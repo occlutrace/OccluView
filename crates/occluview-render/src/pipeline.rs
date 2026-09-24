@@ -488,6 +488,18 @@ impl Renderer {
         }
     }
 
+    /// The 2D texture edge this device will actually accept.
+    ///
+    /// Read from the live device rather than assumed from the request: a
+    /// `wgpu::Limits` request intersected with the adapter by
+    /// `or_worse_values_from` keeps the SMALLER of the two, so a machine whose
+    /// adapter reports 2048 gets 2048 while the app's constant still says 8192.
+    /// Anything sized for a texture must ask here.
+    #[must_use]
+    pub fn granted_texture_dimension(&self) -> u32 {
+        self.device.limits().max_texture_dimension_2d
+    }
+
     /// Access the device (for buffer/texture creation by callers).
     pub fn device(&self) -> &wgpu::Device {
         &self.device

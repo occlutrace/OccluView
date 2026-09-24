@@ -282,8 +282,13 @@ impl RepairReportDialog {
     }
 
     /// Whether a card is on screen. Test probe: production code draws the card
-    /// unconditionally in `ui()` and never branches on its open state.
-    #[cfg(test)]
+    /// Whether the card is in front of the operator.
+    ///
+    /// The tool hotkeys and every tool's Escape handler ask
+    /// [`OccluviewApp::modal_dialog_open`], so this card has to be one of its
+    /// terms: without it Escape closed the tool BEHIND the card — and for Align
+    /// that is `cancel_align_session`, which puts every scan back where the
+    /// session found it.
     #[must_use]
     pub(crate) const fn is_open(&self) -> bool {
         self.card.is_some()

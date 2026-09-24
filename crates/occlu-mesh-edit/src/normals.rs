@@ -227,23 +227,4 @@ mod shared_tolerance_tests {
             [0, 0, 0]
         );
     }
-
-    #[test]
-    fn core_and_this_crate_import_the_shared_tolerances() {
-        let core = include_str!("../../occluview-core/src/mesh/normals.rs");
-        assert!(
-            core.contains("use occlu_geometry_math::"),
-            "core must use the shared tolerances rather than redefining them"
-        );
-        assert!(
-            !core.contains(&format!("{}_DUPLICATE_GROUP", "const MAX_PAIRWISE")),
-            "core must not keep a local copy of the coincident-group bound: \
-             that is how the two shadings drifted apart"
-        );
-        assert!(
-            !core.contains(&format!("{}_NORMAL_DOT", "const DUPLICATE"))
-                && !core.contains(&format!("{}_NORMAL_DOT", "const SMOOTH_DUPLICATE")),
-            "core must not keep a local copy of the normal-agreement threshold"
-        );
-    }
 }

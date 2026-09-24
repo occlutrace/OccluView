@@ -25,17 +25,22 @@ use crate::shell_diagnostics::{
     ShellDiagnosticAdapter, ShellDiagnosticComponent, ShellDiagnosticErrorClass,
     ShellDiagnosticOutcome, ShellDiagnosticStage,
 };
+use std::os::windows::ffi::OsStringExt;
 use std::panic::catch_unwind;
 use std::time::Instant;
 
 /// The COM class. Holds the bytes read from the shell-provided stream between
 /// `Initialize` and `GetThumbnail`.
+// `Agile = false` for the same reason as the preview handler: the fields below
+// are `RefCell`/`Cell`, so the class is `!Sync` and must not advertise a
+// free-threaded marshaler. See the note on `PreviewHandler`.
 #[implement(
     IThumbnailProvider,
     IInitializeWithFile,
     IInitializeWithItem,
     IInitializeWithStream,
-    IClassFactory
+    IClassFactory,
+    Agile = false
 )]
 pub struct ThumbnailProvider {
     /// The bytes of the file, captured eagerly for file-backed paths or
@@ -468,9 +473,12 @@ impl IInitializeWithFile_Impl for ThumbnailProvider_Impl {
             "thumbnail IInitializeWithFile",
             || Err(e_fail()),
             || {
-                let path_string = unsafe { pszfilepath.to_string() }.map_err(|_| e_fail())?;
-                let path = PathBuf::from(&path_string);
-                self.this.initialize_path(path);
+                // `to_string()` on a path with an unpaired surrogate returns
+                // E_FAIL, so such a file would get no thumbnail at all even
+                // though Explorer handed it over. An OS string carries the path
+                // unchanged.
+                let path = std::ffi::OsString::from_wide(unsafe { pszfilepath.as_wide() });
+                self.this.initialize_path(PathBuf::from(path));
                 Ok(())
             },
         )

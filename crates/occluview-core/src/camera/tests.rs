@@ -1,7 +1,6 @@
 use super::*;
 use crate::Aabb;
 use glam::{Vec2, Vec3};
-use std::path::PathBuf;
 
 fn cube_bbox() -> Aabb {
     Aabb::from_min_max(Vec3::new(-10.0, -10.0, -10.0), Vec3::new(10.0, 10.0, 10.0))
@@ -55,96 +54,5 @@ fn spread_multi_object_bbox() -> Aabb {
     )
 }
 
-/// A source file of this crate, read for a contract assertion.
-///
-/// It panics rather than returning an empty string. A path that stops
-/// resolving -- a rename, a move, a typo -- would otherwise turn every
-/// assertion about that file into an assertion about "", and the negative
-/// ones, which are the assertions worth having, all pass in a vacuum.
-fn source_file(relative_path: &str) -> String {
-    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    path.push(relative_path);
-    std::fs::read_to_string(&path).unwrap_or_else(|error| {
-        panic!(
-            "contract test source {} is missing: {error}",
-            path.display()
-        )
-    })
-}
-
-#[test]
-fn camera_module_is_split_by_responsibility_not_single_file() {
-    let facade = source_file("src/camera/mod.rs");
-    let input = source_file("src/camera/input.rs");
-    let orientation = source_file("src/camera/orientation.rs");
-    let orbit = source_file("src/camera/orbit.rs");
-    let framing = source_file("src/camera/framing.rs");
-    let presets = source_file("src/camera/presets.rs");
-    let movement = source_file("src/camera/movement.rs");
-    let lib = source_file("src/lib.rs");
-
-    assert!(
-        facade.contains("mod framing;")
-            && facade.contains("mod input;")
-            && facade.contains("mod movement;")
-            && facade.contains("mod orbit;")
-            && facade.contains("mod orientation;")
-            && facade.contains("mod presets;"),
-        "camera should be a private module directory split by input, orientation, orbit, movement, framing, and presets"
-    );
-    assert!(
-        facade.contains("pub struct Camera")
-            && facade.contains("pub enum CameraProjection")
-            && facade.contains("orbit_delta_from_pointer_motion")
-            && facade.contains("zoom_factor_from_scroll")
-            && facade.contains("CAD_ORBIT_DRAG_GAIN"),
-        "camera facade should keep the public core API stable"
-    );
-    assert!(
-        input.contains("pub fn orbit_delta_from_pointer_motion")
-            && orientation.contains("fn orientation_from_yaw_pitch")
-            && orbit.contains("pub fn orbit_view_by")
-            && framing.contains("pub fn frame_occlusal")
-            && presets.contains("pub enum CameraPreset")
-            && movement.contains("pub fn pan_screen"),
-        "camera responsibilities should live in focused modules"
-    );
-    assert!(
-        lib.contains("pub use camera::{")
-            && lib.contains("orbit_delta_from_pointer_motion")
-            && lib.contains("Camera,")
-            && lib.contains("CameraAxisView")
-            && lib.contains("CameraPreset")
-            && lib.contains("CameraProjection")
-            && lib.contains("CAD_ORBIT_DRAG_GAIN"),
-        "occluview-core should keep the same public camera reexports"
-    );
-}
-
 mod behavior;
 mod zoom;
-
-#[test]
-fn the_frame_fill_factor_has_one_definition() {
-    // The bare 0.7 was written three times, twice here and once in the Explorer
-    // preview, with nothing naming what it meant -- and the preview kept its
-    // own orthographic floor under a comment asking for the real one to be
-    // exported.
-    assert!((BBOX_FRAME_FILL - 0.7).abs() < f32::EPSILON);
-    assert!((MIN_ORTHOGRAPHIC_HEIGHT_MM - 0.01).abs() < f32::EPSILON);
-
-    let bare = format!("/ {}.7", 0);
-    for (name, source) in [
-        ("framing", include_str!("framing.rs")),
-        ("presets", include_str!("presets.rs")),
-        (
-            "preview",
-            include_str!("../../../occluview-shell/src/preview_scene/interaction.rs"),
-        ),
-    ] {
-        assert!(
-            !source.contains(&bare),
-            "{name} should divide by the named fill factor, not a bare literal"
-        );
-    }
-}

@@ -39,10 +39,14 @@ pub(crate) const TOUCH_MM: f32 = 0.02;
 
 /// Chaining radius for counting separate contacts, in millimetres.
 ///
-/// Not the flatten radius (0.75 mm) and not the hover region radius (1.6 mm):
-/// this one answers "how many marks does this bite have", and it has to hold a
-/// whole occlusal patch together on a coarse scan while keeping two teeth
-/// apart. Three millimetres does both on a dental arch.
+/// Not the flatten radius (0.75 mm, [`CONTACT_CLUSTER_RADIUS_MM`]'s sibling in
+/// `components`): this one answers "how many marks does this bite have", and it
+/// has to hold a whole occlusal patch together on a coarse scan while keeping
+/// two teeth apart. Three millimetres does both on a dental arch.
+///
+/// An earlier version of this comment justified the number against a "hover
+/// region radius (1.6 mm)" that exists nowhere in the tree; the hover readout
+/// takes no radius at all.
 pub(crate) const CONTACT_CLUSTER_RADIUS_MM: f64 = 3.0;
 
 /// What one contact reading counted.

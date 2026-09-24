@@ -118,12 +118,18 @@ impl ContactFieldTexels {
 }
 
 /// The group-2 material for one layer painting a contact field: the packed
-/// field, plus a white 1×1 base texture and a sampler so the group is complete.
+/// field, a base texture at binding 0, and a sampler.
 ///
-/// The scan's own texture is deliberately *not* bound here. A field is painted
-/// over an unlit measurement surface, and the shader ignores `mesh_texture`
-/// whenever it paints contacts, so carrying the atlas would only keep a second
-/// copy of a multi-megabyte texture alive for nothing.
+/// The base is the LAYER'S OWN atlas when it has one — `upload` takes it as
+/// `base`, and both offscreen call sites pass the layer's texture. The shader
+/// samples that base for the surface colour and mixes the contact ramp over it
+/// (`mesh.wgsl`, the contact branch), so a textured scan keeps its texture
+/// under the reading. Binding a white 1×1 here instead would replace the whole
+/// layer with a pale shell and leave `has_texture`/`show_texture` claiming
+/// otherwise.
+///
+/// The white 1×1 is only for a layer with no atlas of its own, which is why the
+/// field below is `Option`.
 pub struct GpuContactMaterial {
     /// The white 1×1 base this material built for a layer with no texture of
     /// its own, kept alive because the bind group's binding 0 points at it.

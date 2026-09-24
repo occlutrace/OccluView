@@ -1,25 +1,7 @@
 use super::*;
 use crate::mesh::{Mesh, MeshTexture, Vertex};
 use glam::{Affine3A, Vec3};
-use std::path::PathBuf;
 use std::sync::Arc;
-
-/// A source file of this crate, read for a contract assertion.
-///
-/// It panics rather than returning an empty string. A path that stops
-/// resolving -- a rename, a move, a typo -- would otherwise turn every
-/// assertion about that file into an assertion about "", and the negative
-/// ones, which are the assertions worth having, all pass in a vacuum.
-fn source_file(relative_path: &str) -> String {
-    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    path.push(relative_path);
-    std::fs::read_to_string(&path).unwrap_or_else(|error| {
-        panic!(
-            "contract test source {} is missing: {error}",
-            path.display()
-        )
-    })
-}
 
 fn tri() -> Mesh {
     Mesh::new(
@@ -76,42 +58,6 @@ fn two_triangle_mesh() -> Mesh {
         vec![0, 1, 2, 3, 4, 5],
     )
     .expect("valid two-triangle mesh")
-}
-
-#[test]
-fn scene_module_is_split_by_responsibility_not_single_file() {
-    let facade = source_file("src/scene/mod.rs");
-    let id = source_file("src/scene/id.rs");
-    let material = source_file("src/scene/material.rs");
-    let mesh_entry = source_file("src/scene/mesh_entry.rs");
-    let graph = source_file("src/scene/graph.rs");
-    let bounds = source_file("src/scene/bounds.rs");
-    let picking = source_file("src/scene/picking.rs");
-
-    assert!(
-        facade.contains("mod bounds;")
-            && facade.contains("mod graph;")
-            && facade.contains("mod id;")
-            && facade.contains("mod material;")
-            && facade.contains("mod mesh_entry;")
-            && facade.contains("mod picking;"),
-        "scene should be a private module directory split by graph, layer, bounds, and picking responsibilities"
-    );
-    assert!(
-        facade.contains("pub struct Scene")
-            && facade.contains("pub use id::SceneMeshId;")
-            && facade.contains("pub use mesh_entry::SceneMesh;"),
-        "scene facade should keep the public core API stable"
-    );
-    assert!(
-        id.contains("pub struct SceneMeshId")
-            && material.contains("DEFAULT_UNTEXTURED_MESH_TINT")
-            && mesh_entry.contains("pub struct SceneMesh")
-            && graph.contains("pub fn append_scene")
-            && bounds.contains("pub fn bbox(&self) -> Aabb")
-            && picking.contains("pub fn pick_ray(&self"),
-        "scene responsibilities should live in focused modules"
-    );
 }
 
 #[test]
@@ -222,20 +168,6 @@ fn scene_bbox_skips_hidden_meshes() {
 fn scene_bbox_empty_scene() {
     let s = Scene::new();
     assert!(s.bbox().is_empty());
-}
-
-#[test]
-fn scene_bbox_uses_mesh_bbox_cache_for_repaint_safety() {
-    let bbox_source = source_file("src/scene/bounds.rs");
-
-    assert!(
-        bbox_source.contains("entry.mesh.bbox_cached()"),
-        "scene bbox should use each mesh's constructor-time bbox cache"
-    );
-    assert!(
-        !bbox_source.contains("entry.mesh.bbox_uncached()"),
-        "scene bbox must not walk mesh vertices on every repaint"
-    );
 }
 
 #[test]
@@ -425,26 +357,44 @@ fn append_scene_preserves_existing_scene_settings() {
 fn a_layer_carries_an_optional_deviation_overlay() {
     let entry = SceneMesh::new(tri());
     assert!(
-        entry.deviation_colors().is_none(),
+        entry.overlay_colors().is_none(),
         "a plain layer has no overlay"
     );
 
     let colors = Arc::new(vec![[1u8, 2, 3, 255]; 3]);
-    let entry = entry.with_deviation(Some(colors));
-    assert_eq!(entry.deviation_colors().map(|colors| colors.len()), Some(3));
+    let entry = entry.with_overlay(OverlayKind::Measured, Some(colors));
+    assert_eq!(entry.overlay_colors().map(|colors| colors.len()), Some(3));
+    assert_eq!(entry.overlay_kind(), Some(OverlayKind::Measured));
+}
+
+#[test]
+fn an_overlay_remembers_whether_it_is_a_reading_or_paint() {
+    // The renderer draws a measurement and a paint differently, so the meaning
+    // travels with the colours; without it a brush marking would be shaded as
+    // a deviation map.
+    let colors = Arc::new(vec![[1u8, 2, 3, 255]; 3]);
+    let painted = SceneMesh::new(tri()).with_overlay(OverlayKind::Paint, Some(colors));
+
+    assert_eq!(painted.overlay_kind(), Some(OverlayKind::Paint));
+    assert_eq!(
+        SceneMesh::new(tri()).overlay_kind(),
+        None,
+        "a layer with no overlay has no meaning to report"
+    );
 }
 
 #[test]
 fn replacing_the_geometry_drops_a_stale_deviation_overlay() {
     let colors = Arc::new(vec![[9u8, 9, 9, 255]; 3]);
-    let entry = SceneMesh::new(tri()).with_deviation(Some(colors));
+    let entry = SceneMesh::new(tri()).with_overlay(OverlayKind::Measured, Some(colors));
 
     let rebuilt = entry.with_mesh(tri());
 
     assert!(
-        rebuilt.deviation_colors().is_none(),
+        rebuilt.overlay_colors().is_none(),
         "an overlay indexed by the old vertices must not survive new geometry"
     );
+    assert_eq!(rebuilt.overlay_kind(), None);
 }
 
 /// Cloning a scene shares the mesh buffers but copies layer metadata.

@@ -4,7 +4,6 @@
 ## ("Cut View", "Mesh Editing"); … ellipsis (never ...); straight
 ## apostrophes; em dashes with spaces; no "please" in UI strings.
 
-app-title = OccluView
 app-window-title = OccluView 3D Viewer
 align-panel-title = Align Scans
 meshedit-window-title = Mesh Editing
@@ -37,7 +36,6 @@ update-dismiss = Dismiss
 
 error-open-title = Cannot open file
 error-add-title = Cannot add file
-error-open-body = Could not open { $path }.
 
 ## Help surface: section titles, control actions, contextual lines, dialog chrome.
 ## Gesture names (key/mouse vocabulary) stay invariant by contract.
@@ -155,6 +153,9 @@ load-open-failed-start = Open failed: could not start loader
 load-add-failed-start = Add failed: could not start loader
 load-open-failed-stopped = Open failed: loader stopped
 load-loader-failed-summary = The background scene loader could not be started.
+# A file larger than the viewer reads. The limit is in the message because
+# the operator's next step depends on how far over it they are.
+load-file-too-large = This file is { $size } GB, which is above the { $limit } GB the viewer reads in one piece
 load-action-failed-open = Open failed: { $detail }
 load-action-failed-add = Add failed: { $detail }
 
@@ -478,6 +479,8 @@ align-brush-close-hint = Close the brush — the markings are kept
 align-brush-mesh-selection = Mesh selection
 align-brush-moving = Moving
 align-brush-fixed = Fixed
+align-brush-both = Both
+align-brush-both-hint = Paint and command both scans — the surface under the cursor takes the stroke
 align-brush-size = brush size
 align-brush-inverse = Brush inverse
 align-brush-inverse-hint = A plain drag clears instead of marks. Shift inverses it again
@@ -489,15 +492,20 @@ align-status-no-summary = No comparable surface
 align-mask-fit-everywhere = Fit everywhere
 align-mask-fit-everywhere-hint = Clear all existing markings
 align-mask-fit-everywhere-report = Markings cleared — matching on the whole scan
+align-mask-fit-everywhere-report-one = { $name }: markings cleared
 align-mask-fit-nowhere = Fit nowhere
 align-mask-fit-nowhere-hint = Mark the complete mesh — best-fit matching will have no effect
 align-mask-fit-nowhere-report = Whole mesh marked — best-fit matching will have no effect
+align-mask-fit-nowhere-report-one = { $name }: whole scan marked out of the match
 align-mask-invert = Invert markings
 align-mask-invert-hint = Mark unmarked areas and vice versa
 align-mask-invert-report = Markings inverted
+align-mask-invert-report-one = { $name }: markings inverted
 align-mask-automatic = Mark automatic
 align-mask-automatic-hint = Match only on a small area around each arrow end
 align-mask-automatic-report = Matching only around the arrow ends
+align-mask-automatic-report-one = { $name }: matching only around the arrow ends
+align-mask-automatic-empty = Matching everywhere: the region covered the whole scan, so nothing was excluded
 
 align-status-half-dropped = Half-placed arrow dropped
 align-status-turned = Pair turned around
@@ -527,7 +535,6 @@ align-status-measured = Heatmap updated
 align-status-remeasure = { $reason } — run Best fit matching to measure again
 align-status-settings-changed = Matching settings changed
 align-status-visibility-changed = Selected scan visibility changed
-align-brush-not-in-alignment = That mesh is not in this alignment
 align-drag-moving = Moving { $name } by hand
 align-drag-unrecorded = Moved by hand, but this step could not be added to the history — Ctrl+Z will not undo it
 align-drag-moved = { $name } moved { $moved } mm by hand (Ctrl+Z undoes)
@@ -611,7 +618,6 @@ holes-seg-damaged = { $n ->
     [one] { $n } damaged rim skipped
    *[other] { $n } damaged rims skipped
 }
-batchedit-close-holes = Closed safe interior holes
 batchedit-delete = Deleted selection
 batchedit-crop = Cropped selection
 batchedit-cut = Cut selection to new layer
@@ -629,7 +635,6 @@ batchedit-status = { $label } on { $n ->
     [one] { $n } visible layer
    *[other] { $n } visible layers
 }
-batchedit-no-changes = No changes: refine the selection; hidden layers stay untouched
 
 select-covers-all = Selection already covers the whole mesh: { $layer }
 select-covers-remove = Selection covers the whole mesh — remove the layer instead: { $layer }
@@ -743,8 +748,6 @@ scene-positions-reset = Layer positions reset (Ctrl+Z undoes)
 
 settings-header = Settings
 settings-section-files = Files & export
-settings-export-format = Fallback export format
-settings-export-format-hint = Used when the source format cannot be exported
 settings-remember-export = Remember export folder
 settings-remember-export-hint = Use the same folder after restarting OccluView
 settings-section-scene = View & navigation
@@ -868,6 +871,9 @@ contact-load-suffix = mm
 contact-load-hint = The depth this ramp reads as fully loaded. Moving it recolours the map already measured — no re-measurement.
 contact-flatten = One colour per contact
 contact-flatten-hint = Flatten every contact patch to its deepest point. Off keeps the force distribution inside each mark.
+# Label above the list of layers a contact reading can be measured against.
+contact-antagonist-pick = Measured against
+contact-antagonist-pick-hint = The nearest scan is chosen for you. Pick another layer to read against it instead.
 
 contact-legend-deepest = { $mm } mm into the bite
 
@@ -906,10 +912,17 @@ help-hint-contacts-switch-between-marks-only-and-the-whole-approach = Switch bet
 help-hint-contacts-close-the-reading-and-take-the-marks-off-both-scans = Close the reading and take the marks off both scans
 contact-legend-gap = gap up to { $mm } mm
 contact-stats-balance = Area each side
-contact-stats-balance-hint = Contact area either side of this scan's own mid-line. The split follows the scan's coordinates, so a rotated or mirrored case can swap the two numbers.
 layer-menu-contacts-unavailable = A contact reading needs two visible triangle meshes — show or open the opposing scan first
 
 contact-details = Details
 contact-details-hint = The numbers and the one colour per contact rule
 contact-details-close = Hide details
 settings-shortcuts-hint = Keyboard and mouse reference (F1)
+
+load-units-ambiguous = Units are not verified: this format declares meters while scanner exports usually carry millimetres — { $suggestion }
+load-units-suggest-meters = the size suggests meters, so it is about 1000x smaller than it should be
+load-units-suggest-millimeters = the size suggests millimetre numbers, which is how it was read
+load-units-unclear = the size does not settle it; check a known measurement
+contact-stats-balance-hover = Contact area split by the mid-line: before-line / after-line
+mesh-warning-vertex-alpha = vertex alpha was not written
+load-superseded-parked-open = A newer open is waiting: answer its prompt first

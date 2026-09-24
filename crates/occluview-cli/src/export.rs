@@ -31,15 +31,30 @@ pub(crate) fn close_holes_file(
         .with_context(|| format!("loading {}", input.display()))?;
     let format = ExportFormat::from_output_path(output)?;
 
-    // Mirror `app_layer_edits::whole_mesh::close_holes_options`: heal the cut
-    // line (which also welds the STL soup back to real topology), compact the
-    // welded-away duplicates, and honor the optional mm perimeter budget.
-    let options = MeshEditOptions {
-        compact_vertices: true,
-        max_boundary_loop: CLOSE_HOLES_EDGE_CEILING,
-        max_rim_perimeter_mm: limit_mm,
-        heal_boundary_rims: true,
-        ..MeshEditOptions::default()
+    // Mirror `app_layer_edits::whole_mesh::close_holes_options` EXACTLY, and
+    // the mirror has to include the branch, not just the fields it sets.
+    //
+    // The app omits `max_boundary_loop` when no mm limit was given, which leaves
+    // the kernel default (8192). This used to set `CLOSE_HOLES_EDGE_CEILING`
+    // (20000) unconditionally, so the same nominal command closed a rim of
+    // 8193..20000 edges headlessly while the app's button reported it as
+    // "Skipped (oversize)" — two different output meshes for one documented
+    // operation. The ceiling belongs only to the mm-limited branch, which is
+    // where the app puts it: the perimeter budget is what makes a wider edge
+    // count acceptable, because the operator asked for a bounded rim.
+    let options = match limit_mm {
+        Some(limit_mm) => MeshEditOptions {
+            compact_vertices: true,
+            max_boundary_loop: CLOSE_HOLES_EDGE_CEILING,
+            max_rim_perimeter_mm: Some(limit_mm),
+            heal_boundary_rims: true,
+            ..MeshEditOptions::default()
+        },
+        None => MeshEditOptions {
+            compact_vertices: true,
+            heal_boundary_rims: true,
+            ..MeshEditOptions::default()
+        },
     };
     let result =
         fill_holes_in_mesh(&mesh, None, options).with_context(|| "closing holes".to_string())?;
@@ -161,6 +176,7 @@ pub(crate) fn print_write_warnings(report: &MeshWriteReport) {
             MeshWriteWarning::VertexColorsNotWritten => "vertex colors not included",
             MeshWriteWarning::UvsNotWritten => "UVs not included",
             MeshWriteWarning::TextureImageNotWritten => "texture image not included",
+            MeshWriteWarning::VertexAlphaNotWritten => "vertex alpha not included",
         };
         eprintln!("Warning: {message}");
     }
@@ -216,7 +232,17 @@ mod tests {
 
         let (format, report) = convert_file(&input, &output).expect("convert");
         assert_eq!(format, ExportFormat::Ply);
-        assert!(report.warnings.contains(&MeshWriteWarning::UvsNotWritten));
+        assert!(
+            !report.warnings.contains(&MeshWriteWarning::UvsNotWritten),
+            "PLY carries the coordinates as per-vertex s/t, so a conversion must not              report them as dropped"
+        );
+        let written = fs::read(&output).expect("the exported ply");
+        let header_end = written
+            .windows(b"end_header\n".len())
+            .position(|window| window == b"end_header\n")
+            .expect("end header");
+        let header = String::from_utf8_lossy(&written[..header_end]);
+        assert!(header.contains("property float s\nproperty float t\n"));
         assert!(output.exists());
         let _ = fs::remove_file(input);
         let _ = fs::remove_file(output);

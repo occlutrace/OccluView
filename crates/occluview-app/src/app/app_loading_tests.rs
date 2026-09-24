@@ -717,3 +717,47 @@ fn an_append_does_not_discard_a_held_drag_pose_it_carries_forward() {
         "with the one history step the release would have recorded"
     );
 }
+
+/// A newer request must not be overtaken by an older one still in the queue.
+///
+/// Two holes shared one shape: a Replace parked while an edit was open never
+/// reached `queue_request_while_active` (whose contract is "a newer Replace
+/// supersedes every pending request"), so a decode still running with an OLDER
+/// Replace queued behind it would later start that one and replace the scene the
+/// operator had asked for most recently. The other hole is the same function's
+/// other branch: the guard can clear while a request is parked (removing the
+/// last layer empties the unsaved set while the guard window is up), and the
+/// stale parking then stayed alive to open an older file over a newer scene.
+#[test]
+fn a_parked_request_supersedes_replaces_already_in_the_queue() {
+    let mut app = test_app("parked-supersedes-queued");
+    app.document.scene = Some(Arc::new(named_scene("scene-a", 0.0)));
+    // An older Replace is queued behind a decode.
+    app.document.queued_loads.push_back(SceneLoadRequest {
+        paths: vec![PathBuf::from("/cases/older.stl")],
+        source: "open",
+        mode: SceneLoadMode::Replace,
+        content_revision_at_request: app.document.content_revision,
+        dirty_at_request: false,
+    });
+    // …and the operator now asks for a newer file while an edit session is open,
+    // which is what parks the request.
+    app.document
+        .edit_mode
+        .begin_layer_edit(
+            &app.document.scene.as_ref().expect("scene").meshes()[0],
+            EditModeCommand::MoveLayer,
+        )
+        .expect("layer edit session");
+    app.replace_paths(&[PathBuf::from("/cases/newer.stl")], "open");
+
+    assert!(
+        app.ui.pending_replace_open.is_some(),
+        "the newest request is held for the guard"
+    );
+    assert!(
+        app.document.queued_loads.is_empty(),
+        "the older queued Replace is obsolete and must not survive to clobber \
+         the scene the operator asked for last"
+    );
+}

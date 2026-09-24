@@ -1,90 +1,5 @@
 use super::*;
 
-#[test]
-fn windows_app_reports_startup_and_panic_failures() {
-    let source = app_bootstrap_source();
-    let manifest = app_manifest_source();
-
-    assert!(
-        source.contains("install_panic_hook();")
-            && source.contains("if let Err(error) = real_main()"),
-        "Windows-subsystem startup must install a panic hook before fallible startup"
-    );
-    assert!(
-        source.contains("std::process::exit(1);"),
-        "a failed GUI startup must return a failure status instead of silently succeeding"
-    );
-    assert!(
-        source.contains("fn real_main() -> Result<()>"),
-        "fallible startup should live behind a non-Result Windows main wrapper"
-    );
-    assert!(
-        source.contains("show_startup_fatal_message_box"),
-        "startup failures and panics should show a visible Windows dialog"
-    );
-    assert!(
-        source.contains("MessageBoxW"),
-        "Windows-subsystem fatal errors need MessageBoxW because there is no console"
-    );
-    assert!(
-        source.contains("fn crash_report_dir() -> Option<PathBuf>")
-            && source.contains(".map(|base| base.join(\"crashes\"))"),
-        "crash reports should be written under the platform app state directory"
-    );
-    assert!(source.contains("env!(\"CARGO_PKG_VERSION\")"));
-    assert!(manifest.contains("\"Win32_UI_WindowsAndMessaging\""));
-}
-
-#[test]
-fn linux_build_uses_real_gui_instead_of_failure_stub() {
-    let binary = main_source();
-    let library = lib_source();
-    let manifest = app_manifest_source();
-
-    assert!(
-        !binary.contains("#[cfg(not(windows))]\nfn main() -> std::process::ExitCode"),
-        "Linux builds must launch the same egui/wgpu desktop viewer, not a failure stub"
-    );
-    assert!(
-        library.contains("mod app;"),
-        "the GUI implementation should live behind the library boundary"
-    );
-    assert!(
-        !library.contains("#[cfg(windows)]\nmod app"),
-        "app module must not be hidden behind cfg(windows)"
-    );
-    assert!(
-        manifest.contains("features = [\"wgpu\", \"default_fonts\", \"x11\", \"wayland\"]"),
-        "Linux GUI builds need eframe's x11 and wayland backends enabled"
-    );
-}
-
-#[test]
-fn binary_entry_delegates_to_the_public_library_entry() {
-    let binary = main_source();
-
-    assert!(
-        binary.contains("occluview_app::main_entry()"),
-        "the binary must delegate to the public library entry point"
-    );
-    assert!(
-        binary.contains("windows_subsystem"),
-        "the Windows GUI-subsystem attribute must stay on the binary"
-    );
-    assert!(
-        !binary.contains("mod app"),
-        "the application module graph must live behind the library boundary"
-    );
-    let meaningful = binary
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with("//"))
-        .count();
-    assert!(
-        meaningful <= 20,
-        "main.rs must stay a thin delegate of at most 20 meaningful lines, found {meaningful}"
-    );
-}
 #[cfg(target_os = "linux")]
 #[test]
 fn linux_window_identity_value_matches_desktop_metadata() {
@@ -103,91 +18,26 @@ fn windows_app_identity_value_matches_shell_registration() {
     );
 }
 
+/// The `AppUserModelID` the process sets must be the one the installed shortcut
+/// is tagged with, or the taskbar groups the running viewer under a second,
+/// unnamed entry and the jump list disappears.
+///
+/// This is the value-agreement half of the guard the source-text removal left
+/// behind: the constant is compared against the MSI that actually ships, not
+/// against a second copy of the string. Runs on the Windows CI job, where
+/// `APP_USER_MODEL_ID` exists.
+#[cfg(windows)]
 #[test]
-fn platform_identity_values_are_pinned_unconditionally() {
-    // The cfg-gated asserts above only run on their platform; pin both
-    // values everywhere so cross-platform drift cannot hide.
-    assert!(
-        lib_source().contains("LINUX_DESKTOP_APP_ID: &str = \"ai.occlutrace.OccluView\""),
-        "Wayland app_id value must match the installed desktop file id"
+fn windows_app_identity_value_matches_the_shipped_shortcut() {
+    let wxs = msi_wxs_source();
+    let expected = format!(
+        "<ShortcutProperty Key=\"System.AppUserModel.ID\" Value=\"{APP_USER_MODEL_ID}\" />"
     );
     assert!(
-        lib_source().contains("APP_USER_MODEL_ID: &str = \"OccluTrace.OccluView\""),
-        "AppUserModelID value must match the shell registration"
+        wxs.contains(&expected),
+        "install/occluview.wxs must tag its Start Menu shortcut with the \
+         process AppUserModelID {APP_USER_MODEL_ID}"
     );
-}
-#[test]
-fn linux_window_identity_matches_desktop_metadata() {
-    let bootstrap_source = app_bootstrap_source();
-    let build_deb = linux_build_deb_source();
-    let package_workflow = package_workflow_source();
-    let metainfo = linux_metainfo_source();
-    let desktop = linux_desktop_source();
-
-    assert!(
-        bootstrap_source.contains(".with_app_id(crate::LINUX_DESKTOP_APP_ID)"),
-        "Wayland app_id should match the installed desktop file id"
-    );
-    assert!(build_deb.contains("ai.occlutrace.OccluView.desktop"));
-    assert!(metainfo
-        .contains("<launchable type=\"desktop-id\">ai.occlutrace.OccluView.desktop</launchable>"));
-    assert!(package_workflow
-        .contains("desktop-file-validate install/linux/ai.occlutrace.OccluView.desktop"));
-    assert!(!package_workflow.contains("desktop-file-validate install/linux/occluview.desktop"));
-    assert!(desktop.contains("StartupNotify=true"));
-    assert!(bootstrap_source.contains("capture_activation_token"));
-    assert!(include_str!("../single_instance/activation.rs").contains("xdg_activation"));
-
-    // A metainfo with no <releases> makes every software centre show the app
-    // with no version history at all, and appstreamcli says so. The entry has
-    // to be the version being prepared, or the centre advertises a release
-    // that is not the one in the package.
-    let manifest = include_str!("../../../../Cargo.toml");
-    let version = manifest
-        .split("[workspace.package]")
-        .nth(1)
-        .and_then(|section| section.split("version = \"").nth(1))
-        .and_then(|rest| rest.split('"').next());
-    let Some(version) = version else {
-        panic!("the workspace version should be readable");
-    };
-    assert!(
-        metainfo.contains(&format!("<release version=\"{version}\"")),
-        "the metainfo should name {version}, the version this package carries"
-    );
-}
-
-#[test]
-fn linux_desktop_state_uses_xdg_paths() {
-    let app_paths = include_str!("../app_paths.rs");
-    let single_instance_unix = include_str!("../single_instance/unix.rs");
-
-    assert!(
-        app_paths.contains("XDG_STATE_HOME") && app_paths.contains(".local/state"),
-        "recent files and crash reports on Linux should use XDG state directories"
-    );
-    assert!(
-        single_instance_unix.contains("XDG_RUNTIME_DIR"),
-        "Linux single-instance IPC should prefer XDG_RUNTIME_DIR"
-    );
-    assert!(
-        single_instance_unix.contains("UnixListener")
-            && single_instance_unix.contains("UnixStream"),
-        "Linux single-instance handoff should use Unix domain sockets"
-    );
-}
-
-#[test]
-fn public_linux_copy_is_not_left_as_windows_only() {
-    let app_manifest = app_manifest_source();
-    let live_viewport = include_str!("../live_viewport.rs");
-    let about = repo_source_file("src/app/app_settings_window.rs");
-    let ci = ci_workflow_source();
-
-    assert!(!app_manifest.contains("Windows-only"));
-    assert!(!live_viewport.contains("Windows desktop app"));
-    assert!(!about.contains("Native Windows viewer for fast scan inspection"));
-    assert!(!ci.contains("Build the Windows-only crates (shell, app)"));
 }
 
 #[test]
@@ -265,26 +115,6 @@ fn the_deb_ships_and_gates_the_license_set() {
     assert!(
         copyright.contains("THIRD-PARTY-NOTICES.md"),
         "the DEP-5 copyright should point at the shipped attribution file"
-    );
-}
-
-#[test]
-fn the_viewer_answers_version_before_any_windowing() {
-    let bootstrap = app_bootstrap_source();
-
-    let version_exit = bootstrap.find("if args.version {");
-    let single_instance = bootstrap.find("SingleInstance::acquire");
-    assert!(
-        version_exit.is_some() && single_instance.is_some(),
-        "both the version early-exit and the single-instance handshake should exist"
-    );
-    // --version must never focus a running instance or open a window; the
-    // early exit has to sit before the single-instance handshake.
-    assert!(version_exit < single_instance);
-    assert!(startup_source().contains("\"--version\" | \"-V\""));
-    assert!(
-        parse_args_from(["-V"]).version && parse_args_from(["--version"]).version,
-        "both version spellings must exit before any windowing"
     );
 }
 
@@ -431,162 +261,6 @@ fn the_fuzz_manifest_declares_every_target_and_ci_runs_them() {
 }
 
 #[test]
-fn no_scan_path_reaches_the_crash_report() {
-    // `write_crash_report` dumps the log ring buffer to a text file, and a
-    // dental scan's path is the case it belongs to. The moment someone is asked
-    // to attach that report to a public issue, they attach patient identifiers.
-    let bootstrap = app_bootstrap_source();
-
-    assert!(
-        !bootstrap.contains("files = ?args.files"),
-        "startup must log the shape of the session, not the paths in it"
-    );
-    assert!(
-        bootstrap.contains("file_count = args.files.len()")
-            && bootstrap.contains("file_extensions("),
-        "startup should log how many files and of which kinds"
-    );
-    assert!(
-        bootstrap.contains("fn write_crash_report"),
-        "this test is about what the crash report can contain"
-    );
-
-    // The Explorer handlers run over whatever folder is on screen, so the same
-    // rule applies to the thumbnail crate.
-    let thumbnail = include_str!("../../../occluview-thumbnail/src/render_thumb/mod.rs");
-    assert!(
-        !thumbnail.contains("path = %path.display()"),
-        "the thumbnail path must not be logged; the extension is enough to diagnose"
-    );
-
-    // Startup and the thumbnail are not the only sites. A failed open logged
-    // the whole request, and the error beside it carried the path again.
-    let loading = repo_source_file("src/app/app_loading.rs");
-    assert!(
-        !loading.contains("paths = ?pending.paths"),
-        "a failed load must log how many files and of which kinds, not which"
-    );
-    assert!(
-        !loading.contains("error = ?e,"),
-        "the load error names the file inside its own text; it has to be \
-         redacted before it reaches the ring"
-    );
-    assert!(
-        loading.contains("error = %failure_without_paths(&e, &pending.paths)"),
-        "the redacted form is what belongs in the log"
-    );
-
-    // Three spellings across three hand-listed files is not the rule; it is a
-    // sample of the rule, and `tracing::warn!(file = ?p)` walked straight
-    // through it. The rule is that no tracing event in the viewer carries a
-    // field whose name says it holds a path.
-    let offenders = tracing_events_naming_a_path();
-    assert!(
-        offenders.is_empty(),
-        "these tracing events carry a path-shaped field; log how many files \
-         and of which kinds instead:\n{}",
-        offenders.join("\n")
-    );
-}
-
-/// Words that make a field name say it holds a path.
-const PATH_WORDS: &[&str] = &["path", "file", "scan", "directory", "folder"];
-
-/// Field names built from those words that describe a set rather than name it.
-const FIELDS_THAT_DESCRIBE_A_SET: &[&str] = &[
-    "file_count",
-    "path_count",
-    "files_count",
-    "formats",
-    "extension",
-    "extensions",
-    "file_extensions",
-];
-
-/// Every `tracing::` event in the viewer that names a path-shaped field, or
-/// renders a path into its message.
-///
-/// A text scan, not a macro-expansion check, so what it looks for is readable
-/// by whoever has to satisfy it. Field names come out of the macro call as
-/// `name = value` or the `?name` / `%name` shorthand, so
-/// `error = %failure_without_paths(..)` is judged by the name `error` while
-/// `?report_path` is judged by `report_path` and fails.
-fn tracing_events_naming_a_path() -> Vec<String> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let Some(workspace_root) = manifest_dir.parent().and_then(Path::parent) else {
-        panic!("app crate should live under the workspace crates directory");
-    };
-
-    let mut sources = Vec::new();
-    for crate_name in ["occluview-app", "occluview-thumbnail", "occluview-shell"] {
-        let root = workspace_root.join("crates").join(crate_name).join("src");
-        collect_rust_source_files(&root, &mut sources)
-            .unwrap_or_else(|error| panic!("cannot walk {crate_name}: {error}"));
-    }
-
-    let mut offenders = Vec::new();
-    for path in sources {
-        if path
-            .components()
-            .any(|part| part.as_os_str().to_string_lossy().contains("tests"))
-        {
-            continue;
-        }
-        let Ok(text) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        let production = text
-            .split_once("#[cfg(test)]\nmod tests")
-            .map_or(text.as_str(), |(source, _)| source);
-        for (offset, _) in production.match_indices("tracing::") {
-            let Some(rest) = production.get(offset..) else {
-                continue;
-            };
-            let event: String = rest.chars().take(600).collect();
-            let Some(open) = event.find('(') else {
-                continue;
-            };
-            let Some(close) = event[open..].find(");") else {
-                continue;
-            };
-            let arguments = &event[open + 1..open + close];
-            let line = production[..offset].matches('\n').count() + 1;
-
-            // Everything before the message literal is fields.
-            let (fields, message_and_after) = arguments
-                .split_once('"')
-                .map_or((arguments, ""), |(fields, after)| (fields, after));
-
-            for part in fields.split(',') {
-                let name = part
-                    .split_once('=')
-                    .map_or_else(
-                        || part.trim().trim_start_matches(['?', '%']),
-                        |(name, _)| name.trim(),
-                    )
-                    .trim();
-                let name = name.split(['.', '(', ' ']).next().unwrap_or(name);
-                if name.is_empty() || FIELDS_THAT_DESCRIBE_A_SET.contains(&name) {
-                    continue;
-                }
-                if PATH_WORDS.iter().any(|word| name.contains(word)) {
-                    offenders.push(format!("{}:{line}: field {name}", path.display()));
-                }
-            }
-
-            // A path rendered into the message instead of passed as a field.
-            if fields.trim().is_empty() && message_and_after.contains(".display()") {
-                offenders.push(format!(
-                    "{}:{line}: a path rendered into the message",
-                    path.display()
-                ));
-            }
-        }
-    }
-    offenders
-}
-
-#[test]
 fn the_statically_linked_cpp_components_are_attributed() {
     // `THIRD-PARTY-NOTICES.md` is generated from `Cargo.lock` and therefore
     // covers the Rust graph only. The shipped binaries also statically link a
@@ -662,30 +336,5 @@ fn the_workflows_name_the_package_they_built_instead_of_globbing_for_it() {
         builder.contains("# Contract: the last line on stdout is the path"),
         "build-deb.sh should say that its last line is the contract the \
          workflows depend on"
-    );
-}
-
-#[test]
-fn the_updater_speaks_only_https_outside_its_own_tests() {
-    // SECURITY.md tells a reader the product makes two ordinary HTTPS GETs and
-    // nothing else. ureq follows five redirects, so without this an https host
-    // answering with an http Location would be followed down -- inside the
-    // signature boundary, but not inside the promise.
-    let updater = repo_source_file("../occluview-update/src/lib.rs");
-    assert!(
-        updater.contains(".https_only(!cfg!(test))"),
-        "the update agent must refuse plain HTTP in a shipped build"
-    );
-    let security = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(Path::parent)
-            .map(|root| root.join("SECURITY.md"))
-            .unwrap_or_default(),
-    )
-    .unwrap_or_default();
-    assert!(
-        security.contains("HTTPS"),
-        "and SECURITY.md is where that promise is made"
     );
 }

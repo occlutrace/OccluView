@@ -97,8 +97,17 @@ pub(crate) struct OpenRequestListener {
 impl OpenRequestListener {
     #[cfg(test)]
     pub(crate) fn for_tests() -> Self {
-        let (_sender, receiver) = mpsc::channel();
-        Self { receiver }
+        Self::for_tests_with_sender().0
+    }
+
+    /// The test listener together with the sender that feeds it, so a test can
+    /// hand it a request the way the socket thread does. Without the sender a
+    /// test can only observe an empty listener, which proves nothing about the
+    /// event-driven path.
+    #[cfg(test)]
+    pub(crate) fn for_tests_with_sender() -> (Self, mpsc::Sender<OpenRequest>) {
+        let (sender, receiver) = mpsc::channel();
+        (Self { receiver }, sender)
     }
 
     pub(crate) fn spawn(repaint_ctx: egui::Context) -> Self {

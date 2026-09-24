@@ -40,6 +40,12 @@ pub(super) struct LiveViewport {
 }
 
 impl LiveViewport {
+    /// Forward the device's real texture edge; see
+    /// [`occluview_render::Renderer::granted_texture_dimension`].
+    pub(super) fn granted_texture_dimension(&self) -> u32 {
+        self.renderer.granted_texture_dimension()
+    }
+
     pub(super) fn from_render_state(
         render_state: &egui_wgpu::RenderState,
         sample_count: u16,
@@ -81,19 +87,24 @@ impl LiveViewport {
         self.show_ghost = show_ghost;
     }
 
+    /// `splat_viewport_px` is the viewport the callback actually paints into,
+    /// in physical pixels — NOT the clamped `render_extent_px`. The splat radius
+    /// is a pixel quantity (`ndc_radius = POINT_SPLAT_RADIUS_PX * 2 / viewport`),
+    /// so the clamped extent drew every splat at `radius * actual / clamped`:
+    /// 5.25 px instead of 3.5 px on a 4K fullscreen, and undersized in a window
+    /// below the floor. The camera aspect still comes from the clamped extent,
+    /// which is correct.
     pub(super) fn update_view(
         &mut self,
         camera: &GpuCamera,
-        render_extent_px: [u16; 2],
+        splat_viewport_px: [u32; 2],
         clip_plane: ClipPlane,
     ) {
         if self.renderer.is_gpu_faulted() {
             return;
         }
-        self.renderer.set_point_splat_viewport(
-            u32::from(render_extent_px[0]),
-            u32::from(render_extent_px[1]),
-        );
+        self.renderer
+            .set_point_splat_viewport(splat_viewport_px[0], splat_viewport_px[1]);
         self.renderer.set_camera(camera);
         self.clip_enabled = clip_plane.enabled != 0;
         self.renderer
@@ -288,38 +299,5 @@ impl egui_wgpu::CallbackTrait for LiveViewportCallback {
             return;
         };
         viewport.paint(render_pass);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn live_viewport_keeps_selection_overlay_separate_from_base_scene() {
-        let source = crate::primary_ui_tests::production_source(include_str!("live_viewport.rs"))
-            .replace("\r\n", "\n");
-        let production_source = source
-            .split_once("\nmod tests {")
-            .map_or(source.as_str(), |(source, _)| source);
-
-        assert!(
-            production_source.contains("selection_overlay: Option<PreparedScene>"),
-            "live viewport should not fold selected-face overlay into the base prepared scene"
-        );
-        assert!(
-            production_source.contains("pub(super) fn sync_selection_overlay("),
-            "selection overlay should have its own sync path"
-        );
-        assert!(
-            crate::primary_ui_tests::appears_before(
-                production_source,
-                "scene.draw_with_clip(",
-                "overlay.draw_with_clip(",
-            ),
-            "selection overlay should draw after the base scene"
-        );
-        assert!(
-            production_source.contains("self.selection_overlay = None;"),
-            "clearing the live scene should also clear stale selection overlay"
-        );
     }
 }

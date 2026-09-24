@@ -48,6 +48,21 @@ pub enum FormatError {
         path: String,
     },
 
+    /// The file is larger than this build reads.
+    ///
+    /// An unbounded read is a resource attack whether or not anyone meant it:
+    /// the viewer holds the whole file in memory before parsing it, and a
+    /// folder dropped on the window parses several files at once. The limit is
+    /// far above any real scan (see `MAX_IMPORT_BYTES`), so reaching it means
+    /// the file is not a scan this viewer should open.
+    #[error("file is {bytes} bytes, larger than the {limit} byte limit this build reads")]
+    TooLarge {
+        /// Size of the file that was refused.
+        bytes: u64,
+        /// The limit it exceeded.
+        limit: u64,
+    },
+
     /// The extension/magic did not match any known format.
     #[error("unsupported format (extension={extension:?})")]
     Unsupported {

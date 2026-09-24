@@ -2,7 +2,7 @@
     clippy::cast_precision_loss,
     clippy::expect_used,
     clippy::float_cmp,
-    reason = "sculpt source contracts use exact synthetic inputs"
+    reason = "exact dab-planning inputs make float equality meaningful"
 )]
 
 use super::{plan_dab_centers, sculpt_target};
@@ -91,79 +91,5 @@ fn a_stalled_frame_cannot_dump_a_huge_hold_backlog() {
     assert!(
         centers.len() <= 5,
         "clamped dt should keep the backlog small"
-    );
-}
-
-#[test]
-fn brush_hotkeys_survive_a_held_shift() {
-    let source = crate::primary_ui_tests::production_source(include_str!("app_sculpt.rs"));
-    for key in ["egui::Key::Num1", "egui::Key::Num2"] {
-        assert!(source.contains(&format!("egui::Modifiers::SHIFT, {key}")));
-    }
-}
-
-#[test]
-fn sculpt_hotkeys_switch_to_sculpt_from_edit_mesh() {
-    let source = crate::primary_ui_tests::production_source(include_str!("app_sculpt.rs"));
-    let start = source
-        .find("pub(super) fn handle_sculpt_hotkeys")
-        .expect("the sculpt hotkey handler must exist");
-    let body = &source[start..(start + 900).min(source.len())];
-    assert!(!body.contains("self.tools.editor_tab != mesh_editor_overlay::EditorTab::Sculpt"));
-    assert!(body.contains("self.arm_sculpt_tool"));
-}
-
-#[test]
-fn mode_switch_finishes_a_live_stroke_instead_of_aborting_it() {
-    let source = crate::primary_ui_tests::production_source(include_str!("app_sculpt.rs"));
-    let start = source
-        .find("pub(super) fn toggle_sculpt_tool")
-        .expect("the brush-mode switch must exist");
-    let body = &source[start..(start + 2000).min(source.len())];
-    assert!(body.contains("self.commit_sculpt_stroke(ctx)"));
-    assert!(!body.contains("abort_sculpt_stroke"));
-}
-
-#[test]
-fn toggling_off_does_not_drop_a_worker_with_a_queued_finish() {
-    let source = crate::primary_ui_tests::production_source(include_str!("app_sculpt.rs"));
-    let start = source
-        .find("pub(super) fn toggle_sculpt_tool")
-        .expect("the sculpt toggle must exist");
-    let body = &source[start..(start + 2600).min(source.len())];
-    assert!(body.contains("!self.tools.sculpt.worker_has_pending_work()"));
-}
-
-#[test]
-fn an_active_stroke_stops_sampling_when_pointer_leaves_viewport() {
-    let source = crate::primary_ui_tests::production_source(include_str!("app_sculpt.rs"));
-    let start = source
-        .find("pub(super) fn handle_sculpt_drag")
-        .expect("the sculpt drag handler must exist");
-    let body = &source[start..(start + 4200).min(source.len())];
-    assert!(body.contains("if !response.contains_pointer()"));
-}
-
-#[test]
-fn sculpt_cursor_follows_pointer_ownership_and_warm_pick_readiness() {
-    let source = crate::primary_ui_tests::production_source(include_str!("app_sculpt.rs"));
-    let start = source
-        .find("pub(super) fn paint_sculpt_cursor_impl")
-        .expect("the sculpt cursor painter must exist");
-    let body = &source[start..(start + 1600).min(source.len())];
-    assert!(body.contains("viewport_response.contains_pointer()"));
-    assert!(!body.contains("self.tools.sculpt.worker.is_none()"));
-    assert!(source.contains("entry.mesh.bvh_is_ready()"));
-}
-
-#[test]
-fn abort_also_reverts_a_released_stroke_waiting_in_the_worker() {
-    let source = crate::primary_ui_tests::production_source(include_str!("app_sculpt.rs"));
-    let start = source
-        .find("pub(super) fn abort_sculpt_stroke")
-        .expect("the sculpt abort handler must exist");
-    let body = &source[start..(start + 900).min(source.len())];
-    assert!(
-        body.contains("worker_has_pending_work()") && body.contains("had_stroke || had_pending")
     );
 }

@@ -2,7 +2,6 @@
 ## Status: DRAFT. Requires native dental/CAD terminology review + visual UI review before APPROVED.
 ## Contract: exact key/attribute/variable parity with en.ftl.
 
-app-title = OccluView
 app-window-title = OccluView 3D Viewer
 align-panel-title = Alinear escaneos
 meshedit-window-title = Edición de mallas
@@ -35,7 +34,6 @@ update-dismiss = Descartar
 
 error-open-title = No se puede abrir el archivo
 error-add-title = No se puede añadir el archivo
-error-open-body = No se pudo abrir { $path }.
 
 ## Help surface — DRAFT. Gesture names stay invariant by contract.
 
@@ -152,6 +150,7 @@ load-open-failed-start = Falló la apertura: no arranca el cargador
 load-add-failed-start = Falló la adición: no arranca el cargador
 load-open-failed-stopped = Falló la apertura: el cargador se detuvo
 load-loader-failed-summary = No se pudo iniciar el cargador de escena en segundo plano.
+load-file-too-large = El archivo ocupa { $size } GB, por encima de los { $limit } GB que se leen de una vez
 load-action-failed-open = Falló la apertura: { $detail }
 load-action-failed-add = Falló la adición: { $detail }
 
@@ -474,6 +473,8 @@ align-brush-close-hint = Cerrar el pincel — se conservan las marcas
 align-brush-mesh-selection = Selección de malla
 align-brush-moving = Móvil
 align-brush-fixed = Fija
+align-brush-both = Ambos
+align-brush-both-hint = Pinta y aplica en ambos escaneos — la superficie bajo el cursor recibe el trazo
 align-brush-size = tamaño del pincel
 align-brush-inverse = Pincel inverso
 align-brush-inverse-hint = Arrastrar pela en vez de marcar. Shift lo invierte
@@ -485,15 +486,20 @@ align-status-no-summary = No hay superficie comparable
 align-mask-fit-everywhere = Ajustar en todas partes
 align-mask-fit-everywhere-hint = Limpiar todas las marcas
 align-mask-fit-everywhere-report = Marcas limpias — ajuste en todo el escaneo
+align-mask-fit-everywhere-report-one = { $name }: marcas borradas
 align-mask-fit-nowhere = No ajustar en ningún lado
 align-mask-fit-nowhere-hint = Marcar toda la malla — el ajuste no tendrá efecto
 align-mask-fit-nowhere-report = Malla entera marcada — el ajuste no tendrá efecto
+align-mask-fit-nowhere-report-one = { $name }: escaneo completo excluido del ajuste
 align-mask-invert = Invertir marcas
 align-mask-invert-hint = Marcar lo sin marcar y viceversa
 align-mask-invert-report = Marcas invertidas
+align-mask-invert-report-one = { $name }: marcas invertidas
 align-mask-automatic = Marca automática
 align-mask-automatic-hint = Ajustar solo un área pequeña en cada extremo
 align-mask-automatic-report = Ajuste solo en extremos de flecha
+align-mask-automatic-report-one = { $name }: ajuste solo alrededor de las puntas de flecha
+align-mask-automatic-empty = Coincidencia en todas partes: la región cubrió todo el escaneo, así que no se excluyó nada
 
 align-status-half-dropped = Flecha a medias descartada
 align-status-turned = Par girado
@@ -523,7 +529,6 @@ align-status-measured = Mapa de calor actualizado
 align-status-remeasure = { $reason } — ejecuta el ajuste fino para medir de nuevo
 align-status-settings-changed = Ajustes de matching cambiados
 align-status-visibility-changed = Cambió la visibilidad de un escaneo seleccionado
-align-brush-not-in-alignment = Ese escaneo no es de esta alineación
 align-drag-moving = Moviendo { $name } a mano
 align-drag-unrecorded = Movido a mano, pero este paso no quedó en el historial — Ctrl+Z no lo deshará
 align-drag-moved = { $name }: movimiento de { $moved } mm a mano (Ctrl+Z deshace)
@@ -608,7 +613,6 @@ holes-seg-damaged = { $n ->
    *[other] Omitidos { $n } bordes dañados
 }
 batchedit-invert = Normales invertidas
-batchedit-close-holes = Agujeros interiores seguros cerrados
 batchedit-delete = Selección eliminada
 batchedit-crop = Recorte a la selección
 batchedit-cut = Selección cortada a nueva capa
@@ -619,7 +623,6 @@ batchedit-status = { $label } en { $n ->
     [one] { $n } capa visible
    *[other] { $n } capas visibles
 }
-batchedit-no-changes = Sin cambios: afina la selección; lo oculto queda intacto
 batch-close-holes = Agujeros interiores cerrados
 batch-delete = Selección eliminada
 batch-crop = Recorte a la selección
@@ -740,8 +743,6 @@ align-session-kept = Alineación guardada — exporta el escaneo para escribirla
 
 settings-header = Ajustes
 settings-section-files = Archivos y exportación
-settings-export-format = Formato de exportación alternativo
-settings-export-format-hint = Cuando el formato origen no se puede exportar
 settings-remember-export = Recordar carpeta de exportación
 settings-remember-export-hint = Misma carpeta tras reiniciar OccluView
 settings-section-scene = Vista y navegación
@@ -863,6 +864,9 @@ contact-load-suffix = mm
 contact-load-hint = La profundidad a la que esta escala se lee como carga completa. Moverla recolorea el mapa ya medido, sin volver a medir.
 contact-flatten = Un color por contacto
 contact-flatten-hint = Reducir cada zona de contacto a su punto más profundo. Desactivado conserva la distribución de fuerza dentro de cada marca.
+# Label above the list of layers a contact reading can be measured against.
+contact-antagonist-pick = Medido contra
+contact-antagonist-pick-hint = El escaneo más cercano se elige automáticamente. Elija otra capa para medir contra ella.
 
 contact-legend-deepest = { $mm } mm dentro de la mordida
 
@@ -901,10 +905,17 @@ contact-status-failed-hint = Lea de nuevo; si sigue fallando, puede que el par n
 contact-status-needs-second-hint = Abra el escaneo antagonista o muéstrelo de nuevo y empiece la lectura
 contact-legend-gap = holgura hasta { $mm } mm
 contact-stats-balance = Área por lado
-contact-stats-balance-hint = Área de contacto a cada lado de la línea media del propio escaneo. El reparto sigue las coordenadas del escaneo, así que un caso girado o reflejado puede intercambiar los números.
 layer-menu-contacts-unavailable = Una lectura de contactos necesita dos mallas de triángulos visibles: muestre o abra antes el escaneo antagonista
 
 contact-details = Detalles
 contact-details-hint = Los números y la regla de un color por contacto
 contact-details-close = Ocultar detalles
 settings-shortcuts-hint = Referencia de teclado y ratón (F1)
+
+load-units-ambiguous = Unidades sin verificar: el formato declara metros, pero los escáneres suelen exportar milímetros — { $suggestion }
+load-units-suggest-meters = el tamaño sugiere metros, así que es unas 1000 veces más pequeño de lo que debería
+load-units-suggest-millimeters = el tamaño sugiere números en milímetros, así se leyó
+load-units-unclear = el tamaño no lo decide; compruébelo con una medida conocida
+contact-stats-balance-hover = Área de contacto dividida por la línea media: antes / después de la línea
+mesh-warning-vertex-alpha = el alfa de vértice no se escribió
+load-superseded-parked-open = Hay una apertura más reciente esperando: responda primero a su aviso

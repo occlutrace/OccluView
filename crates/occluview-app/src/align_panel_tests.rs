@@ -1,41 +1,7 @@
-#![allow(clippy::expect_used)]
-
-fn production() -> &'static str {
-    let source = crate::primary_ui_tests::production_source(include_str!("align_panel.rs"));
-    source
-        .split_once("\n#[cfg(test)]")
-        .map_or(source, |(before, _)| before)
-}
-
-/// The whole point of this tool is that there is no object picker. If a
-/// control ever names a target or a role, the simplification is gone.
-#[test]
-fn no_control_in_the_window_names_a_target_a_source_or_a_role() {
-    for literal in production().split('"').skip(1).step_by(2) {
-        let lowered = literal.to_lowercase();
-        for banned in ["target", "source object", "primary object", "role"] {
-            assert!(
-                !lowered.contains(banned),
-                "a control says {literal:?}, which names {banned}"
-            );
-        }
-    }
-}
+#![allow(clippy::expect_used, clippy::panic)]
 
 /// The window has to be draggable like the mesh editor: a panel pinned to a
 /// corner covers the very geometry the operator is clicking on.
-#[test]
-fn the_window_is_movable_and_constrained_to_the_viewport() {
-    let source = production();
-    assert!(source.contains("align-panel-title"));
-    assert!(source.contains(".default_pos(default_pos)"));
-    assert!(source.contains(".constrain_to(viewport_rect)"));
-    assert!(
-        !source.contains(".anchor("),
-        "an anchored window cannot be moved"
-    );
-}
-
 #[test]
 fn align_window_opens_clear_of_layers_at_normal_and_narrow_widths() {
     for width in [600.0, 1024.0, 1600.0] {
@@ -66,119 +32,170 @@ fn previously_opened_align_window_reanchors_after_narrowing() {
     assert!(!super::panel_needs_reanchor(Some(new_rect), viewport, 2));
 }
 
-/// The window exposes explicit Cancel and Done actions.
-#[test]
-fn the_window_ends_in_cancel_and_done() {
-    let commit = production()
-        .split_once("fn commit(")
-        .map(|(_, rest)| rest)
-        .expect("a commit row");
-    assert!(commit.contains("AlignPanelAction::Cancel"));
-    assert!(commit.contains("AlignPanelAction::Done"));
+/// Every label AccessKit was handed for one render of the window.
+///
+/// The window is checked through the widgets it actually produced, not through
+/// its source: AccessKit is what a screen reader sees, so a control that is
+/// drawn but never registered is missing for exactly the operator who cannot
+/// see it either.
+fn panel_control_labels(
+    ctx: &egui::Context,
+    tab: super::AlignTab,
+    locale: &crate::i18n::LocaleManager,
+) -> Vec<String> {
+    panel_controls(ctx, tab, false, locale)
+        .into_iter()
+        .map(|(label, _)| label)
+        .collect()
 }
 
-/// Preserve the established control labels.
+/// Every label AccessKit was handed, with whether the control was disabled.
+///
+/// `busy` is the input that matters for the orientation rule: the job holds the
+/// settings snapshot it was submitted with, so the rule has to be disabled
+/// while a fit runs rather than let an edit describe a different match.
+fn panel_controls(
+    ctx: &egui::Context,
+    tab: super::AlignTab,
+    busy: bool,
+    locale: &crate::i18n::LocaleManager,
+) -> Vec<(String, bool)> {
+    use crate::align_drag::DragConstraint;
+    use crate::align_tool::AlignTool;
+    use crate::align_worker::AlignSettings;
+
+    let tool = AlignTool::default();
+    let mut settings = AlignSettings::default();
+    let mut constraint = DragConstraint::default();
+    let mut excluding = false;
+    let mut drop_pending = false;
+    let mut open_tab = tab;
+    let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1024.0, 768.0));
+    let raw = egui::RawInput {
+        screen_rect: Some(viewport),
+        ..Default::default()
+    };
+    let mut output = ctx.run_ui(raw, |ui| {
+        let ctx = ui.ctx().clone();
+        let _ = super::show(
+            &ctx,
+            viewport,
+            super::AlignPanelView {
+                tool: &tool,
+                layer_count: 2,
+                settings: &mut settings,
+                constraint: &mut constraint,
+                excluding: &mut excluding,
+                drop_pending: &mut drop_pending,
+                status: None,
+                refined_match_ready: false,
+                roles: None,
+                busy,
+                worker_failed: false,
+                moved: false,
+                can_undo: false,
+                can_redo: false,
+                tab: &mut open_tab,
+            },
+            locale,
+        );
+    });
+    // The frame is inspected, not painted: its texture deltas are dropped the
+    // way the other egui-driven tests here do.
+    output.textures_delta.clear();
+    output
+        .platform_output
+        .accesskit_update
+        .map(|update| {
+            update
+                .nodes
+                .iter()
+                .filter_map(|(_, node)| {
+                    node.label()
+                        .map(|label| (label.to_string(), node.is_disabled()))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The exclusion brush belongs to the automatic tab and to no other.
+///
+/// Marking surface out of the match is a question only the tab that runs
+/// best-fit matching asks. A brush control offered on the manual pose tab says
+/// it applies to a fit that tab cannot run, and the operator who ticks it there
+/// gets markings with nothing behind them.
 #[test]
-fn the_controls_carry_the_labels_operators_already_know() {
-    let source = format!(
-        "{}{}",
-        production(),
-        crate::primary_ui_tests::production_source(include_str!("align_panel_settings.rs"))
-    );
-    for label in [
-        "\"align-back\"",
-        "\"align-fit-perform\"",
-        "\"align-fit-refine\"",
-        "\"align-matching-parts\"",
-        "\"align-max-influence\"",
-        "\"align-orientation-match\"",
-        "\"align-orientation-inverted\"",
-        "\"align-orientation-ignored\"",
-        "\"align-exclude\"",
+fn the_exclusion_brush_is_offered_on_the_automatic_tab_only() {
+    let locale = crate::i18n::LocaleManager::for_tests();
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    let brush = locale.tr("align-exclude");
+
+    for (tab, expected) in [
+        (super::AlignTab::Automatically, true),
+        (super::AlignTab::Manually, false),
     ] {
-        assert!(source.contains(label), "the window is missing {label}");
-    }
-}
-
-/// The exclusion brush belongs to the automatic tab.
-#[test]
-fn the_exclusion_brush_belongs_to_the_automatic_tab() {
-    let source = production();
-    let manual = source
-        .split_once("fn manually(")
-        .and_then(|(_, rest)| rest.split_once("\n/// What the tool is waiting for"))
-        .map(|(block, _)| block)
-        .expect("a manual tab body");
-    for absent in ["excluding", "brush", "Brush"] {
+        let labels = panel_control_labels(&ctx, tab, &locale);
         assert!(
-            !manual.contains(absent),
-            "the manual tab mentions {absent}, which belongs to the automatic tab"
+            !labels.is_empty(),
+            "{tab:?}: the window has to render controls before this checks anything"
         );
-    }
-    let automatic = source
-        .split_once("fn automatically(")
-        .and_then(|(_, rest)| rest.split_once("\n/// The Manually tab"))
-        .map(|(block, _)| block)
-        .expect("an automatic tab body");
-    assert!(automatic.contains("exclude(ui, view.excluding, enabled, locale)"));
-}
-
-/// The manual tab exposes Undo and Redo.
-#[test]
-fn the_manual_tab_offers_the_history_buttons() {
-    let manual = production()
-        .split_once("fn manually(")
-        .map(|(_, rest)| rest)
-        .expect("a manual tab body");
-    assert!(manual.contains("AlignPanelAction::Undo"));
-    assert!(manual.contains("AlignPanelAction::Redo"));
-}
-
-#[test]
-fn custom_align_controls_show_keyboard_focus() {
-    let source = production();
-    for control in ["tab_strip", "chip", "fit_button"] {
-        let body = source
-            .split_once(&format!("fn {control}("))
-            .map(|(_, rest)| rest)
-            .unwrap_or_default();
-        assert!(
-            body.contains("response.has_focus()"),
-            "{control} is focusable but has no visible focus treatment"
+        assert_eq!(
+            labels.contains(&brush),
+            expected,
+            "{tab:?}: exclusion brush present={expected}, controls={labels:?}"
         );
     }
 }
 
+/// The surface-orientation rule is disabled while a fit is running: the job
+/// holds the settings snapshot it was submitted with, so an edit made
+/// mid-flight would describe a different match than the one that lands.
+///
+/// Drives the real `facing` control through egui and reads the disabled state
+/// back from the produced widget tree, which is stronger than the source-text
+/// check this replaced. The panel-level AccessKit node for a window does not
+/// surface per-control disabled state on this egui version, so the check runs
+/// at the control the panel delegates to.
 #[test]
-fn custom_align_controls_publish_accessible_button_roles() {
-    let source = production();
-    for control in ["tab_strip", "chip", "fit_button"] {
-        let body = source
-            .split_once(&format!("fn {control}("))
-            .map(|(_, rest)| rest)
-            .unwrap_or_default();
-        assert!(
-            body.contains("response.widget_info") && body.contains("egui::WidgetType::Button"),
-            "{control} must expose a semantic button to AccessKit"
-        );
-    }
-}
+fn the_orientation_rule_is_disabled_while_a_fit_runs() {
+    use occluview_align::Orientation;
 
-#[test]
-fn compact_constraint_chips_keep_visual_labels_compact_but_semantic_names() {
-    let source = production();
-    let compact = source
-        .split_once("fn compact_icon_chip(")
-        .map(|(_, rest)| rest)
-        .unwrap_or_default();
+    let locale = crate::i18n::LocaleManager::for_tests();
+    let target = locale.tr("align-orientation-match");
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+
+    let disabled_for = |enabled: bool| -> bool {
+        let raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(400.0, 400.0),
+            )),
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(raw, |ui| {
+            let mut orientation = Orientation::Match;
+            super::super::align_panel_settings::facing(ui, &mut orientation, enabled, &locale);
+        });
+        out.textures_delta.clear();
+        out.platform_output
+            .accesskit_update
+            .and_then(|update| {
+                update.nodes.iter().find_map(|(_, node)| {
+                    (node.label() == Some(target.as_str())).then(|| node.is_disabled())
+                })
+            })
+            .unwrap_or_else(|| panic!("the orientation radio {target:?} must be rendered"))
+    };
+
     assert!(
-        compact.contains("accessibility_label")
-            && compact.contains("chip_with_accessibility")
-            && compact.contains("\"\""),
-        "constraint chips need an icon-only visual and a non-empty semantic label"
+        !disabled_for(true),
+        "with no fit running the orientation rule is editable"
     );
     assert!(
-        source.contains("&locale.tr(value.label_key())"),
-        "each constraint chip must provide its localized semantic name"
+        disabled_for(false),
+        "a running fit must disable the orientation rule"
     );
 }

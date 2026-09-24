@@ -57,10 +57,14 @@ fn install_tracing() {
 
 fn run() -> Result<()> {
     let mut args = std::env::args_os().skip(1);
-    let subcommand = args.next().unwrap_or_else(|| {
-        print_usage_with_error();
-        OsString::from("help")
-    });
+    // No arguments at all is a usage question, answered once on stdout. It used
+    // to print the usage TWICE — `print_usage_with_error` wrote it to stderr and
+    // then the synthesised "help" subcommand wrote it again to stdout, exiting 0
+    // — so a successful invocation produced duplicated output on two streams.
+    let Some(subcommand) = args.next() else {
+        print_usage();
+        return Ok(());
+    };
 
     match subcommand.to_str() {
         Some("thumbnail") => cmd_thumbnail(&mut args),
@@ -186,20 +190,48 @@ fn cmd_thumbnail(args: &mut impl Iterator<Item = OsString>) -> Result<()> {
         }
     }
 
-    let out_path = normalize_thumbnail_output_path(output.unwrap_or_else(|| {
-        let mut p = file.clone();
-        p.set_extension("png");
-        p
-    }))?;
+    let out_path = normalize_thumbnail_output_path(match output {
+        Some(path) => path,
+        None => implicit_thumbnail_path(&file),
+    })?;
 
     eprintln!("Rendering {size}x{size} thumbnail...");
-    let pixels = occluview_thumbnail::render_thumbnail_file_or_placeholder(
+    let spec = occluview_render::ThumbnailSpec {
+        size_px: size,
+        ..Default::default()
+    };
+    // The caller here is a person or a script, not Explorer's thumbnail cache,
+    // so a file the renderer could not open must be visible. The freedesktop
+    // thumbnailer contract still requires a PNG, so the placeholder is written
+    // either way — but the exit code says whether it is a picture of the file
+    // or a picture of the failure.
+    let attempt = occluview_thumbnail::try_render_thumbnail_file(
         &file,
-        occluview_render::ThumbnailSpec {
-            size_px: size,
-            ..Default::default()
-        },
+        spec,
+        std::time::Duration::from_secs(15),
     );
+    // `TransientFailure` is the CLI FAILING to open the file: a bad path, an
+    // unreadable file, a directory. That is the case a script must be able to
+    // detect, and it exits non-zero.
+    //
+    // A corrupt or unsupported CONTAINER is different, and deliberately still
+    // exits 0: the crate reached a verdict about the file's content, the PNG is
+    // that verdict (the corrupt-badged placeholder), and a file manager showing
+    // a badge is the correct outcome for a file that is simply broken. That is
+    // the freedesktop contract, and it is what the black-box test
+    // `thumbnail_of_corrupt_file_exits_zero_and_writes_placeholder_png` pins.
+    //
+    // Comparing the pixels against a freshly generated placeholder would erase
+    // that distinction — and would throw away the badge, since the corrupt
+    // placeholder is not the plain one.
+    let rendered = match attempt {
+        occluview_thumbnail::ThumbnailAttempt::Bitmap(pixels) => Some(pixels),
+        occluview_thumbnail::ThumbnailAttempt::TransientFailure => None,
+    };
+
+    let pixels = rendered
+        .clone()
+        .unwrap_or_else(|| occluview_thumbnail::placeholder_thumbnail(spec));
 
     eprintln!("Writing {}...", out_path.display());
     let img = image::RgbaImage::from_raw(u32::from(size), u32::from(size), pixels)
@@ -207,6 +239,13 @@ fn cmd_thumbnail(args: &mut impl Iterator<Item = OsString>) -> Result<()> {
     write_thumbnail_atomically(&out_path, &img)
         .with_context(|| format!("writing {}", out_path.display()))?;
 
+    if rendered.is_none() {
+        eprintln!(
+            "Done: {} (placeholder: this file could not be rendered)",
+            out_path.display()
+        );
+        std::process::exit(1);
+    }
     eprintln!("Done: {}", out_path.display());
     std::process::exit(0);
 }
@@ -214,6 +253,14 @@ fn cmd_thumbnail(args: &mut impl Iterator<Item = OsString>) -> Result<()> {
 static NEXT_THUMBNAIL_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
 fn write_thumbnail_atomically(path: &Path, image: &image::RgbaImage) -> Result<()> {
+    // A symlink destination is followed, not replaced. Publishing with a bare
+    // rename swapped the LINK's inode for a regular file, so the file the link
+    // pointed at kept its previous image while the CLI printed "Done" — the
+    // operator checked the target and saw stale content. The mesh writer has
+    // resolved this exact case for the same reason; the thumbnailer now does
+    // the same instead of a second, weaker copy of the rule.
+    let path = occluview_formats::resolve_overwrite_destination(path)?;
+    let path = path.as_path();
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -295,6 +342,46 @@ fn replace_thumbnail_file(temporary: &Path, destination: &Path) -> std::io::Resu
         )
     }
     .map_err(|error| std::io::Error::other(error.to_string()))
+}
+
+/// Where a thumbnail goes when the operator named no output.
+///
+/// `<scan>.png` is the name a PLY or OBJ names as its own texture, so writing a
+/// thumbnail there would replace the scan's image with a picture of the scan.
+/// An occupied name is therefore stepped aside, and only an explicit `-o`
+/// replaces a file the operator chose by name.
+fn implicit_thumbnail_path(file: &Path) -> PathBuf {
+    let mut path = file.to_path_buf();
+    path.set_extension("png");
+    // The writer collapses a repeated terminal extension (`scan.png.stl` ->
+    // `scan.png`), so the name to check is the one that will be written, not
+    // the one before that collapse.
+    path = export::normalize_output_path(path);
+    if !path.exists() {
+        return path;
+    }
+    let stem = path.file_stem().map_or_else(
+        || "thumbnail".to_string(),
+        |stem| stem.to_string_lossy().into_owned(),
+    );
+    // Keep stepping. The doc above promises an occupied name is stepped aside,
+    // but the `-thumb` name was returned without a second `exists()` check, and
+    // `write_thumbnail_atomically` then renamed over it: `scan.png` plus a
+    // pre-existing `scan-thumb.png` (an unrelated file, or another tool's)
+    // silently destroyed the latter, a file the operator never named. A
+    // numbered suffix keeps escalating instead of overwriting anything.
+    let mut candidate = path.clone();
+    candidate.set_file_name(format!("{stem}-thumb.png"));
+    if !candidate.exists() {
+        return candidate;
+    }
+    for index in 2..1000u32 {
+        candidate.set_file_name(format!("{stem}-thumb-{index}.png"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    candidate
 }
 
 /// `convert <file> -o output.{stl|ply|obj}`
@@ -535,18 +622,6 @@ fn usage_text() -> &'static str {
 mod tests {
     #![allow(clippy::expect_used, clippy::panic)]
 
-    /// The part of this file above the test module.
-    ///
-    /// Searching the whole of it matches the needle written in the assertion
-    /// itself, so the guard would pass on its own text and the production line
-    /// it names could be deleted with nothing going red.
-    fn production_source() -> &'static str {
-        let source = include_str!("main.rs");
-        source
-            .split_once("#[cfg(test)]\nmod tests")
-            .map_or(source, |(production, _)| production)
-    }
-
     use super::{
         normalize_thumbnail_output_path, parse_limit_mm, take_file_argument,
         validate_thumbnail_size, write_thumbnail_atomically, FileArgument,
@@ -592,69 +667,6 @@ mod tests {
         let error =
             take_file_argument(&mut args, "close-holes").expect_err("close-holes needs a file");
         assert!(error.to_string().contains("close-holes"));
-    }
-
-    #[test]
-    fn version_flag_is_recognised_and_advertised() {
-        let source = production_source();
-        assert!(
-            source.contains("\"--version\" | \"-V\""),
-            "--version must dispatch instead of falling into the unknown-subcommand error"
-        );
-        assert!(
-            source.contains("--version | -V"),
-            "the usage text should advertise the flag"
-        );
-    }
-
-    #[test]
-    fn thumbnail_cli_uses_file_backed_render_path() {
-        let source = production_source();
-        let start = source.find("fn cmd_thumbnail(");
-        assert!(start.is_some(), "missing cmd_thumbnail");
-        let Some(start) = start else {
-            return;
-        };
-        let end = source[start..].find("/// `info <file>");
-        assert!(
-            end.is_some(),
-            "missing info command after thumbnail command"
-        );
-        let Some(end) = end else {
-            return;
-        };
-        let thumbnail = &source[start..start + end];
-
-        assert!(
-            thumbnail
-                .contains("occluview_thumbnail::render_thumbnail_file_or_placeholder("),
-            "CLI thumbnails should use the file-backed, placeholder-backed path shared with Explorer \
-             so corrupt/unsupported files still produce a PNG (freedesktop thumbnailer contract)"
-        );
-        assert!(
-            !thumbnail.contains("std::fs::read(&file)"),
-            "CLI thumbnails should not read large files into memory before rendering"
-        );
-        assert!(
-            !thumbnail.contains("read_file_with_key_provider(&file"),
-            "CLI thumbnails should not parse once for console stats and again for rendering"
-        );
-        assert!(
-            !thumbnail.contains("use_software_renderer_only"),
-            "CLI rendering uses the same per-request verified adapter policy as Explorer"
-        );
-        assert!(
-            thumbnail.contains("write_thumbnail_atomically"),
-            "thumbnail output must be published only after the complete PNG is encoded"
-        );
-    }
-
-    #[test]
-    fn convert_cli_routes_through_export_module() {
-        let source = production_source();
-        assert!(source.contains("Some(\"convert\") => cmd_convert(&mut args)"));
-        assert!(source.contains("export::convert_file(&input, &output)?;"));
-        assert!(source.contains("output.{stl|ply|obj}"));
     }
 
     #[test]

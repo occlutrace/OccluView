@@ -14,7 +14,7 @@
 //! logic — the menu inventory, the icon raster, and the clipboard DIB packing —
 //! is factored into `crate::preview_menu`, which is unit tested on any host.
 
-use super::super::e_fail;
+use super::super::{e_fail, MAX_OFFSCREEN_EDGE};
 use super::window::window_owns_handler;
 use super::PreviewHandler;
 use crate::preview_menu::dib::pack_clipboard_dib;
@@ -285,12 +285,27 @@ impl PreviewHandler {
     fn copy_preview_to_clipboard(&self, hwnd: HWND) -> windows::core::Result<()> {
         self.ensure_preview_scene_loaded()
             .map_err(super::shell_error_to_hresult)?;
+        // Every other preview render caps an edge at MAX_OFFSCREEN_EDGE, which
+        // is the renderer's texture ceiling (`using_resolution(adapter.limits())`
+        // hands the device the adapter's limit, and the code's own floor case is
+        // 2048). Asking the shared renderer for a full-pane texture on a wide
+        // pane was a wgpu validation error: the fault latched, the shared
+        // renderer was retired, and this menu command discarded the error, so the
+        // operator got no image and no message. The clamp also bounds the
+        // oversize-placeholder branch, which allocated width*height*4 from a rect
+        // otherwise clamped only at 65535.
         let size = self.preview_size_u16();
+        let render_width = u32::from(size[0]).min(MAX_OFFSCREEN_EDGE);
+        let render_height = u32::from(size[1]).min(MAX_OFFSCREEN_EDGE);
         let theme = super::theme::preview_theme();
         let pixels = self
-            .render_preview_pixels(size, theme.background_linear(), theme.canvas_rgba())
+            .render_preview_pixels(
+                [render_width as u16, render_height as u16],
+                theme.background_linear(),
+                theme.canvas_rgba(),
+            )
             .map_err(super::shell_error_to_hresult)?;
-        copy_rgba_to_clipboard(hwnd, &pixels, u32::from(size[0]), u32::from(size[1]))
+        copy_rgba_to_clipboard(hwnd, &pixels, render_width, render_height)
     }
 }
 
@@ -349,13 +364,28 @@ fn copy_rgba_to_clipboard(
     let Some(dib) = pack_clipboard_dib(rgba, width, height) else {
         return Err(e_fail());
     };
+    // Open the clipboard before the block exists. Opening it last and
+    // returning with `?` leaked the block whenever another process held the
+    // clipboard open: the error path ran before either `GlobalFree` below, and
+    // the leak lands in prevhost.exe, which serves every later preview in the
+    // session.
+    // SAFETY: take ownership of the clipboard tied to our window.
+    let opened = unsafe { OpenClipboard(Some(hwnd)) };
+    if opened.is_err() {
+        return Err(e_fail());
+    }
     // SAFETY: allocates a moveable global block of the exact DIB size.
-    let hglobal = unsafe { GlobalAlloc(GMEM_MOVEABLE, dib.len()) }?;
+    let Ok(hglobal) = (unsafe { GlobalAlloc(GMEM_MOVEABLE, dib.len()) }) else {
+        // SAFETY: always release the clipboard we opened.
+        let _ = unsafe { CloseClipboard() };
+        return Err(e_fail());
+    };
     // SAFETY: `hglobal` was just allocated.
     let ptr = unsafe { GlobalLock(hglobal) };
     if ptr.is_null() {
-        // SAFETY: releasing the block we failed to lock.
+        // SAFETY: releasing the block we failed to lock, then the clipboard.
         let _ = unsafe { GlobalFree(Some(hglobal)) };
+        let _ = unsafe { CloseClipboard() };
         return Err(e_fail());
     }
     // SAFETY: `ptr` addresses at least `dib.len()` writable bytes.
@@ -363,9 +393,8 @@ fn copy_rgba_to_clipboard(
     // SAFETY: matching unlock; a 0 return (fully unlocked) is expected, not an error.
     let _ = unsafe { GlobalUnlock(hglobal) };
 
-    // SAFETY: take ownership of the clipboard tied to our window.
-    unsafe { OpenClipboard(Some(hwnd)) }?;
-    // SAFETY: clipboard is open; empty it before publishing our format.
+    // SAFETY: the clipboard is already open and ours; empty it before
+    // publishing our format.
     let outcome = unsafe { EmptyClipboard() }.and_then(|()| {
         // SAFETY: on success the system takes ownership of `hglobal`.
         unsafe { SetClipboardData(u32::from(CF_DIB.0), Some(HANDLE(hglobal.0))) }.map(|_| ())

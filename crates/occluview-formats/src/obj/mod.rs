@@ -26,9 +26,10 @@
 //!   metadata comments.
 //! - **Vertex colors** are detected by counting tokens after `v`: 3 floats =
 //!   position only, 6 = position + RGB (ints 0..=255).
-//! - **No external file reads**: `mtllib` is recorded but the `.mtl` is not
-//!   loaded at parse time (texture loading is a separate concern; v1 attaches
-//!   vertex colors only).
+//! - **No external file reads here**: `mtllib` is resolved after this parser
+//!   has produced the mesh, by the companion loader the path-aware entry points
+//!   call once the bytes are parsed (texture loading is a separate concern; v1
+//!   attaches vertex colors only).
 
 use crate::error::FormatError;
 use glam::Vec3;

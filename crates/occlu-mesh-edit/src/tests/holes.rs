@@ -393,13 +393,26 @@ fn a_large_unwelded_soup_is_refused_rather_than_filled() {
         "expected the options to be named as the problem, got {error}"
     );
 
-    // And the same soup fills when the caller asks for the weld.
+    // Asking for the weld changes nothing HERE, and that is correct: this
+    // fixture puts every triangle at its own positions (x = i * 0.01), so the
+    // full-payload weld merges nothing and the buffers are still a soup. The
+    // previous assertion ("welding is what makes this shape fillable") described
+    // a shape this fixture does not have. What welding is FOR is a soup whose
+    // corners coincide, and that case is pinned by
+    // `holes_soup_tests::soup_close_holes_reports_honest_counts_and_closes_curved_rims`.
     let options = MeshEditOptions {
         heal_boundary_rims: true,
         ..MeshEditOptions::default()
     };
+    let started = std::time::Instant::now();
+    let error = fill_holes(&buffers, None, options)
+        .expect_err("corners that never coincide cannot be welded into a fillable surface");
     assert!(
-        fill_holes(&buffers, None, options).is_ok(),
-        "welding is what makes this shape fillable"
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "the refusal must stay immediate"
+    );
+    assert!(
+        matches!(error, MeshEditError::InvalidOptions { .. }),
+        "expected the options to be named as the problem, got {error}"
     );
 }

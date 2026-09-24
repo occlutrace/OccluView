@@ -20,7 +20,7 @@ mod tests;
 
 pub use id::SceneMeshId;
 pub use material::{DEFAULT_COLORED_MESH_TINT, DEFAULT_UNTEXTURED_MESH_TINT};
-pub use mesh_entry::SceneMesh;
+pub use mesh_entry::{OverlayKind, SceneMesh};
 pub use occlu_mesh_edit::{SectionPlane, SectionPolyline, SectionResult};
 pub use picking::ScenePickHit;
 pub use section::{LayerSection, SceneSection, SectionCache};

@@ -4,76 +4,6 @@ use glam::Quat;
 use occluview_core::{Mesh, SceneMesh};
 use std::thread;
 
-/// Warming the picking tree is a single `OnceLock::get_or_init`, so the only
-/// way to keep a canceled preparation from holding the worker - and the
-/// layer's mesh - alive for a scan-sized build is to not start it. Both paths
-/// that warm a tree on a background thread check the cancel flag first, and
-/// the pick path warms its own when a live session needs one.
-#[test]
-fn a_warm_bvh_is_never_started_for_an_abandoned_worker() {
-    let source = include_str!("sculpt_tool.rs");
-    let production = source
-        .split("\n#[cfg(test)]\nmod tests")
-        .next()
-        .unwrap_or(source);
-    for (label, marker) in [
-        (
-            "preparation",
-            "if !worker_cancel.load(Ordering::Relaxed) {\n                    mesh.warm_bvh();",
-        ),
-        (
-            "rebuild",
-            "if !cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {\n            mesh.warm_bvh();",
-        ),
-    ] {
-        assert!(
-            production.contains(marker),
-            "the {label} path must check cancellation before warming the picking tree"
-        );
-    }
-    assert!(
-        !production.contains("\n                mesh.warm_bvh();"),
-        "an unconditional warm would block cancellation for the whole build"
-    );
-}
-
-/// The undo baseline is speculative work: most strokes are never undone.
-/// `snapshot_mesh` records what building it with the caches costs the first
-/// dab of every stroke.
-#[test]
-fn the_stroke_baseline_is_snapshotted_cold() {
-    // Only the part above this module counts, or the guard matches the
-    // needle in its own assertion and passes on its own text.
-    let source = include_str!("sculpt_tool.rs");
-    let production = source
-        .split("\n#[cfg(test)]\nmod tests")
-        .next()
-        .unwrap_or(source);
-    assert!(
-        production.contains("with_sculpted_vertices_uncached(shadow.clone())"),
-        "the stroke's undo baseline must not pay for caches it usually never uses"
-    );
-}
-
-#[test]
-fn densification_failure_is_not_silently_dropped() {
-    let source = include_str!("sculpt_tool.rs");
-    let production = source
-        .split("\n#[cfg(test)]\nmod tests")
-        .next()
-        .unwrap_or(source);
-    assert!(
-        production.contains("failure: Option<DabFailure>"),
-        "a topology rebuild failure needs a typed dab outcome"
-    );
-    assert!(
-        !production.contains(
-            "mesh_from_sculpt_session_like(&self.base_mesh, &self.session)\n            .ok()?"
-        ),
-        "a topology change must not turn a rebuild error into an empty dab"
-    );
-}
-
 #[test]
 fn toggling_a_tool_arms_it_and_toggling_again_disarms() {
     let mut tool = SculptTool::default();
@@ -269,6 +199,127 @@ fn invalid_shadow_mapping_fails_before_partial_publish() {
     assert_eq!(*shadow.read().expect("shadow read"), original);
 }
 
+/// A brush session is prepared off the UI thread, so for a frame or two there
+/// is no worker yet — and the mesh edit that a worker would gate on is exactly
+/// the one that must wait for the preparation. Reporting quiet there lets a
+/// Done/undo/structural edit invalidate the session being built.
+#[test]
+fn sculpt_preparation_counts_as_busy_before_the_worker_exists() {
+    let mut tool = SculptTool::default();
+    let mut scene = Scene::new();
+    let index = scene.add(SceneMesh::new(quad_mesh("prepare-busy")));
+    let scene = Arc::new(scene);
+    let layer_id = scene.meshes()[index].id();
+    let topology_id = scene.meshes()[index].mesh.topology_id();
+
+    tool.queue_preparation(Arc::clone(&scene), index);
+
+    assert!(
+        tool.worker.is_none(),
+        "the worker lands only after preparation"
+    );
+    assert!(
+        tool.pending_matches(layer_id, topology_id),
+        "the preparation must be in flight"
+    );
+    assert!(
+        tool.is_busy(),
+        "a mesh edit must wait for the session that is still being prepared"
+    );
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let session = loop {
+        if let Some(result) = tool.poll_preparation() {
+            break result.expect("the preparation worker succeeds");
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "preparation never landed"
+        );
+        thread::sleep(std::time::Duration::from_millis(1));
+    };
+    assert_eq!(session.layer_id, layer_id);
+    assert!(
+        !tool.is_busy(),
+        "a landed, idle session is not work the guards have to wait for"
+    );
+}
+
+/// The stroke's undo baseline is snapshotted cold. It is stored and usually
+/// dropped — most strokes are never undone — and the full form's caches land on
+/// the first dab of every stroke, where the operator is waiting.
+#[test]
+fn the_stroke_baseline_is_snapshotted_cold() {
+    let mesh = quad_mesh("cold-baseline");
+    mesh.warm_bvh();
+    let original = mesh.vertices().to_vec();
+    let topology_id = mesh.topology_id();
+    let topology = PreparedSceneTopology::from_mesh(&mesh);
+    let layer_id = SceneMesh::new(mesh.clone()).id();
+    let brush = BrushSession::prepare(&mesh_edit_buffers_from_mesh(&mesh)).expect("prepare");
+    let mut session = SculptSession {
+        layer_id,
+        topology_id,
+        session: brush,
+        base_mesh: Arc::new(mesh),
+        shadow: Arc::new(RwLock::new(original.clone())),
+        topology,
+        world_to_local: Affine3A::IDENTITY,
+        local_per_world: 1.0,
+        dirty_stroke: false,
+        stroke_start_mesh: None,
+    };
+
+    let outcome = session.apply_dab(
+        BrushStroke {
+            center: [0.0, 0.0, 0.0],
+            radius_mm: 2.0,
+            strength: 1.0,
+            view_dir: [0.0, 0.0, -1.0],
+        },
+        BrushMode::Add,
+    );
+    assert!(
+        !outcome.touched.is_empty(),
+        "the dab has to move geometry, or there is no baseline to snapshot"
+    );
+
+    let baseline = session
+        .stroke_start_mesh
+        .as_ref()
+        .expect("the first dab snapshots the undo baseline");
+    assert_eq!(
+        baseline.vertices(),
+        original.as_slice(),
+        "the baseline is the pre-stroke geometry"
+    );
+    assert_eq!(baseline.topology_id(), topology_id);
+    assert!(
+        !baseline.bvh_is_ready(),
+        "the baseline must not refit a picking tree on the operator's first dab"
+    );
+    assert!(
+        !baseline.bbox_is_cached(),
+        "nor rebuild the bounding box for a mesh that is most likely dropped"
+    );
+}
+
+/// A four-vertex quad: small enough to sculpt immediately, real enough that a
+/// dab moves something.
+fn quad_mesh(name: &str) -> Mesh {
+    Mesh::new(
+        Some(name.to_string()),
+        vec![
+            Vertex::at(Vec3::new(-1.0, -1.0, 0.0)),
+            Vertex::at(Vec3::new(1.0, -1.0, 0.0)),
+            Vertex::at(Vec3::new(1.0, 1.0, 0.0)),
+            Vertex::at(Vec3::new(-1.0, 1.0, 0.0)),
+        ],
+        vec![0, 1, 2, 0, 2, 3],
+    )
+    .expect("test mesh")
+}
+
 #[test]
 fn shadow_shape_mismatch_is_not_treated_as_an_empty_dab() {
     let mesh = Mesh::new(
@@ -306,5 +357,47 @@ fn shadow_shape_mismatch_is_not_treated_as_an_empty_dab() {
             shadow_count: 0,
             live_count: mesh.vertices().len(),
         }
+    );
+}
+
+/// Disarming abandons a preparation that is still in flight, and the abandoned
+/// worker never installs its session. A preparation that landed after the tool
+/// was disarmed would attach a worker the operator no longer has a brush for —
+/// and, worse, warm a picking tree for a scan nobody is sculpting.
+#[test]
+fn an_abandoned_preparation_never_installs_its_session() {
+    let mut tool = SculptTool::default();
+    let mut scene = Scene::new();
+    let index = scene.add(SceneMesh::new(quad_mesh("abandoned-preparation")));
+    let scene = Arc::new(scene);
+    let layer_id = scene.meshes()[index].id();
+    let topology_id = scene.meshes()[index].mesh.topology_id();
+
+    assert!(
+        !tool.queue_preparation(Arc::clone(&scene), index),
+        "a fresh preparation reports that it has not landed yet"
+    );
+    assert!(
+        tool.pending_matches(layer_id, topology_id),
+        "the preparation has to be in flight, or this proves nothing"
+    );
+
+    tool.disarm();
+
+    assert!(
+        !tool.pending_matches(layer_id, topology_id),
+        "disarming must abandon the in-flight preparation"
+    );
+    assert!(
+        !tool.is_busy(),
+        "an abandoned preparation must not keep the tool reading as busy"
+    );
+    assert!(
+        tool.poll_preparation().is_none(),
+        "an abandoned preparation must never be collected as a session"
+    );
+    assert!(
+        tool.worker.is_none(),
+        "so no worker is installed for a brush the operator has put down"
     );
 }

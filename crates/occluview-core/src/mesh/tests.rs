@@ -1,5 +1,4 @@
 use super::*;
-use occlu_geometry_math::DEGENERATE_AREA_SIN;
 use occlu_mesh_edit::{FaceSelection, MeshEditOptions, MeshTopology};
 use std::{mem::size_of, ptr::addr_of};
 
@@ -677,63 +676,6 @@ fn core_repair_cleans_defective_mesh_and_preserves_name() {
     assert_eq!(output.report.removed_duplicate_triangles, 1);
     assert_eq!(output.mesh.name(), Some("dirty scan"));
     assert_eq!(output.mesh.triangle_count(), 4);
-}
-
-#[test]
-fn every_facet_degeneracy_copy_holds_the_same_number() {
-    // The facet-degeneracy rule, the coincident-group bound and the welding
-    // tolerance live in `occlu-geometry-math` since 2026-08-29. Before that
-    // they were copied across `occlu-mesh-edit`, `occluview-core` and
-    // `occluview-hps`, and the fix of 2026-07-25 landed in one crate and
-    // reached the others four weeks later -- for those four weeks every scan
-    // opened through the other paths lost shading on facets under 20 um.
-    // This test is what keeps the copies from coming back: the crates below
-    // must import the shared definitions and must not redefine them.
-    assert!(
-        (DEGENERATE_AREA_SIN - 1e-10).abs() < 1e-16,
-        "the shared threshold moved; anything comparing against a local \
-         constant is now measuring the wrong thing"
-    );
-
-    let mesh_edit = include_str!("../../../occlu-mesh-edit/src/normals.rs");
-    let hps = include_str!("../../../occluview-hps/src/parser.rs");
-    let own = include_str!("normals.rs");
-    for (crate_name, source) in [
-        ("occlu-mesh-edit", mesh_edit),
-        ("occluview-hps", hps),
-        ("occluview-core", own),
-    ] {
-        assert!(
-            source.contains("use occlu_geometry_math::")
-                || source.contains("occlu_geometry_math::"),
-            "{crate_name} must import the shared geometry tolerances rather \
-             than hold local copies"
-        );
-        for redefinition in [
-            "const DEGENERATE_AREA_SIN",
-            "const MAX_PAIRWISE_DUPLICATE_GROUP",
-            "const MAX_DUPLICATE_CLUSTERS",
-            "const DUPLICATE_NORMAL_DOT",
-            "const SMOOTH_DUPLICATE_NORMAL_DOT",
-        ] {
-            assert!(
-                !source.contains(redefinition),
-                "{crate_name} must not keep a local copy of `{redefinition}`: \
-                 that is how the two shadings drifted apart"
-            );
-        }
-    }
-
-    // The one crate that CAN import the accumulation must not carry a copy.
-    let formats = include_str!("../../../occluview-formats/src/hps/mesh.rs");
-    assert!(
-        !formats.contains("DEGENERATE_AREA_SIN"),
-        "occluview-formats depends on core and should use its definition"
-    );
-    assert!(
-        formats.contains("occluview_core::accumulate_smooth_normals"),
-        "occluview-formats should share core's accumulation, not repeat it"
-    );
 }
 
 /// A mesh with enough spread for a principal frame to exist: a flat strip

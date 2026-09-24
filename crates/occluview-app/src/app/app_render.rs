@@ -116,14 +116,25 @@ impl OccluViewApp {
                 // the status line and keep the reason where the operator can
                 // find it, but do not raise the modal. On a machine that misses
                 // the deadline repeatedly, one dialog per attempt would bury the
-                // viewport and offer no way out; the terminal case keeps the
-                // dialog because the path really is off until restart.
+                // viewport and offer no way out. The TERMINAL case DOES raise the
+                // modal, because the offscreen path is the only viewport there
+                // and the operator would otherwise get a blank area with no
+                // explanation — and it carries the retry action, which clears
+                // this latch, so the dialog is a way out rather than a full
+                // stop.
                 if terminal {
                     self.ui.app_error = Some(AppErrorDialog {
                         title: self.ui.locale.tr("render-failed-title"),
                         summary: self.ui.locale.tr("render-failed-summary"),
                         details: format!("Render failed\n\n{e:#}"),
-                        action: AppErrorAction::None,
+                        // Retryable here, and that is the whole point: on a
+                        // machine where the offscreen path IS the viewport, this
+                        // dialog is the only surface the operator sees, and
+                        // `AppErrorAction::None` left the latch unreachable from
+                        // the UI. `retry_gpu_after_fault` clears the offscreen
+                        // latch (and the live one when there is a live viewport),
+                        // so the button now has something to do on both paths.
+                        action: AppErrorAction::RetryGraphics,
                     });
                 }
                 self.ui.status_message = Some(self.ui.locale.tr("render-failed-status"));
@@ -501,7 +512,7 @@ impl OccluViewApp {
     ///
     /// A terminal failure keeps it off; a deferred retry waits out its delay so
     /// a loaded machine cannot be asked to fail on every repaint.
-    fn offscreen_available(&self) -> bool {
+    pub(super) fn offscreen_available(&self) -> bool {
         if self.render.offscreen_failed {
             return false;
         }
@@ -605,7 +616,13 @@ impl OccluViewApp {
         let (repush_deviation, scene_rebuilt) = match live_viewport.lock() {
             Ok(mut viewport) => {
                 viewport.set_show_ghost(self.persistence.settings.show_cut_ghost);
-                viewport.update_view(&gpu_cam, self.render.render_extent_px, clip_plane);
+                let splat_viewport = self.render.live_viewport_px.unwrap_or_else(|| {
+                    [
+                        u32::from(self.render.render_extent_px[0]),
+                        u32::from(self.render.render_extent_px[1]),
+                    ]
+                });
+                viewport.update_view(&gpu_cam, splat_viewport, clip_plane);
                 let mut rebuilt = false;
                 if self.render.invalidation.live_scene_stale() {
                     let sources = self.prepared_scene_sources(scene);
@@ -681,18 +698,25 @@ impl OccluViewApp {
     /// Nothing is repaired here: the next frame either paints or raises the
     /// fault again, and a new message re-arms the dialog.
     pub(super) fn retry_gpu_after_fault(&mut self, ctx: &egui::Context) {
-        let Some(live_viewport) = self.render.live_viewport.as_ref() else {
-            return;
-        };
-        match live_viewport.lock() {
-            Ok(mut viewport) => viewport.clear_gpu_fault(),
-            Err(error) => {
-                tracing::warn!(?error, "live viewport lock failed while retrying graphics");
-                return;
+        // The offscreen latch is cleared here too. It used to return early
+        // without a live viewport — which is precisely the machine where the
+        // offscreen path IS the viewport, so the only recovery the UI offers did
+        // nothing on the machine that needed it, and the fault stayed latched
+        // for the session.
+        self.render.offscreen_failed = false;
+        self.render.offscreen_retry_after = None;
+        if let Some(live_viewport) = self.render.live_viewport.as_ref() {
+            match live_viewport.lock() {
+                Ok(mut viewport) => viewport.clear_gpu_fault(),
+                Err(error) => {
+                    tracing::warn!(?error, "live viewport lock failed while retrying graphics");
+                    return;
+                }
             }
         }
         tracing::info!("operator asked to resume drawing after a graphics fault");
         self.ui.status_message = Some(self.ui.locale.tr("gpu-retry-status"));
+        self.render.invalidation.request_redraw();
         ctx.request_repaint();
     }
 
@@ -730,7 +754,26 @@ impl OccluViewApp {
 
     pub(super) fn set_scene(&mut self, scene: Scene, reset_camera: bool) {
         self.document.content_revision = self.document.content_revision.wrapping_add(1);
-        // Record a drag before replacing the scene when its layer survives.
+        // The drag is ended here, and WHICH form is decided by what happens to
+        // the layer, not by where the code sits. `set_scene` is reached by two
+        // different transitions:
+        //
+        // - Replace (and the scene-destroying paths): the layer and the pose
+        //   both go. Recording would push a history step describing the
+        //   OUTGOING scene, and the guard never refused it (it matches layer
+        //   ids), so the first Ctrl+Z showed the edit undone and the second put
+        //   it back and rewound the pose. `forget_replaced_scene_state` already
+        //   drops the gesture for this path before the scene is installed.
+        // - Append: the layer SURVIVES into the combined scene, so the pose
+        //   sitting on it is just as real there. Dropping it would leave a scan
+        //   in a pose that no history step describes and no save prompt names.
+        //   It must be committed.
+        //
+        // `abandon_align_drag` is the commit form and is the right default here:
+        // on the Replace path the drag is already `None` (dropped by
+        // `forget_replaced_scene_state`), so it is a no-op, and on the Append
+        // path it records the move. Calling `discard` here instead is what let
+        // an append carry a moved pose forward with nothing recording it.
         self.abandon_align_drag();
         self.tools.bridge_split.cancel();
         self.tools.bridge_split_disc.disarm();
@@ -859,6 +902,27 @@ impl OccluViewApp {
                 let available = ui.available_size();
                 let viewport_rect = egui::Rect::from_min_size(ui.cursor().min, available);
                 let response = ui.allocate_rect(viewport_rect, egui::Sense::click_and_drag());
+                // The callback paints into egui's render pass at THIS rect, so
+                // it is the real viewport; `render_extent_px` is clamped for the
+                // offscreen target and the invalidation threshold. The splat
+                // radius is measured in pixels of the former.
+                let ppp = ctx.pixels_per_point();
+                let live_px = response.rect.size() * ppp;
+                self.render.live_viewport_px = Some([
+                    // Deliberately NOT clamped to the render-extent bounds: this
+                    // is the viewport the callback actually paints, and clamping
+                    // it is the bug being fixed. A non-finite or negative size
+                    // cannot reach here (egui rects are finite and non-negative),
+                    // so the cast is a plain round with a floor of one pixel.
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                    {
+                        live_px.x.round().max(1.0) as u32
+                    },
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                    {
+                        live_px.y.round().max(1.0) as u32
+                    },
+                ]);
                 ui.painter()
                     .add(live_viewport::paint_callback(response.rect, live_viewport));
                 self.show_viewport_overlays(ui, &response, &ctx);
@@ -1025,18 +1089,26 @@ fn transformed_bbox(local: Aabb, transform: glam::Affine3A) -> Aabb {
 
 pub(super) fn scene_mesh_uniform(entry: &SceneMesh) -> GpuMeshUniform {
     // Derived from the overlay rather than stored beside it, so the two can
-    // never disagree: a layer draws as a measured map exactly when it carries
-    // one, and that same condition forces its colors on and its texture off.
-    let deviation = entry.deviation_colors().is_some();
+    // never disagree about which kind is up. A measured map replaces the
+    // scan's colours and ignores its tint — the ramp is the reading. Paint
+    // does neither: it is mixed over the surface's own material, so the scan
+    // keeps its tint, its texture and its normal lighting and only the marked
+    // region turns blue.
+    let measured = entry.overlay_kind() == Some(occluview_core::OverlayKind::Measured);
+    let paint = entry.overlay_kind() == Some(occluview_core::OverlayKind::Paint);
+    let overlay = measured || paint;
     GpuMeshUniform {
         model: Mat4::from(entry.transform).to_cols_array(),
         tint: entry.tint,
         opacity: entry.opacity,
         has_texture: u32::from(entry.mesh.texture().is_some()),
         show_orientation: u32::from(entry.show_orientation),
-        show_vertex_colors: u32::from(entry.show_vertex_colors || deviation),
-        show_texture: u32::from(entry.show_texture && !deviation),
-        measured_map: u32::from(deviation),
+        show_vertex_colors: u32::from(entry.show_vertex_colors || overlay),
+        // A measured map is drawn instead of the texture; paint is drawn over
+        // it, so the texture (the scan's real colour) stays.
+        show_texture: u32::from(entry.show_texture && !measured),
+        measured_map: u32::from(measured),
+        overlay_paint: u32::from(paint),
         ..GpuMeshUniform::identity()
     }
 }

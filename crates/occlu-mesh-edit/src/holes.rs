@@ -188,13 +188,19 @@ pub(crate) fn fill_holes_with_outcome(
         return Ok((empty_fill_result(mesh, counts), FillLoopStats::default()));
     }
 
-    refuse_unweldable_soup(mesh, options.heal_boundary_rims, counts.triangles)?;
-
-    // Weld STL-style soup to shared topology first (Close Holes path only), so
-    // the boundary walk sees real rims instead of one phantom needle per
-    // triangle. See [`apply_soup_weld`].
+    // The weld comes FIRST, and the refusal is asked of its result. Deciding
+    // from the `heal_boundary_rims` flag alone treated "healing is on" as "the
+    // mesh is welded", but healing welds by full payload: a soup whose
+    // coincident corners differ in colour or UV merges nothing, and the healing
+    // pass then deleted every triangle as an isolated nick while reporting the
+    // result as a successful cap.
     let welded = apply_soup_weld(mesh, options.heal_boundary_rims)?;
     let mesh: &MeshEditBuffers = welded.as_ref().unwrap_or(mesh);
+    // Asked of the POST-WELD mesh, and about whether its corners are shared —
+    // not about the heal flag and not about the buffer lengths. Both of those
+    // earlier attempts are described on the gate itself; this one sees a welded
+    // surface and a soup differently at any size.
+    refuse_unweldable_soup(mesh, counts.triangles)?;
 
     // Pre-clean the cut line (opt-in via `heal_boundary_rims`): drop dangling
     // needle/lone triangles and weld near-coincident boundary vertices so a
@@ -389,6 +395,21 @@ fn apply_rim_healing(
             healed_rims: 0,
         };
     };
+    // A "heal" that removes EVERY triangle is not a heal. That is exactly what
+    // the pre-clean does to a soup whose coincident corners carry different
+    // payloads: nothing welds, so all three edges of every triangle read as an
+    // isolated nick and the pass deletes the whole mesh, and the kernel then
+    // published a zero-face result as a successful cap. Refusing to apply the
+    // destructive result leaves the caller's mesh intact; the filler then walks
+    // the original buffers, which for a small soup is the slow-but-allowed case
+    // and for a large one was already refused before this point.
+    if outcome.mesh.indices.is_empty() && !mesh.indices.is_empty() {
+        return RimHealing {
+            mesh: None,
+            selection: None,
+            healed_rims: 0,
+        };
+    }
     let selection = selection.map(|sel| outcome.remap_selection(sel));
     RimHealing {
         mesh: Some(outcome.mesh),

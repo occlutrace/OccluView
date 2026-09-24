@@ -3,7 +3,7 @@ use super::{
     ThumbnailError, MAX_THUMBNAIL_FILE_BYTES, MAX_THUMBNAIL_INPUT_BYTES,
 };
 use crate::fast_thumb::{
-    try_read_fast_thumbnail_mesh_for_kind, try_read_fast_thumbnail_mesh_from_file,
+    try_read_fast_thumbnail_mesh_for_kind, try_read_fast_thumbnail_mesh_from_file_with_limit,
 };
 use crate::thumbnail_format::infer_thumbnail_format;
 use glam::Vec3;
@@ -93,21 +93,28 @@ pub(super) fn load_thumbnail_mesh_from_file(
         thumbnail_kind_from_extension(path),
         prefers_full_fidelity_thumbnail_parse(path, &metadata),
         || read_file_shaded(path, &RuntimeHpsKeyProvider, THUMBNAIL_SHADING),
-        || try_read_fast_thumbnail_mesh_from_file(path),
+        || try_read_fast_thumbnail_mesh_from_file_with_limit(path, MAX_THUMBNAIL_FILE_BYTES as u64),
     )
 }
 
+/// The format label for the corrupt-error path.
+///
+/// This value is used for exactly one thing — naming the format in
+/// `non_renderable_thumbnail_error` — and it used to map everything that was not
+/// OBJ or PLY to `Stl`. A GLB, HPS, DCM, 3MF or OFF file with no drawable
+/// triangles therefore reported "STL ... no renderable geometry", which names
+/// the wrong format in the log line and in the error the operator can see. The
+/// mapping is delegated to the format crate's own extension table so there is
+/// one place in the tree that knows what an extension means.
 fn thumbnail_kind_from_extension(path: &Path) -> FormatKind {
-    match path
-        .extension()
+    path.extension()
         .and_then(|extension| extension.to_str())
         .map(str::to_ascii_lowercase)
-        .as_deref()
-    {
-        Some("obj") => FormatKind::Obj,
-        Some("ply") => FormatKind::Ply,
-        _ => FormatKind::Stl,
-    }
+        .and_then(|extension| occluview_formats::probe::by_extension(extension.as_str()))
+        // An extension outside the table keeps the historic STL fallback: the
+        // fast path only reaches this for the formats it recognizes, so this is
+        // a defensive default rather than a label.
+        .unwrap_or(FormatKind::Stl)
 }
 
 /// Pick the mesh a thumbnail should render, preferring whichever source is
@@ -209,11 +216,16 @@ fn mesh_has_drawable_triangle(mesh: &Mesh) -> bool {
 /// `render_thumb::placeholder_kind_for_error`): the format name is real (never
 /// the `"thumbnail …"` sentinel that marks a quiet policy decision).
 fn non_renderable_thumbnail_error(kind: FormatKind) -> FormatError {
+    // Every kind the table can return gets its own name here; "mesh" remains
+    // only for a kind with no extension behind it.
     let format = match kind {
         FormatKind::Stl => "STL",
         FormatKind::Obj => "OBJ",
         FormatKind::Ply => "PLY",
-        _ => "mesh",
+        FormatKind::Gltf => "glTF",
+        FormatKind::Threemf => "3MF",
+        FormatKind::Off => "OFF",
+        FormatKind::Hps => "HPS",
     };
     FormatError::Malformed {
         format,

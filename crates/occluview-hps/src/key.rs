@@ -252,9 +252,18 @@ mod tests {
         match configured {
             Some(value) => {
                 let expected = HpsSecretKey::from_config_value(&value).expect("valid test key");
-                assert_eq!(
-                    actual.expect("embedded key exists").as_bytes(),
-                    expected.as_bytes()
+                // Deliberately not `assert_eq!` on the byte slices: a failing
+                // `assert_eq!` prints both operands, and this test runs in the
+                // packaging jobs where one operand is the real private key. The
+                // guard below compares without ever formatting material, so a
+                // mismatch fails the build without putting the key in the CI
+                // log. The workflow's own log scan only looks for the literal
+                // secret string, which a comma-separated config value would not
+                // match once printed as a byte array.
+                let embedded = actual.expect("embedded key exists");
+                assert!(
+                    embedded.as_bytes() == expected.as_bytes(),
+                    "the embedded HPS key does not match the configured key"
                 );
             }
             None => assert!(actual.is_none()),

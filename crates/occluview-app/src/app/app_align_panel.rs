@@ -201,7 +201,7 @@ impl OccluViewApp {
     }
 
     /// Which scan the fit will move, named the way the operator named the files.
-    fn align_roles(&self) -> Option<crate::align_panel_roles::AlignRoles> {
+    pub(super) fn align_roles(&self) -> Option<crate::align_panel_roles::AlignRoles> {
         Some(crate::align_panel_roles::AlignRoles {
             moving: self.layer_display_name(self.tools.align.tool.moving_layer()?)?,
             fixed: self.layer_display_name(self.tools.align.tool.fixed_layer()?)?,
@@ -241,7 +241,7 @@ impl OccluViewApp {
     /// it does not survive.
     pub(super) fn adopt_swapped_roles(&mut self, reason: String) {
         self.tools.align.markings.swap_sides();
-        self.tools.align.brush.swap_target_side();
+        self.tools.align.brush.swap_target();
         self.forget_align_fit(&reason);
     }
 
@@ -250,7 +250,7 @@ impl OccluViewApp {
     fn clear_align_pair(&mut self) {
         self.tools.align.tool.clear();
         self.clear_align_mask();
-        self.tools.align.brush.reset_target_side();
+        self.tools.align.brush.reset_target();
         self.forget_align_fit(&self.ui.locale.tr("align-status-cleared"));
         self.tools.align.status = Some(self.ui.locale.tr("align-status-click-moving"));
     }
@@ -300,67 +300,6 @@ mod tests {
         assert_eq!(
             action_after_tab_change(Some(AlignPanelAction::Refine), false),
             Some(AlignPanelAction::Refine)
-        );
-    }
-
-    /// The source before this module. Keeping this contract on the production
-    /// half prevents the test from satisfying itself with its own assertion.
-    fn production() -> &'static str {
-        let source = crate::primary_ui_tests::production_source(include_str!("app_align_panel.rs"));
-        source
-            .split_once("\n#[cfg(test)]")
-            .map_or(source, |(before, _)| before)
-    }
-
-    #[test]
-    fn optimizer_setting_changes_drop_the_refined_authority() {
-        let source = production();
-        assert!(
-            source.contains("matching_inputs_changed"),
-            "the panel must compare optimizer inputs after editing them"
-        );
-        assert!(
-            source.contains("self.forget_align_fit"),
-            "a changed optimizer input must remove the old refined match"
-        );
-    }
-
-    /// A settings edit lands while a job may be running with the pre-edit
-    /// snapshot. Abandoning it cannot depend on the refined claim, or the job
-    /// that should have died is exactly the one allowed to arm it.
-    #[test]
-    fn a_settings_change_abandons_a_running_fit_without_waiting_for_a_claim() {
-        let source = production();
-        let branch = source
-            .split_once("if matching_inputs_changed(previous_settings, settings)")
-            .and_then(|(_, rest)| rest.split_once("let tab_changed"))
-            .map(|(body, _)| body)
-            .unwrap_or_default();
-        assert!(!branch.is_empty(), "the settings boundary must exist");
-        assert!(
-            branch.contains("self.abandon_align_jobs()"),
-            "an in-flight job must be abandoned even when no refined fit was landed yet"
-        );
-        assert!(
-            !branch.contains("&& self.tools.align.refined_match_ready"),
-            "the abort must not be conditional on the claim it is supposed to protect"
-        );
-    }
-
-    /// The orientation rule steers the next fit. While one is running it holds
-    /// the settings snapshot it was submitted with, so the rule has to be
-    /// disabled with the rest of the matching cluster.
-    #[test]
-    fn the_orientation_rule_is_disabled_while_a_fit_runs() {
-        let source =
-            crate::primary_ui_tests::production_source(include_str!("../align_panel_settings.rs"));
-        assert!(
-            source.contains("facing(ui, &mut settings.orientation, enabled, locale)"),
-            "the orientation cluster must receive the panel's enabled state"
-        );
-        assert!(
-            source.contains("ui.add_enabled_ui(enabled, |ui| {"),
-            "the orientation radios must be disabled with the matching cluster"
         );
     }
 }

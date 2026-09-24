@@ -28,6 +28,7 @@ use crate::shell_diagnostics::{
 };
 #[cfg(feature = "diagnostic-logs")]
 use occluview_render::AdapterResult;
+use std::os::windows::ffi::OsStringExt;
 #[cfg(feature = "diagnostic-logs")]
 use std::time::Instant;
 
@@ -52,6 +53,16 @@ enum PreviewDragMode {
 /// Unlike thumbnails, the preview path keeps a GPU-prepared scene resident
 /// after the first load. That allows resizes and pointer interaction to
 /// re-render the same file without reparsing or re-uploading the mesh payload.
+// `Agile = false` because the struct below holds `RefCell`/`Cell` state and is
+// therefore `!Sync`. The attribute defaults to `Agile = true`, which makes the
+// generated `QueryInterface` answer `IID_IAgileObject` and `IID_IMarshal` with a
+// free-threaded marshaler — i.e. a client in another apartment receives the SAME
+// raw pointer instead of a proxy, and two threads reach the `RefCell` borrow
+// flag and the cached buffers. The registration deliberately relies on STA
+// serialisation (`registration/clsid.rs`: "COM hosts every Apartment instance on
+// one host STA, so all extractions of this CLSID serialize"), so advertising
+// agility contradicts the premise the class is built on. Marshalling instead
+// costs nothing on the one-threaded path the shell actually uses.
 #[implement(
     IPreviewHandler,
     IOleWindow,
@@ -59,7 +70,8 @@ enum PreviewDragMode {
     IInitializeWithFile,
     IInitializeWithItem,
     IInitializeWithStream,
-    IClassFactory
+    IClassFactory,
+    Agile = false
 )]
 pub struct PreviewHandler {
     source: std::cell::RefCell<DeferredSource<IStream>>,
@@ -700,8 +712,13 @@ impl IInitializeWithFile_Impl for PreviewHandler_Impl {
             "preview IInitializeWithFile",
             || Err(e_fail()),
             || {
-                let path_string = unsafe { pszfilepath.to_string() }.map_err(|_| e_fail())?;
-                self.this.initialize_path(PathBuf::from(path_string));
+                // `to_string()` on a path with an unpaired surrogate returns
+                // E_FAIL, so a file Explorer can see and hand over would get no
+                // preview and no thumbnail. `initialize_path` takes a `PathBuf`,
+                // so the wide string converts straight into an OS string with no
+                // lossy step to fail on.
+                let path = std::ffi::OsString::from_wide(unsafe { pszfilepath.as_wide() });
+                self.this.initialize_path(PathBuf::from(path));
                 Ok(())
             },
         )

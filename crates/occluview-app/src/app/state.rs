@@ -181,10 +181,14 @@ impl OccluViewApp {
 impl eframe::App for OccluViewApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.ui.sync_native_title(ctx);
+        // Sync the brush sliders into settings BEFORE persisting, so a close
+        // request that flushes the debounce is written by the save on this same
+        // frame. In the old order the save ran first and the flushed value
+        // waited for the next frame, which a closing window does not get.
+        self.persistence.sync_sculpt_preferences(ctx);
         self.persistence.persist_settings_if_due(ctx);
         let preference = self.ui.locale.snapshot().preference.clone();
         self.persistence.persist_language_if_due(ctx, &preference);
-        self.persistence.sync_sculpt_preferences(ctx);
         self.ui.expire_status_message(ctx);
         Self::schedule_linux_open_request_repaint(ctx);
         self.process_scene_loads(ctx);
@@ -207,6 +211,11 @@ impl eframe::App for OccluViewApp {
         if ui_scale_zoom_is_allowed(&ctx) && (ctx.zoom_factor() - target_ui_scale).abs() > 1e-3 {
             ctx.set_zoom_factor(target_ui_scale);
         }
+        // Before anything can draw — and therefore before egui's own Escape
+        // handling can close a popup — record whether one was up. Every consumer
+        // of `modal_dialog_open()` this frame then sees the frame the operator
+        // saw, not one already disarmed by this frame's draw.
+        self.ui.popup_open_at_frame_start = egui::Popup::is_any_open(&ctx);
         self.handle_dropped_files(&ctx);
         self.release_viewport_orbit_cursor_if_inactive(&ctx);
         self.render_pending_frame(&ctx);

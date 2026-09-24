@@ -1,7 +1,9 @@
 //! Pointer readout for values on the current contact fields.
 
 use eframe::egui;
-use occluview_contact::{format_contact_value, ContactReading, ContactReadingKind};
+use occluview_contact::{
+    format_contact_value_in, ContactLengthUnit, ContactReading, ContactReadingKind,
+};
 
 use super::OccluViewApp;
 use crate::contact::{field_value_at, reading_of};
@@ -80,6 +82,10 @@ impl OccluViewApp {
                 locale: &self.ui.locale,
                 reading,
                 accent,
+                unit: match self.persistence.settings.unit_display {
+                    crate::app_settings::UnitDisplay::Millimeters => ContactLengthUnit::Millimeters,
+                    crate::app_settings::UnitDisplay::Inches => ContactLengthUnit::Inches,
+                },
             },
         );
     }
@@ -98,6 +104,9 @@ struct Readout<'a> {
     /// The exact colour the surface wears at this reading, or `None` when the
     /// reading is outside the painted band and the surface wears nothing there.
     accent: Option<egui::Color32>,
+    /// The operator's length unit, so this readout matches the ruler rather than
+    /// being the one measurement that ignores the preference.
+    unit: ContactLengthUnit,
 }
 
 fn paint_readout(ui: &mut egui::Ui, readout: Readout<'_>) {
@@ -107,6 +116,7 @@ fn paint_readout(ui: &mut egui::Ui, readout: Readout<'_>) {
         locale,
         reading,
         accent,
+        unit,
     } = readout;
     let sign = match reading.kind {
         ContactReadingKind::Penetration => "+",
@@ -116,9 +126,12 @@ fn paint_readout(ui: &mut egui::Ui, readout: Readout<'_>) {
         ContactReadingKind::Penetration => locale.tr("contact-readout-load"),
         ContactReadingKind::Gap => locale.tr("contact-readout-gap"),
     };
+    // The operator's length preference reaches this readout too: it used to be
+    // the only measurement in the app that ignored it, while the ruler, the
+    // thickness probe and the scale bar all follow it.
     let value = format!(
         "{label} {sign}{}",
-        format_contact_value(reading.magnitude_mm)
+        format_contact_value_in(reading.magnitude_mm, unit)
     );
 
     let font = egui::FontId::proportional(11.0);

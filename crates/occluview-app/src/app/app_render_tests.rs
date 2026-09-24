@@ -1,33 +1,12 @@
 #![allow(clippy::expect_used, clippy::float_cmp, clippy::panic)]
 
-/// Source contract for the destroyed-texture submit crash. The per-frame
-/// render paths must update ONE persistent egui texture id in place
-/// (`TextureHandle::set` / `CutTool::store_slice`), never allocate a fresh id
-/// per render. A fresh id can free a texture after this frame has painted it.
-#[test]
-fn per_frame_render_paths_reuse_persistent_texture_ids() {
-    let source = crate::primary_ui_tests::production_source(include_str!("app_render.rs"))
-        .replace("\r\n", "\n");
-    assert!(
-        source.contains("frame.texture.set(color_image, egui::TextureOptions::LINEAR)"),
-        "render_now must update the viewport texture in place, not reallocate it"
-    );
-    assert!(
-        source.contains("self.tools.cut_view.store_slice(ctx, color_image, slice_cam)"),
-        "render_cut_now must route the slice through CutTool::store_slice"
-    );
-    assert!(
-        !source.contains("load_texture(\"occluview-cut\""),
-        "the cut slice must not allocate a fresh egui texture id per render"
-    );
-}
-
-/// A deviation map must reach the screen unlit and in its own measured colors.
+/// A deviation map must reach the screen unlit and in its own measured colors,
+/// while the brush's paint must keep the scan's own material underneath.
 #[test]
 fn a_deviation_overlay_forces_unlit_vertex_colors() {
     use glam::Vec3;
     use occluview_core::scene::SceneMesh;
-    use occluview_core::{Mesh, Vertex};
+    use occluview_core::{Mesh, OverlayKind, Vertex};
 
     let mesh = Mesh::new(
         None,
@@ -46,173 +25,328 @@ fn a_deviation_overlay_forces_unlit_vertex_colors() {
 
     let plain = super::scene_mesh_uniform(&entry);
     assert_eq!(plain.measured_map, 0);
+    assert_eq!(plain.overlay_paint, 0);
     assert_eq!(plain.show_vertex_colors, 0);
 
     let colors = std::sync::Arc::new(vec![[0u8, 0, 0, 255]; 3]);
-    let mapped = super::scene_mesh_uniform(&entry.with_deviation(Some(colors)));
+    let measured = entry
+        .clone()
+        .with_overlay(OverlayKind::Measured, Some(std::sync::Arc::clone(&colors)));
+    let mapped = super::scene_mesh_uniform(&measured);
     assert_eq!(mapped.measured_map, 1, "a deviation map must draw unlit");
+    assert_eq!(mapped.overlay_paint, 0);
     assert_eq!(mapped.show_vertex_colors, 1);
     assert_eq!(mapped.show_texture, 0);
-}
 
-#[test]
-fn the_offscreen_viewport_replays_overlay_vertices_after_scene_upload() {
-    let source = crate::primary_ui_tests::production_source(include_str!("app_render.rs"));
-    assert!(
-        source.contains("fn push_deviation_colors_offscreen"),
-        "the fallback viewport needs its own overlay upload path"
+    // Paint is not a measurement: the scan keeps its texture and tint, and the
+    // marking is mixed over that material instead of replacing the whole scan.
+    let paint = entry.with_overlay(OverlayKind::Paint, Some(colors));
+    let painted = super::scene_mesh_uniform(&paint);
+    assert_eq!(painted.measured_map, 0, "paint must stay lit");
+    assert_eq!(painted.overlay_paint, 1);
+    assert_eq!(painted.show_vertex_colors, 1);
+    assert_eq!(
+        painted.show_texture, 1,
+        "paint must not hide the scan's texture"
     );
-    assert!(
-        source.contains("prepared.write_entry_vertices(offscreen.renderer()"),
-        "offscreen scene uploads must receive the measured colours"
-    );
-    // The body, not the rest of the file: the upload helper is *defined* below
-    // this method, so "everything after the signature" was satisfied by the
-    // definition even after the call was gone.
-    let body = crate::primary_ui_tests::method_body(source, "pub(super) fn render_scene_pixels");
-    assert!(
-        !body.is_empty(),
-        "render_scene_pixels must exist and end at the impl indentation"
-    );
-    assert!(
-        body.contains("push_deviation_colors_offscreen()"),
-        "render_scene_pixels must restore a map after rebuilding its prepared scene"
+    assert_eq!(
+        painted.tint, plain.tint,
+        "paint must not drop the scan's tint"
     );
 }
 
+/// A failed frame must consume the redraw that asked for it.
+///
+/// The pending redraw is what makes egui call back; leaving it set after a
+/// failure re-enters the same failed submit on every repaint, so a dead GPU
+/// spins the UI at 100% and buries the original cause behind the loop. The
+/// frame loop must consume the request and short-circuit a latched path rather
+/// than asking a device it already knows is broken for another frame.
 #[test]
 fn a_failed_offscreen_frame_cannot_start_a_repaint_storm() {
-    let source = crate::primary_ui_tests::production_source(include_str!("app_render.rs"));
-    let render_now = crate::primary_ui_tests::method_body(source, "pub(super) fn render_now");
+    let mut app = crate::app::app_test_support::test_app("offscreen-failure-does-not-spin");
+    app.document.scene = Some(crate::app::app_test_support::named_scene("scan", 0.0).into());
+    // The state a terminal graphics fault leaves behind.
+    app.render.offscreen_failed = true;
+    assert!(!app.offscreen_available());
+
+    let ctx = egui::Context::default();
+    for frame in 0..3 {
+        app.render.invalidation.request_redraw();
+        assert!(
+            app.render.invalidation.redraw_pending(),
+            "frame {frame}: the loop was asked to paint"
+        );
+        app.render_pending_frame(&ctx);
+
+        assert!(
+            !app.render.invalidation.redraw_pending(),
+            "frame {frame}: the failed frame must consume its redraw, or the next frame repeats it"
+        );
+        assert!(
+            app.render.offscreen_failed,
+            "frame {frame}: the fault stays latched until the operator retries"
+        );
+        assert!(
+            app.ui.status_message.is_none() && app.ui.app_error.is_none(),
+            "frame {frame}: the loop short-circuited instead of asking the dead device for another frame"
+        );
+    }
     assert!(
-        render_now.contains("self.note_offscreen_failure_anyhow(&e)"),
-        "render_now must consume and classify a failed offscreen frame"
-    );
-    let pending =
-        crate::primary_ui_tests::method_body(source, "pub(super) fn render_pending_frame");
-    assert!(
-        pending.contains("self.offscreen_available()") && pending.contains("consume_redraw()"),
-        "the pending-frame path must stop retrying an unavailable offscreen path"
-    );
-    let note = crate::primary_ui_tests::method_body(source, "fn note_offscreen_failure(&mut self");
-    assert!(
-        note.contains("terminal_offscreen_render_error(error)"),
-        "a failure must be classified before the path is latched or deferred"
+        app.render.rendered.is_none(),
+        "no frame reached the renderer, so nothing was produced from a broken device"
     );
 }
 
-/// A missed readback deadline is a liveness bound, not a device verdict. It
-/// used to latch the whole offscreen path off for the session: the section
-/// panel kept showing the previous plane and, with no live viewport, the
-/// viewport stopped repainting at all, on hardware that was never shown to be
-/// broken and with no control that could clear it.
+/// A readback deadline defers the offscreen path; it does not kill it.
+///
+/// The deadline measures how long this process was willing to wait, not the
+/// health of the device, so it must never latch the path off for the session
+/// (that left the section panel showing a previous plane and, with no live
+/// viewport, stopped the viewport repainting at all). It is still a failure:
+/// the next attempt waits out a backoff so a loaded machine is not asked to
+/// fail on every repaint, and then the path must be usable again on its own.
 #[test]
 fn a_readback_deadline_defers_the_offscreen_path_instead_of_killing_it() {
-    let source = crate::primary_ui_tests::production_source(include_str!("app_render.rs"));
+    let mut app = crate::app::app_test_support::test_app("offscreen-deadline-defers");
 
-    // The body, not the doc comment: the prose above these functions explains
-    // the deadline case and would satisfy a whole-text search on its own.
-    let terminal_body = source
-        .split_once("fn terminal_offscreen_render_error")
-        .and_then(|(_, rest)| rest.split_once("\n}"))
-        .map(|(body, _)| body)
-        .unwrap_or_default();
+    app.note_offscreen_failure(&super::RenderError::ReadbackTimeout {
+        timeout: super::APP_OFFSCREEN_RENDER_TIMEOUT,
+    });
+
     assert!(
-        !terminal_body.contains("ReadbackTimeout"),
-        "a deadline must not be classified as a broken graphics stack"
+        !app.render.offscreen_failed,
+        "a missed deadline is not a device verdict and must not latch the path off"
+    );
+    let deadline = app
+        .render
+        .offscreen_retry_after
+        .expect("the next attempt must be deferred, not silently dropped");
+    let now = std::time::Instant::now();
+    assert!(
+        deadline > now,
+        "a deferral in the past is no deferral: the failed submit is retried at once"
     );
     assert!(
-        terminal_body.contains("RenderError::Surface"),
-        "a real surface failure still latches the path off"
-    );
-    let retryable_body = source
-        .split_once("fn retryable_offscreen_render_error")
-        .and_then(|(_, rest)| rest.split_once("\n}"))
-        .map(|(body, _)| body)
-        .unwrap_or_default();
-    assert!(
-        retryable_body.contains("ReadbackTimeout"),
-        "a deadline is the failure the offscreen path must retry"
+        deadline <= now + super::OFFSCREEN_RETRY_DELAY,
+        "the backoff is bounded by the retry delay"
     );
     assert!(
-        !retryable_body.contains("RenderError::Surface"),
-        "a broken stack is not retried on a timer"
+        !app.offscreen_available(),
+        "no frame may use the path while the backoff is running"
     );
+
+    // The wait ends on its own: recovery must not need the operator to restart
+    // the viewer or find a dialog.
+    app.render.offscreen_retry_after = Some(std::time::Instant::now());
     assert!(
-        source.contains(
-            "self.render.offscreen_retry_after = Some(Instant::now() + OFFSCREEN_RETRY_DELAY)"
-        ),
-        "the retry must be deferred so a loaded machine is not asked to fail on a loop"
+        app.offscreen_available(),
+        "once the backoff has elapsed the offscreen path must be usable again"
     );
 }
 
-/// The fault dialog has to offer a way back. Clearing the flag is the only
-/// recovery this app documents short of closing the viewer and losing the
-/// scene, so the dialog must carry the action and the frame loop must route it
-/// to the renderer that latched the fault.
-#[test]
-fn the_graphics_fault_dialog_offers_the_retry_action() {
-    let render = crate::primary_ui_tests::production_source(include_str!("app_render.rs"));
-    let poll = crate::primary_ui_tests::method_body(render, "pub(super) fn poll_gpu_errors");
-    assert!(!poll.is_empty(), "the GPU error poll must exist");
-    assert!(
-        poll.contains("action: AppErrorAction::RetryGraphics"),
-        "a graphics fault must be reported with an offered recovery"
-    );
-
-    let dialogs = crate::primary_ui_tests::production_source(include_str!("app_dialogs.rs"));
-    assert!(
-        dialogs.contains("error.action == AppErrorAction::RetryGraphics"),
-        "the dialog must render the retry button only for an actionable error"
-    );
-    assert!(
-        dialogs.contains("self.retry_gpu_after_fault(ctx)"),
-        "the retry button must reach the renderer"
-    );
-
-    let retry = crate::primary_ui_tests::method_body(render, "pub(super) fn retry_gpu_after_fault");
-    assert!(
-        retry.contains("viewport.clear_gpu_fault()"),
-        "retrying graphics must clear the latch the paint path obeys"
-    );
-}
-
-/// The deferred retry has to survive the frames that arrive during its wait.
+/// The offscreen fault latch must be clearable by the retry the UI offers.
 ///
-/// `ensure_offscreen` runs on the section path, which the operator drives by
-/// dragging the cut plane — the very action that causes a readback to miss its
-/// deadline. When it refused with a bare string, the caller could not classify
-/// the cause and latched the path off permanently: one drag inside the 750 ms
-/// window and the section panel went dead for the session, which is the state
-/// the deferral exists to avoid.
+/// This replaces a source-text guard that only checked the words in the
+/// function. The behaviour it protected is the one that matters and had no
+/// other check: on a machine where the offscreen path IS the viewport (a live
+/// viewport that failed to come up), the fault dialog is the only surface the
+/// operator sees, so a retry that cannot clear the latch leaves a blank
+/// viewport for the rest of the session.
+#[test]
+fn retrying_a_graphics_fault_clears_the_offscreen_latch() {
+    let mut app = crate::app::app_test_support::test_app("offscreen-retry-clears-latch");
+    // The state the latch is in on a machine whose offscreen path died.
+    app.render.offscreen_failed = true;
+    app.render.offscreen_retry_after = Some(std::time::Instant::now());
+    assert!(
+        !app.offscreen_available(),
+        "a latched path must be unavailable before the retry"
+    );
+
+    let ctx = app.ui.repaint_ctx.clone();
+    app.retry_gpu_after_fault(&ctx);
+
+    assert!(
+        !app.render.offscreen_failed,
+        "the retry must clear the terminal offscreen latch, not leave it set"
+    );
+    assert!(
+        app.render.offscreen_retry_after.is_none(),
+        "and the retry backoff with it, or the next attempt is deferred"
+    );
+    assert!(
+        app.offscreen_available(),
+        "so the offscreen path is usable again"
+    );
+}
+
+/// A frame that arrives inside the retry wait must not turn the wait into a
+/// session-long latch.
+///
+/// The wait is exactly the state a frame lands in after a missed deadline, and
+/// the decision the frame makes about its own failure has to be the retryable
+/// one. A frame that classified "the path is not available yet" as an
+/// unclassifiable error latched the path off permanently on the first repaint
+/// after the deadline: the section panel showed a previous plane and, with no
+/// live viewport, the viewport stopped repainting at all. The operator also
+/// must not get a modal per attempt for a failure that is transient by
+/// definition, but must still be told the frame failed.
 #[test]
 fn a_frame_during_the_retry_wait_cannot_latch_the_offscreen_path_off() {
-    let source = crate::primary_ui_tests::production_source(include_str!("app_render.rs"));
-    let ensure = crate::primary_ui_tests::method_body(source, "pub(super) fn ensure_offscreen");
-    assert!(!ensure.is_empty(), "ensure_offscreen must exist");
-    let deferral = ensure
-        .split_once("if !self.offscreen_available()")
-        .and_then(|(_, rest)| rest.split_once("if self.render.offscreen_failed"))
-        .map(|(body, _)| body)
-        .unwrap_or_default();
+    let mut app = crate::app::app_test_support::test_app("offscreen-retry-wait-no-latch");
+    app.document.scene = Some(crate::app::app_test_support::named_scene("scan", 0.0).into());
+    app.note_offscreen_failure(&super::RenderError::ReadbackTimeout {
+        timeout: super::APP_OFFSCREEN_RENDER_TIMEOUT,
+    });
+    assert!(!app.offscreen_available(), "the retry wait is armed");
+
+    let ctx = egui::Context::default();
+    for frame in 0..3 {
+        app.render.invalidation.request_redraw();
+        assert!(app.render.invalidation.redraw_pending());
+        app.render_now(&ctx);
+
+        assert!(
+            !app.render.offscreen_failed,
+            "frame {frame}: a frame inside the wait must not latch the path off"
+        );
+        assert!(
+            app.render.offscreen_retry_after.is_some(),
+            "frame {frame}: and the retry must stay armed"
+        );
+        assert!(
+            app.ui.app_error.is_none(),
+            "frame {frame}: a transient failure must not bury the viewport in a modal per attempt"
+        );
+        assert!(
+            app.ui.status_message.is_some(),
+            "frame {frame}: the operator is still told the frame failed"
+        );
+        assert!(
+            !app.render.invalidation.redraw_pending(),
+            "frame {frame}: the failed frame consumed its redraw"
+        );
+    }
+
+    app.render.offscreen_retry_after = Some(std::time::Instant::now());
     assert!(
-        deferral.contains("Error::new(RenderError::ReadbackTimeout"),
-        "a deferral must carry a typed cause, or the caller latches the path off"
+        app.offscreen_available(),
+        "and the wait still ends on its own, so nothing is latched off"
+    );
+}
+
+/// A terminal offscreen fault must raise a dialog that offers the retry.
+///
+/// On a machine whose offscreen path IS the viewport (a live viewport that
+/// failed to come up) this dialog is the only surface the operator sees. A
+/// dialog that only reports leaves the latch unreachable from the UI, so the
+/// documented recovery is to close the viewer and lose the scene — the same
+/// dead end the latch exists to avoid. The action must be the one the dialog
+/// handler dispatches, too: the button and the recovery are the same thing.
+#[test]
+fn the_graphics_fault_dialog_offers_the_retry_action() {
+    let mut app = crate::app::app_test_support::test_app("graphics-fault-dialog-offers-retry");
+    app.document.scene = Some(crate::app::app_test_support::named_scene("scan", 0.0).into());
+    // The state a terminal graphics fault leaves behind with no live viewport.
+    app.render.offscreen_failed = true;
+    assert!(!app.offscreen_available());
+
+    let ctx = egui::Context::default();
+    app.render_now(&ctx);
+
+    let dialog = app
+        .ui
+        .app_error
+        .as_ref()
+        .expect("a terminal fault with no live viewport must raise the fault dialog");
+    assert_eq!(
+        dialog.action,
+        super::AppErrorAction::RetryGraphics,
+        "the dialogue must offer the retry, or the latch has no way out that keeps the scene"
     );
     assert!(
-        !deferral.contains("anyhow!("),
-        "a bare string cannot be classified by the caller"
+        !dialog.title.is_empty() && !dialog.summary.is_empty() && !dialog.details.is_empty(),
+        "the dialogue must say what failed, not only offer the button"
     );
 
-    // And the wait has to end by itself.
-    let pending =
-        crate::primary_ui_tests::method_body(source, "pub(super) fn render_pending_frame");
+    // What the dialog handler calls when that button is clicked.
+    app.retry_gpu_after_fault(&ctx);
     assert!(
-        pending.contains("request_repaint_after"),
-        "the retry must schedule its own wake-up; otherwise it waits for input"
+        app.offscreen_available(),
+        "so pressing it gives the offscreen path back"
     );
+}
+
+/// A rebuilt offscreen scene uploads the scan's own colours, so a live
+/// deviation map must be replayed into those vertices afterwards.
+///
+/// The measured colours ARE the reading the operator came for. A rebuild that
+/// drops them leaves the fallback viewport and the section panel showing an
+/// unmeasured scan while the layer still claims to be mapped, and nothing
+/// repaints them until the next scene change. The offscreen path keeps its own
+/// prepared scene, so it needs the same replay the live viewport has. This
+/// drives the real renderer, so it needs a wgpu adapter (a software one does).
+#[test]
+fn the_offscreen_viewport_replays_overlay_vertices_after_scene_upload() {
+    use crate::app::app_align_display::AlignOverlay;
+    /// A colour no scan has, so a frame that shows it is showing the reading.
+    const MEASURED: [u8; 4] = [220, 30, 30, 255];
+
+    fn render_frame(app: &mut super::OccluViewApp, ctx: &egui::Context) -> Option<Vec<u8>> {
+        app.render.invalidation.request_redraw();
+        app.render_now(ctx);
+        app.render
+            .rendered
+            .as_ref()
+            .map(|frame| frame.pixels.clone())
+    }
+
+    let mut app = crate::app::app_test_support::test_app("offscreen-replays-measured-colours");
+    let scene = crate::app::app_test_support::named_scene("scan", 0.0);
+    let layer = scene.meshes()[0].id();
+    app.document.scene = Some(scene.into());
+    let ctx = egui::Context::default();
+
+    // The scan's own colours: what the operator sees before a measurement.
+    app.render.invalidation.scene_geometry_changed();
+    let Some(scan_frame) = render_frame(&mut app, &ctx) else {
+        assert!(
+            app.render.offscreen.is_none(),
+            "an initialized offscreen path must produce a frame"
+        );
+        // No wgpu adapter in this environment, so there is no offscreen frame
+        // to inspect. This is a skip, not coverage: `scripts/test-linux.sh`
+        // pins Lavapipe and sets OCCLUVIEW_REQUIRE_GPU_TESTS=1 so a checkout
+        // with a working software adapter fails loudly here instead of
+        // counting a vacuous pass.
+        assert!(
+            std::env::var_os("OCCLUVIEW_REQUIRE_GPU_TESTS").is_none(),
+            "OCCLUVIEW_REQUIRE_GPU_TESTS is set, so a wgpu adapter is required, \
+             but the offscreen path produced no frame: the overlay replay is untested"
+        );
+        return;
+    };
+
+    // A measurement marks every vertex of the layer.
     assert!(
-        pending.contains("offscreen_retry_after"),
-        "the wake-up must be derived from the retry deadline"
+        app.attach_overlay_colors(layer, vec![MEASURED; 3], AlignOverlay::Map),
+        "the map must attach to a layer whose vertex count it matches"
+    );
+    let measured_frame = render_frame(&mut app, &ctx).expect("the mapped scan must render");
+    assert_ne!(
+        measured_frame, scan_frame,
+        "the frame must actually show the measurement, or this test proves nothing"
+    );
+
+    // A structural scene change drops the prepared scene, and the next frame
+    // rebuilds it: `prepare_scene` uploads the scan's own vertex colours.
+    app.render.prepared_scene = None;
+    app.render.invalidation.scene_geometry_changed();
+    let rebuilt_frame = render_frame(&mut app, &ctx).expect("the rebuilt scan must render");
+
+    assert_eq!(
+        rebuilt_frame, measured_frame,
+        "the rebuild must replay the measured colours; falling back to the scan's own colours shows the operator an unmeasured scan"
     );
 }

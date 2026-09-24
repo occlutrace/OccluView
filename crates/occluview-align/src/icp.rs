@@ -92,9 +92,84 @@ const MIN_REFINEMENT_MEDIAN_MM: f64 = 0.08;
 /// exactly when the operator widens the search.
 const MAX_REFINEMENT_MEDIAN_MM: f64 = 0.30;
 
+/// The proximity band that decides how much of the surface counts as seated.
+///
+/// This was a literal `0.2` at its one call site, and it decides two things the
+/// operator cannot see: whether the global feature seed runs at all (at 0.9),
+/// and how much of the trim ratio is actually used (the fraction is multiplied
+/// by 0.8 and clamped to 0.1..0.8, silently replacing the ratio slider). The
+/// band is derived from the operator's correspondence radius and clamped, so it
+/// tracks a setting rather than a mesh-size guess, and it has a name so the
+/// derivation is visible.
+fn seated_band_mm(influence_radius_mm: f64) -> f64 {
+    (influence_radius_mm.abs() * SEATED_BAND_RADIUS_FRACTION)
+        .clamp(MIN_SEATED_BAND_MM, MAX_SEATED_BAND_MM)
+}
+
+/// Fraction of the correspondence radius the seated band spans.
+const SEATED_BAND_RADIUS_FRACTION: f64 = 0.1;
+
+/// Floor and ceiling for that band, in millimetres.
+///
+/// The floor keeps the band above a scanner's own discretisation error at the
+/// tightest slider setting; the ceiling keeps it from growing into "anything on
+/// the other arch counts as seated" at the widest.
+const MIN_SEATED_BAND_MM: f64 = 0.2;
+const MAX_SEATED_BAND_MM: f64 = 1.0;
+
+/// How far the WORST fifth of the matched surface may sit, as a multiple of
+/// the operator's correspondence radius.
+///
+/// `median_abs` bounds the typical vertex. Alone, it certifies a pose where the
+/// surface is mostly seated and a fifth of it is far away — which is exactly the
+/// shape of a fit that slid onto a neighbouring surface while most of the
+/// sampled patch stayed put. `p95_abs` is the field that measures that tail, it
+/// was computed on every report, and the gate only ever asked whether it was
+/// finite, so the one number that describes the discarded fifth was never
+/// bounded.
+///
+/// The rule is the one the doc states: a fifth of the MATCHED surface sitting a
+/// full correspondence radius away is not an alignment. It is deliberately not
+/// tighter, because the median limit already carries the fine discrimination
+/// and the corpus numbers are the calibration: a correct seating reports a
+/// median near the discretisation error but a `p95_abs` that follows the
+/// surface's own noise, and a bound tighter than the radius would risk refusing
+/// a correct seating on a coarse scan — the failure mode this whole gate was
+/// written to avoid. What it removes is the unbounded case: a pose whose
+/// discarded fifth is arbitrarily far away could be authorized on the strength
+/// of its median alone.
+const MAX_REFINEMENT_P95_FRACTION: f64 = 1.0;
+
 /// Huber cut as a multiple of the median absolute residual — the usual 95%
 /// efficiency constant for a normal error model.
 const HUBER_FACTOR: f64 = 1.345;
+
+/// How close a sample must sit to count as *seated*, in millimetres.
+///
+/// This is the one number in the refinement that does not come from the
+/// trimmed residual, and it exists because the trimmed residual cannot tell a
+/// seating from a slide. On a prepared model only a part of the surface is
+/// truly rigid; the operated region sits within a couple of millimetres of the
+/// original but is not congruent to it. A trimmed least-squares objective is
+/// minimised by spreading that deformation over everything — the reported
+/// residual goes DOWN while the scan goes sideways — so the pose the operator
+/// gets is the one that best hides the deformation, not the one that seats the
+/// surface that did not change.
+///
+/// The band is the distance within which two acquisitions of the same surface
+/// agree, and it is deliberately much smaller than any correspondence radius.
+/// Measured on a real prepared arch pair, the true seating puts 0.203 of the
+/// sampled surface inside 0.05 mm while the published wrong pose manages 0.072,
+/// and refining from the true pose moves 1.98 mm AWAY from it — the objective,
+/// not the search, is what picks the wrong basin.
+const SEATED_BAND_MM: f64 = 0.05;
+
+/// Fraction of the sampled surface a pose must seat inside `SEATED_BAND_MM`
+/// before the gate will authorize it.
+///
+/// Between the measured wrong pose (0.072) and the measured true seating
+/// (0.203), with room for a scan whose sampling is coarser than the band.
+const MIN_SEATED_FRACTION: f64 = 0.12;
 
 /// Rotation step below this (radians) counts as converged.
 const CONVERGED_ROTATION: f64 = 1e-7;
@@ -197,6 +272,21 @@ pub struct IcpReport {
     pub weak_rot_axes: [bool; 3],
     /// Per world axis, whether translation along it is undetermined.
     pub weak_trans_axes: [bool; 3],
+    /// The trim ratio the fit actually ran at.
+    ///
+    /// Not the operator's slider value: the global-seed branch replaces it with
+    /// `near_surface_fraction(seed) * 0.8` clamped to 0.1..0.8, so the panel was
+    /// unable to say which algorithm had run. Carried here so it can.
+    pub effective_matching_ratio: f64,
+    /// Fraction of the level's samples inside the seated band of the surface
+    /// (see `SEATED_BAND_MM`).
+    ///
+    /// The statistic the solver itself ranks poses by, published so the gate can
+    /// read it. Before this field existed the gate certified a pose on trimmed
+    /// residual statistics alone: a fit that seats nothing can still report a
+    /// small median, because the trimmed set never contains the region that is
+    /// far away.
+    pub seated_fraction: f64,
 }
 
 impl IcpReport {
@@ -226,9 +316,38 @@ impl IcpReport {
         let limit = radius * MAX_REFINEMENT_GEOMETRIC_RMS_FRACTION;
         let median_limit = (radius * MAX_REFINEMENT_MEDIAN_FRACTION)
             .clamp(MIN_REFINEMENT_MEDIAN_MM, MAX_REFINEMENT_MEDIAN_MM);
+        // The tail, not just the typical vertex: see MAX_REFINEMENT_P95_FRACTION.
+        let p95_limit = (radius * MAX_REFINEMENT_P95_FRACTION).max(MIN_REFINEMENT_MEDIAN_MM);
         self.is_trustworthy_refinement_with_limit(limit)
             && self.median_abs.is_finite()
             && self.median_abs <= median_limit
+            && self.p95_abs.is_finite()
+            && self.p95_abs >= 0.0
+            && self.p95_abs <= p95_limit
+            && self.seats_enough()
+    }
+
+    /// Whether the pose actually seats a meaningful part of the surface.
+    ///
+    /// Every other term here is a trimmed statistic, and a trimmed set improves
+    /// when a deformation is spread out: the region carrying the truth is the
+    /// first thing the trim discards. This is the one term measured OUTSIDE that
+    /// set, over the untrimmed correspondence sample, and it is the statistic
+    /// the solver itself now ranks poses by.
+    ///
+    /// Calibrated on the real prepared-arch pair the crate measures against: the
+    /// true seating puts 0.203 of the sampled surface inside `SEATED_BAND_MM`,
+    /// and the published wrong pose — the one whose median of 0.190 sat just
+    /// under the 0.2 mm limit and which the gate used to authorize — manages
+    /// 0.072. The floor sits between them.
+    ///
+    /// A pose reported by a caller that does not compute seating leaves the field
+    /// zero, and zero is refused deliberately: "this report never measured
+    /// seating" must not read as "this pose seats nothing but is otherwise
+    /// fine" — the gate is fail-closed.
+    #[must_use]
+    fn seats_enough(&self) -> bool {
+        self.seated_fraction.is_finite() && self.seated_fraction >= MIN_SEATED_FRACTION
     }
 
     fn is_trustworthy_refinement_with_limit(&self, geometric_rms_limit: f64) -> bool {
@@ -391,6 +510,12 @@ pub fn refine(
         p95_abs: summary.p95_abs,
         weak_rot_axes: summary.weak_rot_axes,
         weak_trans_axes: summary.weak_trans_axes,
+        // The value that RAN, not the operator's slider: the global-seed branch
+        // lowers it to `near_surface_fraction(seed) * 0.8` clamped to 0.1..0.8
+        // (`adaptive_settings`), so publishing the slider made the doc on this
+        // field false.
+        effective_matching_ratio: adaptive_settings.matching_ratio,
+        seated_fraction: summary.seated_fraction,
     })
 }
 
@@ -416,6 +541,7 @@ fn select_initial_pose(
         level.fixed,
         level.start,
         level.cancel,
+        seated_band_mm(level.settings.influence_radius_mm),
     ) >= 0.9
     {
         None
@@ -443,6 +569,7 @@ fn select_initial_pose(
                     level.fixed,
                     initial_pose.rigid,
                     level.cancel,
+                    seated_band_mm(level.settings.influence_radius_mm),
                 ) * 0.8)
                     .clamp(0.1, 0.8),
             )
@@ -452,13 +579,14 @@ fn select_initial_pose(
     Ok((initial_pose, settings, feature_seed))
 }
 
-#[allow(clippy::cast_precision_loss)]
+#[allow(clippy::cast_precision_loss, clippy::too_many_arguments)]
 fn near_surface_fraction(
     moving: Soup<'_>,
     samples: &[u32],
     fixed: &SurfaceIndex,
     pose: Rigid,
     cancel: &CancelFlag,
+    band_mm: f64,
 ) -> f64 {
     if samples.is_empty() {
         return 0.0;
@@ -471,7 +599,7 @@ fn near_surface_fraction(
         let Some(point) = vertex_at(moving.positions, vertex as usize) else {
             continue;
         };
-        if fixed.nearest(pose.apply(point), 0.2).is_some() {
+        if fixed.nearest(pose.apply(point), band_mm).is_some() {
             near += 1;
         }
     }
@@ -523,6 +651,8 @@ fn idle_report(start: Rigid) -> IcpReport {
         p95_abs: 0.0,
         weak_rot_axes: [true; 3],
         weak_trans_axes: [true; 3],
+        effective_matching_ratio: 0.0,
+        seated_fraction: 0.0,
     }
 }
 
@@ -591,6 +721,11 @@ struct Summary {
     rms: f64,
     /// RMS Euclidean point-to-surface distance used to accept a trial pose.
     geometric_rms: f64,
+    /// Fraction of the level's samples sitting inside `SEATED_BAND_MM` of the
+    /// fixed surface. This is the term that distinguishes a seating from a
+    /// slide; every other statistic here is a trimmed residual and improves
+    /// when a deformation is spread out.
+    seated_fraction: f64,
     median_abs: f64,
     p95_abs: f64,
     weak_rot_axes: [bool; 3],
@@ -978,7 +1113,13 @@ fn forward_summary(level: &Level<'_>, pose: Rigid) -> Option<Summary> {
         return None;
     }
     let (matrix, _, _) = accumulate(&kept);
-    Some(summarize(&kept, matched, level.samples.len(), &matrix))
+    Some(summarize(
+        &found,
+        &kept,
+        matched,
+        level.samples.len(),
+        &matrix,
+    ))
 }
 
 /// A surface crop's bounding-box centre can sit well above its actual surface
@@ -1015,6 +1156,11 @@ fn nearest_component_index(level: &Level<'_>, pose: Rigid, moving_center: DVec3)
 }
 
 /// Whether a candidate keeps enough of the incumbent's forward coverage.
+/// Seated-fraction difference that counts as a real advantage rather than
+/// noise. Two poses a few micrometres apart seat the same surface.
+const COARSE_TIE_SEATED: f64 = 0.01;
+
+/// Whether a candidate keeps enough of the incumbent's forward coverage.
 fn coarse_keeps_coverage(candidate: f64, current: f64) -> bool {
     candidate >= current * COARSE_COVERAGE_KEEP_FRACTION
 }
@@ -1037,6 +1183,18 @@ fn coarse_explains_more_fixed(
 }
 
 fn coarse_candidate_is_better(candidate: &CoarseCandidate, current: &CoarseCandidate) -> bool {
+    // Seating comes before every residual comparison. A candidate that puts
+    // materially more of the surface inside the seated band is the better
+    // answer even when its trimmed residual is worse, because the residual is
+    // exactly what a deformed majority can drive down. Without this the search
+    // walked from the operator's own placement into the basin that best hides
+    // a preparation.
+    if candidate.summary.seated_fraction > current.summary.seated_fraction + COARSE_TIE_SEATED {
+        return true;
+    }
+    if candidate.summary.seated_fraction + COARSE_TIE_SEATED < current.summary.seated_fraction {
+        return false;
+    }
     // A forward-only low residual can come from a small smooth patch. When
     // both triangle soups are available, prefer a candidate that explains
     // materially more of the fixed surface as long as its forward residual is
@@ -1241,13 +1399,20 @@ fn coarse_orientation_deltas() -> [DQuat; 24] {
 }
 
 /// Run one resolution level to convergence or to its iteration ceiling.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one iteration loop whose branches are the documented stop and trial rules; \
+              splitting it hid the frame in which `summary` and `pose` must stay paired"
+)]
 fn run_level(level: &Level<'_>) -> Result<LevelOutcome, FitRejection> {
     let mut pose = level.start;
     let mut iterations = 0u32;
     let mut converged = false;
     let mut summary: Option<Summary> = None;
     let mut best_rms = f64::INFINITY;
-    // Keep the pose associated with the best residual.
+    let mut best_seated = f64::NEG_INFINITY;
+    // Keep the pose that seats most of the surface; the residual only breaks a
+    // tie between two poses that seat the same amount.
     let mut best: Option<(Rigid, Summary)> = None;
     let radii = if level.settings.local_only {
         // The operator has already brought the scans together. Respect the
@@ -1276,7 +1441,7 @@ fn run_level(level: &Level<'_>) -> Result<LevelOutcome, FitRejection> {
             });
         }
         let (normal_matrix, gradient, centre) = accumulate(&kept);
-        let measured = summarize(&kept, matched, level.samples.len(), &normal_matrix);
+        let measured = summarize(&found, &kept, matched, level.samples.len(), &normal_matrix);
         let measured_reciprocal = reciprocal_evidence(level, pose, radii[radius_slot]);
         if !reciprocal_evidence_is_usable(level, measured_reciprocal) {
             // Unusable reciprocal evidence means THIS iteration cannot be
@@ -1292,10 +1457,15 @@ fn run_level(level: &Level<'_>) -> Result<LevelOutcome, FitRejection> {
         summary = Some(measured);
         // `measured` describes the pose the correspondences were found AT, not
         // the one the step below produces. Remember the pair together.
-        if measured.geometric_rms.is_finite()
-            && measured.geometric_rms < best_rms * STALL_IMPROVEMENT
+        let seats_more = measured.seated_fraction > best_seated + COARSE_TIE_SEATED;
+        let seats_same = (measured.seated_fraction - best_seated).abs() <= COARSE_TIE_SEATED;
+        if seats_more
+            || (seats_same
+                && measured.geometric_rms.is_finite()
+                && measured.geometric_rms < best_rms * STALL_IMPROVEMENT)
         {
             best_rms = measured.geometric_rms;
+            best_seated = measured.seated_fraction;
             best = Some((pose, measured));
         }
 
@@ -1349,8 +1519,15 @@ fn run_level(level: &Level<'_>) -> Result<LevelOutcome, FitRejection> {
         // summary with the pose so a convergence break cannot report metrics
         // for the pre-step correspondences.
         summary = Some(next_summary);
-        if next_summary.geometric_rms.is_finite() && next_summary.geometric_rms < best_rms {
+        let seats_more = next_summary.seated_fraction > best_seated + COARSE_TIE_SEATED;
+        let seats_same = (next_summary.seated_fraction - best_seated).abs() <= COARSE_TIE_SEATED;
+        if seats_more
+            || (seats_same
+                && next_summary.geometric_rms.is_finite()
+                && next_summary.geometric_rms < best_rms)
+        {
             best_rms = next_summary.geometric_rms;
+            best_seated = next_summary.seated_fraction;
             best = Some((next_pose, next_summary));
         }
         iterations += 1;
@@ -1497,11 +1674,26 @@ fn accumulate(kept: &[Correspondence]) -> ([[f64; 6]; 6], [f64; 6], DVec3) {
 
 /// Residual statistics and the degrees of freedom the geometry left free.
 fn summarize(
+    found: &[Option<Correspondence>],
     kept: &[Correspondence],
     matched: usize,
     sampled: usize,
     matrix: &[[f64; 6]; 6],
 ) -> Summary {
+    // How much of the surface is actually seated.
+    //
+    // Taken over EVERY correspondence found at this pose, not over `kept`. That
+    // is the whole point of the statistic: the trimmed set is chosen by
+    // distance, so a deformed majority always fills it and pushes the rigid
+    // part of the same surface out — measuring seating inside `kept` would
+    // report the deformation's own coherence and call it a fit. Counted
+    // against the sampled population, so a pose that explains only a sliver
+    // cannot look seated either.
+    let seated = found
+        .iter()
+        .flatten()
+        .filter(|entry| (entry.point - entry.target).length() <= SEATED_BAND_MM)
+        .count();
     let mut magnitudes: Vec<f64> = kept.iter().map(|entry| entry.residual.abs()).collect();
     magnitudes.sort_by(f64::total_cmp);
     #[allow(clippy::cast_precision_loss)]
@@ -1529,6 +1721,8 @@ fn summarize(
         coverage: matched as f64 / sampled_count,
         rms: (sum_squares / count).sqrt(),
         geometric_rms: (geometric_sum_squares / count).sqrt(),
+        #[allow(clippy::cast_precision_loss)]
+        seated_fraction: seated as f64 / sampled_count,
         median_abs: magnitudes.get(magnitudes.len() / 2).copied().unwrap_or(0.0),
         p95_abs: magnitudes
             .get(p95_slot.clamp(1, magnitudes.len()) - 1)

@@ -38,6 +38,7 @@ use super::SelectedFaceEditContext;
 use occluview_core::{
     selected_connected_components_in_mesh, CoreError, FaceSelection, Mesh, SceneMesh, Vertex,
 };
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// Upper bound on the layers a single Separate ("Divide") may spawn. A dental
@@ -198,9 +199,23 @@ pub(super) fn split_selection_into_meshes(
         }
     }
 
-    // stamp[v] = bucket that last copied vertex v; local[v] = its index there.
-    let mut stamp = vec![usize::MAX; source_vertices.len()];
-    let mut local = vec![0u32; source_vertices.len()];
+    // local[bucket][v] = the index `v` was copied to in THAT bucket.
+    //
+    // The pair this replaces recorded only the LAST bucket a vertex was copied
+    // into, with a single `local[v]`. A vertex shared between the selected patch
+    // and the remainder is copied into bucket A, then into bucket B, and a later
+    // triangle of A then finds `stamp[v] == B`, so it mints a SECOND copy in A:
+    // the output has two coincident vertices where the source had one and its
+    // triangles stop sharing a corner. That is guaranteed whenever the patch's
+    // triangles are not a contiguous run of the source triangle order — a lasso
+    // over a few triangles in the middle of an arch is the ordinary case — and
+    // every in-app topology consumer welds by position, so the visible cost was
+    // the duplicated rows saved into the layer plus a Repair click reporting
+    // "welded N vertices" for damage this code introduced.
+    //
+    // Keying by (bucket, vertex) makes the revisit reuse the index already
+    // assigned for that bucket, which is what "true shared topology" means here.
+    let mut local: Vec<BTreeMap<usize, u32>> = vec![BTreeMap::new(); bucket_count];
     let mut out_vertices: Vec<Vec<Vertex>> = vec![Vec::new(); bucket_count];
     let mut out_indices: Vec<Vec<u32>> = vec![Vec::new(); bucket_count];
 
@@ -210,18 +225,20 @@ pub(super) fn split_selection_into_meshes(
             .ok_or_else(|| CoreError::Geometry(format!("triangle {triangle} is out of range")))?;
         for &raw in corners {
             let old = raw as usize;
-            if stamp[old] != bucket {
+            let assigned = if let Some(&index) = local[bucket].get(&old) {
+                index
+            } else {
                 let local_index = u32::try_from(out_vertices[bucket].len()).map_err(|_| {
                     CoreError::Geometry("component vertex count exceeds u32".to_string())
                 })?;
                 let vertex = *source_vertices.get(old).ok_or_else(|| {
                     CoreError::Geometry(format!("vertex index {old} is out of range"))
                 })?;
-                stamp[old] = bucket;
-                local[old] = local_index;
+                local[bucket].insert(old, local_index);
                 out_vertices[bucket].push(vertex);
-            }
-            out_indices[bucket].push(local[old]);
+                local_index
+            };
+            out_indices[bucket].push(assigned);
         }
     }
 

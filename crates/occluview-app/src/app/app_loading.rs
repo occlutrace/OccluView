@@ -83,11 +83,26 @@ impl OccluViewApp {
         if self.replace_open_needs_guard() {
             // Newest replace supersedes an older parked one; the open is held,
             // never dropped, until the operator answers the dialog.
+            //
+            // It supersedes QUEUED replaces too. A Replace that arrives while
+            // dirty never reaches `queue_request_while_active` (whose contract is
+            // exactly "a newer Replace supersedes every pending request"), so a
+            // decode still running with an older Replace behind it would later
+            // start that older one and clobber the scene this request opened.
+            self.supersede_queued_replaces();
             self.ui.pending_replace_open = Some(PendingReplaceOpen {
                 paths: paths.to_vec(),
                 source,
+                requested_at: Instant::now(),
             });
             return;
+        }
+        // The guard cleared while a request was parked (removing the last layer
+        // can empty `unsaved_edit_layer_ids` while the guard window is up, and
+        // that window is not a modal backdrop). Starting this load must not leave
+        // the stale parking alive to open an older file over the new scene.
+        if self.ui.pending_replace_open.take().is_some() {
+            self.supersede_queued_replaces();
         }
         self.load_paths_with_mode(paths, source, SceneLoadMode::Replace);
     }
@@ -101,13 +116,18 @@ impl OccluViewApp {
             return;
         }
         if self.document.edit_mode.is_busy() {
+            self.supersede_queued_replaces();
             self.ui.pending_replace_open = Some(PendingReplaceOpen {
                 paths: paths.to_vec(),
                 source,
+                requested_at: Instant::now(),
             });
             self.ui.status_message = Some(self.ui.locale.tr("edit-session-busy"));
             return;
         }
+        // This request is the newest, so a Replace still queued behind a decode
+        // is obsolete and must not start later over the scene this opens.
+        self.supersede_queued_replaces();
         self.load_paths_with_mode(paths, source, SceneLoadMode::Replace);
     }
 
@@ -213,6 +233,7 @@ impl OccluViewApp {
             superseded: false,
             content_revision_at_request,
             dirty_at_request,
+            requested_at: started_at,
         });
     }
 
@@ -269,10 +290,24 @@ impl OccluViewApp {
 
     fn start_next_queued_load(&mut self) {
         if self.document.active_load.is_none() && self.ui.pending_replace_open.is_none() {
+            // Any survivor may start, including a Replace. An OBSOLETE queued
+            // Replace never reaches this point: it is dropped by
+            // `supersede_queued_replaces` at the moment a newer request arrives
+            // (parked or confirmed). What is left in the queue is either an
+            // append or a Replace that is itself the newest request — the
+            // successor of a decode that was superseded, which is exactly the
+            // one that must start.
             if let Some(request) = self.document.queued_loads.pop_front() {
                 self.start_scene_load(request);
             }
         }
+    }
+
+    /// Drop queued Replace requests that a newer one has made obsolete.
+    fn supersede_queued_replaces(&mut self) {
+        self.document
+            .queued_loads
+            .retain(|request| request.mode != SceneLoadMode::Replace);
     }
 
     /// Clear state belonging to the scene replaced by a completed load.
@@ -297,9 +332,27 @@ impl OccluViewApp {
 
     fn park_loaded_replace_for_reconfirmation(&mut self, pending: PendingSceneLoad) {
         // New edits outrank an older permission to replace the scene.
+        //
+        // But an older LOAD finishing here must not outrank a NEWER parked
+        // request. The operator opened F1, edited while it decoded, then opened
+        // F2 (parked); when F1 landed this used to overwrite the parked F2 and
+        // clear the status, so the file they asked for last was silently
+        // discarded and answering the dialog opened F1. The parked request is
+        // kept when it is newer — the status line then says so instead of
+        // leaving the operator with a dialog whose headline changed under them.
+        let newer_request_parked = self
+            .ui
+            .pending_replace_open
+            .as_ref()
+            .is_some_and(|parked| parked.requested_at > pending.requested_at);
+        if newer_request_parked {
+            self.ui.status_message = Some(self.ui.locale.tr("load-superseded-parked-open"));
+            return;
+        }
         self.ui.pending_replace_open = Some(PendingReplaceOpen {
             paths: pending.paths,
             source: pending.source,
+            requested_at: Instant::now(),
         });
         self.ui.status_message = None;
     }
@@ -362,7 +415,18 @@ impl OccluViewApp {
                 self.persistence.current_paths = current_paths;
                 self.persistence.push_recent_scene(&recent_paths);
                 self.persistence.save_recent_files();
-                self.ui.status_message = None;
+                // A glTF declares METERS while scanner exports carry
+                // millimeter numbers, so the format crate flags the layer
+                // ambiguous and applies no scale. Nothing in the app read that
+                // flag, so a spec-compliant file loaded 1000x small with every
+                // derived number wrong by that factor — ruler, scale bar,
+                // thickness, brush steps, deviation ranges — and no surface
+                // saying the units were unverified. The recommendation helper
+                // and the conversion it feeds existed with no caller at all.
+                // Say it in the status line, where every other load outcome
+                // lands, and keep the suggestion advisory exactly as the
+                // module doc requires.
+                self.ui.status_message = self.ambiguous_units_notice();
                 tracing::info!(
                     source = pending.source,
                     append,
@@ -432,6 +496,14 @@ impl OccluViewApp {
     }
 
     pub(super) fn handle_dropped_files(&mut self, ctx: &egui::Context) {
+        // A drop is a load request like any other, and a modal in front of the
+        // viewport owns the frame. Letting it through parked an open behind a
+        // guard window the modal layer kept dimmed and unclickable, with nothing
+        // on screen connecting the drop to the dialog the operator could not
+        // reach.
+        if self.ui.modal_dialog_open() {
+            return;
+        }
         ctx.input(|i| {
             let paths = native_drop_paths(&i.raw.dropped_files);
             if !paths.is_empty() {
@@ -526,6 +598,42 @@ impl OccluViewApp {
         ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
             egui::UserAttentionType::Reset,
         ));
+    }
+}
+
+impl OccluViewApp {
+    /// A one-line warning when a loaded layer's units are unverified.
+    ///
+    /// Returns `None` for the ordinary case. The sentence names the scale the
+    /// bounding box suggests rather than applying it: a wrong silent scale
+    /// corrupts every measurement, which is what the import-unit doc says must
+    /// never happen.
+    fn ambiguous_units_notice(&self) -> Option<String> {
+        let scene = self.document.scene.as_ref()?;
+        let ambiguous = scene.meshes().iter().any(|entry| {
+            entry.import_units().confidence == occluview_core::UnitConfidence::Ambiguous
+        });
+        if !ambiguous {
+            return None;
+        }
+        let size = scene.bbox().size();
+        let extent = size.max_element();
+        let suggestion = match occluview_formats::units::recommend_glb_scale(extent) {
+            occluview_formats::units::GlbScaleRecommendation::MetersToMillimeters => {
+                self.ui.locale.tr("load-units-suggest-meters")
+            }
+            occluview_formats::units::GlbScaleRecommendation::KeepAsMillimeters => {
+                self.ui.locale.tr("load-units-suggest-millimeters")
+            }
+            occluview_formats::units::GlbScaleRecommendation::Unclear => {
+                self.ui.locale.tr("load-units-unclear")
+            }
+        };
+        Some(
+            self.ui
+                .locale
+                .tr_with("load-units-ambiguous", &[("suggestion", &suggestion)]),
+        )
     }
 }
 

@@ -43,6 +43,7 @@ fn candidate(rms: f64, coverage: f64, reciprocal_coverage: Option<f64>) -> Coars
             coverage,
             rms,
             geometric_rms: rms,
+            seated_fraction: 0.0,
             median_abs: rms * 0.5,
             p95_abs: rms * 1.5,
             weak_rot_axes: [false; 3],

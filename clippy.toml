@@ -14,10 +14,11 @@ too-many-arguments-threshold = 5
 # carry a local `#[allow(clippy::too_many_lines)]`, which keeps each exception
 # visible at the function instead of hidden in a global number.
 #
-# NOTE: the 800-line budget per source file is not a clippy rule and is not a CI
-# script either. It is asserted by
-# `rust_source_files_stay_within_the_physical_line_budget` in
-# crates/occluview-app/src/primary_ui_tests/viewport.rs.
+# NOTE: the 800-line budget per source file is a convention, not a rule. Nothing
+# enforces it: it was once asserted by a source-text test, and that test is gone
+# because a file that is 40 lines too long is a review comment, not a
+# regression. Split a file when the split is worth reading, not to hit a
+# number.
 
 # Enum variant size: warn on large variants (helps keep types cache-friendly).
 enum-variant-size-threshold = 256

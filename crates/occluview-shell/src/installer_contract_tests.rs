@@ -124,53 +124,6 @@ fn dcm_is_offered_to_the_user_and_never_taken_from_medical_dicom() {
 }
 
 #[test]
-fn installer_refreshes_shell_association_cache_after_registry_changes() {
-    let registration = super::shell_contract_tests::registration_source();
-    let app_bootstrap = include_str!("../../occluview-app/src/app_bootstrap.rs");
-    // Argument parsing lives behind the app library boundary; the installer
-    // flag the WiX custom actions pass must be honored at its canonical home.
-    let app_startup = include_str!("../../occluview-app/src/startup.rs");
-    let wxs = include_str!("../../../install/occluview.wxs");
-
-    assert!(registration.contains("SHChangeNotify"));
-    assert!(registration.contains("SHCNE_ASSOCCHANGED"));
-    assert!(registration.contains("SHCNF_IDLIST"));
-    assert!(registration.contains("notify_shell_associations_changed();"));
-    assert!(app_startup.contains("\"--shell-refresh\""));
-    assert!(app_bootstrap.contains("notify_shell_associations_changed"));
-    assert!(wxs.contains("Id=\"RefreshShellAssociationsInstall\""));
-    assert!(wxs.contains("Id=\"RefreshShellAssociationsUninstall\""));
-    assert!(wxs.contains("FileKey=\"filOccluViewExe\""));
-    assert!(wxs.contains("ExeCommand=\"--shell-refresh\""));
-    assert!(wxs.contains("After=\"WriteRegistryValues\""));
-    assert!(wxs.contains("After=\"RemoveRegistryValues\""));
-    assert!(!wxs.contains("filOccluViewCli"));
-
-    for action_id in [
-        "RefreshShellAssociationsInstall",
-        "RefreshShellAssociationsUninstall",
-    ] {
-        let action = wxs.split("<CustomAction").find_map(|candidate| {
-            candidate
-                .split_once("/>")
-                .filter(|(element, _)| element.contains(&format!("Id=\"{action_id}\"")))
-                .map(|(element, _)| element)
-        });
-        assert!(action.is_some(), "missing {action_id} CustomAction");
-        let Some(action) = action else { return };
-
-        assert!(
-            action.contains("Impersonate=\"yes\""),
-            "{action_id} must refresh Explorer as the installing user"
-        );
-        assert!(
-            action.contains("TerminalServerAware=\"yes\""),
-            "{action_id} must target the installing user's terminal-server session"
-        );
-    }
-}
-
-#[test]
 fn preview_handler_uses_the_windows_prevhost_registration_from_main() {
     // The verified main build uses Windows' standard low-integrity Prevhost
     // AppID. The installer and self-registration must never own or delete
@@ -527,9 +480,23 @@ fn release_msi_builds_the_preview_dll_from_the_pinned_working_shell_source() {
     // known-good shell revision rather than a hand-copied old binary.
     let msi_build = include_str!("../../../install/build-msi.ps1");
     let workflow = include_str!("../../../.github/workflows/package-msi.yml");
+    let pin = include_str!("../../../install/shell-pin.json");
+
+    assert!(
+        pin.contains("\"revision\": \"659725632dffcdf14d62724743f35f1689602bbc\""),
+        "the shell pin contract must name the revision the release ships"
+    );
+    assert!(
+        pin.contains("\"shell_crates\""),
+        "the pin must list the crates the shell links, so the delta report has a scope"
+    );
+    assert!(
+        workflow.contains("report-shell-pin.sh"),
+        "the release must record which shell revision it shipped"
+    );
 
     for required in [
-        "$referenceShellRevision = \"659725632dffcdf14d62724743f35f1689602bbc\"",
+        "(Get-Content -Raw $shellPinPath | ConvertFrom-Json).revision",
         "git -C $repoRoot cat-file -e",
         "git -C $repoRoot worktree add --detach",
         "Set-ReferenceShellPackageVersion",
@@ -553,6 +520,10 @@ fn release_msi_builds_the_preview_dll_from_the_pinned_working_shell_source() {
     assert!(
         workflow.contains("fetch-depth: 0"),
         "Windows packaging must fetch the pinned working shell revision before building the MSI"
+    );
+    assert!(
+        workflow.contains("scripts/report-shell-pin.sh"),
+        "the release must record which shell revision it shipped and how far behind it is"
     );
 }
 

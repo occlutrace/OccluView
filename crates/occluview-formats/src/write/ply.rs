@@ -3,8 +3,93 @@ use super::{
     MeshWriteWarning,
 };
 use crate::error::FormatError;
-use occluview_core::{Mesh, MeshKind};
+use crate::ply::embed;
+use occluview_core::{Mesh, MeshKind, MeshTexture};
 use std::io::Write;
+
+/// How much of the encoded image goes on one comment line.
+///
+/// The header is text read line by line, and a single line holding megabytes
+/// asks every reader — including ones that merely look at the first kilobyte —
+/// to hold all of it at once.
+const TEXTURE_CHUNK: usize = 76;
+
+/// What this write will do with the mesh's texture, decided once so the header,
+/// the face list and the warnings cannot disagree.
+struct TexturePlan<'a> {
+    /// The image to write, if one can be written at all.
+    texture: Option<&'a MeshTexture>,
+    /// The encoded image, ready for the header comments.
+    encoded: Option<String>,
+}
+
+impl<'a> TexturePlan<'a> {
+    fn new(mesh: &'a Mesh, options: &MeshWriteOptions) -> Self {
+        // A texture is applied through texture coordinates on faces. Without
+        // triangles, or without coordinates, there is nothing for an image to
+        // map onto: writing it would produce a file that claims a texture
+        // nothing can sample.
+        let candidate = mesh
+            .texture()
+            .filter(|_| options.include_texture && options.include_uvs)
+            // A texture whose dimensions and pixel buffer disagree makes the
+            // PNG encoder assert, and an abort would take the whole viewer down
+            // with the export. The GLB writer rejects the same shape; here the
+            // image is simply not written, and the caller warns.
+            .filter(|texture| {
+                texture.width > 0
+                    && texture.height > 0
+                    && texture.rgba.len()
+                        == (texture.width as usize)
+                            .saturating_mul(texture.height as usize)
+                            .saturating_mul(4)
+            })
+            // An image needs face rows to carry its coordinates: without them
+            // the file would hold an atlas nothing can sample and lose the UVs
+            // with no warning. The per-vertex path survives an empty face list.
+            .filter(|_| {
+                mesh.kind() == MeshKind::TriangleMesh
+                    && mesh.has_uvs()
+                    && !mesh.indices().is_empty()
+            })
+            // A texture the reader's own decode limits would refuse must not be
+            // written at all. Re-encoding is not enough to know: a lopsided
+            // atlas compresses to a small PNG while decoding to a surface past
+            // `MAX_TEXTURE_RGBA_BYTES`, and an edge past
+            // `MAX_TEXTURE_DIMENSION_PX` decodes to nothing. Either way the
+            // export would report success, the bytes would sit in the header,
+            // and re-opening the file would show no texture with nothing said;
+            // dropping it here routes the case through `TextureImageNotWritten`,
+            // which the operator actually sees. Asked of the shared validator
+            // rather than duplicated, so the two cannot drift.
+            .filter(|texture| {
+                crate::texture_decode::validate_texture_dimensions(
+                    texture.width,
+                    texture.height,
+                    "PLY",
+                )
+                .is_ok()
+            });
+        let png = candidate.and_then(|texture| super::super::glb_writer::encode_png(texture).ok());
+        let encoded = png.as_deref().map(embed::encode);
+        // The reader refuses an embedded image whose base64 exceeds its own
+        // ceiling, so a bigger one must not be written at all: the export would
+        // report success, the bytes would sit in the header, and re-opening the
+        // file would show no texture with nothing said. Dropping it here routes
+        // the case through `TextureImageNotWritten`, which is a warning the
+        // operator actually sees. Asked of the reader rather than duplicated, so
+        // the two cannot drift.
+        let encoded = encoded.filter(|text| text.len() <= crate::ply::max_encoded_chars());
+        // An image that cannot be encoded is not written, and the caller warns
+        // about it rather than shipping a header that promises it.
+        let texture = candidate.filter(|_| encoded.is_some());
+        Self { texture, encoded }
+    }
+
+    fn writes_texture(&self) -> bool {
+        self.texture.is_some()
+    }
+}
 
 pub(super) fn write_mesh<W: Write>(
     writer: &mut W,
@@ -12,47 +97,131 @@ pub(super) fn write_mesh<W: Write>(
     options: MeshWriteOptions,
     report: &mut MeshWriteReport,
 ) -> Result<(), FormatError> {
+    let texture = TexturePlan::new(mesh, &options);
+    // Texture coordinates go out with the texture as the per-face `texcoord`
+    // list every textured-mesh reader looks for, and without one as per-vertex
+    // `s`/`t`, which at least preserves the mapping for the next tool.
+    let uv_as_texcoord = texture.writes_texture();
+    let uv_as_vertex = mesh.has_uvs() && options.include_uvs && !uv_as_texcoord;
+    report_losses(
+        mesh,
+        &options,
+        &texture,
+        uv_as_texcoord || uv_as_vertex,
+        report,
+    );
+
+    write_header(writer, mesh, &options, &texture, uv_as_vertex)?;
+    write_vertices(writer, mesh, &options, uv_as_vertex)?;
+    write_faces(writer, mesh, uv_as_texcoord)?;
+
+    Ok(())
+}
+
+/// Report what this write cannot carry.
+///
+/// Every loss is about the mesh rather than about the format: the writer either
+/// writes a property or says why it did not.
+fn report_losses(
+    mesh: &Mesh,
+    options: &MeshWriteOptions,
+    texture: &TexturePlan<'_>,
+    uvs_written: bool,
+    report: &mut MeshWriteReport,
+) {
     if mesh.has_vertex_colors() && !options.include_vertex_colors {
         report.warn(MeshWriteWarning::VertexColorsNotWritten);
     }
-    if mesh.has_uvs() {
+    if mesh.has_uvs() && !uvs_written {
         report.warn(MeshWriteWarning::UvsNotWritten);
     }
-    if mesh.texture().is_some() {
+    if mesh.texture().is_some() && !texture.writes_texture() {
         report.warn(MeshWriteWarning::TextureImageNotWritten);
     }
+}
 
+fn write_header<W: Write>(
+    writer: &mut W,
+    mesh: &Mesh,
+    options: &MeshWriteOptions,
+    texture: &TexturePlan<'_>,
+    uv_as_vertex: bool,
+) -> Result<(), FormatError> {
     let vertex_count = mesh.vertices().len();
     let face_count = if mesh.kind() == MeshKind::TriangleMesh {
         mesh.triangle_count()
     } else {
         0
     };
-
-    write!(
-        writer,
-        "ply\nformat binary_little_endian 1.0\ncomment Generated by OccluView\nelement vertex {vertex_count}\nproperty float x\nproperty float y\nproperty float z\n"
-    )?;
+    writeln!(writer, "ply")?;
+    writeln!(writer, "format binary_little_endian 1.0")?;
+    writeln!(writer, "comment Generated by OccluView")?;
+    write_texture_comments(writer, texture)?;
+    writeln!(writer, "element vertex {vertex_count}")?;
+    writeln!(writer, "property float x")?;
+    writeln!(writer, "property float y")?;
+    writeln!(writer, "property float z")?;
     if options.include_normals {
-        write!(
-            writer,
-            "property float nx\nproperty float ny\nproperty float nz\n"
-        )?;
+        writeln!(writer, "property float nx")?;
+        writeln!(writer, "property float ny")?;
+        writeln!(writer, "property float nz")?;
     }
     if options.include_vertex_colors && mesh.has_vertex_colors() {
-        write!(
-            writer,
-            "property uchar red\nproperty uchar green\nproperty uchar blue\nproperty uchar alpha\n"
-        )?;
+        writeln!(writer, "property uchar red")?;
+        writeln!(writer, "property uchar green")?;
+        writeln!(writer, "property uchar blue")?;
+        writeln!(writer, "property uchar alpha")?;
+    }
+    if uv_as_vertex {
+        writeln!(writer, "property float s")?;
+        writeln!(writer, "property float t")?;
     }
     if mesh.kind() == MeshKind::TriangleMesh {
-        write!(
-            writer,
-            "element face {face_count}\nproperty list uchar int vertex_indices\n"
-        )?;
+        writeln!(writer, "element face {face_count}")?;
+        writeln!(writer, "property list uchar int vertex_indices")?;
+        if texture.writes_texture() {
+            writeln!(writer, "property list uchar float texcoord")?;
+        }
     }
     writeln!(writer, "end_header")?;
+    Ok(())
+}
 
+/// The comments that carry the texture inside the file.
+///
+/// PLY has no texture element. The convention the other tools share — a
+/// `comment TextureFile` line naming an image beside the file — leaves the pair
+/// splittable and puts an extra file in the operator's folder, which is not
+/// what an export of one scan should be. The image is therefore encoded into
+/// comments of our own, and a reader that does not know the key skips them as
+/// text. Nothing is written beside the export.
+fn write_texture_comments<W: Write>(
+    writer: &mut W,
+    texture: &TexturePlan<'_>,
+) -> Result<(), FormatError> {
+    if !texture.writes_texture() {
+        return Ok(());
+    }
+    writeln!(writer, "comment OccluViewTextureFormat png")?;
+    if let Some(encoded) = &texture.encoded {
+        for chunk in encoded.as_bytes().chunks(TEXTURE_CHUNK) {
+            // `encoded` is ASCII: every byte is one character.
+            writeln!(
+                writer,
+                "comment OccluViewTextureBase64 {}",
+                String::from_utf8_lossy(chunk)
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn write_vertices<W: Write>(
+    writer: &mut W,
+    mesh: &Mesh,
+    options: &MeshWriteOptions,
+    uv_as_vertex: bool,
+) -> Result<(), FormatError> {
     for vertex in mesh.vertices() {
         write_f32_le(writer, vertex.position[0])?;
         write_f32_le(writer, vertex.position[1])?;
@@ -65,24 +234,48 @@ pub(super) fn write_mesh<W: Write>(
         if options.include_vertex_colors && mesh.has_vertex_colors() {
             writer.write_all(&vertex.color)?;
         }
+        if uv_as_vertex {
+            write_f32_le(writer, vertex.uv[0])?;
+            write_f32_le(writer, vertex.uv[1])?;
+        }
     }
+    Ok(())
+}
 
-    if mesh.kind() == MeshKind::TriangleMesh {
-        for triangle in mesh.indices().as_chunks::<3>().0 {
-            writer.write_all(&[3])?;
+fn write_faces<W: Write>(
+    writer: &mut W,
+    mesh: &Mesh,
+    uv_as_texcoord: bool,
+) -> Result<(), FormatError> {
+    if mesh.kind() != MeshKind::TriangleMesh {
+        return Ok(());
+    }
+    for triangle in mesh.indices().as_chunks::<3>().0 {
+        writer.write_all(&[3])?;
+        for index in triangle {
+            write_i32_le(
+                writer,
+                i32::try_from(*index).map_err(|_| FormatError::Malformed {
+                    format: MeshWriteFormat::PlyBinaryLittleEndian.label(),
+                    offset: 0,
+                    reason: "triangle index exceeds i32".to_string(),
+                })?,
+            )?;
+        }
+        if uv_as_texcoord {
+            // Six floats: u,v for each of the three corners, in the order of
+            // the indices just written.
+            writer.write_all(&[6])?;
             for index in triangle {
-                write_i32_le(
-                    writer,
-                    i32::try_from(*index).map_err(|_| FormatError::Malformed {
-                        format: MeshWriteFormat::PlyBinaryLittleEndian.label(),
-                        offset: 0,
-                        reason: "triangle index exceeds i32".to_string(),
-                    })?,
-                )?;
+                let uv = mesh
+                    .vertices()
+                    .get(usize::try_from(*index).unwrap_or(usize::MAX))
+                    .map_or([0.0, 0.0], |vertex| vertex.uv);
+                write_f32_le(writer, uv[0])?;
+                write_f32_le(writer, uv[1])?;
             }
         }
     }
-
     Ok(())
 }
 
@@ -103,6 +296,96 @@ mod tests {
         mesh
     }
 
+    /// A triangle with a two-pixel texture and per-vertex coordinates.
+    fn textured_triangle() -> Mesh {
+        let mut mesh = Mesh::new(
+            Some("arch".to_string()),
+            vec![
+                Vertex::at(glam::Vec3::ZERO).with_uv([0.0, 1.0]),
+                Vertex::at(glam::Vec3::X).with_uv([1.0, 1.0]),
+                Vertex::at(glam::Vec3::Y).with_uv([0.0, 0.0]),
+            ],
+            vec![0, 1, 2],
+        )
+        .expect("a triangle mesh");
+        mesh.set_texture(MeshTexture::new(2, 1, vec![255, 0, 0, 255, 0, 0, 255, 255]));
+        mesh
+    }
+
+    #[test]
+    fn a_texture_travels_inside_the_file_and_lands_back_on_the_mesh() {
+        let mesh = textured_triangle();
+        let mut bytes = Vec::new();
+        let written = crate::write::write_mesh(
+            &mut bytes,
+            &mesh,
+            MeshWriteFormat::PlyBinaryLittleEndian,
+            MeshWriteOptions::default(),
+        )
+        .expect("write ply");
+
+        let header_end = bytes
+            .windows(b"end_header\n".len())
+            .position(|window| window == b"end_header\n")
+            .expect("end header");
+        let header = String::from_utf8_lossy(&bytes[..header_end]);
+        assert!(
+            !header.contains("TextureFile"),
+            "nothing is written beside this file, so the header must not name an image"
+        );
+        assert!(
+            header.contains("property list uchar float texcoord"),
+            "the faces must carry the texture coordinates"
+        );
+        assert!(
+            !header.contains("property float s\n"),
+            "coordinates go with the texture, not twice"
+        );
+        assert!(
+            !written
+                .warnings
+                .contains(&MeshWriteWarning::TextureImageNotWritten),
+            "the image was written"
+        );
+        // The same file, moved on its own, must still open with its texture.
+        let read = crate::ply::read(&bytes).expect("read back the exported ply");
+        let texture = read.texture().expect("the texture came back");
+        assert_eq!((texture.width, texture.height), (2, 1));
+        assert_eq!(texture.rgba, vec![255, 0, 0, 255, 0, 0, 255, 255]);
+        assert!(read.has_uvs(), "the texture coordinates came back");
+        assert_eq!(read.vertices()[0].uv, [0.0, 1.0]);
+        assert_eq!(read.vertices()[1].uv, [1.0, 1.0]);
+    }
+
+    /// A mesh without a texture still carries its mapping, as per-vertex
+    /// properties, so the coordinates are not silently dropped on the way out.
+    #[test]
+    fn coordinates_survive_without_an_image() {
+        let mut mesh = textured_triangle();
+        mesh.clear_texture();
+        let mut bytes = Vec::new();
+        let written = crate::write::write_mesh(
+            &mut bytes,
+            &mesh,
+            MeshWriteFormat::PlyBinaryLittleEndian,
+            MeshWriteOptions::default(),
+        )
+        .expect("write ply");
+
+        assert!(!written.warnings.contains(&MeshWriteWarning::UvsNotWritten));
+        let header_end = bytes
+            .windows(b"end_header\n".len())
+            .position(|window| window == b"end_header\n")
+            .expect("end header");
+        let header = String::from_utf8_lossy(&bytes[..header_end]);
+        assert!(header.contains("property float s\nproperty float t\n"));
+        assert!(!header.contains("texcoord"));
+
+        let read = crate::ply::read(&bytes).expect("read back");
+        assert!(read.has_uvs());
+        assert_eq!(read.vertices()[2].uv, [0.0, 0.0]);
+    }
+
     #[test]
     fn preserves_vertex_color_bytes_and_reports_loss_warnings() {
         let mesh = sample_point_cloud();
@@ -118,10 +401,13 @@ mod tests {
         assert_eq!(written.format, MeshWriteFormat::PlyBinaryLittleEndian);
         assert_eq!(written.vertices, 1);
         assert_eq!(written.triangles, 0);
-        assert!(written.warnings.contains(&MeshWriteWarning::UvsNotWritten));
+        // A point cloud has no faces for a texture or its coordinates to map
+        // through, so the image is dropped and said so. The coordinates
+        // themselves are not lost: they go out as per-vertex `s`/`t`.
         assert!(written
             .warnings
             .contains(&MeshWriteWarning::TextureImageNotWritten));
+        assert!(!written.warnings.contains(&MeshWriteWarning::UvsNotWritten));
         assert!(!written
             .warnings
             .contains(&MeshWriteWarning::VertexColorsNotWritten));
@@ -133,5 +419,54 @@ mod tests {
             + b"end_header\n".len();
         let color_offset = header_end + 24;
         assert_eq!(&bytes[color_offset..color_offset + 4], [11, 22, 33, 44]);
+    }
+
+    /// An export must not promise an image its own reader will throw away.
+    ///
+    /// A texture whose decoded surface is past the reader's limit compresses to
+    /// a small PNG, so re-encoding it proves nothing about whether it can be
+    /// read back. Writing it would report success and leave the operator with a
+    /// file that opens untextured and says nothing.
+    #[test]
+    fn an_image_past_the_decoders_limits_is_not_written() {
+        let mut mesh = textured_triangle();
+        let too_wide = crate::texture_decode::MAX_TEXTURE_DIMENSION_PX + 1;
+        mesh.set_texture(MeshTexture::new(
+            too_wide,
+            1,
+            vec![0; too_wide as usize * 4],
+        ));
+
+        let mut bytes = Vec::new();
+        let written = crate::write::write_mesh(
+            &mut bytes,
+            &mesh,
+            MeshWriteFormat::PlyBinaryLittleEndian,
+            MeshWriteOptions::default(),
+        )
+        .expect("write ply");
+
+        assert!(
+            written
+                .warnings
+                .contains(&MeshWriteWarning::TextureImageNotWritten),
+            "the operator has to be told the image was dropped"
+        );
+        let header_end = bytes
+            .windows(b"end_header\n".len())
+            .position(|window| window == b"end_header\n")
+            .expect("end header");
+        let header = String::from_utf8_lossy(&bytes[..header_end]);
+        assert!(
+            !header.contains("OccluViewTextureFormat"),
+            "an image the reader would refuse must not be promised:\n{header}"
+        );
+        // The coordinates are still preserved for the next tool even though the
+        // image could not travel, so the mesh keeps its mapping.
+        assert!(!written.warnings.contains(&MeshWriteWarning::UvsNotWritten));
+        assert!(
+            header.contains("property list uchar float texcoord")
+                || header.contains("property float s")
+        );
     }
 }

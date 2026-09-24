@@ -22,6 +22,12 @@ struct DabInput {
     kind: SculptToolKind,
     shift: bool,
     dt: f32,
+    /// Whether the primary button was PRESSED this frame, i.e. a fresh edge.
+    ///
+    /// A stroke may only begin on an edge. Carried through the input rather than
+    /// re-read inside the dab loop so the frame that decides it is the same one
+    /// that observed it.
+    fresh_press: bool,
 }
 
 /// A frame's dab request in WORLD space plus the resolved kernel mode/strength;
@@ -326,7 +332,16 @@ impl OccluViewApp {
         self.tools
             .sculpt
             .set_cursor_hit([pointer.x, pointer.y], hit);
-        self.paint_sculpt_dabs(ctx, &hit, DabInput { kind, shift, dt });
+        self.paint_sculpt_dabs(
+            ctx,
+            &hit,
+            DabInput {
+                kind,
+                shift,
+                dt,
+                fresh_press: pressed,
+            },
+        );
         true
     }
 
@@ -349,6 +364,29 @@ impl OccluViewApp {
             }
             Some(_) => {}
             None => {
+                // A stroke starts on a PRESS EDGE, never on a held button.
+                //
+                // Two paths reach here with the button already down and no
+                // stroke. Ctrl+Z mid-drag is the important one: the shortcut is
+                // read before the viewport input, it takes the stroke, queues
+                // the worker `Finish` and — because the worker is busy — parks
+                // `pending_history` instead of undoing. This frame still sees
+                // `Primary` down, so the old code built a SECOND StrokeState and
+                // fed dabs behind the first stroke's Finish. The parked undo
+                // then could not run while the worker had work, and the operator
+                // kept dragging, so the undo did nothing for as long as the drag
+                // lasted and finally undid that second stroke — not the one they
+                // were looking at when they asked. The other path is a mid-drag
+                // invalidation (the sculpted layer hidden), which re-armed the
+                // brush on whichever layer `sculpt_target` fell back to while
+                // the editor still named the hidden one.
+                //
+                // Waiting for a fresh press is the general fix: it covers every
+                // invalidation, not just the undo one.
+                if !input.fresh_press || self.tools.sculpt.pending_history.is_some() {
+                    ctx.request_repaint();
+                    return;
+                }
                 if !self.ensure_sculpt_session_for_hit(hit) {
                     ctx.request_repaint();
                     return;
@@ -890,6 +928,10 @@ fn sculpt_cursor_color(kind: SculptToolKind, shift: bool) -> egui::Color32 {
         (SculptToolKind::Smooth, _) => egui::Color32::from_rgb(178, 126, 255),
     }
 }
+
+#[cfg(test)]
+#[path = "app_sculpt_commit_tests.rs"]
+mod commit_tests;
 
 #[cfg(test)]
 #[path = "app_sculpt_tests.rs"]

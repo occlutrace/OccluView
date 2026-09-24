@@ -127,6 +127,11 @@ impl OccluViewApp {
                 .status_override(ContactStatus::AntagonistUnusable);
             return;
         }
+        // Both sides are readable again, so any "unusable" sentence on screen is
+        // stale: clear it before deciding whether a new measurement is needed.
+        if self.tools.contacts.clear_unusable_override() {
+            ctx.request_repaint();
+        }
         let Some(keys) = contact_job_keys(&scene, pair, self.tools.contacts.flatten_patches())
         else {
             return;
@@ -150,6 +155,16 @@ impl OccluViewApp {
             || self.ui.modal_dialog_open()
             || self.tools.bridge_split_active()
         {
+            return;
+        }
+        // Escape closes what is in front of the operator. The details popover
+        // is: closing the whole reading from under it took the panel away while
+        // the operator was aiming at one row in it.
+        if self.tools.contacts.details_open() {
+            if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+                self.tools.contacts.toggle_details();
+                ctx.request_repaint();
+            }
             return;
         }
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
@@ -239,11 +254,14 @@ impl OccluViewApp {
 
     /// Take finished measurements and put them on the scans.
     pub(super) fn drain_contacts_worker(&mut self, ctx: &egui::Context) {
-        let Some(worker) = self.tools.contacts.worker() else {
+        let Some((completions, worker_failed)) = self.tools.contacts.worker().map(|worker| {
+            let completions = worker.drain();
+            (completions, worker.has_failed())
+        }) else {
             return;
         };
-        let completions = worker.drain();
         if completions.is_empty() {
+            self.release_a_reading_whose_worker_died(worker_failed, ctx);
             return;
         }
         let mut accepted = false;
@@ -278,11 +296,18 @@ impl OccluViewApp {
                         contacts = stats.contacts,
                         "contact field applied"
                     );
+                    // The device's real texture edge, asked before sizing the
+                    // buffer: the constant is a request ceiling and the granted
+                    // limit can be lower, in which case a field sized on the
+                    // request is refused by wgpu, latches the GPU fault, and
+                    // freezes the viewport instead of measuring.
+                    let texture_limit = self.render.granted_texture_dimension();
                     let Some((subject_field, antagonist_field)) = pack_fields(
                         &mut self.tools.contacts,
                         request.pair,
                         subject_signed_mm,
                         antagonist_signed_mm,
+                        texture_limit,
                     ) else {
                         self.tools.contacts.mark_failed(
                             request.id,
@@ -319,6 +344,25 @@ impl OccluViewApp {
             self.mark_scene_materials_changed();
             ctx.request_repaint();
         }
+        self.release_a_reading_whose_worker_died(worker_failed, ctx);
+    }
+
+    /// Stop waiting for a reading whose worker can no longer produce one.
+    ///
+    /// A thread that panicked publishes nothing, so the pending request would
+    /// stay in flight forever: the bar would show a spinner with no status text
+    /// and no retry, and re-opening the reading would only queue work nobody
+    /// drains. The failure latch is the only signal that the executor is gone.
+    fn release_a_reading_whose_worker_died(&mut self, worker_failed: bool, ctx: &egui::Context) {
+        if !worker_failed {
+            return;
+        }
+        let Some(keys) = self.tools.contacts.in_flight_keys() else {
+            return;
+        };
+        tracing::warn!("contact worker is unusable; releasing the pending reading");
+        self.tools.contacts.mark_unavailable(keys);
+        ctx.request_repaint();
     }
 
     /// Build GPU sources for the current scene, including contact paint.
@@ -380,9 +424,10 @@ fn pack_fields(
     pair: ContactPair,
     subject_signed_mm: Vec<f32>,
     antagonist_signed_mm: Vec<f32>,
+    texture_limit: u32,
 ) -> Option<(ContactLayerField, ContactLayerField)> {
-    let subject_texels = pack(&subject_signed_mm)?;
-    let antagonist_texels = pack(&antagonist_signed_mm)?;
+    let subject_texels = pack(&subject_signed_mm, texture_limit)?;
+    let antagonist_texels = pack(&antagonist_signed_mm, texture_limit)?;
     let subject_revision = state.take_revision();
     let antagonist_revision = state.take_revision();
     Some((
@@ -411,12 +456,12 @@ fn field_width(field: Option<&ContactLayerField>) -> u32 {
     field.map_or(CONTACT_FIELD_TEXTURE_WIDTH, |field| field.texels.width)
 }
 
-/// Pack one field using the contact crate's sentinel and device texture limit.
-fn pack(values: &[f32]) -> Option<Arc<ContactFieldTexels>> {
-    let width = crate::contact::contact_field_width(
-        values.len(),
-        crate::app_bootstrap::MAX_RENDER_TEXTURE_DIMENSION,
-    )?;
+/// Pack one field using the contact crate's sentinel and the DEVICE's limit.
+///
+/// `texture_limit` is the granted `max_texture_dimension_2d`, not the request
+/// ceiling; see `RenderState::granted_texture_dimension`.
+fn pack(values: &[f32], texture_limit: u32) -> Option<Arc<ContactFieldTexels>> {
+    let width = crate::contact::contact_field_width(values.len(), texture_limit)?;
     let packed = occluview_contact::pack_field_texels(values, width);
     ContactFieldTexels::new(packed.rgba, packed.width, packed.height).map(Arc::new)
 }

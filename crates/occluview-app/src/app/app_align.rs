@@ -9,11 +9,12 @@ use glam::{Affine3A, DVec3, Vec3, Vec3A};
 use occluview_align::Rigid;
 use occluview_core::{Scene, SceneMesh, SceneMeshId};
 
+use super::app_align_display::AlignOverlay;
 use super::OccluViewApp;
 use crate::align_geometry::transform_key;
 use crate::align_markings::AlignSide;
 use crate::align_tool::{AlignPoint, ClickOutcome};
-use crate::align_worker::{AlignJob, AlignJobKind, AlignWorker, MeasureKey, SurfaceKey, WorldPair};
+use crate::align_worker::{AlignJob, AlignJobKind, MeasureKey, SurfaceKey, WorldPair};
 use crate::viewer::pick_scene_hit;
 
 impl OccluViewApp {
@@ -105,6 +106,10 @@ impl OccluViewApp {
                 // be handed to the next pair and exclude an arbitrary region of
                 // a different scan, with nothing on screen to say so.
                 self.clear_align_mask();
+                // A target that named this layer would keep the next pair
+                // narrowed to one scan with the Mesh selection row hidden,
+                // because that row is only drawn while both roles are named.
+                self.tools.align.brush.reset_target();
                 // The rejection list indexes pairs by position. The pairs are
                 // gone, so a freshly placed first pair would inherit the red of
                 // whatever the last fit rejected, with no fit having run.
@@ -143,9 +148,7 @@ impl OccluViewApp {
                     .map(|entry| (entry.id(), entry.transform))
                     .collect()
             });
-        if self.tools.align.worker.is_none() {
-            self.tools.align.worker = Some(AlignWorker::spawn());
-        }
+        self.align_worker_mut();
         self.imply_align_pair();
         self.tools.align.status = Some(match self.tools.align.tool.moving_layer() {
             Some(_) => self.ui.locale.tr("align-status-two-scans"),
@@ -190,7 +193,7 @@ impl OccluViewApp {
         self.tools.align.rejected.clear();
         self.tools.align.session_poses.clear();
         self.tools.align.brush.set_armed(false);
-        self.tools.align.brush.reset_target_side();
+        self.tools.align.brush.reset_target();
         // A session that ended on Manually used to re-open there, with the tab
         // the operator last left rather than the one the tool starts in. The
         // drag constraint is the same class of leak and worse to diagnose: an
@@ -378,7 +381,10 @@ impl OccluViewApp {
         if !self.align_measure_allowed(kind) {
             return;
         }
-        if self.tools.align.worker.is_none() {
+        // A worker that died is replaced here rather than left to refuse every
+        // job for the rest of the session.
+        let worker_alive = !self.align_worker_mut().has_failed();
+        if !worker_alive {
             return;
         }
         let (Some(moving_id), Some(fixed_id)) = (
@@ -498,7 +504,13 @@ impl OccluViewApp {
             self.tools.align.refined_match_ready = false;
             self.tools.align.settings.show_deviation = false;
             self.tools.align.stats = None;
-            self.clear_deviation_overlay();
+            // Only a heatmap is the previous fit's picture. With the brush
+            // armed, the attached overlay is the markings' preview, and they
+            // are still in force: dropping it there hid the exclusion regions
+            // the job was about to be built from.
+            if self.tools.align.overlay == AlignOverlay::Map {
+                self.clear_deviation_overlay();
+            }
         }
         if stale {
             self.tools.align.status = Some(self.ui.locale.tr("align-markings-dropped"));
@@ -559,169 +571,8 @@ fn transform_world_normal(transform: Affine3A, local: Vec3) -> Vec3 {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::panic)]
-
-    use super::transform_world_normal;
-    use glam::{Affine3A, Vec3};
-
-    /// The whole reason the worker exists. A full arch is hundreds of
-    /// thousands of triangles; calling a stage inline would freeze the window
-    /// for seconds.
-    /// The production half of this file: a source-contract test that scanned
-    /// its own assertions would pass or fail on its own text.
-    fn production() -> &'static str {
-        let source = crate::primary_ui_tests::production_source(include_str!("app_align.rs"));
-        source
-            .split_once("\n#[cfg(test)]")
-            .map_or(source, |(before, _)| before)
-    }
-
-    #[test]
-    fn every_heavy_call_goes_through_the_worker() {
-        let source = production();
-        for inline in [
-            "occluview_align::refine(",
-            "occluview_align::deviation(",
-            "occluview_align::fit_pairs(",
-            "SurfaceIndex::build(",
-        ] {
-            assert!(
-                !source.contains(inline),
-                "{inline} must run on the worker, never on the UI thread"
-            );
-        }
-        assert!(
-            source.contains("worker.submit(AlignJob {"),
-            "the tool must reach the maths by submitting a job"
-        );
-    }
-
-    #[test]
-    fn a_click_that_turns_the_pair_around_invalidates_the_fit() {
-        let source = production();
-        assert!(
-            source.contains("if self.tools.align.tool.take_role_swap() {"),
-            "the click path must consume the swap the tool reported"
-        );
-        assert!(
-            source.contains("self.adopt_swapped_roles(self.ui.locale.tr(\"align-status-turned\"))"),
-            "a click-driven swap owes the same invalidation as the panel button"
-        );
-    }
-
-    #[test]
-    fn clicked_triangle_normals_stay_in_the_mesh_local_frame() {
-        let source = production();
-        assert!(
-            source.contains("normal: triangle_normal(entry, hit.triangle_index)"),
-            "a triangle normal is already local and must not be inverse-transformed twice"
-        );
-        assert!(
-            !source.contains("transform_vector3(triangle_normal(entry, hit.triangle_index))"),
-            "pair refinement must not receive a normal in a second inverse-transformed frame"
-        );
-    }
-
-    #[test]
-    fn fixed_pair_normals_use_the_inverse_transpose_for_scaled_instances() {
-        let source = production();
-        assert!(
-            source.contains("transform.matrix3.inverse().transpose()"),
-            "fixed surface normals need the inverse-transpose normal matrix"
-        );
-        assert!(
-            !source.contains("fixed_pose.transform_vector3(pair.fixed.normal)"),
-            "a non-rigid fixed instance must not transform normals as vectors"
-        );
-
-        let transform = Affine3A::from_scale(Vec3::new(2.0, 1.0, 1.0));
-        let actual = transform_world_normal(transform, Vec3::new(1.0, 1.0, 0.0));
-        let expected = Vec3::new(0.5, 1.0, 0.0).normalize();
-        assert!(
-            (actual - expected).length() < 1.0e-6,
-            "{actual:?} != {expected:?}"
-        );
-    }
-
-    /// Two tools sharing the primary click would fight over every gesture.
-    #[test]
-    fn arming_align_stands_the_other_tools_down() {
-        let source = production();
-        let arm = source
-            .split_once("fn arm_align_tool(")
-            .map(|(_, rest)| rest)
-            .and_then(|rest| rest.split_once("\n    }"))
-            .map(|(body, _)| body)
-            .unwrap_or_default();
-        for other in [
-            "self.tools.sculpt.disarm()",
-            "self.tools.measure.disarm()",
-            "self.tools.cut_view.disable()",
-        ] {
-            assert!(arm.contains(other), "arming align must stand down {other}");
-        }
-    }
-
-    #[test]
-    fn removing_a_named_layer_revokes_refined_authority() {
-        let source = production();
-        let cleanup = source
-            .split_once("fn forget_removed_align_layers(")
-            .and_then(|(_, rest)| rest.split_once("    /// Arm the tool"))
-            .map(|(body, _)| body)
-            .unwrap_or_default();
-        assert!(
-            cleanup.contains("self.tools.align.refined_match_ready = false")
-                && cleanup.contains("self.tools.align.settings.show_deviation = false"),
-            "a removed scan must not leave a heatmap authority behind"
-        );
-    }
-
-    /// Measure is re-submitted on every settings change, so building the
-    /// worker's arrays here would copy eleven megabytes of an arch each time
-    /// the operator touched a slider. They are cached by the geometry and pose
-    /// they were built from and handed over by `Arc`.
-    #[test]
-    fn a_job_never_re_copies_geometry_that_has_not_changed() {
-        let source = production();
-        for built_inline in ["flat_map(|vertex| vertex.position)", "indices().to_vec()"] {
-            assert!(
-                !source.contains(built_inline),
-                "{built_inline} must come from the geometry cache, not a fresh copy per submit"
-            );
-        }
-        for cached in [
-            "geometry.local_positions(moving)",
-            "geometry.world_positions(fixed)",
-        ] {
-            assert!(source.contains(cached), "a job must borrow {cached}");
-        }
-    }
-
-    /// The reuse contract: a job carries the identity of what it measures, so
-    /// the worker can tell a re-colour from a re-measurement. Without it every
-    /// nudge of the display scale would re-derive distances that did not
-    /// change.
-    #[test]
-    fn a_job_carries_the_identity_of_what_it_measures() {
-        let source = production();
-        assert!(source.contains("measure_key: MeasureKey {"));
-        for input in [
-            "moving: moving_key",
-            "fixed: fixed_key",
-            "mask: mask_revision",
-            "influence_radius_bits",
-            "orientation: settings.orientation",
-        ] {
-            assert!(
-                source.contains(input),
-                "the measurement key must cover {input}"
-            );
-        }
-        for colour_only in ["scale_mm", "bands", "ramp_mode"] {
-            assert!(
-                !source.contains(&format!("{colour_only}:")),
-                "{colour_only} only changes the colour, so it must not key the measurement"
-            );
-        }
-    }
 }
+
+#[cfg(test)]
+#[path = "app_align_frame_tests.rs"]
+mod frame_tests;

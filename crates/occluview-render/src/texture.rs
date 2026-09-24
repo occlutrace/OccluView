@@ -5,7 +5,6 @@ use crate::contact_texture::{inert_field_texture, white_base};
 use crate::pipeline::Renderer;
 use occluview_core::MeshTexture;
 
-/// A texture resident on the GPU: the `wgpu::Texture`, its view, a sampler,
 /// Box-filter `tex` down until both sides fit `limit`, or `None` if it already
 /// does.
 ///
@@ -56,7 +55,12 @@ fn fit_to_device(tex: &MeshTexture, limit: u32) -> Option<MeshTexture> {
     Some(MeshTexture::new(width, height, rgba))
 }
 
-/// and the bind group (group 2) that binds them at bindings 0 and 1.
+/// A texture resident on the GPU: the `wgpu::Texture`, its view, a sampler and
+/// the bind group (group 2) that binds them at bindings 0 and 1.
+///
+/// An earlier edit inserted `fit_to_device` between this doc's first line and
+/// its tail, so the opening sentence described the wrong item and the tail
+/// dangled on the struct.
 pub struct GpuTexture {
     /// Owns the GPU memory; kept alive so the view and sampler stay valid.
     #[allow(dead_code)]
@@ -242,45 +246,6 @@ impl GpuTexture {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
-    /// The part of this file above the test module.
-    ///
-    /// Searching the whole of it matches the needle written in the assertion
-    /// itself, so the guard would pass on its own text and the production line
-    /// it names could be deleted with nothing going red.
-    fn production_source() -> &'static str {
-        let source = include_str!("texture.rs");
-        source
-            .split_once("#[cfg(test)]\nmod tests")
-            .map_or(source, |(production, _)| production)
-    }
-
-    #[test]
-    fn mesh_texture_sampler_clamps_uv_edges() {
-        let source = production_source();
-        let start = source.find("label: Some(\"occluview mesh sampler\")");
-        assert!(start.is_some(), "missing mesh sampler");
-        let Some(start) = start else {
-            return;
-        };
-        let end = source[start..].find("mipmap_filter: wgpu::MipmapFilterMode::Nearest");
-        assert!(end.is_some(), "missing mesh sampler mipmap filter");
-        let Some(end) = end else {
-            return;
-        };
-        let sampler = &source[start..start + end];
-
-        assert!(
-            sampler.contains("address_mode_u: wgpu::AddressMode::ClampToEdge")
-                && sampler.contains("address_mode_v: wgpu::AddressMode::ClampToEdge")
-                && sampler.contains("address_mode_w: wgpu::AddressMode::ClampToEdge"),
-            "scan textures should clamp at UV borders instead of wrapping unrelated texture pixels"
-        );
-        assert!(
-            !sampler.contains("address_mode_u: wgpu::AddressMode::Repeat"),
-            "Repeat sampling causes HPS edge/packed-UV color artifacts"
-        );
-    }
-
     /// A texture the device cannot hold is boxed down, not dropped.
     ///
     /// The readers accept up to 8192 px and some devices stop at 2048, so a

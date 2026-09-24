@@ -194,38 +194,66 @@ fn rim_perimeter_mm(mesh: &MeshEditBuffers, boundary_loop: &[usize]) -> Result<f
     Ok(perimeter)
 }
 
-/// Refuse a triangle soup that the caller has not asked to weld.
+/// Refuse a triangle soup whose corners are still not shared.
 ///
-/// With `heal_boundary_rims` off nothing welds, so in index space every edge
-/// of every triangle reads as a boundary: each triangle becomes its own
-/// three-edge rim, and the duplicate check each rim runs scans all triangles.
-/// That is quadratic, and it does not finish -- a 500k-triangle soup was still
-/// running after ten minutes.
+/// In index space every edge of every triangle reads as a boundary: each
+/// triangle becomes its own three-edge rim, and the duplicate check each rim
+/// runs scans all triangles. That is quadratic, and it does not finish -- a
+/// 500k-triangle soup was still running after ten minutes.
 ///
-/// The shipped callers all pass `heal_boundary_rims: true`, and the repair
-/// path welds before it gets here, so this only catches a caller using the
-/// default options on soup: `MeshEditOptions::default()` has healing off, which
-/// makes the obvious call the trap. A soup is recognisable for free -- every
-/// corner is its own vertex, so the vertex and index counts match.
+/// The test is whether the INDICES SHARE VERTICES, and it is asked of the
+/// post-weld mesh. Two earlier versions were wrong in ways this one is not:
+///
+/// * Keying on the `heal_boundary_rims` flag assumed healing welds first, but
+///   healing welds by full payload (position AND colour/UV bits), so a soup
+///   whose coincident corners carry different payloads merges nothing -- and the
+///   healing pass then classified all three edges of every triangle as an
+///   isolated nick and deleted the whole mesh, publishing a zero-face result as
+///   a successful cap. Every OBJ is such a soup: the reader pushes one vertex per
+///   face corner and never dedups.
+/// * Keying on the vertex/index LENGTHS cannot see the weld at all:
+///   `weld_soup_topology` clones the vertex array and remaps only the indices, so
+///   a soup has `vertices.len() == indices.len()` before AND after a successful
+///   weld. That version refused every large soup, including the perfectly
+///   weldable binary-STL arch Close Holes exists to heal.
+///
+/// A welded surface points many corners at the same vertex; a soup gives every
+/// corner its own. Counting distinct referenced vertices separates the two at
+/// any size, and it costs one linear pass.
 pub(super) fn refuse_unweldable_soup(
     mesh: &MeshEditBuffers,
-    heal_boundary_rims: bool,
     triangles: usize,
 ) -> Result<(), MeshEditError> {
     /// Below this a quadratic pass is merely slow, and some fixtures rely on
     /// filling small soups directly.
     const SOUP_REFUSAL_TRIANGLES: usize = 20_000;
 
-    if heal_boundary_rims
-        || triangles < SOUP_REFUSAL_TRIANGLES
-        || mesh.vertices.len() != mesh.indices.len()
-    {
+    if triangles < SOUP_REFUSAL_TRIANGLES {
+        return Ok(());
+    }
+    // Distinct referenced vertices. A closed triangle surface references about
+    // half as many vertices as it has triangles; a tangled patch references
+    // about one per triangle; a soup references one per CORNER, i.e. three per
+    // triangle. Comparing against the corner count is what tells them apart.
+    let mut seen = vec![false; mesh.vertices.len()];
+    let mut distinct = 0usize;
+    for &index in &mesh.indices {
+        let Some(flag) = seen.get_mut(index as usize) else {
+            continue;
+        };
+        if !*flag {
+            *flag = true;
+            distinct += 1;
+        }
+    }
+    if distinct.saturating_mul(2) < mesh.indices.len() {
         return Ok(());
     }
     Err(MeshEditError::InvalidOptions {
         reason: format!(
-            "hole filling on {triangles} unwelded triangles is quadratic; set \
-             heal_boundary_rims to weld the soup first"
+            "hole filling on {triangles} triangles whose corners are not shared is quadratic; \
+             weld the soup first (coincident corners that differ in colour or UV cannot be \
+             welded by position)"
         ),
     })
 }

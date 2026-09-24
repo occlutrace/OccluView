@@ -2,7 +2,6 @@
 ## Status: DRAFT. Requires native dental/CAD terminology review + visual UI review before APPROVED.
 ## Contract: exact key/attribute/variable parity with en.ftl.
 
-app-title = OccluView
 app-window-title = OccluView 3D Viewer
 align-panel-title = Сопоставление сканов
 meshedit-window-title = Редактирование сетки
@@ -35,7 +34,6 @@ update-dismiss = Скрыть
 
 error-open-title = Не удаётся открыть файл
 error-add-title = Не удаётся добавить файл
-error-open-body = Не удалось открыть { $path }.
 
 ## Help surface — DRAFT. Gesture names stay invariant by contract.
 
@@ -158,6 +156,7 @@ load-open-failed-start = Не удалось открыть: загрузчик 
 load-add-failed-start = Не удалось добавить: загрузчик не запустился
 load-open-failed-stopped = Не удалось открыть: загрузчик остановлен
 load-loader-failed-summary = Не удалось запустить фоновый загрузчик сцены.
+load-file-too-large = Файл { $size } ГБ — больше, чем { $limit } ГБ, которые программа читает за один раз
 load-action-failed-open = Не удалось открыть: { $detail }
 load-action-failed-add = Не удалось добавить: { $detail }
 
@@ -548,6 +547,8 @@ align-brush-close-hint = Закрыть кисть — пометки сохра
 align-brush-mesh-selection = Выбор сетки
 align-brush-moving = Подвижная
 align-brush-fixed = Неподвижная
+align-brush-both = Оба
+align-brush-both-hint = Красить и применять на обоих сканах — мазок ложится на поверхность под курсором
 align-brush-size = размер кисти
 align-brush-inverse = Инверсия кисти
 align-brush-inverse-hint = Простое перетаскивание стирает вместо пометки. Shift инвертирует снова
@@ -559,15 +560,20 @@ align-status-no-summary = Нет сопоставимой поверхности
 align-mask-fit-everywhere = Совмещать везде
 align-mask-fit-everywhere-hint = Снять все пометки
 align-mask-fit-everywhere-report = Пометки сняты — совмещение по всему скану
+align-mask-fit-everywhere-report-one = { $name }: разметка очищена
 align-mask-fit-nowhere = Нигде не совмещать
 align-mask-fit-nowhere-hint = Пометить всю сетку — совмещение не даст эффекта
 align-mask-fit-nowhere-report = Вся сетка помечена — совмещение не даст эффекта
+align-mask-fit-nowhere-report-one = { $name }: весь скан исключён из совмещения
 align-mask-invert = Инвертировать пометки
 align-mask-invert-hint = Пометить непомеченные области и наоборот
 align-mask-invert-report = Пометки инвертированы
+align-mask-invert-report-one = { $name }: разметка инвертирована
 align-mask-automatic = Автопометка
 align-mask-automatic-hint = Совмещать только по малой области у концов стрелок
 align-mask-automatic-report = Совмещение только у концов стрелок
+align-mask-automatic-report-one = { $name }: совмещение только вокруг концов стрелок
+align-mask-automatic-empty = Совпадение по всей поверхности: область накрыла весь скан, поэтому ничего не исключено
 
 align-status-half-dropped = Незавершённая стрелка убрана
 align-status-turned = Пара развёрнута
@@ -597,7 +603,6 @@ align-status-measured = Теплокарта обновлена
 align-status-remeasure = { $reason } — запустите точное совмещение для повторного измерения
 align-status-settings-changed = Настройки сопоставления изменены
 align-status-visibility-changed = Видимость выбранного скана изменена
-align-brush-not-in-alignment = Этот скан не входит в текущее совмещение
 align-drag-moving = Перемещение { $name } вручную
 align-drag-unrecorded = Перемещено вручную, но шаг не попал в историю — Ctrl+Z не отменит его
 align-drag-moved = Перемещение вручную: { $name }, сдвиг { $moved } мм (Ctrl+Z отменяет)
@@ -697,7 +702,6 @@ holes-seg-damaged = { $n ->
     [many] Пропущено { $n } повреждённых кромок
    *[other] Пропущено { $n } повреждённых кромок
 }
-batchedit-close-holes = Закрыты безопасные внутренние отверстия
 batchedit-delete = Выбор удалён
 batchedit-crop = Обрезано по выбору
 batchedit-cut = Выбор вырезан в новый слой
@@ -717,7 +721,6 @@ batchedit-status = { $label } на { $n ->
     [many] { $n } видимых слоях
    *[other] { $n } видимых слоях
 }
-batchedit-no-changes = Без изменений: уточните выбор; скрытые слои не тронуты
 
 select-covers-all = Выбор уже покрывает всю сетку: { $layer }
 select-covers-remove = Выбор покрывает всю сетку — вместо этого удалите слой: { $layer }
@@ -849,8 +852,6 @@ scene-positions-reset = Позиции слоёв сброшены (Ctrl+Z от�
 
 settings-header = Настройки
 settings-section-files = Файлы и экспорт
-settings-export-format = Запасной формат экспорта
-settings-export-format-hint = Используется, когда исходный формат нельзя экспортировать
 settings-remember-export = Запоминать папку экспорта
 settings-remember-export-hint = Использовать ту же папку после перезапуска OccluView
 settings-section-scene = Вид и навигация
@@ -953,6 +954,9 @@ contact-load-suffix = мм
 contact-load-hint = Глубина, при которой шкала читается как полная нагрузка. Сдвиг перекрашивает уже измеренную карту — без повторного измерения.
 contact-flatten = Один цвет на контакт
 contact-flatten-hint = Свести каждый отпечаток контакта к его самой глубокой точке. Выключено — сохраняется распределение силы внутри отпечатка.
+# Label above the list of layers a contact reading can be measured against.
+contact-antagonist-pick = Измеряется относительно
+contact-antagonist-pick-hint = Ближайший скан выбирается автоматически. Выберите другой слой, чтобы измерять относительно него.
 
 contact-legend-deepest = { $mm } мм в смыкание
 
@@ -991,10 +995,17 @@ contact-status-failed-hint = Прочитать заново; если снов�
 contact-status-needs-second-hint = Откройте встречный скан или покажите его снова и начните чтение
 contact-legend-gap = зазор до { $mm } мм
 contact-stats-balance = Площадь по сторонам
-contact-stats-balance-hint = Площадь контакта по обе стороны от собственной средней линии скана. Деление идёт по координатам скана, поэтому при повороте или зеркале числа могут поменяться местами.
 layer-menu-contacts-unavailable = Для чтения контактов нужны два видимых полигональных скана — сначала покажите или откройте встречный
 
 contact-details = Подробности
 contact-details-hint = Числа и правило «один цвет на контакт»
 contact-details-close = Скрыть подробности
 settings-shortcuts-hint = Справка по клавиатуре и мыши (F1)
+
+load-units-ambiguous = Единицы не подтверждены: формат объявляет метры, а сканеры обычно пишут миллиметры — { $suggestion }
+load-units-suggest-meters = размер говорит о метрах, то есть модель примерно в 1000 раз меньше нужного
+load-units-suggest-millimeters = размер говорит о миллиметрах — так и прочитано
+load-units-unclear = по размеру не определить; проверьте известным измерением
+contact-stats-balance-hover = Площадь контакта по средней линии: до линии / после линии
+mesh-warning-vertex-alpha = альфа вершин не записана
+load-superseded-parked-open = Ожидает более новый запрос на открытие: сначала ответьте на него

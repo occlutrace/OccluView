@@ -3,7 +3,6 @@
 ## Contract: exact key/attribute/variable parity with en.ftl.
 ## Never use this catalog for pt-PT or other Portuguese variants.
 
-app-title = OccluView
 app-window-title = OccluView 3D Viewer
 align-panel-title = Alinhar escaneamentos
 meshedit-window-title = Edição de malhas
@@ -36,7 +35,6 @@ update-dismiss = Dispensar
 
 error-open-title = Não dá para abrir o arquivo
 error-add-title = Não dá para adicionar o arquivo
-error-open-body = Não foi possível abrir { $path }.
 
 ## Help surface — DRAFT. Gesture names stay invariant by contract.
 
@@ -153,6 +151,7 @@ load-open-failed-start = Falha ao abrir: carregador não iniciou
 load-add-failed-start = Falha ao adicionar: carregador não iniciou
 load-open-failed-stopped = Falha ao abrir: carregador parou
 load-loader-failed-summary = Não deu para iniciar o carregador de cena.
+load-file-too-large = O arquivo tem { $size } GB, acima dos { $limit } GB lidos de uma vez
 load-action-failed-open = Falha ao abrir: { $detail }
 load-action-failed-add = Falha ao adicionar: { $detail }
 
@@ -476,6 +475,8 @@ align-brush-close-hint = Fechar o pincel — marcas mantidas
 align-brush-mesh-selection = Seleção de malha
 align-brush-moving = Móvel
 align-brush-fixed = Fixa
+align-brush-both = Ambos
+align-brush-both-hint = Pinte e aplique nos dois scans — a superfície sob o cursor recebe o traço
 align-brush-size = tamanho do pincel
 align-brush-inverse = Pincel inverso
 align-brush-inverse-hint = Arrastar apaga em vez de marcar. Shift inverte de novo
@@ -487,15 +488,20 @@ align-status-no-summary = Nenhuma superfície comparável
 align-mask-fit-everywhere = Ajustar em tudo
 align-mask-fit-everywhere-hint = Limpar todas as marcas
 align-mask-fit-everywhere-report = Marcas limpas — ajuste no escaneamento todo
+align-mask-fit-everywhere-report-one = { $name }: marcações apagadas
 align-mask-fit-nowhere = Não ajustar em nada
 align-mask-fit-nowhere-hint = Marcar a malha toda — ajuste sem efeito
 align-mask-fit-nowhere-report = Malha toda marcada — ajuste sem efeito
+align-mask-fit-nowhere-report-one = { $name }: scan inteiro excluído da correspondência
 align-mask-invert = Inverter marcas
 align-mask-invert-hint = Marcar o desmarcado e vice-versa
 align-mask-invert-report = Marcas invertidas
+align-mask-invert-report-one = { $name }: marcações invertidas
 align-mask-automatic = Marca automática
 align-mask-automatic-hint = Ajustar só numa área pequena em cada ponta
 align-mask-automatic-report = Ajuste nas pontas de seta
+align-mask-automatic-report-one = { $name }: correspondência só em torno das pontas das setas
+align-mask-automatic-empty = Correspondência em toda parte: a região cobriu todo o escaneamento, então nada foi excluído
 
 align-status-half-dropped = Seta pela metade descartada
 align-status-turned = Par virado
@@ -525,7 +531,6 @@ align-status-measured = Mapa de calor atualizado
 align-status-remeasure = { $reason } — rode o ajuste fino para medir de novo
 align-status-settings-changed = Configurações de matching alteradas
 align-status-visibility-changed = Visibilidade de um escaneamento selecionado alterada
-align-brush-not-in-alignment = Esse escaneamento não faz parte deste alinhamento
 align-drag-moving = Movendo { $name } à mão
 align-drag-unrecorded = Movido à mão, mas esta etapa não entrou no histórico — Ctrl+Z não a desfará
 align-drag-moved = { $name }: movimento de { $moved } mm à mão (Ctrl+Z desfaz)
@@ -610,7 +615,6 @@ holes-seg-damaged = { $n ->
    *[other] Puladas { $n } bordas danificadas
 }
 batchedit-invert = Normais invertidas
-batchedit-close-holes = Buracos internos seguros fechados
 batchedit-delete = Seleção excluída
 batchedit-crop = Recorte na seleção
 batchedit-cut = Seleção cortada para nova camada
@@ -621,7 +625,6 @@ batchedit-status = { $label } em { $n ->
     [one] { $n } camada visível
    *[other] { $n } camadas visíveis
 }
-batchedit-no-changes = Sem mudanças: refine a seleção; ocultas intactas
 batch-close-holes = Buracos internos fechados
 batch-delete = Seleção excluída
 batch-crop = Recorte na seleção
@@ -742,8 +745,6 @@ align-session-kept = Alinhamento mantido — exporte para gravar
 
 settings-header = Ajustes
 settings-section-files = Arquivos e exportação
-settings-export-format = Formato de exportação alternativo
-settings-export-format-hint = Quando o formato de origem não exporta
 settings-remember-export = Lembrar pasta de exportação
 settings-remember-export-hint = Mesma pasta após reiniciar
 settings-section-scene = Visualização e navegação
@@ -865,6 +866,9 @@ contact-load-suffix = mm
 contact-load-hint = A profundidade em que esta escala é lida como carga total. Movê-la recolore o mapa já medido, sem medir de novo.
 contact-flatten = Uma cor por contato
 contact-flatten-hint = Reduzir cada área de contato ao seu ponto mais profundo. Desligado mantém a distribuição de força dentro de cada marca.
+# Label above the list of layers a contact reading can be measured against.
+contact-antagonist-pick = Medido contra
+contact-antagonist-pick-hint = A digitalização mais próxima é escolhida automaticamente. Escolha outra camada para medir contra ela.
 
 contact-legend-deepest = { $mm } mm na oclusão
 
@@ -903,10 +907,17 @@ contact-status-failed-hint = Leia novamente; se continuar falhando, o par talvez
 contact-status-needs-second-hint = Abra o escaneamento antagonista ou mostre-o de novo e inicie a leitura
 contact-legend-gap = folga até { $mm } mm
 contact-stats-balance = Área por lado
-contact-stats-balance-hint = Área de contato de cada lado da linha média do próprio escaneamento. A divisão segue as coordenadas do escaneamento, então um caso girado ou espelhado pode trocar os números.
 layer-menu-contacts-unavailable = Uma leitura de contatos precisa de duas malhas de triângulos visíveis — mostre ou abra antes o escaneamento antagonista
 
 contact-details = Detalhes
 contact-details-hint = Os números e a regra de uma cor por contato
 contact-details-close = Ocultar detalhes
 settings-shortcuts-hint = Referência de teclado e mouse (F1)
+
+load-units-ambiguous = Unidades não verificadas: o formato declara metros, mas os scanners costumam exportar milímetros — { $suggestion }
+load-units-suggest-meters = o tamanho sugere metros, então está cerca de 1000x menor do que deveria
+load-units-suggest-millimeters = o tamanho sugere números em milímetros, foi assim que foi lido
+load-units-unclear = o tamanho não decide; confira com uma medida conhecida
+contact-stats-balance-hover = Área de contato dividida pela linha média: antes / depois da linha
+mesh-warning-vertex-alpha = o alfa dos vértices não foi gravado
+load-superseded-parked-open = Há uma abertura mais recente aguardando: responda primeiro ao aviso dela

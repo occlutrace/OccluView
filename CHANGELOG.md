@@ -3,6 +3,105 @@
 This file records user-visible changes. Internal refactors and test-only work
 remain in the Git history.
 
+## 1.2.1 - 2026-09-21
+
+### Viewer
+
+- Excluding surface from best-fit matching with the Brush tool marks and
+  commands both scans again. Selecting one mesh had narrowed "Fit everywhere",
+  "Fit nowhere", "Invert markings" and "Mark automatic" to that single scan, so
+  with an upper and a lower arch open the button an operator pressed did not do
+  what its own sentence said: one arch was taken out of the match and the other
+  was left in it. The Brush window's Mesh selection now offers both scans, which
+  is what it opens on, and naming one scan still narrows a command for the
+  overlapping case.
+- A stroke paints the scan under the cursor on either arch of the pair. The
+  previous behaviour aimed every dab at whichever mesh the Mesh selection named,
+  so painting the other arch did nothing at all until the operator noticed the
+  selection and changed it.
+- The marked region is drawn as paint over the scan's own surface, not as a
+  measured colour map. Marked surface reads blue; everything else keeps the
+  scan's own colour, texture and lighting. The preview had been shaded through
+  the deviation map's path, which drops the layer tint and the texture and
+  reduces the light, so opening the brush turned both arches into a pale glossy
+  shell and a textured scan lost the colour it was being read against.
+- A whole-mesh command no longer repaints a scan that has nothing marked on it:
+  "Fit everywhere" leaves a mask that marks nothing, and attaching it uploaded a
+  whole vertex array for a picture identical to the scan.
+- The status line after a Brush command names the scan it reached when the Mesh
+  selection narrowed it to one, instead of stating the rule as though both had
+  been changed.
+
+### Files
+
+- Saving a layer back out keeps the format it was opened in by default. Scans
+  already round-tripped PLY/STL/OBJ that way, but a scan opened from a format
+  with no writer (HPS, GLB, OFF) silently became a PLY, and the preference that
+  produced the substitution was not stated anywhere. Settings now asks one
+  question with two answers — save each scan in its own
+  format, or save every scan in a chosen format — instead of a switch beside a
+  format that looked like it applied either way. The format chips appear only in
+  the mode that uses them, and the mode in force is always named. Whichever
+  mode is chosen, a scan whose geometry cannot be written in the resulting
+  format is saved as PLY rather than STL.
+- A merged scene is saved in the fallback format instead of always PLY, so
+  "Save scene as" follows the same preference as the layers.
+- A PLY export of a textured scan carries the texture instead of dropping it,
+  inside the file. PLY has no texture element — every other tool stores the
+  image beside the `.ply` and names it in a `comment TextureFile` line — so the
+  image travels as an OccluView header comment, and the export is one file with
+  nothing to keep together. Texture coordinates go out with it, both as the
+  per-face `texcoord` list other software understands and, for a scan with no
+  image, as per-vertex `s`/`t`. Opening an OccluView export again shows the scan
+  in colour, and a scan that carries both per-vertex colours and an atlas is
+  written with both.
+- A scan that names its image beside it arrives with the image. An OBJ with its
+  `mtllib`/`map_Kd` pair — or with an image sharing its name — and a PLY from
+  another tool with a `comment TextureFile` line are read with the texture
+  attached, instead of being imported untextured and losing the colour the scan
+  was captured with. A file larger than 1 GB, or a companion image larger than
+  64 MB, is refused rather than read.
+- A PLY export no longer writes a texture its own reader would refuse. An atlas
+  with an edge past 8192 px, or one whose decoded surface is past 256 MiB, used
+  to compress into a small PNG, land in the header and be reported as a success,
+  while re-opening the file showed no colour at all. The export now drops the
+  image and says so, and keeps the coordinates for the next tool. The image
+  bytes carried in a PLY header are no longer accumulated past the size the
+  reader accepts either, so a crafted header cannot make the importer hold a
+  second copy of a payload it was always going to reject. A header whose
+  `OccluViewTexture` keys were re-cased by a text editor reads as before,
+  matching the case-insensitive treatment `TextureFile` already had.
+- The save format is no longer a setting. Settings used to ask "each scan keeps
+  its own format" or "chosen format", with a format to pick in the second mode
+  and two lines explaining the consequence — and the mode that was in force
+  could still propose a colourless `.stl` for a scan captured in colour, leaving
+  only a status-line warning after the name had been picked. That whole question
+  is gone, together with the two notes under it. A scan keeps the format it was
+  opened in when the viewer can write it; a scan from a format it cannot write
+  is saved as PLY when it holds a texture, vertex colours or a mapping, and as
+  STL when it is geometry alone. There is nothing left to choose and nothing
+  left to contradict.
+- Settings is shorter and the two references sit side by side. "Keyboard and
+  mouse" and "About OccluView" were two full-width text lines; they are now one
+  row of two equal buttons.
+- A malformed binary PLY can no longer hang the viewer or the Explorer preview.
+  A face element declared with rows but no property used to consume no bytes per
+  row, so the reader looped forever on the same empty state; it is now refused
+  with a typed error, as the ASCII reader already refused it.
+- Opening several scans at once parses two of them at a time and holds at most
+  half a gigabyte of file data in memory, instead of parsing every dropped file
+  at once — a scan larger than that budget is parsed on its own, up to the 1 GB
+  a single file may be. A bigger file is refused with a sentence in the
+  operator's language that gives both sizes in gigabytes.
+- The contact reading says which scan it is measured against when the scene has
+  more than one candidate, and offers the others: an upper, a lower and a wax-up
+  used to resolve by proximity alone, which cannot tell two similar arches
+  apart. With one obvious antagonist the automatic pick stands and nothing
+  changes.
+- A contact measurement whose worker thread died reports a failure and offers
+  "Read again" instead of leaving the bar measuring forever with no status text
+  and no way out.
+
 ## 1.2.0 - 2026-09-14
 
 ### Viewer

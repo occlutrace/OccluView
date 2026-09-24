@@ -211,8 +211,24 @@ pub(super) fn unregister_open_with(ext: &str) -> windows::core::Result<()> {
     delete_value(&key_path, Some(&legacy))
 }
 
+/// The ProgID for an owned extension.
+///
+/// `.dcm` is the legacy extension of the same HPS container, and every other
+/// registration surface says so: the MSI's `OpenWithProgids`, `Capabilities`
+/// and the `.reg` all write `MeshFile.HPS` for it, and the in-crate contract
+/// test canonicalises `dcm` to `hps` before comparing anything. Spelling it
+/// `MeshFile.DCM` here created a SECOND ProgID with its own friendly name, icon
+/// and handlers, so `regsvr32` on an MSI-installed machine listed OccluView
+/// twice in "Open with" under two type names — one of which calls a DICOM
+/// extension an OccluView file type. Unregistration then diverged too: this
+/// path removed `MeshFile.DCM` while the MSI removed `MeshFile.HPS`.
 fn format_progid(ext: &str) -> String {
-    format!("MeshFile.{}", ext.to_ascii_uppercase())
+    let canonical = if ext.eq_ignore_ascii_case("dcm") {
+        "hps"
+    } else {
+        ext
+    };
+    format!("MeshFile.{}", canonical.to_ascii_uppercase())
 }
 
 fn format_legacy_progid(ext: &str) -> String {
@@ -225,8 +241,21 @@ fn system_file_association_shell_ex_key(ext: &str, category: &str) -> HSTRING {
     ))
 }
 
+/// The friendly name of the type behind an extension.
+///
+/// Taken from the CANONICAL extension, not the one that arrived. `.dcm` shares
+/// the HPS ProgID (`format_progid`), and `register_progid` is called once per
+/// supported extension in `SUPPORTED_EXTENSIONS` order — `hps` before `dcm` —
+/// so naming this from the raw extension let the `dcm` pass overwrite
+/// `HKCR\MeshFile.HPS @` from "HPS File" to "DCM File" after the `hps` pass had
+/// written it. The MSI, the `.reg` and the lifecycle smoke all pin "HPS File".
 fn format_file_type_name(ext: &str) -> String {
-    format!("{} File", ext.to_ascii_uppercase())
+    let canonical = if ext.eq_ignore_ascii_case("dcm") {
+        "hps"
+    } else {
+        ext
+    };
+    format!("{} File", canonical.to_ascii_uppercase())
 }
 
 fn format_icon_value(app_path: &HSTRING) -> HSTRING {

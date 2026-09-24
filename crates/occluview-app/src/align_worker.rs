@@ -359,7 +359,42 @@ impl AlignWorker {
         }
     }
 
+    /// Publish a completion as if the worker thread had produced it.
+    ///
+    /// Test-only. `drain` keeps only the newest request, and `submit` mints a
+    /// fresh request id every time, so a submission can never put two
+    /// completions in front of the UI at once. The app's drain loop still has to
+    /// re-read the generation between them, because applying one result can
+    /// invalidate the rest of the batch; this is how that boundary is reached.
+    #[cfg(test)]
+    pub(crate) fn publish_for_tests(&self, generation: u64, outcome: AlignOutcome) {
+        let request_id = self.request_sequence.load(Ordering::SeqCst);
+        if let Ok(mut published) = self.completions.lock() {
+            published.push(AlignCompletion {
+                generation,
+                request_id,
+                outcome,
+            });
+        }
+    }
+
     /// Whether this worker can still accept or publish work.
+    /// Poison this worker's queue, the way a panicking job does.
+    ///
+    /// Test-only: the real failure path is a panic inside the worker thread,
+    /// which cannot be provoked from outside without a job that panics.
+    #[cfg(test)]
+    #[allow(clippy::expect_used, clippy::panic)]
+    pub(crate) fn poison_queue_for_tests(&self) {
+        let queue = Arc::clone(&self.queue);
+        let _ = thread::spawn(move || {
+            let _guard = queue.state.lock().expect("queue lock before poisoning");
+            panic!("poison the align worker queue");
+        })
+        .join();
+        self.queue.wake.notify_one();
+    }
+
     pub(crate) fn has_failed(&self) -> bool {
         self.failed.load(Ordering::Acquire)
     }
@@ -499,14 +534,19 @@ fn run_worker(
         };
         *slot = Some(cancel.clone());
         drop(slot);
-        busy.fetch_add(1, Ordering::SeqCst);
+        // RAII, not a hand-written pair. The panic boundary is OUTSIDE this
+        // loop, so an unwind inside `execute` skipped the `fetch_sub` and left
+        // the counter above zero forever: `is_busy` then reports busy for the
+        // rest of the session, the panel keeps its spinner, and
+        // `finish_align_session` claims the session closed "while a fit was
+        // still running". The contact worker already uses this guard.
+        let _busy = Busy::new(busy);
 
         let outcome = execute(&job, &cancel, &mut cached);
         // Cancelled stages may return structurally valid but unusable values;
         // do not publish them.
         let abandoned = cancel.is_cancelled();
 
-        busy.fetch_sub(1, Ordering::SeqCst);
         let Ok(mut slot) = running.lock() else {
             mark_failed(failed, "running-job lock poisoned", None);
             return;
@@ -538,6 +578,27 @@ fn mark_failed(failed: &AtomicBool, reason: &'static str, detail: Option<String>
         } else {
             tracing::error!(reason, "align worker stopped");
         }
+    }
+}
+
+/// A panic-safe hold on the busy counter.
+///
+/// The counter is what the panel shows as a spinner and what
+/// `finish_align_session` reads before claiming a session ended while work was
+/// running. Decrementing it by hand means any early return or unwind between
+/// the two calls leaves Align busy forever.
+struct Busy(Arc<AtomicU64>);
+
+impl Busy {
+    fn new(counter: &Arc<AtomicU64>) -> Self {
+        counter.fetch_add(1, Ordering::SeqCst);
+        Self(Arc::clone(counter))
+    }
+}
+
+impl Drop for Busy {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
     }
 }
 

@@ -38,8 +38,26 @@ impl OccluViewApp {
         paths: &[PathBuf],
         request: LayerContextRequest,
     ) -> bool {
-        let fallback = fallback_mesh_write_format(self.persistence.settings.fallback_export_format);
-        let default_format = default_layer_export_format(paths, request.index, fallback);
+        // A layer export reads the same scene the other two paths do, so it
+        // obeys the same rule. `pending_layer_exports` already commits the
+        // stroke for the Save flow and keeps its guard open; this covers the
+        // direct "Export layer" menu item, which has none.
+        let ctx = self.ui.repaint_ctx.clone();
+        if self.refuse_export_during_stroke(&ctx) {
+            return false;
+        }
+        // The format is decided from the scan, not from a preference: its own
+        // format when the viewer can write it, and otherwise PLY or STL by what
+        // the scan holds. A layer that is not in the scene has nothing to
+        // inspect, so the dialog opens on PLY, the format that never loses a
+        // payload.
+        let default_format = match scene.meshes().get(request.index) {
+            Some(entry) if entry.id() == request.layer_id => representable_export_format(
+                automatic_export_format(paths, request.index, &entry.mesh),
+                &entry.mesh,
+            ),
+            _ => MeshWriteFormat::PlyBinaryLittleEndian,
+        };
         let mut dialog = layer_export_file_dialog(default_format).set_file_name(
             default_layer_export_name(paths, scene, request.index, default_format),
         );
@@ -133,6 +151,28 @@ impl OccluViewApp {
             self.persistence.settings.last_export_dir = parent.to_str().map(str::to_owned);
             self.persistence.settings_persistence.mark_dirty();
         }
+    }
+
+    /// Refuse an export while a Sculpt stroke is still being rebuilt.
+    ///
+    /// The scene only advances to a stroke's result when its worker lands, so
+    /// an export started mid-stroke writes the geometry from BEFORE the stroke
+    /// — or an intermediate rebuild — reports success, and the operator finds
+    /// out by re-opening the file. `save_scene_dialog`, `save_each_layer_dialog`
+    /// and `save_layer_export_dialog` are three separate entry points to the
+    /// same scene, and the close/replace guard was the only one that knew this
+    /// rule; every path asks here instead.
+    ///
+    /// Returns true when the caller must stop.
+    pub(super) fn refuse_export_during_stroke(&mut self, ctx: &egui::Context) -> bool {
+        if !self.document.unsaved_sculpt_stroke {
+            return false;
+        }
+        // Ask the worker to finish, exactly as Save does, so the next attempt
+        // writes the stroke instead of nothing.
+        let _ = self.commit_sculpt_stroke(ctx);
+        self.ui.status_message = Some(self.ui.locale.tr("edit-session-busy"));
+        true
     }
 
     /// Collect edited layers for Save, committing a held Align drag first.
@@ -321,24 +361,99 @@ fn mesh_export_format_from_source_path(path: &Path) -> Option<MeshWriteFormat> {
     }
 }
 
-pub(super) fn default_layer_export_format(
+/// The format a layer is saved in, decided from the scan itself.
+///
+/// A scan keeps the format of the file it came from when the viewer can write
+/// that format. When it cannot — `.dcm`/HPS, GLB, OFF, or a layer with no file
+/// of its own — the format follows what the scan actually holds: PLY carries a
+/// texture atlas, vertex colours and a mapping in one file, so a scan that has
+/// any of them is saved as PLY, and a scan that is geometry alone is saved as
+/// STL. STL cannot carry colour, which is why it is only proposed when there is
+/// no colour to lose.
+pub(super) fn automatic_export_format(
     paths: &[PathBuf],
     index: usize,
-    fallback: MeshWriteFormat,
+    mesh: &occluview_core::Mesh,
 ) -> MeshWriteFormat {
     source_path_for_export_defaults(paths, index)
         .and_then(mesh_export_format_from_source_path)
-        .unwrap_or(fallback)
+        .map_or_else(
+            || format_for_payload(mesh),
+            |source| source_format_that_carries(source, mesh),
+        )
 }
 
-pub(super) const fn fallback_mesh_write_format(
-    format: crate::app_settings::FallbackExportFormat,
-) -> MeshWriteFormat {
-    match format {
-        crate::app_settings::FallbackExportFormat::Ply => MeshWriteFormat::PlyBinaryLittleEndian,
-        crate::app_settings::FallbackExportFormat::Stl => MeshWriteFormat::StlBinary,
-        crate::app_settings::FallbackExportFormat::Obj => MeshWriteFormat::Obj,
+/// Whether this scan carries anything STL cannot hold.
+fn carries_colour_payload(mesh: &occluview_core::Mesh) -> bool {
+    mesh.texture().is_some() || mesh.has_vertex_colors() || mesh.has_uvs()
+}
+
+/// PLY when the scan has colour to keep or is not a triangle mesh, STL when it
+/// is plain geometry.
+///
+/// A point cloud cannot be written as STL at all — the writer refuses a
+/// non-triangle mesh — so the geometry kind belongs in the same decision as the
+/// payload, and a point cloud is never proposed as STL.
+pub(super) fn format_for_payload(mesh: &occluview_core::Mesh) -> MeshWriteFormat {
+    if mesh.kind() != occluview_core::MeshKind::TriangleMesh || carries_colour_payload(mesh) {
+        MeshWriteFormat::PlyBinaryLittleEndian
+    } else {
+        MeshWriteFormat::StlBinary
     }
+}
+
+/// Keep the source format, unless it cannot carry what the scan holds.
+///
+/// STL carries geometry only, so a coloured scan written as STL loses the
+/// colour. OBJ carries vertex colours and a mapping but no image, so a textured
+/// scan written as OBJ loses the atlas. PLY carries all three, so it is the one
+/// format that never has to be second-guessed.
+fn source_format_that_carries(
+    source: MeshWriteFormat,
+    mesh: &occluview_core::Mesh,
+) -> MeshWriteFormat {
+    match source {
+        MeshWriteFormat::StlBinary if format_for_payload(mesh) != MeshWriteFormat::StlBinary => {
+            MeshWriteFormat::PlyBinaryLittleEndian
+        }
+        MeshWriteFormat::Obj if mesh.texture().is_some() => MeshWriteFormat::PlyBinaryLittleEndian,
+        other => other,
+    }
+}
+
+/// The format actually offered for one layer.
+///
+/// Two things make the chosen format unwritable or lossy here, and both are
+/// answered before a file name is proposed:
+///
+/// * A point cloud cannot be written as STL — the writer refuses a non-triangle
+///   mesh — so a forced STL falls back to PLY for that layer rather than
+///   proposing a file name whose write is guaranteed to fail into an error
+///   dialog.
+/// * STL carries geometry and nothing else. A colour scan written as STL loses
+///   the colour it was captured with, and the operator only finds out from a
+///   warning on the status line, after the name is already chosen. PLY holds
+///   the atlas, the vertex colours and the mapping in one file, so a layer that
+///   has any of them opens its save dialog on PLY instead.
+///
+/// The colour rule is what a `.dcm`/HPS scan needs: those formats have no
+/// writer, so the save dialog came up on the operator's fallback format, and a
+/// fallback of STL silently proposed a colourless file for a colour scan.
+pub(super) fn representable_export_format(
+    format: MeshWriteFormat,
+    mesh: &occluview_core::Mesh,
+) -> MeshWriteFormat {
+    if format != MeshWriteFormat::StlBinary {
+        return format;
+    }
+    if mesh.kind() != occluview_core::MeshKind::TriangleMesh
+        || mesh.texture().is_some()
+        || mesh.has_vertex_colors()
+        || mesh.has_uvs()
+    {
+        return MeshWriteFormat::PlyBinaryLittleEndian;
+    }
+    format
 }
 
 /// The folders a save dialog may open in, best first: the layer's own
@@ -526,6 +641,7 @@ pub(super) fn mesh_export_warning_summary(
             MeshWriteWarning::VertexColorsNotWritten => locale.tr("mesh-warning-vertex-colors"),
             MeshWriteWarning::UvsNotWritten => locale.tr("mesh-warning-uvs"),
             MeshWriteWarning::TextureImageNotWritten => locale.tr("mesh-warning-texture-image"),
+            MeshWriteWarning::VertexAlphaNotWritten => locale.tr("mesh-warning-vertex-alpha"),
         })
         .collect();
     (!labels.is_empty()).then(|| labels.join(", "))
@@ -638,15 +754,258 @@ mod tests {
         let scene = exportable_scene()?;
         let paths = vec![PathBuf::from("very-long-scan-name.stl")];
 
-        let name = default_layer_export_name(
-            &paths,
-            &scene,
-            0,
-            default_layer_export_format(&paths, 0, MeshWriteFormat::PlyBinaryLittleEndian),
-        );
+        let format = automatic_export_format(&paths, 0, &scene.meshes()[0].mesh);
+        let name = default_layer_export_name(&paths, &scene, 0, format);
 
+        assert_eq!(format, MeshWriteFormat::StlBinary);
         assert_eq!(name, "very-long-scan-name-edited.stl");
         Ok(())
+    }
+
+    /// A scan keeps the format it was opened in when the viewer can write it,
+    /// and that is the whole rule for a plain geometry scan: no switch, no
+    /// per-session choice.
+    #[test]
+    fn a_scan_keeps_its_own_writable_format() {
+        let Ok(scene) = exportable_scene() else {
+            return;
+        };
+        let plain = (*scene.meshes()[0].mesh).clone();
+
+        for (path, expected) in [
+            ("upper.stl", MeshWriteFormat::StlBinary),
+            ("upper.ply", MeshWriteFormat::PlyBinaryLittleEndian),
+            ("upper.obj", MeshWriteFormat::Obj),
+        ] {
+            let paths = vec![PathBuf::from(path)];
+            assert_eq!(
+                automatic_export_format(&paths, 0, &plain),
+                expected,
+                "a geometry-only scan opened as {path} saves as {path}"
+            );
+        }
+    }
+
+    /// A point cloud cannot be written as STL, so the format actually offered
+    /// has to be one the geometry can be written as. The writer refuses a
+    /// non-triangle mesh, and a forced STL used to propose a name whose write
+    /// was guaranteed to fail into the error dialog.
+    #[test]
+    fn a_forced_stl_falls_back_to_ply_for_a_point_cloud() {
+        let cloud = Mesh::point_cloud(Some("points".to_owned()), vec![Vertex::at(Vec3::ZERO)]);
+        assert_eq!(
+            representable_export_format(MeshWriteFormat::StlBinary, &cloud),
+            MeshWriteFormat::PlyBinaryLittleEndian
+        );
+        // And the automatic choice never asks for STL in the first place.
+        let paths = vec![PathBuf::from("points.stl")];
+        assert_eq!(
+            automatic_export_format(&paths, 0, &cloud),
+            MeshWriteFormat::PlyBinaryLittleEndian,
+            "a point cloud is never proposed as STL, whatever it was opened as"
+        );
+
+        let Ok(scene) = exportable_scene() else {
+            return;
+        };
+        let Some(entry) = scene.meshes().first() else {
+            return;
+        };
+        assert_eq!(
+            representable_export_format(MeshWriteFormat::StlBinary, &entry.mesh),
+            MeshWriteFormat::StlBinary,
+            "a plain triangle mesh keeps STL"
+        );
+    }
+
+    /// STL carries geometry only, so proposing it for a colour scan silently
+    /// throws the colour away. This is the `.dcm` case: the format has no
+    /// writer, the dialog comes up on the fallback, and a fallback of STL used
+    /// to propose a colourless file for a scan captured in colour.
+    #[test]
+    fn a_forced_stl_falls_back_to_ply_so_colour_is_not_thrown_away() {
+        use occluview_core::MeshTexture;
+
+        // A textured scan: the atlas and its mapping both live only in PLY.
+        let Ok(scene) = exportable_scene() else {
+            return;
+        };
+        let mut textured = (*scene.meshes()[0].mesh).clone();
+        textured.set_texture(MeshTexture::new(1, 1, vec![1, 2, 3, 255]));
+        assert_eq!(
+            representable_export_format(MeshWriteFormat::StlBinary, &textured),
+            MeshWriteFormat::PlyBinaryLittleEndian,
+            "a textured scan must not be proposed as STL"
+        );
+
+        // A scan whose colour is per-vertex, with no atlas at all.
+        let coloured = Mesh::new(
+            Some("coloured".to_owned()),
+            vec![
+                Vertex::at(Vec3::ZERO).with_color([210, 180, 120, 255]),
+                Vertex::at(Vec3::X).with_color([220, 170, 110, 255]),
+                Vertex::at(Vec3::Y).with_color([230, 160, 100, 255]),
+            ],
+            vec![0, 1, 2],
+        );
+        let Ok(coloured) = coloured else { return };
+        assert!(coloured.has_vertex_colors());
+        assert_eq!(
+            representable_export_format(MeshWriteFormat::StlBinary, &coloured),
+            MeshWriteFormat::PlyBinaryLittleEndian,
+            "a vertex-coloured scan must not be proposed as STL"
+        );
+
+        // A scan with a mapping but no image keeps it only in PLY too.
+        let mapped = Mesh::new(
+            Some("mapped".to_owned()),
+            vec![
+                Vertex::at(Vec3::ZERO).with_uv([0.0, 1.0]),
+                Vertex::at(Vec3::X).with_uv([1.0, 1.0]),
+                Vertex::at(Vec3::Y).with_uv([0.0, 0.0]),
+            ],
+            vec![0, 1, 2],
+        );
+        let Ok(mapped) = mapped else { return };
+        assert!(mapped.has_uvs());
+        assert_eq!(
+            representable_export_format(MeshWriteFormat::StlBinary, &mapped),
+            MeshWriteFormat::PlyBinaryLittleEndian,
+            "a mapped scan must not be proposed as STL"
+        );
+
+        // PLY and OBJ are never second-guessed: only STL loses the payload.
+        assert_eq!(
+            representable_export_format(MeshWriteFormat::PlyBinaryLittleEndian, &coloured),
+            MeshWriteFormat::PlyBinaryLittleEndian
+        );
+        assert_eq!(
+            representable_export_format(MeshWriteFormat::Obj, &coloured),
+            MeshWriteFormat::Obj
+        );
+    }
+
+    /// The operator's exact case: a `.dcm` opened and saved.
+    ///
+    /// A `.dcm`/HPS has no writer, so there is no source format to keep. The
+    /// format now follows what the scan holds: a colour scan is offered as PLY,
+    /// and a geometry-only scan as STL. There is no preference that can turn a
+    /// colour scan into a colourless `.stl`.
+    #[test]
+    fn a_dcm_is_offered_the_format_that_carries_what_it_holds() {
+        use occluview_core::MeshTexture;
+
+        let paths = vec![PathBuf::from("/scans/upper.dcm")];
+
+        // A textured scan must come out PLY.
+        let Ok(scene) = exportable_scene() else {
+            return;
+        };
+        let mut textured = (*scene.meshes()[0].mesh).clone();
+        textured.set_texture(MeshTexture::new(1, 1, vec![1, 2, 3, 255]));
+        let proposed =
+            representable_export_format(automatic_export_format(&paths, 0, &textured), &textured);
+        assert_eq!(
+            proposed,
+            MeshWriteFormat::PlyBinaryLittleEndian,
+            "a textured .dcm must be offered PLY, not a colourless STL"
+        );
+        assert_eq!(mesh_write_extension(proposed), "ply");
+
+        // The same scan with colour on its vertices, no atlas.
+        let coloured = Mesh::new(
+            Some("upper".to_owned()),
+            vec![
+                Vertex::at(Vec3::ZERO).with_color([210, 180, 120, 255]),
+                Vertex::at(Vec3::X).with_color([220, 170, 110, 255]),
+                Vertex::at(Vec3::Y).with_color([230, 160, 100, 255]),
+            ],
+            vec![0, 1, 2],
+        );
+        let Ok(coloured) = coloured else { return };
+        assert_eq!(
+            automatic_export_format(&paths, 0, &coloured),
+            MeshWriteFormat::PlyBinaryLittleEndian
+        );
+
+        // A scan with a mapping but no image: STL would lose the mapping too.
+        let mapped = Mesh::new(
+            Some("upper".to_owned()),
+            vec![
+                Vertex::at(Vec3::ZERO).with_uv([0.0, 1.0]),
+                Vertex::at(Vec3::X).with_uv([1.0, 1.0]),
+                Vertex::at(Vec3::Y).with_uv([0.0, 0.0]),
+            ],
+            vec![0, 1, 2],
+        );
+        let Ok(mapped) = mapped else { return };
+        assert_eq!(
+            automatic_export_format(&paths, 0, &mapped),
+            MeshWriteFormat::PlyBinaryLittleEndian
+        );
+
+        // A geometry-only .dcm loses nothing as STL, so STL is what it gets.
+        let Ok(plain) = exportable_scene().map(|scene| (*scene.meshes()[0].mesh).clone()) else {
+            return;
+        };
+        assert!(!plain.has_vertex_colors() && !plain.has_uvs() && plain.texture().is_none());
+        let proposed =
+            representable_export_format(automatic_export_format(&paths, 0, &plain), &plain);
+        assert_eq!(
+            proposed,
+            MeshWriteFormat::StlBinary,
+            "a geometry-only scan written as STL loses nothing, so STL is right"
+        );
+    }
+
+    /// A writable source format is kept, unless it cannot carry what the scan
+    /// holds: OBJ has no image, STL has no colour at all.
+    #[test]
+    fn a_source_format_that_cannot_carry_the_payload_yields_to_ply() {
+        use occluview_core::MeshTexture;
+
+        let Ok(scene) = exportable_scene() else {
+            return;
+        };
+        let mut textured = (*scene.meshes()[0].mesh).clone();
+        textured.set_texture(MeshTexture::new(1, 1, vec![1, 2, 3, 255]));
+
+        assert_eq!(
+            automatic_export_format(&[PathBuf::from("upper.obj")], 0, &textured),
+            MeshWriteFormat::PlyBinaryLittleEndian,
+            "OBJ cannot hold an atlas, so a textured scan is saved as PLY"
+        );
+        assert_eq!(
+            automatic_export_format(&[PathBuf::from("upper.stl")], 0, &textured),
+            MeshWriteFormat::PlyBinaryLittleEndian,
+            "STL cannot hold an atlas either"
+        );
+        assert_eq!(
+            automatic_export_format(&[PathBuf::from("upper.ply")], 0, &textured),
+            MeshWriteFormat::PlyBinaryLittleEndian,
+            "PLY already is the format that holds it"
+        );
+
+        // A vertex-coloured scan: STL yields, OBJ keeps (it carries RGB).
+        let coloured = Mesh::new(
+            Some("upper".to_owned()),
+            vec![
+                Vertex::at(Vec3::ZERO).with_color([210, 180, 120, 255]),
+                Vertex::at(Vec3::X).with_color([220, 170, 110, 255]),
+                Vertex::at(Vec3::Y).with_color([230, 160, 100, 255]),
+            ],
+            vec![0, 1, 2],
+        );
+        let Ok(coloured) = coloured else { return };
+        assert_eq!(
+            automatic_export_format(&[PathBuf::from("upper.stl")], 0, &coloured),
+            MeshWriteFormat::PlyBinaryLittleEndian
+        );
+        assert_eq!(
+            automatic_export_format(&[PathBuf::from("upper.obj")], 0, &coloured),
+            MeshWriteFormat::Obj,
+            "OBJ carries vertex colour, so a colour-only scan keeps OBJ"
+        );
     }
 
     #[test]
@@ -697,21 +1056,26 @@ mod tests {
     }
 
     #[test]
-    fn source_format_falls_back_to_ply_for_read_only_formats() -> Result<()> {
+    fn a_read_only_source_format_falls_to_what_the_scan_holds() -> Result<()> {
         let scene = exportable_scene()?;
+        let plain = (*scene.meshes()[0].mesh).clone();
         let paths = vec![PathBuf::from("encrypted-scan.hps")];
 
+        // A geometry-only scan from a format with no writer becomes STL.
+        let format = automatic_export_format(&paths, 0, &plain);
+        assert_eq!(format, MeshWriteFormat::StlBinary);
         assert_eq!(
-            default_layer_export_format(&paths, 0, MeshWriteFormat::PlyBinaryLittleEndian),
-            MeshWriteFormat::PlyBinaryLittleEndian
+            default_layer_export_name(&paths, &scene, 0, format),
+            "encrypted-scan-edited.stl"
         );
+
+        // The same scan with colour becomes PLY, under the same base name.
+        let mut coloured = plain;
+        coloured.set_texture(occluview_core::MeshTexture::new(1, 1, vec![1, 2, 3, 255]));
+        let format = automatic_export_format(&paths, 0, &coloured);
+        assert_eq!(format, MeshWriteFormat::PlyBinaryLittleEndian);
         assert_eq!(
-            default_layer_export_name(
-                &paths,
-                &scene,
-                0,
-                default_layer_export_format(&paths, 0, MeshWriteFormat::PlyBinaryLittleEndian),
-            ),
+            default_layer_export_name(&paths, &scene, 0, format),
             "encrypted-scan-edited.ply"
         );
         Ok(())
@@ -721,9 +1085,14 @@ mod tests {
     fn derived_layer_uses_its_neighbour_for_folder_and_format() {
         let paths = vec![PathBuf::new(), PathBuf::from("/case/scans/upper.obj")];
 
+        let Ok(scene) = exportable_scene() else {
+            return;
+        };
+        let plain = (*scene.meshes()[0].mesh).clone();
         assert_eq!(
-            default_layer_export_format(&paths, 0, MeshWriteFormat::PlyBinaryLittleEndian),
-            MeshWriteFormat::Obj
+            automatic_export_format(&paths, 0, &plain),
+            MeshWriteFormat::Obj,
+            "a layer with no file of its own takes its neighbour's format"
         );
         assert_eq!(
             export_directory_candidates(&paths, 0, None),
@@ -742,9 +1111,14 @@ mod tests {
             export_directory_candidates(&paths, 1, None),
             vec![PathBuf::from("/case/lower"), PathBuf::from("/case/upper")]
         );
+        let Ok(scene) = exportable_scene() else {
+            return;
+        };
+        let plain = (*scene.meshes()[0].mesh).clone();
         assert_eq!(
-            default_layer_export_format(&paths, 1, MeshWriteFormat::PlyBinaryLittleEndian),
-            MeshWriteFormat::PlyBinaryLittleEndian
+            automatic_export_format(&paths, 1, &plain),
+            MeshWriteFormat::PlyBinaryLittleEndian,
+            "the layer's own .ply is kept"
         );
     }
 
@@ -763,9 +1137,14 @@ mod tests {
             export_directory_candidates(&paths, 2, None),
             vec![PathBuf::from("/case/scans")]
         );
+        let Ok(scene) = exportable_scene() else {
+            return;
+        };
+        let plain = (*scene.meshes()[0].mesh).clone();
         assert_eq!(
-            default_layer_export_format(&paths, 2, MeshWriteFormat::PlyBinaryLittleEndian),
-            MeshWriteFormat::StlBinary
+            automatic_export_format(&paths, 2, &plain),
+            MeshWriteFormat::StlBinary,
+            "the split part takes the source it descends from"
         );
     }
 
