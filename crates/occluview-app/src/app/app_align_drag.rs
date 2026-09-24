@@ -20,8 +20,10 @@ pub(crate) struct AlignDrag {
     pub(super) layer: SceneMeshId,
     /// Its pose when the gesture began, so the whole drag is one undo step.
     pub(super) start: Affine3A,
-    /// Its centre in world, the pivot a Ctrl-drag turns about.
-    pub(super) centroid: Vec3,
+    /// The surface point the operator grabbed, in the layer's own local frame.
+    /// Kept local so a Ctrl-drag pivots about the point under the cursor even
+    /// after the gesture has already moved or turned the scan.
+    pub(super) pivot_local: Vec3,
 }
 
 impl OccluViewApp {
@@ -101,12 +103,23 @@ impl OccluViewApp {
             let Some(entry) = scene.meshes().get(hit.layer_index) else {
                 return false;
             };
+            // The grabbed surface point, converted into the layer's own local
+            // frame. A Ctrl-drag turns about it so the point the operator
+            // pulled stays under the cursor; keeping it local means the pivot
+            // is still correct after the gesture has already moved the scan.
+            // When the ray missed the mesh and only the bounding box caught it,
+            // the hit is still a world point on this layer and converts the same
+            // way; the inverse is guarded because a degenerate pose has none.
+            let inverse = entry.transform.inverse();
+            let pivot_local = if inverse.is_finite() {
+                inverse.transform_point3(hit.point)
+            } else {
+                entry.mesh.bbox_cached().center()
+            };
             self.tools.align.drag = Some(AlignDrag {
                 layer: hit.layer_id,
                 start: entry.transform,
-                centroid: entry
-                    .transform
-                    .transform_point3(entry.mesh.bbox_cached().center()),
+                pivot_local,
             });
             // Nothing below reads the scene, and what follows edits it in
             // place: `forget_align_fit` reaches `live_scene_mut` through the
@@ -153,11 +166,21 @@ impl OccluViewApp {
                 crate::align_drag::DEGREES_PER_PIXEL,
                 self.tools.align.constraint,
             );
-            // Turn about the layer's own centre, so the scan spins in place
-            // instead of orbiting the world origin.
-            Affine3A::from_translation(drag.centroid)
-                * Affine3A::from_quat(turn)
-                * Affine3A::from_translation(-drag.centroid)
+            // Turn about the grabbed point, so the surface the operator pulled
+            // follows the pointer instead of the far side of the arch swinging
+            // around the layer's centre. The pivot is carried in the layer's own
+            // frame and mapped through its CURRENT pose, so a gesture that has
+            // already moved the scan keeps turning about the same physical point
+            // under the cursor.
+            let pivot_world = self
+                .document
+                .scene
+                .as_ref()
+                .and_then(|scene| layer_of(scene, drag.layer))
+                .map_or(drag.pivot_local, |entry| {
+                    entry.transform.transform_point3(drag.pivot_local)
+                });
+            crate::align_drag::rotation_about_pivot(turn, pivot_world)
         } else {
             let world_per_pixel =
                 crate::align_drag::mm_per_pixel(camera.orthographic_height, response.rect.height());
