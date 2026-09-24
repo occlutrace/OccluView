@@ -10,28 +10,6 @@ use std::time::{Duration, Instant};
 const SETTINGS_FILE: &str = "settings.json";
 pub(crate) const SETTINGS_RETRY_DELAY: Duration = Duration::from_secs(5);
 
-/// The format used when a layer's own format cannot be kept — because the
-/// source format has no writer, the layer has no source file, or the operator
-/// turned off `keep_source_export_format`.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum FallbackExportFormat {
-    #[default]
-    Ply,
-    Stl,
-    Obj,
-}
-
-impl FallbackExportFormat {
-    pub(crate) const OPTIONS: [Self; 3] = [Self::Ply, Self::Stl, Self::Obj];
-
-    pub(crate) const fn label(self) -> &'static str {
-        match self {
-            Self::Ply => "PLY",
-            Self::Stl => "STL",
-            Self::Obj => "OBJ",
-        }
-    }
-}
 /// Preset for the 3D viewport clear color.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum ViewportBackground {
@@ -117,18 +95,6 @@ impl ThemePreference {
     pub(crate) const OPTIONS: [Self; 2] = [Self::Light, Self::Dark];
 }
 
-fn deserialize_export_format<'de, D>(deserializer: D) -> Result<FallbackExportFormat, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let value = String::deserialize(deserializer)?;
-    Ok(match value.as_str() {
-        "Stl" => FallbackExportFormat::Stl,
-        "Obj" => FallbackExportFormat::Obj,
-        _ => FallbackExportFormat::Ply,
-    })
-}
-
 /// Entries the Open menu's recent list keeps.
 ///
 /// Fixed rather than a preference: it changed how long a menu was, which has no
@@ -148,18 +114,6 @@ pub(crate) const RECENT_FILES_LIMIT_MAX: usize = 20;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct Settings {
-    #[serde(
-        alias = "default_export_format",
-        deserialize_with = "deserialize_export_format"
-    )]
-    pub(crate) fallback_export_format: FallbackExportFormat,
-    /// Keep each layer's own file format when saving it back out.
-    ///
-    /// On by default: a scan opened as STL saves as STL and one opened as PLY
-    /// saves as PLY, which is what "save the file" means. It can be turned off
-    /// to force one format for every export — a shop that feeds a mill only
-    /// STL does not want a folder of mixed extensions.
-    pub(crate) keep_source_export_format: bool,
     pub(crate) remember_export_dir: bool,
     pub(crate) last_export_dir: Option<String>,
     pub(crate) update_check_on_start: bool,
@@ -194,8 +148,6 @@ pub(crate) struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            fallback_export_format: FallbackExportFormat::Ply,
-            keep_source_export_format: true,
             remember_export_dir: false,
             last_export_dir: None,
             update_check_on_start: true,
@@ -406,6 +358,8 @@ mod tests {
             "schema_version": 1,
             "reset_camera_on_open": false,
             "default_export_format": "Stl",
+            "fallback_export_format": "Stl",
+            "keep_source_export_format": false,
             "remember_export_dir": false,
             "last_export_dir": null,
             "update_check_on_start": true
@@ -413,8 +367,12 @@ mod tests {
         let settings: Settings = serde_json::from_slice(legacy)?;
         let rewritten = serde_json::to_value(settings)?;
 
-        assert_eq!(rewritten["fallback_export_format"], "Stl");
+        // The save format is no longer a stored preference, so a document
+        // written while it was one loads without complaint and is rewritten
+        // without it.
         assert!(rewritten.get("default_export_format").is_none());
+        assert!(rewritten.get("fallback_export_format").is_none());
+        assert!(rewritten.get("keep_source_export_format").is_none());
         assert!(rewritten.get("schema_version").is_none());
         assert!(rewritten.get("reset_camera_on_open").is_none());
         // The limit is read when the recent list is loaded, so a rewritten
@@ -426,38 +384,23 @@ mod tests {
         Ok(())
     }
 
+    /// A settings document from before the switch existed still loads, and the
+    /// format fields it carries are simply dropped.
     #[test]
-    fn legacy_auto_fallback_becomes_ply() -> Result<()> {
-        let settings: Settings = serde_json::from_str(r#"{"default_export_format":"Auto"}"#)?;
-
-        assert_eq!(settings.fallback_export_format, FallbackExportFormat::Ply);
-        Ok(())
-    }
-
-    /// Saving in the format a scan was opened in is the default, and a document
-    /// written before the switch existed must read the same way: the behaviour
-    /// it had is the behaviour the switch turns on.
-    #[test]
-    fn keeping_the_source_format_is_on_by_default_and_survives_a_round_trip() -> Result<()> {
-        assert!(
-            Settings::default().keep_source_export_format,
-            "saving in the scan's own format is the default"
-        );
-        let older: Settings = serde_json::from_str(r#"{"fallback_export_format":"Stl"}"#)?;
-        assert!(
-            older.keep_source_export_format,
-            "a document without the field keeps the behaviour it was written under"
-        );
-
-        let settings = Settings {
-            keep_source_export_format: false,
-            ..Settings::default()
-        };
-        let rewritten: Settings = serde_json::from_str(&serde_json::to_string(&settings)?)?;
-        assert!(
-            !rewritten.keep_source_export_format,
-            "turning the switch off must survive a save and reload"
-        );
+    fn legacy_export_format_fields_still_load() -> Result<()> {
+        for legacy in [
+            r#"{"default_export_format":"Auto"}"#,
+            r#"{"default_export_format":"Stl"}"#,
+            r#"{"fallback_export_format":"Obj"}"#,
+            r#"{"keep_source_export_format":false}"#,
+        ] {
+            let settings: Settings = serde_json::from_str(legacy)?;
+            assert_eq!(
+                settings.remember_export_dir,
+                Settings::default().remember_export_dir,
+                "the rest of the document must read as its default: {legacy}"
+            );
+        }
         Ok(())
     }
 

@@ -1,8 +1,8 @@
 //! Whole-scene export with each visible layer's pose baked into its geometry.
 
 use super::app_mesh_export::{
-    append_mesh_export_warnings, default_layer_export_directory, default_layer_export_stem,
-    fallback_mesh_write_format, layer_export_file_dialog, layer_export_format,
+    append_mesh_export_warnings, automatic_export_format, default_layer_export_directory,
+    default_layer_export_stem, format_for_payload, layer_export_file_dialog,
     mesh_export_format_from_path, mesh_export_warning_summary, mesh_write_extension,
     normalize_layer_export_path, representable_export_format,
 };
@@ -19,16 +19,14 @@ use std::path::{Path, PathBuf};
 
 /// The format a merged scene is written as.
 ///
-/// A merged scene has no single source format to keep, so the operator's
-/// fallback decides — except where the merged geometry cannot be written in it.
-/// A scene of point clouds is saved as PLY rather than STL, because the writer
-/// refuses a non-triangle mesh and the failure would land in the error dialog
-/// after the operator had already chosen a file name.
-fn scene_export_format(
-    fallback: crate::app_settings::FallbackExportFormat,
-    mesh: &Mesh,
-) -> MeshWriteFormat {
-    representable_export_format(fallback_mesh_write_format(fallback), mesh)
+/// A merged scene has no single source format to keep, so the format follows
+/// what the merged geometry holds: PLY when there is colour, a texture or a
+/// mapping to carry, STL when it is geometry alone. A scene of point clouds is
+/// PLY rather than STL because the writer refuses a non-triangle mesh and the
+/// failure would land in the error dialog after the operator had already chosen
+/// a file name.
+fn scene_export_format(mesh: &Mesh) -> MeshWriteFormat {
+    representable_export_format(format_for_payload(mesh), mesh)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -101,14 +99,12 @@ impl OccluViewApp {
                 .iter()
                 .any(|entry| entry.visible && entry.mesh.texture().is_some());
 
-        // A merged scene has no single source format to keep, so the operator's
-        // chosen format decides. It used to be hard-coded PLY, which ignored
-        // both the fallback preference and the "keep source" switch — an
-        // operator who set STL for a mill still got a PLY-first dialog. The
-        // format is also clamped to one the merged geometry can be written as:
-        // a scene of point clouds cannot become an STL.
-        let default_format =
-            scene_export_format(self.persistence.settings.fallback_export_format, &mesh);
+        // A merged scene has no single source format to keep, so the format
+        // follows what the merged geometry actually holds: PLY when there is
+        // colour, a texture or a mapping to carry, STL when it is geometry
+        // alone. It is clamped to one the geometry can be written as too: a
+        // scene of point clouds cannot become an STL.
+        let default_format = scene_export_format(&mesh);
         let extension = mesh_write_extension(default_format);
         let mut dialog =
             layer_export_file_dialog(default_format).set_file_name(format!("scene.{extension}"));
@@ -217,16 +213,14 @@ impl OccluViewApp {
             .enumerate()
             .filter(|(_, entry)| entry.visible)
             .collect();
-        let fallback = fallback_mesh_write_format(self.persistence.settings.fallback_export_format);
-        let keep_source = self.persistence.settings.keep_source_export_format;
         let specs: Vec<(String, MeshWriteFormat)> = visible
             .iter()
             .map(|(index, entry)| {
-                // A point cloud cannot be written as STL; clamping here keeps
-                // the batch's proposed names writable instead of failing one
-                // layer into the error dialog.
+                // Each layer's format is decided from that layer, and a point
+                // cloud is clamped off STL so the batch's proposed names stay
+                // writable instead of failing one layer into the error dialog.
                 let format = representable_export_format(
-                    layer_export_format(&paths, *index, fallback, keep_source),
+                    automatic_export_format(&paths, *index, &entry.mesh),
                     &entry.mesh,
                 );
                 (
@@ -579,11 +573,11 @@ fn double_vec(value: [f32; 3]) -> DVec3 {
 mod tests {
     #![allow(clippy::expect_used, clippy::panic)]
 
-    /// A merged scene follows the operator's fallback format, and never a
-    /// format its geometry cannot be written in.
+    /// A merged scene is written in a format its geometry and payload can both
+    /// be held by: STL only when there is no colour to lose, PLY otherwise, and
+    /// never STL for a point cloud the writer would refuse.
     #[test]
-    fn a_merged_scene_takes_the_fallback_format_unless_it_cannot_be_written() {
-        use crate::app_settings::FallbackExportFormat;
+    fn a_merged_scene_takes_the_format_its_geometry_and_payload_can_be_written_as() {
         use occluview_formats::write::MeshWriteFormat;
 
         let triangle = Mesh::new(
@@ -599,18 +593,22 @@ mod tests {
         let cloud = Mesh::point_cloud(Some("points".to_owned()), vec![Vertex::at(Vec3::ZERO)]);
 
         assert_eq!(
-            scene_export_format(FallbackExportFormat::Stl, &triangle),
+            scene_export_format(&triangle),
             MeshWriteFormat::StlBinary,
-            "a merged triangle scene takes the chosen format"
+            "a merged geometry-only triangle scene is written as STL"
         );
         assert_eq!(
-            scene_export_format(FallbackExportFormat::Stl, &cloud),
+            scene_export_format(&cloud),
             MeshWriteFormat::PlyBinaryLittleEndian,
             "a merged point cloud cannot be written as STL, so it clamps to PLY"
         );
+
+        let mut textured = triangle;
+        textured.set_texture(occluview_core::MeshTexture::new(1, 1, vec![1, 2, 3, 255]));
         assert_eq!(
-            scene_export_format(FallbackExportFormat::Obj, &cloud),
-            MeshWriteFormat::Obj
+            scene_export_format(&textured),
+            MeshWriteFormat::PlyBinaryLittleEndian,
+            "a merged scene with colour keeps it in PLY instead of losing it in STL"
         );
     }
 
