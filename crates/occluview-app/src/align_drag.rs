@@ -370,31 +370,59 @@ mod tests {
         assert_eq!(step, Affine3A::IDENTITY);
     }
 
-    /// The grabbed point is the pivot, whatever the drag constraint.
+    /// The grabbed point is the pivot, under every drag constraint.
     ///
     /// A cusp pulled under any chip must stay under the cursor. The constraint
     /// chooses the rotation axis; letting it also choose the pivot is what made
     /// a constrained Ctrl-drag "just spin around an axis" with the pulled point
     /// sliding away.
+    ///
+    /// The axis must still follow the constraint, which is what keeps this from
+    /// passing vacuously on a build where the constraint was dropped entirely:
+    /// each case builds its turn the way the app does and checks both the fixed
+    /// point and the axis.
     #[test]
     fn the_grabbed_point_is_the_pivot_under_every_constraint() {
         let grabbed = Vec3::new(12.0, -5.0, 3.0);
         let centre = Vec3::new(1.0, 2.0, 0.0);
         let radius = 35.0;
+        let drag = egui::vec2(40.0, 0.0);
 
-        // The constraint is not even an input any more: nothing about it may
-        // change where the turn happens.
-        for constraint in [
-            DragConstraint::Free,
-            DragConstraint::ZOnly,
-            DragConstraint::XyPlane,
+        for (constraint, expect_z_axis) in [
+            (DragConstraint::Free, false),
+            (DragConstraint::ZOnly, true),
+            (DragConstraint::XyPlane, true),
         ] {
-            let _ = constraint;
+            // The app's own composition: the constraint picks the turn, the
+            // grabbed point is always the pivot.
+            let turn = constrained_rotation_from_drag(drag, Vec3::X, Vec3::Y, 0.25, constraint);
+            let pivot = drag_pivot_local(grabbed, centre, radius);
+            let step = rotation_about_pivot(turn, pivot);
+
             assert_eq!(
-                drag_pivot_local(grabbed, centre, radius),
-                grabbed,
-                "the grabbed point must stay the pivot"
+                pivot, grabbed,
+                "{constraint:?}: the constraint must not move the pivot"
             );
+            let pinned = step.transform_point3(grabbed);
+            assert!(
+                (pinned - grabbed).length() < 1e-4,
+                "{constraint:?}: the grabbed point moved to {pinned:?}"
+            );
+
+            // The constrained chips must still turn about the vertical.
+            let (axis, angle) = turn.to_axis_angle();
+            if expect_z_axis {
+                assert!(
+                    axis.dot(Vec3::Z).abs() > 0.99,
+                    "{constraint:?}: expected a Z-axis turn, got axis {axis:?}"
+                );
+                assert!(angle.abs() > 1e-3, "{constraint:?}: the turn was empty");
+            } else {
+                assert!(
+                    axis.dot(Vec3::Z).abs() < 0.99,
+                    "{constraint:?}: a free turn should not be locked to Z"
+                );
+            }
         }
     }
 
