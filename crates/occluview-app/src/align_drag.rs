@@ -5,7 +5,7 @@
 //! approximation that drifts as the operator zooms.
 
 use eframe::egui;
-use glam::{Quat, Vec3};
+use glam::{Affine3A, Quat, Vec3};
 
 /// Degrees of rotation per pixel of drag. Slow enough that a small correction
 /// stays small, fast enough that a half-turn does not need three gestures.
@@ -139,8 +139,64 @@ pub(crate) fn constrained_rotation_from_drag(
     }
 }
 
+/// Turn a scan about the point the operator grabbed, not about its centre.
+///
+/// A hand drag that rotates about the mesh centre spins the whole arch around a
+/// pivot the operator cannot see and did not choose: they pull a cusp and the
+/// far side swings, which reads as the tool ignoring where the pointer went.
+/// Pivoting about the grabbed surface point keeps that point under the cursor
+/// for the whole gesture, so the scan turns about what was actually pulled.
+///
+/// The returned step is a world-space transform, meant to be pre-multiplied onto
+/// the layer's pose exactly like the translation step.
+pub(crate) fn rotation_about_pivot(turn: Quat, pivot: Vec3) -> Affine3A {
+    if !pivot.is_finite() {
+        return Affine3A::from_quat(turn);
+    }
+    Affine3A::from_translation(pivot)
+        * Affine3A::from_quat(turn)
+        * Affine3A::from_translation(-pivot)
+}
+
+/// Largest world-space pivot a drag may use, in millimetres.
+///
+/// A dental scan sits within tens of millimetres of the origin, so a pivot a
+/// metre out can only come from a non-invertible or wildly scaled pose. Using
+/// it would turn the scan about a point effectively at infinity — the far side
+/// of the arch sweeping across the screen — so the choice is refused instead.
+pub(crate) const DRAG_PIVOT_LIMIT_MM: f32 = 1_000.0;
+
+/// Which world point a Ctrl-drag should fix, given the active constraint.
+///
+/// The two answers are both deliberate and the constraint decides between them:
+///
+/// * `Free` (the chip says "Move/rotate in all directions") fixes the surface
+///   point the operator actually grabbed, so that point stays under the cursor
+///   while the rest of the scan swings around it. Pivoting on the mesh centre
+///   instead made a pulled cusp slide sideways.
+/// * `ZOnly` and `XyPlane` fix the layer's own centre. Those chips promise an
+///   arch turned about the vertical while it stays put, and an off-axis pivot
+///   would translate the centre in XY — the slide the chip says cannot happen.
+///
+/// Returns `None` when the chosen point is unusable (non-finite, or absurdly
+/// far from the origin); the caller must then leave the pose alone rather than
+/// guess a pivot.
+pub(crate) fn drag_pivot_world(
+    constraint: DragConstraint,
+    grabbed_world: Vec3,
+    centre_world: Vec3,
+) -> Option<Vec3> {
+    let candidate = match constraint {
+        DragConstraint::Free => grabbed_world,
+        DragConstraint::ZOnly | DragConstraint::XyPlane => centre_world,
+    };
+    (candidate.is_finite() && candidate.length() <= DRAG_PIVOT_LIMIT_MM).then_some(candidate)
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     /// One conversion, one guard. The brush ring and the hand drag each had
     /// their own, guarding a different operand, so a zero-height viewport was
     /// safe on one path and produced an infinity on the other.
@@ -258,5 +314,105 @@ mod tests {
     fn a_degenerate_camera_basis_rotates_nothing() {
         let rotation = rotation_from_drag(egui::vec2(30.0, 30.0), Vec3::ZERO, Vec3::Y, 1.0);
         assert_eq!(rotation, Quat::IDENTITY);
+    }
+
+    /// A Ctrl-drag must turn about the grabbed point, not the mesh centre.
+    ///
+    /// The operator pulls a cusp to tilt an arch. Pivoting about the centre
+    /// swings the far side and leaves the grabbed surface sliding sideways,
+    /// which reads as the tool ignoring where the pointer went; pivoting about
+    /// the grab keeps the grabbed point exactly where the pointer is.
+    #[test]
+    fn a_ctrl_drag_turns_about_the_grabbed_point() {
+        let pivot = Vec3::new(4.0, -2.0, 1.5);
+        let turn = Quat::from_axis_angle(Vec3::Y, 0.5);
+        let step = rotation_about_pivot(turn, pivot);
+
+        // The pivot itself is a fixed point of the turn.
+        let pinned = step.transform_point3(pivot);
+        assert!(
+            (pinned - pivot).length() < 1e-5,
+            "the grabbed point moved: {pinned:?}"
+        );
+
+        // A point away from the pivot does move, and by the rotation about it.
+        let far = Vec3::new(-9.0, 3.0, 0.0);
+        let expected = pivot + turn * (far - pivot);
+        let actual = step.transform_point3(far);
+        assert!(
+            (actual - expected).length() < 1e-5,
+            "expected {expected:?}, got {actual:?}"
+        );
+
+        // And it is not the centre pivot: the world origin is NOT pinned.
+        let origin_moved = step.transform_point3(Vec3::ZERO).length();
+        assert!(
+            origin_moved > 1e-3,
+            "the step collapsed onto a centre pivot (origin unmoved)"
+        );
+    }
+
+    /// The pivot helper never produces a non-finite transform.
+    #[test]
+    fn a_non_finite_pivot_still_returns_a_rotation() {
+        let turn = Quat::from_axis_angle(Vec3::Y, 0.25);
+        let step = rotation_about_pivot(turn, Vec3::new(f32::NAN, 0.0, 0.0));
+        assert!(step.is_finite(), "{step:?}");
+        assert!((step.transform_point3(Vec3::X) - turn * Vec3::X).length() < 1e-5);
+    }
+
+    /// Free mode fixes the grabbed point; the constrained modes fix the centre.
+    ///
+    /// This is the wiring the drag handler relies on, and the two answers are
+    /// not interchangeable: Free exists to keep a pulled cusp under the cursor,
+    /// while ZOnly/XyPlane promise the arch stays put on the vertical, which an
+    /// off-axis pivot would break by translating the centre in XY.
+    #[test]
+    fn the_pivot_follows_the_constraint() {
+        let grabbed = Vec3::new(12.0, -5.0, 3.0);
+        let centre = Vec3::new(1.0, 2.0, 0.0);
+
+        assert_eq!(
+            drag_pivot_world(DragConstraint::Free, grabbed, centre),
+            Some(grabbed),
+            "Free must turn about what the operator grabbed"
+        );
+        assert_eq!(
+            drag_pivot_world(DragConstraint::ZOnly, grabbed, centre),
+            Some(centre),
+            "a z-only turn must stay on the vertical through the centre"
+        );
+        assert_eq!(
+            drag_pivot_world(DragConstraint::XyPlane, grabbed, centre),
+            Some(centre),
+            "an xy-plane turn must keep the centre on its axis"
+        );
+    }
+
+    /// An unusable pivot is refused, not silently substituted.
+    ///
+    /// A nearly singular pose inverts to a finite matrix with enormous entries,
+    /// so a `is_finite`-only guard would let the scan turn about a point
+    /// effectively at infinity. The magnitude limit is what catches it.
+    #[test]
+    fn an_unusable_pivot_is_refused() {
+        let centre = Vec3::new(1.0, 2.0, 0.0);
+        for bad in [
+            Vec3::new(f32::NAN, 0.0, 0.0),
+            Vec3::new(f32::INFINITY, 0.0, 0.0),
+            Vec3::splat(DRAG_PIVOT_LIMIT_MM + 1.0),
+        ] {
+            assert_eq!(
+                drag_pivot_world(DragConstraint::Free, bad, centre),
+                None,
+                "a pivot of {bad:?} must be refused"
+            );
+        }
+        // The centre is still usable when it is itself sane.
+        assert_eq!(
+            drag_pivot_world(DragConstraint::ZOnly, Vec3::NAN, centre),
+            Some(centre),
+            "a constrained turn does not read the grabbed point at all"
+        );
     }
 }

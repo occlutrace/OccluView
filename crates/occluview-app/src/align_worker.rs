@@ -85,7 +85,21 @@ impl AlignSettings {
             influence_radius_mm: self.influence_radius_mm,
             matching_ratio: self.matching_ratio,
             orientation: self.orientation,
-            local_only: true,
+            // The full search, not local-only. "Best fit matching" is the one
+            // button an operator presses to find the other arch, and it has to
+            // work from a pose that is not already close: a scan dropped in at
+            // its own origin, an arch picked up mid-case, or a rescan that sits
+            // several millimetres off. `local_only: true` removed both the
+            // global seed and the radius ladder, so a start more than a couple
+            // of millimetres out converged onto whatever surface it touched
+            // first and then failed the seating gate.
+            //
+            // Measured on a real arch with the search enabled: a start 8 mm out
+            // still seated (seated fraction 0.998, trustworthy). With
+            // `local_only: true` the same 4 mm start reported a seated fraction
+            // of 0.016 and was refused — the operator saw "Best fit matching
+            // could not confirm an improvement" for a pair the tool can seat.
+            local_only: false,
             ..RefineSettings::default()
         }
     }
