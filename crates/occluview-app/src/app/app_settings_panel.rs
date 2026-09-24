@@ -10,9 +10,11 @@ use crate::update_notice::UpdateCheckStatus;
 use eframe::egui;
 
 pub(super) const PANEL_MARGIN: i8 = 12;
-pub(super) const ROW_HEIGHT: f32 = 30.0;
+/// A control row. Tight enough that the whole panel fits without scrolling on a
+/// normal screen, tall enough that a checkbox is still an easy target.
+pub(super) const ROW_HEIGHT: f32 = 26.0;
 /// Height of the two footer buttons, which are the panel's largest controls.
-const FOOTER_BUTTON_HEIGHT: f32 = 28.0;
+const FOOTER_BUTTON_HEIGHT: f32 = 26.0;
 pub(super) const SETTINGS_PANEL_ID: &str = "settings-popover-v2";
 
 pub(super) fn settings_popup_id() -> egui::Id {
@@ -95,7 +97,7 @@ pub(super) fn show_settings_popup(
             let mut action = None;
             ui.set_width(286.0);
             panel_header(ui, locale);
-            ui.add_space(7.0);
+            ui.add_space(4.0);
 
             // Keep the popup inside the remaining screen height.
             let scroll_budget = ui
@@ -138,11 +140,6 @@ pub(super) fn show_settings_popup(
 
                     section_break(ui);
                     section_label(ui, &locale.tr("settings-section-files"));
-                    // There is no save-format choice any more: the format is
-                    // decided from what the scan holds, so the panel states the
-                    // rule instead of offering a switch that could contradict
-                    // it.
-                    save_format_rows(ui, locale);
                     let mut remember = settings.remember_export_dir;
                     ui.allocate_ui_with_layout(
                         egui::vec2(ui.available_width(), ROW_HEIGHT),
@@ -292,9 +289,9 @@ pub(super) fn show_settings_popup(
                 .on_hover_text(locale.tr("settings-save-error-hint"));
             }
 
-            ui.add_space(4.0);
+            ui.add_space(2.0);
             ui.separator();
-            ui.add_space(3.0);
+            ui.add_space(2.0);
             // Both references sit on one row of two equal, full-height buttons
             // rather than as two bare text lines. They are the only ways into
             // the shortcut list and the about box, and a real button is both
@@ -356,27 +353,9 @@ fn section_label(ui: &mut egui::Ui, label: &str) {
 }
 
 fn section_break(ui: &mut egui::Ui) {
-    ui.add_space(3.0);
+    ui.add_space(1.0);
     ui.separator();
-    ui.add_space(4.0);
-}
-
-/// The save-format question, and the whole of it: there is nothing to choose.
-///
-/// A scan's own format is kept when the viewer can write it, and a scan from a
-/// format with no writer falls to the one format that can carry what the scan
-/// actually holds — PLY when it has an atlas, vertex colours or a mapping, STL
-/// when it is geometry alone. That rule is applied at the point of writing, so
-/// the panel states it rather than offering a switch that could contradict it.
-/// A mode chosen here used to be able to propose a colourless `.stl` for a
-/// colour scan; removing the choice removes that whole class of surprise.
-fn save_format_rows(ui: &mut egui::Ui, locale: &LocaleManager) {
-    ui.label(locale.tr("settings-save-format"));
-    ui.label(
-        egui::RichText::new(locale.tr("settings-save-format-note"))
-            .size(10.5)
-            .color(ui_theme::text_muted()),
-    );
+    ui.add_space(1.0);
 }
 
 const NUMERIC_LABEL_WIDTH: f32 = 96.0;
