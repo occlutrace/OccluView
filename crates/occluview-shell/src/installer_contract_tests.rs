@@ -528,6 +528,42 @@ fn release_msi_builds_the_preview_dll_from_the_pinned_working_shell_source() {
 }
 
 #[test]
+fn the_shell_pin_report_survives_a_windows_crlf_crate_list() {
+    // `report-shell-pin.sh` reads the crate list from Python stdout, and the
+    // packaging job runs the script under Git-Bash on a Windows runner. There,
+    // Python's text mode emits CRLF, and command substitution keeps the CR. A
+    // crate left as `occluview-shell\r` is a git pathspec matching nothing, so
+    // the delta collapsed to whichever names happened to survive: the released
+    // MSI recorded "1 commit touching its crates" when the true figure was 130.
+    // The defect is invisible on a Linux checkout, so it has to be asserted
+    // against the script text itself.
+    let script = include_str!("../../../scripts/report-shell-pin.sh");
+
+    // The strip must be present and must target the carriage return, not
+    // merely trim whitespace that a reviewer might remove later.
+    assert!(
+        script.contains(r#"crate="${crate%$'\r'}""#),
+        "the shell-pin report must strip a Windows carriage return from each \
+         crate name; without it the git pathspecs match nothing and the \
+         recorded delta is far too small"
+    );
+
+    // And the stripped name must be what enters the pathspec array, so an empty
+    // entry cannot be smuggled in as a bare `crates/`.
+    let strip_at = script
+        .find(r#"crate="${crate%$'\r'}""#)
+        .expect("the strip was just asserted present");
+    let push_at = script
+        .find(r#"paths+=("crates/$crate")"#)
+        .expect("the script must add each crate to the pathspec array");
+    assert!(
+        strip_at < push_at,
+        "the carriage return must be stripped before the name reaches the \
+         pathspec array"
+    );
+}
+
+#[test]
 fn windows_package_builds_link_the_msvc_runtime_statically() {
     // The MSI invokes occluview.exe during installation.  A package that
     // depends on a separately installed VC++ runtime can therefore roll back
