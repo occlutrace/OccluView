@@ -17,6 +17,38 @@ use occluview_align::{
     deviation_colors, DeviationMap, Orientation, RampMode, RampSettings, Validity,
 };
 
+/// Best fit must run the full search, not a local-only refinement.
+///
+/// This is the regression that made "Best fit matching" stop finding an arch
+/// that was more than a couple of millimetres out: `local_only: true` removed
+/// the global feature seed and the radius ladder, so the fit kept whatever
+/// surface it first touched and then failed the seating gate. Measured on a
+/// real arch, the full search seated a start 8 mm out (seated fraction 0.998,
+/// trustworthy) while the local-only path reported 0.016 at 4 mm and refused.
+///
+/// The assertion is on the setting the app builds, because that is the value
+/// that decides whether the search runs at all.
+#[test]
+fn best_fit_runs_the_full_search_not_a_local_only_refinement() {
+    let settings = AlignSettings::default().refine();
+    assert!(
+        !settings.local_only,
+        "Best fit must be allowed to search; local_only removes the global seed \
+         and the radius ladder, which is what made it stop finding a scan that \
+         was more than a couple of millimetres out"
+    );
+    // The operator's own inputs still reach the solver unchanged.
+    let tuned = AlignSettings {
+        influence_radius_mm: 1.5,
+        matching_ratio: 0.6,
+        ..AlignSettings::default()
+    }
+    .refine();
+    assert!((tuned.influence_radius_mm - 1.5).abs() < f64::EPSILON);
+    assert!((tuned.matching_ratio - 0.6).abs() < f64::EPSILON);
+    assert!(!tuned.local_only);
+}
+
 /// A map with one of everything: a hard negative, nominal, a hard positive,
 /// something past the scale, and an entry that was never measured.
 fn map() -> DeviationMap {

@@ -13,6 +13,26 @@ use super::OccluViewApp;
 use crate::edit_mode::EditModeCommand;
 use crate::viewer::pick_scene_hit;
 
+/// Largest grabbed point, in the layer's own millimetres, that a pivot may use.
+///
+/// A real dental scan is tens of millimetres across, so a local point beyond a
+/// metre can only come from inverting a nearly singular pose. The captured
+/// value is rejected for the mesh centre instead of turning the scan about a
+/// point effectively at infinity, which would make the far side of the arch
+/// sweep across the screen.
+const PIVOT_LOCAL_LIMIT: f32 = 1_000.0;
+
+/// One pointer frame's inputs, carried together into the step builder.
+#[derive(Clone, Copy)]
+struct DragFrame {
+    /// The viewport the pointer moved in, for the millimetres-per-pixel scale.
+    viewport: egui::Rect,
+    /// Pointer motion this frame, in pixels.
+    motion: egui::Vec2,
+    /// Whether Ctrl is held, which makes the frame a rotation.
+    rotating: bool,
+}
+
 /// An open hand drag.
 #[derive(Clone, Copy)]
 pub(crate) struct AlignDrag {
@@ -20,8 +40,10 @@ pub(crate) struct AlignDrag {
     pub(super) layer: SceneMeshId,
     /// Its pose when the gesture began, so the whole drag is one undo step.
     pub(super) start: Affine3A,
-    /// Its centre in world, the pivot a Ctrl-drag turns about.
-    pub(super) centroid: Vec3,
+    /// The surface point the operator grabbed, in the layer's own local frame.
+    /// Kept local so a Ctrl-drag pivots about the point under the cursor even
+    /// after the gesture has already moved or turned the scan.
+    pub(super) pivot_local: Vec3,
 }
 
 impl OccluViewApp {
@@ -101,12 +123,36 @@ impl OccluViewApp {
             let Some(entry) = scene.meshes().get(hit.layer_index) else {
                 return false;
             };
+            // The grabbed surface point, converted into the layer's own local
+            // frame. A Ctrl-drag turns about it so the point the operator
+            // pulled stays under the cursor; keeping it local means the pivot
+            // is still correct after the gesture has already moved the scan.
+            // When the ray missed the mesh and only the bounding box caught it,
+            // the hit is still a world point on this layer and converts the same
+            // way.
+            //
+            // The inverse is guarded, and the guard has to be a magnitude check,
+            // not `is_finite` alone. A nearly singular pose (a scale a few orders
+            // below a millimetre) inverts to a FINITE matrix with entries around
+            // 1e30, so `is_finite` passes and the pivot lands light-years away;
+            // the step built from it then carries the scan off screen. The mesh
+            // centre is the safe answer for a pose the operator cannot invert by
+            // hand anyway.
+            let inverse = entry.transform.inverse();
+            let mapped = if inverse.is_finite() {
+                inverse.transform_point3(hit.point)
+            } else {
+                Vec3::splat(f32::INFINITY)
+            };
+            let pivot_local = if mapped.is_finite() && mapped.length() <= PIVOT_LOCAL_LIMIT {
+                mapped
+            } else {
+                entry.mesh.bbox_cached().center()
+            };
             self.tools.align.drag = Some(AlignDrag {
                 layer: hit.layer_id,
                 start: entry.transform,
-                centroid: entry
-                    .transform
-                    .transform_point3(entry.mesh.bbox_cached().center()),
+                pivot_local,
             });
             // Nothing below reads the scene, and what follows edits it in
             // place: `forget_align_fit` reaches `live_scene_mut` through the
@@ -141,37 +187,87 @@ impl OccluViewApp {
         let Some(camera) = self.render.camera else {
             return true;
         };
-        let up = camera.view_up();
-        let right = camera.view_direction().cross(up).normalize_or_zero();
         let rotating = ctx.input(|input| input.modifiers.command);
-
-        let step = if rotating {
-            let turn = crate::align_drag::constrained_rotation_from_drag(
-                motion,
-                right,
-                up,
-                crate::align_drag::DEGREES_PER_PIXEL,
-                self.tools.align.constraint,
-            );
-            // Turn about the layer's own centre, so the scan spins in place
-            // instead of orbiting the world origin.
-            Affine3A::from_translation(drag.centroid)
-                * Affine3A::from_quat(turn)
-                * Affine3A::from_translation(-drag.centroid)
-        } else {
-            let world_per_pixel =
-                crate::align_drag::mm_per_pixel(camera.orthographic_height, response.rect.height());
-            let moved =
-                crate::align_drag::screen_delta_to_world(motion, right, up, world_per_pixel);
-            Affine3A::from_translation(crate::align_drag::constrain_translation(
-                moved,
-                self.tools.align.constraint,
-            ))
+        let frame = DragFrame {
+            viewport: response.rect,
+            motion,
+            rotating,
+        };
+        let Some(step) = self.align_drag_step(drag, &camera, frame) else {
+            // A Ctrl-turn with no usable pivot: keep the pose rather than pick
+            // an unseen fallback, but keep owning the gesture.
+            return true;
         };
 
         self.nudge_align_layer(drag.layer, step);
         ctx.request_repaint();
         true
+    }
+
+    /// The world-space step one drag frame applies.
+    ///
+    /// Split out of the gesture handler so the pivot decision, the constraint
+    /// handling and the screen-to-world conversion are readable on their own and
+    /// the handler stays a state machine. `None` means the frame produced no
+    /// usable step (a rotation whose pivot could not be resolved), which is not
+    /// an error: the gesture continues and the pose is left alone.
+    fn align_drag_step(
+        &self,
+        drag: AlignDrag,
+        camera: &occluview_core::Camera,
+        frame: DragFrame,
+    ) -> Option<Affine3A> {
+        let DragFrame {
+            viewport,
+            motion,
+            rotating,
+        } = frame;
+        if !rotating {
+            let right = camera
+                .view_direction()
+                .cross(camera.view_up())
+                .normalize_or_zero();
+            let world_per_pixel =
+                crate::align_drag::mm_per_pixel(camera.orthographic_height, viewport.height());
+            let moved = crate::align_drag::screen_delta_to_world(
+                motion,
+                right,
+                camera.view_up(),
+                world_per_pixel,
+            );
+            return Some(Affine3A::from_translation(
+                crate::align_drag::constrain_translation(moved, self.tools.align.constraint),
+            ));
+        }
+        let right = camera
+            .view_direction()
+            .cross(camera.view_up())
+            .normalize_or_zero();
+        let turn = crate::align_drag::constrained_rotation_from_drag(
+            motion,
+            right,
+            camera.view_up(),
+            crate::align_drag::DEGREES_PER_PIXEL,
+            self.tools.align.constraint,
+        );
+        // Which point the turn fixes depends on the constraint; see
+        // `align_drag::drag_pivot_world` for why Free and the constrained modes
+        // answer differently. The grabbed point is carried in the layer's own
+        // frame and mapped through its CURRENT pose, so a gesture that has
+        // already moved the scan keeps turning about the same physical point
+        // under the cursor. An unusable pivot (no scene, a non-invertible pose, a
+        // point a metre out) refuses the frame rather than turning about an
+        // unseen fallback.
+        let scene = self.document.scene.as_ref()?;
+        let entry = layer_of(scene, drag.layer)?;
+        let pivot_world = crate::align_drag::drag_pivot_world(
+            self.tools.align.constraint,
+            entry.transform.transform_point3(drag.pivot_local),
+            entry
+                .transform
+                .transform_point3(entry.mesh.bbox_cached().center()),
+        )?;
+        Some(crate::align_drag::rotation_about_pivot(turn, pivot_world))
     }
 
     /// Apply one drag step directly to the scene, without touching history.
