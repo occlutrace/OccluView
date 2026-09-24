@@ -186,6 +186,15 @@ pub(crate) const MIN_PIVOT_EXTENT_MM: f32 = 10.0;
 /// sideways, and "it just spun around an axis" is precisely the report this
 /// answers.
 ///
+/// The trade-off is worth stating, because it is visible: a rotation about a
+/// point that is not the centre necessarily moves the centre. Under `ZOnly` and
+/// `XyPlane` the turn is still about world Z, but the arch's centre travels in
+/// XY by roughly `2*sin(angle/2)*offset`. Keeping the centre fixed instead would
+/// put the turn back on an axis the operator did not choose, which is the
+/// behaviour this replaced, so the grabbed point wins. The constraint chips
+/// describe *translation* ("Move in z-direction"); the Ctrl gesture is a turn,
+/// and the panel says the turn follows the grab.
+///
 /// The layer centre is the fallback for a grab that cannot be trusted: a
 /// non-finite value out of a singular pose, or a point far outside the scan.
 /// Returning a sane point keeps the gesture alive instead of freezing it.
@@ -368,6 +377,51 @@ mod tests {
         assert!(step.is_finite(), "{step:?}");
         // It must not guess a pivot: the identity leaves the pose alone.
         assert_eq!(step, Affine3A::IDENTITY);
+    }
+
+    /// The price of pivoting on the grab: an off-centre turn moves the centre.
+    ///
+    /// This is the documented trade-off, asserted so it cannot change silently
+    /// and cannot be mistaken for a bug later. Pivoting on the grabbed point is
+    /// what the operator asked for, and a Z-axis turn about a point that is not
+    /// the centre necessarily carries the centre in XY. Keeping the centre fixed
+    /// is the alternative that was rejected, so this pins the consequence rather
+    /// than forbidding it.
+    #[test]
+    fn an_off_centre_turn_moves_the_centre_within_the_plane() {
+        let centre = Vec3::ZERO;
+        let grabbed = Vec3::new(30.0, 0.0, 0.0);
+        // 40 px at DEGREES_PER_PIXEL, the app's own Z-only turn.
+        let turn = constrained_rotation_from_drag(
+            egui::vec2(40.0, 0.0),
+            Vec3::X,
+            Vec3::Y,
+            DEGREES_PER_PIXEL,
+            DragConstraint::ZOnly,
+        );
+        let step = rotation_about_pivot(turn, grabbed);
+
+        // The grabbed point is exactly fixed.
+        let pinned = step.transform_point3(grabbed);
+        assert!(
+            (pinned - grabbed).length() < 1e-3,
+            "the grabbed point must stay put, got {pinned:?}"
+        );
+
+        // The centre moves, by the closed form 2*sin(angle/2)*offset.
+        let moved = (step.transform_point3(centre) - centre).length();
+        let (_, angle) = turn.to_axis_angle();
+        let expected = 2.0 * (angle / 2.0).sin() * 30.0;
+        assert!(
+            (moved - expected).abs() < 1e-2,
+            "centre moved {moved:.4} mm, expected {expected:.4} mm"
+        );
+        // And the motion stays in the plane: a Z-turn adds no Z displacement.
+        let full = step.transform_point3(centre);
+        assert!(
+            full.z.abs() < 1e-4,
+            "a Z-only turn must not lift the centre, got {full:?}"
+        );
     }
 
     /// The grabbed point is the pivot, under every drag constraint.
