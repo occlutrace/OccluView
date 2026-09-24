@@ -27,10 +27,16 @@
     clippy::expect_used,
     clippy::unwrap_used,
     clippy::print_stderr,
+    // A refused correct rescan is the failure this file exists to catch, so the
+    // helper that reports it panics on purpose.
+    clippy::panic,
     // The distance sweeps below report what the solver reached at each step;
     // that table IS the evidence, so it is printed on purpose.
     clippy::print_stdout,
-    clippy::cast_precision_loss
+    clippy::cast_precision_loss,
+    // Mesh positions are f32 by contract, so the synthesised rescan narrows
+    // back to f32 on purpose.
+    clippy::cast_possible_truncation
 )]
 
 use std::path::{Path, PathBuf};
@@ -633,6 +639,163 @@ fn a_rescanned_arch_seats_from_a_hand_placement_when_fixtures_are_present() {
                 );
             }
             Err(rejection) => println!("true {shift_mm:>5.1} mm -> REFUSED {rejection:?}"),
+        }
+    }
+}
+
+/// How far the corrected rescan still sits from the fixed surface, as an RMS
+/// over the mesh's own vertices.
+///
+/// `refine` returns the pose that seats the *moving* mesh onto the fixed one, so
+/// a correct answer composed with the displacement that created the rescan
+/// returns each vertex to where it started. Measuring the composed result is the
+/// honest quantity: comparing `rigid` to `truth` directly would compare a
+/// correction against the motion it corrects.
+fn residual_after_correction(positions: &[f32], truth: Rigid, correction: Rigid) -> f64 {
+    let mut squares = 0.0;
+    let mut count = 0usize;
+    for point in positions.as_chunks::<3>().0 {
+        let local = DVec3::new(
+            f64::from(point[0]),
+            f64::from(point[1]),
+            f64::from(point[2]),
+        );
+        let rescan = truth.apply(local);
+        squares += (correction.apply(rescan) - local).length_squared();
+        count += 1;
+    }
+    (squares / count.max(1) as f64).sqrt()
+}
+
+/// Deterministic Gaussian noise, standing in for the scanner error a second
+/// acquisition of the same jaw would carry.
+struct Noise {
+    state: u64,
+}
+
+impl Noise {
+    fn new(seed: u64) -> Self {
+        Self { state: seed }
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        self.state = self.state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut value = self.state;
+        value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        value ^ (value >> 31)
+    }
+
+    /// Uniform in `[0, 1)`.
+    fn next_unit(&mut self) -> f64 {
+        (self.next_u64() >> 11) as f64 / (1_u64 << 53) as f64
+    }
+
+    fn next_normal(&mut self) -> f64 {
+        let first = self.next_unit().max(f64::MIN_POSITIVE);
+        let second = self.next_unit();
+        (-2.0 * first.ln()).sqrt() * (std::f64::consts::TAU * second).cos()
+    }
+}
+
+/// A rescan of the same jaw, from a hand placement, must be ACCEPTED.
+///
+/// This is the operator's own workflow, and the one the seating gate can get
+/// wrong. The corpus holds no pair of genuinely independent acquisitions, so
+/// this stands in for one: it moves a real arch by a known rigid transform and
+/// perturbs every vertex with the scanner error a second capture would carry.
+/// The full search must both find the pose and satisfy
+/// `is_trustworthy_refinement_for`. A build that only refines locally converges
+/// on an unseated pose here and the gate refuses it, which is the regression
+/// this test guards — the complaint was exactly "align stopped finding the
+/// pose".
+#[test]
+fn a_rescan_with_scanner_error_is_accepted_where_fixtures_are_present() {
+    let Some(path) = fixtures().and_then(|files| files.into_iter().next()) else {
+        eprintln!("skipped: set OCCLUVIEW_ALIGN_FIXTURES");
+        return;
+    };
+    let (positions, indices) = read_binary_stl(&path);
+    let fixed = Soup {
+        positions: &positions,
+        indices: &indices,
+        mask: None,
+    };
+    let index = SurfaceIndex::build(fixed).expect("a real mesh must index");
+    println!(
+        "fixture: {} ({} verts)",
+        path.display(),
+        fixed.vertex_count()
+    );
+
+    // Per-point scanner error: a clean re-acquisition, then a typical and a
+    // deliberately coarse intra-oral capture.
+    for sigma_mm in [0.0_f64, 0.03, 0.06] {
+        for shift_mm in [1.0_f64, 4.0, 8.0] {
+            let truth = Rigid::new(
+                DQuat::from_axis_angle(
+                    DVec3::new(0.3, 0.5, 0.8).normalize(),
+                    (shift_mm * 0.004).min(0.20),
+                ),
+                DVec3::new(shift_mm * 0.6, -shift_mm * 0.5, shift_mm * 0.3),
+            );
+            let mut noise = Noise::new(0x5eed_1234_u64 ^ sigma_mm.to_bits() ^ shift_mm.to_bits());
+            let mut moved = Vec::with_capacity(positions.len());
+            for point in positions.as_chunks::<3>().0 {
+                let local = DVec3::new(
+                    f64::from(point[0]),
+                    f64::from(point[1]),
+                    f64::from(point[2]),
+                );
+                let mut world = truth.apply(local);
+                if sigma_mm > 0.0 {
+                    world += DVec3::new(
+                        noise.next_normal(),
+                        noise.next_normal(),
+                        noise.next_normal(),
+                    ) * sigma_mm;
+                }
+                moved.push(world.x as f32);
+                moved.push(world.y as f32);
+                moved.push(world.z as f32);
+            }
+            let moving = Soup {
+                positions: &moved,
+                indices: &indices,
+                mask: None,
+            };
+            let settings = RefineSettings::default();
+            // The operator's start is the identity: the rescan sits where the
+            // original did, and the tool must find the displacement.
+            let report = refine(
+                moving,
+                &index,
+                Rigid::IDENTITY,
+                &settings,
+                &CancelFlag::new(),
+            )
+            .unwrap_or_else(|rejection| {
+                panic!("sigma={sigma_mm} shift={shift_mm}: refused with {rejection:?}")
+            });
+            let error = residual_after_correction(&positions, truth, report.rigid);
+            println!(
+                "sigma={sigma_mm:>4.2} shift={shift_mm:>4.1} -> seated={:.4} rms={:.4} \
+                 med={:.4} residual={error:.4} mm",
+                report.seated_fraction, report.rms, report.median_abs
+            );
+            assert!(
+                report.is_trustworthy_refinement_for(&settings),
+                "sigma={sigma_mm} shift={shift_mm}: a correct rescan was refused by the gate \
+                 (seated={:.4}, needs at least 0.12); rms={:.4} med={:.4}",
+                report.seated_fraction,
+                report.rms,
+                report.median_abs
+            );
+            assert!(
+                error < 0.5,
+                "sigma={sigma_mm} shift={shift_mm}: the accepted pose leaves {error:.4} mm of \
+                 residual displacement; the rescan was not brought home"
+            );
         }
     }
 }

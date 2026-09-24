@@ -149,48 +149,54 @@ pub(crate) fn constrained_rotation_from_drag(
 ///
 /// The returned step is a world-space transform, meant to be pre-multiplied onto
 /// the layer's pose exactly like the translation step.
+///
+/// A non-finite pivot yields the identity: it is unreachable from the drag
+/// handler, because `drag_pivot_local` has already replaced an unusable grab
+/// with the layer centre, and guessing a pivot here would turn the scan about a
+/// point nobody chose.
 pub(crate) fn rotation_about_pivot(turn: Quat, pivot: Vec3) -> Affine3A {
     if !pivot.is_finite() {
-        return Affine3A::from_quat(turn);
+        return Affine3A::IDENTITY;
     }
     Affine3A::from_translation(pivot)
         * Affine3A::from_quat(turn)
         * Affine3A::from_translation(-pivot)
 }
 
-/// Largest world-space pivot a drag may use, in millimetres.
+/// How far a grabbed pivot may sit from the layer centre, as a multiple of the
+/// layer's own radius.
 ///
-/// A dental scan sits within tens of millimetres of the origin, so a pivot a
-/// metre out can only come from a non-invertible or wildly scaled pose. Using
-/// it would turn the scan about a point effectively at infinity — the far side
-/// of the arch sweeping across the screen — so the choice is refused instead.
-pub(crate) const DRAG_PIVOT_LIMIT_MM: f32 = 1_000.0;
+/// The bound is relative on purpose. An absolute metre says nothing about a
+/// 70 mm arch — it passes a pivot fourteen times the whole scan — and it is
+/// anchored to the world origin, so a layer legitimately placed a metre away
+/// had every Ctrl-drag silently refused. A grab further than this multiple of
+/// the scan's own size is a pose artefact, not a point on the surface.
+pub(crate) const DRAG_PIVOT_EXTENT_MULTIPLE: f32 = 10.0;
 
-/// Which world point a Ctrl-drag should fix, given the active constraint.
+/// Floor for the relative bound, so a degenerate bounding box cannot reject
+/// every grab.
+pub(crate) const MIN_PIVOT_EXTENT_MM: f32 = 10.0;
+
+/// Which local point a Ctrl-drag fixes.
 ///
-/// The two answers are both deliberate and the constraint decides between them:
+/// Always the surface point the operator grabbed. The gesture exists to answer
+/// "where am I pulling, and by what": that point must stay under the cursor
+/// while the scan turns around it. The drag constraint chooses the rotation
+/// *axis*, never the pivot — a cusp pulled under any chip must not slide
+/// sideways, and "it just spun around an axis" is precisely the report this
+/// answers.
 ///
-/// * `Free` (the chip says "Move/rotate in all directions") fixes the surface
-///   point the operator actually grabbed, so that point stays under the cursor
-///   while the rest of the scan swings around it. Pivoting on the mesh centre
-///   instead made a pulled cusp slide sideways.
-/// * `ZOnly` and `XyPlane` fix the layer's own centre. Those chips promise an
-///   arch turned about the vertical while it stays put, and an off-axis pivot
-///   would translate the centre in XY — the slide the chip says cannot happen.
-///
-/// Returns `None` when the chosen point is unusable (non-finite, or absurdly
-/// far from the origin); the caller must then leave the pose alone rather than
-/// guess a pivot.
-pub(crate) fn drag_pivot_world(
-    constraint: DragConstraint,
-    grabbed_world: Vec3,
-    centre_world: Vec3,
-) -> Option<Vec3> {
-    let candidate = match constraint {
-        DragConstraint::Free => grabbed_world,
-        DragConstraint::ZOnly | DragConstraint::XyPlane => centre_world,
-    };
-    (candidate.is_finite() && candidate.length() <= DRAG_PIVOT_LIMIT_MM).then_some(candidate)
+/// The layer centre is the fallback for a grab that cannot be trusted: a
+/// non-finite value out of a singular pose, or a point far outside the scan.
+/// Returning a sane point keeps the gesture alive instead of freezing it.
+pub(crate) fn drag_pivot_local(grabbed_local: Vec3, centre_local: Vec3, radius_local: f32) -> Vec3 {
+    let limit = (radius_local * DRAG_PIVOT_EXTENT_MULTIPLE).max(MIN_PIVOT_EXTENT_MM);
+    let offset = (grabbed_local - centre_local).length();
+    if grabbed_local.is_finite() && offset.is_finite() && offset <= limit {
+        grabbed_local
+    } else {
+        centre_local
+    }
 }
 
 #[cfg(test)]
@@ -352,67 +358,84 @@ mod tests {
         );
     }
 
-    /// The pivot helper never produces a non-finite transform.
+    /// A non-finite pivot never produces a non-finite transform.
     #[test]
     fn a_non_finite_pivot_still_returns_a_rotation() {
-        let turn = Quat::from_axis_angle(Vec3::Y, 0.25);
-        let step = rotation_about_pivot(turn, Vec3::new(f32::NAN, 0.0, 0.0));
+        let step = rotation_about_pivot(
+            Quat::from_axis_angle(Vec3::Y, 0.25),
+            Vec3::new(f32::NAN, 0.0, 0.0),
+        );
         assert!(step.is_finite(), "{step:?}");
-        assert!((step.transform_point3(Vec3::X) - turn * Vec3::X).length() < 1e-5);
+        // It must not guess a pivot: the identity leaves the pose alone.
+        assert_eq!(step, Affine3A::IDENTITY);
     }
 
-    /// Free mode fixes the grabbed point; the constrained modes fix the centre.
+    /// The grabbed point is the pivot, whatever the drag constraint.
     ///
-    /// This is the wiring the drag handler relies on, and the two answers are
-    /// not interchangeable: Free exists to keep a pulled cusp under the cursor,
-    /// while ZOnly/XyPlane promise the arch stays put on the vertical, which an
-    /// off-axis pivot would break by translating the centre in XY.
+    /// A cusp pulled under any chip must stay under the cursor. The constraint
+    /// chooses the rotation axis; letting it also choose the pivot is what made
+    /// a constrained Ctrl-drag "just spin around an axis" with the pulled point
+    /// sliding away.
     #[test]
-    fn the_pivot_follows_the_constraint() {
+    fn the_grabbed_point_is_the_pivot_under_every_constraint() {
         let grabbed = Vec3::new(12.0, -5.0, 3.0);
         let centre = Vec3::new(1.0, 2.0, 0.0);
+        let radius = 35.0;
 
-        assert_eq!(
-            drag_pivot_world(DragConstraint::Free, grabbed, centre),
-            Some(grabbed),
-            "Free must turn about what the operator grabbed"
-        );
-        assert_eq!(
-            drag_pivot_world(DragConstraint::ZOnly, grabbed, centre),
-            Some(centre),
-            "a z-only turn must stay on the vertical through the centre"
-        );
-        assert_eq!(
-            drag_pivot_world(DragConstraint::XyPlane, grabbed, centre),
-            Some(centre),
-            "an xy-plane turn must keep the centre on its axis"
-        );
+        // The constraint is not even an input any more: nothing about it may
+        // change where the turn happens.
+        for constraint in [
+            DragConstraint::Free,
+            DragConstraint::ZOnly,
+            DragConstraint::XyPlane,
+        ] {
+            let _ = constraint;
+            assert_eq!(
+                drag_pivot_local(grabbed, centre, radius),
+                grabbed,
+                "the grabbed point must stay the pivot"
+            );
+        }
     }
 
-    /// An unusable pivot is refused, not silently substituted.
-    ///
-    /// A nearly singular pose inverts to a finite matrix with enormous entries,
-    /// so a `is_finite`-only guard would let the scan turn about a point
-    /// effectively at infinity. The magnitude limit is what catches it.
+    /// An unusable grab falls back to the centre instead of freezing the drag.
     #[test]
-    fn an_unusable_pivot_is_refused() {
+    fn an_unusable_pivot_falls_back_to_the_layer_centre() {
         let centre = Vec3::new(1.0, 2.0, 0.0);
+        let radius = 35.0;
+        let limit = (radius * DRAG_PIVOT_EXTENT_MULTIPLE).max(MIN_PIVOT_EXTENT_MM);
+
         for bad in [
             Vec3::new(f32::NAN, 0.0, 0.0),
             Vec3::new(f32::INFINITY, 0.0, 0.0),
-            Vec3::splat(DRAG_PIVOT_LIMIT_MM + 1.0),
+            // Just outside the layer's own extent bound.
+            centre + Vec3::splat(limit + 1.0),
         ] {
             assert_eq!(
-                drag_pivot_world(DragConstraint::Free, bad, centre),
-                None,
-                "a pivot of {bad:?} must be refused"
+                drag_pivot_local(bad, centre, radius),
+                centre,
+                "a grab of {bad:?} must fall back to the centre"
             );
         }
-        // The centre is still usable when it is itself sane.
+
+        // The bound is relative to the scan, so a grab a sane distance out is
+        // still honoured: this is what keeps a far-placed layer draggable.
         assert_eq!(
-            drag_pivot_world(DragConstraint::ZOnly, Vec3::NAN, centre),
-            Some(centre),
-            "a constrained turn does not read the grabbed point at all"
+            drag_pivot_local(centre + Vec3::splat(limit * 0.5), centre, radius),
+            centre + Vec3::splat(limit * 0.5),
+            "a grab inside the layer's extent must be honoured"
+        );
+    }
+
+    /// A tiny or degenerate bounding box still leaves a usable pivot.
+    #[test]
+    fn a_degenerate_layer_extent_still_allows_a_grab() {
+        let centre = Vec3::ZERO;
+        // A zero radius would make a purely relative bound reject everything.
+        assert_eq!(
+            drag_pivot_local(Vec3::new(1.0, 0.0, 0.0), centre, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            "the floor must keep a small scan draggable"
         );
     }
 }

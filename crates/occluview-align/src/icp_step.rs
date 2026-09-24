@@ -100,9 +100,12 @@ pub(super) fn try_backtracked_step(
         // A step may not trade seating away for a smaller residual. A trimmed
         // least-squares residual always falls when the step spreads a
         // deformation over everything, which is how a prepared model ends up
-        // seated on its operated region instead of its unchanged one. Seating
-        // is allowed to be zero throughout (two real acquisitions of one jaw
-        // need not agree within 50 um), but it must never go DOWN.
+        // seated on its operated region instead of its unchanged one. This is a
+        // monotonicity rule, not the acceptance test: a level may start and stay
+        // unseated, and the pose it converges to is still judged by
+        // `is_trustworthy_refinement_for`, which refuses anything below
+        // `MIN_SEATED_FRACTION`. Nothing here may lower seating, and nothing
+        // here may authorize a pose on its own.
         let seated_kept = trial_summary.seated_fraction + 1e-9 >= state.measured.seated_fraction;
         if seated_kept
             && trial_summary.geometric_rms.is_finite()
