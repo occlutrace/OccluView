@@ -77,3 +77,11 @@ pub(super) fn linux_build_deb_source() -> &'static str {
 pub(super) fn linux_check_deb_source() -> &'static str {
     include_str!("../../../../install/linux/check-deb.sh")
 }
+
+pub(super) fn macos_build_app_source() -> &'static str {
+    include_str!("../../../../install/macos/build-app.sh")
+}
+
+pub(super) fn macos_info_plist_source() -> &'static str {
+    include_str!("../../../../install/macos/Info.plist.in")
+}

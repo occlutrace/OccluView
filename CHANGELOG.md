@@ -274,6 +274,21 @@ remain in the Git history.
 - Added a private `Prevhost.exe` smoke check that confirms visible pixels in
   the real surrogate while retaining low-integrity isolation.
 
+### macOS
+
+- Added an Apple Silicon `aarch64-apple-darwin` build targeting macOS 14+, with
+  Application Support state, kernel-backed single-instance locking, and local
+  open-file handoff.
+- Added Finder document-open integration for STL, PLY, OBJ, GLB, HPS, and the
+  legacy `.dcm` HPS container. `.dcm` is declared only as an alternate handler,
+  so it appears in "Open With" without taking medical DICOM files from their own
+  software; a real DICOM file is still refused by its `DICM` signature.
+- Added unsigned developer `.app`, `.dmg`, and `.pkg` packaging, plus verified
+  `.pkg` handoff to macOS Installer. Developer ID signing and notarization remain
+  maintainer release gates; these local artifacts are not public downloads.
+- Added Command-key shortcut labels, trackpad scrolling for viewport pan, and
+  pinch zoom.
+
 ## 1.1.0 - 2026-08-24
 
 ### Highlights
