@@ -23,20 +23,25 @@ GETs, nothing is installed without the operator choosing it, and the manifest is
 verified against a public key compiled into the binary
 ([`occluview.pub`](occluview.pub)) before any download is offered. If the
 operator accepts, one further GET fetches the installer, which is checked
-against the manifest's SHA-256 and its own signature before it runs. The only
-state kept is a local marker for a dismissed version.
+against the manifest's SHA-256 and its own signature before the OS receives it.
+On macOS, the verified `.pkg` is opened with LaunchServices; Installer presents
+the package and the operator authorizes changes to `/Applications`. Nothing
+runs with elevated privileges from inside OccluView. The only state kept is a
+local marker for a dismissed version.
 
 Set `OCCLUVIEW_NO_UPDATE_CHECK` (any value) to disable the check entirely.
 `occluview-update` is the only crate with an HTTP client; nothing else in the
 workspace reaches the network. The single-instance handshake uses a local Unix
-socket or named pipe and never leaves the machine.
+socket on Linux, a named pipe on Windows, and a kernel-managed file lock plus
+local state-directory handoff on macOS; it never leaves the machine.
 
 ## Local state
 
-The viewer writes one state directory: `%APPDATA%\OccluView\` on Windows or
-`$XDG_STATE_HOME/OccluView/` on Linux. It contains recent-file paths, crash
-reports, the skipped-update marker, and short-lived hand-off files. Crash
-reports deliberately omit scan paths.
+The viewer writes one state directory: `%APPDATA%\OccluView\` on Windows,
+`$XDG_STATE_HOME/OccluView/` (falling back to `~/.local/state/OccluView/`) on
+Linux, or `~/Library/Application Support/OccluView/` on macOS. It contains
+recent-file paths, crash reports, the skipped-update marker, and short-lived
+hand-off files. Crash reports deliberately omit scan paths.
 
 ## Signing keys
 
@@ -44,6 +49,16 @@ Release secrets are stored only in the release system, never in this
 repository. To rotate the update key, first ship a release that trusts the new
 public key, then sign subsequent releases with the new private key. Remove the
 old key only after installed versions can verify the replacement.
+
+## macOS distribution gate
+
+Local Apple Silicon `.app`, `.dmg`, and `.pkg` outputs are unsigned developer
+artifacts and are not published. Before a macOS release is added, a maintainer
+must sign the app with Developer ID Application, sign its installer package
+with Developer ID Installer, notarize and staple the distributed artifacts,
+and still attach the existing minisign signatures to update assets. No Apple
+signing credentials are stored in this repository. Until that gate is met, no
+macOS asset is advertised by the release or update manifest.
 
 ## Verifying a release
 
