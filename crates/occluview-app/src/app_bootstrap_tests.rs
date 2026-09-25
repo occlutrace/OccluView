@@ -363,7 +363,22 @@ fn report_names_are_unique_even_when_failures_share_a_clock_tick() {
 /// desktop through whatever the image actually ships. The command lines are
 /// pinned here because a wrong flag makes the dialog never appear, which looks
 /// exactly like the silent failure this exists to prevent.
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_dialog_keeps_report_content_out_of_osascript_source() {
+    let title = "Title'; do shell script 'false";
+    let body = "Report path: /tmp/scan'; display dialog 'injected";
+    let args = macos_dialog_command(title, body);
+
+    assert_eq!(args[0], "-e");
+    assert!(args[1].contains("display dialog"));
+    assert!(!args[1].contains(title));
+    assert!(!args[1].contains(body));
+    assert_eq!(args[3], title);
+    assert_eq!(args[4], body);
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
 #[test]
 fn every_desktop_notification_channel_builds_a_usable_command() {
     for channel in NOTIFICATION_CHANNELS {
