@@ -49,7 +49,7 @@ help-section-align-measure = Alineación y medición
 help-section-cut-view = Vista de corte
 help-section-layers-preview = Capas y vista previa del Explorador
 
-help-hintline-navigation = Arrastrar con BRM orbita · MMB desplaza · rueda zoom · clic MMB enfoca
+help-hintline-navigation = Arrastrar con BRM orbita · MMB desplaza · scroll del trackpad desplaza · rueda/pellizco amplía · clic MMB enfoca
 help-hintline-mesh-editing = Clic IZM selecciona · Shift+clic desmarca · rectángulo · Ctrl+Z deshace
 help-hintline-sculpt = IZM esculpe · Shift cambia modo · Shift+rueda tamaño · Ctrl+rueda fuerza
 help-hintline-align = IZM coloca · Ctrl/Command+arrastrar rota · Shift+arrastrar borra · BRM deshace

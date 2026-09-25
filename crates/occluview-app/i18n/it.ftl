@@ -49,7 +49,7 @@ help-section-align-measure = Allineamento e misura
 help-section-cut-view = Vista in sezione
 help-section-layers-preview = Livelli e anteprima di Explorer
 
-help-hintline-navigation = Trascina DX orbita · CM pan · rotella zoom · clic CM fuoco
+help-hintline-navigation = Trascina DX orbita · CM pan · scorrimento trackpad sposta · rotella/pizzico zoom · clic CM fuoco
 help-hintline-mesh-editing = Clic SX seleziona · Shift+clic deseleziona · rettangolo · Ctrl+Z annulla
 help-hintline-sculpt = SX scolpisce · Shift cambia modo · Shift+rotella misura · Ctrl+rotella forza
 help-hintline-align = SX piazza · Ctrl/Command+trascina ruota · Shift+trascina cancella · DX annulla

@@ -59,7 +59,7 @@ impl OccluViewApp {
                         .size(11.5),
                 );
                 ui.label(
-                    egui::RichText::new("Ctrl+O")
+                    egui::RichText::new(crate::i18n::platform_shortcut_text("Ctrl+O"))
                         .color(crate::ui_theme::text_muted())
                         .size(10.5),
                 );
