@@ -7,6 +7,14 @@ remain in the Git history.
 
 ### Viewer
 
+- "Best fit matching" accepts a scan of part of a jaw against a scan of all of
+  it again. The acceptance gate had briefly required a fixed fraction of the
+  moving surface to seat inside 0.05 mm, which a real partial overlap cannot
+  reach — the overlap seated exactly (median 0.000 mm) and the gate still
+  refused it, so the button did nothing and no heatmap appeared. The median
+  residual decides acceptance, as it did in v1.2.0, with the worst-fifth tail
+  still bounded so a fit that slid onto a neighbouring surface is refused. Two
+  different jaws stay refused.
 - Excluding surface from best-fit matching with the Brush tool marks and
   commands both scans again. Selecting one mesh had narrowed "Fit everywhere",
   "Fit nowhere", "Invert markings" and "Mark automatic" to that single scan, so
@@ -46,31 +54,35 @@ remain in the Git history.
   format is saved as PLY rather than STL.
 - A merged scene is saved in the fallback format instead of always PLY, so
   "Save scene as" follows the same preference as the layers.
-- A PLY export of a textured scan carries the texture instead of dropping it,
-  inside the file. PLY has no texture element — every other tool stores the
-  image beside the `.ply` and names it in a `comment TextureFile` line — so the
-  image travels as an OccluView header comment, and the export is one file with
-  nothing to keep together. Texture coordinates go out with it, both as the
-  per-face `texcoord` list other software understands and, for a scan with no
-  image, as per-vertex `s`/`t`. Opening an OccluView export again shows the scan
-  in colour, and a scan that carries both per-vertex colours and an atlas is
-  written with both.
+- A PLY export of a textured scan writes the atlas as per-vertex RGBA, at each
+  vertex's texture coordinate. PLY stores coordinates but not an image, so this
+  is the only way the colour travels with the geometry. The `OccluViewTexture*`
+  header comments are no longer written: a 4 MB `.dcm` could become a ~50 MB
+  `.ply` that most other tools would not read. Coordinates are omitted once the
+  colour is baked, because `s`/`t` with no image makes readers draw the scan
+  white. A PLY an earlier release wrote with the header comment still opens in
+  colour. An OBJ export of the same scan carries the colour the same way, as
+  per-vertex RGB. A layer that also carries its own colours exports the atlas
+  and reports that the other colours were replaced.
 - A scan that names its image beside it arrives with the image. An OBJ with its
   `mtllib`/`map_Kd` pair — or with an image sharing its name — and a PLY from
   another tool with a `comment TextureFile` line are read with the texture
   attached, instead of being imported untextured and losing the colour the scan
   was captured with. A file larger than 1 GB, or a companion image larger than
   64 MB, is refused rather than read.
-- A PLY export no longer writes a texture its own reader would refuse. An atlas
-  with an edge past 8192 px, or one whose decoded surface is past 256 MiB, used
-  to compress into a small PNG, land in the header and be reported as a success,
-  while re-opening the file showed no colour at all. The export now drops the
-  image and says so, and keeps the coordinates for the next tool. The image
-  bytes carried in a PLY header are no longer accumulated past the size the
-  reader accepts either, so a crafted header cannot make the importer hold a
-  second copy of a payload it was always going to reject. A header whose
+- A crafted PLY header can no longer make the importer hold a second copy of a
+  base64 payload it was always going to reject, and a header whose
   `OccluViewTexture` keys were re-cased by a text editor reads as before,
   matching the case-insensitive treatment `TextureFile` already had.
+- An HPS/DCM scan whose texture has its red and blue channels transposed is
+  corrected to warm at any brightness. The check previously compared a
+  brightness-scaled margin, so the same swap was caught on a dark atlas and
+  missed on a bright one; a 3Shape lab scanner writes the bright kind, and
+  those scans opened with cyan gingiva and blue-tinted enamel. It now measures
+  the blue bias per hue-bearing pixel and requires a near-uniform bias of at
+  least 24 levels on average. The sample spans rows and columns, so a
+  power-of-two atlas is judged from the whole picture. A texture whose format
+  is declared explicitly is decoded as declared and never re-guessed.
 - The save format is no longer a setting. Settings used to ask "each scan keeps
   its own format" or "chosen format", with a format to pick in the second mode
   and two lines explaining the consequence — and the mode that was in force

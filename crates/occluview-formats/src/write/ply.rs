@@ -1,95 +1,14 @@
+use super::vertex_color::baked_colors;
 use super::{
     write_f32_le, write_i32_le, MeshWriteFormat, MeshWriteOptions, MeshWriteReport,
     MeshWriteWarning,
 };
 use crate::error::FormatError;
-use crate::ply::embed;
-use occluview_core::{Mesh, MeshKind, MeshTexture};
+use occluview_core::{Mesh, MeshKind};
 use std::io::Write;
 
-/// How much of the encoded image goes on one comment line.
-///
-/// The header is text read line by line, and a single line holding megabytes
-/// asks every reader — including ones that merely look at the first kilobyte —
-/// to hold all of it at once.
-const TEXTURE_CHUNK: usize = 76;
-
-/// What this write will do with the mesh's texture, decided once so the header,
-/// the face list and the warnings cannot disagree.
-struct TexturePlan<'a> {
-    /// The image to write, if one can be written at all.
-    texture: Option<&'a MeshTexture>,
-    /// The encoded image, ready for the header comments.
-    encoded: Option<String>,
-}
-
-impl<'a> TexturePlan<'a> {
-    fn new(mesh: &'a Mesh, options: &MeshWriteOptions) -> Self {
-        // A texture is applied through texture coordinates on faces. Without
-        // triangles, or without coordinates, there is nothing for an image to
-        // map onto: writing it would produce a file that claims a texture
-        // nothing can sample.
-        let candidate = mesh
-            .texture()
-            .filter(|_| options.include_texture && options.include_uvs)
-            // A texture whose dimensions and pixel buffer disagree makes the
-            // PNG encoder assert, and an abort would take the whole viewer down
-            // with the export. The GLB writer rejects the same shape; here the
-            // image is simply not written, and the caller warns.
-            .filter(|texture| {
-                texture.width > 0
-                    && texture.height > 0
-                    && texture.rgba.len()
-                        == (texture.width as usize)
-                            .saturating_mul(texture.height as usize)
-                            .saturating_mul(4)
-            })
-            // An image needs face rows to carry its coordinates: without them
-            // the file would hold an atlas nothing can sample and lose the UVs
-            // with no warning. The per-vertex path survives an empty face list.
-            .filter(|_| {
-                mesh.kind() == MeshKind::TriangleMesh
-                    && mesh.has_uvs()
-                    && !mesh.indices().is_empty()
-            })
-            // A texture the reader's own decode limits would refuse must not be
-            // written at all. Re-encoding is not enough to know: a lopsided
-            // atlas compresses to a small PNG while decoding to a surface past
-            // `MAX_TEXTURE_RGBA_BYTES`, and an edge past
-            // `MAX_TEXTURE_DIMENSION_PX` decodes to nothing. Either way the
-            // export would report success, the bytes would sit in the header,
-            // and re-opening the file would show no texture with nothing said;
-            // dropping it here routes the case through `TextureImageNotWritten`,
-            // which the operator actually sees. Asked of the shared validator
-            // rather than duplicated, so the two cannot drift.
-            .filter(|texture| {
-                crate::texture_decode::validate_texture_dimensions(
-                    texture.width,
-                    texture.height,
-                    "PLY",
-                )
-                .is_ok()
-            });
-        let png = candidate.and_then(|texture| super::super::glb_writer::encode_png(texture).ok());
-        let encoded = png.as_deref().map(embed::encode);
-        // The reader refuses an embedded image whose base64 exceeds its own
-        // ceiling, so a bigger one must not be written at all: the export would
-        // report success, the bytes would sit in the header, and re-opening the
-        // file would show no texture with nothing said. Dropping it here routes
-        // the case through `TextureImageNotWritten`, which is a warning the
-        // operator actually sees. Asked of the reader rather than duplicated, so
-        // the two cannot drift.
-        let encoded = encoded.filter(|text| text.len() <= crate::ply::max_encoded_chars());
-        // An image that cannot be encoded is not written, and the caller warns
-        // about it rather than shipping a header that promises it.
-        let texture = candidate.filter(|_| encoded.is_some());
-        Self { texture, encoded }
-    }
-
-    fn writes_texture(&self) -> bool {
-        self.texture.is_some()
-    }
-}
+#[cfg(test)]
+use super::vertex_color::sample;
 
 pub(super) fn write_mesh<W: Write>(
     writer: &mut W,
@@ -97,25 +16,41 @@ pub(super) fn write_mesh<W: Write>(
     options: MeshWriteOptions,
     report: &mut MeshWriteReport,
 ) -> Result<(), FormatError> {
-    let texture = TexturePlan::new(mesh, &options);
-    // Texture coordinates go out with the texture as the per-face `texcoord`
-    // list every textured-mesh reader looks for, and without one as per-vertex
-    // `s`/`t`, which at least preserves the mapping for the next tool.
-    let uv_as_texcoord = texture.writes_texture();
-    let uv_as_vertex = mesh.has_uvs() && options.include_uvs && !uv_as_texcoord;
-    report_losses(
-        mesh,
-        &options,
-        &texture,
-        uv_as_texcoord || uv_as_vertex,
-        report,
-    );
+    // PLY has no texture element, so an attached atlas is baked into per-vertex
+    // RGBA (the form a scanner's PLY uses). See `vertex_color`.
+    let baked = baked_colors(mesh, &options);
+    let plan = VertexPlan {
+        colors: options.include_vertex_colors && (baked.is_some() || mesh.has_vertex_colors()),
+        normals: options.include_normals,
+        // No image means no `s`/`t`: a reader that sees coordinates without an
+        // image enters an empty texture mode and draws the scan white. A scan
+        // with no atlas keeps its coordinates.
+        uvs: options.include_uvs && mesh.has_uvs() && baked.is_none(),
+        baked: baked.as_deref(),
+    };
+    report_losses(mesh, &options, plan, report);
 
-    write_header(writer, mesh, &options, &texture, uv_as_vertex)?;
-    write_vertices(writer, mesh, &options, uv_as_vertex)?;
-    write_faces(writer, mesh, uv_as_texcoord)?;
+    write_header(writer, mesh, plan)?;
+    write_vertices(writer, mesh, plan)?;
+    write_faces(writer, mesh)?;
 
     Ok(())
+}
+
+/// What the vertex element of this export is going to carry.
+///
+/// One value rather than four loose flags, decided once so the header and the
+/// rows it describes cannot disagree about the property list.
+#[derive(Copy, Clone)]
+struct VertexPlan<'a> {
+    /// Write per-vertex RGBA.
+    colors: bool,
+    /// Write per-vertex normals.
+    normals: bool,
+    /// Write per-vertex `s`/`t`.
+    uvs: bool,
+    /// Baked colours that replace the vertices' own, when an atlas was sampled.
+    baked: Option<&'a [[u8; 4]]>,
 }
 
 /// Report what this write cannot carry.
@@ -125,17 +60,20 @@ pub(super) fn write_mesh<W: Write>(
 fn report_losses(
     mesh: &Mesh,
     options: &MeshWriteOptions,
-    texture: &TexturePlan<'_>,
-    uvs_written: bool,
+    plan: VertexPlan<'_>,
     report: &mut MeshWriteReport,
 ) {
-    if mesh.has_vertex_colors() && !options.include_vertex_colors {
+    // The baked atlas is what the renderer shows by default, so it is the
+    // colour written. A mesh that also carries its own per-vertex colours (a
+    // painted or occlusion-marked scan) therefore loses them, and has to say so.
+    let colors_replaced = plan.baked.is_some() && mesh.has_vertex_colors();
+    if mesh.has_vertex_colors() && (!options.include_vertex_colors || colors_replaced) {
         report.warn(MeshWriteWarning::VertexColorsNotWritten);
     }
-    if mesh.has_uvs() && !uvs_written {
+    if mesh.has_uvs() && !plan.uvs {
         report.warn(MeshWriteWarning::UvsNotWritten);
     }
-    if mesh.texture().is_some() && !texture.writes_texture() {
+    if mesh.texture().is_some() && plan.baked.is_none() {
         report.warn(MeshWriteWarning::TextureImageNotWritten);
     }
 }
@@ -143,9 +81,7 @@ fn report_losses(
 fn write_header<W: Write>(
     writer: &mut W,
     mesh: &Mesh,
-    options: &MeshWriteOptions,
-    texture: &TexturePlan<'_>,
-    uv_as_vertex: bool,
+    plan: VertexPlan<'_>,
 ) -> Result<(), FormatError> {
     let vertex_count = mesh.vertices().len();
     let face_count = if mesh.kind() == MeshKind::TriangleMesh {
@@ -156,85 +92,52 @@ fn write_header<W: Write>(
     writeln!(writer, "ply")?;
     writeln!(writer, "format binary_little_endian 1.0")?;
     writeln!(writer, "comment Generated by OccluView")?;
-    write_texture_comments(writer, texture)?;
     writeln!(writer, "element vertex {vertex_count}")?;
     writeln!(writer, "property float x")?;
     writeln!(writer, "property float y")?;
     writeln!(writer, "property float z")?;
-    if options.include_normals {
+    if plan.normals {
         writeln!(writer, "property float nx")?;
         writeln!(writer, "property float ny")?;
         writeln!(writer, "property float nz")?;
     }
-    if options.include_vertex_colors && mesh.has_vertex_colors() {
+    if plan.colors {
         writeln!(writer, "property uchar red")?;
         writeln!(writer, "property uchar green")?;
         writeln!(writer, "property uchar blue")?;
         writeln!(writer, "property uchar alpha")?;
     }
-    if uv_as_vertex {
+    if plan.uvs {
         writeln!(writer, "property float s")?;
         writeln!(writer, "property float t")?;
     }
     if mesh.kind() == MeshKind::TriangleMesh {
         writeln!(writer, "element face {face_count}")?;
         writeln!(writer, "property list uchar int vertex_indices")?;
-        if texture.writes_texture() {
-            writeln!(writer, "property list uchar float texcoord")?;
-        }
     }
     writeln!(writer, "end_header")?;
-    Ok(())
-}
-
-/// The comments that carry the texture inside the file.
-///
-/// PLY has no texture element. The convention the other tools share — a
-/// `comment TextureFile` line naming an image beside the file — leaves the pair
-/// splittable and puts an extra file in the operator's folder, which is not
-/// what an export of one scan should be. The image is therefore encoded into
-/// comments of our own, and a reader that does not know the key skips them as
-/// text. Nothing is written beside the export.
-fn write_texture_comments<W: Write>(
-    writer: &mut W,
-    texture: &TexturePlan<'_>,
-) -> Result<(), FormatError> {
-    if !texture.writes_texture() {
-        return Ok(());
-    }
-    writeln!(writer, "comment OccluViewTextureFormat png")?;
-    if let Some(encoded) = &texture.encoded {
-        for chunk in encoded.as_bytes().chunks(TEXTURE_CHUNK) {
-            // `encoded` is ASCII: every byte is one character.
-            writeln!(
-                writer,
-                "comment OccluViewTextureBase64 {}",
-                String::from_utf8_lossy(chunk)
-            )?;
-        }
-    }
     Ok(())
 }
 
 fn write_vertices<W: Write>(
     writer: &mut W,
     mesh: &Mesh,
-    options: &MeshWriteOptions,
-    uv_as_vertex: bool,
+    plan: VertexPlan<'_>,
 ) -> Result<(), FormatError> {
-    for vertex in mesh.vertices() {
+    for (index, vertex) in mesh.vertices().iter().enumerate() {
         write_f32_le(writer, vertex.position[0])?;
         write_f32_le(writer, vertex.position[1])?;
         write_f32_le(writer, vertex.position[2])?;
-        if options.include_normals {
+        if plan.normals {
             write_f32_le(writer, vertex.normal[0])?;
             write_f32_le(writer, vertex.normal[1])?;
             write_f32_le(writer, vertex.normal[2])?;
         }
-        if options.include_vertex_colors && mesh.has_vertex_colors() {
-            writer.write_all(&vertex.color)?;
+        if plan.colors {
+            let color = plan.baked.map_or(vertex.color, |baked| baked[index]);
+            writer.write_all(&color)?;
         }
-        if uv_as_vertex {
+        if plan.uvs {
             write_f32_le(writer, vertex.uv[0])?;
             write_f32_le(writer, vertex.uv[1])?;
         }
@@ -242,11 +145,7 @@ fn write_vertices<W: Write>(
     Ok(())
 }
 
-fn write_faces<W: Write>(
-    writer: &mut W,
-    mesh: &Mesh,
-    uv_as_texcoord: bool,
-) -> Result<(), FormatError> {
+fn write_faces<W: Write>(writer: &mut W, mesh: &Mesh) -> Result<(), FormatError> {
     if mesh.kind() != MeshKind::TriangleMesh {
         return Ok(());
     }
@@ -261,19 +160,6 @@ fn write_faces<W: Write>(
                     reason: "triangle index exceeds i32".to_string(),
                 })?,
             )?;
-        }
-        if uv_as_texcoord {
-            // Six floats: u,v for each of the three corners, in the order of
-            // the indices just written.
-            writer.write_all(&[6])?;
-            for index in triangle {
-                let uv = mesh
-                    .vertices()
-                    .get(usize::try_from(*index).unwrap_or(usize::MAX))
-                    .map_or([0.0, 0.0], |vertex| vertex.uv);
-                write_f32_le(writer, uv[0])?;
-                write_f32_le(writer, uv[1])?;
-            }
         }
     }
     Ok(())
@@ -296,24 +182,36 @@ mod tests {
         mesh
     }
 
-    /// A triangle with a two-pixel texture and per-vertex coordinates.
+    /// A triangle whose three UVs land on three different texels of a 2x2
+    /// atlas, so a reordered or mirrored sample cannot pass by accident.
     fn textured_triangle() -> Mesh {
         let mut mesh = Mesh::new(
             Some("arch".to_string()),
             vec![
-                Vertex::at(glam::Vec3::ZERO).with_uv([0.0, 1.0]),
-                Vertex::at(glam::Vec3::X).with_uv([1.0, 1.0]),
-                Vertex::at(glam::Vec3::Y).with_uv([0.0, 0.0]),
+                Vertex::at(glam::Vec3::ZERO).with_uv([0.25, 0.25]),
+                Vertex::at(glam::Vec3::X).with_uv([0.75, 0.25]),
+                Vertex::at(glam::Vec3::Y).with_uv([0.25, 0.75]),
             ],
             vec![0, 1, 2],
         )
         .expect("a triangle mesh");
-        mesh.set_texture(MeshTexture::new(2, 1, vec![255, 0, 0, 255, 0, 0, 255, 255]));
+        mesh.set_texture(MeshTexture::new(
+            2,
+            2,
+            vec![
+                255, 0, 0, 255, // top-left, red
+                0, 255, 0, 255, // top-right, green
+                0, 0, 255, 255, // bottom-left, blue
+                255, 255, 0, 255, // bottom-right, yellow
+            ],
+        ));
         mesh
     }
 
+    /// A textured export carries colour on the vertices and no encoded image in
+    /// the header, so the result is a single file.
     #[test]
-    fn a_texture_travels_inside_the_file_and_lands_back_on_the_mesh() {
+    fn a_scan_texture_is_baked_into_per_vertex_colour() {
         let mesh = textured_triangle();
         let mut bytes = Vec::new();
         let written = crate::write::write_mesh(
@@ -324,37 +222,124 @@ mod tests {
         )
         .expect("write ply");
 
+        assert!(
+            !written
+                .warnings
+                .contains(&MeshWriteWarning::TextureImageNotWritten),
+            "the colour was written: {:?}",
+            written.warnings
+        );
         let header_end = bytes
             .windows(b"end_header\n".len())
             .position(|window| window == b"end_header\n")
             .expect("end header");
         let header = String::from_utf8_lossy(&bytes[..header_end]);
         assert!(
+            header.contains("property uchar red\nproperty uchar green\nproperty uchar blue\nproperty uchar alpha\n"),
+            "the colour is per vertex, the way a scanner writes it:\n{header}"
+        );
+        assert!(
+            !header.contains("OccluViewTexture"),
+            "no image may be encoded into the header:\n{header}"
+        );
+        assert!(
             !header.contains("TextureFile"),
             "nothing is written beside this file, so the header must not name an image"
         );
+        // No image travels, so the coordinates would point at nothing. A reader
+        // that sees s/t without a texture switches to an empty texture mode and
+        // draws the scan white; a scanner's own coloured PLY carries none.
         assert!(
-            header.contains("property list uchar float texcoord"),
-            "the faces must carry the texture coordinates"
+            !header.contains("property float s"),
+            "no coordinates are written once the colour is baked:\n{header}"
         );
+
+        // The colour each vertex samples is the colour the viewer showed.
+        let read = crate::ply::read(&bytes).expect("read back the exported ply");
+        assert!(read.has_vertex_colors(), "the colour came back on vertices");
+        assert!(read.texture().is_none(), "no phantom image is attached");
+        assert!(!read.has_uvs(), "no dangling coordinates are attached");
+        assert_eq!(read.vertices()[0].color, [255, 0, 0, 255]);
+        assert_eq!(read.vertices()[1].color, [0, 255, 0, 255]);
+        assert_eq!(read.vertices()[2].color, [0, 0, 255, 255]);
+    }
+
+    /// A mesh that carries BOTH an atlas and its own per-vertex colours — a
+    /// painted or occlusion-marked HPS scan is exactly that — exports the atlas,
+    /// because that is what the viewer shows by default, and reports the
+    /// colours it replaced rather than dropping them without a word.
+    #[test]
+    fn replacing_real_vertex_colours_with_the_atlas_is_reported() {
+        let mut mesh = textured_triangle();
+        let mut vertices = mesh.vertices().to_vec();
+        vertices[0].color = [10, 20, 30, 255];
+        vertices[1].color = [40, 50, 60, 255];
+        vertices[2].color = [70, 80, 90, 255];
+        mesh =
+            Mesh::new(Some("arch".to_string()), vertices, vec![0, 1, 2]).expect("a triangle mesh");
+        mesh.set_texture(MeshTexture::new(
+            2,
+            2,
+            vec![
+                255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255,
+            ],
+        ));
+        assert!(mesh.has_vertex_colors() && mesh.texture().is_some());
+
+        let mut bytes = Vec::new();
+        let written = crate::write::write_mesh(
+            &mut bytes,
+            &mesh,
+            MeshWriteFormat::PlyBinaryLittleEndian,
+            MeshWriteOptions::default(),
+        )
+        .expect("write ply");
+
         assert!(
-            !header.contains("property float s\n"),
-            "coordinates go with the texture, not twice"
+            written
+                .warnings
+                .contains(&MeshWriteWarning::VertexColorsNotWritten),
+            "the colours the atlas replaced must be reported: {:?}",
+            written.warnings
         );
+        let read = crate::ply::read(&bytes).expect("read back");
+        assert_eq!(
+            read.vertices()[0].color,
+            [255, 0, 0, 255],
+            "the atlas colour is what was written"
+        );
+    }
+
+    /// With no atlas there is nothing to bake, so a mesh's own colours go out
+    /// unchanged and nothing is reported as lost.
+    #[test]
+    fn vertex_colours_alone_are_written_without_a_warning() {
+        let mut mesh = textured_triangle();
+        mesh.clear_texture();
+        let mut vertices = mesh.vertices().to_vec();
+        vertices[0].color = [10, 20, 30, 255];
+        mesh =
+            Mesh::new(Some("arch".to_string()), vertices, vec![0, 1, 2]).expect("a triangle mesh");
+        assert!(mesh.has_vertex_colors() && mesh.texture().is_none());
+
+        let mut bytes = Vec::new();
+        let written = crate::write::write_mesh(
+            &mut bytes,
+            &mesh,
+            MeshWriteFormat::PlyBinaryLittleEndian,
+            MeshWriteOptions::default(),
+        )
+        .expect("write ply");
+
         assert!(
             !written
                 .warnings
-                .contains(&MeshWriteWarning::TextureImageNotWritten),
-            "the image was written"
+                .contains(&MeshWriteWarning::VertexColorsNotWritten),
+            "nothing was lost: {:?}",
+            written.warnings
         );
-        // The same file, moved on its own, must still open with its texture.
-        let read = crate::ply::read(&bytes).expect("read back the exported ply");
-        let texture = read.texture().expect("the texture came back");
-        assert_eq!((texture.width, texture.height), (2, 1));
-        assert_eq!(texture.rgba, vec![255, 0, 0, 255, 0, 0, 255, 255]);
-        assert!(read.has_uvs(), "the texture coordinates came back");
-        assert_eq!(read.vertices()[0].uv, [0.0, 1.0]);
-        assert_eq!(read.vertices()[1].uv, [1.0, 1.0]);
+        let read = crate::ply::read(&bytes).expect("read back");
+        assert_eq!(read.vertices()[0].color, [10, 20, 30, 255]);
     }
 
     /// A mesh without a texture still carries its mapping, as per-vertex
@@ -383,7 +368,7 @@ mod tests {
 
         let read = crate::ply::read(&bytes).expect("read back");
         assert!(read.has_uvs());
-        assert_eq!(read.vertices()[2].uv, [0.0, 0.0]);
+        assert_eq!(read.vertices()[2].uv, [0.25, 0.75]);
     }
 
     #[test]
@@ -401,9 +386,9 @@ mod tests {
         assert_eq!(written.format, MeshWriteFormat::PlyBinaryLittleEndian);
         assert_eq!(written.vertices, 1);
         assert_eq!(written.triangles, 0);
-        // A point cloud has no faces for a texture or its coordinates to map
-        // through, so the image is dropped and said so. The coordinates
-        // themselves are not lost: they go out as per-vertex `s`/`t`.
+        // A point cloud has no faces for a texture to map through, so the image
+        // is dropped and said so. The coordinates themselves are not lost: they
+        // go out as per-vertex `s`/`t`.
         assert!(written
             .warnings
             .contains(&MeshWriteWarning::TextureImageNotWritten));
@@ -421,21 +406,18 @@ mod tests {
         assert_eq!(&bytes[color_offset..color_offset + 4], [11, 22, 33, 44]);
     }
 
-    /// An export must not promise an image its own reader will throw away.
+    /// An unusable texture must not be promised, and must not abort the export.
     ///
-    /// A texture whose decoded surface is past the reader's limit compresses to
-    /// a small PNG, so re-encoding it proves nothing about whether it can be
-    /// read back. Writing it would report success and leave the operator with a
-    /// file that opens untextured and says nothing.
+    /// A texture whose decoded surface does not match its dimensions would make
+    /// a sampler read out of bounds; the writer drops it and says so.
     #[test]
-    fn an_image_past_the_decoders_limits_is_not_written() {
+    fn an_image_whose_pixels_disagree_with_its_size_is_not_baked() {
         let mut mesh = textured_triangle();
-        let too_wide = crate::texture_decode::MAX_TEXTURE_DIMENSION_PX + 1;
-        mesh.set_texture(MeshTexture::new(
-            too_wide,
-            1,
-            vec![0; too_wide as usize * 4],
-        ));
+        mesh.set_texture(MeshTexture {
+            width: 4,
+            height: 4,
+            rgba: vec![0; 8],
+        });
 
         let mut bytes = Vec::new();
         let written = crate::write::write_mesh(
@@ -458,15 +440,62 @@ mod tests {
             .expect("end header");
         let header = String::from_utf8_lossy(&bytes[..header_end]);
         assert!(
-            !header.contains("OccluViewTextureFormat"),
-            "an image the reader would refuse must not be promised:\n{header}"
+            !header.contains("OccluViewTexture"),
+            "an unusable image must not be promised:\n{header}"
         );
         // The coordinates are still preserved for the next tool even though the
         // image could not travel, so the mesh keeps its mapping.
         assert!(!written.warnings.contains(&MeshWriteWarning::UvsNotWritten));
-        assert!(
-            header.contains("property list uchar float texcoord")
-                || header.contains("property float s")
+        assert!(header.contains("property float s"));
+    }
+
+    /// A UV that maps outside the atlas clamps to the edge, exactly as the
+    /// renderer's `ClampToEdge` sampler does, instead of reading out of bounds.
+    #[test]
+    fn a_uv_outside_the_atlas_clamps_to_the_edge() {
+        let texture = MeshTexture::new(
+            2,
+            2,
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
         );
+        // Far outside on both axes clamps to the two opposite corner texels.
+        assert_eq!(sample(&texture, [-1.0, -1.0]), [1, 2, 3, 4]);
+        assert_eq!(sample(&texture, [2.0, 2.0]), [13, 14, 15, 16]);
+        // On the very edge, `ClampToEdge` duplicates the edge texel — exactly
+        // what the vertex there shows in the viewer, with no seam.
+        assert_eq!(sample(&texture, [0.0, 0.0]), [1, 2, 3, 4]);
+        // Dead centre of a texel returns that texel unchanged.
+        assert_eq!(sample(&texture, [0.25, 0.25]), [1, 2, 3, 4]);
+        assert_eq!(sample(&texture, [0.75, 0.75]), [13, 14, 15, 16]);
+    }
+
+    /// Both axes have to be interpolated with their own fraction.
+    ///
+    /// A 2x2 atlas of four distinct texels, sampled a quarter of the way across
+    /// in X and three quarters down in Y. Blending the bottom row with the Y
+    /// fraction instead of the X fraction — a transposition — gives 175, so the
+    /// two implementations cannot both pass.
+    #[test]
+    fn both_axes_use_their_own_fraction() {
+        let texture = MeshTexture::new(
+            2,
+            2,
+            vec![
+                0, 0, 0, 255, // (0,0) black
+                200, 200, 200, 255, // (1,0) light grey
+                100, 100, 100, 255, // (0,1) mid grey
+                255, 255, 255, 255, // (1,1) white
+            ],
+        );
+        // u = 0.375, v = 0.625 on a 2x2 atlas: fx = 0.25, fy = 0.75.
+        assert_eq!(sample(&texture, [0.375, 0.625]), [117, 117, 117, 255]);
+    }
+
+    /// A non-finite UV is not a coordinate; it must not be read as one.
+    #[test]
+    fn a_non_finite_uv_is_neutral_white() {
+        let texture = MeshTexture::new(1, 1, vec![9, 8, 7, 6]);
+        assert_eq!(sample(&texture, [f32::NAN, 0.0]), [255, 255, 255, 255]);
+        assert_eq!(sample(&texture, [0.0, f32::INFINITY]), [255, 255, 255, 255]);
     }
 }

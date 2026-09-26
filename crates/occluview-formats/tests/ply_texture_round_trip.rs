@@ -1,10 +1,9 @@
-//! A textured scan keeps its texture when it is exported as PLY.
+//! A textured scan keeps its colour when it is exported as PLY.
 //!
-//! PLY has no texture element, so the image travels inside the file as encoded
-//! comment lines and nothing is written beside it: one scan in, one scan out.
+//! PLY has no texture element, so the colour is baked into the vertices as
+//! RGBA, and nothing is written beside the file: one scan in, one scan out.
 //! This walks the whole chain — a textured GLB in, a PLY out, the same PLY read
-//! back — and compares the pixels, because a texture that arrives re-encoded is
-//! a texture that did not arrive.
+//! back — and checks that the colour arrives on the vertices it was sampled for.
 
 #![allow(clippy::expect_used, clippy::panic)]
 
@@ -14,17 +13,20 @@ use occluview_formats::{
     MeshWriteOptions,
 };
 
+/// A quad whose four UVs land on four different texels, so a mirrored or
+/// reordered image cannot pass by accident.
 fn textured_mesh() -> Mesh {
     let mut mesh = Mesh::new(
         Some("arch".to_string()),
         vec![
-            Vertex::at(glam::Vec3::new(0.0, 0.0, 0.0)).with_uv([0.0, 1.0]),
-            Vertex::at(glam::Vec3::new(1.0, 0.0, 0.0)).with_uv([1.0, 1.0]),
-            Vertex::at(glam::Vec3::new(0.0, 1.0, 0.0)).with_uv([0.0, 0.0]),
+            Vertex::at(glam::Vec3::new(0.0, 0.0, 0.0)).with_uv([0.25, 0.25]),
+            Vertex::at(glam::Vec3::new(1.0, 0.0, 0.0)).with_uv([0.75, 0.25]),
+            Vertex::at(glam::Vec3::new(1.0, 1.0, 0.0)).with_uv([0.75, 0.75]),
+            Vertex::at(glam::Vec3::new(0.0, 1.0, 0.0)).with_uv([0.25, 0.75]),
         ],
-        vec![0, 1, 2],
+        vec![0, 1, 2, 0, 2, 3],
     )
-    .expect("a triangle mesh");
+    .expect("a quad mesh");
     // Four pixels, one per corner, so a mirrored or reordered image cannot pass
     // by accident.
     mesh.set_texture(MeshTexture::new(
@@ -38,7 +40,7 @@ fn textured_mesh() -> Mesh {
 }
 
 #[test]
-fn a_textured_glb_exported_as_ply_carries_its_texture() -> Result<(), Box<dyn std::error::Error>> {
+fn a_textured_glb_exported_as_ply_carries_its_colour() -> Result<(), Box<dyn std::error::Error>> {
     let source = textured_mesh();
     let glb = write_textured_glb(&source)?;
     let imported = dispatch_by_extension("glb", &glb)?;
@@ -63,11 +65,11 @@ fn a_textured_glb_exported_as_ply_carries_its_texture() -> Result<(), Box<dyn st
         !report
             .warnings
             .contains(&occluview_formats::MeshWriteWarning::TextureImageNotWritten),
-        "the texture was written: {:?}",
+        "the colour was written: {:?}",
         report.warnings
     );
 
-    // One file, and nothing beside it: the image travels inside.
+    // One file, and nothing beside it.
     let entries: Vec<String> = std::fs::read_dir(&directory)?
         .filter_map(Result::ok)
         .map(|entry| entry.file_name().to_string_lossy().into_owned())
@@ -88,29 +90,34 @@ fn a_textured_glb_exported_as_ply_carries_its_texture() -> Result<(), Box<dyn st
         "nothing is written beside the export, so the header must name nothing:\n{header}"
     );
     assert!(
-        header.contains("comment OccluViewTextureBase64 "),
-        "the image must be in the header:\n{header}"
+        !header.contains("OccluViewTexture"),
+        "no image may be encoded into the header:\n{header}"
     );
     assert!(
-        header.contains("property list uchar float texcoord"),
-        "the faces must carry texture coordinates, or nothing can sample the image"
+        header.contains(
+            "property uchar red\nproperty uchar green\nproperty uchar blue\nproperty uchar alpha\n"
+        ),
+        "the colour must be per vertex, the way a scanner writes it:\n{header}"
     );
 
-    // And the same file, moved on its own, still opens with its texture.
+    // And the same file, moved on its own, still opens with its colour.
     let reopened = dispatch_by_extension("ply", &bytes)?;
-    let texture = reopened.texture().expect("the traveled texture");
-    assert_eq!((texture.width, texture.height), (2, 2));
-    assert_eq!(
-        texture.rgba,
-        source.texture().expect("the source texture").rgba,
-        "the pixels must survive the whole chain"
-    );
-    assert!(reopened.has_uvs(), "the coordinates came back with it");
-    let uv = reopened.vertices()[1].uv;
+    assert!(reopened.has_vertex_colors(), "the colour came back");
     assert!(
-        (uv[0] - 1.0).abs() < f32::EPSILON && (uv[1] - 1.0).abs() < f32::EPSILON,
-        "the corner that was (1,1) came back as {uv:?}"
+        reopened.texture().is_none(),
+        "no phantom image is attached to the reopened mesh"
     );
+    // The image did not travel, so no coordinates point at one. Writing them
+    // would make a reader enter an empty texture mode and draw a white shell.
+    assert!(
+        !header.contains("property float s"),
+        "no dangling coordinates are written:\n{header}"
+    );
+    // Each corner samples the texel the viewer would have shown it.
+    assert_eq!(reopened.vertices()[0].color, [255, 0, 0, 255]);
+    assert_eq!(reopened.vertices()[1].color, [0, 255, 0, 255]);
+    assert_eq!(reopened.vertices()[2].color, [255, 255, 0, 255]);
+    assert_eq!(reopened.vertices()[3].color, [0, 0, 255, 255]);
 
     let _ = std::fs::remove_dir_all(&directory);
     Ok(())

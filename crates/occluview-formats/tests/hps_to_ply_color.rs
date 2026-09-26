@@ -2,10 +2,10 @@
 //!
 //! `.dcm` is the legacy extension of the 3Shape HPS container. This walks the
 //! whole chain the operator takes — a textured HPS opened as the scan the
-//! viewer shows, written out as one `.ply` — and checks that the image is in
-//! the file, that nothing was written beside it, and that the pixels come back
-//! unchanged. The colour is carried both ways a PLY can carry it: as the
-//! embedded atlas, and as per-vertex RGBA when the source has no atlas.
+//! viewer shows, written out as one `.ply` — and checks that the colour the
+//! viewer displayed comes back on the vertices, that nothing was written beside
+//! the file, and that no image was encoded into the header. PLY has no texture
+//! element, so the atlas is sampled per vertex.
 //!
 //! The fixture is the same packed-CC shape the CLI round-trip tests use, with a
 //! two-triangle quad so the UVs are genuinely per corner.
@@ -167,7 +167,7 @@ fn only_entry(directory: &std::path::Path) -> String {
 }
 
 /// The operator's case: a `.dcm` scan with an atlas, saved as a PLY, carries
-/// its colour inside that one file and nothing beside it.
+/// its colour on the vertices and nothing beside it.
 #[test]
 fn a_textured_dcm_saved_as_ply_keeps_its_colour_inside_the_file(
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -196,7 +196,7 @@ fn a_textured_dcm_saved_as_ply_keeps_its_colour_inside_the_file(
         report.warnings
     );
 
-    // Exactly one file, and the image is inside it.
+    // Exactly one file, with the colour on the vertices.
     let name = only_entry(&directory);
     assert_eq!(name, "scan-edited.ply");
     let bytes = std::fs::read(&export)?;
@@ -210,20 +210,26 @@ fn a_textured_dcm_saved_as_ply_keeps_its_colour_inside_the_file(
         "nothing may be named beside the export:\n{header}"
     );
     assert!(
-        header.contains("comment OccluViewTextureFormat png")
-            && header.contains("comment OccluViewTextureBase64 "),
-        "the atlas must travel in the header:\n{header}"
+        !header.contains("OccluViewTexture"),
+        "no image may be encoded into the header:\n{header}"
     );
     assert!(
-        header.contains("property list uchar float texcoord"),
-        "the faces must carry the coordinates the atlas samples"
+        header.contains(
+            "property uchar red\nproperty uchar green\nproperty uchar blue\nproperty uchar alpha\n"
+        ),
+        "the colour must be per vertex:\n{header}"
     );
 
     // Moved on its own, with the folder forgotten, the colour is still there.
     let reopened = dispatch_by_extension("ply", &bytes)?;
-    let texture = reopened.texture().expect("the travelled atlas");
-    assert_eq!((texture.width, texture.height), (2, 2));
-    assert_eq!(texture.rgba, TEXTURE, "the pixels must survive unchanged");
+    assert!(reopened.has_vertex_colors(), "the colour came back");
+    assert!(reopened.texture().is_none(), "no phantom image is attached");
+
+    // The quad's four corners sample the four atlas texels the viewer showed.
+    assert_eq!(reopened.vertices()[0].color, [205, 164, 118, 255]);
+    assert_eq!(reopened.vertices()[1].color, [194, 151, 105, 255]);
+    assert_eq!(reopened.vertices()[2].color, [218, 176, 132, 255]);
+    assert_eq!(reopened.vertices()[3].color, [184, 144, 101, 255]);
 
     let _ = std::fs::remove_dir_all(&directory);
     Ok(())

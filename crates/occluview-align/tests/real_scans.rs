@@ -785,8 +785,8 @@ fn a_rescan_with_scanner_error_is_accepted_where_fixtures_are_present() {
             );
             assert!(
                 report.is_trustworthy_refinement_for(&settings),
-                "sigma={sigma_mm} shift={shift_mm}: a correct rescan was refused by the gate \
-                 (seated={:.4}, needs at least 0.12); rms={:.4} med={:.4}",
+                "sigma={sigma_mm} shift={shift_mm}: a correct rescan was refused by the gate; \
+                 seated={:.4} rms={:.4} med={:.4}",
                 report.seated_fraction,
                 report.rms,
                 report.median_abs

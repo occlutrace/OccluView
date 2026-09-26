@@ -2,9 +2,9 @@
 //!
 //! OBJ reaches its image through `mtllib` and a `map_Kd` line; PLY names one in
 //! a `comment TextureFile` line. Neither format holds the image in the file
-//! itself — that is why the PLY writer here embeds it as its own comment, and
-//! why a file from another program arrives with a companion the reader has to
-//! find.
+//! itself, which is why a file from another program arrives with a companion
+//! the reader has to find, and why OccluView's own exports bake the colour into
+//! the vertices rather than writing a second file.
 //!
 //! The reader itself takes bytes and nothing else, on purpose: a file another
 //! process is replacing mid-import must not change what was parsed. Finding a
@@ -100,7 +100,7 @@ pub(crate) enum LocateKind {
     Obj,
     /// A PLY, which may name it in a `comment TextureFile` line.
     Ply,
-    /// Neither: the format keeps its image inside the file.
+    /// Neither: this format has no companion lookup.
     None,
 }
 

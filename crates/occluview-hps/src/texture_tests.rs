@@ -174,6 +174,38 @@ fn raw_rgba_texture_image_keeps_declared_rgba_order() {
     assert_eq!(texture.rgba(), &raw_rgba);
 }
 
+/// A declared channel order wins over the hue heuristic: a legitimately cool
+/// atlas stored RGBA must be decoded as declared, not inverted to warm.
+///
+/// The heuristic exists for a compressed image, which carries no channel order
+/// at all. A raw texture states its layout, so `parse_raw_texture_image` has
+/// already produced the right order and the prior must not second-guess it.
+#[test]
+fn a_declared_raw_layout_is_not_overridden_by_the_hue_heuristic() {
+    // A uniform cool-white surface, physically R=186, G=198, B=210.
+    let raw_rgba = [
+        186, 198, 210, 255, 186, 198, 210, 255, 186, 198, 210, 255, 186, 198, 210, 255,
+    ];
+    let extra = format!(
+        r#"  <TextureData2>
+    <TextureImages>
+      <TextureImage TextureId="tex0" Width="2" Height="2" BytesPerPixel="4" PixelFormat="RGBA" Base64EncodedBytes="{}">{}</TextureImage>
+    </TextureImages>
+  </TextureData2>
+"#,
+        raw_rgba.len(),
+        encode_base64(&raw_rgba)
+    );
+
+    let mesh = read(&cc_fixture(3, 1, &[4], &extra)).expect("raw-textured HPS should read");
+    let texture = mesh.texture().expect("raw HPS texture should be attached");
+    assert_eq!(
+        texture.rgba(),
+        &raw_rgba,
+        "a declared RGBA order must not be re-guessed by the hue prior"
+    );
+}
+
 #[test]
 fn raw_argb_texture_image_keeps_declared_argb_order() {
     let raw_argb = [
@@ -444,7 +476,7 @@ fn embedded_png_with_swapped_dental_chroma_is_corrected_to_warm() {
 }
 
 // A mild cool tint remains below the whole-texture swap threshold. The 20-value
-// gap clears the near-gray filter and stays below `red_mean / 4` (150 / 4 = 37).
+// gap clears the near-gray filter and stays below the required mean excess.
 #[test]
 fn embedded_png_with_a_mild_cool_tint_is_left_untouched() {
     let pixel = [150, 160, 170, 255]; // R=150, B=170: a 20-value cool tint.
@@ -469,6 +501,201 @@ fn embedded_png_with_a_mild_cool_tint_is_left_untouched() {
             "a mild cool tint must not be treated as a channel-order bug"
         );
     }
+}
+
+/// The cool-cast line is 24 levels, and it is a line, not a slope.
+///
+/// A cast below it is a cast and stays; a bias at or above it is large enough to
+/// be a wrong channel order and is corrected. Pinning both sides means the
+/// threshold cannot drift unnoticed in either direction.
+#[test]
+fn the_cool_cast_line_sits_between_23_and_24_levels() {
+    // 23 levels: R=187, B=210. Just under the line, so it stays as stored.
+    let under = [187, 198, 210, 255];
+    // 24 levels: R=186, B=210. At the line, so it is corrected to warm.
+    let at = [186, 198, 210, 255];
+
+    let under_png = solid_rgba_png_bytes(4, 4, under, false);
+    let under_extra = format!(
+        r#"  <TextureData2>
+    <TextureImages>
+      <TextureImage TextureId="tex0" Width="4" Height="4" BytesPerPixel="4" Base64EncodedBytes="{}">{}</TextureImage>
+    </TextureImages>
+  </TextureData2>
+"#,
+        under_png.len(),
+        encode_base64(&under_png)
+    );
+    let mesh = read(&cc_fixture(3, 1, &[4], &under_extra)).expect("textured HPS should read");
+    for decoded in mesh.texture().expect("texture").rgba().as_chunks::<4>().0 {
+        assert_eq!(
+            *decoded, under,
+            "a 23-level cool cast is below the line and must stay as stored"
+        );
+    }
+
+    let at_png = solid_rgba_png_bytes(4, 4, at, false);
+    let at_extra = format!(
+        r#"  <TextureData2>
+    <TextureImages>
+      <TextureImage TextureId="tex0" Width="4" Height="4" BytesPerPixel="4" Base64EncodedBytes="{}">{}</TextureImage>
+    </TextureImages>
+  </TextureData2>
+"#,
+        at_png.len(),
+        encode_base64(&at_png)
+    );
+    let mesh = read(&cc_fixture(3, 1, &[4], &at_extra)).expect("textured HPS should read");
+    for decoded in mesh.texture().expect("texture").rgba().as_chunks::<4>().0 {
+        assert_eq!(
+            *decoded,
+            [210, 198, 186, 255],
+            "a 24-level blue bias is at the line and must be corrected"
+        );
+    }
+}
+
+/// A whole-texture chroma swap on a bright atlas is corrected.
+///
+/// Bright atlases (mean hue-bearing red around 188) are the 3Shape lab-scanner
+/// case: the swap's ~34-level blue excess sits below a brightness-scaled margin
+/// and the scan decodes cyan.
+#[test]
+fn embedded_png_with_a_bright_swapped_dental_atlas_is_corrected_to_warm() {
+    // A dental surface stored with R and B transposed: what should be warm cream
+    // enamel (R=235, G=222, B=205) and warm gingiva (R=200, G=150, B=130)
+    // arrives as their swaps.
+    let mut pixels = Vec::with_capacity(64);
+    for _ in 0..48 {
+        pixels.push([205, 222, 235, 255]);
+    }
+    for _ in 0..16 {
+        pixels.push([130, 150, 200, 255]);
+    }
+    let png_bytes = rgba_png_bytes_from_pixels(8, 8, pixels);
+    let extra = format!(
+        r#"  <TextureData2>
+    <TextureImages>
+      <TextureImage TextureId="tex0" Width="8" Height="8" BytesPerPixel="4" Base64EncodedBytes="{}">{}</TextureImage>
+    </TextureImages>
+  </TextureData2>
+"#,
+        png_bytes.len(),
+        encode_base64(&png_bytes)
+    );
+
+    let mesh = read(&cc_fixture(3, 1, &[4], &extra)).expect("textured HPS should read");
+    let texture = mesh.texture().expect("HPS texture should be attached");
+
+    for decoded in texture.rgba().as_chunks::<4>().0 {
+        assert!(
+            decoded[0] > decoded[2],
+            "a bright swapped atlas must be corrected to warm (R>B): {decoded:?}"
+        );
+    }
+    // The enamel and the gingiva come back as the warm colours they are.
+    assert_eq!(&texture.rgba()[0..4], &[235, 222, 205, 255]);
+    assert_eq!(&texture.rgba()[48 * 4..48 * 4 + 4], &[200, 150, 130, 255]);
+}
+
+/// The same swapped atlas is corrected at bright, mid and dark brightness, so
+/// the verdict cannot depend on brightness.
+#[test]
+fn a_swapped_atlas_is_corrected_at_every_brightness() {
+    for (label, warm) in [
+        ("bright", [235, 222, 205, 255]),
+        ("mid", [180, 170, 150, 255]),
+        ("dark", [150, 117, 107, 255]),
+    ] {
+        let swapped = [warm[2], warm[1], warm[0], warm[3]];
+        assert!(
+            swapped[2] > swapped[0],
+            "the {label} fixture must be stored blue-biased, or it tests nothing"
+        );
+        let png_bytes = solid_rgba_png_bytes(4, 4, swapped, false);
+        let extra = format!(
+            r#"  <TextureData2>
+    <TextureImages>
+      <TextureImage TextureId="tex0" Width="4" Height="4" BytesPerPixel="4" Base64EncodedBytes="{}">{}</TextureImage>
+    </TextureImages>
+  </TextureData2>
+"#,
+            png_bytes.len(),
+            encode_base64(&png_bytes)
+        );
+
+        let mesh = read(&cc_fixture(3, 1, &[4], &extra)).expect("textured HPS should read");
+        let texture = mesh.texture().expect("HPS texture should be attached");
+        for decoded in texture.rgba().as_chunks::<4>().0 {
+            assert_eq!(
+                *decoded, warm,
+                "the {label} swapped atlas must come back as the warm original"
+            );
+        }
+    }
+}
+
+/// The sample covers every column of a 4096-wide atlas: a blue edge column must
+/// not invert an otherwise warm scan, and a gray edge column must not hide a
+/// whole-atlas swap.
+#[test]
+fn the_swap_sample_covers_every_column_not_just_the_first() {
+    // 4096x4096 where only the first column is blue and everything else is warm
+    // gingiva: the population is overwhelmingly warm, so it must NOT be swapped.
+    let width = 4096u32;
+    let height = 4096u32;
+    let mut pixels = vec![[200, 140, 80, 255]; (width * height) as usize];
+    for row in 0..height {
+        pixels[(row * width) as usize] = [40, 90, 230, 255];
+    }
+    let png = rgba_png_bytes_from_pixels(width, height, pixels);
+    let extra = format!(
+        r#"  <TextureData2>
+    <TextureImages>
+      <TextureImage TextureId="tex0" Width="{width}" Height="{height}" BytesPerPixel="4" Base64EncodedBytes="{}">{}</TextureImage>
+    </TextureImages>
+  </TextureData2>
+"#,
+        png.len(),
+        encode_base64(&png)
+    );
+    let mesh = read(&cc_fixture(3, 1, &[4], &extra)).expect("textured HPS should read");
+    let texture = mesh.texture().expect("HPS texture should be attached");
+    assert_eq!(
+        &texture.rgba()[0..4],
+        &[40, 90, 230, 255],
+        "a blue edge column must not invert an otherwise warm scan"
+    );
+    assert_eq!(
+        &texture.rgba()[4..8],
+        &[200, 140, 80, 255],
+        "the rest of the atlas stays warm"
+    );
+
+    // And the reverse: only the first column is near-gray (so it carries no
+    // hue), everything else is a swapped bright atlas that must be corrected.
+    let mut swapped = vec![[205, 222, 235, 255]; (width * height) as usize];
+    for row in 0..height {
+        swapped[(row * width) as usize] = [10, 10, 10, 255];
+    }
+    let png = rgba_png_bytes_from_pixels(width, height, swapped);
+    let extra = format!(
+        r#"  <TextureData2>
+    <TextureImages>
+      <TextureImage TextureId="tex0" Width="{width}" Height="{height}" BytesPerPixel="4" Base64EncodedBytes="{}">{}</TextureImage>
+    </TextureImages>
+  </TextureData2>
+"#,
+        png.len(),
+        encode_base64(&png)
+    );
+    let mesh = read(&cc_fixture(3, 1, &[4], &extra)).expect("textured HPS should read");
+    let texture = mesh.texture().expect("HPS texture should be attached");
+    assert_eq!(
+        &texture.rgba()[4..8],
+        &[235, 222, 205, 255],
+        "a gray edge column must not hide a real whole-atlas swap"
+    );
 }
 
 fn rgba_png_bytes_from_pixels(width: u32, height: u32, pixels: Vec<[u8; 4]>) -> Vec<u8> {
