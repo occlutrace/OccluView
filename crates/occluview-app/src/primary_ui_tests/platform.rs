@@ -119,6 +119,107 @@ fn the_deb_ships_and_gates_the_license_set() {
 }
 
 #[test]
+fn the_macos_bundle_ships_the_license_set_and_the_safe_finder_registration() {
+    let build = macos_build_app_source();
+    let plist = macos_info_plist_source();
+    let ci = ci_workflow_source();
+
+    // The statically linked native CSG library and every Rust dependency are
+    // redistributed inside the bundle, so the same four notices the MSI and the
+    // deb carry must travel with it.
+    for notice in [
+        "LICENSE",
+        "NOTICE",
+        "THIRD-PARTY-NOTICES.md",
+        "THIRD-PARTY-NOTICES-NATIVE.md",
+    ] {
+        assert!(
+            build.contains(notice),
+            "the macOS builder must copy {notice} into the bundle"
+        );
+    }
+    assert!(
+        build.contains(r#"resources="$contents/Resources""#) && build.contains("$resources/Legal"),
+        "the notices belong inside the bundle, in a predictable Resources/Legal directory"
+    );
+    assert!(
+        build.contains("Helpers/occluview-cli"),
+        "the command-line companion ships inside the bundle, not as a second download"
+    );
+    assert!(
+        ci.contains("Legal/$notice"),
+        "the macOS CI package step must fail a bundle that lost the license set"
+    );
+    assert!(
+        ci.contains("OccluView-*-aarch64.dmg") && ci.contains("OccluView-*-aarch64.pkg"),
+        "the macOS CI step should verify the DMG and the PKG it just built"
+    );
+    // Developer ID signing is a maintainer gate with credentials this
+    // repository does not hold; a local builder that pretended to sign would
+    // hide the difference between a test artifact and a release.
+    assert!(
+        !build.contains("codesign"),
+        "the unsigned developer builder must not claim to sign anything"
+    );
+
+    // Finder integration covers every format the viewer opens, the legacy HPS
+    // `.dcm` container included: `V1_OPEN_EXTENSIONS` has carried that suffix
+    // since v1, so a bundle that hides it would disagree with the app's own
+    // Open dialog.
+    for extension in ["stl", "ply", "obj", "glb", "hps", "dcm"] {
+        assert!(
+            plist.contains(&format!("<string>{extension}</string>")),
+            "the bundle should register .{extension} with Launch Services"
+        );
+    }
+    // `.dcm` is also the medical DICOM suffix, so it may only ever be an opt-in
+    // surface. The handler rank is what decides that: `Owner` or `Default`
+    // would make OccluView the system-wide handler for every DICOM file, which
+    // is the same reason Windows keeps `.dcm` in `OFFERED_ONLY_EXTENSIONS` and
+    // registers only its Open-with entries.
+    let document_types = plist
+        .split("<key>CFBundleDocumentTypes</key>")
+        .nth(1)
+        .and_then(|rest| rest.split("<key>UTImportedTypeDeclarations</key>").next())
+        .unwrap_or_default();
+    assert!(
+        document_types.contains("<string>ai.occlutrace.occluview.dcm</string>"),
+        "the .dcm container must reach Launch Services through CFBundleDocumentTypes"
+    );
+    assert!(
+        document_types.contains("<string>Alternate</string>"),
+        "the .dcm offer must stay an alternate handler"
+    );
+    for claimed_rank in ["<string>Owner</string>", "<string>Default</string>"] {
+        assert!(
+            !document_types.contains(claimed_rank),
+            "OccluView must not claim {claimed_rank} for .dcm: medical DICOM files \
+             belong to their own tools"
+        );
+    }
+    // Imported, not exported: OccluView reads these third-party formats and
+    // does not define them, and an exported declaration would assert an
+    // ownership it does not have over the `.dcm` suffix.
+    let imported = plist
+        .split("<key>UTImportedTypeDeclarations</key>")
+        .nth(1)
+        .unwrap_or_default();
+    assert!(
+        imported.contains("<string>ai.occlutrace.occluview.dcm</string>")
+            && imported.contains("<string>dcm</string>"),
+        "the .dcm container needs its own imported type declaration and extension tag"
+    );
+    assert!(
+        !plist.contains("UTExportedTypeDeclarations"),
+        "these formats are imported; exporting them would claim ownership OccluView lacks"
+    );
+    assert!(
+        plist.contains("<string>occluview</string>") && plist.contains("<string>14.0</string>"),
+        "the bundle must name the shipped executable and its macOS 14 floor"
+    );
+}
+
+#[test]
 fn the_release_page_quotes_the_changelog_and_attests_the_sboms() {
     let package = package_workflow_source();
 

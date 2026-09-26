@@ -50,7 +50,7 @@ help-section-align-measure = Alinhamento e medição
 help-section-cut-view = Vista de corte
 help-section-layers-preview = Camadas e prévia do Explorer
 
-help-hintline-navigation = Arrastar BRD orbita · BRM desloca · roda zoom · clique BRM foca
+help-hintline-navigation = Arrastar BRD orbita · BRM desloca · rolagem do trackpad desloca · roda/pinça amplia · clique BRM foca
 help-hintline-mesh-editing = Clique EQM seleciona · Shift+clique desmarca · retângulo · Ctrl+Z desfaz
 help-hintline-sculpt = EQM esculpe · Shift troca o modo · Shift+roda tamanho · Ctrl+roda força
 help-hintline-align = EQM posiciona · Ctrl/Command+arrastar gira · Shift+arrastar apaga · BRD desfaz

@@ -52,7 +52,7 @@ help-section-align-measure = Align and Measure
 help-section-cut-view = Cut View
 help-section-layers-preview = Layers and Explorer Preview
 
-help-hintline-navigation = RMB drag orbit · MMB drag pan · Wheel zoom · MMB click focus
+help-hintline-navigation = RMB drag orbit · MMB drag pan · Trackpad scroll pan · Wheel/pinch zoom · MMB click focus
 help-hintline-mesh-editing = LMB select · Shift+click unmark · Drag rectangle · Ctrl+Z undo
 help-hintline-sculpt = LMB sculpt · Shift changes mode · Shift+wheel size · Ctrl+wheel force
 help-hintline-align = LMB place · Ctrl/Command+drag rotate · Shift+drag erase · RMB undo

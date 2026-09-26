@@ -99,6 +99,65 @@ jobs:
       - name: cargo check (shell + app)
         run: cargo check -p occluview-shell -p occluview-app --locked
 
+  macos-arm:
+    name: build and test (macOS Apple Silicon)
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: "1.98.0"
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - name: Require a native Apple Silicon runner
+        run: test "$(uname -m)" = "arm64"
+      - name: Build desktop and CLI for macOS 14+
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "14.0"
+        run: >
+          cargo build --locked --target aarch64-apple-darwin
+          --profile release-unwind -p occluview-app -p occluview-cli
+      - name: Test the viewer and updater suites on Apple Silicon
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "14.0"
+        # The whole app suite, not a macOS-only subset, because the Metal
+        # backed offscreen tests (contact rendering, adapter policy) are the
+        # hardware acceptance that this lane exists to provide, and the
+        # Finder/state/input contracts are asserted inside it.
+        #
+        # The renderer's golden-image and fallback-adapter suites are
+        # deliberately not run here: they select a deterministic software
+        # rasterizer (Lavapipe on Linux, WARP on Windows) and their stored
+        # baselines are software artifacts. Apple Silicon has no equivalent
+        # adapter, so those suites stay on the Linux and Windows lanes. Their
+        # assertions are left untouched rather than loosened.
+        run: |
+          cargo test --locked --target aarch64-apple-darwin --profile release-unwind \
+            -p occluview-app --lib
+          cargo test --locked --target aarch64-apple-darwin --profile release-unwind \
+            -p occluview-update --lib
+      - name: Package and verify unsigned Apple Silicon app, DMG, and PKG
+        run: |
+          bash install/macos/build-app.sh --no-build
+          bash install/macos/build-dmg.sh --no-build
+          bash install/macos/build-pkg.sh --no-build
+          dmg="$(find target/macos -maxdepth 1 -type f -name 'OccluView-*-aarch64.dmg' -print -quit)"
+          pkg="$(find target/macos -maxdepth 1 -type f -name 'OccluView-*-aarch64.pkg' -print -quit)"
+          test -n "$dmg" && test -n "$pkg"
+          hdiutil verify "$dmg"
+          pkgutil --payload-files "$pkg" | grep -F './OccluView.app/Contents/MacOS/occluview'
+          lipo -archs target/macos/OccluView.app/Contents/MacOS/occluview | grep -Fx arm64
+          for notice in LICENSE NOTICE THIRD-PARTY-NOTICES.md THIRD-PARTY-NOTICES-NATIVE.md; do
+            test -s "target/macos/OccluView.app/Contents/Resources/Legal/$notice"
+          done
+          version="$(sed -n '/^\[workspace\.package\]/,/^\[/p' Cargo.toml \
+            | sed -n 's/^version *= *"\(.*\)"/\1/p' | head -n1)"
+          test -n "$version"
+          target/macos/OccluView.app/Contents/MacOS/occluview --version | grep -F "$version"
+          target/macos/OccluView.app/Contents/Helpers/occluview-cli --version | grep -F "$version"
+
   linux-renderer-tests:
     name: test (linux renderer)
     runs-on: ubuntu-latest

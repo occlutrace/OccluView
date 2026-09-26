@@ -49,7 +49,7 @@ help-section-align-measure = Alignement et mesure
 help-section-cut-view = Vue en coupe
 help-section-layers-preview = Calques et aperçu de l’Explorateur
 
-help-hintline-navigation = Glisser BRD orbite · BMM panoramique · molette zoom · clic BMM focus
+help-hintline-navigation = Glisser BRD orbite · BMM panoramique · défilement trackpad panoramique · molette/pincement zoom · clic BMM focus
 help-hintline-mesh-editing = Clic BG sélectionne · Shift+clic désélectionne · rectangle · Ctrl+Z annule
 help-hintline-sculpt = BG sculpte · Shift change de mode · Shift+molette taille · Ctrl+molette force
 help-hintline-align = BG place · Ctrl/Command+glisser pivote · Shift+glisser efface · BRD annule
