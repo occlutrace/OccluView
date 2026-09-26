@@ -169,14 +169,12 @@ fn real_main() -> Result<()> {
     // Finder hands a cold launch its documents before eframe calls the app
     // creator below, so the handlers go in as the application finishes
     // launching; the call in the creator only covers a failed observer.
-    #[cfg(target_os = "macos")]
     single_instance::install_open_files_handler_at_launch();
 
     eframe::run_native(
         "OccluView 3D Viewer",
         native_options,
         Box::new(move |cc| {
-            #[cfg(target_os = "macos")]
             single_instance::install_open_files_handler();
             append_startup_stage("window-ready");
             // Capture both raw handles now so the open-file handoff can use

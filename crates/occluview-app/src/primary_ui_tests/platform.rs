@@ -154,61 +154,80 @@ fn the_macos_bundle_ships_the_license_set_and_the_safe_finder_registration() {
         ci.contains("OccluView-*-aarch64.dmg") && ci.contains("OccluView-*-aarch64.pkg"),
         "the macOS CI step should verify the DMG and the PKG it just built"
     );
-    // Developer ID signing is a maintainer gate with credentials this
-    // repository does not hold; a local builder that pretended to sign would
-    // hide the difference between a test artifact and a release.
+    // The builder seals the bundle with an ad-hoc signature: with only the
+    // linker's per-binary signatures a downloaded copy is reported as damaged,
+    // with no way to open it. Developer ID signing stays a maintainer gate
+    // with credentials this repository does not hold, so the builder never
+    // names an identity and a test artifact cannot pass for a release.
     assert!(
-        !build.contains("codesign"),
-        "the unsigned developer builder must not claim to sign anything"
+        build.contains(r#"codesign --force --sign - "$app_bundle""#),
+        "the developer builder seals the bundle with an ad-hoc signature"
+    );
+    assert!(
+        !build.contains("OCCLUVIEW_MACOS_APP_IDENTITY"),
+        "the developer builder must not sign with a Developer ID identity"
     );
 
-    // Finder integration covers every format the viewer opens, the legacy HPS
-    // `.dcm` container included: `V1_OPEN_EXTENSIONS` has carried that suffix
-    // since v1, so a bundle that hides it would disagree with the app's own
-    // Open dialog.
-    for extension in ["stl", "ply", "obj", "glb", "hps", "dcm"] {
-        assert!(
-            plist.contains(&format!("<string>{extension}</string>")),
-            "the bundle should register .{extension} with Launch Services"
-        );
-    }
-    // `.dcm` is also the medical DICOM suffix, so it may only ever be an opt-in
-    // surface. The handler rank is what decides that: `Owner` or `Default`
-    // would make OccluView the system-wide handler for every DICOM file, which
-    // is the same reason Windows keeps `.dcm` in `OFFERED_ONLY_EXTENSIONS` and
-    // registers only its Open-with entries.
+    // Finder offers the app for every format the viewer opens, the legacy HPS
+    // `.dcm` container included (`V1_OPEN_EXTENSIONS` has carried it since
+    // v1). macOS types .stl, .ply, .obj, .glb and .dcm itself, so the document
+    // types name those system identifiers: a type of the app's own for one of
+    // those extensions is never the one a file gets, and the app was not
+    // offered for them until the bundle named the system's.
     let document_types = plist
         .split("<key>CFBundleDocumentTypes</key>")
         .nth(1)
         .and_then(|rest| rest.split("<key>UTImportedTypeDeclarations</key>").next())
         .unwrap_or_default();
-    assert!(
-        document_types.contains("<string>ai.occlutrace.occluview.dcm</string>"),
-        "the .dcm container must reach Launch Services through CFBundleDocumentTypes"
-    );
-    assert!(
-        document_types.contains("<string>Alternate</string>"),
-        "the .dcm offer must stay an alternate handler"
-    );
-    for claimed_rank in ["<string>Owner</string>", "<string>Default</string>"] {
+    for identifier in [
+        "public.standard-tesselated-geometry-format",
+        "public.polygon-file-format",
+        "public.geometry-definition-format",
+        "org.khronos.glb",
+        "ai.occlutrace.occluview.hps",
+        "org.nema.dicom",
+    ] {
         assert!(
-            !document_types.contains(claimed_rank),
-            "OccluView must not claim {claimed_rank} for .dcm: medical DICOM files \
-             belong to their own tools"
+            document_types.contains(&format!("<string>{identifier}</string>")),
+            "the bundle should offer itself for {identifier}"
         );
     }
-    // Imported, not exported: OccluView reads these third-party formats and
-    // does not define them, and an exported declaration would assert an
-    // ownership it does not have over the `.dcm` suffix.
+    // `.dcm` is the medical DICOM suffix, so it may only ever be an opt-in
+    // surface: the DICOM entry is an alternate handler. `Owner` or `Default`
+    // there would make OccluView the system-wide handler for every DICOM
+    // file, the same reason Windows keeps `.dcm` in `OFFERED_ONLY_EXTENSIONS`
+    // and registers only its Open-with entries.
+    let dicom_entry = document_types
+        .split("<dict>")
+        .find(|entry| entry.contains("<string>org.nema.dicom</string>"))
+        .unwrap_or_default();
+    assert!(
+        dicom_entry.contains("<string>Alternate</string>")
+            && !dicom_entry.contains("<string>Default</string>")
+            && !dicom_entry.contains("<string>Owner</string>"),
+        "the DICOM offer must stay an alternate handler"
+    );
+    assert!(
+        !document_types.contains("<string>Owner</string>"),
+        "OccluView claims no format as its owner"
+    );
+    // Imported, not exported: OccluView reads HPS and does not define it. The
+    // formats macOS already declares are not declared again.
     let imported = plist
         .split("<key>UTImportedTypeDeclarations</key>")
         .nth(1)
         .unwrap_or_default();
     assert!(
-        imported.contains("<string>ai.occlutrace.occluview.dcm</string>")
-            && imported.contains("<string>dcm</string>"),
-        "the .dcm container needs its own imported type declaration and extension tag"
+        imported.contains("<string>ai.occlutrace.occluview.hps</string>")
+            && imported.contains("<string>hps</string>"),
+        "the HPS container needs its imported type declaration and extension tag"
     );
+    for extension in ["stl", "ply", "obj", "glb", "dcm"] {
+        assert!(
+            !imported.contains(&format!("<string>{extension}</string>")),
+            "macOS declares .{extension}; a second declaration is never chosen"
+        );
+    }
     assert!(
         !plist.contains("UTExportedTypeDeclarations"),
         "these formats are imported; exporting them would claim ownership OccluView lacks"
