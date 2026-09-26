@@ -126,10 +126,11 @@ impl OccluViewApp {
             return;
         };
 
-        // Only the VISIBLE layers go into the file, so only their edits are on
-        // disk afterwards. Clearing the whole flag also cleared it for a hidden
-        // layer that was never written: the close guard then read clean and the
-        // app shut without asking, taking that layer's edits with it.
+        // Only the visible layers go into the file, so only their edits are on
+        // disk afterwards. Clearing the whole flag would also clear it for a
+        // hidden layer that was never written: the close guard would then read
+        // clean and the app would shut without asking, taking that layer's
+        // edits with it.
         let written: Vec<SceneMeshId> = scene
             .meshes()
             .iter()
@@ -179,7 +180,7 @@ impl OccluViewApp {
 
     /// Write every visible layer to its own file in a chosen folder, each in
     /// its current pose.
-    // This is deliberately one batch transaction so partial successes,
+    // This is one batch transaction so partial successes,
     // warnings, dirty-state reconciliation, and the final error dialog agree.
     #[expect(clippy::too_many_lines)]
     pub(super) fn save_each_layer_dialog(&mut self) {
@@ -372,10 +373,10 @@ fn export_path_already_exists(error: &occluview_formats::FormatError) -> bool {
 /// The stem comes from the layer label, which is the source file's name. Two
 /// layers opened from different folders under the same file name — the norm
 /// when a case folder holds `upper.stl` beside another case's `upper.stl` —
-/// resolve to one path. The second write truncates the first, nothing reports
-/// a failure, the batch clears the unsaved-edit flag for both, and the close
-/// guard then lets the app exit without asking. A colliding name gains a
-/// ` (2)`, ` (3)` suffix instead.
+/// resolve to one path. The second write would truncate the first, nothing
+/// would report a failure, the batch would clear the unsaved-edit flag for
+/// both, and the close guard would then let the app exit without asking. A
+/// colliding name gains a ` (2)`, ` (3)` suffix instead.
 ///
 /// Names already in the directory count as taken for the same reason. The
 /// operator chose a folder, not filenames, so nothing ever asks about
@@ -466,11 +467,10 @@ pub(super) fn posed_mesh(entry: &SceneMesh) -> Mesh {
         return Mesh::point_cloud(name, vertices);
     }
     // The vertex count and the indices are unchanged, so this cannot fail for a
-    // mesh that already validated. If it ever does, the fallback must NOT be the
-    // source mesh: that writes the scan in its original position and calls it a
-    // success, which is the one outcome an export must never produce — the
-    // operator's alignment thrown away silently. Keep the posed vertices and let
-    // the point-cloud form carry them.
+    // mesh that already validated. If it ever does, the fallback must not be the
+    // source mesh: that would write the scan in its original position and
+    // report success, discarding the operator's alignment without notice. Keep
+    // the posed vertices and let the point-cloud form carry them.
     let Ok(mut posed) = Mesh::new(
         name.clone(),
         vertices.clone(),
@@ -827,8 +827,8 @@ mod tests {
 
     #[test]
     fn a_file_already_in_the_directory_is_not_overwritten() {
-        // The operator picked a folder, so no overwrite prompt was ever shown
-        // and the same case exported twice lands on the same name.
+        // The operator picked a folder, so no overwrite prompt is shown and the
+        // same case exported twice lands on the same name.
         let directory =
             std::env::temp_dir().join(format!("occluview-export-{}", std::process::id()));
         std::fs::create_dir_all(&directory).expect("create the test directory");

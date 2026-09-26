@@ -102,8 +102,8 @@ fn a_failed_offscreen_frame_cannot_start_a_repaint_storm() {
 ///
 /// The deadline measures how long this process was willing to wait, not the
 /// health of the device, so it must never latch the path off for the session
-/// (that left the section panel showing a previous plane and, with no live
-/// viewport, stopped the viewport repainting at all). It is still a failure:
+/// (that would leave the section panel showing a previous plane and, with no
+/// live viewport, stop the viewport repainting at all). It is still a failure:
 /// the next attempt waits out a backoff so a loaded machine is not asked to
 /// fail on every repaint, and then the path must be usable again on its own.
 #[test]
@@ -147,12 +147,10 @@ fn a_readback_deadline_defers_the_offscreen_path_instead_of_killing_it() {
 
 /// The offscreen fault latch must be clearable by the retry the UI offers.
 ///
-/// This replaces a source-text guard that only checked the words in the
-/// function. The behaviour it protected is the one that matters and had no
-/// other check: on a machine where the offscreen path IS the viewport (a live
-/// viewport that failed to come up), the fault dialog is the only surface the
-/// operator sees, so a retry that cannot clear the latch leaves a blank
-/// viewport for the rest of the session.
+/// On a machine where the offscreen path is the viewport (a live viewport that
+/// failed to come up), the fault dialog is the only surface the operator sees,
+/// so a retry that cannot clear the latch leaves a blank viewport for the rest
+/// of the session.
 #[test]
 fn retrying_a_graphics_fault_clears_the_offscreen_latch() {
     let mut app = crate::app::app_test_support::test_app("offscreen-retry-clears-latch");
@@ -184,12 +182,12 @@ fn retrying_a_graphics_fault_clears_the_offscreen_latch() {
 /// A frame that arrives inside the retry wait must not turn the wait into a
 /// session-long latch.
 ///
-/// The wait is exactly the state a frame lands in after a missed deadline, and
-/// the decision the frame makes about its own failure has to be the retryable
-/// one. A frame that classified "the path is not available yet" as an
-/// unclassifiable error latched the path off permanently on the first repaint
-/// after the deadline: the section panel showed a previous plane and, with no
-/// live viewport, the viewport stopped repainting at all. The operator also
+/// The wait is the state a frame lands in after a missed deadline, and the
+/// decision the frame makes about its own failure has to be the retryable one.
+/// Classifying "the path is not available yet" as an unclassifiable error
+/// would latch the path off permanently on the first repaint after the
+/// deadline: the section panel would show a previous plane and, with no live
+/// viewport, the viewport would stop repainting at all. The operator also
 /// must not get a modal per attempt for a failure that is transient by
 /// definition, but must still be told the frame failed.
 #[test]
@@ -238,7 +236,7 @@ fn a_frame_during_the_retry_wait_cannot_latch_the_offscreen_path_off() {
 
 /// A terminal offscreen fault must raise a dialog that offers the retry.
 ///
-/// On a machine whose offscreen path IS the viewport (a live viewport that
+/// On a machine whose offscreen path is the viewport (a live viewport that
 /// failed to come up) this dialog is the only surface the operator sees. A
 /// dialog that only reports leaves the latch unreachable from the UI, so the
 /// documented recovery is to close the viewer and lose the scene — the same
@@ -281,7 +279,7 @@ fn the_graphics_fault_dialog_offers_the_retry_action() {
 /// A rebuilt offscreen scene uploads the scan's own colours, so a live
 /// deviation map must be replayed into those vertices afterwards.
 ///
-/// The measured colours ARE the reading the operator came for. A rebuild that
+/// The measured colours are the reading the operator came for. A rebuild that
 /// drops them leaves the fallback viewport and the section panel showing an
 /// unmeasured scan while the layer still claims to be mapped, and nothing
 /// repaints them until the next scene change. The offscreen path keeps its own

@@ -284,9 +284,9 @@ fn responsive_information_modal_frame(
 
 /// There is no save-format text in the panel at all: not the mode switch, not
 /// the chips, and not a sentence describing the rule. The format is decided
-/// from the scan, and a paragraph about a decision the operator does not make
-/// is exactly the clutter that was asked to be removed. Rendering the panel and
-/// reading the painted text is what pins the absence.
+/// from the scan, so a paragraph about a decision the operator does not make
+/// is clutter. Rendering the panel and reading the painted text checks the
+/// absence.
 #[test]
 fn settings_show_no_text_about_the_save_format() -> anyhow::Result<()> {
     let ctx = egui::Context::default();
@@ -306,11 +306,11 @@ fn settings_show_no_text_about_the_save_format() -> anyhow::Result<()> {
             "{removed:?} must not appear: the format is decided from the scan"
         );
     }
-    // The rest of the Files section is still there, so the removal took the
-    // format text and not the section with it.
+    // The rest of the Files section is still there: only the format text is
+    // absent, not the section with it.
     assert!(
         direct_control_center(&panel.output, "Remember export folder").is_ok(),
-        "the folder-memory row must survive the format text's removal"
+        "the folder-memory row must still render without the format text"
     );
     Ok(())
 }

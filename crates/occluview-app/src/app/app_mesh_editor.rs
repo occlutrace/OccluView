@@ -425,8 +425,8 @@ impl OccluViewApp {
     /// the Ctrl+Z / Ctrl+Y viewport shortcuts.
     fn apply_history_navigation(&mut self, redo: bool, ctx: &egui::Context) {
         // Finalize any in-flight sculpt drag first (as Done/Cancel do), so the
-        // undo acts on a settled scene and the stroke's dabs are not silently
-        // dropped when the coming scene swap invalidates the sculpt session.
+        // undo acts on a settled scene and the stroke's dabs are not dropped
+        // when the coming scene swap invalidates the sculpt session.
         if !self.commit_sculpt_stroke(ctx) {
             if self.tools.sculpt.stroke.is_some() {
                 self.tools.sculpt.pending_history = Some(redo);
@@ -443,17 +443,18 @@ impl OccluViewApp {
     }
 
     pub(super) fn apply_history_navigation_now(&mut self, redo: bool, ctx: &egui::Context) {
-        // Close any open hand-drag BEFORE the draft is cloned from the live
-        // scene. `set_scene` used to do this on the way in, which was too late:
-        // `finish_align_drag` builds its `before` snapshot from whatever scene is
-        // installed, so it recorded the drag against the OUTGOING scene (the one
-        // this undo is about to replace) and pushed that as the newest history
-        // entry. The live scene then became the draft with the edit undone while
-        // the newest entry described the edit as applied — and because the guard
-        // compares layer ids only, nothing refused it: the first Ctrl+Z showed
-        // the edit undone and the second put it back and rewound the pose. The
-        // drag is also truncated here either way (it takes `self.tools.align.drag`),
-        // so closing it at this point loses the operator nothing.
+        // Close any open hand-drag before the draft is cloned from the live
+        // scene. `finish_align_drag` builds its `before` snapshot from whatever
+        // scene is installed, so closing the drag later, on the way into
+        // `set_scene`, would record it against the outgoing scene (the one this
+        // undo is about to replace) and push that as the newest history entry.
+        // The live scene would then be the draft with the edit undone while the
+        // newest entry described the edit as applied, and because the guard
+        // compares layer ids only, nothing would refuse it: the first Ctrl+Z
+        // would show the edit undone and the second would put it back and
+        // rewind the pose. The drag is truncated here either way (it takes
+        // `self.tools.align.drag`), so closing it at this point loses the
+        // operator nothing.
         self.finish_align_drag();
         let Some(scene) = self.document.scene.clone() else {
             return;
@@ -605,7 +606,7 @@ impl OccluViewApp {
         changed
     }
 
-    /// Dental CAD lasso: outline points are placed on the primary PRESS edge (never on
+    /// Dental CAD lasso: outline points are placed on the primary press edge (never on
     /// click-release — egui reclassifies a moved click as a drag and drops it, so press-based
     /// capture is the only way input is never lost). Holding
     /// and dragging samples freehand points; discrete presses make straight
@@ -643,9 +644,9 @@ impl OccluViewApp {
         // Enter/Esc are consumed only while an outline is in progress, so they
         // keep their normal meaning everywhere else — and never while a modal
         // is in front, where the key belongs to the dialog. Without this the
-        // outline ate the Escape and the modal (which consumes it later in the
-        // same frame) stayed open, so one Escape appeared to do nothing while
-        // silently dropping the outline.
+        // outline would eat the Escape and the modal (which consumes it later in
+        // the same frame) would stay open, so one Escape would appear to do
+        // nothing while dropping the outline.
         let (enter, escape) = if outline_active && !self.ui.modal_dialog_open() {
             ctx.input_mut(|input| {
                 (
@@ -742,7 +743,7 @@ impl OccluViewApp {
     }
 
     /// Run one closed screen-space outline through the shared selection API.
-    /// Dental CAD convention: outlines accumulate; holding SHIFT un-marks.
+    /// Dental CAD convention: outlines accumulate; holding Shift un-marks.
     fn commit_screen_polygon_selection(
         &mut self,
         ctx: &egui::Context,
@@ -785,7 +786,7 @@ impl OccluViewApp {
         let camera = self.render.camera;
         let scene = self.document.scene.clone();
         let pointer = response.interact_pointer_pos();
-        // Dental CAD convention: a click marks the face; SHIFT-click un-marks it.
+        // Dental CAD convention: a click marks the face; Shift-click un-marks it.
         let unmark = ctx.input(|input| input.modifiers.shift);
         let Some(((camera, scene), pointer)) = camera.zip(scene).zip(pointer) else {
             return false;
@@ -794,7 +795,7 @@ impl OccluViewApp {
             return false;
         };
         // Object pick selects the whole component under the cursor; the default
-        // single-face click marks just the picked facet. SHIFT un-marks in both.
+        // single-face click marks just the picked facet. Shift un-marks in both.
         let acted = if self.document.edit_mode.object_mode() {
             self.document
                 .edit_mode

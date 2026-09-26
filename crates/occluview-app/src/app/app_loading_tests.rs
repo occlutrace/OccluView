@@ -720,14 +720,14 @@ fn an_append_does_not_discard_a_held_drag_pose_it_carries_forward() {
 
 /// A newer request must not be overtaken by an older one still in the queue.
 ///
-/// Two holes shared one shape: a Replace parked while an edit was open never
-/// reached `queue_request_while_active` (whose contract is "a newer Replace
-/// supersedes every pending request"), so a decode still running with an OLDER
-/// Replace queued behind it would later start that one and replace the scene the
-/// operator had asked for most recently. The other hole is the same function's
-/// other branch: the guard can clear while a request is parked (removing the
-/// last layer empties the unsaved set while the guard window is up), and the
-/// stale parking then stayed alive to open an older file over a newer scene.
+/// Two paths share one shape. A Replace parked while an edit is open never
+/// reaches `queue_request_while_active` (whose contract is "a newer Replace
+/// supersedes every pending request"), so a decode still running with an older
+/// Replace queued behind it could start that one and replace the scene the
+/// operator asked for most recently. And the guard can clear while a request is
+/// parked (removing the last layer empties the unsaved set while the guard
+/// window is up), leaving a stale parking that could open an older file over a
+/// newer scene.
 #[test]
 fn a_parked_request_supersedes_replaces_already_in_the_queue() {
     let mut app = test_app("parked-supersedes-queued");
