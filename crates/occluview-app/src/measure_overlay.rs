@@ -121,7 +121,7 @@ fn paint_ruler(
 }
 
 /// The thickness probe: entry marker, the wall chord to the exit (when one
-/// exists), and an honest label ("open" when there is no opposite wall).
+/// exists), and a label that reads "open" when there is no opposite wall.
 fn paint_probe(
     painter: &egui::Painter,
     camera: &Camera,
@@ -280,7 +280,7 @@ mod tests {
     }
 
     /// The same ruler invariant dental CAD software follows: a world anchor
-    /// projects onto the SAME model point after any orbit — the pixel through
+    /// projects onto the same model point after any orbit — the pixel through
     /// which it projects always rays back through the anchor.
     #[test]
     fn world_anchor_reprojects_onto_the_same_model_point_across_orbits() {

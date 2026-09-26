@@ -311,7 +311,7 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_accepts_legacy_single_path_lines_as_single_entry_scenes() {
+    fn deserialize_accepts_single_path_lines_as_single_entry_scenes() {
         let restored = RecentFiles::deserialize(3, "a.stl\nb.stl\nc.stl\n");
         let entries = entry_paths(&restored);
 

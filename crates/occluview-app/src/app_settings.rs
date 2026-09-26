@@ -41,8 +41,7 @@ impl ViewportBackground {
     }
 
     /// The clear color in the renderer's linear space, converted from the
-    /// sRGB intent so the two representations can never drift apart (they once
-    /// did: the dark preset's linear values encoded back to a medium gray).
+    /// sRGB intent so the two representations can never drift apart.
     pub(crate) fn linear(self) -> [f64; 4] {
         let color = self.srgb();
         [
@@ -97,10 +96,10 @@ impl ThemePreference {
 
 /// Entries the Open menu's recent list keeps.
 ///
-/// Fixed rather than a preference: it changed how long a menu was, which has no
-/// clinical outcome, and it sat in a panel of choices that change what the
-/// operator sees on a scan. The field stays in the settings file so an existing
-/// document keeps loading, but nothing writes it any more.
+/// Fixed rather than a preference: menu length has no clinical outcome, and the
+/// preferences panel holds choices that change what the operator sees on a
+/// scan. The field stays in the settings file so an existing document keeps
+/// loading, but no control sets it.
 pub(crate) const RECENT_FILES_LIMIT: usize = 8;
 /// Fewest recent scenes the Open chevron keeps.
 pub(crate) const RECENT_FILES_LIMIT_MIN: usize = 4;
@@ -367,9 +366,9 @@ mod tests {
         let settings: Settings = serde_json::from_slice(legacy)?;
         let rewritten = serde_json::to_value(settings)?;
 
-        // The save format is no longer a stored preference, so a document
-        // written while it was one loads without complaint and is rewritten
-        // without it.
+        // The save format is not a stored preference: a document that carries
+        // the format fields loads without complaint and is rewritten without
+        // them.
         assert!(rewritten.get("default_export_format").is_none());
         assert!(rewritten.get("fallback_export_format").is_none());
         assert!(rewritten.get("keep_source_export_format").is_none());
@@ -384,10 +383,10 @@ mod tests {
         Ok(())
     }
 
-    /// A settings document from before the switch existed still loads, and the
-    /// format fields it carries are simply dropped.
+    /// A settings document that carries obsolete export-format fields loads, and
+    /// those fields are dropped.
     #[test]
-    fn legacy_export_format_fields_still_load() -> Result<()> {
+    fn documents_with_obsolete_export_format_fields_load() -> Result<()> {
         for legacy in [
             r#"{"default_export_format":"Auto"}"#,
             r#"{"default_export_format":"Stl"}"#,

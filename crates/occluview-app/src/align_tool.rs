@@ -251,10 +251,10 @@ impl AlignTool {
     ///
     /// The Manually tab has nothing to do with arrows, and an operator who nudges
     /// a scan by hand has moved it out from under every point they placed — the
-    /// arrows then draw a fit that no longer describes anything. Coming back to
-    /// the Automatically tab with a clean slate is what the operator asked for by
-    /// name. The two scan names stay, because they are what "compare these two"
-    /// needs and the operator did not un-choose them.
+    /// arrows would then draw a fit that describes nothing. The Automatically
+    /// tab is re-entered with no arrows. The two scan names stay, because they
+    /// are what "compare these two" needs and the operator did not un-choose
+    /// them.
     ///
     /// Returns whether there was anything to drop.
     pub(crate) fn clear_points(&mut self) -> bool {

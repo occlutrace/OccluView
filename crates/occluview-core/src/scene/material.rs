@@ -16,8 +16,8 @@ pub(super) fn default_mesh_tint(mesh: &Mesh) -> [f32; 4] {
 
 /// Approximate sRGB to linear conversion (no external color crate in `core`).
 ///
-/// Used only for the default background tint; precise color management is an
-/// explicit future concern.
+/// Used only for the default background tint; this is not a color-management
+/// path.
 pub(super) fn linear_srgb_from_srgb(srgb: [f32; 4]) -> [f32; 4] {
     let f = |c: f32| {
         if c <= 0.04045 {

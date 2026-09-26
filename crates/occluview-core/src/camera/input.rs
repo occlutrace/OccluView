@@ -4,14 +4,14 @@ use glam::Vec2;
 ///
 /// Tuned for a crisp, unbraked feel: dragging half the viewport's
 /// smaller dimension turns the model ~172° (the dental CAD "half screen, half
-/// turn" rule). Retune only the magnitude — the drag direction is pinned by
+/// turn" rule). Retune only the magnitude; the drag direction is covered by
 /// `orbit_gain_scales_speed_without_flipping_direction`.
 pub const CAD_ORBIT_DRAG_GAIN: f32 = 3.0;
 
 /// Shared CAD wheel-zoom sensitivity (per scroll point) for the app viewport
 /// and the shell preview. One Windows wheel notch (120–150 points) zooms
-/// ~1.3–1.4×; scroll up always zooms in. Retune only the magnitude — the
-/// direction is pinned by `zoom_direction_is_pinned_scroll_up_zooms_in`.
+/// ~1.3–1.4×; scroll up always zooms in. Retune only the magnitude; the
+/// direction is covered by `zoom_direction_is_pinned_scroll_up_zooms_in`.
 pub const CAD_ZOOM_SCROLL_SENSITIVITY: f32 = 0.0024;
 
 /// Convert a wheel scroll (in points, + = scroll up) into a multiplicative
@@ -67,12 +67,12 @@ mod tests {
             orbit_delta_from_pointer_motion(Vec2::new(300.0, 0.0), viewport).unwrap_or(Vec2::ZERO);
         assert!(
             half_min.x.abs() >= core::f32::consts::PI * 0.9,
-            "orbit feels braked again: {} rad for a half-viewport drag",
+            "orbit gain too low: {} rad for a half-viewport drag",
             half_min.x.abs()
         );
     }
 
-    /// Scroll up (positive points) must always zoom IN (factor < 1 shrinks
+    /// Scroll up (positive points) must always zoom in (factor < 1 shrinks
     /// the orthographic height); scroll down zooms out. Pinned so sensitivity
     /// retunes can never reverse the wheel.
     #[test]
