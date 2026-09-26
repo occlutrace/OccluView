@@ -117,27 +117,14 @@ const SEATED_BAND_RADIUS_FRACTION: f64 = 0.1;
 const MIN_SEATED_BAND_MM: f64 = 0.2;
 const MAX_SEATED_BAND_MM: f64 = 1.0;
 
-/// How far the WORST fifth of the matched surface may sit, as a multiple of
-/// the operator's correspondence radius.
+/// How far the worst fifth of the matched surface may sit, as a multiple of the
+/// operator's correspondence radius.
 ///
-/// `median_abs` bounds the typical vertex. Alone, it certifies a pose where the
-/// surface is mostly seated and a fifth of it is far away — which is exactly the
-/// shape of a fit that slid onto a neighbouring surface while most of the
-/// sampled patch stayed put. `p95_abs` is the field that measures that tail, it
-/// was computed on every report, and the gate only ever asked whether it was
-/// finite, so the one number that describes the discarded fifth was never
-/// bounded.
-///
-/// The rule is the one the doc states: a fifth of the MATCHED surface sitting a
-/// full correspondence radius away is not an alignment. It is deliberately not
-/// tighter, because the median limit already carries the fine discrimination
-/// and the corpus numbers are the calibration: a correct seating reports a
-/// median near the discretisation error but a `p95_abs` that follows the
-/// surface's own noise, and a bound tighter than the radius would risk refusing
-/// a correct seating on a coarse scan — the failure mode this whole gate was
-/// written to avoid. What it removes is the unbounded case: a pose whose
-/// discarded fifth is arbitrarily far away could be authorized on the strength
-/// of its median alone.
+/// `median_abs` bounds the typical vertex. Alone it certifies a pose where the
+/// surface is mostly seated and a fifth of it is far away — a fit that slid onto
+/// a neighbouring surface while most of the sampled patch stayed put. The bound
+/// is deliberately loose: the median carries the fine discrimination, and a
+/// tighter one would refuse a coarse scan. It removes only the unbounded case.
 const MAX_REFINEMENT_P95_FRACTION: f64 = 1.0;
 
 /// Huber cut as a multiple of the median absolute residual — the usual 95%
@@ -163,13 +150,6 @@ const HUBER_FACTOR: f64 = 1.345;
 /// and refining from the true pose moves 1.98 mm AWAY from it — the objective,
 /// not the search, is what picks the wrong basin.
 const SEATED_BAND_MM: f64 = 0.05;
-
-/// Fraction of the sampled surface a pose must seat inside `SEATED_BAND_MM`
-/// before the gate will authorize it.
-///
-/// Between the measured wrong pose (0.072) and the measured true seating
-/// (0.203), with room for a scan whose sampling is coarser than the band.
-const MIN_SEATED_FRACTION: f64 = 0.12;
 
 /// Rotation step below this (radians) counts as converged.
 const CONVERGED_ROTATION: f64 = 1e-7;
@@ -281,11 +261,9 @@ pub struct IcpReport {
     /// Fraction of the level's samples inside the seated band of the surface
     /// (see `SEATED_BAND_MM`).
     ///
-    /// The statistic the solver itself ranks poses by, published so the gate can
-    /// read it. Before this field existed the gate certified a pose on trimmed
-    /// residual statistics alone: a fit that seats nothing can still report a
-    /// small median, because the trimmed set never contains the region that is
-    /// far away.
+    /// The statistic the solver ranks candidates by and keeps monotonic in
+    /// `icp_step`. It is a diagnostic; the acceptance gate decides on the median
+    /// residual.
     pub seated_fraction: f64,
 }
 
@@ -318,36 +296,21 @@ impl IcpReport {
             .clamp(MIN_REFINEMENT_MEDIAN_MM, MAX_REFINEMENT_MEDIAN_MM);
         // The tail, not just the typical vertex: see MAX_REFINEMENT_P95_FRACTION.
         let p95_limit = (radius * MAX_REFINEMENT_P95_FRACTION).max(MIN_REFINEMENT_MEDIAN_MM);
+        // A seating floor is not part of this gate, as it was not in v1.2.0. How
+        // much of two independent acquisitions agrees within `SEATED_BAND_MM` is
+        // a property of the two surfaces, not a fixed fraction of either scan: a
+        // partial overlap seats 0.05 over 0.08 coverage with a 0.000 mm median,
+        // below the 0.072 the floor was calibrated against, so no absolute floor
+        // separates it from a wrong pose. A nominal floor therefore refused a
+        // real partial scan while the two-jaw accident stays refused by the
+        // median (0.42 mm against the 0.30 mm ceiling). `seated_fraction` is the
+        // solver's ranking statistic, not a gate.
         self.is_trustworthy_refinement_with_limit(limit)
             && self.median_abs.is_finite()
             && self.median_abs <= median_limit
             && self.p95_abs.is_finite()
             && self.p95_abs >= 0.0
             && self.p95_abs <= p95_limit
-            && self.seats_enough()
-    }
-
-    /// Whether the pose actually seats a meaningful part of the surface.
-    ///
-    /// Every other term here is a trimmed statistic, and a trimmed set improves
-    /// when a deformation is spread out: the region carrying the truth is the
-    /// first thing the trim discards. This is the one term measured OUTSIDE that
-    /// set, over the untrimmed correspondence sample, and it is the statistic
-    /// the solver itself now ranks poses by.
-    ///
-    /// Calibrated on the real prepared-arch pair the crate measures against: the
-    /// true seating puts 0.203 of the sampled surface inside `SEATED_BAND_MM`,
-    /// and the published wrong pose — the one whose median of 0.190 sat just
-    /// under the 0.2 mm limit and which the gate used to authorize — manages
-    /// 0.072. The floor sits between them.
-    ///
-    /// A pose reported by a caller that does not compute seating leaves the field
-    /// zero, and zero is refused deliberately: "this report never measured
-    /// seating" must not read as "this pose seats nothing but is otherwise
-    /// fine" — the gate is fail-closed.
-    #[must_use]
-    fn seats_enough(&self) -> bool {
-        self.seated_fraction.is_finite() && self.seated_fraction >= MIN_SEATED_FRACTION
     }
 
     fn is_trustworthy_refinement_with_limit(&self, geometric_rms_limit: f64) -> bool {

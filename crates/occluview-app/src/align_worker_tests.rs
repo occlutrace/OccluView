@@ -22,7 +22,7 @@ use occluview_align::{
 /// This is the regression that made "Best fit matching" stop finding an arch
 /// that was more than a couple of millimetres out: `local_only: true` removed
 /// the global feature seed and the radius ladder, so the fit kept whatever
-/// surface it first touched and then failed the seating gate. Measured on a
+/// surface it first touched and then failed the refinement gate. Measured on a
 /// real arch, the full search seated a start 8 mm out (seated fraction 0.998,
 /// trustworthy) while the local-only path reported 0.016 at 4 mm and refused.
 ///
