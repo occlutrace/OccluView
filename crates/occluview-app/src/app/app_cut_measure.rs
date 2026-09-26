@@ -480,7 +480,8 @@ impl OccluViewApp {
 
     /// Route the frame's stationary clicks: LMB on the model places a ruler
     /// anchor or probes thickness (off-mesh clicks do nothing — no floating
-    /// air-points); RMB clears every measurement, and a stationary RMB with
+    /// air-points, except the derived foot of a perpendicular dropped onto a
+    /// ruler line); RMB clears every measurement, and a stationary RMB with
     /// nothing left to clear falls through to the shared scene menu, so
     /// saving stays reachable while the tool is up. Click detection is egui's
     /// press+release-without-drag, so a drag still orbits.
@@ -496,35 +497,8 @@ impl OccluViewApp {
         else {
             return false;
         };
-        let primary_down =
-            ctx.input(|input| input.pointer.button_down(egui::PointerButton::Primary));
         if self.tools.measure.dragged_ruler_anchor().is_some() {
-            ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
-            if primary_down && response.rect.contains(pointer) {
-                if let Some((camera, scene)) = self.render.camera.zip(self.document.scene.clone()) {
-                    if let Some(hit) = pick_scene_hit(&camera, response.rect, pointer, &scene) {
-                        if let Some(distance_mm) = self.tools.measure.update_ruler_drag(hit.point) {
-                            self.ui.status_message = Some(
-                                self.ui.locale.tr_with(
-                                    "measure-distance",
-                                    &[(
-                                        "len",
-                                        measure_tool::format_length(
-                                            distance_mm,
-                                            self.persistence.settings.unit_display,
-                                        )
-                                        .as_str(),
-                                    )],
-                                ),
-                            );
-                            ctx.request_repaint();
-                        }
-                    }
-                }
-            } else if !primary_down {
-                self.tools.measure.end_ruler_drag();
-                ctx.request_repaint();
-            }
+            self.continue_ruler_drag(response, pointer, ctx);
             return true;
         }
         if !self.pointer_on_bare_viewport(ctx, response.rect, pointer) {
@@ -580,6 +554,23 @@ impl OccluViewApp {
         let Some((camera, scene)) = self.render.camera.zip(self.document.scene.clone()) else {
             return false;
         };
+        // A click on a drawn ruler line, with an anchor pending, drops the
+        // perpendicular onto that line; its foot is not on the surface, so it
+        // takes precedence over whatever mesh lies under the line.
+        if self.tools.measure.mode() == Some(MeasureMode::Ruler) {
+            if let Some(base) = measure_overlay::perpendicular_target(
+                &camera,
+                response.rect,
+                &self.tools.measure,
+                pointer,
+            ) {
+                if let Some(distance_mm) = self.tools.measure.place_perpendicular(base) {
+                    self.report_ruler_length(distance_mm, true);
+                    ctx.request_repaint();
+                    return true;
+                }
+            }
+        }
         if let Some(hit) = pick_scene_hit(&camera, response.rect, pointer, &scene) {
             self.apply_measure_click(&scene, hit);
             ctx.request_repaint();
@@ -589,29 +580,65 @@ impl OccluViewApp {
         true
     }
 
+    /// One frame of a ruler-end drag: the end follows the surface under the
+    /// pointer, and the drag ends on release.
+    fn continue_ruler_drag(
+        &mut self,
+        response: &egui::Response,
+        pointer: egui::Pos2,
+        ctx: &egui::Context,
+    ) {
+        ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+        let primary_down =
+            ctx.input(|input| input.pointer.button_down(egui::PointerButton::Primary));
+        if !primary_down {
+            self.tools.measure.end_ruler_drag();
+            ctx.request_repaint();
+            return;
+        }
+        if !response.rect.contains(pointer) {
+            return;
+        }
+        let Some((camera, scene)) = self.render.camera.zip(self.document.scene.clone()) else {
+            return;
+        };
+        let Some(hit) = pick_scene_hit(&camera, response.rect, pointer, &scene) else {
+            return;
+        };
+        if let Some(distance_mm) = self.tools.measure.update_ruler_drag(hit.point) {
+            let perpendicular = self
+                .tools
+                .measure
+                .dragged_ruler_anchor()
+                .is_some_and(|anchor| self.tools.measure.is_perpendicular(anchor.ruler_index));
+            self.report_ruler_length(distance_mm, perpendicular);
+            ctx.request_repaint();
+        }
+    }
+
     /// Apply one on-mesh measure click for the armed mode.
     fn apply_measure_click(&mut self, scene: &Scene, hit: ScenePickHit) {
         match self.tools.measure.mode() {
             Some(MeasureMode::Ruler) => {
                 if let Some(distance_mm) = self.tools.measure.place_ruler_point(hit.point) {
-                    self.ui.status_message = Some(
-                        self.ui.locale.tr_with(
-                            "measure-distance",
-                            &[(
-                                "len",
-                                measure_tool::format_length(
-                                    distance_mm,
-                                    self.persistence.settings.unit_display,
-                                )
-                                .as_str(),
-                            )],
-                        ),
-                    );
+                    self.report_ruler_length(distance_mm, false);
                 }
             }
             Some(MeasureMode::Thickness) => self.apply_thickness_probe(scene, hit),
             None => {}
         }
+    }
+
+    /// Put a ruler reading on the status line in the operator's unit.
+    fn report_ruler_length(&mut self, distance_mm: f64, perpendicular: bool) {
+        let key = if perpendicular {
+            "measure-perpendicular"
+        } else {
+            "measure-distance"
+        };
+        let length =
+            measure_tool::format_length(distance_mm, self.persistence.settings.unit_display);
+        self.ui.status_message = Some(self.ui.locale.tr_with(key, &[("len", length.as_str())]));
     }
 
     /// Probe the wall of the hit layer and report the reading honestly.
