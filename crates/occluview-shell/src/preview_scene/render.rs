@@ -156,12 +156,12 @@ mod tests {
         let blob_bottom = lit_centroid_row_in_half(&frame, w, h, false);
         assert!(
             marker_top.is_some(),
-            "the small +Y marker must light the TOP half in app convention; \
+            "the small +Y marker must light the top half in app convention; \
              a vertical mirror would push it into the bottom half"
         );
         assert!(
             blob_bottom.is_some(),
-            "the big low blob must light the BOTTOM half in app convention"
+            "the big low blob must light the bottom half in app convention"
         );
 
         // The marker is small, the blob is large: this asymmetry is what makes the
@@ -171,7 +171,7 @@ mod tests {
         };
         assert!(
             marker_row < blob_row,
-            "world +Y (marker, row {marker_row}) must sit ABOVE world -Y (blob, row {blob_row})"
+            "world +Y (marker, row {marker_row}) must sit above world -Y (blob, row {blob_row})"
         );
     }
 
@@ -204,7 +204,7 @@ mod tests {
 
         assert!(
             after > before + 1.0,
-            "dragging DOWN must move the top marker DOWN the screen \
+            "dragging down must move the top marker down the screen \
              (row {before} -> {after}); an inverted preview moves it up"
         );
     }

@@ -16,10 +16,10 @@ pub const PREVIEW_HANDLER_CATEGORY: &str = "{8895B1C6-B41F-4C1C-A562-0D564250836
 /// File extensions OccluView registers a thumbnail provider and Open-with
 /// `ProgID` for.
 ///
-/// JSON `.gltf` and `.3mf` are deliberately absent until their stream-safe
-/// readers exist. HPS are included because private builds can provide the
-/// HPS key at runtime while public builds safely fall back to placeholders for
-/// encrypted CE sources.
+/// JSON `.gltf` and `.3mf` are absent: they have no stream-safe readers. HPS
+/// are included because private builds can provide the HPS key at runtime
+/// while public builds safely fall back to placeholders for encrypted CE
+/// sources.
 pub const SUPPORTED_EXTENSIONS: &[&str] = occluview_formats::V1_OPEN_EXTENSIONS;
 
 /// Formats that ship a dedicated file-type icon asset in the MSI.

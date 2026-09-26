@@ -39,10 +39,8 @@ mod public_contract_tests {
 
     #[test]
     fn parser_version_is_a_usable_semver_triple() {
-        // Comparing PARSER_VERSION with env!("CARGO_PKG_VERSION") only restated
-        // its own definition. What a consumer needs is that the constant is
-        // shaped like a version they can compare against, which a workspace
-        // version bump could break without anyone reading this crate.
+        // A consumer needs the constant to be shaped like a version it can
+        // compare against, which a workspace version bump could break.
         let parts: Vec<&str> = PARSER_VERSION.split('.').collect();
         assert_eq!(
             parts.len(),

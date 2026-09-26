@@ -2,7 +2,7 @@
 //!
 //! `regsvr32 occluview_shell.dll` runs `DllRegisterServer`, which writes the
 //! registry entries that make Windows Explorer activate our thumbnail provider
-//! for each supported extension, AND registers the "Open with" ProgID so the
+//! for each supported extension, and registers the "Open with" ProgID so the
 //! shell offers OccluView in the context menu. `DllUnregisterServer` (via
 //! `regsvr32 /u`) removes them.
 //!
@@ -151,9 +151,9 @@ fn unregister_all() -> windows::core::Result<()> {
     unregister_preview_handler_clsid()?;
     let _ = unregister_approved_shell_extension();
     let _ = unregister_preview_handlers_list();
-    // Every extension, including the ones `register_all` now leaves alone: a
-    // build before this policy did claim `.dcm`, and uninstalling that build
-    // has to give it back. Each of these removes a value only when it still
+    // Every extension, including the ones `register_all` leaves alone, so an
+    // uninstall also releases a `.dcm` claim written by an earlier build. Each
+    // of these removes a value only when it still
     // points at OccluView, so a foreign handler is never touched.
     for &ext in SUPPORTED_EXTENSIONS {
         // Missing entry is fine (user may have deleted it); ignore not-found.
@@ -186,7 +186,7 @@ fn own_dll_path() -> windows::core::Result<HSTRING> {
     if n == 0 {
         return Err(windows::core::Error::from_thread());
     }
-    // `GetModuleFileNameW` TRUNCATES and returns `buf.len()` when the path does
+    // `GetModuleFileNameW` truncates and returns `buf.len()` when the path does
     // not fit, rather than failing. Treating that as success would write a
     // truncated path into `InprocServer32`, and the class would then fail to
     // load with no clue why. The context-menu helper already checks this; this

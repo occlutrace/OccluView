@@ -252,7 +252,7 @@ mod tests {
         match configured {
             Some(value) => {
                 let expected = HpsSecretKey::from_config_value(&value).expect("valid test key");
-                // Deliberately not `assert_eq!` on the byte slices: a failing
+                // Not `assert_eq!` on the byte slices: a failing
                 // `assert_eq!` prints both operands, and this test runs in the
                 // packaging jobs where one operand is the real private key. The
                 // guard below compares without ever formatting material, so a

@@ -33,8 +33,8 @@ impl<'a> TexturePlan<'a> {
             .texture()
             .filter(|_| options.include_texture && options.include_uvs)
             // A texture whose dimensions and pixel buffer disagree makes the
-            // PNG encoder assert, and an abort would take the whole viewer down
-            // with the export. The GLB writer rejects the same shape; here the
+            // PNG encoder assert, and the abort would end the viewer along with
+            // the export. The GLB writer rejects the same shape; here the
             // image is simply not written, and the caller warns.
             .filter(|texture| {
                 texture.width > 0
@@ -358,7 +358,7 @@ mod tests {
     }
 
     /// A mesh without a texture still carries its mapping, as per-vertex
-    /// properties, so the coordinates are not silently dropped on the way out.
+    /// properties, so the coordinates are not dropped on the way out.
     #[test]
     fn coordinates_survive_without_an_image() {
         let mut mesh = textured_triangle();

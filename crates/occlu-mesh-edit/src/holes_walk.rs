@@ -1,10 +1,10 @@
 //! Boundary-loop discovery and planar ear-clip capping for hole filling.
 //!
-//! Split out of `holes.rs` (file-size budget): this module owns the low-level
-//! rim machinery — turning boundary half-edges into simple loops
-//! ([`build_boundary_maps`] + [`walk_boundary_loop`]) and triangulating one
-//! loop with a watertight planar ear-clip fan ([`ear_clip_cap`]). The
-//! orchestration (gates, refinement, rebuild) stays in `holes.rs`.
+//! This module owns the low-level rim machinery — turning boundary half-edges
+//! into simple loops ([`build_boundary_maps`] + [`walk_boundary_loop`]) and
+//! triangulating one loop with a watertight planar ear-clip fan
+//! ([`ear_clip_cap`]). The orchestration (gates, refinement, rebuild) stays in
+//! `holes.rs`.
 
 use super::adjacency::vertex_index;
 use super::{MeshEditBuffers, MeshEditError};
@@ -29,7 +29,7 @@ impl BoundaryOwners {
     }
 
     /// Collect the directed edges of `mesh`, last owner winning for a repeated
-    /// edge -- which is what the hash map it replaces did.
+    /// edge.
     fn from_mesh(mesh: &MeshEditBuffers) -> Result<Self, MeshEditError> {
         let mut edges = Vec::with_capacity(mesh.triangle_count() * 3);
         for (triangle_index, triangle) in mesh.indices.as_chunks::<3>().0.iter().enumerate() {
@@ -40,7 +40,7 @@ impl BoundaryOwners {
             }
         }
         // Stable, so equal keys keep the order they were pushed in and the
-        // last of a run is the one the hash map would have kept.
+        // last of a run wins.
         edges.sort_by_key(|(key, _)| *key);
         let mut deduped: Vec<(u64, u32)> = Vec::with_capacity(edges.len());
         for entry in edges {
@@ -110,18 +110,18 @@ pub(crate) fn walk_boundary_loop(
     }
 }
 
-/// Split a walked boundary loop at coincident-POSITION revisits.
+/// Split a walked boundary loop at coincident-position revisits.
 ///
 /// A hole that touches the scan border (or another hole) at a single vertex
 /// is pinch-split per incident fan, which gives the junction one copy per
 /// fan — but when the hole's two rim edges at the junction belong to
-/// DIFFERENT fans, the walk comes back through the second copy and the hole
+/// different fans, the walk comes back through the second copy and the hole
 /// merges with the border into one long loop. The merged loop then reads as
 /// "scan border" and the visibly small hole next to the edge never closes.
 ///
 /// Splitting the loop wherever it passes through two indices carrying the
-/// SAME exact position recovers the operator-visible holes: each sub-loop
-/// keeps BOTH junction copies (closed by the zero-length virtual edge between
+/// same exact position recovers the operator-visible holes: each sub-loop
+/// keeps both junction copies (closed by the zero-length virtual edge between
 /// them), so its cap pairs every real boundary half-edge of its side and the
 /// surface stays closed. A split is taken only when both sides keep at least
 /// 3 real edges; unwelded-seam rims where the twin sits right next to its
@@ -132,7 +132,7 @@ pub(crate) fn split_loop_at_coincident_positions(
 ) -> Vec<Vec<usize>> {
     let mut pending = vec![boundary_loop];
     let mut finished = Vec::new();
-    // Each split leaves both parts strictly shorter in REAL edges than the
+    // Each split leaves both parts strictly shorter in real edges than the
     // parent, so the total work is bounded; the guard only protects against
     // a cycle in the presence of NaN-position pathologies.
     let mut rounds = 0_usize;
@@ -228,11 +228,11 @@ pub(crate) fn build_boundary_maps(
 
     // A vertex where two rims meet (or a non-manifold pinch) has boundary
     // degree > 1. Only vertices with exactly one in- and one out-edge get a
-    // unique successor; junction vertices are deliberately LEFT OUT of the
-    // successor map so any walk that reaches one dead-ends and is refused,
-    // rather than a single overwritten successor silently merging two rims
-    // into one figure-eight loop. (Hole filling pre-splits these junctions in
-    // `crate::pinch` so they no longer occur on its input.)
+    // unique successor; junction vertices are left out of the successor map
+    // so any walk that reaches one dead-ends and is refused, rather than a
+    // single overwritten successor merging two rims into one figure-eight
+    // loop. (Hole filling pre-splits these junctions in `crate::pinch`, so its
+    // input has none.)
     let is_manifold_boundary =
         |vertex: usize| out_degree.get(&vertex) == Some(&1) && in_degree.get(&vertex) == Some(&1);
 
@@ -263,19 +263,19 @@ fn triangle_vertices(triangle: &[u32], triangle_index: usize) -> Result<[usize; 
     ])
 }
 
-/// Rims at or below this length keep the original quadratic ear-clip
-/// byte-for-byte (repair's tiny-hole caps stay bit-identical); longer rims
-/// take the linked-ring, reflex-aware clipper whose cost is O(n * reflex)
-/// instead of O(n^2) full containment scans.
+/// Rims at or below this length use the quadratic ear-clip (repair's tiny-hole
+/// caps keep its exact output); longer rims take the linked-ring, reflex-aware
+/// clipper whose cost is O(n * reflex) instead of O(n^2) full containment
+/// scans.
 const SMALL_EARCLIP_MAX: usize = 64;
 
 /// Total reflex-containment checks the large ear-clip may spend on one rim.
 /// A clean dental rim of 20 000 edges uses a few million; a pathological
 /// spiral or a self-intersecting projection would burn quadratic time, so it
-/// is refused (deterministically) once the budget is gone.
+/// is refused (deterministically) once the budget is spent.
 const LARGE_EARCLIP_WORK_BUDGET: u64 = 50_000_000;
 
-/// Planar ear-clip of one boundary loop, in LOCAL ring indices. The
+/// Planar ear-clip of one boundary loop, in local ring indices. The
 /// [i0, i2, i1] emit order is the reverse twin of the surrounding side faces'
 /// directed boundary edges (watertight winding by construction).
 pub(crate) fn ear_clip_cap(
@@ -398,10 +398,11 @@ fn basis_from_normal(normal: Vec3) -> (Vec3, Vec3) {
 /// Ear-clip for rims longer than [`SMALL_EARCLIP_MAX`]. Same contract as the
 /// small path (full `n - 2` fan or nothing, same winding), different cost
 /// model: a doubly linked ring instead of `Vec::remove`, and containment
-/// tested only against REFLEX vertices (a vertex strictly inside a candidate
+/// tested only against reflex vertices (a vertex strictly inside a candidate
 /// ear is always reflex; clipping only shrinks interior angles, so the reflex
-/// set never grows and is kept as a lazily compacted list). The previous full
-/// scan made a 20 000-edge rim quadratic — minutes instead of milliseconds.
+/// set never grows and is kept as a lazily compacted list). A full
+/// containment scan makes a 20 000-edge rim quadratic — minutes instead of
+/// milliseconds.
 ///
 /// Rims longer than `u16::MAX` are refused as a skip (empty result), not an
 /// error: such a rim is beyond any cap policy, and one absurd loop must not
@@ -459,7 +460,7 @@ fn ear_clip_cap_large(
     let mut cap_triangles: Vec<[usize; 3]> = Vec::with_capacity(loop_len - 2);
     let mut alive = loop_len;
     let mut current = 0_usize;
-    // Global WORK bound (reflex containment checks): a clean rim needs a few
+    // Global work bound (reflex containment checks): a clean rim needs a few
     // hundred per clip at most; a stalled rim (self-intersecting projection)
     // or a pathological spiral gives up deterministically and is refused
     // instead of running for minutes.
@@ -496,7 +497,7 @@ fn ear_clip_cap_large(
                     }
                 }
                 reflex_list.retain(|&index| is_reflex[index]);
-                // BALANCED peeling: skip one vertex before the next clip.
+                // Balanced peeling: skip one vertex before the next clip.
                 // Resuming at the neighbor would clip consecutive corners and
                 // rebuild a fan of ~n near-parallel chords 1 rim-edge apart —
                 // on a near-cocircular rim the Delaunay predicate ties (no
@@ -586,7 +587,7 @@ fn is_ear_reflex(
             continue;
         }
         // The caller compacts the list after each clip, so stale entries are
-        // at most the vertex clipped since; its links no longer target it.
+        // at most the vertex clipped since; its predecessor's link skips it.
         if ring.next[ring.prev[index]] != index {
             continue;
         }

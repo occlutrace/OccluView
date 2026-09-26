@@ -212,9 +212,9 @@ unsafe fn preview_window_proc_body(
 /// release the handler while the menu is up: the object is freed and the frame
 /// that opened the menu is still on the stack, because `Drop` destroys the
 /// window rather than unwinding its caller. `destroy_preview_window` clears
-/// this slot before destroying the window, so a cleared or reassigned slot is
-/// exactly the signal that the pointer in hand is no longer the live handler.
-/// Only the pointer VALUE is compared; nothing is dereferenced.
+/// this slot before destroying the window, so a cleared or reassigned slot
+/// signals that the pointer in hand is not the live handler.
+/// Only the pointer value is compared; nothing is dereferenced.
 pub(super) fn window_owns_handler(hwnd: HWND, handler: *const PreviewHandler) -> bool {
     // SAFETY: reads the back-pointer slot this module sets at WM_NCCREATE.
     let stored = unsafe {

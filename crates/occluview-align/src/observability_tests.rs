@@ -1,5 +1,4 @@
-//! Tests for the sensitivity measure, split out of `observability.rs` to hold
-//! the workspace's file budget.
+//! Tests for the sensitivity measure.
 //!
 //! Two kinds of assertion. The first pins the sensitivities of surfaces whose
 //! sliding directions are known by inspection — a plane slides in its own plane
@@ -60,7 +59,7 @@ fn a_plane_is_blind_to_two_slides_and_one_turn_and_sees_the_other_three() {
     assert_eq!(
         seen.hidden_displacement_mm(0.01),
         f64::INFINITY,
-        "a free slide is unbounded, and saying so is the point"
+        "a free slide is unbounded"
     );
 }
 
@@ -150,9 +149,8 @@ fn the_sensitivities_are_ordered_and_bounded() {
     }
 }
 
-/// The assertion the under-reporting needed. Displace the fixture along the
-/// direction the measure calls blindest, by a known amount, and require the
-/// reported bound to come back to that amount.
+/// Displace the fixture along the direction the measure calls blindest, by a
+/// known amount, and require the reported bound to come back to that amount.
 #[test]
 fn the_hidden_displacement_bound_recovers_a_known_offset_along_the_blind_mode() {
     /// Displacement applied, as an RMS over the surface, in millimetres.
@@ -210,7 +208,7 @@ fn the_hidden_displacement_bound_recovers_a_known_offset_along_the_blind_mode() 
 }
 
 /// The same closing of the loop on a cylinder, where the blind mode is exact
-/// and the bound is therefore infinite — which is the honest answer, not a
+/// and the bound is therefore infinite — which is the correct answer, not a
 /// failure.
 #[test]
 fn a_free_slide_reports_an_unbounded_hidden_displacement() {

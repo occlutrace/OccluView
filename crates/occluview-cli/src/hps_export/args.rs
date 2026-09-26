@@ -27,8 +27,8 @@ pub(crate) enum ParseOutcome {
 }
 
 pub(crate) fn parse(arguments: Vec<OsString>) -> Result<ParseOutcome, CliError> {
-    // `-h` as well as `--help`: the main CLI accepts both, and a tool that
-    // rejects the short form while its sibling accepts it reads as a bug.
+    // `-h` as well as `--help`: the main CLI accepts both, and the two tools
+    // accept the same help flags.
     if arguments.len() == 1
         && (arguments[0] == OsStr::new("--help") || arguments[0] == OsStr::new("-h"))
     {

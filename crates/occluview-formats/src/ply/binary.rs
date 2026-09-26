@@ -324,13 +324,13 @@ fn read_faces(
     // properties (e.g. some intraoral scanners emit `vertex_indices` +
     // `texcoord`); we must consume every declared list per row so the next
     // row's bytes line up.
-    // No geometry list means nothing to triangulate — but the element's BYTES
-    // still have to be consumed. Returning early left the cursor at the start of
-    // the row, so any element declared after this one was read from the wrong
-    // offset and decoded as garbage; the ASCII reader already skips the whole
-    // element in this case. An out-of-range index makes the shared loop below
-    // take its "discard this list" branch for every property, which consumes
-    // exactly the element's bytes and emits nothing.
+    // No geometry list means nothing to triangulate — but the element's bytes
+    // still have to be consumed. Returning early would leave the cursor at the
+    // start of the row, so any element declared after this one would be read
+    // from the wrong offset and decoded as garbage; the ASCII reader skips the
+    // whole element in this case. An out-of-range index makes the shared loop
+    // below take its "discard this list" branch for every property, which
+    // consumes exactly the element's bytes and emits nothing.
     let indices_prop_idx = element
         .properties
         .iter()
@@ -344,8 +344,8 @@ fn read_faces(
     // parser never returns. The ASCII reader closes the same hole from the
     // other side -- it finds no `vertex_indices` and skips the element, whose
     // token count is `count * properties.len()`, which is zero here and so
-    // terminates. Rejecting the shape outright is honest: a face row with no
-    // readable property carries no geometry.
+    // terminates. The shape is rejected outright: a face row with no readable
+    // property carries no geometry.
     if element.properties.is_empty() {
         if element.count == 0 {
             return Ok(());
@@ -578,10 +578,10 @@ mod tests {
     }
 
     /// A `face` element with no property consumes no bytes per row, so the row
-    /// loop used to re-read the same empty state forever. The fuzz seed budget
-    /// found exactly this: a header may declare a huge count, and the parser
-    /// must answer rather than spin. The assertion is on termination itself, so
-    /// the test fails by timing out if the hole reopens.
+    /// loop would re-read the same empty state forever. A header may declare a
+    /// huge count, and the parser must answer rather than spin. The assertion is
+    /// on termination itself, so the test fails by timing out if the reader
+    /// spins.
     #[test]
     fn a_face_element_with_no_property_is_refused_instead_of_spinning() {
         let bytes = b"ply\nformat binary_little_endian 1.0\n\

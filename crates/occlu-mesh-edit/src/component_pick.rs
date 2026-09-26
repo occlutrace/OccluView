@@ -1,13 +1,13 @@
 //! Pick the connected component (one "object") under a triangle.
 //!
 //! A multi-part prosthesis saved in a CAD tool as one scene and exported to a
-//! single STL arrives as several disjoint solids fused into one triangle SOUP
+//! single STL arrives as several disjoint solids fused into one triangle soup
 //! (every triangle owns private, unshared vertices). "Which object did I click?"
-//! is a connected-component query over the mesh's TRUE topology, so — exactly as
+//! is a connected-component query over the mesh's true topology, so — as
 //! [`selected_connected_components`] does for Separate — the soup is welded back
 //! to shared topology first (see `weld_soup_topology`). Without that weld every
 //! triangle is its own component and a click would select a single facet, never
-//! the whole object (the 317k-confetti failure mode).
+//! the whole object.
 
 use super::{selected_connected_components, validate_face_edit_buffers, FaceSelection};
 use super::{MeshEditBuffers, MeshEditError};
@@ -18,7 +18,7 @@ use super::{MeshEditBuffers, MeshEditError};
 /// Connectivity runs on welded topology (STL soup is recovered exactly — see
 /// [`selected_connected_components`]), so the returned indices span the whole
 /// object the picked facet belongs to, not just the one facet. Triangle order
-/// and count are preserved by the weld, so the indices address the CALLER's
+/// and count are preserved by the weld, so the indices address the caller's
 /// original buffers directly. Deterministic: the underlying grouping is
 /// sort-based and every component's member list is ascending.
 ///
@@ -107,7 +107,7 @@ mod tests {
 
     #[test]
     fn single_object_returns_every_triangle() {
-        // A lone welded strip exploded to soup is ONE object: any pick returns
+        // A lone welded strip exploded to soup is one object: any pick returns
         // the whole strip.
         let mut vertices = Vec::new();
         let mut indices = Vec::new();
@@ -142,7 +142,7 @@ mod tests {
     #[test]
     fn faceless_mesh_is_a_none_noop_not_a_panic() {
         // A triangle-topology mesh with no indices (points only, e.g. a decimated
-        // scan reduced to vertices) has no components: an honest None, no panic.
+        // scan reduced to vertices) has no components: `None`, no panic.
         let mesh = MeshEditBuffers {
             vertices: vec![EditVertex::at([0.0, 0.0, 0.0])],
             indices: Vec::new(),
@@ -222,7 +222,7 @@ mod tests {
 
     /// A ~500k-triangle grid emitted as STL soup: every triangle's corners are
     /// fresh vertices placed at the exact grid-point positions, so the exact-bit
-    /// weld recovers the whole grid as ONE connected object.
+    /// weld recovers the whole grid as one connected object.
     fn soup_grid(cells: u32) -> MeshEditBuffers {
         let mut vertices = Vec::new();
         let mut indices = Vec::new();
@@ -256,9 +256,8 @@ mod tests {
     #[test]
     fn perf_component_pick_on_a_half_million_triangle_soup_stays_interactive() {
         // 500 x 500 cells -> 500_000 triangles, 1_500_000 soup vertices. Picking
-        // any facet must resolve the whole welded object and stay well under an
-        // interactive budget (a LOOSE bound: the box is shared under load, this
-        // guards against an O(N^2) regression, not a precise benchmark).
+        // any facet must resolve the whole welded object within a loose 10 s
+        // bound that catches O(N^2) behaviour; it is not a precise benchmark.
         let cells = 500;
         let mesh = soup_grid(cells);
         let triangle_count = mesh.triangle_count();

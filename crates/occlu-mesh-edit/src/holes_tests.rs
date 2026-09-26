@@ -1,6 +1,5 @@
-//! Hole-filling kernel tests for the dental-lab bug fixes: adjacent pinched
-//! rims, lasso-majority selection gating, and the mm perimeter cap. Kept in
-//! their own module because `tests.rs` is over the file-size budget.
+//! Hole-filling kernel tests: adjacent pinched rims, lasso-majority selection
+//! gating, and the mm perimeter cap.
 
 use crate::{
     fill_holes, fill_selected_holes, EditVertex, FaceSelection, MeshEditBuffers, MeshEditOptions,
@@ -34,11 +33,10 @@ fn boundary_edge_count(indices: &[u32]) -> usize {
 }
 
 /// Two square "bowls" (apex + 4-vertex rim, the standard dental-CAD hole
-/// shape) that share EXACTLY one rim vertex (index 0). That shared vertex is
+/// shape) that share exactly one rim vertex (index 0). That shared vertex is
 /// a boundary junction:
-/// its boundary in/out degree is 2, so the classic walk dead-ends at it and
-/// BOTH rims stay open. This is the "closes random holes, leaves the neighbor"
-/// bug reduced to its core.
+/// its boundary in/out degree is 2, so an unsplit walk dead-ends at it and
+/// both rims stay open.
 fn two_bowls_sharing_a_pinch_vertex() -> MeshEditBuffers {
     let vertices = vec![
         EditVertex::at([0.0, 0.0, 0.0]),  // 0: P, the shared pinch vertex
@@ -95,9 +93,8 @@ fn adjacent_pinched_rims_both_close() {
     let (_, split_count) = split.expect("one pinch vertex split");
     assert_eq!(split_count, 1);
 
-    // End-to-end: BOTH rims now close (previously the shared vertex dead-ended
-    // the walk and neither did), and the result is watertight. The fixture is
-    // a bare pair of bowls whose rims ARE its only boundary, so the scan
+    // End-to-end: both rims close and the result is watertight. The fixture
+    // is a bare pair of bowls whose rims are its only boundary, so the scan
     // border guard is off — this test exercises the pinch machinery.
     let options = MeshEditOptions {
         protect_scan_border: false,
@@ -139,7 +136,7 @@ fn selection_qualifies_on_majority_rim_coverage() {
         .expect("majority selection");
     assert_eq!(closed.report.filled_holes, 1);
 
-    // 7/16 marked -> below half -> left open, and NOT flagged as degeneracy.
+    // 7/16 marked -> below half -> left open, and not flagged as degeneracy.
     let minority = first_n_selected(16, 7);
     let open = fill_selected_holes(&mesh, &minority, MeshEditOptions::default())
         .expect("minority selection");
@@ -164,7 +161,7 @@ fn mm_perimeter_cap_gates_the_unselected_button() {
 
     let skipped = fill_holes(&over, None, capped).expect("over mm cap");
     assert_eq!(skipped.report.filled_holes, 0);
-    assert_eq!(skipped.report.warnings.len(), 1); // honest oversize skip
+    assert_eq!(skipped.report.warnings.len(), 1); // one oversize skip
 }
 
 #[test]

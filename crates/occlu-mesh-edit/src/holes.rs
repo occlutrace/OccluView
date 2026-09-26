@@ -18,16 +18,16 @@ use super::{
 use glam::Vec3;
 use std::collections::HashSet;
 
-/// Loops at or above this many edges get the INTERPOLATED cap (refined interior
+/// Loops at or above this many edges get the interpolated cap (refined interior
 /// vertices + harmonic relaxation); smaller holes keep the plain planar cap.
 const MIN_INTERPOLATED_LOOP: usize = 8;
 
-/// Rims LONGER than this skip the interpolated cap and go straight to the
+/// Rims longer than this skip the interpolated cap and go straight to the
 /// minimum-area membrane. Real lasso cuts routinely produce 200–1000-edge
-/// rims, and the raw membrane on such a rim is full of near-folded creases —
-/// the "sharp spike-like artifacts" of issue #9 — so the interpolated cap must
-/// cover them. Cost is held by `cap_refine`'s interior-vertex budget (the
-/// target edge scale coarsens for big rims), so the ceiling is only a safety
+/// rims, and the raw membrane on such a rim is full of near-folded creases
+/// (sharp spike-like artifacts), so the interpolated cap must cover them.
+/// Cost is held by `cap_refine`'s interior-vertex budget (the target edge
+/// scale coarsens for big rims), so the ceiling is only a safety
 /// valve against pathological mega-rims; a deep socket whose projection folds
 /// is refused by the fold/pierce guards and still falls back to the membrane.
 const MAX_INTERPOLATED_LOOP: usize = 4096;
@@ -41,11 +41,8 @@ const MAX_INTERPOLATED_LOOP: usize = 4096;
 /// because an explicit selection is the operator's intent and large marked
 /// rims should still close.
 ///
-/// Exported because that `max` makes a caller's private copy of this number
-/// silently authoritative: the application and the CLI each held their own
-/// `20_000`, so lowering this constant to fix a hang would have changed
-/// nothing in the shipped product -- `max(20_000, 8_000)` is `20_000`. One
-/// number, in one place, for every caller.
+/// Exported so every caller reads this one number: because of that `max`, a
+/// caller-side copy larger than this constant would override any change to it.
 pub const CLOSE_HOLES_EDGE_CEILING: usize = 20_000;
 
 #[derive(Copy, Clone)]
@@ -66,8 +63,8 @@ struct FillBuffers {
 /// reason (scan border, size restraint, damage).
 ///
 /// [`fill_holes`] folds every skip kind into one
-/// [`MeshEditWarning::DegenerateGeometry`] per skipped loop (its long-standing
-/// public contract) and mirrors the breakdown in the report's `skipped_*`
+/// [`MeshEditWarning::DegenerateGeometry`] per skipped loop (its public
+/// contract) and mirrors the breakdown in the report's `skipped_*`
 /// counters. The repair pipeline maps oversize skips to informational
 /// `open_rims_left`; it disables the border guard, so `skipped_border` stays
 /// zero there.
@@ -90,7 +87,7 @@ pub(crate) struct FillLoopStats {
 ///
 /// Border protection (`options.protect_scan_border`, default on, whole-mesh
 /// path only): a rim whose perimeter is at least half of the largest rim's
-/// perimeter AND at least half of the mesh bounding-box diagonal is treated
+/// perimeter and at least half of the mesh bounding-box diagonal is treated
 /// as the open scan border and left alone. Everything else closes regardless
 /// of size, bounded only by `options.max_boundary_loop` (sanity/perf ceiling)
 /// and, when set, the optional `options.max_rim_perimeter_mm` restraint.
@@ -101,8 +98,8 @@ pub(crate) struct FillLoopStats {
 /// the mm restraint applies.
 ///
 /// Two rims that meet at a single vertex are pre-split during pinch handling so
-/// both become independent simple loops that fill — previously the shared
-/// junction dead-ended the walk and neither closed.
+/// both become independent simple loops that fill; an unsplit shared junction
+/// dead-ends the walk and neither loop closes.
 ///
 /// Caps use the "interpolated from surrounding edges" convention dental CAD
 /// software uses: loops above the interpolated-cap edge threshold are refined
@@ -188,18 +185,16 @@ pub(crate) fn fill_holes_with_outcome(
         return Ok((empty_fill_result(mesh, counts), FillLoopStats::default()));
     }
 
-    // The weld comes FIRST, and the refusal is asked of its result. Deciding
-    // from the `heal_boundary_rims` flag alone treated "healing is on" as "the
-    // mesh is welded", but healing welds by full payload: a soup whose
-    // coincident corners differ in colour or UV merges nothing, and the healing
-    // pass then deleted every triangle as an isolated nick while reporting the
-    // result as a successful cap.
+    // The weld runs first, and the soup refusal is decided on its result. The
+    // `heal_boundary_rims` flag alone does not mean "welded": healing welds by
+    // full payload, so a soup whose coincident corners differ in colour or UV
+    // merges nothing, and the healing pass would delete every triangle as an
+    // isolated nick.
     let welded = apply_soup_weld(mesh, options.heal_boundary_rims)?;
     let mesh: &MeshEditBuffers = welded.as_ref().unwrap_or(mesh);
-    // Asked of the POST-WELD mesh, and about whether its corners are shared —
-    // not about the heal flag and not about the buffer lengths. Both of those
-    // earlier attempts are described on the gate itself; this one sees a welded
-    // surface and a soup differently at any size.
+    // Decided on the post-weld mesh, by whether its corners are shared — not by
+    // the heal flag or the buffer lengths — so a welded surface and a soup are
+    // told apart at any size.
     refuse_unweldable_soup(mesh, counts.triangles)?;
 
     // Pre-clean the cut line (opt-in via `heal_boundary_rims`): drop dangling
@@ -210,10 +205,9 @@ pub(crate) fn fill_holes_with_outcome(
     // below stay byte-for-byte unchanged there.
     let healing = apply_rim_healing(mesh, selection, options.heal_boundary_rims);
     let healed_rims = healing.healed_rims;
-    // Rim healing DELETES triangles (dangling needles, lone faces, faces
-    // collapsed by a weld). Reporting zero removed while the output is smaller
-    // than the input made `input - output` disagree with the report, and left
-    // the operator no way to see that geometry had been dropped.
+    // Rim healing deletes triangles (dangling needles, lone faces, faces
+    // collapsed by a weld). They count as removed, so `input - output` agrees
+    // with the report and the operator can see that geometry was dropped.
     let removed_triangles = healing.mesh.as_ref().map_or(0, |healed| {
         counts.triangles.saturating_sub(healed.indices.len() / 3)
     });
@@ -223,8 +217,8 @@ pub(crate) fn fill_holes_with_outcome(
     };
 
     // Two rims that meet at a single vertex both dead-end the boundary walk (the
-    // junction has no unique successor), so today neither closes and the
-    // operator sees "random" holes left open next to closed ones. Duplicate each
+    // junction has no unique successor), so neither would close and the
+    // operator would see "random" holes left open next to closed ones. Duplicate each
     // boundary-junction vertex per incident fan so every rim becomes a simple
     // loop that fills. A clean mesh (and repair's already bowtie-split input)
     // has no junctions, so this returns `None` and the path below runs on the
@@ -262,7 +256,7 @@ pub(crate) fn fill_holes_with_outcome(
     let mut stats = FillLoopStats::default();
 
     // Vertex-vertex adjacency of the surrounding surface. Interpolated caps use
-    // it to sample a support band OUTSIDE the rim so the fitted cap surface
+    // it to sample a support band outside the rim so the fitted cap surface
     // picks up the real curvature there (a single planar rim carries none).
     // The triangle incidence backs the self-intersection guard's 2-ring
     // neighborhood query; both are built once and shared by every loop.
@@ -274,7 +268,7 @@ pub(crate) fn fill_holes_with_outcome(
         incidence: &incidence,
     };
 
-    // Phase 1: walk EVERY loop first. Border protection needs all rim
+    // Phase 1: walk every loop first. Border protection needs all rim
     // perimeters before any fill decision can be made.
     let loops = collect_boundary_loops(mesh, &next_boundary_vertex, &boundary_starts, &mut stats)?;
 
@@ -308,7 +302,7 @@ pub(crate) fn fill_holes_with_outcome(
             continue;
         }
 
-        // Only a COMPLETE cap (a full fan of loop_len - 2 triangles) counts as
+        // Only a complete cap (a full fan of loop_len - 2 triangles) counts as
         // a filled hole. A partial ear-clip result is never emitted, so the
         // index buffer only grows when the whole rim was triangulated.
         let filled = triangulate_loop(
@@ -352,7 +346,7 @@ pub(crate) fn fill_holes_with_outcome(
 /// disconnected needles — without this the cut-line healing "heals" one phantom
 /// nick per triangle and no real rim is ever found. The weld preserves triangle
 /// order, so any face selection stays valid; the repair pipeline runs its own
-/// weld and keeps healing OFF, so it is byte-for-byte untouched here.
+/// weld and keeps healing off, so it is byte-for-byte untouched here.
 ///
 /// Returns the welded buffers (owned, so the borrow in
 /// [`fill_holes_with_outcome`] outlives it) or `None` when nothing merged.
@@ -395,14 +389,13 @@ fn apply_rim_healing(
             healed_rims: 0,
         };
     };
-    // A "heal" that removes EVERY triangle is not a heal. That is exactly what
-    // the pre-clean does to a soup whose coincident corners carry different
-    // payloads: nothing welds, so all three edges of every triangle read as an
-    // isolated nick and the pass deletes the whole mesh, and the kernel then
-    // published a zero-face result as a successful cap. Refusing to apply the
-    // destructive result leaves the caller's mesh intact; the filler then walks
-    // the original buffers, which for a small soup is the slow-but-allowed case
-    // and for a large one was already refused before this point.
+    // A "heal" that removes every triangle is refused. The pre-clean does that
+    // to a soup whose coincident corners carry different payloads: nothing
+    // welds, so all three edges of every triangle read as an isolated nick and
+    // the pass deletes the whole mesh. Refusing the destructive result leaves
+    // the caller's mesh intact; the filler then walks the original buffers,
+    // which for a small soup is the slow-but-allowed case and for a large one
+    // is refused before this point.
     if outcome.mesh.indices.is_empty() && !mesh.indices.is_empty() {
         return RimHealing {
             mesh: None,
@@ -539,7 +532,7 @@ fn triangle_already_exists(mesh: &MeshEditBuffers, boundary_loop: &[usize]) -> b
     })
 }
 
-/// Triangulate and emit one boundary loop. Returns `true` when a COMPLETE cap
+/// Triangulate and emit one boundary loop. Returns `true` when a complete cap
 /// was emitted (the hole is now closed), `false` when the loop was skipped.
 ///
 /// Cap strategy, in order (first success wins; every candidate is a full,
@@ -548,16 +541,16 @@ fn triangle_already_exists(mesh: &MeshEditBuffers, boundary_loop: &[usize]) -> b
 /// 1. Tiny holes (`< MIN_INTERPOLATED_LOOP`): the plain planar ear-clip fan.
 /// 2. Larger holes: the dental-CAD-style interpolated cap (refined interior +
 ///    harmonic relaxation), which continues curvature across the seam.
-/// 3. Fallbacks for a refused/failed cap, EACH self-intersection guarded, first
+/// 3. Fallbacks for a refused/failed cap, each self-intersection guarded, first
 ///    non-piercing wins: the compact minimum-area membrane (uncapped in size
 ///    via hierarchical splitting — good for deep sockets and strongly wrapped
 ///    rims) then the flat ear-clip lid (good where the membrane grazes a wall).
 ///    Only for rims simple in 3D, so an hourglass crossing is never baked in.
 /// 4. Selection path (explicit operator intent — the convention that a lasso'd
-///    socket ALWAYS closes): if every guarded candidate grazed nearby surface,
+///    socket always closes): if every guarded candidate grazed nearby surface,
 ///    still emit the best watertight cover (membrane first, else the flat lid).
 ///    Whole-mesh auto-close does not do this — it stays conservative and
-///    refuses, so it never silently bakes a self-intersection into a scan.
+///    refuses, so it never bakes a self-intersection into a scan.
 ///
 /// A 3-edge rim around a lone free-standing triangle is never capped on any
 /// path: its only cover is the triangle's reverse twin, a zero-volume doubled
@@ -625,8 +618,8 @@ fn triangulate_loop(
     }
 
     // 3) Guarded fallbacks, first non-piercing wins. The hierarchical
-    // minimum-area membrane lifts the old 256-edge cap so deep tooth sockets
-    // (hundreds to thousands of rim edges) get a full watertight cover.
+    // minimum-area membrane splits rims past the 256-edge DP leaf, so deep tooth
+    // sockets (hundreds to thousands of rim edges) get a full watertight cover.
     let simple3d = rim_is_simple_3d(&rim_positions);
     let membrane = if simple3d {
         min_area_triangulation_any(&rim_positions)
@@ -701,7 +694,7 @@ fn emit_plain_cap(
 
 /// Interpolated-cap tail of [`triangulate_loop`]: refine with interior
 /// vertices matched to the rim edge density, relax to the harmonic surface
-/// spanning the 3D rim, fair the interior against the FIXED outside ring so
+/// spanning the 3D rim, fair the interior against the fixed outside ring so
 /// curvature continues across the seam, and emit — unless the (faired, then
 /// unfaired) cap pierces the surroundings, in which case the loop is refused.
 #[allow(clippy::too_many_arguments)] // Internal tail call sharing one context.

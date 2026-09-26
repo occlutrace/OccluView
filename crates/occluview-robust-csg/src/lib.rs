@@ -42,7 +42,7 @@ pub struct RobustSplit {
     pub part_a: RobustMeshPart,
     /// The negative-normal part of the source mesh.
     pub part_b: RobustMeshPart,
-    /// Honest physical-component and cut-loop counts.
+    /// Physical-component and cut-loop counts of the result.
     pub report: RobustSplitReport,
 }
 

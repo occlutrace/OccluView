@@ -28,11 +28,11 @@ mod grow;
 #[path = "brush_upkeep.rs"]
 mod upkeep;
 
-/// Uniform-Laplacian factor for the Smooth tool: aggressive by design (the
-/// operator asked for cardinal flattening), strength = pass count.
+/// Uniform-Laplacian factor for the Smooth tool: aggressive by design for
+/// cardinal flattening, strength = pass count.
 const SMOOTH_LAMBDA: f32 = 0.72;
 /// Taubin λ/μ for the clay auto-smooth: a shrink pass then an inflate pass
-/// removes grain WITHOUT the volume loss of a plain Laplacian, so a built dome
+/// removes grain without the volume loss of a plain Laplacian, so a built dome
 /// stays full while the scan's surface noise is ironed out.
 const TAUBIN_LAMBDA: f32 = 0.36;
 const TAUBIN_MU: f32 = -0.38;
@@ -64,7 +64,7 @@ const MAX_ROLLBACK_ITERS: usize = 4;
 const MAX_LOCAL_ROLLBACK_ITERS: usize = 4;
 /// Grid cells spanned by one brush radius: cell size is `radius / this`, so a
 /// radius query scans a small bounded cube of cells regardless of brush size
-/// vs. mesh scale — fixes a big brush stuttering over millions of empty cells.
+/// vs. mesh scale, so a big brush never scans millions of empty cells.
 const GRID_CELLS_ACROSS_RADIUS: f32 = 4.0;
 /// Smallest session growth allowance, in added vertices. A small crop still
 /// gets room for a real densified stroke; a big scan uses its own vertex count
@@ -83,7 +83,7 @@ pub struct BrushStroke {
     /// Smooth turns it into a pass count. Cadence is the caller's job — this is
     /// per-dab magnitude, framerate-independent when dabs are arc-length-spaced.
     pub strength: f32,
-    /// Unit view direction, FROM the camera INTO the scene. Add/Remove orient
+    /// Unit view direction, from the camera into the scene. Add/Remove orient
     /// the coherent brush normal toward the camera, so Add always builds
     /// toward the viewer and Remove carves away, even across a scan's
     /// inverted-normal patches. Ignored by Smooth; a zero vector falls back to
@@ -118,8 +118,8 @@ pub enum BrushMode {
 
 /// Outcome of one [`BrushSession::apply_stroke`] call: vertex ids whose
 /// position and/or normal changed, for a partial GPU update. Deduplicated but
-/// NOT sorted (the caller sorts the frame's union once); indices into the
-/// ORIGINAL vertex array `BrushSession::prepare` was built from.
+/// not sorted (the caller sorts the frame's union once); indices into the
+/// original vertex array `BrushSession::prepare` was built from.
 #[derive(Clone, Debug, Default)]
 pub struct BrushStrokeOutcome {
     /// Touched vertex ids, unique, in first-touched order.
@@ -134,10 +134,10 @@ pub struct BrushStrokeOutcome {
     /// interactive picker can test this small dirty set against the live
     /// shadow while retaining the original mesh BVH for all other triangles.
     pub dirty_triangles: Vec<usize>,
-    /// Vertices APPENDED by densification during this dab. New ids are always
+    /// Vertices appended by densification during this dab. New ids are always
     /// contiguous and end the array, so they occupy
     /// `vertex_count() - added_vertices .. vertex_count()`. Existing ids never
-    /// move, so a caller's sparse vertex mapping stays valid for the old range.
+    /// move, so a caller's sparse vertex mapping stays valid for the pre-dab range.
     pub added_vertices: usize,
 }
 
@@ -167,7 +167,7 @@ pub struct BrushSession {
     positions: Vec<Vec3>,
     /// Original (unwelded) triangle indices, returned verbatim by `finish`.
     indices: Vec<u32>,
-    /// Vertex-vertex adjacency over WELDED topology as CSR (a non-representative
+    /// Vertex-vertex adjacency over welded topology as CSR (a non-representative
     /// soup duplicate has an empty row; it moves via sibling propagation).
     adjacency: Csr,
     /// Per-vertex incident triangle indices (into `indices`) as CSR.
@@ -202,7 +202,7 @@ pub struct BrushSession {
     component_stamp: Vec<u32>,
     /// Current generation for the stamp buffer.
     stamp_generation: u32,
-    /// Visited stamp per TRIANGLE, for the densification region flood. Grows
+    /// Visited stamp per triangle, for the densification region flood. Grows
     /// with the triangle list.
     triangle_stamp: Vec<u32>,
     /// Current generation for the triangle stamp buffer.
@@ -211,8 +211,8 @@ pub struct BrushSession {
     /// needs to recognize one physical edge across an STL soup's duplicate
     /// corners. A vertex minted by a split represents itself.
     representative_of: Vec<u32>,
-    /// Whether Smooth may add vertices under the dab. On by default; the
-    /// operator's Smooth is useless on a coarse edge without it.
+    /// Whether Smooth may add vertices under the dab. On by default; without it
+    /// Smooth cannot relax a coarse edge.
     densify: bool,
     /// Vertex count at `prepare`, the base the growth budget is measured from.
     prepared_vertices: usize,
@@ -382,7 +382,7 @@ impl BrushSession {
         if cancellation_requested(cancel) {
             return None;
         }
-        // Densify FIRST, so the relaxer has vertices to move where the surface
+        // Densify first, so the relaxer has vertices to move where the surface
         // is coarser than the brush. Splitting is a pure topology change — it
         // leaves the surface exactly where it was — so it never competes with
         // the displacement guards that run below.
@@ -454,8 +454,9 @@ impl BrushSession {
             });
         }
         // Dedup via a stamp (no sort): `touched` has duplicates (displacement +
-        // auto-smooth + soup siblings), and sorting tens of thousands of ids per
-        // dab was a real cost. The caller sorts the frame's union once instead.
+        // auto-smooth + soup siblings), and a big dab carries tens of thousands
+        // of ids, too many to sort per dab. The caller sorts the frame's union
+        // once instead.
         let unique_generation = self.next_stamp();
         let mut unique = Vec::with_capacity(touched.len());
         for &vertex_id in &touched {
@@ -576,7 +577,7 @@ impl BrushSession {
 
     /// Clay Add (`sign = +1`) / Remove (`sign = -1`): displace the brushed
     /// region coherently along one camera-oriented brush normal, then
-    /// auto-smooth so material builds/carves CLEAN instead of lifting the
+    /// auto-smooth so material builds/carves clean instead of lifting the
     /// scan's own surface noise (the "ripple" left by a pure push).
     fn apply_clay(
         &mut self,
@@ -654,8 +655,8 @@ impl BrushSession {
     }
 
     /// One Laplacian pass: move each relaxable candidate a `factor`-and-falloff
-    /// fraction toward its ring centroid, then commit. A NEGATIVE `factor` moves
-    /// AWAY from the centroid — the inflate half of a Taubin pair. Reads pre-pass
+    /// fraction toward its ring centroid, then commit. A negative `factor` moves
+    /// away from the centroid — the inflate half of a Taubin pair. Reads pre-pass
     /// positions (computed in parallel) so the pass is order-independent; skips
     /// boundary and low-valence vertices.
     fn relax_pass(
@@ -842,7 +843,7 @@ impl BrushSession {
 
     /// Bake the session into a [`MeshEditResult`] with updated positions/normals
     /// and the true count of vertices touched across the session. Input counts
-    /// are the PREPARED ones, so the report shows what densification added.
+    /// are the prepared ones, so the report shows what densification added.
     #[must_use]
     pub fn finish(self) -> MeshEditResult {
         let output_vertices = self.vertices.len();

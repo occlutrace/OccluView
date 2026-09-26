@@ -35,9 +35,9 @@ pub struct StreamReadBounds {
 /// `declared_len` is a *hint*, not a gate: `Some(len)` beyond the cap rejects
 /// up front (no wasted copy), while `None` means the source did not report a
 /// size — cloud placeholders and pipe-like shell streams legitimately `Stat`
-/// as zero — and the only honest answer is to read until EOF or the cap.
-/// Treating "unknown" as "infinite" here once turned every size-silent stream
-/// into a permanent oversize placeholder.
+/// as zero — and the only correct answer is to read until EOF or the cap.
+/// Treating "unknown" as "infinite" would turn every size-silent stream into a
+/// permanent oversize placeholder.
 pub fn read_capped_stream(
     bounds: StreamReadBounds,
     read_chunk: impl FnMut(&mut [u8]) -> Result<usize, ()>,

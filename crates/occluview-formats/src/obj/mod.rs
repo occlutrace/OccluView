@@ -11,7 +11,7 @@
 //! - `f a b c ...` - polygonal face; indices are 1-based, may carry
 //!   `/vt/vn` suffixes. We fan-triangulate polygons with `>3` corners.
 //! - `p a b ...` - point element; a file with vertices but no faces is loaded
-//!   as a point cloud so OBJ export does not silently erase its geometry.
+//!   as a point cloud, so an OBJ export of a point cloud keeps its geometry.
 //! - `g`, `o`, `s`, `usemtl`, `mtllib`, `#` - group/object/smoothing/material
 //!   directives; tolerated, not geometry-affecting for v1.
 //!

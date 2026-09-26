@@ -35,7 +35,7 @@ fn open_with_targets_the_real_gui_binary_name() {
     // Bound to the manifest that produces the file, the way platform.rs binds
     // the Linux app id to the installed .desktop entry. Against a copy of the
     // constant, renaming the [[bin]] target stays green while "Open with" on
-    // every installed machine points at an executable that is gone.
+    // every installed machine points at an executable that does not exist.
     let stem = APP_EXE_NAME.strip_suffix(".exe").unwrap_or(APP_EXE_NAME);
     let manifest = include_str!("../../occluview-app/Cargo.toml");
     assert!(
@@ -165,7 +165,7 @@ fn installer_metadata_tracks_supported_shell_extensions() {
     assert!(!wxs.contains("UserChoice"));
     // The WixUI_InstallDir dialog set already injects ARPNOMODIFY=1; defining
     // it in our authoring again is a duplicate-symbol light.exe error
-    // (LGHT0091), so the wxs must NOT declare it itself.
+    // (LGHT0091), so the wxs must not declare it itself.
     assert!(!wxs.contains("<Property Id=\"ARPNOMODIFY\""));
     assert!(wxs.contains("WixUI_InstallDir"));
     assert!(reg.contains("@=\"\\\"<APP_EXE_PATH>\\\" \\\"%1\\\"\""));

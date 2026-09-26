@@ -242,7 +242,7 @@ where
 {
     // Find the vertex-indices list property (by name). Faces may carry multiple
     // list properties (real-world case: some intraoral scanners emit
-    // `property list uchar int vertex_indices` PLUS `property list uchar float
+    // `property list uchar int vertex_indices` plus `property list uchar float
     // texcoord`). We must consume every declared list per row or the next row's
     // tokens get misaligned.
     let Some(indices_prop_idx) = element
@@ -594,7 +594,7 @@ end_header
 
     #[test]
     fn face_with_texcoord_list_parses() {
-        // Real textured-scan layout: each face has TWO list properties -
+        // Real textured-scan layout: each face has two list properties -
         // vertex_indices (the geometry) and texcoord (UV pairs). We must
         // consume the texcoord list so the next face row parses correctly,
         // instead of reading UV floats as vertex indices.
@@ -676,13 +676,12 @@ end_header
         assert_eq!(vs[2].uv, [0.0, 1.0]);
     }
 
-    /// 68 bytes, and before the guard they asked for 660 GB of vertices.
+    /// 68 bytes that, without the guard, ask for 660 GB of vertices.
     ///
-    /// The row plan was empty, so the reader consumed no input and the
-    /// truncation backstop -- the only thing standing between a declared count
-    /// and the allocator -- was never reached. An allocation failure aborts the
-    /// process; inside the shell surrogate that takes every other thumbnail in
-    /// the folder with it.
+    /// With an empty row plan the reader consumes no input, so the truncation
+    /// backstop -- the only thing between a declared count and the allocator --
+    /// is never reached. An allocation failure aborts the process; inside the
+    /// shell surrogate that takes every other thumbnail in the folder with it.
     #[test]
     fn a_vertex_element_with_no_properties_is_refused_not_allocated() {
         for header in [

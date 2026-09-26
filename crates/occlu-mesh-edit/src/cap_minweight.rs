@@ -19,25 +19,23 @@ pub(super) const MIN_WEIGHT_MAX_RIM: usize = 256;
 /// Absolute ceiling for the hierarchical min-area path: a socket rim of a few
 /// thousand edges closes comfortably, but a pathological rim past this stays
 /// refused rather than allocate unboundedly. Matches the selection-scoped
-/// boundary-loop ceiling so nothing the walk admits is silently un-cappable.
+/// boundary-loop ceiling, so no loop the walk admits is refused for size here.
 pub(super) const MIN_WEIGHT_HIER_MAX_RIM: usize = 20_000;
 
 /// Relative proximity threshold for non-adjacent rim segments. Scaling by the
 /// local pair avoids rejecting short seam edges near long segments.
 const RIM_PROXIMITY_FRACTION: f64 = 1e-3;
 
-/// Segment PAIRS the simplicity test may compare on one rim.
+/// Segment pairs the simplicity test may compare on one rim.
 ///
 /// The test is O(n²) and the ceiling this crate admits is `MIN_WEIGHT_HIER_MAX_RIM`
 /// = 20 000 edges, i.e. ~2·10^8 pairs, each running a full f64 closest-point
-/// form. Every other expensive pass here is budgeted (the large ear clipper
-/// spends at most `LARGE_EARCLIP_WORK_BUDGET` reflex checks, the min-area DP
-/// spends `MIN_WEIGHT_HIER_MAX_RIM`); this one was bounded only by a comment
-/// claiming `n <= 256`, which stopped being true when the hierarchy raised the
-/// rim ceiling. A rim that exhausts the budget is refused: an unverifiable rim
-/// is exactly the case the test exists to reject, and refusing keeps the
-/// outcome deterministic instead of stretching to minutes on a pathological
-/// socket or lasso boundary.
+/// form. Like the other expensive passes here (the large ear clipper spends at
+/// most `LARGE_EARCLIP_WORK_BUDGET` reflex checks, the min-area DP spends
+/// `MIN_WEIGHT_HIER_MAX_RIM`), this one is budgeted. A rim that exhausts the
+/// budget is refused: the test exists to reject unverifiable rims, and
+/// refusing keeps the outcome deterministic instead of stretching to minutes
+/// on a pathological socket or lasso boundary.
 const RIM_SIMPLICITY_PAIR_BUDGET: u64 = 20_000_000;
 
 /// Whether the 3D rim polyline is simple. Curved but simple rims use the
@@ -72,12 +70,12 @@ pub(super) fn rim_is_simple_3d(points: &[Vec3]) -> bool {
             }
             pairs_left -= 1;
             let (b0, b1) = (points[j], points[(j + 1) % n]);
-            // Local tube: proportional to the SMALLER of the two edges, so the
+            // Local tube: proportional to the smaller of the two edges, so the
             // radius never dwarfs a tiny seam edge sitting near a long one.
             let local_scale = edge_len[i].min(edge_len[j]);
             let threshold = local_scale * RIM_PROXIMITY_FRACTION;
             if segment_distance(a0, a1, b0, b1) < threshold {
-                // Exactly coincident ENDPOINTS are seam data (dental formats
+                // Exactly coincident endpoints are seam data (dental formats
                 // duplicate positions with distinct indices on purpose), not
                 // a crossing: only a mid-segment contact is damage.
                 let endpoint_touch = a0 == b0 || a0 == b1 || a1 == b0 || a1 == b1;
@@ -178,7 +176,7 @@ pub(super) fn min_area_triangulation(points: &[Vec3]) -> Option<Vec<[usize; 3]>>
             continue;
         }
         let k = split[i * n + j];
-        // Watertight winding: [i, j, k] contains the REVERSED rim edges
+        // Watertight winding: [i, j, k] contains the reversed rim edges
         // (k -> i when k = i + 1, j -> k when j = k + 1), the twin of the
         // surrounding faces' directed boundary edges.
         triangles.push([i, j, k]);
@@ -191,18 +189,18 @@ pub(super) fn min_area_triangulation(points: &[Vec3]) -> Option<Vec<[usize; 3]>>
     Some(triangles)
 }
 
-/// Triangulate a cyclic rim of ANY size (up to [`MIN_WEIGHT_HIER_MAX_RIM`]) by
+/// Triangulate a cyclic rim of any size (up to [`MIN_WEIGHT_HIER_MAX_RIM`]) by
 /// divide-and-conquer minimum-area capping. Small rims run the DP directly;
 /// large ones are split at a near-balanced, most-distant vertex pair into two
 /// sub-arcs joined by a shared chord (an interior edge, watertight by
 /// construction), recursively until each leaf fits [`MIN_WEIGHT_MAX_RIM`].
 ///
-/// Returns local-index triangles into the ORIGINAL `points` ordering, in the
+/// Returns local-index triangles into the original `points` ordering, in the
 /// same watertight winding convention as [`min_area_triangulation`], or `None`
 /// when the rim is out of range or numerically degenerate. Geometric
-/// self-piercing is left to the caller's cap guard, exactly as for the direct
-/// DP. Deterministic: the split pair is chosen by a fixed rule and ties break
-/// on the lowest index.
+/// self-piercing is left to the caller's cap guard, as for the direct DP.
+/// Deterministic: the split pair is chosen by a fixed rule and ties break on
+/// the lowest index.
 pub(super) fn min_area_triangulation_any(points: &[Vec3]) -> Option<Vec<[usize; 3]>> {
     let n = points.len();
     if !(3..=MIN_WEIGHT_HIER_MAX_RIM).contains(&n) {
@@ -213,7 +211,7 @@ pub(super) fn min_area_triangulation_any(points: &[Vec3]) -> Option<Vec<[usize; 
     }
     let dpoints: Vec<DVec3> = points.iter().map(Vec3::as_dvec3).collect();
 
-    // Work items are arcs of the cyclic rim: contiguous runs of ORIGINAL
+    // Work items are arcs of the cyclic rim: contiguous runs of original
     // indices in ring order. The arc's two endpoints are joined by an implicit
     // chord, so each arc is the closed polygon (arc + chord) to triangulate.
     let mut triangles: Vec<[usize; 3]> = Vec::with_capacity(n - 2);

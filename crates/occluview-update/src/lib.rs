@@ -169,7 +169,7 @@ pub fn check_with(
     if latest <= current {
         return Ok(None);
     }
-    // A missing platform entry is NOT an error: the newer release is still
+    // A missing platform entry is not an error: the newer release is still
     // announced so the operator can fetch it manually from the release page.
     let artifact = manifest
         .platforms
@@ -187,7 +187,7 @@ pub fn check_with(
 }
 
 /// Download the installer into `dest_dir`, verifying the SHA-256 from the
-/// signed manifest AND the artifact's own minisign signature before returning
+/// signed manifest and the artifact's own minisign signature before returning
 /// the final path. A failed verification removes the temp file.
 ///
 /// `progress` receives `(bytes_downloaded, total_bytes_if_known)`.
@@ -302,7 +302,7 @@ fn stream_and_verify(
     verify_signature(pubkeys, &payload, artifact.signature.as_bytes())
 }
 
-/// Create the download directory, or refuse one anybody else can write to.
+/// Create the download directory, or refuse one another account can write to.
 ///
 /// The verified installer sits here between the signature check and the
 /// operator's click on "Install", which is an unbounded window. A directory
@@ -444,10 +444,9 @@ fn agent() -> ureq::Agent {
         .timeout(HTTP_TIMEOUT)
         // Everything here is signature-checked, so this is not what keeps a
         // bad artifact out. It keeps the promise SECURITY.md makes -- two
-        // ordinary HTTPS GETs -- from depending on nobody ever publishing a
-        // manifest with an http URL, or a host answering with a redirect to
-        // one. ureq follows five redirects by default and would follow that
-        // one.
+        // ordinary HTTPS GETs -- independent of whether a manifest carries an
+        // http URL or a host answers with a redirect to one. ureq follows five
+        // redirects by default and would follow that one.
         //
         // Relaxed only for this crate's own tests, whose fixture server is a
         // loopback listener with no certificate.
@@ -470,7 +469,7 @@ fn fetch_bytes(agent: &ureq::Agent, url: &str, limit: u64) -> Result<Vec<u8>, Up
     Ok(bytes)
 }
 
-/// Accept the signature if ANY trusted key verifies it.
+/// Accept the signature if any trusted key verifies it.
 ///
 /// Trying each key rather than picking one by id keeps the caller free of key
 /// bookkeeping, and the cost is a handful of Ed25519 verifications on a

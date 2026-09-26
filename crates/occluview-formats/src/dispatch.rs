@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 /// Largest single file the viewer will read into memory.
 ///
 /// The number comes from the corpus, not from a round figure: the largest real
-/// scan on the maintainer's machine is a 41 MB intraoral OBJ, and dental
+/// scan in the test corpus is a 41 MB intraoral OBJ, and dental
 /// packages with embedded textures reach a few hundred MB. A gigabyte is
 /// therefore ~25x the largest known scan — far enough that no real scan is
 /// refused, close enough that a mistaken pick (a video, a disk image, a
@@ -33,10 +33,9 @@ pub const IMPORT_BATCH_BUDGET_BYTES: u64 = 512 << 20;
 
 /// Files parsed at once during a multi-file import.
 ///
-/// The box this is developed on has 12 cores shared with the renderer and with
-/// whatever else the operator is doing; parsing is memory-hungry rather than
-/// CPU-hungry, so two is the point where a second file is worth it and a
-/// twelfth is not.
+/// The cores are shared with the renderer and with whatever else the operator
+/// is doing, and parsing is memory-hungry rather than CPU-hungry, so two is the
+/// point where a second file is worth it and more are not.
 pub const IMPORT_PARALLELISM: usize = 2;
 
 /// Owned file bytes. Parsing must not depend on a file that another process
@@ -102,12 +101,6 @@ pub fn dispatch_by_kind_with_key_provider(
     dispatch_by_kind_shaded(kind, bytes, key_provider, crate::MeshShading::Reconstructed)
 }
 
-/// As [`dispatch_by_kind_with_key_provider`], choosing how vertex normals are
-/// produced.
-///
-/// Only the three formats a scanner writes take the policy; the rest are read
-/// the one way they have always been read, because they are rare enough on the
-/// thumbnail path that the plumbing would cost more than the milliseconds.
 /// A parsed mesh together with how it was detected and what its
 /// coordinates mean. Readers return bare [`Mesh`] geometry; the import-unit
 /// interpretation rides alongside so callers never have to re-derive it
@@ -124,6 +117,10 @@ pub struct LoadedMesh {
 
 /// Read `bytes` with an explicit format kind, choosing how vertex normals
 /// are produced.
+///
+/// Only the three formats a scanner writes take the policy; the rest are read
+/// one way, because they are rare enough on the thumbnail path that the
+/// plumbing would cost more than the milliseconds.
 ///
 /// # Errors
 /// See [`FormatError`].
@@ -151,18 +148,18 @@ pub fn dispatch_by_kind_loaded(
         FormatKind::Stl => crate::stl::read_shaded(bytes, shading),
         FormatKind::Ply => crate::ply::read_shaded(bytes, shading),
         FormatKind::Obj => crate::obj::read_shaded(bytes, shading),
-        // `.gltf` is JSON, and `probe` maps both extensions to this kind, so a
-        // JSON file reaches a reader that only accepts the GLB container and
-        // was told "not a glTF file: bad signature" for a file that *is* a
-        // glTF. Defer only what actually looks like JSON, so a truncated or
-        // corrupted `.glb` still fails as one.
+        // `.gltf` is JSON, and `probe` maps both extensions to this kind, but
+        // the GLB reader only accepts the binary container and would answer
+        // "not a glTF file: bad signature" for a file that is a glTF. Defer
+        // only what looks like JSON, so a truncated or corrupted `.glb` still
+        // fails as one.
         FormatKind::Gltf if looks_like_json(bytes) => Err(FormatError::Deferred {
             format: "glTF",
             reason: ".gltf (JSON) is not read; export .glb".to_string(),
         }),
         FormatKind::Gltf => crate::gltf::read(bytes),
         FormatKind::Off => crate::off::read(bytes),
-        // Implement natively when demand appears.
+        // 3MF is recognized but has no reader.
         FormatKind::Threemf => Err(FormatError::Malformed {
             format: "occluview-formats",
             offset: 0,
@@ -177,10 +174,6 @@ pub fn dispatch_by_kind_loaded(
     })
 }
 
-/// Convenience: read `bytes` using the reader selected by file extension.
-///
-/// # Errors
-/// See [`FormatError`] and [`dispatch_by_kind`].
 /// Convenience: read `bytes` using the reader selected by file extension.
 ///
 /// **Magic wins over extension.** Real-world dental files are frequently
@@ -240,11 +233,11 @@ pub fn dispatch_by_extension_loaded(
     shading: crate::MeshShading,
 ) -> Result<LoadedMesh, FormatError> {
     // The BOM is stripped by `probe` (for signature matching) and by each text
-    // reader (PLY, ASCII STL), NOT here. Stripping it in front of the whole
-    // format layer removed three bytes from every container, including a binary
-    // STL whose free-form 80-byte header happened to begin with those bytes:
-    // the triangle count then came from the wrong offset and a valid file was
-    // misread. Each layer that interprets text skips the mark itself.
+    // reader (PLY, ASCII STL), not here. Stripping it in front of the whole
+    // format layer would remove three bytes from every container, including a
+    // binary STL whose free-form 80-byte header begins with those bytes: the
+    // triangle count would then come from the wrong offset and a valid file
+    // would be misread. Each layer that interprets text skips the mark itself.
     // Magic-first: if the bytes declare a format, honor it over the extension.
     // `probe` falls back to the extension when the magic is ambiguous (e.g.
     // binary STL with a zero header), so this is safe.
@@ -294,8 +287,8 @@ pub fn read_file_bytes(path: &Path) -> Result<FileBytes, FormatError> {
 ///
 /// The size is checked twice. The metadata check refuses the ordinary case
 /// before a byte is read; the length check after the read covers a file that
-/// grew between the two, which is exactly the window a hostile or merely busy
-/// writer would use.
+/// grew between the two, which is the window a hostile or merely busy writer
+/// would use.
 ///
 /// # Errors
 /// See [`read_file_bytes`].
@@ -491,10 +484,6 @@ pub fn read_files_with_key_provider(
     Ok(scene)
 }
 
-/// The bytes of `bytes` without a leading UTF-8 byte-order mark.
-///
-/// A BOM is metadata, not content: no format here declares it as part of its
-/// signature, and a tool that writes one means the file that follows.
 /// True when `bytes` starts an object, which is how a `.gltf` (JSON) file
 /// begins and how a GLB never does.
 ///
@@ -509,6 +498,10 @@ pub(crate) fn looks_like_json(bytes: &[u8]) -> bool {
     )
 }
 
+/// The bytes of `bytes` without a leading UTF-8 byte-order mark.
+///
+/// A BOM is metadata, not content: no format here declares it as part of its
+/// signature, and a tool that writes one means the file that follows.
 fn strip_utf8_bom(bytes: &[u8]) -> &[u8] {
     match bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
         Some(rest) => rest,

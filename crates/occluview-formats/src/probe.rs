@@ -61,9 +61,9 @@ pub fn probe(extension: Option<&str>, magic: &[u8]) -> Result<FormatKind, Format
     //
     // A binary STL's 80-byte header is free-form by contract and may itself
     // begin with those three bytes; on that file the size formula reads the
-    // count at offset 80, and testing it against a three-byte-short slice broke
-    // the match, so an unnamed stream was reported Unsupported where it used to
-    // route. Text signatures (`ply`, `solid`, `{`, `OFF`) are where a leading
+    // count at offset 80, and testing it against a three-byte-short slice would
+    // break the match and report an unnamed stream as Unsupported. Text
+    // signatures (`ply`, `solid`, `{`, `OFF`) are where a leading
     // BOM actually hides the prefix, so only they are tested with it removed.
     let text_magic = magic.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(magic);
 
@@ -71,7 +71,7 @@ pub fn probe(extension: Option<&str>, magic: &[u8]) -> Result<FormatKind, Format
         return Ok(FormatKind::Hps);
     }
 
-    // Binary STL: RAW bytes, before any text consideration.
+    // Binary STL: raw bytes, before any text consideration.
     if looks_like_binary_stl(magic) {
         return Ok(FormatKind::Stl);
     }
@@ -104,7 +104,7 @@ pub fn probe(extension: Option<&str>, magic: &[u8]) -> Result<FormatKind, Format
         // Disambiguation happens in the STL reader; here we hint STL.
         return Ok(FormatKind::Stl);
     }
-    // (The binary size formula was already evaluated above, on the RAW bytes —
+    // (The binary size formula was already evaluated above, on the raw bytes —
     // see why the BOM is decided per signature.)
     // glTF .gltf (JSON) — probe for leading `{` or whitespace then `"asset"`.
     if magic.iter().take_while(|b| b.is_ascii_whitespace()).count() < magic.len()

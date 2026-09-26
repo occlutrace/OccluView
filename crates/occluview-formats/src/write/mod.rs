@@ -39,8 +39,7 @@ impl MeshWriteFormat {
 
 /// Options that control which optional mesh payloads are written.
 // Four independent yes/no choices rather than a state: each one is a property
-// of the export the operator asked for, so a struct of flags is the honest
-// shape.
+// of the requested export, so a struct of flags models them directly.
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MeshWriteOptions {
@@ -163,8 +162,7 @@ pub fn write_mesh_to_new_file(
 /// Write a mesh to a file, truncating any existing content.
 ///
 /// A `path` that is a symbolic link is followed: the file it points at receives
-/// the new mesh and the link itself survives, which is what truncating writes
-/// did before publishing became a rename.
+/// the new mesh and the link itself survives.
 ///
 /// # Errors
 ///
@@ -181,11 +179,11 @@ pub fn write_mesh_overwrite(
 /// Reject a mesh the requested format cannot represent, before any file is
 /// touched.
 ///
-/// `File::create` truncates, so a rejection discovered inside the writer left
-/// the destination at zero bytes: exporting a point-cloud layer as `.stl` over
-/// an existing scan destroyed that scan and returned an error having written
-/// nothing. The only such rejection is STL's, and it depends on the mesh kind
-/// alone, so it can be answered before opening anything.
+/// `File::create` truncates, so a rejection discovered inside the writer would
+/// leave the destination at zero bytes: exporting a point-cloud layer as `.stl`
+/// over an existing scan would destroy that scan and return an error. The only
+/// such rejection is STL's, and it depends on the mesh kind alone, so it can be
+/// answered before opening anything.
 fn ensure_format_can_represent(
     mesh: &Mesh,
     format: MeshWriteFormat,
@@ -252,7 +250,7 @@ fn write_mesh_file(
     ensure_format_can_represent(mesh, format, &options)?;
     if create_new {
         // Write beside the destination and publish with a no-replace hard
-        // link. Opening the destination with `create_new` first still exposed
+        // link. Opening the destination with `create_new` first would expose
         // a partially written file to Explorer and crash recovery; a hard
         // link makes the completed inode visible in one operation while
         // retaining create-new collision semantics.
@@ -272,15 +270,15 @@ fn write_mesh_file(
         return Ok(report);
     }
 
-    // An overwrite is a transaction: the old destination remains readable
+    // An overwrite is a transaction: the existing destination remains readable
     // until the complete new mesh has been flushed and the same-directory
-    // rename commits it. Writing the target directly used to turn a disk-full
+    // rename commits it. Writing the target directly would turn a disk-full
     // or interrupted export into an empty/partial scan.
     //
     // Resolve a symlink destination first. `rename` replaces the link itself
     // rather than the file it points at, so publishing straight onto the
     // operator's `CASE/upper.ply` shortcut would leave the archive copy
-    // untouched while the app reported a successful export. Resolving also
+    // untouched while the app reports a successful export. Resolving also
     // keeps the temporary beside the file the rename lands on.
     let destination = resolve_overwrite_destination(path)?;
     let (temporary, file) = create_export_temp(&destination)?;
@@ -409,8 +407,8 @@ fn publish_new_export_file(temporary: &Path, destination: &Path) -> std::io::Res
         }
         Err(error) if !linkless_publish_required(&error) => Err(error),
         // exFAT, vfat, and link-disabled network mounts have no `link(2)` at
-        // all, so the publish step failed for a reason that has nothing to do
-        // with the destination name. The create-new contract is about the
+        // all, so the link-based publish fails for a reason that has nothing to
+        // do with the destination name. The create-new contract is about the
         // name, not about how it is claimed: fall back to reserving the
         // destination exclusively and copying the finished bytes in.
         Err(_) => publish_by_exclusive_copy(temporary, destination),
@@ -518,8 +516,8 @@ fn move_export_file(
     // Without `MOVEFILE_REPLACE_EXISTING`, an existing destination fails here
     // with ERROR_ALREADY_EXISTS (or ERROR_FILE_EXISTS). Callers detect a
     // create-new collision by `ErrorKind::AlreadyExists`, so a flat
-    // `ErrorKind::Other` made the batch retry treat every collision as a hard
-    // failure on Windows. Keep the Win32 text for the operator either way.
+    // `ErrorKind::Other` would make the batch retry treat every collision as a
+    // hard failure on Windows. Keep the Win32 text for the operator either way.
     .map_err(|error| {
         let code = error.code();
         if code == ERROR_ALREADY_EXISTS.to_hresult() || code == ERROR_FILE_EXISTS.to_hresult() {
@@ -967,9 +965,8 @@ mod tests {
 
     /// A chain that never reaches a regular file must fail the export instead
     /// of renaming onto a link: the rename would replace the link inode and
-    /// leave the file it pointed at with the previous geometry, which is the
-    /// silent divergence the symlink resolution exists to prevent. The link is
-    /// left exactly as it was.
+    /// leave the file it pointed at with the previous geometry, which the
+    /// symlink resolution exists to prevent. The link is left unchanged.
     #[cfg(unix)]
     #[test]
     fn an_unresolvable_link_chain_fails_instead_of_replacing_the_link() {

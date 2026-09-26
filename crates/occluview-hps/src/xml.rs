@@ -29,7 +29,7 @@ pub(super) fn looks_like_hps_xml(text: &str) -> bool {
     // over every valid-UTF-8 entry of a package, so a sidecar carrying a
     // patient name in Cyrillic or CJK routinely puts a multi-byte character
     // across that byte — and slicing a `str` there is a panic, which under the
-    // shipped `panic = "abort"` profile takes the whole viewer down on open.
+    // shipped `panic = "abort"` profile ends the viewer process on open.
     let cap = text.len().min(512);
     let end = (0..=cap)
         .rev()

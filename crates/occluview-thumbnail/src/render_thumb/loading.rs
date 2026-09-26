@@ -12,39 +12,36 @@ use occluview_formats::dispatch::{dispatch_by_kind_shaded, read_file_shaded};
 use occluview_formats::hps::RuntimeHpsKeyProvider;
 use occluview_formats::{FormatError, FormatKind};
 
+/// A thumbnail keeps the normals the file wrote.
+///
+/// Welding vertices by position and averaging normals across each run is what
+/// makes a faceted scan shade smoothly in the viewport, and it is most of the
+/// cost of reading one: 135 ms of a 172 ms read for a 326 000 triangle arch.
+/// At 256 pixels that arch puts a tenth of a pixel under each triangle, so the
+/// reconstruction cannot be seen -- the two renders differ by a quarter of one
+/// step out of 255. The app still reconstructs; only the picture skips it.
+const THUMBNAIL_SHADING: occluview_formats::MeshShading = occluview_formats::MeshShading::AsWritten;
+
 // Thumbnail fidelity cutoffs: files at or below the format's cutoff are
 // parsed with the canonical `occluview-formats` reader (full triangle/point
 // data); larger files go through the `fast_thumb` decimated reader instead.
 //
-// The cutoffs are no longer about speed, and the numbers say so plainly. Once
-// the thumbnail stopped reconstructing normals the canonical readers became
-// the faster ones at every size measured here, because the decimating reader
-// welds onto a grid and that weld now costs more than the parse it replaces:
+// The cutoffs bound memory, not time. Because the thumbnail does not
+// reconstruct normals, the canonical readers are the faster ones at every
+// size measured: the decimating reader welds onto a grid, and that weld costs
+// more than the parse it replaces:
 //
 //     20.5 MB STL   full  42 ms   fast 113 ms
 //     46.7 MB STL   full 115 ms   fast 289 ms
 //    186.7 MB STL   full 415 ms   fast 938 ms
 //     31.7 MB OBJ   full 218 ms   fast 345 ms
 //
-// What the decimating reader still buys is memory. A full read of that 186 MB
-// scan is 3.9 million triangles, about 420 MB of vertices resident, and the
-// shell hosts several of these at once in a process it does not own. So the
-// cutoffs stay, sized to hold that resident cost inside a surrogate rather
-// than to save time, and the formats that were held to a tighter budget than
-// their cost justified -- OBJ at 24 MB, PLY at 4 MB, where the fast reader
-// declines a faced PLY anyway and the file is read twice for nothing -- move
-// up to the same line as STL.
-/// A thumbnail keeps the normals the file wrote.
-///
-/// Welding vertices by position and averaging normals across each run is what
-/// makes a faceted scan shade smoothly in the viewport, and it is most of the
-/// cost of reading one: 135 ms of a 172 ms read for a 326 000 triangle arch,
-/// measured here. At 256 pixels that arch puts a tenth of a pixel under each
-/// triangle, so the reconstruction cannot be seen -- the two renders differ by
-/// a quarter of one step out of 255. The app still reconstructs; only the
-/// picture skips it.
-const THUMBNAIL_SHADING: occluview_formats::MeshShading = occluview_formats::MeshShading::AsWritten;
-
+// What the decimating reader buys is memory. A full read of that 186 MB scan
+// is 3.9 million triangles, about 420 MB of vertices resident, and the shell
+// hosts several of these at once in a process it does not own. The cutoffs
+// are sized to hold that resident cost inside a surrogate, and OBJ and PLY
+// share the STL line: the fast reader declines a faced PLY anyway, so a lower
+// PLY cutoff would read such a file twice.
 const FULL_FIDELITY_STL_THUMBNAIL_FILE_BYTES: u64 = 40 * 1024 * 1024;
 const FULL_FIDELITY_OBJ_THUMBNAIL_FILE_BYTES: u64 = 40 * 1024 * 1024;
 const FULL_FIDELITY_PLY_THUMBNAIL_FILE_BYTES: u64 = 40 * 1024 * 1024;
@@ -100,12 +97,11 @@ pub(super) fn load_thumbnail_mesh_from_file(
 /// The format label for the corrupt-error path.
 ///
 /// This value is used for exactly one thing — naming the format in
-/// `non_renderable_thumbnail_error` — and it used to map everything that was not
-/// OBJ or PLY to `Stl`. A GLB, HPS, DCM, 3MF or OFF file with no drawable
-/// triangles therefore reported "STL ... no renderable geometry", which names
-/// the wrong format in the log line and in the error the operator can see. The
-/// mapping is delegated to the format crate's own extension table so there is
-/// one place in the tree that knows what an extension means.
+/// `non_renderable_thumbnail_error`, in the log line and in the error the
+/// operator can see. The mapping is delegated to the format crate's own
+/// extension table, so a GLB, HPS, DCM, 3MF or OFF file with no drawable
+/// triangles is reported under its own format and there is one place in the
+/// tree that knows what an extension means.
 fn thumbnail_kind_from_extension(path: &Path) -> FormatKind {
     path.extension()
         .and_then(|extension| extension.to_str())
@@ -118,7 +114,7 @@ fn thumbnail_kind_from_extension(path: &Path) -> FormatKind {
 }
 
 /// Pick the mesh a thumbnail should render, preferring whichever source is
-/// appropriate for the file size but ALWAYS returning renderable geometry.
+/// appropriate for the file size but always returning renderable geometry.
 ///
 /// The fast surrogate can decline (returns `None`) or emit geometry that would
 /// render as a fully transparent tile (an all-degenerate / non-finite file
@@ -135,7 +131,7 @@ fn select_thumbnail_mesh(
 ) -> Result<Mesh, ThumbnailError> {
     if prefer_full {
         // Inside the fidelity budget: trust the canonical reader, but fall back
-        // to the fast surrogate if it fails OR returns nothing renderable.
+        // to the fast surrogate if it fails or returns nothing renderable.
         match full() {
             Ok(mesh) if thumbnail_mesh_is_renderable(&mesh) => return Ok(mesh),
             full_result => {
