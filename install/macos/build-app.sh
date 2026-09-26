@@ -90,5 +90,15 @@ for notice in LICENSE NOTICE THIRD-PARTY-NOTICES.md THIRD-PARTY-NOTICES-NATIVE.m
   cp "$notice" "$resources/Legal/$notice"
 done
 plutil -lint "$contents/Info.plist"
-printf 'Created unsigned Apple Silicon app bundle: %s\n' "$app_bundle"
+
+# Seal the bundle with an ad-hoc signature. The linker signs each binary but
+# not the bundle, and Gatekeeper reports a downloaded bundle whose signature
+# covers no resources as damaged, with no way to open it; sealed, it asks the
+# operator to approve an unidentified developer instead. Nested code first:
+# codesign does not re-sign what a bundle contains. sign-and-notarize.sh
+# replaces this signature with the Developer ID one.
+codesign --force --sign - "$contents/Helpers/occluview-cli"
+codesign --force --sign - "$app_bundle"
+codesign --verify --deep --strict "$app_bundle"
+printf 'Created ad-hoc signed Apple Silicon app bundle: %s\n' "$app_bundle"
 printf 'Bundle version: %s; minimum macOS: 14.0\n' "$version"
