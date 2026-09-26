@@ -78,6 +78,7 @@ mod layers_overlay;
 mod live_viewport;
 mod measure_draw;
 mod measure_overlay;
+mod measure_ruler;
 mod measure_tool;
 mod mesh_editor_icons;
 mod mesh_editor_overlay;

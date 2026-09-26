@@ -165,6 +165,10 @@ const ALIGN_AND_MEASURE: &[HintRow] = &[
         key: "help-hint-align-measure-place-an-alignment-point-or-measurement-point",
     },
     HintRow {
+        gesture: "LMB click on a ruler line",
+        key: "help-hint-align-measure-drop-a-perpendicular-onto-a-ruler-line",
+    },
+    HintRow {
         gesture: "Ctrl/Command + LMB drag",
         key: "help-hint-align-measure-rotate-a-scan-in-align-s-manual-mode",
     },

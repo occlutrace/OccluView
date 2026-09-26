@@ -86,6 +86,7 @@ help-hint-sculpt-remove-or-strengthen-the-active-brush-mode = Удалить и�
 help-hint-sculpt-change-brush-size = Изменить размер кисти
 help-hint-sculpt-change-brush-intensity = Изменить силу кисти
 help-hint-align-measure-place-an-alignment-point-or-measurement-point = Поставить точку сопоставления или измерения
+help-hint-align-measure-drop-a-perpendicular-onto-a-ruler-line = После первой точки опустить перпендикуляр на линию линейки
 help-hint-align-measure-rotate-a-scan-in-align-s-manual-mode = Повернуть скан в ручном режиме сопоставления
 help-hint-align-measure-erase-an-align-exclusion-region = Стереть исключённую область сопоставления
 help-hint-align-measure-change-align-exclusion-brush-size = Изменить размер кисти исключения
@@ -779,6 +780,7 @@ layer-removed = Слой удалён: { $label }
 layer-face-selection = Выбор граней: { $label }
 
 measure-distance = Расстояние: { $len }
+measure-perpendicular = Перпендикуляр: { $len }
 measure-thickness = Толщина стенки: { $len }
 measure-open-wall = Открытая поверхность: нет встречной стенки вдоль внутренней нормали
 measure-cannot-probe = Здесь нельзя измерить: вырожденная геометрия

@@ -89,6 +89,7 @@ help-hint-sculpt-remove-or-strengthen-the-active-brush-mode = Remove or strength
 help-hint-sculpt-change-brush-size = Change brush size
 help-hint-sculpt-change-brush-intensity = Change brush intensity
 help-hint-align-measure-place-an-alignment-point-or-measurement-point = Place an alignment point or measurement point
+help-hint-align-measure-drop-a-perpendicular-onto-a-ruler-line = After the first point, drop a perpendicular onto a ruler line
 help-hint-align-measure-rotate-a-scan-in-align-s-manual-mode = Rotate a scan in Align's Manual mode
 help-hint-align-measure-erase-an-align-exclusion-region = Erase an Align exclusion region
 help-hint-align-measure-change-align-exclusion-brush-size = Change Align exclusion-brush size
@@ -693,6 +694,7 @@ layer-removed = Removed layer: { $label }
 layer-face-selection = Face selection: { $label }
 
 measure-distance = Distance: { $len }
+measure-perpendicular = Perpendicular: { $len }
 measure-thickness = Wall thickness: { $len }
 measure-open-wall = Open surface: no opposite wall along the inward normal
 measure-cannot-probe = Cannot probe here: degenerate surface geometry
