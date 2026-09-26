@@ -3,7 +3,7 @@
 //! Invariant: the cut view never removes geometry from the main viewport.
 //! The kept side draws opaque (unchanged) and the cut-away side is re-drawn as
 //! a faint translucent ghost. These tests render the main-viewport clip path
-//! (`render_prepared_viewport_with_clip_and_overlay`, which now runs the ghost
+//! (`render_prepared_viewport_with_clip_and_overlay`, which runs the ghost
 //! pass) and the small-slice hard-clip path (`render_prepared_scene_with_clip`)
 //! and assert:
 //!   * the kept side is pixel-for-pixel the same whether or not the ghost runs,
@@ -94,11 +94,11 @@ fn uv_sphere(radius: f32, stacks: usize, slices: usize) -> Mesh {
     b.build().expect("valid sphere mesh")
 }
 
-/// A UV sphere with texture coordinates and a WHITE per-vertex color — the
+/// A UV sphere with texture coordinates and a white per-vertex color — the
 /// shape a HPS dental scan takes: the real color lives in the texture, the
 /// vertex color is neutral white. The ghost pass must sample the texture, not
 /// the (white) vertex color, or a textured scan ghosts as a flat cool-white
-/// "normals" shell — the reported scissors bug.
+/// "normals" shell.
 fn uv_sphere_textured(radius: f32, stacks: usize, slices: usize) -> Mesh {
     let mut b = MeshBuilder::new();
     let white = [255, 255, 255, 255];
@@ -385,7 +385,7 @@ fn textured_ghost_tracks_texture_not_flat_shell() {
         ghost_light_luma > ghost_dark_luma + 40.0,
         "textured ghost ignores the texture (flat shell): light={ghost_light_luma} dark={ghost_dark_luma}"
     );
-    // Sanity: the kept side (opaque, fs_main) obviously tracks the texture too.
+    // Sanity: the kept side (opaque, fs_main) tracks the texture too.
     let kept_dark = region_mean_rgb(&dark, SIZE, 0.60, 0.78, 0.40, 0.60);
     let kept_light = region_mean_rgb(&light, SIZE, 0.60, 0.78, 0.40, 0.60);
     let kept_dark_luma = kept_dark[0] + kept_dark[1] + kept_dark[2];
@@ -451,10 +451,10 @@ fn textured_cut_keeps_kept_side_identical() {
     );
 }
 
-/// A disabled clip through the ghost-capable path on a TEXTURED mesh must
+/// A disabled clip through the ghost-capable path on a textured mesh must
 /// reproduce the plain render byte-for-byte — the armed-but-no-pose / cut-off
 /// state renders identically (`fs_ghost` draws nothing, `fs_main`'s textured
-/// path is untouched by the ghost fix).
+/// path is unaffected by the ghost pass).
 #[test]
 fn disabled_clip_on_textured_matches_plain() {
     let _gpu = gpu_test_lock();

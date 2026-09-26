@@ -13,16 +13,14 @@ fn mesh_shader_uses_camera_relative_inspection_lighting() {
     // Three separate assertions, not one `&&`: the golden scene is a flat
     // triangle facing the camera, so fresnel, rim, wrap and backface are all
     // near zero in it and this text is the only guard these terms have. A
-    // combined assert reported "studio light and side walls" without saying
-    // which of the three had moved.
+    // combined assert could not say which of the three had moved.
     assert!(
         shader.contains("0.50 + 0.36 * wrapped_key + 0.095 * fill_lit + 0.018 * rim_lit"),
         "the studio light's key/fill/rim mix should keep its lit floor and its full swing"
     );
-    // Matched with whitespace collapsed: the previous form pinned the exact
-    // indentation of a `clamp()` argument list, so reflowing it onto one line
-    // -- byte-identical semantics, golden images unchanged -- failed this test.
-    // Nothing formats WGSL in CI.
+    // Matched with whitespace collapsed, so reflowing the `clamp()` argument
+    // list onto one line -- byte-identical semantics, golden images unchanged
+    // -- does not fail this test. Nothing formats WGSL in CI.
     let collapsed: String = shader.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
         collapsed.contains("0.48, 1.05,"),
@@ -180,11 +178,11 @@ fn gpu_error_latch_poison_is_ignored_not_fatal() {
 /// A GPU fault must not come back as pixels.
 ///
 /// The device's error handler records rather than panics, because a panic
-/// inside the shell surrogate is a crash. Nothing on the offscreen path used
-/// to ask what it recorded, so a refused buffer allocation -- a scan of three
-/// million triangles against the 256 MiB floor the limits used to request --
-/// produced a frame of zeroes that travelled on as a valid transparent
-/// thumbnail, and Explorer cached it against the file's timestamp.
+/// inside the shell surrogate is a crash. The offscreen path must ask what it
+/// recorded: otherwise a refused buffer allocation -- such as a scan of three
+/// million triangles against a 256 MiB buffer limit -- produces a frame of
+/// zeroes that travels on as a valid transparent thumbnail, and Explorer
+/// caches it against the file's timestamp.
 #[test]
 #[allow(clippy::expect_used)]
 fn a_recorded_gpu_fault_fails_the_readback_instead_of_returning_a_blank_frame() {
@@ -340,7 +338,7 @@ fn draw_sculpt_into_a_live_shaped_pass(renderer: &crate::Renderer) {
 /// derives it from the app's `depth_buffer: 24` / `stencil_buffer: 8`.
 /// Declaring the format here, instead of reading it back from the renderer
 /// under test, is what makes this a contract: a pass format and a pipeline
-/// format that drifted together used to keep this suite green.
+/// format that drift together would otherwise keep this suite green.
 #[test]
 #[allow(clippy::expect_used)]
 fn sculpt_tool_pipeline_is_compatible_with_the_live_depth_pass() {
@@ -371,7 +369,7 @@ fn sculpt_tool_pipeline_is_compatible_with_a_multisampled_live_pass() {
     let queue = std::sync::Arc::clone(&single.queue);
 
     // Probe before building the pipeline. The application turns multisampling
-    // on only when BOTH the colour target and the depth attachment support 4x
+    // on only when both the colour target and the depth attachment support 4x
     // (`adapter_supports_prefill_msaa_4`), so an adapter missing either one runs
     // the single-sample profile and must not be reported as a pipeline defect.
     // Probe both, and say which one was missing rather than returning silently.

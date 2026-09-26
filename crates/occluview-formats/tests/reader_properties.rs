@@ -10,8 +10,8 @@
 //! success path is exercised rather than the reject-everything path a stream of
 //! random bytes takes.
 
-// Bit-for-bit is the point of the determinism property: two reads of the
-// same bytes must produce the same floats, not merely close ones.
+// The determinism property is bit-for-bit: two reads of the same bytes must
+// produce the same floats, not merely close ones.
 #![allow(clippy::expect_used, clippy::float_cmp)]
 
 use occluview_formats::dispatch::dispatch_by_extension;
@@ -132,8 +132,8 @@ proptest! {
 }
 
 /// A UTF-8 BOM is metadata a Windows tool writes in front of an otherwise
-/// valid file. Before this it hid the signature from the probe and from the
-/// reader, so a good PLY became "not a PLY file" and an ASCII STL was
+/// valid file. It must not hide the signature from the probe or the reader:
+/// a good PLY would become "not a PLY file" and an ASCII STL would be
 /// misrouted into the binary reader and reported as malformed.
 mod byte_order_mark {
     const BOM: [u8; 3] = [0xEF, 0xBB, 0xBF];
@@ -194,9 +194,9 @@ mod byte_order_mark {
 ///
 /// A reader that consumes no input per row turns a 68-byte file into an
 /// unbounded loop. That is worse than a crash for the Explorer thumbnail host:
-/// the process is not killed, it simply never finishes, and the preview sits
-/// there forever. The fuzz smoke lane stalled on exactly this shape, which is
-/// why the property is pinned as its own test rather than left to a timeout.
+/// the process is not killed, it never finishes, and the preview never
+/// appears. The property is pinned as its own test rather than left to the
+/// fuzz lane's timeout.
 #[test]
 fn a_pathological_element_count_terminates_for_every_ply_variant() {
     let huge = "18446744073709551615";
@@ -216,8 +216,8 @@ fn a_pathological_element_count_terminates_for_every_ply_variant() {
              property float x\nend_header\n"
         ),
     ] {
-        // The assertion is the return itself: a regression means this test
-        // never completes, which the harness reports as a hang, not a pass.
+        // The assertion is the return itself: a reader that spins never
+        // completes, which the harness reports as a hang, not a pass.
         let _ = occluview_formats::ply::read(bytes.as_bytes());
     }
 }

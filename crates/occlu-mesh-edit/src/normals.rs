@@ -6,11 +6,8 @@ use occlu_geometry_math::{coincident_position_key, DUPLICATE_NORMAL_DOT, MAX_DUP
 /// longest edge squared, so it means the same thing on a 10 mm arch and on a
 /// 10 um sliver.
 ///
-/// Owned by `occlu-geometry-math` since 2026-08-29. Before that it was three
-/// copies across this crate, `occluview-core` and `occluview-hps`, and the
-/// fix of 2026-07-25 landed in one crate and reached the others four weeks
-/// later -- for those four weeks every scan opened through the other paths
-/// lost shading on facets under 20 um.
+/// Owned by `occlu-geometry-math` so this crate, `occluview-core` and
+/// `occluview-hps` apply one threshold on every load path.
 pub use occlu_geometry_math::DEGENERATE_AREA_SIN;
 use std::collections::HashMap;
 
@@ -54,11 +51,11 @@ pub fn recompute_all_normals(
         let c = Vec3::from_array(vertices[ic].position);
         let face_normal = (b - a).cross(c - a);
         // Relative to the facet's own edges, not an absolute epsilon. The
-        // cross product is twice an AREA — square millimetres — so comparing it
-        // against a dimensionless f32::EPSILON dropped every facet with edges
-        // under about 19 um. Lab scanners at 7 um point spacing produce exactly
-        // those, and their vertices fell through to a hard +Z fallback: visible
-        // shading speckle on the finest regions of a scan.
+        // cross product is twice an area — square millimetres — so comparing it
+        // against a dimensionless f32::EPSILON would drop every facet with edges
+        // under about 19 um. Lab scanners at 7 um point spacing produce those,
+        // and their vertices would fall through to the +Z fallback, speckling
+        // the shading on the finest regions of a scan.
         let longest_edge_sq = (b - a)
             .length_squared()
             .max((c - b).length_squared())

@@ -10,7 +10,7 @@
 //! This pass is what keeps hole-closing from stalling on a mess of skipped
 //! rims: it heals the cut line first — removing dangling needle/lone
 //! triangles to a fixpoint and welding near-coincident boundary vertices — so
-//! the surviving rims are simple loops that a cap can complete. It is OPT-IN
+//! the surviving rims are simple loops that a cap can complete. It is opt-in
 //! (`MeshEditOptions::heal_boundary_rims`,
 //! set by the Close Holes path); the repair pipeline leaves it off and stays
 //! byte-for-byte unchanged.
@@ -42,7 +42,7 @@ const RIM_WELD_FRACTION: f32 = 0.05;
 pub(crate) struct RimHealOutcome {
     /// Healed mesh (fewer triangles, possibly fewer distinct vertex ids).
     pub(crate) mesh: MeshEditBuffers,
-    /// `true` for each ORIGINAL triangle that survived, in original order.
+    /// `true` for each original triangle that survived, in original order.
     pub(crate) keep: Vec<bool>,
     /// Dangling needle/lone triangles removed, plus boundary vertices welded.
     pub(crate) healed: usize,
@@ -137,7 +137,7 @@ pub(crate) fn heal_boundary_rims(mesh: &MeshEditBuffers) -> Option<RimHealOutcom
     })
 }
 
-/// Directed-edge multiset over the ALIVE triangles: an edge with no opposing
+/// Directed-edge multiset over the alive triangles: an edge with no opposing
 /// twin is a boundary half-edge.
 fn boundary_edge_set(
     mesh: &MeshEditBuffers,
@@ -209,7 +209,7 @@ fn is_needle(mesh: &MeshEditBuffers, tri: &[u32]) -> bool {
 /// vertices merged away. Non-boundary vertices always map to themselves.
 ///
 /// Deterministic: candidates are bucketed on a quantized grid, and each cluster
-/// elects its LOWEST id as canonical after a sorted union.
+/// elects its lowest id as canonical after a sorted union.
 fn weld_boundary_vertices(mesh: &MeshEditBuffers, alive: &[bool]) -> (Vec<u32>, usize) {
     let vertex_count = mesh.vertices.len();
     // Identity remap over vertex ids (all referenced ids fit u32 by validation).
@@ -279,7 +279,7 @@ fn weld_boundary_vertices(mesh: &MeshEditBuffers, alive: &[bool]) -> (Vec<u32>, 
                         }
                         let pw = Vec3::from_array(mesh.vertices[w as usize].position);
                         // Coincident attribute-distinct duplicates (a color/uv
-                        // seam) fuse here TOO, on purpose: a seam slit is an
+                        // seam) fuse here too, on purpose: a seam slit is an
                         // index-space boundary, and leaving it open would feed
                         // the hole filler two giant phantom rims to cap with
                         // membranes. Closing the topology wins; the cost is a

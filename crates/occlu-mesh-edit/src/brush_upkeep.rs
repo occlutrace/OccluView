@@ -1,9 +1,8 @@
-//! Per-dab bookkeeping for [`super::BrushSession`], split out of `brush.rs` to
-//! hold the workspace's 800-line file budget: the reusable generation stamps,
-//! the spatial-index upkeep, the connected-component restriction, the post-dab
-//! inversion rollback, and the localized normal recompute.
+//! Per-dab bookkeeping for [`super::BrushSession`]: the reusable generation
+//! stamps, the spatial-index upkeep, the connected-component restriction, the
+//! post-dab inversion rollback, and the localized normal recompute.
 //!
-//! These are the parts of a dab that touch session STATE rather than shape.
+//! These are the parts of a dab that touch session state rather than shape.
 //! They live in a child module (not a sibling) so they can keep reading
 //! `BrushSession`'s private fields directly, and are `pub(super)` so both
 //! `brush.rs` and the densification module can drive them.
@@ -23,7 +22,7 @@ impl BrushSession {
     /// Keep only candidates in the same connected component as the vertex
     /// nearest the dab center, by flooding welded rings (and soup siblings)
     /// through the in-disc set. A Euclidean radius query can pull in a
-    /// spatially-close but topologically SEPARATE surface (a dropout island,
+    /// spatially-close but topologically separate surface (a dropout island,
     /// the opposing arch behind the cursor); this stops a dab from dragging
     /// two disjoint sheets together, for Add/Remove as well as Smooth.
     pub(super) fn restrict_to_component(
@@ -100,16 +99,16 @@ impl BrushSession {
 
     /// Keep the spatial grid usable for a dab of `radius`: rebuild it (from
     /// live positions, cell size matched to radius) only when the brush radius
-    /// changed enough to make the old cell size too coarse or fine — sized to
+    /// changed enough to make the current cell size too coarse or fine — sized to
     /// radius so a big brush never scans millions of empty cells.
     pub(super) fn sync_grid(&mut self, radius: f32, cancel: Option<&AtomicBool>) -> bool {
         if cancellation_requested(cancel) {
             return false;
         }
-        // ONLY a brush-radius change (which changes cell size) forces a
-        // rebuild — a rare, deliberate size-slider move. Motion during a
-        // stroke is tracked incrementally, not by a per-dab O(n) rebuild
-        // (the stall a big scan showed).
+        // Only a brush-radius change (which changes cell size) forces a
+        // rebuild — a rare, explicit size-slider move. Motion during a
+        // stroke is tracked incrementally; a per-dab O(n) rebuild would stall
+        // on a big scan.
         if self.grid_radius <= 0.0 {
             self.grid_radius = radius;
             return true;

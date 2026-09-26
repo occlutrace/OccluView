@@ -251,7 +251,7 @@ fn same_stem_image(path: &Path, directory: &Path) -> Option<PathBuf> {
 }
 
 /// Errors from a companion are not errors of the import: the mesh is what the
-/// operator asked for, and a texture that could not be read is reported by the
+/// operator opened, and a texture that could not be read is reported by the
 /// format's own loss warning when it is written back out.
 #[allow(dead_code)]
 fn _error_type_is_shared(_: FormatError) {}

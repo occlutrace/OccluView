@@ -119,8 +119,8 @@ mod tests {
     fn a_header_claiming_more_than_the_pixel_limit_is_refused_before_decoding() {
         // `validate_texture_dimensions` runs on an image that has already been
         // decoded, so by the time it can complain the allocation has happened.
-        // The line that actually prevents the bomb is `reader.limits(limits)`,
-        // and deleting it broke no test. This one fails without it.
+        // The line that prevents the bomb is `reader.limits(limits)`, and this
+        // test fails without it.
         let bomb = over_wide_png(MAX_TEXTURE_DIMENSION_PX + 808);
         assert!(
             bomb.len() < 4096,

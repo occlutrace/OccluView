@@ -71,7 +71,7 @@ impl FaceUvs {
     ///
     /// Called once the vertex element has been consumed, because a corner index
     /// in the face element is arbitrary input: sizing the table from the
-    /// largest index in the file let a 232-byte file ask for 51 GB, and the
+    /// largest index in the file would let a 232-byte file ask for 51 GB, and the
     /// allocation failure that follows aborts a process uncatchably — in the
     /// Explorer thumbnail host that takes every other thumbnail with it. The
     /// declared vertex count is no better a bound, since a header can declare

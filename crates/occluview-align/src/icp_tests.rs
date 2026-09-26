@@ -1,5 +1,4 @@
-//! Tests for the refine stage, split out of `icp.rs` to hold the workspace's
-//! file budget.
+//! Tests for the refine stage.
 
 // Fixture builders place grid indices into `f32` millimetres and turn small
 // millimetre offsets back into indices. Every cast is bounded by the fixture's
@@ -10,10 +9,9 @@
     clippy::cast_possible_wrap,
     clippy::cast_sign_loss
 )]
-// A test that cannot seat a scan has to say WHICH placement and WHICH refusal,
-// and a settled pair has to be read out of the report. Both are the point of
-// the test rather than an accident, so the workspace's production-code lints
-// are turned off here the same way the sibling test modules do it.
+// A test that cannot seat a scan has to say which placement and which refusal,
+// and a settled pair has to be read out of the report, so the workspace's
+// production-code lints are turned off here as in the sibling test modules.
 #![allow(clippy::panic, clippy::expect_used)]
 
 use crate::icp::{refine, IcpReport, Orientation, RefineSettings};
@@ -167,20 +165,6 @@ fn trustworthy_report() -> IcpReport {
     }
 }
 
-/// Two different jaws must not be authorized as an alignment.
-///
-/// The numbers are measured, not invented. Running `refine` on a real upper
-/// and a real lower arch (the fixtures in `real_scans.rs`, `calmcase` pair)
-/// produces this report at every starting distance from touching to 40 mm
-/// apart: 34.5 % of the moving surface finds a point on the other jaw within
-/// the 2 mm search radius, so coverage and the geometric-RMS ceiling both pass
-/// while the pose is meaningless — the two jaws have no single correct joint
-/// position, they only meet where the occlusal surfaces touch.
-///
-/// The median is what separates this from a real alignment: 0.42 mm here,
-/// against a discretisation error for an arch seated on a displaced copy of
-/// itself. This test pins the gate that rejects it, so nobody later relaxes
-/// the median and lets a confidently wrong pose paint a heatmap.
 /// The median limit holds at both ends of the radius slider.
 ///
 /// It is a fraction of the operator's search radius, and the radius is
@@ -188,7 +172,7 @@ fn trustworthy_report() -> IcpReport {
 /// directions at the two ends, and both failures matter:
 ///
 /// - at 0.2 mm the limit lands at 0.02 mm, below the noise of a real scanner,
-///   so a CORRECT seating is refused;
+///   so a correct seating is refused;
 /// - at 10 mm it lands at 1 mm, wide enough to authorize two different jaws,
 ///   so a meaningless pose is accepted with a heatmap over it.
 ///
@@ -231,6 +215,20 @@ fn the_median_limit_holds_at_both_ends_of_the_radius_slider() {
     }
 }
 
+/// Two different jaws must not be authorized as an alignment.
+///
+/// The numbers are measured. Running `refine` on a real upper and a real lower
+/// arch (the fixtures in `real_scans.rs`, `calmcase` pair) produces this report
+/// at every starting distance from touching to 40 mm apart: 34.5 % of the
+/// moving surface finds a point on the other jaw within the 2 mm search radius,
+/// so coverage and the geometric-RMS ceiling both pass while the pose is
+/// meaningless — the two jaws have no single correct joint position, they only
+/// meet where the occlusal surfaces touch.
+///
+/// The median is what separates this from a real alignment: 0.42 mm here,
+/// against a discretisation error for an arch seated on a displaced copy of
+/// itself. This test covers the median limit that rejects it, so a confidently
+/// wrong pose cannot paint a heatmap.
 #[test]
 fn two_different_jaws_are_not_authorized_as_an_alignment() {
     let two_jaws = IcpReport {
@@ -564,8 +562,8 @@ fn a_start_with_no_surface_in_reach_is_refused() {
     let outcome = refine(mesh, &index, start, &settings(), &CancelFlag::new());
 
     // The variant matters: an unreachable start is not an ambiguous one, and
-    // the operator's next step differs. `is_err()` accepted every rejection
-    // this crate can produce, which is how a swapped variant would pass.
+    // the operator's next step differs. `is_err()` would accept every
+    // rejection this crate can produce, including a swapped variant.
     assert!(
         matches!(outcome, Err(FitRejection::TooFewPairs { .. })),
         "a hopeless start must be refused as unreachable, got {outcome:?}"
@@ -624,10 +622,10 @@ fn where_the_file_puts_its_zero_does_not_change_the_refine() {
     // bit-identical surface in a bit-identical place. It has to answer the
     // same — the guard included.
     //
-    // The pose's translation column does NOT stay the same: turning the mesh
+    // The pose's translation column does not stay the same: turning the mesh
     // through a small angle swings it by twice the distance to the file's
     // zero, which here is far more than the mesh's own size. Reading that as
-    // "how far the scan moved" is what refused refines that had not moved the
+    // "how far the scan moved" would refuse refines that had not moved the
     // scan at all.
     // Across the turn axis, not along it: an offset parallel to the axis
     // survives the rotation untouched and would leave the two numbers below
@@ -640,9 +638,9 @@ fn where_the_file_puts_its_zero_does_not_change_the_refine() {
         DVec3::new(0.25, -0.18, 0.12),
     );
 
-    // Both refines must land. An unwrap here prints the refusal itself, which
-    // is the part worth reading: a `Runaway` is the regression this test is
-    // for, and any other rejection is a different bug.
+    // Both refines must land. An unwrap here prints the refusal itself: a
+    // `Runaway` means the displacement guard read the translation column, and
+    // any other rejection is a different failure.
     let here = refine(
         soup(&positions, &indices),
         &index,
@@ -669,8 +667,8 @@ fn where_the_file_puts_its_zero_does_not_change_the_refine() {
     // Read the second answer back in the first one's frame.
     // The offset is a whole multiple of the grid step, so requoting is
     // bit-exact in `f32` and any drift is the solver's own — measured at
-    // ~1e-13 mm. The bound stays a loose micron so the test pins the
-    // regression, not one fixture's noise floor.
+    // ~1e-13 mm. The bound stays a loose micron so the test checks the frame
+    // invariance, not one fixture's noise floor.
     let read_back = there.rigid.translation + there.rigid.rotation * elsewhere;
     let drift = (read_back - here.rigid.translation).length();
     assert!(
@@ -884,12 +882,11 @@ fn best_fit_recovers_a_small_patch_when_a_center_seed_has_false_coverage() {
 
 #[test]
 fn a_dense_level_refusal_cannot_fall_back_to_a_coarse_report() {
-    // Deliberately create a sampling alias: the coarse budget's stride is 201,
-    // while the dense budget's stride is 41. The only usable moving vertices
-    // sit at multiples of 201, so the coarse level sees the whole surface but
-    // the dense level sees less than the one-percent coverage floor. A prior
-    // implementation swallowed that dense refusal and returned the apparently
-    // perfect coarse report as a refined match.
+    // Create a sampling alias: the coarse budget's stride is 201, while the
+    // dense budget's stride is 41. The only usable moving vertices sit at
+    // multiples of 201, so the coarse level sees the whole surface but the
+    // dense level sees less than the one-percent coverage floor. The dense
+    // refusal must not be replaced by the apparently perfect coarse report.
     let total_vertices = 1_600_001usize;
     let (fixed, fixed_indices) = dome(88, 0.5);
     let mut moving = vec![1_000.0_f32; total_vertices * 3];
@@ -974,21 +971,20 @@ fn a_single_accepted_step_is_the_pose_that_refine_returns() {
 
 /// A hand placement of one scan must seat it back onto the surface it came from.
 ///
-/// The older fixtures in this file fit a mesh against an index built from THAT
-/// SAME mesh with the identity start, so they only ever exercise a pair that is
-/// already seated and a zero-residual answer is reachable. That is not the
-/// operator's case: they place one scan near another and ask the tool to close
-/// the gap, and the pose it must find is a real displacement.
+/// A fixture that fits a mesh against an index built from that same mesh with
+/// the identity start only exercises a pair that is already seated, where a
+/// zero-residual answer is reachable. That is not the operator's case: they
+/// place one scan near another and ask the tool to close the gap, and the pose
+/// it must find is a real displacement.
 ///
 /// Here the layer starts at a known hand placement — a few millimetres out and
 /// a few degrees turned — and the correct answer is known by construction: the
 /// identity, which puts the scan back where it was. The distances walk what a
 /// hand actually produces, from nearly seated to more than a centimetre out.
 ///
-/// This pins the old refusal: the loop returned `Err(NoImprovement)` from
-/// inside instead of the best pose it had already measured, so a pair the
-/// solver could seat came back to the operator as "could not confirm an
-/// improvement".
+/// The loop must return the best pose it measured rather than
+/// `Err(NoImprovement)`, which reaches the operator as "could not confirm an
+/// improvement" on a pair the solver can seat.
 #[test]
 fn a_scan_moved_by_a_known_transform_seats_back_onto_its_source() {
     let (positions, indices) = dome(24, 0.5);
@@ -997,7 +993,7 @@ fn a_scan_moved_by_a_known_transform_seats_back_onto_its_source() {
 
     for (shift_mm, turn_deg) in [(2.0_f64, 1.0_f64), (5.0, 3.0), (12.0, 7.0)] {
         // The hand placement, expressed as the pose the layer is carrying. The
-        // moving soup holds the same LOCAL vertices as the fixture, so the
+        // moving soup holds the same local vertices as the fixture, so the
         // correct answer is the identity: put the scan back where it was.
         let placement = Rigid::new(
             DQuat::from_axis_angle(DVec3::new(0.3, 0.5, 0.8).normalize(), turn_deg.to_radians()),
@@ -1037,40 +1033,17 @@ fn a_scan_moved_by_a_known_transform_seats_back_onto_its_source() {
     }
 }
 
-/// One unproductive iteration must not throw away what the level measured.
-///
-/// A rank-deficient normal matrix is a stop. Returning `Err` there discarded
-/// every correspondence the level had found, which is what the operator saw as
-/// "Best fit could not confirm an improvement" on a pair the solver had in fact
-/// already seated.
 /// An unproductive iteration must return what the level measured, not refuse.
 ///
 /// When the solve cannot produce a step — a rank-deficient normal matrix, which
-/// is what a surface with one undetermined direction gives — the loop stops.
-/// It used to return `Err(NoImprovement)` instead, which discarded the
-/// correspondences the level had already measured and surfaced to the operator
-/// as "Best fit could not confirm an improvement" on a pair that had in fact
-/// been seated. Stopping and refusing are different answers and the operator
-/// only sees one of them.
+/// is what a surface with an undetermined direction gives — the loop stops and
+/// keeps the correspondences the level has already measured. Stopping and
+/// refusing are different answers, and the panel shows only one of them.
 ///
-/// The fixture curves along X and is a straight line along Y, so rotation about
-/// the in-plane axis is undetermined: the solve stays rank deficient, and the
-/// coarse stage still has a single answer because the shape is not symmetric.
-/// An unproductive iteration must return what the level measured, not refuse.
-///
-/// When the solve cannot produce a step — a rank-deficient normal matrix, which
-/// is what a surface with one undetermined direction gives — the loop stops.
-/// It used to return `Err(NoImprovement)` instead, discarding the
-/// correspondences the level had already measured, and the operator saw "Best
-/// fit could not confirm an improvement" on a pair the solver had in fact
-/// seated. Stopping and refusing are different answers and the panel only shows
-/// one of them.
-///
-/// The fixture curves along X and is dead straight along Y, so rotation about
-/// the in-plane axis is undetermined. It is tilted as well, which is what puts
-/// a real residual in front of the guard: with the sheets coincident the
-/// residual is zero, the old `> 1e-6` test was false, and the bug hid. This is
-/// the shape of a scan placed by hand — a small tilt and a real gap.
+/// The start is turned and lifted off the fixture, which puts a real residual
+/// in front of the guard: with the sheets coincident the residual is zero and
+/// the guard is not exercised. This is the shape of a scan placed by hand — a
+/// small turn and a real gap.
 #[test]
 fn an_unproductive_iteration_returns_the_best_pose_instead_of_refusing() {
     let n = 24usize;
@@ -1079,11 +1052,11 @@ fn an_unproductive_iteration_returns_the_best_pose_instead_of_refusing() {
         for i in 0..=n {
             let x = i as f32 * 0.5;
             let y = j as f32 * 0.5;
-            // Form in BOTH directions, deliberately. A surface curved only
-            // across x is a cylinder: sliding it along y changes nothing, so
-            // every position along that axis explains the data equally well and
-            // `Ambiguous` is the correct answer. That fixture would test the
-            // ambiguity guard rather than the one this test is about.
+            // Curved in both directions. A surface curved only across x is a
+            // cylinder: sliding it along y changes nothing, so every position
+            // along that axis explains the data equally well and `Ambiguous`
+            // is the correct answer. That fixture would test the ambiguity
+            // guard rather than the one this test is about.
             let bend = 0.05 * (x - 6.0) * (x - 6.0) + 0.045 * (y - 6.0) * (y - 6.0);
             positions.extend_from_slice(&[x, y, bend]);
         }
@@ -1127,12 +1100,10 @@ fn an_unproductive_iteration_returns_the_best_pose_instead_of_refusing() {
 
 /// A seated scan must also pass the trust gate, not just the solver.
 ///
-/// This is the piece the two halves of the bug met in. The solver could reach
-/// a correct pose while reporting `converged = false`, and the worker refuses
-/// anything `is_trustworthy_refinement_for` rejects — so a pair the tool had
-/// already seated came back to the operator as "Best fit could not confirm an
-/// improvement". Testing either half alone would have missed it: the pose was
-/// right and the report was wrong.
+/// The worker refuses anything `is_trustworthy_refinement_for` rejects, so a
+/// correct pose whose report fails the gate (for example `converged = false`)
+/// still reaches the operator as "Best fit could not confirm an improvement".
+/// This test checks the pose and the report together.
 #[test]
 fn a_seated_scan_is_trustworthy_at_every_hand_placement() {
     let (positions, indices) = dome(24, 0.5);

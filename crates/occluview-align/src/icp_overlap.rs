@@ -16,8 +16,8 @@ use super::{Level, Orientation, MIN_TRIAL_COVERAGE_FRACTION};
 const MIN_RECIPROCAL_MATCHES: usize = 12;
 
 /// A fixed surface with thousands of representatives must contribute more
-/// than twelve lucky hits before it can authorize a trial. This is deliberately
-/// a small fraction: partial scans remain valid, while a one-percent sliver
+/// than twelve lucky hits before it can authorize a trial. This is a small
+/// fraction: partial scans remain valid, while a one-percent sliver
 /// cannot win a global search merely because its absolute hit count cleared the
 /// floor above.
 const MIN_RECIPROCAL_COVERAGE_FRACTION: f64 = 0.01;

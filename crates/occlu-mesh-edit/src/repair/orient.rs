@@ -1,9 +1,9 @@
 //! Pass 6: coherent triangle orientation.
 //!
-//! Per component: BFS over shared undirected edges enforcing OPPOSING
+//! Per component: BFS over shared undirected edges enforcing opposing
 //! directed edges (seed = lowest triangle index), then an area-weighted
 //! majority rule so the component keeps its original dominant orientation,
-//! then — for CLOSED components only — an outward signed-volume check. Open
+//! then — for closed components only — an outward signed-volume check. Open
 //! components never get the volume flip.
 
 use std::collections::VecDeque;
@@ -53,7 +53,7 @@ pub(super) fn orient_components(
 }
 
 /// BFS from `seed` (which keeps its winding): a neighbor must traverse the
-/// shared edge in the direction OPPOSITE to the current face's effective
+/// shared edge in the direction opposite to the current face's effective
 /// direction, or it gets a flip flag. First assignment wins on conflicts.
 fn propagate_orientation(
     mesh: &MeshEditBuffers,

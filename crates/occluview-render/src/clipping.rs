@@ -109,8 +109,8 @@ impl Default for CutViewSpec {
             //
             // Not converted to linear: this colour is written straight into an
             // `Rgba8Unorm` target that nothing encodes, so a linear value comes
-            // out darker than the hex it is named after -- #E84C4B was
-            // reaching the screen as (198, 46, 45).
+            // out darker than the hex it is named after -- a linearised
+            // #E84C4B reaches the screen as (198, 46, 45).
             cap_color: [0.910, 0.298, 0.294, 1.0],
             show_hollow: false,
         }

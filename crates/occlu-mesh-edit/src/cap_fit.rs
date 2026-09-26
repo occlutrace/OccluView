@@ -1,7 +1,7 @@
-//! The interpolated cap's SURFACE model: a local planar frame plus a quadric
+//! The interpolated cap's surface model: a local planar frame plus a quadric
 //! height field least-squares fitted to the rim and a distance-weighted band
-//! of surface samples just outside it. Split out of `cap_refine.rs` (which
-//! keeps the triangulation/refinement machinery) to hold the file-size budget.
+//! of surface samples just outside it. `cap_refine.rs` owns the
+//! triangulation and refinement.
 
 use glam::{Vec2, Vec3};
 
@@ -50,10 +50,10 @@ impl CapSurface {
 
 /// Falloff scale for support-sample weights, in units of the mean rim edge
 /// length: a sample two edge lengths from the rim still weighs ~1/2, one at
-/// four edge lengths ~1/65. The band exists to pin LOCAL curvature at the
+/// four edge lengths ~1/65. The band exists to pin local curvature at the
 /// seam; a topological neighbor that is metrically far (a cone apex, the far
 /// wall of a deep socket) is distant geometry, and letting it pull the quadric
-/// used to sink the whole cap toward it — a funnel-shaped "cap" that follows
+/// sinks the whole cap toward it — a funnel-shaped "cap" that follows
 /// the socket instead of covering it.
 const SUPPORT_FALLOFF_EDGES: f32 = 2.0;
 
@@ -68,11 +68,11 @@ struct PlanarFrame {
 /// Project rim + support into the frame as `(a, b, height, weight)` rows for
 /// the weighted quadric fit. Rim samples weigh 1. Support samples are
 /// distance-weighted (see [`SUPPORT_FALLOFF_EDGES`]), and any support sample
-/// whose projection falls INSIDE the rim polygon is excluded outright: that is
+/// whose projection falls inside the rim polygon is excluded outright: that is
 /// an overhanging wall (tooth socket, cone flank), not the outside curvature
 /// the band exists to capture — on a round rim the fit's center height is pure
-/// extrapolation, so even a tiny weight on such a sample used to sink the
-/// whole cap into a funnel.
+/// extrapolation, so even a tiny weight on such a sample sinks the whole cap
+/// into a funnel.
 fn weighted_planar_samples(
     rim: &[Vec3],
     support: &[[f32; 3]],
@@ -125,7 +125,7 @@ fn weighted_planar_samples(
 }
 
 /// Fit a local frame (Newell normal over the rim) plus a quadric height field
-/// least-squares fitted to the rim AND a band of surface samples just outside
+/// least-squares fitted to the rim and a band of surface samples just outside
 /// it. A clean circular rim is nearly planar and carries no curvature on its
 /// own, so the outside band is what lets the fit recover the local shape (a
 /// sphere/saddle exactly, a gentle blend otherwise). Support samples are
@@ -143,7 +143,7 @@ pub(super) fn fit_cap_surface(
     centroid /= count_as_f32(rim_len.max(1));
 
     // Newell's method: robust polygon normal for a non-planar rim. Vertices
-    // are taken RELATIVE to the centroid: Newell is translation-invariant in
+    // are taken relative to the centroid: Newell is translation-invariant in
     // exact arithmetic, and centering avoids the catastrophic f32 cancellation
     // a small far-from-origin rim would otherwise hit.
     let mut normal = Vec3::ZERO;
@@ -165,10 +165,10 @@ pub(super) fn fit_cap_surface(
     // solving the 6x6 normal equations (A^T A + ridge) c = A^T h. The rim pins
     // the fit at the seam; the outside support band supplies the curvature.
     //
-    // The fit runs in SCALE-NORMALIZED coordinates (divided by the RMS planar
-    // radius): the fixed ridge is then meaningful for every hole size, where
-    // in raw mm a sub-millimeter hole was flattened (ridge dominated its tiny
-    // quadratic terms) and a very large one was effectively unregularized.
+    // The fit runs in scale-normalized coordinates (divided by the RMS planar
+    // radius): the fixed ridge is then meaningful for every hole size. In raw
+    // mm the ridge would dominate a sub-millimeter hole's quadratic terms and
+    // leave a very large one effectively unregularized.
     let frame = PlanarFrame {
         centroid,
         tangent_u,
@@ -221,13 +221,13 @@ pub(super) fn fit_cap_surface(
         }
     }
     // Scale the ridge by the total weight. The diagonal entries grow with the
-    // SAMPLE COUNT — the radius normalization above only removes the hole's
+    // sample count — the radius normalization above only removes the hole's
     // size dependence, not its rim length — so a fixed 1e-4 is a bitwise no-op
     // in f32 above a diagonal of 2048, which a rim of roughly 700 edges reaches.
-    // Every routine socket was therefore solving an unregularized 6x6, and on a
-    // near-rank-deficient rim (a long thin interproximal slot, whose samples are
-    // nearly collinear in plane) the coefficients blow up, the lifted interior
-    // is refused by the fold and pierce guards, and the hole comes back
+    // An unscaled ridge leaves a routine socket solving an unregularized 6x6;
+    // on a near-rank-deficient rim (a long thin interproximal slot, whose
+    // samples are nearly collinear in plane) the coefficients blow up, the fold
+    // and pierce guards refuse the lifted interior, and the hole reports
     // "damaged" instead of filled.
     #[allow(clippy::cast_possible_truncation)]
     let ridge = QUADRIC_RIDGE * (weight_sum as f32).max(1.0);
@@ -261,7 +261,7 @@ fn count_as_f32(count: usize) -> f32 {
 }
 
 /// Angular bins over the rim's planar radii, for a cheap "does this support
-/// sample project INSIDE the rim polygon" verdict. Per bin the MINIMUM rim
+/// sample project inside the rim polygon" verdict. Per bin the minimum rim
 /// radius is kept (conservative: near-rim outside samples are never dropped by
 /// a wiggly bin); a sample clearly under its bin's minimum is an overhang.
 /// Approximate for strongly non-star-shaped rims, which is acceptable — a

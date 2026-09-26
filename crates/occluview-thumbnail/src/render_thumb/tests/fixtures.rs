@@ -113,9 +113,9 @@ pub(super) fn large_binary_stl_tessellated_plane(min_bytes: usize) -> Vec<u8> {
 }
 
 /// A dense binary-STL UV sphere of at least `min_bytes`. A sphere is the sharp
-/// speckle probe: its thumbnail silhouette is a filled disc, so ANY transparent
-/// pixel strictly inside the disc is a see-through hole — exactly the speckled
-/// artifact that per-Nth-triangle striding produced on dense scans.
+/// speckle probe: its thumbnail silhouette is a filled disc, so any transparent
+/// pixel strictly inside the disc is a see-through hole — the speckled
+/// artifact that per-Nth-triangle striding produces on dense scans.
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 pub(super) fn dense_binary_stl_sphere(min_bytes: usize) -> Vec<u8> {
     let triangle_target = (min_bytes.saturating_sub(84) / 50).max(8);
@@ -166,11 +166,12 @@ fn append_binary_stl_triangle(out: &mut Vec<u8>, a: [f32; 3], b: [f32; 3], c: [f
     push_stl_triangle(out, [0.0, 0.0, 1.0], a, b, c);
 }
 
-/// A dense binary-STL sphere plus ONE far outlier triangle parked at 1e6 mm on
-/// every axis. Pre-fix, that lone outlier stretched the clustering grid so the
-/// whole real sphere welded into one or two cells, every triangle was culled as
-/// degenerate, and the fast path emitted 0 triangles -> a fully transparent
-/// tile. Robust grid bounds must trim the outlier and keep the sphere solid.
+/// A dense binary-STL sphere plus one far outlier triangle parked at 1e6 mm on
+/// every axis. Without robust bounds, that lone outlier stretches the
+/// clustering grid so the whole real sphere welds into one or two cells, every
+/// triangle is culled as degenerate, and the fast path emits 0 triangles -> a
+/// fully transparent tile. Robust grid bounds must trim the outlier and keep
+/// the sphere solid.
 pub(super) fn dense_binary_stl_sphere_with_far_outlier(min_bytes: usize) -> Vec<u8> {
     let mut out = dense_binary_stl_sphere(min_bytes);
     append_binary_stl_triangle(
@@ -206,7 +207,7 @@ pub(super) fn dense_binary_stl_sphere_with_nonfinite(min_bytes: usize) -> Vec<u8
 
 /// A dense binary-STL sphere (mm-scale bulk) plus a few micro-scale (1e-3 mm)
 /// triangles and one far (1e6 mm) outlier, so the coordinate range spans
-/// 1e-3..1e6. Robust bounds must trim BOTH extremes and frame the bulk.
+/// 1e-3..1e6. Robust bounds must trim both extremes and frame the bulk.
 pub(super) fn dense_binary_stl_huge_coordinate_range(min_bytes: usize) -> Vec<u8> {
     let mut out = dense_binary_stl_sphere(min_bytes);
     for _ in 0..8 {

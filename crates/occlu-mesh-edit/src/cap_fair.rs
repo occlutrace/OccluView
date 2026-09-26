@@ -6,7 +6,7 @@
 //! surface with a small slope jump: the quadric is a least-squares blend, not
 //! an interpolant of the outside curvature. Fairing polishes exactly that —
 //! interior vertices relax toward `U²(v) = 0` (discrete thin-plate) while the
-//! rim AND its first ring OUTSIDE the rim stay fixed, so the solution
+//! rim and its first ring outside the rim stay fixed, so the solution
 //! continues the surrounding surface's tangent plane across the seam instead
 //! of merely touching its positions.
 //!
@@ -23,7 +23,7 @@ const MAX_FAIR_SWEEPS: usize = 160;
 const FAIR_TOLERANCE_FACTOR: f32 = 1e-5;
 
 /// One rim vertex's fixed surroundings: the positions of its mesh neighbors
-/// OUTSIDE the cap. They complete the rim vertex's full umbrella so `U(rim)`
+/// outside the cap. They complete the rim vertex's full umbrella so `U(rim)`
 /// measures the real surface, letting the interior blend curvature across the
 /// seam.
 pub(super) struct RimSupport {
@@ -31,13 +31,13 @@ pub(super) struct RimSupport {
     pub(super) outside: Vec<Vec3>,
 }
 
-/// Largest TOTAL normal rotation fairing may inflict on any incident triangle,
+/// Largest total normal rotation fairing may apply to any incident triangle,
 /// measured against the triangle's normal at the start of fairing (cosine of
 /// 45°). Thin-plate continuation of steep boundary slopes (a funnel-like
 /// outside ring) has no fold-free solution — the raw Kobbelt iteration then
 /// walks interior triangles right through a fold, one small step at a time, and
 /// the downstream `candidate_folds` guard refuses the whole cap. Guarding the
-/// ACCUMULATED rotation keeps every pairwise cap dihedral well under that
+/// accumulated rotation keeps every pairwise cap dihedral well under that
 /// guard's 120° limit (two adjacent triangles can drift at most 45° each in
 /// opposite directions), so fairing always yields an emittable cap.
 const TOTAL_NORMAL_COSINE_LIMIT: f32 = std::f32::consts::FRAC_1_SQRT_2; // 45°
@@ -170,8 +170,8 @@ fn cap_connectivity(
 
 /// The anti-fold step gate: triangle normals captured at the start of fairing
 /// (the lifted quadric+residual cap is smooth and fold-free), against which
-/// every proposed vertex move is checked. Guarding ACCUMULATED rotation is the
-/// honest fold measure — a per-step check lets a fold build up gradually.
+/// every proposed vertex move is checked. Accumulated rotation measures the
+/// fold directly; a per-step check lets a fold build up gradually.
 struct FoldGuard<'a> {
     triangles: &'a [[usize; 3]],
     initial_normals: Vec<Vec3>,
@@ -198,7 +198,7 @@ impl<'a> FoldGuard<'a> {
 
     /// Whether moving `moved` to `proposed` keeps every incident triangle's
     /// normal within [`TOTAL_NORMAL_COSINE_LIMIT`] of its direction at the
-    /// START of fairing. Triangles whose initial normal is degenerate accept
+    /// start of fairing. Triangles whose initial normal is degenerate accept
     /// any move.
     fn step_keeps_normals(
         &self,

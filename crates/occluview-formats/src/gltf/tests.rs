@@ -140,12 +140,10 @@ fn handles_non_indexed_primitive() {
     assert_eq!(mesh.triangle_count(), 1);
 }
 
-/// Regression: index values must round-trip correctly. An earlier bug had
-/// `read_indices` pass `&bytes[off..]` (a tail slice, not exactly 4 bytes)
-/// to `u32_at`, whose `try_into().unwrap_or([0;4])` then silently zeroed
-/// every index — producing degenerate `(0,0,0)` triangles and empty renders
-/// for any real GLB. This test uses non-trivial index values so the bug
-/// surfaces as a value mismatch, not just a count check.
+/// Index values must round-trip, not just the index count. A reader that
+/// zeroes every index still reports the right triangle count while producing
+/// degenerate `(0,0,0)` triangles and empty renders, so this test uses
+/// non-trivial index values and compares them.
 #[test]
 fn index_values_round_trip_exactly() {
     // 6 vertices, 2 triangles with indices (1,4,2) and (5,0,3).
@@ -170,7 +168,7 @@ fn index_values_round_trip_exactly() {
     assert_eq!(mesh.indices(), &[1, 4, 2, 5, 0, 3]);
 }
 
-/// Regression companion: USHORT (5123) indices also round-trip exactly.
+/// USHORT (5123) indices also round-trip exactly.
 #[test]
 fn ushort_index_values_round_trip() {
     let json = br#"{"asset":{"version":"2.0"},
@@ -314,9 +312,9 @@ fn malformed_bmp_magic_is_rejected_by_whitelist_before_decode() {
 /// A parent whose own mesh carries no primitives must not hide the material of
 /// the child below it.
 ///
-/// The search returned from the whole function when a node's mesh had an empty
-/// primitive list, so a scan exported with an empty group node above the
-/// geometry -- which exporters write -- came out silently untextured.
+/// A node whose mesh has an empty primitive list must not end the whole
+/// search: exporters write an empty group node above the geometry, and the
+/// scan would otherwise load untextured with no error.
 #[test]
 fn an_empty_parent_mesh_does_not_hide_the_child_material() {
     let png_bytes: Vec<u8> = {
@@ -596,7 +594,7 @@ fn rejects_a_node_that_is_its_own_child() {
     );
 }
 
-/// Two nodes that list each other — the same defect one step removed.
+/// Two nodes that list each other — the same cycle one step removed.
 #[test]
 fn rejects_a_two_node_cycle() {
     let json = br#"{"asset":{"version":"2.0"},
@@ -624,7 +622,7 @@ fn rejects_a_two_node_cycle() {
 }
 
 /// The guard must not reject an ordinary hierarchy: a parent with two
-/// distinct children is exactly what a real scanner export looks like.
+/// distinct children is what a real scanner export looks like.
 #[test]
 fn accepts_a_parent_with_two_distinct_children() {
     let json = br#"{"asset":{"version":"2.0"},
@@ -680,9 +678,10 @@ fn chain_glb(depth: usize) -> Vec<u8> {
 
 #[test]
 fn rejects_a_node_chain_deeper_than_the_bound() {
-    // 60000 chained nodes is a 1.2 MB file that aborted the process outright:
-    // a stack overflow is a guard-page fault, so neither the catch_unwind in
-    // the Explorer host nor the one around the load thread could see it.
+    // 60000 chained nodes is a 1.2 MB file that would abort the process
+    // outright: a stack overflow is a guard-page fault, so neither the
+    // catch_unwind in the Explorer host nor the one around the load thread can
+    // see it.
     let error = read(&chain_glb(60_000)).expect_err("a chain this deep is malformed");
     assert!(
         format!("{error}").contains("nested too deeply"),
@@ -714,10 +713,10 @@ fn accepts_a_chain_within_the_bound() {
 #[test]
 fn an_index_sentinel_cannot_wrap_onto_a_valid_vertex() {
     // `base + a` is unchecked and this profile wraps: with a second primitive
-    // the sentinel 0xFFFF_FFFF used to alias the vertex just before `base`,
-    // so `Mesh::new` saw a plausible index and the triangle was built from the
-    // wrong vertex with no error. The first primitive was caught only because
-    // its base is zero.
+    // the sentinel 0xFFFF_FFFF would alias the vertex just before `base`, so
+    // `Mesh::new` would see a plausible index and build the triangle from the
+    // wrong vertex with no error. The first primitive cannot show this,
+    // because its base is zero.
     let glb = two_primitive_glb_with_index(0xFFFF_FFFF);
     let error = read(&glb).expect_err("an out-of-range corner is malformed");
     assert!(

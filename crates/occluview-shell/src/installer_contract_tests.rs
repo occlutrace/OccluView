@@ -1,8 +1,5 @@
 //! Contracts over what the installers write, and over the scripts that build
 //! them.
-//!
-//! Split out of `shell_contract_tests` to hold the workspace's 800-line file
-//! budget, which the module's own guard enforces.
 
 // A skipped contract check has to say so on stderr, or a green run would imply
 // it had verified something.
@@ -76,8 +73,7 @@ fn dcm_is_offered_to_the_user_and_never_taken_from_medical_dicom() {
     assert!(reg.contains("\".dcm\"=\"MeshFile.HPS\""));
 
     // DllRegisterServer applies the same rule; DllUnregisterServer must not,
-    // or a build that shipped before this policy keeps its .dcm entries
-    // through an uninstall.
+    // so an uninstall also removes .dcm entries that an earlier build wrote.
     let registration = super::shell_contract_tests::registration_source();
     assert!(registration.contains("if !owns_extension(ext) {\n            continue;"));
     assert!(registration.contains(
@@ -481,7 +477,7 @@ fn wix_default_build_directory_matches_the_shipped_unwind_profile() {
 fn release_msi_builds_the_preview_dll_from_the_pinned_working_shell_source() {
     // The viewer stays on the current dependency graph, but Explorer loads a
     // separate COM DLL. Its release payload must therefore come from the
-    // known-good shell revision rather than a hand-copied old binary.
+    // known-good shell revision rather than a hand-copied binary.
     let msi_build = include_str!("../../../install/build-msi.ps1");
     let workflow = include_str!("../../../.github/workflows/package-msi.yml");
     let pin = include_str!("../../../install/shell-pin.json");
@@ -586,11 +582,9 @@ fn commits_behind_in(file: &std::path::Path) -> Option<u64> {
 ///
 /// POSIX-only: the shim is a `#!/bin/bash` script that `sed`s a carriage return
 /// onto every line. On the Windows runners the separator, the shebang and the
-/// interpreter name all differ, and an earlier version of this test hardcoded
-/// `/usr/bin/python3` there, aborting the script and failing the suite on a
-/// platform it never meant to exercise. Windows is covered by the framing
-/// assertion above and by the packaging job itself, which runs this script on
-/// that runner and must produce a sane count.
+/// interpreter name all differ, so the test does not run there. Windows is
+/// covered by the framing assertion above and by the packaging job itself,
+/// which runs this script on that runner and must produce a sane count.
 #[cfg(unix)]
 #[test]
 fn the_shell_pin_report_survives_a_windows_crlf_python() {
@@ -602,9 +596,10 @@ fn the_shell_pin_report_survives_a_windows_crlf_python() {
     };
     let root = script.parent().and_then(|p| p.parent()).expect("repo root");
 
-    // A test that shells out is only meaningful when the box can spawn a child.
-    // Under a parallel run with a low process limit the fork fails and the
-    // script aborts for a reason unrelated to the contract; a skip is honest.
+    // A test that shells out is only meaningful when the host can spawn a
+    // child. Under a parallel run with a low process limit the fork fails and
+    // the script aborts for a reason unrelated to the contract, so the test
+    // reports a skip instead.
     let forked = Command::new("sh").arg("-c").arg("exit 0").output();
     if !forked.is_ok_and(|out| out.status.success()) {
         eprintln!("skipped: this host cannot fork a child process right now");

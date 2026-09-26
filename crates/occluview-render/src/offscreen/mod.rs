@@ -92,7 +92,7 @@ mod adapter_policy_tests {
 /// Renderer consumers have different liveness contracts: an Explorer
 /// thumbnail request has a small end-to-end budget, while a preview pane and
 /// a desktop export have their own bounded operation. Keeping this deadline
-/// explicit prevents one consumer from silently imposing its timeout on all
+/// explicit prevents one consumer from imposing its timeout on all
 /// others.
 #[derive(Clone, Copy, Debug)]
 pub struct RenderDeadline {
@@ -466,7 +466,7 @@ impl Offscreen {
 
     /// Create and verify the preferred adapter without a caller timeout.
     ///
-    /// This is the synchronous Preview Pane path. It deliberately shares the
+    /// This is the synchronous Preview Pane path. It shares the
     /// same hardware-then-fallback policy as bounded callers, but never turns
     /// an unfinished first frame into a timer-derived result.
     ///

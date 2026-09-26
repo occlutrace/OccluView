@@ -33,7 +33,7 @@ const COARSE_BUDGET: usize = 8_000;
 const DENSE_BUDGET: usize = 40_000;
 
 /// Bounded representatives used for the fixed-to-moving half of the overlap
-/// check. This is deliberately much smaller than the dense ICP level: it is a
+/// check. This is much smaller than the dense ICP level: it is a
 /// guard against a wrong patch, not a second dense registration pass.
 const RECIPROCAL_BUDGET: usize = 2_048;
 
@@ -42,7 +42,7 @@ const MIN_CORRESPONDENCES: usize = 6;
 
 /// A large scan must not be declared registered because six vertices happened
 /// to land on a neighbouring patch. Partial scans remain allowed; this is a
-/// deliberately small one-percent floor on the moving surface.
+/// small one-percent floor on the moving surface.
 const MIN_FORWARD_COVERAGE_FRACTION: f64 = 0.01;
 
 /// A committed refinement must explain a meaningful portion of the moving
@@ -56,15 +56,15 @@ const MIN_REFINEMENT_COVERAGE_FRACTION: f64 = 0.05;
 /// it follows the physical search setting rather than a mesh-size guess.
 const MAX_REFINEMENT_GEOMETRIC_RMS_FRACTION: f64 = 0.5;
 
-/// How far the TYPICAL matched vertex may sit from the surface it matched.
+/// How far the typical matched vertex may sit from the surface it matched.
 ///
 /// A fraction of the operator's correspondence radius, like the ceiling above,
 /// but this one is what tells an alignment from an accident. Two different
 /// jaws can be brought close enough that a third of one surface finds points on
 /// the other within the search radius; measured, that seating reports a
 /// geometric RMS of 0.58 mm and a coverage of 35 %, so it satisfies every
-/// threshold above while being exactly the "confidently wrong pose" this gate
-/// exists to stop.
+/// threshold above while being a confidently wrong pose that this gate
+/// refuses.
 ///
 /// The median separates them cleanly. On the same pair: the two-jaw seating has
 /// a median of 0.42 mm, while an arch seated against a displaced copy of itself
@@ -77,30 +77,27 @@ const MAX_REFINEMENT_MEDIAN_FRACTION: f64 = 0.10;
 ///
 /// The search radius is adjustable down to 0.2 mm, where a tenth of it is
 /// 0.02 mm — below the noise of the scanners this tool reads. A limit that
-/// tight would refuse a correct seating, which is the same failure the refusal
-/// this gate replaced produced, only arriving from the other side. The floor
-/// sits above scanner noise and well below the separation that matters.
+/// tight would refuse a correct seating. The floor sits above scanner noise
+/// and well below the separation that matters.
 const MIN_REFINEMENT_MEDIAN_MM: f64 = 0.08;
 
 /// The ceiling over that limit, in millimetres.
 ///
-/// The radius is also adjustable UP to 10 mm, where a tenth of it is a
+/// The radius is also adjustable up to 10 mm, where a tenth of it is a
 /// millimetre — wide enough to authorize two different jaws, which is the pose
-/// this gate exists to refuse. Measured on the real fixture pair that seating
-/// has a median of 0.42 mm, so the ceiling is set under it and above any
-/// seating that is actually an alignment. Without this end the gate weakens
-/// exactly when the operator widens the search.
+/// this gate refuses. Measured on the real fixture pair that seating has a
+/// median of 0.42 mm, so the ceiling is set under it and above any seating
+/// that is actually an alignment. Without this end the gate weakens when the
+/// operator widens the search.
 const MAX_REFINEMENT_MEDIAN_MM: f64 = 0.30;
 
 /// The proximity band that decides how much of the surface counts as seated.
 ///
-/// This was a literal `0.2` at its one call site, and it decides two things the
-/// operator cannot see: whether the global feature seed runs at all (at 0.9),
-/// and how much of the trim ratio is actually used (the fraction is multiplied
-/// by 0.8 and clamped to 0.1..0.8, silently replacing the ratio slider). The
-/// band is derived from the operator's correspondence radius and clamped, so it
-/// tracks a setting rather than a mesh-size guess, and it has a name so the
-/// derivation is visible.
+/// It decides two things the operator cannot see: whether the global feature
+/// seed runs at all (at 0.9), and how much of the trim ratio is actually used
+/// (the fraction is multiplied by 0.8 and clamped to 0.1..0.8, replacing the
+/// ratio slider). The band is derived from the operator's correspondence
+/// radius and clamped, so it tracks a setting rather than a mesh-size guess.
 fn seated_band_mm(influence_radius_mm: f64) -> f64 {
     (influence_radius_mm.abs() * SEATED_BAND_RADIUS_FRACTION)
         .clamp(MIN_SEATED_BAND_MM, MAX_SEATED_BAND_MM)
@@ -139,16 +136,16 @@ const HUBER_FACTOR: f64 = 1.345;
 /// truly rigid; the operated region sits within a couple of millimetres of the
 /// original but is not congruent to it. A trimmed least-squares objective is
 /// minimised by spreading that deformation over everything — the reported
-/// residual goes DOWN while the scan goes sideways — so the pose the operator
-/// gets is the one that best hides the deformation, not the one that seats the
+/// residual goes down while the scan goes sideways — so that objective alone
+/// selects the pose that best hides the deformation, not the one that seats the
 /// surface that did not change.
 ///
 /// The band is the distance within which two acquisitions of the same surface
-/// agree, and it is deliberately much smaller than any correspondence radius.
-/// Measured on a real prepared arch pair, the true seating puts 0.203 of the
-/// sampled surface inside 0.05 mm while the published wrong pose manages 0.072,
-/// and refining from the true pose moves 1.98 mm AWAY from it — the objective,
-/// not the search, is what picks the wrong basin.
+/// agree, and it is much smaller than any correspondence radius. Measured on a
+/// real prepared arch pair, the true seating puts 0.203 of the sampled surface
+/// inside 0.05 mm while a trimmed-residual wrong pose manages 0.072, and
+/// trimmed-residual refinement from the true pose moves 1.98 mm away from it:
+/// the objective, not the search, picks the wrong basin.
 const SEATED_BAND_MM: f64 = 0.05;
 
 /// Rotation step below this (radians) counts as converged.
@@ -255,8 +252,8 @@ pub struct IcpReport {
     /// The trim ratio the fit actually ran at.
     ///
     /// Not the operator's slider value: the global-seed branch replaces it with
-    /// `near_surface_fraction(seed) * 0.8` clamped to 0.1..0.8, so the panel was
-    /// unable to say which algorithm had run. Carried here so it can.
+    /// `near_surface_fraction(seed) * 0.8` clamped to 0.1..0.8. Carried here so
+    /// the panel can state which algorithm ran.
     pub effective_matching_ratio: f64,
     /// Fraction of the level's samples inside the seated band of the surface
     /// (see `SEATED_BAND_MM`).
@@ -354,7 +351,7 @@ struct Correspondence {
 /// proved. Those are the two bounded stages the total move is made of; the
 /// refinement's own travel is not allowed to grow beyond the first two terms.
 /// A surface with enough pairs but no accepted improvement returns
-/// [`FitRejection::NoImprovement`] instead of silently claiming a refined pose.
+/// [`FitRejection::NoImprovement`] instead of claiming a refined pose.
 /// A solve that stops on an iteration budget returns its best report with
 /// `converged == false`, which is not by itself a success: callers must consult
 /// [`IcpReport::is_trustworthy_refinement`].
@@ -473,10 +470,9 @@ pub fn refine(
         p95_abs: summary.p95_abs,
         weak_rot_axes: summary.weak_rot_axes,
         weak_trans_axes: summary.weak_trans_axes,
-        // The value that RAN, not the operator's slider: the global-seed branch
+        // The value that ran, not the operator's slider: the global-seed branch
         // lowers it to `near_surface_fraction(seed) * 0.8` clamped to 0.1..0.8
-        // (`adaptive_settings`), so publishing the slider made the doc on this
-        // field false.
+        // (`adaptive_settings`).
         effective_matching_ratio: adaptive_settings.matching_ratio,
         seated_fraction: summary.seated_fraction,
     })
@@ -576,13 +572,12 @@ fn near_surface_fraction(
 /// missing required evidence stage, not permission to keep the coarse report
 /// and call the result refined.
 ///
-/// This is a guard, not a live path: `sample_vertices` returns nothing only for
-/// a soup with no usable vertex, so emptiness does not depend on the budget and
-/// no level can be empty while another has evidence. It stays because the refine
-/// contract must not rest on that property forever — a future sampler that can
-/// skip a level would otherwise let a sparse accidental coarse sample authorize
-/// a refined pose. `an_empty_dense_level_cannot_reuse_coarse_evidence` pins the
-/// rule itself; the production path that could reach it is absent.
+/// The current sampler does not reach this refusal: `sample_vertices` returns
+/// nothing only for a soup with no usable vertex, so emptiness does not depend
+/// on the budget and no level can be empty while another has evidence. The
+/// refine contract does not rely on that sampler property: a sparse coarse
+/// sample never authorizes a refined pose on its own.
+/// `an_empty_dense_level_cannot_reuse_coarse_evidence` covers the rule.
 fn level_samples_are_usable(
     previous_summary: Option<Summary>,
     samples: &[u32],
@@ -635,11 +630,9 @@ struct Level<'a> {
 
 /// Search radii from the operator's own setting outwards.
 ///
-/// The operator's number is where the search STARTS. It used to be the maximum
-/// of a ladder whose first rung was a quarter of it, so a fit configured at
-/// 2.0 mm actually searched at 0.5 mm and found nothing on a pair a few
-/// millimetres apart, then reported that it could not confirm an improvement.
-/// The setting means what it says: reach that far first.
+/// The operator's number is where the search starts, not the top of a ladder:
+/// a fit configured at 2.0 mm searches 2.0 mm first, so a pair a few
+/// millimetres apart is found at the reach the operator set.
 ///
 /// Widening past it is bounded and only happens when the coverage floor is
 /// still unmet at that radius, which is the case the operator cannot fix by
@@ -729,9 +722,9 @@ struct GlobalSeedContext<'a> {
 const COARSE_TIE_RELATIVE_RMS: f64 = 0.02;
 const COARSE_TIE_COVERAGE: f64 = 0.02;
 /// Fraction of the incumbent's forward coverage a candidate must keep to win on
-/// residual alone. Relative, not absolute: an absolute allowance lifted the 1%
-/// search floor to an effective 3%, which is exactly the regime where a small
-/// patch competes with the operator's own start.
+/// residual alone. Relative, not absolute: an absolute allowance would lift the
+/// 1% search floor to an effective 3%, the regime where a small patch competes
+/// with the operator's own start.
 const COARSE_COVERAGE_KEEP_FRACTION: f64 = 0.9;
 const COARSE_RECIPROCAL_ADVANTAGE: f64 = 0.01;
 const COARSE_RECIPROCAL_RMS_FACTOR: f64 = 1.25;
@@ -797,8 +790,8 @@ fn choose_start_pose(level: &Level<'_>) -> Result<StartPose, FitRejection> {
     // Remember whether the operator's pose itself produced usable evidence.
     // A centered component seed can see a neighbouring surface through a
     // generous influence radius even when the requested pose has no hit at
-    // all. Letting that accidental seed decide whether global recovery runs
-    // was the reason a small partial crop stayed sideways.
+    // all. That accidental seed must not decide whether global recovery runs,
+    // or a small partial crop stays sideways.
     let (start_candidate, start_has_strong_evidence) = coarse_start_candidate(level, moving_center);
     if let Some(candidate) = start_candidate {
         candidates.push(candidate);
@@ -1118,7 +1111,6 @@ fn nearest_component_index(level: &Level<'_>, pose: Rigid, moving_center: DVec3)
         .map(|(index, _)| index)
 }
 
-/// Whether a candidate keeps enough of the incumbent's forward coverage.
 /// Seated-fraction difference that counts as a real advantage rather than
 /// noise. Two poses a few micrometres apart seat the same surface.
 const COARSE_TIE_SEATED: f64 = 0.01;
@@ -1131,8 +1123,8 @@ fn coarse_keeps_coverage(candidate: f64, current: f64) -> bool {
 /// Whether a candidate explains materially more of the fixed surface.
 ///
 /// Missing evidence on either side is not a gain: a point-cloud layer has no
-/// reverse surface to query, and treating that absence as "explains more" let a
-/// residual-only win discard most of the operator's coverage.
+/// reverse surface to query, and treating that absence as "explains more" would
+/// let a residual-only win discard most of the operator's coverage.
 fn coarse_explains_more_fixed(
     candidate: Option<ReciprocalSummary>,
     current: Option<ReciprocalSummary>,
@@ -1149,9 +1141,9 @@ fn coarse_candidate_is_better(candidate: &CoarseCandidate, current: &CoarseCandi
     // Seating comes before every residual comparison. A candidate that puts
     // materially more of the surface inside the seated band is the better
     // answer even when its trimmed residual is worse, because the residual is
-    // exactly what a deformed majority can drive down. Without this the search
-    // walked from the operator's own placement into the basin that best hides
-    // a preparation.
+    // what a deformed majority can drive down. Without this the search walks
+    // from the operator's own placement into the basin that best hides a
+    // preparation.
     if candidate.summary.seated_fraction > current.summary.seated_fraction + COARSE_TIE_SEATED {
         return true;
     }
@@ -1236,18 +1228,15 @@ fn coarse_seed_order(left: &CoarseCandidate, right: &CoarseCandidate) -> std::cm
         })
 }
 
-/// Whether a competing coarse hypothesis is a rival ANSWER to the best one.
+/// Whether a competing coarse hypothesis is a rival answer to the best one.
 ///
-/// A rival has to be at least as good on BOTH axes. The guard below exists to
-/// stop the tool picking one of two equally supported seatings by component id;
-/// it is not a reason to give up on a pair the search can seat.
+/// A rival has to be at least as good on both axes. The guard below stops the
+/// tool picking one of two equally supported seatings by component id; it is
+/// not a reason to give up on a pair the search can seat.
 ///
-/// It used to admit a candidate that was merely CLOSE on both axes, extra
-/// tolerance included, so a hypothesis worse in residual AND worse in coverage
-/// still counted as an equally plausible rival and refused the fit. That is
-/// what the operator saw as the tool giving up on two scans placed near each
-/// other: the competing hypothesis explained the surface less well by both
-/// measures, and nothing about it was worth abandoning the better pose for.
+/// A candidate that is merely close on both axes is not a rival: a hypothesis
+/// worse in residual and worse in coverage explains the surface less well by
+/// both measures and does not refuse the better pose.
 fn coarse_candidates_are_equivalent(candidate: &CoarseCandidate, best: &CoarseCandidate) -> bool {
     let worse_on_residual = candidate.summary.geometric_rms > best.summary.geometric_rms;
     let worse_on_coverage = candidate.summary.coverage < best.summary.coverage;
@@ -1286,11 +1275,11 @@ fn turn_between(left: Rigid, right: Rigid) -> f64 {
 ///
 /// A hypothesis that flips or rolls the jaw is not a rival answer to the same
 /// question, it is a different question. The coarse search tries 24 cube
-/// orientations, so an upside-down pose that happens to cover a comparable
-/// patch used to tie with the upright seating and the whole fit was refused as
-/// `Ambiguous` — measured on a real arch pair, at every starting distance from
-/// touching to 40 mm apart. `Orientation` is how an operator asks for a flipped
-/// answer; the ambiguity guard is not.
+/// orientations, and on a real arch pair an upside-down pose covers a patch
+/// comparable to the upright seating at every starting distance from touching
+/// to 40 mm apart; counting it as a rival would refuse every such fit as
+/// `Ambiguous`. `Orientation` is how an operator asks for a flipped answer;
+/// the ambiguity guard is not.
 const COARSE_SAME_QUESTION_RAD: f64 = std::f64::consts::FRAC_PI_2;
 
 fn coarse_candidates_are_ambiguous(
@@ -1305,7 +1294,7 @@ fn coarse_candidates_are_ambiguous(
     // deterministically would authorize a misleading heatmap. Treat every
     // distinct, equally supported nearby pose as ambiguous.
     //
-    // "Distinct" means distinct as an ANSWER, so a hypothesis that turns the
+    // "Distinct" means distinct as an answer, so a hypothesis that turns the
     // scan onto a different face of the cube is not a rival: see
     // `COARSE_SAME_QUESTION_RAD`.
     candidate.shift <= best.shift + COARSE_TIE_SHIFT_MM
@@ -1314,13 +1303,13 @@ fn coarse_candidates_are_ambiguous(
         && coarse_candidates_are_equivalent(candidate, best)
 }
 
-/// Whether two coarse poses are different ANSWERS, judged at the scan's scale.
+/// Whether two coarse poses are different answers, judged at the scan's scale.
 ///
 /// Comparing a translation against one epsilon and a rotation against another
-/// treats the two independently, and that is what refused every real arch pair:
-/// two hypotheses six MICROMETRES apart in translation and 0.62 degrees apart in
-/// rotation — one seating, parameterised twice — cleared the rotation epsilon
-/// (0.57 degrees) and were declared two rival answers.
+/// treats the two independently and refuses real arch pairs: two hypotheses
+/// six micrometres apart in translation and 0.62 degrees apart in rotation —
+/// one seating, parameterised twice — clear a 0.57-degree rotation epsilon and
+/// would be declared two rival answers.
 ///
 /// What matters is how far the two poses actually move the geometry. A rotation
 /// of `dr` about the scan's centre moves its rim by `dr * extent/2`, so the
@@ -1365,7 +1354,7 @@ fn coarse_orientation_deltas() -> [DQuat; 24] {
 #[expect(
     clippy::too_many_lines,
     reason = "one iteration loop whose branches are the documented stop and trial rules; \
-              splitting it hid the frame in which `summary` and `pose` must stay paired"
+              splitting it hides the frame in which `summary` and `pose` must stay paired"
 )]
 fn run_level(level: &Level<'_>) -> Result<LevelOutcome, FitRejection> {
     let mut pose = level.start;
@@ -1379,7 +1368,7 @@ fn run_level(level: &Level<'_>) -> Result<LevelOutcome, FitRejection> {
     let mut best: Option<(Rigid, Summary)> = None;
     let radii = if level.settings.local_only {
         // The operator has already brought the scans together. Respect the
-        // requested physical reach instead of silently looking 4x farther.
+        // requested physical reach instead of looking 4x farther.
         vec![level.settings.influence_radius_mm]
     } else {
         influence_radius_ladder(level.settings.influence_radius_mm)
@@ -1407,18 +1396,17 @@ fn run_level(level: &Level<'_>) -> Result<LevelOutcome, FitRejection> {
         let measured = summarize(&found, &kept, matched, level.samples.len(), &normal_matrix);
         let measured_reciprocal = reciprocal_evidence(level, pose, radii[radius_slot]);
         if !reciprocal_evidence_is_usable(level, measured_reciprocal) {
-            // Unusable reciprocal evidence means THIS iteration cannot be
-            // trusted, not that the fit is worthless. Refusing here discarded a
-            // pose the level had already measured, which is the same mistake the
-            // two guards below used to make. With nothing measured yet there is
-            // no result to keep, so only that case stays a refusal.
+            // Unusable reciprocal evidence means this iteration cannot be
+            // trusted, not that the fit is worthless, so a pose the level has
+            // already measured is kept. With nothing measured yet there is no
+            // result to keep, so only that case is a refusal.
             if summary.is_none() && best.is_none() {
                 return Err(FitRejection::NoImprovement);
             }
             break;
         }
         summary = Some(measured);
-        // `measured` describes the pose the correspondences were found AT, not
+        // `measured` describes the pose the correspondences were found at, not
         // the one the step below produces. Remember the pair together.
         let seats_more = measured.seated_fraction > best_seated + COARSE_TIE_SEATED;
         let seats_same = (measured.seated_fraction - best_seated).abs() <= COARSE_TIE_SEATED;
@@ -1433,12 +1421,11 @@ fn run_level(level: &Level<'_>) -> Result<LevelOutcome, FitRejection> {
         }
 
         let Some(step) = solve_damped(&normal_matrix, &gradient) else {
-            // A rank-deficient system is a STOP, not a refusal. It says the
+            // A rank-deficient system is a stop, not a refusal. It says the
             // local model has no further direction to move, which is what a
             // seated pair looks like; the pose goes back through `best` below.
-            // Returning Err here discarded every correspondence the level had
-            // found, and a real pair never reaches an exact zero residual, so
-            // the fit was thrown away exactly when it had converged.
+            // A real pair never reaches an exact zero residual, so refusing
+            // here would discard the fit at the point it converged.
             break;
         };
         let rotation = DVec3::new(step[0], step[1], step[2]);
@@ -1455,25 +1442,17 @@ fn run_level(level: &Level<'_>) -> Result<LevelOutcome, FitRejection> {
                 radius: radii[radius_slot],
             },
         ) else {
-            // Never apply a step that was not evaluated as an improvement. The
-            // previous implementation did, so a nearest-surface change could
-            // rotate a rough pair sideways while its report still looked valid.
+            // Never apply a step that was not evaluated as an improvement: a
+            // nearest-surface change could rotate a rough pair sideways while
+            // its report still looked valid.
             //
-            // Stopping here is not an error either. The step we could not
-            // improve on was already below the convergence epsilon, which is a
-            // stationary pose; `converged` describes that STEP and never the
-            // size of the residual, because a residual threshold is a quality
-            // judgement and this function only decides where to stop.
-            // The line search could not improve on what the level already has,
-            // which is the definition of a settled pose. `converged` therefore
-            // describes THIS outcome: there is no further movement to be had.
-            //
-            // It used to be set only when the rejected step happened to be tiny,
-            // so a level that had genuinely stopped after a few productive
-            // iterations reported `converged = false` and the trust gate threw
-            // its pose away — the operator saw a refusal on a pair the tool had
-            // already seated. How far the rejected step would have travelled is
-            // not evidence about the pose that was kept.
+            // Stopping here is not an error. The line search could not improve
+            // on what the level already has, which is the definition of a
+            // settled pose, so `converged` describes this outcome. How far the
+            // rejected step would have travelled is not evidence about the pose
+            // that was kept, and `converged` never describes the size of the
+            // residual: a residual threshold is a quality judgement and this
+            // function only decides where to stop.
             converged = true;
             break;
         };
@@ -1645,13 +1624,12 @@ fn summarize(
 ) -> Summary {
     // How much of the surface is actually seated.
     //
-    // Taken over EVERY correspondence found at this pose, not over `kept`. That
-    // is the whole point of the statistic: the trimmed set is chosen by
-    // distance, so a deformed majority always fills it and pushes the rigid
-    // part of the same surface out — measuring seating inside `kept` would
-    // report the deformation's own coherence and call it a fit. Counted
-    // against the sampled population, so a pose that explains only a sliver
-    // cannot look seated either.
+    // Taken over every correspondence found at this pose, not over `kept`:
+    // the trimmed set is chosen by distance, so a deformed majority always
+    // fills it and pushes the rigid part of the same surface out — measuring
+    // seating inside `kept` would report the deformation's own coherence and
+    // call it a fit. Counted against the sampled population, so a pose that
+    // explains only a sliver cannot look seated either.
     let seated = found
         .iter()
         .flatten()

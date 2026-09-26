@@ -37,12 +37,12 @@ const CONSENSUS_MM: f64 = 0.5;
 const TIGHT_CONSENSUS_MM: f64 = 0.05;
 /// Independent matches one agreement must carry before it can seed a fit.
 ///
-/// This is a floor on EVIDENCE, not on the fraction of the cloud: a prepared
+/// This is a floor on evidence, not on the fraction of the cloud: a prepared
 /// model keeps only its unchanged region rigid, and that region can be a small
 /// minority of the surface. On a real prepared arch pair the true seating
-/// carried 12 spatially extended agreements, so a floor of 24 refused the one
-/// correct hypothesis and left the search to a coarse orientation sweep that
-/// landed 2.5 mm away. The floor is only safe because the seed is not trusted
+/// carries 12 spatially extended agreements; a floor of 24 refuses that one
+/// correct hypothesis and leaves the search to a coarse orientation sweep that
+/// lands 2.5 mm away. The floor is only safe because the seed is not trusted
 /// on its own: `refine` refuses any pose more than a millimetre from it, so a
 /// coincidental twelve-point agreement produces a refusal, not a wrong pose.
 const MIN_SUPPORT: usize = 12;
@@ -143,8 +143,8 @@ pub(super) fn find_feature_seed(
     }
     let mut best = best?;
     // Not a fixed fraction of the matched cloud: a changed arch supplies most
-    // of its features from the region that no longer matches, so requiring a
-    // share of them would refuse exactly the case this seed exists for. What
+    // of its features from the changed region, which does not match, so
+    // requiring a share of them would refuse the case this seed exists for. What
     // matters is that no rival explains as much, and that the support is
     // spatially extended rather than a coincidental cluster.
     // A rival is only a rival if it seats as well. Two hypotheses that both

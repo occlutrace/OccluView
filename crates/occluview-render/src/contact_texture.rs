@@ -120,7 +120,7 @@ impl ContactFieldTexels {
 /// The group-2 material for one layer painting a contact field: the packed
 /// field, a base texture at binding 0, and a sampler.
 ///
-/// The base is the LAYER'S OWN atlas when it has one — `upload` takes it as
+/// The base is the layer's own atlas when it has one — `upload` takes it as
 /// `base`, and both offscreen call sites pass the layer's texture. The shader
 /// samples that base for the surface colour and mixes the contact ramp over it
 /// (`mesh.wgsl`, the contact branch), so a textured scan keeps its texture

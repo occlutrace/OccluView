@@ -57,10 +57,6 @@ fn fit_to_device(tex: &MeshTexture, limit: u32) -> Option<MeshTexture> {
 
 /// A texture resident on the GPU: the `wgpu::Texture`, its view, a sampler and
 /// the bind group (group 2) that binds them at bindings 0 and 1.
-///
-/// An earlier edit inserted `fit_to_device` between this doc's first line and
-/// its tail, so the opening sentence described the wrong item and the tail
-/// dangled on the struct.
 pub struct GpuTexture {
     /// Owns the GPU memory; kept alive so the view and sampler stay valid.
     #[allow(dead_code)]
@@ -159,7 +155,7 @@ impl GpuTexture {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            // `Rgba8Unorm`, NOT `Rgba8UnormSrgb`.
+            // `Rgba8Unorm`, not `Rgba8UnormSrgb`.
             //
             // The whole pipeline writes into an `Rgba8Unorm` target and encodes
             // nothing on the way out, so whatever the shader returns is what
@@ -169,12 +165,12 @@ impl GpuTexture {
             // then be written out as if it were sRGB -- the same nominal colour
             // arriving darker through a texture than through a vertex.
             //
-            // Same triangle, same light: sRGB 128 rendered as 70 from a
-            // texture against 129 from a vertex colour, and sRGB 200 as 159
-            // against 198. That is the flagship formats (HPS and GLB, colour in
-            // a texture) and the open ones (PLY and OBJ, colour in vertices) on
-            // two different scales, in a viewer whose job includes judging
-            // colour.
+            // Same triangle, same light: sRGB 128 renders as 70 from an
+            // sRGB-typed texture against 129 from a vertex colour, and sRGB
+            // 200 as 159 against 198. That would put the flagship formats (HPS
+            // and GLB, colour in a texture) and the open ones (PLY and OBJ,
+            // colour in vertices) on two different scales, in a viewer whose
+            // job includes judging colour.
             format: wgpu::TextureFormat::Rgba8Unorm,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
@@ -249,8 +245,8 @@ mod tests {
     /// A texture the device cannot hold is boxed down, not dropped.
     ///
     /// The readers accept up to 8192 px and some devices stop at 2048, so a
-    /// scan with a 4096-pixel atlas used to decode, pay for its memory and
-    /// then render nothing at all.
+    /// scan with a 4096-pixel atlas would otherwise decode, pay for its memory
+    /// and then render nothing at all.
     #[test]
     fn an_oversized_texture_is_boxed_down_to_the_device_limit() {
         // 4x2 of two solid halves, so the average of each box is exact.

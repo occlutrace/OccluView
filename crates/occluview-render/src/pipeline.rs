@@ -16,10 +16,11 @@ use std::sync::{
 };
 
 /// Shared latch for the most recent wgpu uncaptured error. wgpu's default
-/// uncaptured-error handler PANICS, which is a hard process abort in a release
+/// uncaptured-error handler panics, which is a hard process abort in a release
 /// default build (`panic = "abort"`) — a single driver hiccup or validation
-/// slip would kill the app. We install a handler that records the message here instead;
-/// the app polls [`Renderer::take_gpu_error`] and surfaces it honestly.
+/// slip would kill the app. The renderer installs a handler that records the
+/// message here instead; the app polls [`Renderer::take_gpu_error`] and
+/// surfaces it.
 pub(crate) type GpuErrorLatch = Arc<Mutex<Option<String>>>;
 
 /// Record a wgpu error into the latch (called from the device error handler).
@@ -492,7 +493,7 @@ impl Renderer {
     ///
     /// Read from the live device rather than assumed from the request: a
     /// `wgpu::Limits` request intersected with the adapter by
-    /// `or_worse_values_from` keeps the SMALLER of the two, so a machine whose
+    /// `or_worse_values_from` keeps the smaller of the two, so a machine whose
     /// adapter reports 2048 gets 2048 while the app's constant still says 8192.
     /// Anything sized for a texture must ask here.
     #[must_use]
@@ -542,8 +543,8 @@ impl Renderer {
     ///
     /// Clearing the flag does not repair anything by itself: the next paint
     /// either succeeds or raises the fault again, and the dialog is not
-    /// re-armed until the latch reports a new message. The alternative — the
-    /// only documented recovery — was to close the viewer and lose the scene.
+    /// re-armed until the latch reports a new message. Without it, the only
+    /// recovery is to close the viewer and lose the scene.
     pub fn clear_gpu_fault(&self) {
         self.gpu_faulted.store(false, Ordering::Release);
     }

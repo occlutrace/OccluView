@@ -168,7 +168,7 @@ fn default_thumbnail_background_is_transparent() {
 }
 
 /// Rewrites `tests/golden/baselines/triangle.png` from the current renderer.
-/// Run deliberately after an intentional shader change:
+/// Run after an intentional shader change:
 /// `cargo test -p occluview-render --test golden_image regenerate_golden_triangle -- --ignored`
 #[test]
 #[ignore = "regenerates the committed golden baseline; run only after an intentional shader change"]
@@ -669,7 +669,7 @@ fn point_cloud_splat_edges_use_fractional_coverage() {
 
 /// A shallow dome in one flat colour.
 ///
-/// Curvature is the point: a flat triangle has uniform luminance under any
+/// Curvature is required: a flat triangle has uniform luminance under any
 /// lighting, so a shading test built on one would pass whatever the shader did.
 /// This fan has a raised centre, so its normals — and therefore its shading —
 /// vary across the surface.
@@ -699,12 +699,12 @@ fn colored_dome_mesh(color: [u8; 4]) -> Mesh {
     builder.build().expect("valid dome mesh")
 }
 
-/// A measured colour map has two jobs at once, and an earlier version of this
-/// flag only did the first: it emitted the exact colour with no lighting, which
-/// left the surface a flat silhouette with no readable form. A heat map you
-/// cannot see the shape of tells you nothing about a scan.
+/// A measured colour map has two jobs at once: it keeps the exact colour, and
+/// it keeps the surface shaded. The exact colour with no lighting leaves the
+/// surface a flat silhouette with no readable form, and a heat map without a
+/// visible shape says nothing about a scan.
 ///
-/// So this test requires BOTH: the hue must survive (the ramp is the
+/// So this test requires both: the hue must survive (the ramp is the
 /// measurement), and the surface must still be shaded (luminance has to vary
 /// across it). It is also the only check that the flag reaches the shader at
 /// the right offset — a struct-layout slip would read another field's bits and
@@ -766,7 +766,7 @@ fn a_measured_map_keeps_its_hue_and_its_shading() {
     assert!(
         brightest.saturating_sub(darkest) > 8,
         "a measured map must still be shaded: the surface came out flat \
-         ({darkest}..{brightest}), which is the unreadable blob this flag once produced"
+         ({darkest}..{brightest}), an unreadable blob"
     );
 
     let differs_from_plain_lit = lit_pixels

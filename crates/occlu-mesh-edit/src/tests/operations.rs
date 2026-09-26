@@ -431,10 +431,9 @@ fn fill_holes_respects_selection_scoped_loop_gating() {
 /// A pile of coincident vertices must not make the duplicate-normal pass
 /// quadratic.
 ///
-/// Bounding core's loader path alone makes it worse, not better: the file then
-/// opens in milliseconds, the pile reaches the scene, and the first Repair,
-/// Close holes or Invert normals runs this on the UI thread with no repaint, no
-/// progress and no cancel.
+/// A file that loads quickly still brings the pile into the scene, and Repair,
+/// Close holes and Invert normals run this pass on the UI thread with no
+/// repaint, no progress and no cancel.
 #[test]
 fn a_huge_coincident_vertex_group_stays_linear_on_the_edit_path() {
     let group = 20_000usize;
@@ -462,9 +461,9 @@ fn a_huge_coincident_vertex_group_stays_linear_on_the_edit_path() {
     recompute_all_normals(&mut vertices, &indices).expect("valid mesh");
     let elapsed = started.elapsed();
 
-    // Measured here in the test profile at this k: 820 ms pairwise against
-    // 16 ms bounded. 300 ms sits between them with room on either side for a
-    // runner that is not this machine.
+    // Measured in the test profile at this k: 820 ms pairwise against 16 ms
+    // bounded. 300 ms sits between them with room on either side for faster
+    // or slower runners.
     assert!(
         elapsed < std::time::Duration::from_millis(300),
         "coincident-group normal smoothing took {elapsed:?} on the edit path; \
@@ -481,8 +480,8 @@ fn a_huge_coincident_vertex_group_stays_linear_on_the_edit_path() {
 
 /// A crease inside a coincident pile past the bounded threshold must survive.
 ///
-/// The same defect as in `occluview-core`: judging the whole group against one
-/// mean puts that mean on the bisector of two clusters and welds both to it.
+/// As in `occluview-core`, judging the whole group against one mean puts that
+/// mean on the bisector of two clusters and welds both to it.
 #[test]
 fn a_crease_survives_a_group_past_the_threshold_on_the_edit_path() {
     let group = 400usize;
