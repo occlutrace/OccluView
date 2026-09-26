@@ -836,6 +836,7 @@ align-reject-unpaired = Completa entrambi i lati di ogni freccia
 align-reject-degenerate-plain = Distribuisci i punti sulla superficie
 align-reject-unit = Le scansioni usano unità diverse
 align-reject-apart = Controlla le frecce e avvicina le scansioni
+align-reject-inconsistent = Le frecce non concordano: controlla che ognuna colleghi lo stesso punto su entrambe le scansioni
 align-reject-runaway = Avvicina le scansioni e riprova Best fit matching
 align-reject-no-improvement = Nessun miglioramento confermato — avvicina le scansioni e riprova
 align-reject-ambiguous = Trovate più superfici ugualmente plausibili — marca la zona corretta o avvicina le scansioni

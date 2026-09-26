@@ -836,6 +836,7 @@ align-reject-unpaired = Completa ambos lados de cada flecha
 align-reject-degenerate-plain = Distribuye los puntos por la superficie
 align-reject-unit = Los escaneos usan unidades distintas
 align-reject-apart = Revisa las flechas y acerca los escaneos
+align-reject-inconsistent = Las flechas no concuerdan: revisa que cada una una el mismo punto en ambos escaneos
 align-reject-runaway = Acerca los escaneos y repite Best fit matching
 align-reject-no-improvement = El ajuste no confirmó una mejora — acerca los escaneos e inténtalo de nuevo
 align-reject-ambiguous = El ajuste encontró varias superficies igual de probables — marca la zona correspondiente o acerca los escaneos

@@ -336,7 +336,8 @@ impl OccluViewApp {
     ///
     /// Two solid surfaces a fraction of a millimetre apart interpenetrate, and
     /// the coloured one is then only visible in patches. Lab software shows one
-    /// clean coloured surface; this is how.
+    /// clean coloured surface; this is how. The fade is display state: the
+    /// layer's own opacity is left alone (see [`Self::displayed_opacity`]).
     pub(super) fn ghost_other_layer(&mut self) {
         if !self.tools.align.ghosted.is_empty() {
             return;
@@ -344,21 +345,15 @@ impl OccluViewApp {
         let Some(other) = self.align_other_layer() else {
             return;
         };
-        // Opacity is a material change; preserve the scene structure.
-        let Some(live) = self.document.live_scene_mut() else {
-            return;
-        };
-        let mut remembered = Vec::new();
-        for entry in live.meshes_mut() {
-            if entry.id() == other {
-                remembered.push((entry.id(), entry.opacity));
-                entry.opacity = GHOST_OPACITY;
-            }
-        }
-        if remembered.is_empty() {
+        let present = self
+            .document
+            .scene
+            .as_ref()
+            .is_some_and(|scene| scene.meshes().iter().any(|entry| entry.id() == other));
+        if !present {
             return;
         }
-        self.tools.align.ghosted = remembered;
+        self.tools.align.ghosted.push(other);
         self.mark_scene_materials_changed();
     }
 
@@ -367,16 +362,18 @@ impl OccluViewApp {
         if self.tools.align.ghosted.is_empty() {
             return;
         }
-        let restore = std::mem::take(&mut self.tools.align.ghosted);
-        let Some(live) = self.document.live_scene_mut() else {
-            return;
-        };
-        for (id, opacity) in restore {
-            if let Some(entry) = live.meshes_mut().iter_mut().find(|entry| entry.id() == id) {
-                entry.opacity = opacity;
-            }
-        }
+        self.tools.align.ghosted.clear();
         self.mark_scene_materials_changed();
+    }
+
+    /// The opacity a layer is drawn with this frame: faded while the map is up
+    /// on the other scan, its own otherwise.
+    pub(super) fn displayed_opacity(&self, layer: SceneMeshId, own: f32) -> f32 {
+        if self.tools.align.ghosted.contains(&layer) {
+            own.min(GHOST_OPACITY)
+        } else {
+            own
+        }
     }
 }
 
@@ -743,5 +740,114 @@ mod tests {
             scratch.iter().all(|vertex| vertex.color == [1, 2, 3, 255]),
             "the rejected write must leave the scratch exactly as it was"
         );
+    }
+
+    /// The fade is drawn, never written: a history step or a save taken while
+    /// the map is up must not capture it as the scan's own opacity.
+    #[test]
+    fn the_map_fade_is_drawn_not_written_into_the_scene() {
+        let (mut app, moving, fixed) = app_with_a_pair("align-fade-is-display");
+        let own = layer_entry(&app, fixed).opacity;
+        assert!(app.attach_overlay_colors(moving, vec![[7, 7, 7, 255]; 3], AlignOverlay::Map));
+        app.ghost_other_layer();
+
+        assert_eq!(
+            layer_entry(&app, fixed).opacity,
+            own,
+            "the scene keeps the scan's own opacity"
+        );
+        let scene = app.document.scene.clone().expect("a scene");
+        let drawn = |app: &OccluViewApp, layer: SceneMeshId| {
+            let index = scene
+                .meshes()
+                .iter()
+                .position(|entry| entry.id() == layer)
+                .expect("layer");
+            app.prepared_scene_updates(&scene)[index].uniform.opacity
+        };
+        assert!(
+            drawn(&app, fixed) < own,
+            "while the map is up the other scan is drawn faded"
+        );
+        assert_eq!(drawn(&app, moving), layer_entry(&app, moving).opacity);
+
+        app.clear_deviation_overlay();
+        assert_eq!(
+            drawn(&app, fixed),
+            own,
+            "and drawn at its own opacity again after"
+        );
+    }
+
+    /// Any scene install drops a measured map it carries: the install
+    /// invalidates the map, and a copy restored from history (Ctrl+Z, redo,
+    /// Cancel then Ctrl+Z) has no tool state left that would ever remove it.
+    #[test]
+    fn a_map_carried_into_a_scene_install_is_not_left_on_screen() {
+        let (mut app, moving, _fixed) = app_with_a_pair("align-map-not-restored");
+        assert!(app.attach_overlay_colors(moving, vec![[7, 7, 7, 255]; 3], AlignOverlay::Map));
+        let snapshot = app
+            .document
+            .scene
+            .as_ref()
+            .expect("a scene")
+            .as_ref()
+            .clone();
+        assert_eq!(
+            snapshot
+                .meshes()
+                .iter()
+                .find(|entry| entry.id() == moving)
+                .and_then(occluview_core::SceneMesh::overlay_kind),
+            Some(OverlayKind::Measured),
+            "the snapshot carries the map, as a history step taken now would"
+        );
+
+        app.set_scene(snapshot, false);
+
+        assert_eq!(layer_entry(&app, moving).overlay_kind(), None);
+        assert_eq!(app.tools.align.overlay, AlignOverlay::Nothing);
+    }
+
+    /// A scan added while the session is open is part of it: Cancel puts it
+    /// back where it arrived, as it says it does for every scan.
+    #[test]
+    fn cancel_puts_back_a_scan_added_during_the_session() {
+        let mut app = test_app("align-cancel-arrival");
+        let mut scene = named_scene("lower", 0.0);
+        push_named_layer(&mut scene, "upper", 5.0);
+        app.document.scene = Some(Arc::new(scene));
+        let ctx = eframe::egui::Context::default();
+        app.arm_align_tool(&ctx);
+
+        let mut next = app
+            .document
+            .scene
+            .as_ref()
+            .expect("a scene")
+            .as_ref()
+            .clone();
+        let added = push_named_layer(&mut next, "rescan", 9.0);
+        app.set_scene(next, false);
+        let arrived = layer_entry(&app, added).transform;
+
+        let mut moved = app
+            .document
+            .scene
+            .as_ref()
+            .expect("a scene")
+            .as_ref()
+            .clone();
+        for entry in moved.meshes_mut() {
+            if entry.id() == added {
+                entry.transform = glam::Affine3A::from_translation(glam::Vec3::new(3.0, -2.0, 1.0))
+                    * entry.transform;
+            }
+        }
+        app.set_scene(moved, false);
+        assert_ne!(layer_entry(&app, added).transform, arrived);
+
+        app.cancel_align_session(&ctx);
+        assert_eq!(layer_entry(&app, added).transform, arrived);
     }
 }
