@@ -79,6 +79,15 @@ remain in the Git history.
   second copy of a payload it was always going to reject. A header whose
   `OccluViewTexture` keys were re-cased by a text editor reads as before,
   matching the case-insensitive treatment `TextureFile` already had.
+- An HPS/DCM scan whose texture has its red and blue channels transposed is
+  corrected to warm at any brightness. The check previously compared a
+  brightness-scaled margin, so the same swap was caught on a dark atlas and
+  missed on a bright one; a 3Shape lab scanner writes the bright kind, and
+  those scans opened with cyan gingiva and blue-tinted enamel. It now measures
+  the blue bias per hue-bearing pixel and requires a near-uniform bias of at
+  least 24 levels on average. The sample spans rows and columns, so a
+  power-of-two atlas is judged from the whole picture. A texture whose format
+  is declared explicitly is decoded as declared and never re-guessed.
 - The save format is no longer a setting. Settings used to ask "each scan keeps
   its own format" or "chosen format", with a format to pick in the second mode
   and two lines explaining the consequence — and the mode that was in force
