@@ -6,8 +6,14 @@
 //! type while running the event loop. Replacing `NSApplication.delegate` would
 //! therefore break `winit`; adding the two optional document selectors to the
 //! live delegate class preserves its identity and lifecycle.
+//!
+//! When Finder launches the app to open a document, `AppKit` delivers it after
+//! `applicationWillFinishLaunching:` and before `applicationDidFinishLaunching:`.
+//! eframe creates the window, and runs the app creator, only after the latter,
+//! so the selectors are added from a `WillFinishLaunching` observer registered
+//! before the event loop runs. Added any later, a cold launch finds no handler
+//! and `AppKit` reports that OccluView cannot open the file's format.
 
-#[cfg(test)]
 use objc::declare::ClassDecl;
 use objc::runtime::{
     class_addMethod, class_getInstanceMethod, object_getClass, Class, Imp, Object, Sel, BOOL, NO,
@@ -17,6 +23,12 @@ use objc::{class, msg_send, sel, sel_impl};
 use std::ffi::{c_char, CStr};
 use std::os::unix::ffi::OsStringExt;
 use std::path::PathBuf;
+use std::sync::Once;
+
+/// Runtime class of the launch observer, registered once.
+const LAUNCH_OBSERVER_CLASS: &str = "OccluViewLaunchObserver";
+/// Adds the document selectors at most once, whichever caller comes first.
+static INSTALL: Once = Once::new();
 
 const OBJECT_PAIR_METHOD_ENCODING: &[u8] = b"v@:@@\0";
 
@@ -55,8 +67,70 @@ fn add_open_methods(class: *mut Class) -> Result<(), &'static str> {
     Ok(())
 }
 
-/// Install document handlers once `eframe` has created `winit`'s `NSApplication`.
+/// Arrange for [`install`] to run as `NSApplication` finishes launching, before
+/// `AppKit` delivers the documents of a Finder launch. Call before the event
+/// loop runs; `winit` has set its delegate by the time the notification fires.
+pub(super) fn install_when_launching() {
+    let Some(observer_class) = launch_observer_class() else {
+        tracing::warn!("launch observer class unavailable; Finder documents open once running");
+        return;
+    };
+    unsafe {
+        // Never released: the notification centre does not retain observers,
+        // and this one has to outlive the launch.
+        let observer: *mut Object = msg_send![observer_class, new];
+        let center: *mut Object = msg_send![class!(NSNotificationCenter), defaultCenter];
+        let name: *mut Object = msg_send![
+            class!(NSString),
+            stringWithUTF8String: c"NSApplicationWillFinishLaunchingNotification".as_ptr()
+        ];
+        if observer.is_null() || center.is_null() || name.is_null() {
+            tracing::warn!("launch observer not registered; Finder documents open once running");
+            return;
+        }
+        let _: () = msg_send![
+            center,
+            addObserver: observer
+            selector: sel!(occluviewWillFinishLaunching:)
+            name: name
+            object: std::ptr::null_mut::<Object>()
+        ];
+    }
+}
+
+/// The observer class whose one method runs [`install`].
+fn launch_observer_class() -> Option<&'static Class> {
+    static REGISTER: Once = Once::new();
+    REGISTER.call_once(|| {
+        let Some(mut declaration) = ClassDecl::new(LAUNCH_OBSERVER_CLASS, class!(NSObject)) else {
+            return;
+        };
+        unsafe {
+            declaration.add_method(
+                sel!(occluviewWillFinishLaunching:),
+                will_finish_launching as extern "C" fn(&Object, Sel, *mut Object),
+            );
+        }
+        declaration.register();
+    });
+    Class::get(LAUNCH_OBSERVER_CLASS)
+}
+
+extern "C" fn will_finish_launching(
+    _observer: &Object,
+    _selector: Sel,
+    _notification: *mut Object,
+) {
+    install();
+}
+
+/// Add the document handlers to `winit`'s `NSApplication` delegate. Runs at
+/// most once; later calls do nothing.
 pub(super) fn install() {
+    INSTALL.call_once(install_now);
+}
+
+fn install_now() {
     unsafe {
         let application: *mut Object = msg_send![class!(NSApplication), sharedApplication];
         if application.is_null() {
