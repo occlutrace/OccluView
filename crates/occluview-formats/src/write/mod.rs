@@ -7,6 +7,7 @@
 mod obj;
 mod ply;
 mod stl;
+mod vertex_color;
 
 use crate::error::FormatError;
 use occluview_core::{Mesh, MeshKind};
@@ -50,7 +51,8 @@ pub struct MeshWriteOptions {
     pub include_vertex_colors: bool,
     /// Write UV coordinates when the format supports them.
     pub include_uvs: bool,
-    /// Write a texture image when the format carries one.
+    /// Sample an attached texture onto the vertices when the format cannot
+    /// hold an image (PLY, OBJ).
     pub include_texture: bool,
 }
 
@@ -68,11 +70,12 @@ impl Default for MeshWriteOptions {
 /// Non-fatal export warnings emitted by the writer.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MeshWriteWarning {
-    /// Vertex colors were present but not written.
+    /// The mesh's own per-vertex colors were present but not written, either
+    /// because colors were excluded or because an atlas was baked over them.
     VertexColorsNotWritten,
     /// UVs were present but not written.
     UvsNotWritten,
-    /// A texture image was attached but not written.
+    /// A texture image was attached but could not be carried.
     TextureImageNotWritten,
     /// Per-vertex alpha was present but the format carries only RGB.
     VertexAlphaNotWritten,
@@ -214,8 +217,7 @@ fn ensure_format_can_represent(
     {
         return Err(malformed("mesh contains a non-finite vertex normal"));
     }
-    if format == MeshWriteFormat::Obj
-        && options.include_uvs
+    if options.include_uvs
         && mesh.has_uvs()
         && mesh
             .vertices()
@@ -583,10 +585,8 @@ impl std::fmt::Display for FmtF32 {
 
 #[cfg(test)]
 mod tests {
-    /// An export is one file. The image travels inside it, so nothing is
-    /// written beside it and nothing has to be kept together with it.
-    /// A payload this build does not understand is left alone rather than
-    /// decoded on a guess.
+    /// A payload whose declared format this build does not know is left alone
+    /// rather than decoded on a guess.
     #[test]
     fn a_payload_with_an_unknown_format_is_not_decoded() {
         let header = "ply\nformat ascii 1.0\n\
@@ -603,63 +603,29 @@ mod tests {
         );
     }
 
-    /// A texture whose buffer does not match its dimensions must not reach the
-    /// PNG encoder: it asserts, and the shipped profile aborts on panic, so an
-    /// export would close the viewer.
+    /// A textured export follows the scanner convention: colour on the
+    /// vertices, one file, and no encoded image in the header.
     #[test]
-    fn a_texture_whose_pixels_disagree_with_its_size_is_not_written() {
-        let mesh = crate::ply::read(
-            b"ply\nformat ascii 1.0\n\
-              element vertex 3\n\
-              property float x\nproperty float y\nproperty float z\n\
-              property float s\nproperty float t\n\
-              element face 1\n\
-              property list uchar int vertex_indices\n\
-              property list uchar float texcoord\n\
-              end_header\n0 0 0 0 1\n1 0 0 1 1\n0 1 0 0 0\n3 0 1 2 6 0 1 1 1 0 0\n",
-        )
-        .expect("a triangle with coordinates");
-        let mut mesh = mesh;
-        mesh.set_texture(occluview_core::MeshTexture {
-            width: 4,
-            height: 4,
-            rgba: vec![0; 8],
-        });
-
-        let directory =
-            std::env::temp_dir().join(format!("occluview-broken-texture-{}", std::process::id()));
-        std::fs::create_dir_all(&directory).expect("temp dir");
-        let path = directory.join("broken.ply");
-        write_mesh_to_new_file(
-            &path,
-            &mesh,
-            MeshWriteFormat::PlyBinaryLittleEndian,
-            MeshWriteOptions::default(),
-        )
-        .expect("the mesh still writes");
-        let written = std::fs::read(&path).expect("read back");
-        assert!(
-            !String::from_utf8_lossy(&written).contains("OccluViewTextureFormat"),
-            "an unusable image must not be promised in the header"
-        );
-        let _ = std::fs::remove_dir_all(&directory);
-    }
-
-    #[test]
-    fn an_exported_ply_carries_its_texture_inside_itself() {
+    fn an_exported_ply_carries_its_colour_on_the_vertices() {
         use occluview_core::{MeshTexture, Vertex};
 
         let mut mesh = Mesh::new(
             Some("arch".to_string()),
             vec![
-                Vertex::at(glam::Vec3::ZERO).with_uv([0.0, 1.0]),
-                Vertex::at(glam::Vec3::X).with_uv([1.0, 1.0]),
-                Vertex::at(glam::Vec3::Y).with_uv([0.0, 0.0]),
+                Vertex::at(glam::Vec3::ZERO).with_uv([0.25, 0.25]),
+                Vertex::at(glam::Vec3::X).with_uv([0.75, 0.25]),
+                Vertex::at(glam::Vec3::Y).with_uv([0.25, 0.75]),
             ],
             vec![0, 1, 2],
         )
         .expect("a triangle mesh");
-        mesh.set_texture(MeshTexture::new(2, 1, vec![255, 0, 0, 255, 0, 0, 255, 255]));
+        mesh.set_texture(MeshTexture::new(
+            2,
+            2,
+            vec![
+                255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255,
+            ],
+        ));
 
         let directory = tempfile::tempdir().expect("temp directory");
         let path = directory.path().join("upper-edited.ply");
@@ -675,7 +641,8 @@ mod tests {
             !report
                 .warnings
                 .contains(&MeshWriteWarning::TextureImageNotWritten),
-            "the image was written"
+            "the colour was written: {:?}",
+            report.warnings
         );
         let entries: Vec<String> = std::fs::read_dir(directory.path())
             .expect("read the folder")
@@ -699,20 +666,43 @@ mod tests {
             "no image sits beside this file, so nothing may name one:\n{header}"
         );
         assert!(
-            header.contains("comment OccluViewTextureFormat png")
-                && header.contains("comment OccluViewTextureBase64 "),
-            "the image must travel in the header:\n{header}"
+            !header.contains("OccluViewTexture"),
+            "no image may be encoded into the header:\n{header}"
         );
         assert!(
-            header.contains("property list uchar float texcoord"),
-            "the faces must carry the coordinates that apply the image"
+            header.contains("property uchar red\nproperty uchar green\nproperty uchar blue\nproperty uchar alpha\n"),
+            "the colour is per vertex:\n{header}"
         );
 
         let read = crate::ply::read(&bytes).expect("read the export back");
-        let texture = read.texture().expect("the texture came back");
-        assert_eq!((texture.width, texture.height), (2, 1));
-        assert_eq!(texture.rgba, vec![255, 0, 0, 255, 0, 0, 255, 255]);
-        assert!(read.has_uvs());
+        assert!(read.has_vertex_colors(), "the colour came back");
+        assert!(read.texture().is_none(), "no phantom image is attached");
+        assert_eq!(read.vertices()[0].color, [255, 0, 0, 255]);
+        assert_eq!(read.vertices()[1].color, [0, 255, 0, 255]);
+        assert_eq!(read.vertices()[2].color, [0, 0, 255, 255]);
+    }
+
+    /// A PLY an earlier release wrote with an encoded image in its header still
+    /// opens with that image: dropping the writer must not strand those files.
+    #[test]
+    fn a_legacy_embedded_ply_header_still_decodes_to_its_image() {
+        // A 1x1 opaque red PNG, the form the legacy writer embedded.
+        const RED_PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
+        let header = format!(
+            "ply\nformat ascii 1.0\n\
+             comment OccluViewTextureFormat png\n\
+             comment OccluViewTextureWidth 1\n\
+             comment OccluViewTextureHeight 1\n\
+             comment OccluViewTextureBase64 {RED_PNG}\n\
+             element vertex 3\n\
+             property float x\nproperty float y\nproperty float z\n\
+             property float s\nproperty float t\n\
+             end_header\n0 0 0 0 1\n1 0 0 1 1\n0 1 0 0 0\n"
+        );
+        let mesh = crate::ply::read(header.as_bytes()).expect("the legacy file still reads");
+        let texture = mesh.texture().expect("the legacy image decodes");
+        assert_eq!((texture.width, texture.height), (1, 1));
+        assert_eq!(texture.rgba, vec![255, 0, 0, 255]);
     }
 
     use super::*;
