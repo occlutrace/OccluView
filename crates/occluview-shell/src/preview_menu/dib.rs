@@ -116,10 +116,10 @@ mod tests {
             let d = HEADER_LEN + (row * 2 + col) * 4;
             [dib[d], dib[d + 1], dib[d + 2], dib[d + 3]]
         };
-        // DIB row 0 is the image's BOTTOM row (blue, white), stored BGRA opaque.
+        // DIB row 0 is the image's bottom row (blue, white), stored BGRA opaque.
         assert_eq!(px(0, 0), [255, 0, 0, 255], "blue -> BGRA opaque");
         assert_eq!(px(0, 1), [255, 255, 255, 255], "white -> BGRA opaque");
-        // DIB row 1 is the image's TOP row (red, green).
+        // DIB row 1 is the image's top row (red, green).
         assert_eq!(px(1, 0), [0, 0, 255, 255], "red -> BGRA opaque");
         assert_eq!(px(1, 1), [0, 255, 0, 255], "green -> BGRA opaque");
     }

@@ -244,7 +244,7 @@ fn file_backed_obj_around_800kb_falls_back_to_fast_surrogate_after_parser_failur
     };
     let pixels = render_thumbnail_file_or_placeholder(&path, spec);
     assert_ne!(pixels, placeholder_thumbnail(spec));
-    // This stress fixture scatters many sub-pixel triangles; at 256px it now
+    // This stress fixture scatters many sub-pixel triangles; at 256px it
     // falls inside the supersampled size range (MAX_SUPERSAMPLED_THUMBNAIL_SIZE_PX),
     // so such thin geometry legitimately antialiases to partial edge alpha
     // rather than hard-opaque pixels.
@@ -267,7 +267,7 @@ fn noisy_800kb_obj_stream_and_file_thumbnails_stay_real() {
     let stream_pixels = render_thumbnail_or_placeholder(None, &bytes, spec);
     assert_ne!(stream_pixels, placeholder_thumbnail(spec));
     // See the comment above: this scattered-sub-pixel-triangle stress fixture
-    // now supersamples at 256px, so only "visible" (not hard-opaque) coverage
+    // supersamples at 256px, so only "visible" (not hard-opaque) coverage
     // is guaranteed.
     assert_visible_thumbnail_pixels(&stream_pixels, spec);
 
@@ -545,7 +545,7 @@ fn malformed_stl_returns_format_error_without_panic() {
 /// A request for a thumbnail of no pixels answers, rather than dividing by it.
 ///
 /// The cache serves a smaller tile from a larger one when the sizes divide
-/// evenly, and asked that question of a zero. Explorer clamps the size before
+/// evenly, and must not ask that question of a zero. Explorer clamps the size before
 /// it ever reaches here, so this is the library's own contract rather than the
 /// shell's -- and the command-line tool aborts on a panic instead of
 /// unwinding, which turns a bad argument into a dead process.

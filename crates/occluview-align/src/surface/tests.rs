@@ -1,9 +1,8 @@
 //! Tests for the nearest-surface index.
 //!
-//! The load-bearing one is [`the_walk_answers_exactly_as_a_full_scan_does`]:
-//! the traversal is an optimisation over "test every triangle", and the only
-//! thing that makes it safe to optimise further is a test that pins it to that
-//! answer, tie-break included.
+//! The central one is [`the_walk_answers_exactly_as_a_full_scan_does`]: the
+//! traversal is an optimisation over "test every triangle" and must return the
+//! same answer, tie-break included.
 
 #![allow(clippy::expect_used, clippy::panic)]
 
@@ -441,7 +440,7 @@ fn a_tie_one_shell_further_out_still_wins_on_the_lower_index() {
 
 /// The fixed half of "Exclude selected parts".
 ///
-/// The only honest way to keep marked surface out of a match is to leave it out
+/// The only reliable way to keep marked surface out of a match is to leave it out
 /// of the index: a query that could still land on it would match against
 /// geometry the operator has explicitly said not to use, and a deviation
 /// measured to it would be a distance to a surface that is not in the

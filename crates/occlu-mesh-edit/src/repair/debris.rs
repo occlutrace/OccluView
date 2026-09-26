@@ -1,7 +1,7 @@
 //! Pass 7: debris removal.
 //!
-//! A component is debris only when it is BOTH relatively tiny in face count
-//! (vs the largest component) AND relatively tiny in extent (vs the whole
+//! A component is debris only when it is both relatively tiny in face count
+//! (vs the largest component) and relatively tiny in extent (vs the whole
 //! mesh bounding-box diagonal). The largest component is never dropped, so a
 //! two-jaw scan where both halves are large keeps both.
 
@@ -95,7 +95,7 @@ fn diagonal_of(positions: impl Iterator<Item = [f32; 3]>) -> f32 {
     }
 }
 
-/// Face counts fit `f64` exactly for any real mesh; the cast is deliberate.
+/// Face counts fit `f64` exactly for any real mesh, so the cast is lossless.
 #[allow(clippy::cast_precision_loss)]
 fn count_f64(count: usize) -> f64 {
     count as f64

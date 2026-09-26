@@ -38,7 +38,7 @@ pub(super) fn build_vertex_adjacency(mesh: &MeshEditBuffers) -> Vec<Vec<usize>> 
 }
 
 /// The rim plus everything within [`SUPPORT_RING_DEPTH`] rings outside it.
-/// `positions` carries only the OUTSIDE samples (curvature support for the
+/// `positions` carries only the outside samples (curvature support for the
 /// quadric fit) with their geodesic-ish distance to the rim; `vertex_set`
 /// additionally contains the rim itself and backs the self-intersection
 /// guard's neighborhood query.
@@ -47,7 +47,7 @@ pub(super) struct SupportBand {
     pub(super) positions: Vec<[f32; 3]>,
     /// Per-sample distance to the rim, accumulated along the adjacency walk
     /// that discovered the sample (a cheap geodesic proxy). The quadric fit
-    /// downweights far samples: a topological neighbor that is METRICALLY far
+    /// downweights far samples: a topological neighbor that is metrically far
     /// (a deep socket wall, a cone apex) is distant geometry, not the local
     /// curvature the band exists to capture.
     pub(super) distances: Vec<f32>,
@@ -56,7 +56,7 @@ pub(super) struct SupportBand {
 }
 
 /// Collect positions of surface vertices within [`SUPPORT_RING_DEPTH`] rings
-/// OUTSIDE the rim. These samples carry the local curvature the (often planar)
+/// outside the rim. These samples carry the local curvature the (often planar)
 /// rim ring alone cannot, letting the fitted cap surface bulge to follow the
 /// surrounding shape instead of collapsing to a flat disk.
 pub(super) fn gather_support_band(
@@ -103,7 +103,7 @@ pub(super) fn gather_support_band(
 }
 
 /// For each rim vertex (ring order), the positions of its mesh neighbors that
-/// are NOT on the rim: the fixed outside umbrella completing the rim vertex's
+/// are not on the rim: the fixed outside umbrella completing the rim vertex's
 /// full one-ring for seam-continuous fairing.
 pub(super) fn rim_outside_support(
     mesh: &MeshEditBuffers,

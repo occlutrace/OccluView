@@ -1,4 +1,4 @@
-//! Regression against real scan geometry.
+//! Acceptance tests against real scan geometry.
 //!
 //! Synthetic domes prove the maths; they do not prove it survives a real
 //! surface with its noise, its holes, and its uneven triangle sizes. This test
@@ -10,15 +10,15 @@
 //! it; without that the test reports that it skipped and passes, so CI stays
 //! green without shipping meshes.
 //!
-//! That means these two tests are green on CI without having verified anything,
+//! Without fixtures these tests pass on CI without having verified anything,
 //! and the thresholds below — a 0.05 mm residual, 85% measured, 90% inside the
 //! clinical band — are product acceptance criteria that nothing enforces
-//! automatically. The names say `_when_fixtures_are_present` so a green tick is
-//! not mistaken for a passing clinical check. Substituting a synthetic mesh
-//! here would be worse than the gap: it would manufacture the proof. Run them
-//! against the private corpus before any release that touches alignment.
+//! automatically. The names say `_when_fixtures_are_present` so a passing run
+//! is not mistaken for a clinical check. A synthetic mesh is not substituted
+//! here, because it cannot stand in for real scan geometry. Run them against
+//! the private corpus before any release that touches alignment.
 //!
-//! The STL reader here is deliberately local. Pulling in the format crate would
+//! The STL reader here is local. Pulling in the format crate would
 //! give this leaf crate a dev-dependency on half the workspace for forty lines
 //! of parsing.
 
@@ -31,7 +31,7 @@
     // helper that reports it panics on purpose.
     clippy::panic,
     // The distance sweeps below report what the solver reached at each step;
-    // that table IS the evidence, so it is printed on purpose.
+    // that table is the evidence, so it is printed on purpose.
     clippy::print_stdout,
     clippy::cast_precision_loss,
     // Mesh positions are f32 by contract, so the synthesised rescan narrows
@@ -148,15 +148,13 @@ fn a_real_scan_returns_to_a_known_pose_and_measures_clean_when_fixtures_are_pres
 
 /// A rigid offset a real scan is displaced by, and what each measure says.
 ///
-/// This is the test that would have caught the under-reporting. It displaces a
-/// real arch by a known amount and asserts three things about it: that the raw
-/// one-sided statistic understates the truth badly, that it understates it
-/// *however* the scan is displaced, and that the observability estimate brings
-/// it back. The first two assertions look odd for a passing test — they require
-/// a known flaw to still be present — but that is exactly the point. If somebody
-/// later "fixes" `deviation` so the mean tracks the truth, these fire and force
-/// the reader to notice, because a nearest-point map cannot do that and a mean
-/// that suddenly does is measuring something else.
+/// It displaces a real arch by a known amount and asserts three things about
+/// it: that the raw one-sided statistic understates the truth badly, that it
+/// understates it *however* the scan is displaced, and that the observability
+/// estimate brings it back. The first two assertions require a known limitation
+/// of nearest-point maps to be present: a change to `deviation` that makes the
+/// mean track the truth fails them, because a nearest-point map cannot do that
+/// and a mean that does is measuring something else.
 #[test]
 fn a_known_rigid_offset_is_corrected_when_fixtures_are_present() {
     /// Displacement applied, in millimetres.
@@ -254,7 +252,7 @@ struct Offset<'a> {
 /// Measure one known offset three ways and hold each to what it promises.
 fn check_offset(case: &Offset<'_>) {
     /// The one-sided statistic must come in below this share of the truth.
-    const MAX_HONEST_SHARE: f64 = 0.80;
+    const MAX_ONE_SIDED_SHARE: f64 = 0.80;
     /// The corrected estimate must never fall below this share of the truth.
     const ESTIMATE_LOW: f64 = 0.85;
 
@@ -270,10 +268,10 @@ fn check_offset(case: &Offset<'_>) {
     let estimate = case.seen.hidden_displacement_mm(summary.rms);
 
     assert!(
-        summary.rms < truth * MAX_HONEST_SHARE,
-        "{label}: the one-sided rms {:.4} no longer under-reports {truth:.4}. A \
+        summary.rms < truth * MAX_ONE_SIDED_SHARE,
+        "{label}: the one-sided rms {:.4} does not under-report {truth:.4}. A \
          nearest-point map cannot track a tangential offset, so either the measure \
-         changed or this fixture did — do not relax this, work out which.",
+         or this fixture changed; find which before changing this bound.",
         summary.rms
     );
     assert!(
@@ -286,12 +284,11 @@ fn check_offset(case: &Offset<'_>) {
         "{label}: the corrected estimate {estimate:.4} is looser than the sensitivity \
          spread allows against a true {truth:.4}"
     );
-    // The correction is an UPPER BOUND on the hidden motion, not a second
+    // The correction is an upper bound on the hidden motion, not a second
     // estimate of it: `rms / sensitivity` is how far a motion could have gone
-    // while still producing this map. Asking a bound to sit closer to the truth
-    // than the raw statistic does is asking the wrong question, and on a
-    // tangential slide the bound is *supposed* to be loose — a nearest-point map
-    // genuinely cannot see motion along the surface.
+    // while still producing this map. A bound need not sit closer to the truth
+    // than the raw statistic, and on a tangential slide it is expected to be
+    // loose — a nearest-point map cannot see motion along the surface.
     //
     // What must hold is the property the bound promises and the panel relies on:
     // it never understates the displacement it is asked to bound, and it stays
@@ -421,11 +418,10 @@ fn read_binary_stl(path: &Path) -> (Vec<f32>, Vec<u32>) {
 /// a scan already seated. An operator places two scans by eye, and the tool has
 /// to close what they leave: several millimetres of offset, and a small tilt.
 /// This walks that range on a real arch and reports what the solver does at
-/// each step, so a regression that narrows the search is visible as a distance
-/// that used to recover and no longer does.
+/// each step, so the printed table shows which offsets the search recovers.
 ///
-/// It reads `OCCLUVIEW_ALIGN_FIXTURES` like the test above and skips loudly
-/// without it; the numbers it prints are the point, so run it with `--nocapture`.
+/// It reads `OCCLUVIEW_ALIGN_FIXTURES` like the test above and reports a skip
+/// without it; its result is the printed table, so run it with `--nocapture`.
 #[test]
 fn a_real_scan_recovers_from_a_ballpark_placement_when_fixtures_are_present() {
     let Some(files) = fixtures() else {
@@ -489,13 +485,13 @@ fn a_real_scan_recovers_from_a_ballpark_placement_when_fixtures_are_present() {
     }
 }
 
-/// Two DIFFERENT arches are not a refine pair, and the tool says so.
+/// Two different arches are not a refine pair, and the tool says so.
 ///
 /// The upper and lower jaw have no single correct joint pose: only their
 /// occlusal surfaces relate, and several positions explain them equally well.
 /// The solver refuses such a pair as `Ambiguous` rather than picking one and
-/// painting a heatmap that would look authoritative. This pins that refusal, so
-/// nobody later "fixes" it into a confidently wrong pose.
+/// painting a heatmap that would look authoritative. This test covers that
+/// refusal.
 #[test]
 fn two_different_arches_are_refused_rather_than_guessed_when_fixtures_are_present() {
     let Some(dir) = std::env::var_os("OCCLUVIEW_ALIGN_FIXTURES").map(PathBuf::from) else {
@@ -553,9 +549,7 @@ fn two_different_arches_are_refused_rather_than_guessed_when_fixtures_are_presen
                 // answer. The two jaws relate only where their occlusal
                 // surfaces meet, and several positions explain that equally
                 // well; a heatmap over one of them would look authoritative
-                // and mean nothing. This branch used to PRINT the problem
-                // instead of failing on it, so the test passed while the
-                // solver returned exactly what it was written to forbid.
+                // and mean nothing.
                 //
                 // A refusal is the correct outcome; what is checked here is
                 // that the pose is not reported as a fit. `is_trustworthy`
@@ -587,7 +581,7 @@ fn two_different_arches_are_refused_rather_than_guessed_when_fixtures_are_presen
 /// The pairing the tool is actually for: a scan against the same scan.
 ///
 /// An operator re-scans or re-imports a jaw and asks Best fit to seat it. That
-/// pair has ONE correct answer, unlike two different arches whose only relation
+/// pair has one correct answer, unlike two different arches whose only relation
 /// is where their occlusal surfaces meet. This walks a range of hand placements
 /// on the real fixture and reports what the solver reaches.
 #[test]
@@ -649,7 +643,7 @@ fn a_rescanned_arch_seats_from_a_hand_placement_when_fixtures_are_present() {
 /// `refine` returns the pose that seats the *moving* mesh onto the fixed one, so
 /// a correct answer composed with the displacement that created the rescan
 /// returns each vertex to where it started. Measuring the composed result is the
-/// honest quantity: comparing `rigid` to `truth` directly would compare a
+/// correct quantity: comparing `rigid` to `truth` directly would compare a
 /// correction against the motion it corrects.
 fn residual_after_correction(positions: &[f32], truth: Rigid, correction: Rigid) -> f64 {
     let mut squares = 0.0;
@@ -698,17 +692,15 @@ impl Noise {
     }
 }
 
-/// A rescan of the same jaw, from a hand placement, must be ACCEPTED.
+/// A rescan of the same jaw, from a hand placement, must be accepted.
 ///
 /// This is the operator's own workflow, and the one the seating gate can get
-/// wrong. The corpus holds no pair of genuinely independent acquisitions, so
+/// wrong. The corpus holds no pair of independent acquisitions, so
 /// this stands in for one: it moves a real arch by a known rigid transform and
 /// perturbs every vertex with the scanner error a second capture would carry.
 /// The full search must both find the pose and satisfy
 /// `is_trustworthy_refinement_for`. A build that only refines locally converges
-/// on an unseated pose here and the gate refuses it, which is the regression
-/// this test guards — the complaint was exactly "align stopped finding the
-/// pose".
+/// on an unseated pose here and the gate refuses it; this test catches that.
 #[test]
 fn a_rescan_with_scanner_error_is_accepted_where_fixtures_are_present() {
     let Some(path) = fixtures().and_then(|files| files.into_iter().next()) else {
@@ -729,7 +721,7 @@ fn a_rescan_with_scanner_error_is_accepted_where_fixtures_are_present() {
     );
 
     // Per-point scanner error: a clean re-acquisition, then a typical and a
-    // deliberately coarse intra-oral capture.
+    // coarse intra-oral capture.
     for sigma_mm in [0.0_f64, 0.03, 0.06] {
         for shift_mm in [1.0_f64, 4.0, 8.0] {
             let truth = Rigid::new(

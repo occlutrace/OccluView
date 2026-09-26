@@ -4,10 +4,10 @@
 //!   cargo run -p occluview-formats --example smoke_real_files -- <file> [<file> ...]
 //!
 //! Each file is parsed end-to-end through dispatch_by_extension and we print
-//! the mesh stats (vertex/triangle counts, has-colors, bbox dims). This is the
-//! honest reality check: synthetic tests do not catch real-scanner quirks.
+//! the mesh stats (vertex/triangle counts, has-colors, bbox dims). Synthetic
+//! tests do not catch real-scanner quirks; this runs the readers on real files.
 
-// This is a CLI tool: stdout/stderr is the entire point, and usize->f64 cast
+// This is a CLI tool: stdout/stderr is its output, and usize->f64 cast
 // for a size-in-MB display is intentional.
 #![allow(
     clippy::print_stdout,

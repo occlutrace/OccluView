@@ -1,6 +1,5 @@
-//! Texture decode/color-correction tests, split out of `tests.rs` to hold the
-//! workspace's 800-line file budget. Shares the base64/XML fixture builders
-//! from [`crate::tests`].
+//! Texture decode/color-correction tests. Shares the base64/XML fixture
+//! builders from [`crate::tests`].
 
 #![allow(
     clippy::cast_possible_truncation,
@@ -284,9 +283,9 @@ fn compressed_texture_uses_decoded_dimensions_before_raw_metadata_limits() {
 
 // A format-less raw HPS texture decodes deterministically as BGRA: HPS
 // emits DirectX surfaces (D3DFMT_A8R8G8B8) whose memory byte order is [B,G,R,A].
-// This is the verified-correct behavior: a warm-white dental surface
-// (physical R>=G>B) is stored with the small blue value in byte 0, and swapping
-// R<->B is what keeps enamel warm instead of turning it blue.
+// A warm-white dental surface (physical R>=G>B) is stored with the small blue
+// value in byte 0, and swapping R<->B keeps enamel warm instead of turning it
+// blue.
 #[test]
 fn raw_texture_image_without_format_defaults_to_bgra_swap() {
     // Bytes are a warm-white enamel patch stored BGRA: byte0=B(small) .. byte2=R(large).
@@ -320,8 +319,8 @@ fn raw_texture_image_without_format_defaults_to_bgra_swap() {
     }
 }
 
-// Regression for a bug where white regions decoded blue: a texture atlas
-// dominated by cool/neutral stone with a minority of warm-white enamel decodes
+// White regions must not decode blue: a texture atlas dominated by
+// cool/neutral stone with a minority of warm-white enamel decodes
 // deterministically as BGRA, so the enamel stays warm regardless of what the
 // rest of the atlas looks like — no per-scan pixel-statistics guessing.
 #[test]
@@ -361,9 +360,9 @@ fn raw_texture_image_cool_dominant_atlas_keeps_enamel_warm() {
     assert_eq!(&texture.rgba()[0..4], &[210, 214, 220, 255]);
 }
 
-// A file that declares the DirectX pixel-format NAME D3DFMT_A8R8G8B8 (0xAARRGGBB)
-// stores memory bytes [B,G,R,A]. Decode as BGRA (swap R<->B), not literal ARGB:
-// painting entire scans blue.
+// A file that declares the DirectX pixel-format name D3DFMT_A8R8G8B8 (0xAARRGGBB)
+// stores memory bytes [B,G,R,A]. Decode as BGRA (swap R<->B); a literal ARGB
+// decode paints entire scans blue.
 #[test]
 fn raw_a8r8g8b8_directx_name_decodes_as_bgra() {
     // memory bytes for a warm-white pixel: [B=236, G=244, R=248, A=255]
@@ -466,7 +465,7 @@ fn embedded_png_with_a_mild_cool_tint_is_left_untouched() {
     for decoded in texture.rgba().as_chunks::<4>().0 {
         assert_eq!(
             *decoded, pixel,
-            "a mild cool tint must not be treated as a channel-order bug"
+            "a mild cool tint must not be treated as swapped channels"
         );
     }
 }
@@ -484,15 +483,14 @@ fn rgba_png_bytes_from_pixels(width: u32, height: u32, pixels: Vec<[u8; 4]>) -> 
     buf.into_inner()
 }
 
-// Regression (issue review 2026-07-18): a real dental scan can carry a
-// LOCALIZED patch of intensely blue material (anti-glare spray,
-// bite-registration silicone) alongside otherwise-warm surface color. That
-// patch alone can pull the whole-texture MEAN past the swap-detection margin
-// even though most of the surface never reads blue — the swap guard must
-// require the bias to be near-uniform across sampled pixels (a real channel
-// swap affects every pixel alike), not just present in the aggregate mean,
-// or it would wrongly invert real warm gingiva/tooth color sitting next to a
-// genuinely blue material.
+// A real dental scan can carry a localized patch of intensely blue material
+// (anti-glare spray, bite-registration silicone) alongside otherwise-warm
+// surface color. That patch alone can pull the whole-texture mean past the
+// swap-detection margin even though most of the surface never reads blue, so
+// the swap guard requires the bias to be near-uniform across sampled pixels
+// (a real channel swap affects every pixel alike), not just present in the
+// aggregate mean. Otherwise it would invert real warm gingiva/tooth color
+// next to a blue material.
 #[test]
 fn embedded_png_with_a_localized_blue_material_patch_is_left_untouched() {
     let mut pixels = Vec::with_capacity(100);
@@ -524,9 +522,8 @@ fn embedded_png_with_a_localized_blue_material_patch_is_left_untouched() {
     let mesh = read(&cc_fixture(3, 1, &[4], &extra)).expect("textured HPS should read");
     let texture = mesh.texture().expect("HPS texture should be attached");
 
-    // The gingiva pixels must stay warm (R>B) — a global swap would have
-    // flipped them to [80, 140, 200], which is what this regression guards
-    // against.
+    // The gingiva pixels must stay warm (R>B); a global swap would flip them
+    // to [80, 140, 200].
     let gingiva_pixel = &texture.rgba()[70 * 4..70 * 4 + 4];
     assert_eq!(
         gingiva_pixel,
@@ -537,8 +534,8 @@ fn embedded_png_with_a_localized_blue_material_patch_is_left_untouched() {
 
 /// A structurally valid PNG whose header claims `width` x 1 grayscale.
 ///
-/// A run of identical bytes compresses to almost nothing, which is exactly
-/// what makes an oversized header cheap to send and expensive to decode.
+/// A run of identical bytes compresses to almost nothing, which is what
+/// makes an oversized header cheap to send and expensive to decode.
 fn over_wide_png(width: u32) -> Vec<u8> {
     use image::ImageEncoder as _;
     let mut bytes = Vec::new();
@@ -557,9 +554,9 @@ fn over_wide_png(width: u32) -> Vec<u8> {
 fn an_embedded_image_larger_than_the_pixel_limit_never_reaches_the_decoder() {
     // `validate_texture_dimensions` runs on an already-decoded image, so it can
     // only report a bomb that has already been allocated — inside dllhost.exe,
-    // on a file Explorer handed us. The line that actually prevents it is
-    // `reader.limits(limits)` in `decode_embedded_raster`, and removing it
-    // broke no test. This one goes through the real container path.
+    // on a file Explorer passed in. The line that prevents it is
+    // `reader.limits(limits)` in `decode_embedded_raster`; this test goes
+    // through the real container path so it fails without that line.
     let bomb = over_wide_png(9_000);
     assert!(
         bomb.len() < 4096,

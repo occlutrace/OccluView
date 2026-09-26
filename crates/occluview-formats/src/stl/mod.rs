@@ -37,11 +37,11 @@ pub fn read(bytes: &[u8]) -> Result<Mesh, FormatError> {
 /// # Errors
 /// See [`read`].
 pub fn read_shaded(bytes: &[u8], shading: crate::MeshShading) -> Result<Mesh, FormatError> {
-    // BINARY FIRST, judged on the RAW bytes by the exact size formula
+    // Binary first, judged on the raw bytes by the exact size formula
     // (`len == 84 + 50 * count`). The 80-byte header of a binary STL is
     // free-form by contract, so it may itself begin with the three BOM bytes —
-    // and stripping them unconditionally moved the triangle count from offset
-    // 80 to 83, which turned a valid file into an empty mesh or a Truncated
+    // and stripping them unconditionally would move the triangle count from
+    // offset 80 to 83, turning a valid file into an empty mesh or a Truncated
     // error. The formula is what distinguishes the two, not the text prefix:
     // an ASCII file essentially never satisfies it.
     if binary_layout_matches(bytes) {
@@ -51,13 +51,13 @@ pub fn read_shaded(bytes: &[u8], shading: crate::MeshShading) -> Result<Mesh, Fo
     // this the ASCII reader sees no `solid` and the bytes fall through to the
     // binary reader, which reports a malformed file for a perfectly good one.
     let stripped = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
-    // The BOM may also sit in front of a BINARY file. The raw check above cannot
+    // The BOM may also sit in front of a binary file. The raw check above cannot
     // see that one — it read the count from offset 80 of the BOM-shifted buffer —
     // so the formula is asked again of the stripped bytes. Without this second
-    // question a BOM-prefixed binary STL fell through to the RAW binary reader
-    // and was reported Truncated, because the count was still being read three
-    // bytes late. Raw first, then stripped: a header that merely BEGINS with
-    // those bytes still wins on its own layout and is never shifted.
+    // question a BOM-prefixed binary STL would fall through to the raw binary
+    // reader and be reported Truncated, because the count would still be read
+    // three bytes late. Raw first, then stripped: a header that merely begins
+    // with those bytes still wins on its own layout and is never shifted.
     if stripped.len() != bytes.len() && binary_layout_matches(stripped) {
         return binary::read_shaded(stripped, shading);
     }
@@ -65,7 +65,7 @@ pub fn read_shaded(bytes: &[u8], shading: crate::MeshShading) -> Result<Mesh, Fo
         ascii::read_shaded(stripped, shading)
     } else {
         // Neither the formula nor the text prefix decided it. Hand it to the
-        // binary reader on the RAW bytes so its own truncation reporting is the
+        // binary reader on the raw bytes so its own truncation reporting is the
         // one the operator sees, and so a binary file whose header merely fails
         // the formula is still read from offset 80.
         binary::read_shaded(bytes, shading)
