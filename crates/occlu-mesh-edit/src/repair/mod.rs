@@ -253,9 +253,9 @@ fn run_fill_pass(
         // fill even when it happens to be the largest rim of a closed mesh.
         max_rim_perimeter_mm: None,
         protect_scan_border: false,
-        // Repair keeps the legacy conservative walk (its debris/weld/degenerate
-        // passes already ran); the Close Holes cut-line healing is opt-in and
-        // OFF here so repair output stays byte-for-byte unchanged.
+        // Repair uses the conservative walk (its debris/weld/degenerate passes
+        // already ran); the Close Holes cut-line healing is opt-in and off
+        // here.
         heal_boundary_rims: false,
     };
     let (result, stats) = fill_holes_with_outcome(work, None, fill_options)?;

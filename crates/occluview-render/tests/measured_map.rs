@@ -62,7 +62,7 @@ fn identity_uniform(tint: [f32; 4], opacity: f32) -> GpuMeshUniform {
     }
 }
 
-/// A shallow dome in one flat colour. Curvature is the point: a flat triangle
+/// A shallow dome in one flat colour. Curvature is required: a flat triangle
 /// has uniform luminance under any lighting, so a shading claim built on one
 /// would pass whatever the shader did.
 fn colored_dome_mesh(color: [u8; 4]) -> Mesh {
@@ -126,7 +126,7 @@ fn render_measured_dome(mesh: &Mesh) -> Vec<u8> {
     let uniform = GpuMeshUniform {
         measured_map: 1,
         // The tint a scan carries by default is warm stone. A measured map must
-        // ignore it: the ramp IS the reading.
+        // ignore it: the ramp is the reading.
         ..identity_uniform([0.98, 0.90, 0.80, 1.0], 1.0)
     };
     let entries = [occluview_render::SceneDrawEntry {

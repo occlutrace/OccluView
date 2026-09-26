@@ -96,9 +96,9 @@ pub struct DeviationStats {
     pub measured: u32,
     /// Vertices that do not, and why.
     ///
-    /// The plain total used to live here on its own, and it could not tell "there
-    /// is no tooth opposite this one" from "this file has broken vertices" —
-    /// which is the whole difference between a normal result and a bad scan.
+    /// Counted by cause: a single total cannot tell "there is no tooth opposite
+    /// this one" from "this file has broken vertices", which is the difference
+    /// between a normal result and a bad scan.
     pub unmeasured: Unmeasured,
     /// The numbers themselves — **absent** when there was not enough measured
     /// surface to characterise, which is a different answer from zero.
@@ -106,7 +106,7 @@ pub struct DeviationStats {
     /// This is an `Option` on purpose. A struct of zeroes returned for a
     /// measurement that never happened reads, in the one field a clinician
     /// looks at, as a perfect fit. Making the numbers unrepresentable in that
-    /// case is the only way a reader cannot print one by accident.
+    /// case keeps a reader from printing one by accident.
     pub summary: Option<DeviationSummary>,
 }
 
@@ -165,7 +165,7 @@ pub struct RampSettings {
 
 /// The display scale that actually shows this measurement's structure.
 ///
-/// A fixed scale is a guess about data nobody has measured yet: too wide and
+/// A fixed scale is a guess about data not yet measured: too wide and
 /// every result is one flat colour at the ramp's centre, too narrow and
 /// everything saturates. Derived from the 95th percentile so a handful of
 /// outliers cannot stretch the range and flatten everything else, rounded up to
@@ -406,7 +406,7 @@ pub fn deviation_colors(map: &DeviationMap, ramp: &RampSettings) -> Vec<[u8; 4]>
 
 /// The colour for one measured deviation.
 ///
-/// The tolerance is deliberately not part of this mapping. It is a statistics
+/// The tolerance is not part of this mapping. It is a statistics
 /// threshold, while the working heatmap is a continuous absolute-distance
 /// scale from zero to the selected maximum.
 #[must_use]

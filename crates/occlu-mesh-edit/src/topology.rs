@@ -9,8 +9,8 @@ use super::{EditVertex, MeshEditBuffers, MeshEditError};
 /// Full-payload weld key for soup recovery: exact position bits + color + uv
 /// bits. STL and other soup formats write byte-identical coordinates for a
 /// shared corner, so an exact key merges exactly the true duplicates and can
-/// never fuse two genuinely distinct points. Normals are deliberately excluded:
-/// a shared corner carries a different per-FACE normal in each incident triangle,
+/// never fuse two genuinely distinct points. Normals are excluded: a shared
+/// corner carries a different per-face normal in each incident triangle,
 /// yet is the same topological vertex.
 type SoupWeldKey = ([u32; 3], [u8; 4], [u32; 2]);
 
@@ -47,7 +47,7 @@ impl CanonicalTopology {
         self.merged_vertices
     }
 
-    /// The welded representative elected for every ORIGINAL vertex id. A
+    /// The welded representative elected for every original vertex id. A
     /// representative maps to itself; every soup duplicate maps to the lowest
     /// original id in its position cluster.
     pub(crate) fn representative_of(&self) -> &[u32] {
@@ -87,7 +87,7 @@ pub(crate) fn canonical_position_key(position: [f32; 3]) -> [u32; 3] {
 }
 
 /// Position tolerance used only by the interactive sculpt topology. It is
-/// deliberately much smaller than a dental feature and is not used by the
+/// much smaller than a dental feature and is not used by the
 /// public repair or bridge-split topology policies.
 const SCULPT_POSITION_EPSILON_MM: f64 = 1e-4;
 
@@ -193,7 +193,7 @@ pub(crate) fn canonical_topology(
 }
 
 /// Build original-vertex sibling rows from a canonical position mapping. The
-/// rows deliberately retain every source vertex: the renderer and edit result
+/// rows retain every source vertex: the renderer and edit result
 /// still use the original soup array, while sculpting must move every corner of
 /// one physical point together.
 pub(crate) fn sibling_rows_from_representatives(canonical: &CanonicalTopology) -> Vec<Vec<usize>> {

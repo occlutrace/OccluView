@@ -56,7 +56,7 @@ pub fn read_shaded(bytes: &[u8], shading: crate::MeshShading) -> Result<Mesh, Fo
     let triangle_count = u32::from_le_bytes(count_bytes) as usize;
 
     // Upper bound on data we expect. If the file is short, we read what we can
-    // (dental scanners sometimes lie about the count); if it's short *inside* a
+    // (dental scanners sometimes write a wrong count); if it's short *inside* a
     // triangle, that's a hard truncation.
     let declared_end = FIRST_TRIANGLE_OFFSET + triangle_count * TRIANGLE_SIZE;
     if bytes.len() < declared_end {
@@ -271,9 +271,8 @@ mod tests {
         assert_eq!(mesh.vertices().len(), 30);
     }
 
-    /// Tiny serial reference matching the pre-parallelization decode loop,
-    /// used to prove the rayon-based `read_triangles` produces identical
-    /// output order and values.
+    /// Tiny serial reference decode loop, used to prove the rayon-based
+    /// `read_triangles` produces identical output order and values.
     fn read_triangles_serial_reference(bytes: &[u8], count: usize) -> Result<Mesh, FormatError> {
         let mut vertices = Vec::with_capacity(count * 3);
         let mut indices = Vec::with_capacity(count * 3);

@@ -5,14 +5,14 @@
 //! lookup chase a per-vertex heap pointer (a cache miss). CSR — one flat `data`
 //! array sliced by per-vertex `offsets`, stored as `u32` — makes a lookup one
 //! bounds pair plus a dense slice, and builds from two arrays instead of one
-//! `Vec` per vertex (a real win on a million-vertex `prepare`).
+//! `Vec` per vertex (which matters on a million-vertex `prepare`).
 //!
 //! # Growing without losing the flat fast path
 //!
 //! Dynamic-topology densification ([`super::brush::BrushSession::refine_dab`])
 //! splits edges mid-stroke, which rewrites a handful of rows and appends new
 //! ones. A flat CSR cannot absorb that in place, and rebuilding it per dab
-//! would be O(mesh) on a million-vertex scan. Instead an EDITED row moves into
+//! would be O(mesh) on a million-vertex scan. Instead an edited row moves into
 //! an overlay `Vec<u32>` and `overlay_of` redirects it; every untouched row —
 //! all but a few dozen per split — still reads straight out of the flat
 //! arrays. `overlay_of` stays empty until the first edit, so a session that

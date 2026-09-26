@@ -1,8 +1,8 @@
 //! Pass 1: weld duplicate vertices.
 //!
 //! STL-style soup stores each triangle's corners separately; welding restores
-//! shared connectivity. The anti-weld doctrine still holds: dental formats
-//! duplicate a position with different colors/UVs ON PURPOSE, so the weld key
+//! shared connectivity. Dental formats duplicate a position with different
+//! colors/UVs on purpose, so the weld key
 //! includes color and UV bits — only full-attribute matches merge. The
 //! representative is the lowest-original-index member and survivors adopt its
 //! exact bits (no averaging, no vertex ever moves).
