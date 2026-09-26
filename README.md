@@ -64,13 +64,13 @@ the app. `.dcm` is declared as an alternate handler, so it stays reachable
 through **Open With** without taking medical DICOM files away from their own
 software; a real DICOM file is refused by its `DICM` signature.
 
-## Quick Look
+## Explorer preview
 
 OccluView adds a live 3D preview to Windows Explorer. Select a scan and inspect
 it immediately without opening the full viewer.
 
 <p align="center">
-  <img src="assets/explorer-preview.gif" width="640" alt="OccluView Quick Look showing a live 3D Explorer Preview Pane">
+  <img src="assets/explorer-preview.gif" width="640" alt="OccluView showing a live 3D scan in the Windows Explorer Preview Pane">
 </p>
 
 ## Alignment and Heatmap
@@ -85,9 +85,9 @@ Open both scans as layers, choose **A** (Align), and use the automatic workflow:
 2. Click `Best fit matching` to seat corresponding surfaces.
 3. Read the colour map with the explicit millimetre legend and bounded range.
 
-The heatmap is display-only evidence from the latest confirmed matching result.
-Changing the pair, optimizer settings, exclusion markings, or returning to
-Automatic clears it until a new matching result lands. Manual alignment remains
+The heatmap shows the latest confirmed matching result. Changing the pair, the
+matching settings or the exclusion markings, or returning to Automatic, clears
+it until a new matching result is available. Manual alignment remains
 available when the automatic pair is not appropriate.
 
 ## Mesh Editing
@@ -96,7 +96,7 @@ available when the automatic pair is not appropriate.
   <img src="assets/mesh-editing.png" width="900" alt="OccluView Mesh Editing panel with selection and mesh operations">
 </p>
 
-Mesh Editing keeps the common dental CAD operations in one bounded palette:
+Mesh Editing keeps the common dental CAD operations in one palette:
 
 - lasso, object, surface, and through-mesh selection;
 - select all, clear, and invert;
@@ -117,11 +117,10 @@ panel instead of consuming the whole viewport.
   <img src="assets/mesh-repair.png" width="900" alt="OccluView Mesh Repair report with concrete repair counts">
 </p>
 
-Mesh Repair runs on the selected layer and opens a bounded report card. It
-removes duplicate and degenerate geometry, repairs unsafe topology, closes only
-safe pinholes, and reports the non-zero changes together with remaining open
-rims. A clean mesh receives an explicit “nothing to repair” result rather than
-silence. `Copy details` preserves the full per-pass report for a case record.
+Mesh Repair runs on the selected layer and opens a report. It removes duplicate
+and degenerate geometry, repairs unsafe topology, closes only safe pinholes,
+and lists what it changed together with the open rims that remain. A clean mesh
+reports that there was nothing to repair. `Copy details` preserves the full per-pass report for a case record.
 
 ## Files and results
 
@@ -198,8 +197,8 @@ contact area, patch count, deepest penetration — describe the scan the reading
 was opened on, named first in the panel title. **Esc** closes the reading and
 takes the marks off both scans.
 
-Two scans further apart than half a millimetre are a legitimate reading with
-nothing in it, not a failure: the panel says so and both arches stay bare.
+When the two scans are more than half a millimetre apart there is no contact to
+show; the panel says so and both arches stay bare.
 
 ## The cut view
 

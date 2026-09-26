@@ -24,17 +24,6 @@ flamegraph.svg
 # Generated docs locally
 /target/doc
 
-# Internal planning docs
-/ПЛАН_*.md
-/ОТЧЁТ_*.md
-/LOADING-BUG.md
-/ФЛЕШ*/
-/flash*-server/
-/preop/
-.commandcode/
-.claude/
-.audit-scratch/
-
 # Local downloads / media / logs
 *.zip
 *.mp4

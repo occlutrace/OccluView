@@ -5,7 +5,7 @@ Please report security issues privately: **security@occlutrace.ai**.
 Useful reports include:
 
 - the file or steps needed to reproduce the issue;
-- the expected and actual behavior;
+- the expected and actual behaviour;
 - the affected version or commit.
 
 Please do not open a public GitHub issue for a suspected vulnerability.
