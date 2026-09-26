@@ -146,8 +146,9 @@ Press **F1** — or open **Settings → Keyboard shortcuts** — for the complet
   layer; toolbar Open replaces the scene.
 - Toolbar tools: **C** Cut View, **M** Ruler, **T** Thickness, **A** Align, and
   **E** Mesh Editing.
-- Orbit with right-drag; pan with middle-drag or LMB+RMB drag. On a trackpad,
-  two-finger scroll pans and pinch zooms; a mouse wheel zooms toward the pointer.
+- Orbit with right-drag; pan with middle-drag or LMB+RMB drag. A mouse wheel
+  zooms toward the pointer. On a Mac trackpad, two-finger scroll pans and
+  pinch zooms.
   Recenter on a surface with middle-click or double-click.
 - In Mesh Editing, **Ctrl+A** (**⌘+A** on macOS) selects all; **Delete** or **Backspace**
   removes; **Ctrl+Z**, **Ctrl+Y**, or **Ctrl+Shift+Z** (the ⌘ equivalents on macOS)
@@ -156,9 +157,13 @@ Press **F1** — or open **Settings → Keyboard shortcuts** — for the complet
   changed.
 - In Sculpt, **1** chooses Add/Remove and **2** chooses Smooth. **Shift+wheel** changes Sculpt brush size; **Ctrl+wheel** (**⌘+wheel** on macOS) changes intensity.
   Holding **Shift** during a drag removes or strengthens the active brush mode.
-- In Ruler, after the first point, a click on a drawn ruler line drops a
-  perpendicular onto it (for example the Korkhaus arch length from the incisal
-  point to the Pont premolar line); the length is the 3D perpendicular.
+- In Ruler, after the first point, a click on a drawn ruler line ends the
+  ruler on that line (for example the Korkhaus arch length from the incisal
+  point to the Pont premolar line). The end goes where you click along the
+  line and the ruler shows its 3D length and the smaller angle to the line;
+  drag that end to slide it along the line. The strip at the top of the
+  viewport switches between "Any angle" and "90°" (the perpendicular); hold
+  **Shift** for the other choice.
 - In Align, **Shift** erases an Align exclusion region; **Ctrl/Command+drag**
   (**⌘+drag** on macOS) rotates a scan in Align Manual mode; stationary **RMB
   click** undoes the last alignment point.

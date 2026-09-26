@@ -29,6 +29,11 @@ const LABEL_PAD: egui::Vec2 = egui::Vec2::new(4.0, 2.0);
 const LABEL_SIDE_GAP_PX: f32 = 6.0;
 /// Leg length of the right-angle mark at a perpendicular's foot.
 const RIGHT_ANGLE_LEG_PX: f32 = 8.0;
+/// Radius of the arc that marks the angle where a ruler meets a line.
+const ANGLE_ARC_RADIUS_PX: f32 = 18.0;
+/// How far past the arc (or the right-angle mark) the angle's label centre
+/// sits, along the bisector.
+const ANGLE_LABEL_GAP_PX: f32 = 16.0;
 
 /// Thin, precise measurement segment: a soft white halo under a hairline accent
 /// stroke so the line reads on both dark and light geometry.
@@ -166,6 +171,53 @@ pub(crate) fn right_angle_mark(
     ));
 }
 
+/// Arc at `corner` over the angle between two on-screen directions, drawn
+/// like the right-angle mark. Returns where the angle's label goes: past the
+/// arc on its bisector. Skipped (`None`) when either direction collapses.
+pub(crate) fn angle_arc(
+    painter: &egui::Painter,
+    corner: egui::Pos2,
+    from: egui::Vec2,
+    to: egui::Vec2,
+) -> Option<egui::Pos2> {
+    const STEPS: u8 = 16;
+    let (from, to) = (unit(from)?, unit(to)?);
+    let start = from.y.atan2(from.x);
+    // Signed turn from `from` to `to`, the short way round.
+    let sweep = from.x.mul_add(to.y, -(from.y * to.x)).atan2(from.dot(to));
+    let points: Vec<egui::Pos2> = (0..=STEPS)
+        .map(|step| {
+            let angle = sweep.mul_add(f32::from(step) / f32::from(STEPS), start);
+            corner + egui::vec2(angle.cos(), angle.sin()) * ANGLE_ARC_RADIUS_PX
+        })
+        .collect();
+    painter.add(egui::Shape::line(
+        points.clone(),
+        egui::Stroke::new(
+            SEGMENT_HALO_PX,
+            egui::Color32::from_rgba_unmultiplied(255, 255, 255, 170),
+        ),
+    ));
+    painter.add(egui::Shape::line(
+        points,
+        egui::Stroke::new(SEGMENT_STROKE_PX, ui_theme::accent()),
+    ));
+    angle_label_anchor(corner, from, to)
+}
+
+/// Where the label of the angle between two on-screen directions at `corner`
+/// goes: on the bisector, past the arc. `None` when either direction
+/// collapses. Directions pointing opposite ways bisect along the normal.
+pub(crate) fn angle_label_anchor(
+    corner: egui::Pos2,
+    from: egui::Vec2,
+    to: egui::Vec2,
+) -> Option<egui::Pos2> {
+    let (from, to) = (unit(from)?, unit(to)?);
+    let bisector = unit(from + to).unwrap_or_else(|| from.rot90());
+    Some(corner + bisector * (ANGLE_ARC_RADIUS_PX + ANGLE_LABEL_GAP_PX))
+}
+
 /// `v` scaled to unit length, or `None` when it has no usable direction.
 fn unit(v: egui::Vec2) -> Option<egui::Vec2> {
     let length = v.length();
@@ -269,7 +321,7 @@ pub(crate) fn thickness_ray(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::float_cmp)]
+    #![allow(clippy::float_cmp, clippy::expect_used)]
     use super::*;
 
     /// Every primitive lays out and paints without panicking, including at the
@@ -295,6 +347,8 @@ mod tests {
                 label_chip_beside(painter, a, b, "1.23 mm", Some(b));
                 right_angle_mark(painter, a, b - a, egui::vec2(0.0, 1.0));
                 right_angle_mark(painter, a, egui::Vec2::ZERO, egui::vec2(0.0, 1.0));
+                let _ = angle_arc(painter, a, b - a, egui::vec2(0.0, 1.0));
+                let _ = angle_arc(painter, a, egui::Vec2::ZERO, egui::vec2(0.0, 1.0));
                 extension(painter, a, b);
             }
             // Empty and long labels must not panic the galley layout either.
@@ -364,6 +418,30 @@ mod tests {
             None,
         );
         assert!(vertical.x > 200.0, "a vertical segment labels to the right");
+    }
+
+    /// The arc spans the short way between the two directions at its radius,
+    /// and the label sits on the bisector clear of the arc.
+    #[test]
+    fn the_angle_arc_spans_the_smaller_opening_and_labels_its_bisector() {
+        let corner = egui::pos2(200.0, 200.0);
+        let along = egui::vec2(1.0, 0.0);
+        let up_left = egui::vec2(-1.0, -1.0);
+        egui::__run_test_ui(|ui| {
+            let painter = ui.painter();
+            let label = angle_arc(painter, corner, along, up_left).expect("an arc");
+            let offset = label - corner;
+            assert!((offset.length() - (ANGLE_ARC_RADIUS_PX + ANGLE_LABEL_GAP_PX)).abs() < 1.0e-3);
+            // 135 degrees between them; the bisector points up and right of up.
+            let bisector_angle = offset.y.atan2(offset.x).to_degrees();
+            assert!((bisector_angle + 67.5).abs() < 1.0e-3, "{bisector_angle}");
+            assert!(angle_arc(painter, corner, egui::Vec2::ZERO, along).is_none());
+        });
+        let opposite = angle_label_anchor(corner, along, -along).expect("a label");
+        assert!(
+            (opposite - corner).x.abs() < 1.0e-3,
+            "a straight angle labels off the line, not on it"
+        );
     }
 
     #[test]

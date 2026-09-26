@@ -65,6 +65,10 @@ impl OccluViewApp {
                 self.persistence.settings.unit_display = unit;
                 self.persistence.settings_persistence.mark_dirty();
             }
+            SettingsAction::SetRulerLineAngle(angle) => {
+                self.persistence.settings.ruler_line_angle = angle;
+                self.persistence.settings_persistence.mark_dirty();
+            }
             SettingsAction::SetTheme(theme) => {
                 self.persistence.settings.theme = theme;
                 self.persistence.settings_persistence.mark_dirty();

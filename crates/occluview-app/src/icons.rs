@@ -43,6 +43,10 @@ pub(crate) enum AppIcon {
     Ruler,
     Thickness,
     Align,
+    /// A ruler meeting a line at any angle.
+    AngleFree,
+    /// A ruler meeting a line at 90 degrees.
+    AngleRight,
     // Mesh editor cells
     Lasso,
     Object,
@@ -70,7 +74,8 @@ pub(crate) enum AppIcon {
 }
 
 impl AppIcon {
-    /// The vendored Lucide SVG for this icon.
+    /// The SVG for this icon: vendored Lucide, except the two angle glyphs,
+    /// which are OccluView's own, drawn on Lucide's grid and stroke.
     fn svg(self) -> &'static [u8] {
         macro_rules! lucide {
             ($file:literal) => {
@@ -109,6 +114,8 @@ impl AppIcon {
             Self::Ruler => lucide!("ruler"),
             Self::Thickness => lucide!("proportions"),
             Self::Align => lucide!("combine"),
+            Self::AngleFree => lucide!("angle-free"),
+            Self::AngleRight => lucide!("angle-right"),
             Self::Lasso => lucide!("lasso"),
             Self::Object => lucide!("square-mouse-pointer"),
             Self::SelectAll => lucide!("square-check-big"),
