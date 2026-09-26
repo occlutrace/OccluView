@@ -161,8 +161,8 @@ fn trustworthy_report() -> IcpReport {
         weak_rot_axes: [false; 3],
         weak_trans_axes: [false; 3],
         effective_matching_ratio: 0.8,
-        // Above the floor the gate added, so this literal stays the "a real
-        // seating" case it was written as.
+        // The solver ranks candidates by this and `icp_step` refuses a step
+        // that lowers it. It is not a gate input, so any benign value will do.
         seated_fraction: 0.25,
     }
 }
@@ -258,6 +258,50 @@ fn two_different_jaws_are_not_authorized_as_an_alignment() {
     assert!(
         seated.is_trustworthy_refinement_for(&settings()),
         "a seated pair must still be authorized: {seated:?}"
+    );
+}
+
+/// A partial model on a full scan is authorized on its median.
+///
+/// The fields are the values a spatially contiguous five-per-cent patch of a
+/// real arch produces: the overlap seats exactly (median 0.000 mm) at coverage
+/// 0.08, while `seated_fraction` (0.05) sits far below any seating floor.
+///
+/// The two-jaw accident is still refused by the median alone (0.42 mm against
+/// the 0.30 mm ceiling).
+#[test]
+fn a_partial_model_on_a_full_scan_is_still_authorized() {
+    let partial_overlap = IcpReport {
+        geometric_rms: 0.01,
+        median_abs: 0.000,
+        p95_abs: 0.02,
+        coverage: 0.08,
+        seated_fraction: 0.05,
+        ..trustworthy_report()
+    };
+    assert!(
+        partial_overlap.is_trustworthy_refinement_for(&settings()),
+        "a partial model that seats its overlap exactly must be authorized: \
+         {partial_overlap:?}"
+    );
+}
+
+/// A pose whose median is small but whose worst fifth is far away is refused.
+///
+/// The median bounds the typical vertex only; a fit that slid onto a
+/// neighbouring surface keeps most of the sampled patch in place and pushes the
+/// rest away. Without the p95 ceiling such a pose was authorized on its median
+/// alone.
+#[test]
+fn a_small_median_does_not_authorize_a_far_tail() {
+    let far_tail = IcpReport {
+        median_abs: 0.05,
+        p95_abs: 3.0,
+        ..trustworthy_report()
+    };
+    assert!(
+        !far_tail.is_trustworthy_refinement_for(&settings()),
+        "a 3 mm worst-fifth against a 2 mm radius must be refused: {far_tail:?}"
     );
 }
 

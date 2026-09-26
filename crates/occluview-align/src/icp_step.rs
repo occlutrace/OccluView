@@ -97,15 +97,10 @@ pub(super) fn try_backtracked_step(
         if !reciprocal_coverage_ok(state.measured_reciprocal, trial_reciprocal) {
             continue;
         }
-        // A step may not trade seating away for a smaller residual. A trimmed
-        // least-squares residual always falls when the step spreads a
-        // deformation over everything, which is how a prepared model ends up
-        // seated on its operated region instead of its unchanged one. This is a
-        // monotonicity rule, not the acceptance test: a level may start and stay
-        // unseated, and the pose it converges to is still judged by
-        // `is_trustworthy_refinement_for`, which refuses anything below
-        // `MIN_SEATED_FRACTION`. Nothing here may lower seating, and nothing
-        // here may authorize a pose on its own.
+        // A step may not trade seating away for a smaller residual: a trimmed
+        // least-squares residual falls when a step spreads a deformation over
+        // everything. This is a monotonicity rule, not the acceptance test;
+        // `is_trustworthy_refinement_for` judges the pose on its median.
         let seated_kept = trial_summary.seated_fraction + 1e-9 >= state.measured.seated_fraction;
         if seated_kept
             && trial_summary.geometric_rms.is_finite()
