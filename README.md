@@ -44,13 +44,15 @@ bash install/macos/build-dmg.sh --no-build
 bash install/macos/build-pkg.sh --no-build
 ```
 
-The scripts write an unsigned `.app`, `.dmg`, and `.pkg` under `target/macos/`.
-These are developer/test artifacts, not release downloads: the release workflow
-publishes Windows and Linux assets only, and no macOS asset is advertised by the
-update manifest. Before any macOS download is offered, a maintainer must sign
-the app with Developer ID Application, sign the package with Developer ID
-Installer, notarize and staple the artifacts, and extend the gated release
-process.
+The scripts write an unsigned `.app`, `.dmg`, and `.pkg` under `target/macos/`;
+set `OCCLUVIEW_HPS_EMBEDDED_KEY` before `build-app.sh` for a build that opens
+encrypted HPS and `.dcm` files. The Package workflow builds the same three on an
+Apple Silicon runner with the embedded key. It signs them with Developer ID,
+notarizes and staples them when the Apple signing secrets are configured (see
+[SECURITY.md](SECURITY.md)), and only such a build is attached to a release and
+offered by the update manifest. Without those secrets the packages are unsigned
+test builds in the workflow artifacts; macOS asks for confirmation the first
+time one is opened.
 
 The renderer suites that compare against stored golden images select a
 deterministic software rasterizer (Lavapipe on Linux, WARP on Windows), so they

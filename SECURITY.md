@@ -52,13 +52,25 @@ old key only after installed versions can verify the replacement.
 
 ## macOS distribution gate
 
-Local Apple Silicon `.app`, `.dmg`, and `.pkg` outputs are unsigned developer
-artifacts and are not published. Before a macOS release is added, a maintainer
-must sign the app with Developer ID Application, sign its installer package
-with Developer ID Installer, notarize and staple the distributed artifacts,
-and still attach the existing minisign signatures to update assets. No Apple
-signing credentials are stored in this repository. Until that gate is met, no
-macOS asset is advertised by the release or update manifest.
+The Package workflow builds the Apple Silicon `.app`, `.dmg`, and `.pkg` with
+the embedded HPS key. A macOS asset is published, and advertised by the update
+manifest, only when the build was signed with Developer ID Application (app and
+disk image) and Developer ID Installer (package), notarized, and stapled; the
+update assets still carry minisign signatures like every other platform. The
+signing step runs when all of these release secrets are set, and refuses a
+partial set:
+
+- `OCCLUVIEW_MACOS_APP_P12_BASE64` and `OCCLUVIEW_MACOS_INSTALLER_P12_BASE64`:
+  the two Developer ID certificates with their private keys, as base64 PKCS#12;
+- `OCCLUVIEW_MACOS_P12_PASSWORD`: the password of both files;
+- `OCCLUVIEW_MACOS_APP_IDENTITY` and `OCCLUVIEW_MACOS_INSTALLER_IDENTITY`: the
+  signing identity names, e.g. `Developer ID Application: <name> (<team>)`;
+- `OCCLUVIEW_NOTARY_KEY_P8_BASE64`, `OCCLUVIEW_NOTARY_KEY_ID`, and
+  `OCCLUVIEW_NOTARY_ISSUER`: an App Store Connect API key for `notarytool`.
+
+Without them the packages stay unsigned workflow artifacts and the release
+carries no macOS asset. No Apple signing credentials are stored in this
+repository.
 
 ## Verifying a release
 

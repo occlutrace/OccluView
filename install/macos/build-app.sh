@@ -54,9 +54,17 @@ cli_binary="$profile_dir/occluview-cli"
 app_bundle="$cargo_target_dir/macos/OccluView.app"
 
 if (( build_release )); then
+  # Same rule as install/linux/build-deb.sh: release packaging passes the key
+  # from its secret store, and encrypted HPS/.dcm files open only in a build
+  # that embeds it. The empty-array form keeps /bin/bash 3.2 under `set -u`.
+  feature_args=()
+  if [[ -n "${OCCLUVIEW_HPS_EMBEDDED_KEY:-}" ]]; then
+    echo "Private HPS key embedding enabled for this build."
+    feature_args=(--features occluview-formats/private-hps-key)
+  fi
   MACOSX_DEPLOYMENT_TARGET=14.0 cargo build --locked \
     --target aarch64-apple-darwin --profile release-unwind \
-    -p occluview-app -p occluview-cli
+    -p occluview-app -p occluview-cli ${feature_args[@]+"${feature_args[@]}"}
 fi
 
 for binary in "$app_binary" "$cli_binary"; do
