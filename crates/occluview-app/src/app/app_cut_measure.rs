@@ -80,7 +80,7 @@ pub(super) fn triangle_world_normal(
 }
 
 /// The hit mesh's own principal-axis frame, transformed into world space.
-/// `centroid` is a POINT (needs the transform's translation), `axis0`/`axis1`
+/// `centroid` is a point (needs the transform's translation), `axis0`/`axis1`
 /// are directions (only the linear part, no translation). Shared by Cut View
 /// and Bridge Split, both of which drive the same [`crate::cut_manipulator`]
 /// follow orientation from it. `None` propagates through to the disc's
@@ -275,7 +275,7 @@ impl OccluViewApp {
             }
         }
 
-        // Responsiveness: render THIS frame's slice before painting the panel, so
+        // Responsiveness: render this frame's slice before painting the panel, so
         // a plant/drag/orbit/zoom shows its fresh section with no frame of lag.
         // `maybe_render_cut_view` consumes the dirty flag (`take_needs_render`),
         // so this stays one slice render per frame — the top-of-loop pass then
@@ -370,9 +370,9 @@ impl OccluViewApp {
         if !self.tools.measure.is_active() {
             return false;
         }
-        // Invariants: an edit session owns LMB (marquee/lasso), an INTERACTIVE
+        // Invariants: an edit session owns LMB (marquee/lasso), an interactive
         // cut owns the viewport, and a closed scene has nothing to measure. A
-        // PROBE-LINKED cut is the exception: it was opened by this very tool and
+        // probe-linked cut is the exception: it was opened by this very tool and
         // is passive, so the marker and the section coexist. The tool stands down
         // instead of fighting the others.
         if self.document.edit_mode.has_active_session()
@@ -395,7 +395,7 @@ impl OccluViewApp {
             return false;
         }
         // Align Scans owns the primary click while it is armed. Without this
-        // one click would place an align point AND a ruler anchor.
+        // one click would place an align point and a ruler anchor.
         if self.align_active() {
             self.tools.measure.disarm();
             return false;
@@ -524,9 +524,9 @@ impl OccluViewApp {
         if response.secondary_clicked() {
             // RMB is also the orbit button. Only a truly stationary right-click
             // clears: `viewport_secondary_gesture_moved_since_press` is armed by
-            // ANY pointer motion during the press (including sub-threshold
-            // motion the platform may classify as a click), which is exactly
-            // the "Thickness exits on rotation" guard. Note `press_origin()`
+            // any pointer motion during the press (including sub-threshold
+            // motion the platform may classify as a click), which is the
+            // "Thickness exits on rotation" guard. Note `press_origin()`
             // cannot be used here — egui wipes it on every release, so on the
             // click frame it is always None.
             if self.ui.viewport_secondary_gesture_moved_since_press {
@@ -651,7 +651,7 @@ impl OccluViewApp {
         self.ui.status_message = Some(self.ui.locale.tr_with(key, &[("len", length.as_str())]));
     }
 
-    /// Probe the wall of the hit layer and report the reading honestly.
+    /// Probe the wall of the hit layer and report the reading.
     fn apply_thickness_probe(&mut self, scene: &Scene, hit: ScenePickHit) {
         let Some(entry) = scene.meshes().get(hit.layer_index) else {
             return;
@@ -676,8 +676,8 @@ impl OccluViewApp {
                     ThicknessReading::Open => self.ui.locale.tr("measure-open-wall"),
                 });
                 self.tools.measure.set_probe(probe);
-                // Feature D: the same click ALSO opens the Cut View at this
-                // cross-section (Wall readings only), showing the same chord.
+                // The same click also opens the Cut View at this cross-section
+                // (Wall readings only), showing the same chord.
                 self.drive_probe_cut_view(scene, &probe);
             }
             None => {
@@ -691,8 +691,8 @@ impl OccluViewApp {
     /// A `Wall` reading with a buildable cross-section plane plants a world-fixed
     /// disc whose plane contains the entry->exit chord, so the wall reads edge-on
     /// in the Section panel with the same measurement. An `Open` reading (or a
-    /// degenerate chord we cannot section) plants nothing and closes any cut view
-    /// this probe flow had opened — honest: there is nothing to section.
+    /// degenerate chord that cannot be sectioned) plants nothing and closes any
+    /// cut view this probe flow had opened: there is nothing to section.
     fn drive_probe_cut_view(&mut self, scene: &Scene, probe: &ThicknessProbe) {
         let planned = if let ThicknessReading::Wall { exit, thickness_mm } = probe.reading {
             let scale_hint = scene.bbox().half_diagonal();
@@ -760,7 +760,7 @@ impl OccluViewApp {
             self.tools.cut_view.slice_visible(),
         );
 
-        // A probe-linked cut is PASSIVE: the measure tool owns the main-viewport
+        // A probe-linked cut is passive: the measure tool owns the main-viewport
         // pointer and the Esc/F keys, so the disc is not draggable, does not
         // re-plant, and never consumes Escape here (Esc goes to the measure tool,
         // which closes both). This is what lets the two tools coexist.
@@ -784,7 +784,7 @@ impl OccluViewApp {
             && self.tools.cut_view.is_planted()
             && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F));
 
-        // Wheel scoping: the wheel acts ONLY inside the Section
+        // Wheel scoping: the wheel acts only inside the Section
         // panel; over the bare viewport it stays camera zoom. Inside the panel,
         // Ctrl+wheel resizes the disc (manipulator radius) and a plain wheel
         // zooms the slice to the cursor. Drain the scroll in both cases so it

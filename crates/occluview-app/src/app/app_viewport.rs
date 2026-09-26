@@ -300,7 +300,7 @@ impl OccluViewApp {
         // lasso is armed (the outline owns the gesture).
         // A click the axis gizmo answered is a view change, not a pick. The
         // gizmo markers sit over the model, so without this the same click
-        // snapped the camera AND marked the facet behind the marker.
+        // would snap the camera and mark the facet behind the marker.
         if self.tools.editor_tab == mesh_editor_overlay::EditorTab::EditMesh
             && !gizmo_click
             && !self.document.edit_mode.lasso_armed()

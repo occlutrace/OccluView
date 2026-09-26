@@ -32,7 +32,7 @@ pub(super) struct PersistenceState {
     pub(super) settings: Settings,
     pub(super) settings_persistence: SettingsPersistence,
     /// Retry state for the language sidecar, mirroring settings persistence.
-    /// The sidecar lives in its own file so an old binary rewriting
+    /// The sidecar lives in its own file so an older binary rewriting
     /// settings.json can never erase the language choice.
     pub(super) language_persistence: SettingsPersistence,
     pub(super) recent_files: RecentFiles,
@@ -147,22 +147,21 @@ impl PersistenceState {
 
     /// Mirror the sculpt sliders into settings while "remember brush settings"
     /// is on. The sliders themselves live in egui memory while the editor is
-    /// open; this one-way sync makes the next launch restore exactly what the
-    /// operator last used. The persist is debounced: a drag changes the sliders
+    /// open; this one-way sync makes the next launch restore what the operator
+    /// last used. The persist is debounced: a drag changes the sliders
     /// about sixty times a second, and every dirty frame would cost an fsync.
     pub(super) fn sync_sculpt_preferences(&mut self, ctx: &egui::Context) {
         if !self.settings.remember_sculpt_brush {
             self.sculpt_settings_dirty_since = None;
             return;
         }
-        // A close request and the debounce race, and the debounce loses: the
-        // sliders were already written into `settings` but the dirty mark is
-        // only set once the value has been still for a second, and closing does
-        // not persist anything (`intercept_unsaved_close_request` only fires for
-        // unsaved MESH edits, and there is no `on_exit`). Closing within that
-        // second therefore discarded the new brush size and intensity. The
-        // operator asked for the settings to be remembered, so flush them now
-        // rather than on a timer the window no longer has.
+        // A close request races the debounce: the sliders are already written
+        // into `settings`, but the dirty mark is only set once the value has
+        // been still for a second, and closing does not persist anything
+        // (`intercept_unsaved_close_request` only fires for unsaved mesh edits,
+        // and there is no `on_exit`). Closing within that second would discard
+        // the new brush size and intensity, so flush them now rather than on a
+        // timer the closing window will not run.
         if self.sculpt_settings_dirty_since.is_some()
             && ctx.input(|i| i.viewport().close_requested())
         {

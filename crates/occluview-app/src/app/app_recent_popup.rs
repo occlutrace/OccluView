@@ -38,7 +38,7 @@ pub(super) fn show_recent_files_popup(
                 }
             }
             ui.separator();
-            // Canonical label "Clear recent" pinned by source guards.
+            // Canonical label "Clear recent".
             ui.button(locale.tr("recent-clear"))
                 .clicked()
                 .then_some(RecentFilesAction::Clear)

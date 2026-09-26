@@ -185,7 +185,7 @@ fn late_measurement_cannot_reopen_hidden_or_unrefined_map() {
     assert!(!app.tools.align.settings.show_deviation);
     assert!(
         app.tools.align.status.is_none(),
-        "and no reading is reported for a map nobody asked to see"
+        "and no reading is reported for a map the operator did not ask to see"
     );
 
     // The refined claim went away under the running job.

@@ -107,8 +107,8 @@ fn layer_mesh(app: &OccluViewApp, layer_id: SceneMeshId) -> Arc<Mesh> {
         .clone()
 }
 
-/// Poll the frame path until the worker owes the stroke nothing more, exactly
-/// as the viewport does once per frame.
+/// Poll the frame path until the worker owes the stroke nothing more, as the
+/// viewport does once per frame.
 fn pump_sculpt_worker(app: &mut OccluViewApp) {
     let ctx = app.ui.repaint_ctx.clone();
     let deadline = Instant::now() + Duration::from_secs(60);
@@ -191,7 +191,7 @@ fn every_terminal_failure_exit_raises_the_dialog_and_disarms() {
     let shadow = app.tools.sculpt.worker.as_ref().expect("worker").shadow();
     let poison = std::thread::spawn(move || {
         let _guard = shadow.write().expect("shadow lock");
-        // The panic IS the mechanism under test: it poisons the worker's
+        // The panic is the mechanism under test: it poisons the worker's
         // publication boundary, which is what the real code sees when a panic
         // unwinds through a worker-side lock.
         panic!("test poison");

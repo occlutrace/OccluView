@@ -38,8 +38,8 @@ impl OccluViewApp {
         if !self.ui.modal_dialog_open()
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
-            // Escape is a close, and a close puts the scans back. Silently
-            // keeping what a cancelled tool did is how work gets lost.
+            // Escape is a close, and a close puts the scans back: a cancelled
+            // tool never keeps what it did.
             self.cancel_align_session(ctx);
             return false;
         }
@@ -120,9 +120,9 @@ impl OccluViewApp {
                 self.clear_deviation_overlay();
                 self.tools.align.stats = None;
                 // And whatever the worker is still computing about that pair.
-                // Without this the cleanup above was undone a beat later by the
-                // abandoned job's own result, which repopulated the status and
-                // the statistics for a scan that had left the scene.
+                // Without this the abandoned job's own result would undo the
+                // cleanup above shortly after, repopulating the status and the
+                // statistics for a scan that has left the scene.
                 self.abandon_align_jobs();
             }
         }
@@ -138,8 +138,8 @@ impl OccluViewApp {
         self.tools.measure.disarm();
         self.tools.cut_view.disable();
         self.tools.align.tool.arm();
-        // Remember where every scan started. Cancel is only honest if there is
-        // something to go back to.
+        // Remember where every scan started, so Cancel has something to go
+        // back to.
         self.tools.align.session_poses =
             self.document.scene.as_ref().map_or_else(Vec::new, |scene| {
                 scene
@@ -161,10 +161,10 @@ impl OccluViewApp {
     pub(super) fn disarm_align_tool(&mut self, ctx: &egui::Context) {
         // A gesture can still be open: Escape is read before the drag handler,
         // and arming another tool disarms this one from the outside. Closing it
-        // here records the movement as one undo step. Left dangling, the scan
-        // kept a pose that no history step described and no save prompt knew
-        // about — and the stale gesture was still live the next time the tool
-        // opened.
+        // here records the movement as one undo step. Left open, the scan would
+        // keep a pose that no history step describes and no save prompt knows
+        // about, and the stale gesture would still be live the next time the
+        // tool opens.
         self.finish_align_drag();
         self.reset_align_state_for_scene_clear();
         ctx.request_repaint();
@@ -194,12 +194,10 @@ impl OccluViewApp {
         self.tools.align.session_poses.clear();
         self.tools.align.brush.set_armed(false);
         self.tools.align.brush.reset_target();
-        // A session that ended on Manually used to re-open there, with the tab
-        // the operator last left rather than the one the tool starts in. The
-        // drag constraint is the same class of leak and worse to diagnose: an
-        // axis lock set on one case survived into the next pair of scans, where
-        // it reads as "the scan is stuck" rather than as a setting that is
-        // still on.
+        // Each session starts on the tool's default tab, not the one the
+        // operator last left. The drag constraint resets too: an axis lock
+        // carried into the next pair of scans reads as "the scan is stuck"
+        // rather than as a setting that is still on.
         self.tools.align.tab = crate::align_panel::AlignTab::default();
         self.tools.align.constraint = crate::align_drag::DragConstraint::default();
     }
@@ -208,7 +206,7 @@ impl OccluViewApp {
     ///
     /// Every message about a scan uses this. An operator who is told "moved by
     /// hand" cannot tell which of two arches moved, and in this tool whichever
-    /// one they grabbed is the one that moves — so the name is the whole message.
+    /// one they grabbed is the one that moves.
     pub(super) fn layer_display_name(&self, layer: SceneMeshId) -> Option<String> {
         let scene = self.document.scene.as_ref()?;
         let index = scene
@@ -251,12 +249,12 @@ impl OccluViewApp {
         if !response.clicked_by(egui::PointerButton::Primary) {
             return false;
         }
-        // Arrows belong to the Automatically tab. The drag handler already
-        // refuses to run outside Manually; without the mirror of that here, a
-        // press too short to become a drag fell through and started a pair on
-        // the tab that has no arrows in it — and the panel only drops a
-        // half-placed point on the way OUT of Automatically, so that arrow
-        // survived every later switch.
+        // Arrows belong to the Automatically tab, as drags belong to Manually
+        // (the drag handler refuses to run outside it). Without this a press
+        // too short to become a drag would fall through and start a pair on the
+        // tab that has no arrows in it, and since the panel only drops a
+        // half-placed point on the way out of Automatically, that arrow would
+        // survive every later switch.
         if self.tools.align.tab != crate::align_panel::AlignTab::Automatically {
             return true;
         }
@@ -293,8 +291,8 @@ impl OccluViewApp {
         let outcome = self.tools.align.tool.click(point);
         // The first point can contradict the arm-time role guess and swap the
         // two scans. That is the same role change the panel button performs, so
-        // it owes the same invalidation: without it the map kept describing the
-        // direction the panel no longer showed.
+        // it owes the same invalidation: without it the map would keep
+        // describing the direction the panel no longer shows.
         if self.tools.align.tool.take_role_swap() {
             self.adopt_swapped_roles(self.ui.locale.tr("align-status-turned"));
         }
@@ -400,9 +398,9 @@ impl OccluViewApp {
         };
         // A hidden scan is still geometry, so every stage below would happily fit
         // against it and measure it, and the panel would report a percentage for a
-        // surface nobody can see. Worse for a map: the colours land on an
-        // invisible layer while the visible one is faded to sixteen per cent, so
-        // the viewport shows a ghost and nothing else.
+        // surface the operator cannot see. For a map it is worse: the colours
+        // would land on an invisible layer while the visible one is faded to
+        // sixteen per cent, so the viewport would show a ghost and nothing else.
         if !moving.visible || !fixed.visible {
             let hidden = if moving.visible { fixed_id } else { moving_id };
             let name = self
@@ -421,9 +419,9 @@ impl OccluViewApp {
             return;
         };
 
-        // Geometry, not topology: a sculpt deliberately keeps the topology id
-        // and mints a fresh geometry id precisely so geometry-derived caches
-        // can tell that the surface changed under them.
+        // Geometry, not topology: a sculpt keeps the topology id and mints a
+        // fresh geometry id so geometry-derived caches can tell that the
+        // surface changed under them.
         let markings = &self.tools.align.markings;
         let geometry = &mut self.tools.align.geometry;
         let mask_revision = markings.revision();
@@ -438,7 +436,7 @@ impl OccluViewApp {
         };
         // Handed over by `Arc`: the arrays are built once per geometry and pose,
         // not once per submit. Measure is re-submitted on every settings change,
-        // and rebuilding them there cost eleven megabytes of copying a time.
+        // and rebuilding them there would copy eleven megabytes each time.
         let moving_positions = geometry.local_positions(moving);
         let moving_indices = geometry.indices(moving);
         let fixed_world_positions = geometry.world_positions(fixed);
@@ -456,9 +454,9 @@ impl OccluViewApp {
             vertex_count: fixed.mesh.vertices().len(),
         };
         // Marks that no longer describe the scan in front of the operator are
-        // dropped, and SAID. They used to be dropped in silence, so a region
-        // painted out before a repair or a sculpt quietly re-entered the match and
-        // the fit changed for no visible reason.
+        // dropped, and the status says so: dropped without notice, a region
+        // painted out before a repair or a sculpt would re-enter the match and
+        // the fit would change for no visible reason.
         let stale = [
             (AlignSide::Moving, moving_marked),
             (AlignSide::Fixed, fixed_marked),
@@ -506,8 +504,8 @@ impl OccluViewApp {
             self.tools.align.stats = None;
             // Only a heatmap is the previous fit's picture. With the brush
             // armed, the attached overlay is the markings' preview, and they
-            // are still in force: dropping it there hid the exclusion regions
-            // the job was about to be built from.
+            // are still in force: dropping it there would hide the exclusion
+            // regions the job is about to be built from.
             if self.tools.align.overlay == AlignOverlay::Map {
                 self.clear_deviation_overlay();
             }

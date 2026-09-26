@@ -1,15 +1,15 @@
 //! Painting the markings that best-fit matching must ignore.
 //!
 //! Three things make this fast enough to feel like a brush rather than a
-//! progress bar, and all three had to be true at once:
+//! progress bar, and all three must hold at once:
 //!
 //! 1. **Nothing is rebuilt per dab.** The flat position array comes from the
-//!    geometry cache and the mask is edited in place. Rebuilding them cost
+//!    geometry cache and the mask is edited in place. Rebuilding them costs
 //!    seven milliseconds and a megabyte of churn per dab.
 //! 2. **Only the marked vertices are re-coloured and re-uploaded.** A dab the
-//!    size of a cusp touches a few hundred vertices out of a million; the old
-//!    path repainted and re-uploaded all of them, thirty-four megabytes each
-//!    way, which is exactly the three frames a second the operator reported.
+//!    size of a cusp touches a few hundred vertices out of a million;
+//!    repainting and re-uploading all of them moves thirty-four megabytes each
+//!    way and holds the brush to three frames a second.
 //! 3. **The dab itself is parallel** — three milliseconds on a 942k-vertex arch.
 //!
 //! The Brush window has an explicit mesh selection, and it opens on **both**
@@ -40,7 +40,7 @@ fn resize_align_brush_from_wheel(
     brush: &mut crate::align_brush::AlignBrush,
     ctx: &egui::Context,
 ) -> bool {
-    // Some platforms turn a shifted wheel into HORIZONTAL scroll, so read
+    // Some platforms turn a shifted wheel into horizontal scroll, so read
     // whichever axis actually moved.
     let raw = super::app_input::raw_wheel_delta(ctx);
     let scroll = if raw.y.abs() >= raw.x.abs() {
@@ -72,7 +72,7 @@ impl OccluViewApp {
         if !primary_down {
             // The stroke ended. The markings changed what would be matched and
             // measured, so a map drawn before them is stale — drop it rather
-            // than silently recomputing behind the operator's hand.
+            // than recompute it behind the operator's hand.
             if self.tools.align.markings.close_stroke() {
                 self.invalidate_deviation_map(&self.ui.locale.tr("align-status-markings-changed"));
                 // The release frame still reads as a click. An armed brush owns
@@ -89,7 +89,7 @@ impl OccluViewApp {
         };
         // The brush's own size slider sits inches from the cursor, and its
         // window floats over the mesh. Without this, dragging that slider
-        // paints a dab per frame on whatever is behind the window — silently.
+        // would paint a dab per frame on whatever is behind the window.
         if !self.pointer_on_bare_viewport(ctx, response.rect, pointer) {
             return false;
         }
@@ -102,7 +102,7 @@ impl OccluViewApp {
         // ray meets that side's own surface. With Both checked (the default),
         // painting is one continuous gesture over the pair: the stroke lands on
         // whichever scan is under the pointer, and an overlapping second scan
-        // is marked too rather than silently skipped.
+        // is marked too rather than skipped.
         let target = self.tools.align.brush.target();
         let erases = self
             .tools
@@ -140,7 +140,7 @@ impl OccluViewApp {
                     f64::from(hit.point.y),
                     f64::from(hit.point.z),
                 );
-                // Cached: rebuilding this per dab was seven milliseconds of
+                // Cached: rebuilding this per dab costs seven milliseconds of
                 // pure copy.
                 let positions = self.tools.align.geometry.local_positions(entry);
                 let mesh = MarkedMesh {
@@ -238,9 +238,9 @@ impl OccluViewApp {
         if !radius_px.is_finite() || radius_px < 2.0 {
             return;
         }
-        // The operator's dental CAD software paints with a green tool and
-        // clears with a red one; the ring says which of the two this drag
-        // will be, Shift included.
+        // Dental CAD software paints with a green tool and clears with a red
+        // one; the ring says which of the two this drag will be, Shift
+        // included.
         let shift = ctx.input(|input| input.modifiers.shift);
         let ink = if self.tools.align.brush.erases(shift) {
             egui::Color32::from_rgb(196, 82, 72)
@@ -295,18 +295,18 @@ impl OccluViewApp {
             });
             return;
         }
-        // "Mark automatic" that left the mask EMPTY on a non-empty mesh excluded
-        // the whole layer: the honest sentence is that there is nothing left to
-        // exclude, not the name of the region the operator asked for. This
+        // "Mark automatic" that left the mask empty on a non-empty mesh excluded
+        // the whole layer: the accurate sentence is that there is nothing left
+        // to exclude, not the name of the region the operator asked for. This
         // happens when the radius is wider than the layer, so every vertex is
         // cleared.
         //
-        // Gated on the COMMAND, not on the count alone. Every command that
+        // Gated on the command, not on the count alone. Every command that
         // clears the mask — "Fit everywhere" above all — legitimately reports
-        // zero marked, and keying this branch on `marked == 0` alone told an
-        // operator who asked for whole-surface matching that "the region covered
-        // the whole scan", while the sentences written for those commands became
-        // unreachable.
+        // zero marked; keying this branch on `marked == 0` alone would tell an
+        // operator who asked for whole-surface matching that "the region
+        // covered the whole scan", and the sentences written for those commands
+        // would be unreachable.
         let emptied = command == MaskCommand::MarkAutomatic
             && reached
                 .iter()
@@ -325,7 +325,7 @@ impl OccluViewApp {
     ///
     /// The report keys state the rule ("whole mesh marked"); naming which
     /// scan it landed on is what says whether the other arch was left in the
-    /// match, which is the difference an operator could not see before.
+    /// match, which the rule alone does not say.
     fn command_report(&self, command: MaskCommand, reached: &[AlignSide]) -> String {
         let report = self.ui.locale.tr(command.report_key());
         if reached.len() == AlignSide::BOTH.len() {
@@ -409,10 +409,10 @@ impl OccluViewApp {
     pub(super) fn clear_align_mask(&mut self) {
         self.tools.align.markings.clear();
         // The region preview is the markings' own picture, so it goes with them.
-        // Left attached, a cleared pair kept showing blue that matched no mask,
-        // and the cached colour array stayed behind: the next dab took the
-        // sparse path and re-attached the stale array, so the screen showed the
-        // old cleared region plus the new dab while the mask held only the dab.
+        // Left attached, a cleared pair would keep showing blue that matches no
+        // mask, and the cached colour array would stay behind: the next dab
+        // would take the sparse path and re-attach the stale array, showing the
+        // cleared region plus the new dab while the mask holds only the dab.
         if self.tools.align.overlay == AlignOverlay::Region {
             self.clear_deviation_overlay();
         }
@@ -462,7 +462,7 @@ impl OccluViewApp {
     /// A layer with nothing marked carries no overlay at all. Fit everywhere
     /// leaves a mask that marks nothing, and attaching it would replace the
     /// scan's colours on the GPU for a picture identical to the scan — which is
-    /// also why opening the brush on an unmarked pair no longer repaints both
+    /// also why opening the brush on an unmarked pair does not repaint both
     /// arches.
     fn repaint_region_preview(&mut self, layer: SceneMeshId, side: AlignSide) -> bool {
         let marked = self
@@ -503,12 +503,12 @@ impl OccluViewApp {
             return;
         }
         // The list belongs to this side's markings, which produced it. Copied
-        // rather than stolen: a `mem::take` here left the markings holding an
-        // empty list for the rest of the frame, so anything else that asked
-        // what the last dab touched was told "nothing". Asking per side is what
-        // makes a Both-target stroke paint BOTH arches: one shared list was
-        // overwritten by the second dab, so the first arch was never
-        // re-coloured and half the stroke stayed invisible.
+        // rather than taken: a `mem::take` here would leave the markings holding
+        // an empty list for the rest of the frame, so anything else that asks
+        // what the last dab touched would be told "nothing". Asking per side is
+        // what makes a Both-target stroke paint both arches: a single shared
+        // list would be overwritten by the second dab, leaving the first arch
+        // un-recoloured and half the stroke invisible.
         let touched = self.tools.align.markings.touched(side).to_vec();
         let Some(patched) = self.region_colors_for(layer, side, &touched) else {
             self.repaint_region_preview(layer, side);
@@ -629,6 +629,8 @@ mod tests {
         assert!(color[0] > 0 && color[1] > 0 && color[2] > 0);
     }
 
+    /// The default Mesh selection covers both scans, so one stroke can mark
+    /// either side of the comparison.
     #[test]
     fn a_fresh_brush_commands_both_scans() {
         let brush = AlignBrush::default();
@@ -636,17 +638,9 @@ mod tests {
         assert_eq!(brush.target().sides().len(), 2);
     }
 
-    /// The two things this file, and only this file, is responsible for keeping
-    /// cheap. What a dab does to the mask itself is covered by real tests over
-    /// `AlignMarkings`; these are the wiring around it, which has no behaviour
-    /// of its own to run.
-    /// The brush must follow the explicit Mesh selection. The two surfaces
-    /// overlap, so a nearest-hit picker would intermittently paint the wrong
-    /// side; `pick_layer_hit` is the causal guard. The default selection covers
-    /// both scans, so one stroke can mark either side of the comparison.
-    /// Every whole-mesh command must reach every scan the selection covers.
-    /// The report keys are per-command, and a command with no one-scan report
-    /// would fall back to a sentence claiming the pair when one was touched.
+    /// Every whole-mesh command has a one-scan report. The report keys are
+    /// per-command, and a command with no one-scan report would fall back to a
+    /// sentence claiming the pair when one was touched.
     #[test]
     fn every_command_can_report_one_named_scan() {
         for command in MaskCommand::ALL {
@@ -657,7 +651,7 @@ mod tests {
 
     /// A shifted wheel resizes the brush once, on whichever axis moved.
     ///
-    /// Some platforms turn a shifted wheel into HORIZONTAL scroll, so the raw
+    /// Some platforms turn a shifted wheel into horizontal scroll, so the raw
     /// event has to be read on whichever axis moved or the size gesture silently
     /// does nothing. egui also smooths wheel deltas across frames: a resize read
     /// from the smoothed value replays the same notch on the next frame and
@@ -723,10 +717,11 @@ mod tests {
     /// A stroke takes the map down instead of recomputing it.
     ///
     /// Painting changes what would be matched, so a map drawn before the stroke
-    /// describes a comparison that no longer exists. Dropping it is honest;
-    /// silently recomputing behind the operator's hand is not, and measuring per
-    /// dab is most of a second behind a moving hand. The markings themselves are
-    /// the operator's own work and have to survive the map's removal.
+    /// describes a comparison that no longer exists. Dropping it shows the
+    /// operator the map is gone, where recomputing behind the operator's hand
+    /// would not, and measuring per dab runs most of a second behind a moving
+    /// hand. The markings themselves are the operator's own work and have to
+    /// survive the map's removal.
     #[test]
     fn a_stroke_drops_the_map_instead_of_recomputing_it() {
         use crate::align_markings::{AlignSide, MarkedMesh};
