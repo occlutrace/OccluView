@@ -376,13 +376,15 @@ impl OccluViewApp {
             .iter()
             .map(|entry| {
                 let field = self.tools.contacts.field_for(entry.id());
+                let mut uniform = super::app_render_contact::scene_mesh_uniform_with_contacts(
+                    entry,
+                    field.map(|_| &scale),
+                    field_width(field),
+                );
+                uniform.opacity = self.displayed_opacity(entry.id(), uniform.opacity);
                 occluview_render::PreparedSceneSource {
                     mesh: &entry.mesh,
-                    uniform: super::app_render_contact::scene_mesh_uniform_with_contacts(
-                        entry,
-                        field.map(|_| &scale),
-                        field_width(field),
-                    ),
+                    uniform,
                     visible: entry.visible,
                     wireframe: entry.wireframe,
                     contact: field.map(contact_paint),
@@ -402,13 +404,15 @@ impl OccluViewApp {
             .iter()
             .map(|entry| {
                 let field = self.tools.contacts.field_for(entry.id());
+                let mut uniform = super::app_render_contact::scene_mesh_uniform_with_contacts(
+                    entry,
+                    field.map(|_| &scale),
+                    field_width(field),
+                );
+                uniform.opacity = self.displayed_opacity(entry.id(), uniform.opacity);
                 occluview_render::PreparedSceneUpdate {
                     topology: occluview_render::PreparedSceneTopology::from_mesh(&entry.mesh),
-                    uniform: super::app_render_contact::scene_mesh_uniform_with_contacts(
-                        entry,
-                        field.map(|_| &scale),
-                        field_width(field),
-                    ),
+                    uniform,
                     visible: entry.visible,
                     wireframe: entry.wireframe,
                     contact: field.map(contact_paint),

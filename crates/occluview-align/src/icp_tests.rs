@@ -164,6 +164,9 @@ fn trustworthy_report() -> IcpReport {
         // The solver ranks candidates by this and `icp_step` refuses a step
         // that lowers it. It is not a gate input, so any benign value will do.
         seated_fraction: 0.25,
+        verified_coverage: 0.8,
+        verified_median_mm: 0.02,
+        verified_stability: 0.1,
     }
 }
 

@@ -22,6 +22,12 @@ use icp_overlap::{reciprocal_evidence, reciprocal_evidence_is_usable, Reciprocal
 #[path = "icp_step.rs"]
 mod icp_step;
 use icp_step::{correspondences_at_radius, try_backtracked_step, TrialState};
+#[path = "icp_verify.rs"]
+mod icp_verify;
+use icp_verify::{verify, Verification};
+#[path = "icp_unique.rs"]
+mod icp_unique;
+use icp_unique::{rivalry, RivalContext, Rivalry};
 
 #[cfg(test)]
 #[path = "icp_internal_tests.rs"]
@@ -181,6 +187,17 @@ const STALL_IMPROVEMENT: f64 = 0.999;
 /// degree of freedom is not determined by the geometry.
 const WEAK_AXIS_FRACTION: f64 = 1e-6;
 
+/// Largest verified median distance a trusted pose may leave, in millimetres
+/// (see `icp_verify`). The release acceptance bar for a real scan pair is a
+/// 0.05 mm residual; a correct seating of two acquisitions of the same arch
+/// measures 0.02-0.035 mm here, while every wrong pose the verification
+/// corpus produced — another patient's patch, the other jaw, a patch one tooth
+/// over, a trimmed fit at a low matching ratio — measured 0.06 mm or more.
+const MAX_VERIFIED_MEDIAN_MM: f64 = 0.05;
+
+/// Smallest stability the tightly seated part must reach (see `icp_verify`).
+const MIN_VERIFIED_STABILITY: f64 = 0.0005;
+
 /// Which way the two surfaces face each other.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Orientation {
@@ -265,6 +282,17 @@ pub struct IcpReport {
     /// `icp_step`. It is a diagnostic; the acceptance gate decides on the median
     /// residual.
     pub seated_fraction: f64,
+    /// Share of the sampled moving surface with a counterpart at the final
+    /// pose: nothing trimmed, the operator's reach, and vertices whose nearest
+    /// fixed point is the fixed scan's open border left out.
+    pub verified_coverage: f64,
+    /// Median distance from those vertices to their counterpart, in
+    /// millimetres. Independent of the matching ratio the solve ran at.
+    pub verified_median_mm: f64,
+    /// Smallest eigenvalue of the tightly seated part's normalized
+    /// point-to-plane information matrix: near zero when that part alone
+    /// could still slide or turn.
+    pub verified_stability: f64,
 }
 
 impl IcpReport {
@@ -331,7 +359,22 @@ impl IcpReport {
             && self.p95_abs.is_finite()
             && !self.weak_rot_axes.into_iter().any(|weak| weak)
             && !self.weak_trans_axes.into_iter().any(|weak| weak)
+            && verification_holds(&Verification {
+                coverage: self.verified_coverage,
+                median_mm: self.verified_median_mm,
+                stability: self.verified_stability,
+            })
     }
+}
+
+/// Whether a verification clears the coverage, median and stability bars.
+fn verification_holds(verification: &Verification) -> bool {
+    verification.coverage.is_finite()
+        && verification.coverage >= MIN_REFINEMENT_COVERAGE_FRACTION
+        && verification.median_mm.is_finite()
+        && verification.median_mm <= MAX_VERIFIED_MEDIAN_MM
+        && verification.stability.is_finite()
+        && verification.stability >= MIN_VERIFIED_STABILITY
 }
 
 /// One accepted moving-vertex-to-fixed-surface correspondence.
@@ -433,7 +476,7 @@ pub fn refine(
         summary = Some(level.summary);
     }
 
-    let Some(summary) = summary else {
+    let Some(mut summary) = summary else {
         return Err(FitRejection::TooFewPairs {
             have: 0,
             need: MIN_CORRESPONDENCES,
@@ -460,6 +503,54 @@ pub fn refine(
         return Err(FitRejection::Runaway { moved_by, allowed });
     }
 
+    // Judged again with nothing trimmed; see `icp_verify`. A pose that clears
+    // that bar must also be the clear best of the basins around it; see
+    // `icp_unique`. One better basin is followed; a second change of mind, or
+    // a rival that fits as well, is ambiguity.
+    let mut verification = verify(moving, &normals, fixed, pose, settings);
+    let context = RivalContext {
+        moving,
+        normals: &normals,
+        fixed,
+        moving_surface: moving_surface.as_ref(),
+        fixed_samples: &fixed_samples,
+        settings: &adaptive_settings,
+        cancel,
+    };
+    if verification_holds(&verification) {
+        match rivalry(&context, pose) {
+            Rivalry::Unique => {}
+            Rivalry::Ambiguous => return Err(FitRejection::Ambiguous),
+            Rivalry::Better(better) => {
+                let samples = sample_vertices(moving, DENSE_BUDGET);
+                let level = run_level(&Level {
+                    moving,
+                    normals: &normals,
+                    fixed,
+                    moving_surface: moving_surface.as_ref(),
+                    fixed_samples: &fixed_samples,
+                    samples: &samples,
+                    settings: &adaptive_settings,
+                    cancel,
+                    start: better,
+                })?;
+                iterations += level.iterations;
+                converged = level.converged;
+                pose = level.pose;
+                summary = level.summary;
+                let moved_by = (pose.apply(center) - start.apply(center)).length();
+                if moved_by > allowed {
+                    return Err(FitRejection::Runaway { moved_by, allowed });
+                }
+                verification = verify(moving, &normals, fixed, pose, settings);
+                if verification_holds(&verification)
+                    && !matches!(rivalry(&context, pose), Rivalry::Unique)
+                {
+                    return Err(FitRejection::Ambiguous);
+                }
+            }
+        }
+    }
     Ok(IcpReport {
         rigid: pose,
         iterations,
@@ -479,6 +570,9 @@ pub fn refine(
         // field false.
         effective_matching_ratio: adaptive_settings.matching_ratio,
         seated_fraction: summary.seated_fraction,
+        verified_coverage: verification.coverage,
+        verified_median_mm: verification.median_mm,
+        verified_stability: verification.stability,
     })
 }
 
@@ -616,6 +710,9 @@ fn idle_report(start: Rigid) -> IcpReport {
         weak_trans_axes: [true; 3],
         effective_matching_ratio: 0.0,
         seated_fraction: 0.0,
+        verified_coverage: Verification::NONE.coverage,
+        verified_median_mm: Verification::NONE.median_mm,
+        verified_stability: Verification::NONE.stability,
     }
 }
 
