@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleExecutable</key>
+  <string>occluview</string>
+  <key>CFBundleIconFile</key>
+  <string>occluview.icns</string>
+  <key>CFBundleIdentifier</key>
+  <string>ai.occlutrace.OccluView</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>OccluView</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>@VERSION@</string>
+  <key>CFBundleVersion</key>
+  <string>@VERSION@</string>
+  <key>LSApplicationCategoryType</key>
+  <string>public.app-category.utilities</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>14.0</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>NSPrincipalClass</key>
+  <string>NSApplication</string>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>3D Mesh</string>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <!-- The system's own identifiers: macOS already declares these
+             extensions, so a type of our own for them is never chosen and
+             the app would not be offered for the files. -->
+        <string>public.standard-tesselated-geometry-format</string>
+        <string>public.polygon-file-format</string>
+        <string>public.geometry-definition-format</string>
+        <string>org.khronos.glb</string>
+      </array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>HPS Dental Scan</string>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+      <key>LSHandlerRank</key>
+      <string>Default</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>ai.occlutrace.occluview.hps</string>
+      </array>
+    </dict>
+    <dict>
+      <!-- macOS types every .dcm file as DICOM. Alternate keeps medical DICOM
+           with its own software while an HPS container saved as .dcm can be
+           opened with OccluView; a real DICOM file is refused by its DICM
+           signature. -->
+      <key>CFBundleTypeName</key>
+      <string>HPS Dental Scan (.dcm)</string>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>org.nema.dicom</string>
+      </array>
+    </dict>
+  </array>
+  <key>UTImportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeConformsTo</key>
+      <array><string>public.data</string></array>
+      <key>UTTypeDescription</key>
+      <string>HPS Dental Scan</string>
+      <key>UTTypeIdentifier</key>
+      <string>ai.occlutrace.occluview.hps</string>
+      <key>UTTypeTagSpecification</key>
+      <dict><key>public.filename-extension</key><array><string>hps</string></array></dict>
+    </dict>
+  </array>
+</dict>
+</plist>

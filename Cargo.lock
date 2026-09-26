@@ -2617,6 +2617,7 @@ dependencies = [
  "fluent-syntax",
  "glam",
  "image",
+ "objc",
  "occluview-align",
  "occluview-contact",
  "occluview-core",

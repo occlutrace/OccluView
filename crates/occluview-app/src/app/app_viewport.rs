@@ -24,6 +24,23 @@ fn secondary_pointer_sample(ctx: &egui::Context) -> SecondaryPointerSample {
     })
 }
 
+fn pan_camera_from_point_scroll(
+    camera: &mut occluview_core::Camera,
+    ctx: &egui::Context,
+    viewport_rect: egui::Rect,
+) -> bool {
+    let scroll = super::app_input::take_raw_point_wheel_delta(ctx);
+    if scroll == egui::Vec2::ZERO {
+        return false;
+    }
+    let viewport_size = viewport_rect.size();
+    camera.pan_screen(
+        Vec2::new(-scroll.x, -scroll.y),
+        Vec2::new(viewport_size.x.max(1.0), viewport_size.y.max(1.0)),
+    );
+    true
+}
+
 pub(super) fn zoom_camera_from_wheel(
     camera: &mut occluview_core::Camera,
     ctx: &egui::Context,
@@ -31,7 +48,28 @@ pub(super) fn zoom_camera_from_wheel(
     viewport_rect: egui::Rect,
     pointer: egui::Pos2,
 ) -> bool {
-    let zoom = zoom_factor_from_scroll(super::app_input::raw_wheel_delta(ctx).y);
+    let wheel_zoom = zoom_factor_from_scroll(super::app_input::raw_wheel_delta(ctx).y);
+    // egui-winit maps macOS trackpad magnification to Event::Zoom, whose
+    // direction is opposite Camera's orthographic-height scale: spreading
+    // fingers emits >1, while Camera needs <1 to zoom in.
+    let pinch_zoom = ctx.input(|input| {
+        input.raw.events.iter().fold(1.0, |factor, event| {
+            let egui::Event::Zoom(gesture_factor) = event else {
+                return factor;
+            };
+            if gesture_factor.is_finite() && *gesture_factor > 0.0 {
+                let candidate = factor / *gesture_factor;
+                if candidate.is_finite() && candidate > 0.0 {
+                    candidate
+                } else {
+                    factor
+                }
+            } else {
+                factor
+            }
+        })
+    });
+    let zoom = wheel_zoom * pinch_zoom;
     if (zoom - 1.0).abs() > f32::EPSILON {
         // Sensitivity is an exponent on the zoom factor: 1.0 keeps the fixed
         // gain, values below soften it, values above sharpen it, and any
@@ -321,6 +359,16 @@ impl OccluViewApp {
             }
         }
 
+        // On macOS, pixel-unit scroll (a trackpad's two fingers) pans like a
+        // dragged canvas and the pinch below zooms, the platform's convention.
+        // Elsewhere pixel-unit scroll keeps zooming: winit reports a Wayland
+        // touchpad in pixels and has no pinch there, so panning would leave
+        // that touchpad with no way to zoom. A wheel the sculpt brush took
+        // this frame does not also move the camera.
+        if response.hovered() && cfg!(target_os = "macos") && !sculpt_wheel_used {
+            changed |= pan_camera_from_point_scroll(camera, ctx, viewport_rect);
+        }
+
         if response.hovered() && !sculpt_wheel_used {
             if let Some(pointer) = ctx.input(|input| input.pointer.hover_pos()) {
                 changed |= zoom_camera_from_wheel(
@@ -415,6 +463,42 @@ mod tests {
         })
         .drop_without_applying_deltas();
         (changed, camera.orthographic_height)
+    }
+
+    fn camera_after_pinch(gesture_factor: f32) -> (bool, f32) {
+        let ctx = egui::Context::default();
+        let viewport_rect =
+            egui::Rect::from_min_size(egui::pos2(100.0, 80.0), egui::vec2(800.0, 600.0));
+        let input = egui::RawInput {
+            screen_rect: Some(viewport_rect),
+            events: vec![egui::Event::Zoom(gesture_factor)],
+            ..Default::default()
+        };
+        let mut camera = Camera::default();
+        let mut changed = false;
+        ctx.run_ui(input, |ui| {
+            changed = zoom_camera_from_wheel(
+                &mut camera,
+                ui.ctx(),
+                1.0,
+                viewport_rect,
+                egui::pos2(500.0, 380.0),
+            );
+        })
+        .drop_without_applying_deltas();
+        (changed, camera.orthographic_height)
+    }
+
+    #[test]
+    fn trackpad_spread_pinch_zooms_in() {
+        let (changed, height) = camera_after_pinch(1.25);
+        assert!(changed && height < 100.0);
+    }
+
+    #[test]
+    fn trackpad_together_pinch_zooms_out() {
+        let (changed, height) = camera_after_pinch(0.8);
+        assert!(changed && height > 100.0);
     }
 
     #[test]

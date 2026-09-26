@@ -119,6 +119,126 @@ fn the_deb_ships_and_gates_the_license_set() {
 }
 
 #[test]
+fn the_macos_bundle_ships_the_license_set_and_the_safe_finder_registration() {
+    let build = macos_build_app_source();
+    let plist = macos_info_plist_source();
+    let ci = ci_workflow_source();
+
+    // The statically linked native CSG library and every Rust dependency are
+    // redistributed inside the bundle, so the same four notices the MSI and the
+    // deb carry must travel with it.
+    for notice in [
+        "LICENSE",
+        "NOTICE",
+        "THIRD-PARTY-NOTICES.md",
+        "THIRD-PARTY-NOTICES-NATIVE.md",
+    ] {
+        assert!(
+            build.contains(notice),
+            "the macOS builder must copy {notice} into the bundle"
+        );
+    }
+    assert!(
+        build.contains(r#"resources="$contents/Resources""#) && build.contains("$resources/Legal"),
+        "the notices belong inside the bundle, in a predictable Resources/Legal directory"
+    );
+    assert!(
+        build.contains("Helpers/occluview-cli"),
+        "the command-line companion ships inside the bundle, not as a second download"
+    );
+    assert!(
+        ci.contains("Legal/$notice"),
+        "the macOS CI package step must fail a bundle that lost the license set"
+    );
+    assert!(
+        ci.contains("OccluView-*-aarch64.dmg") && ci.contains("OccluView-*-aarch64.pkg"),
+        "the macOS CI step should verify the DMG and the PKG it just built"
+    );
+    // The builder seals the bundle with an ad-hoc signature: with only the
+    // linker's per-binary signatures a downloaded copy is reported as damaged,
+    // with no way to open it. Developer ID signing stays a maintainer gate
+    // with credentials this repository does not hold, so the builder never
+    // names an identity and a test artifact cannot pass for a release.
+    assert!(
+        build.contains(r#"codesign --force --sign - "$app_bundle""#),
+        "the developer builder seals the bundle with an ad-hoc signature"
+    );
+    assert!(
+        !build.contains("OCCLUVIEW_MACOS_APP_IDENTITY"),
+        "the developer builder must not sign with a Developer ID identity"
+    );
+
+    // Finder offers the app for every format the viewer opens, the legacy HPS
+    // `.dcm` container included (`V1_OPEN_EXTENSIONS` has carried it since
+    // v1). macOS types .stl, .ply, .obj, .glb and .dcm itself, so the document
+    // types name those system identifiers: a type of the app's own for one of
+    // those extensions is never the one a file gets, and the app was not
+    // offered for them until the bundle named the system's.
+    let document_types = plist
+        .split("<key>CFBundleDocumentTypes</key>")
+        .nth(1)
+        .and_then(|rest| rest.split("<key>UTImportedTypeDeclarations</key>").next())
+        .unwrap_or_default();
+    for identifier in [
+        "public.standard-tesselated-geometry-format",
+        "public.polygon-file-format",
+        "public.geometry-definition-format",
+        "org.khronos.glb",
+        "ai.occlutrace.occluview.hps",
+        "org.nema.dicom",
+    ] {
+        assert!(
+            document_types.contains(&format!("<string>{identifier}</string>")),
+            "the bundle should offer itself for {identifier}"
+        );
+    }
+    // `.dcm` is the medical DICOM suffix, so it may only ever be an opt-in
+    // surface: the DICOM entry is an alternate handler. `Owner` or `Default`
+    // there would make OccluView the system-wide handler for every DICOM
+    // file, the same reason Windows keeps `.dcm` in `OFFERED_ONLY_EXTENSIONS`
+    // and registers only its Open-with entries.
+    let dicom_entry = document_types
+        .split("<dict>")
+        .find(|entry| entry.contains("<string>org.nema.dicom</string>"))
+        .unwrap_or_default();
+    assert!(
+        dicom_entry.contains("<string>Alternate</string>")
+            && !dicom_entry.contains("<string>Default</string>")
+            && !dicom_entry.contains("<string>Owner</string>"),
+        "the DICOM offer must stay an alternate handler"
+    );
+    assert!(
+        !document_types.contains("<string>Owner</string>"),
+        "OccluView claims no format as its owner"
+    );
+    // Imported, not exported: OccluView reads HPS and does not define it. The
+    // formats macOS already declares are not declared again.
+    let imported = plist
+        .split("<key>UTImportedTypeDeclarations</key>")
+        .nth(1)
+        .unwrap_or_default();
+    assert!(
+        imported.contains("<string>ai.occlutrace.occluview.hps</string>")
+            && imported.contains("<string>hps</string>"),
+        "the HPS container needs its imported type declaration and extension tag"
+    );
+    for extension in ["stl", "ply", "obj", "glb", "dcm"] {
+        assert!(
+            !imported.contains(&format!("<string>{extension}</string>")),
+            "macOS declares .{extension}; a second declaration is never chosen"
+        );
+    }
+    assert!(
+        !plist.contains("UTExportedTypeDeclarations"),
+        "these formats are imported; exporting them would claim ownership OccluView lacks"
+    );
+    assert!(
+        plist.contains("<string>occluview</string>") && plist.contains("<string>14.0</string>"),
+        "the bundle must name the shipped executable and its macOS 14 floor"
+    );
+}
+
+#[test]
 fn the_release_page_quotes_the_changelog_and_attests_the_sboms() {
     let package = package_workflow_source();
 

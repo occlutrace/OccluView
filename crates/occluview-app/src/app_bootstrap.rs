@@ -166,10 +166,16 @@ fn real_main() -> Result<()> {
     let live_sample_count = graphics_preflight.live_sample_count;
     let native_options = native_options(&graphics_preflight);
 
+    // Finder hands a cold launch its documents before eframe calls the app
+    // creator below, so the handlers go in as the application finishes
+    // launching; the call in the creator only covers a failed observer.
+    single_instance::install_open_files_handler_at_launch();
+
     eframe::run_native(
         "OccluView 3D Viewer",
         native_options,
         Box::new(move |cc| {
+            single_instance::install_open_files_handler();
             append_startup_stage("window-ready");
             // Capture both raw handles now so the open-file handoff can use
             // the compositor's native activation protocol on Linux.
@@ -1140,9 +1146,9 @@ fn show_startup_fatal_message(report_path: Option<&Path>, details: &str) {
         show_startup_fatal_message_box(report_path, details);
     }
 
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(target_os = "macos")))]
     {
-        // A .desktop launch has no console. Give the operator the full path,
+        // A desktop launch has no console. Give the operator the full path,
         // not just a filename they cannot locate, and put the same actionable
         // value in the next startup breadcrumb if every dialog channel fails.
         // Keep the no-file state machine-readable. This sentinel is also
@@ -1153,6 +1159,14 @@ fn show_startup_fatal_message(report_path: Option<&Path>, details: &str) {
             report_path.map_or_else(|| "none".to_owned(), |path| path.display().to_string());
         tracing::error!(report, details, "OccluView could not continue");
         notify_desktop("OccluView could not start", &report, "critical");
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let report =
+            report_path.map_or_else(|| "none".to_owned(), |path| path.display().to_string());
+        tracing::error!(report, details, "OccluView could not continue");
+        notify_macos_dialog("OccluView could not start", &report);
     }
 }
 
@@ -1179,14 +1193,20 @@ fn show_diagnostics_message(report_path: Option<&Path>) {
         }
     }
 
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(target_os = "macos")))]
     {
         tracing::info!(report, "graphics diagnostics written");
         notify_desktop("OccluView graphics diagnostics", &report, "normal");
     }
+
+    #[cfg(target_os = "macos")]
+    {
+        tracing::info!(report, "graphics diagnostics written");
+        notify_macos_dialog("OccluView graphics diagnostics", &report);
+    }
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "macos")))]
 fn notify_desktop(title: &str, report: &str, urgency: &str) -> &'static str {
     let body = format!("Diagnostic report: {report}");
     for channel in NOTIFICATION_CHANNELS {
@@ -1218,6 +1238,40 @@ fn notify_desktop(title: &str, report: &str, urgency: &str) -> &'static str {
         "no desktop notification channel delivered the notice; the report path is the only operator-visible signal"
     );
     "none"
+}
+
+#[cfg(target_os = "macos")]
+const MACOS_DIALOG_SCRIPT: &str = r#"on run argv
+    display dialog (item 2 of argv) with title (item 1 of argv) buttons {"OK"} default button 1
+end run"#;
+
+/// Build a native `AppleScript` dialog command without interpolating operator or
+/// filesystem content into executable script source.
+#[cfg(target_os = "macos")]
+fn macos_dialog_command(title: &str, body: &str) -> Vec<String> {
+    vec![
+        "-e".to_string(),
+        MACOS_DIALOG_SCRIPT.to_string(),
+        "--".to_string(),
+        title.to_string(),
+        body.to_string(),
+    ]
+}
+
+#[cfg(target_os = "macos")]
+fn notify_macos_dialog(title: &str, report: &str) {
+    let body = format!("Diagnostic report: {report}");
+    let args = macos_dialog_command(title, &body);
+    match run_notification("osascript", &args) {
+        Ok(true) => tracing::info!(
+            channel = "osascript",
+            "startup notice shown to the operator"
+        ),
+        Ok(false) => tracing::warn!(channel = "osascript", "macOS did not accept the notice"),
+        Err(error) => {
+            tracing::warn!(channel = "osascript", %error, "native macOS dialog could not be run");
+        }
+    }
 }
 
 /// Run one notification program and report whether it delivered the message.
@@ -1268,7 +1322,7 @@ const NOTIFICATION_DISMISS_WAIT: std::time::Duration = std::time::Duration::from
 /// `notify-send` is the freedesktop one; `zenity` and `kdialog` are what a
 /// minimal desktop image tends to carry when no notification daemon answers;
 /// `xmessage` is the last X11-only modal fallback.
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "macos")))]
 const NOTIFICATION_CHANNELS: [&str; 4] = ["notify-send", "zenity", "kdialog", "xmessage"];
 
 /// The command line for one notification channel.
@@ -1277,7 +1331,7 @@ const NOTIFICATION_CHANNELS: [&str; 4] = ["notify-send", "zenity", "kdialog", "x
 /// desktop dialog is actionable without the console a `.desktop` launch never
 /// has. Each channel's exit status is read by [`run_notification`], so a
 /// channel with no service behind it does not consume the message.
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "macos")))]
 fn notification_command(
     channel: &str,
     title: &str,

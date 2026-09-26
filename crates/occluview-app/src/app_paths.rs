@@ -30,7 +30,17 @@ fn windows_state_base_dir_from_env(
     appdata.or(local_appdata)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn platform_state_base_dir() -> Option<PathBuf> {
+    macos_state_base_dir_from_home(std::env::var_os("HOME").map(PathBuf::from))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_state_base_dir_from_home(home: Option<PathBuf>) -> Option<PathBuf> {
+    home.map(|home| home.join("Library/Application Support"))
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn platform_state_base_dir() -> Option<PathBuf> {
     unix_state_base_dir_from_env(
         std::env::var_os("XDG_STATE_HOME").map(PathBuf::from),
@@ -38,7 +48,7 @@ fn platform_state_base_dir() -> Option<PathBuf> {
     )
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 fn unix_state_base_dir_from_env(
     xdg_state_home: Option<PathBuf>,
     home: Option<PathBuf>,
@@ -50,7 +60,7 @@ fn unix_state_base_dir_from_env(
 mod tests {
     use super::*;
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     #[test]
     fn unix_state_dir_prefers_xdg_state_home() {
         assert_eq!(
@@ -62,13 +72,23 @@ mod tests {
         );
     }
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     #[test]
     fn unix_state_dir_falls_back_to_home_local_state() {
         assert_eq!(
             unix_state_base_dir_from_env(None, Some(PathBuf::from("/home/user"))),
             Some(PathBuf::from("/home/user/.local/state"))
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_state_dir_uses_application_support() {
+        assert_eq!(
+            macos_state_base_dir_from_home(Some(PathBuf::from("/Users/operator"))),
+            Some(PathBuf::from("/Users/operator/Library/Application Support"))
+        );
+        assert_eq!(macos_state_base_dir_from_home(None), None);
     }
 
     #[cfg(windows)]

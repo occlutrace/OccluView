@@ -70,9 +70,13 @@ impl OccluViewApp {
                                         ui.add_sized(
                                             egui::vec2(gesture_width, HELP_ROW_HEIGHT),
                                             egui::Label::new(
-                                                egui::RichText::new(row.gesture)
-                                                    .strong()
-                                                    .color(ui_theme::text()),
+                                                egui::RichText::new(
+                                                    crate::i18n::platform_shortcut_text(
+                                                        row.gesture,
+                                                    ),
+                                                )
+                                                .strong()
+                                                .color(ui_theme::text()),
                                             )
                                             .truncate(),
                                         );
@@ -138,7 +142,7 @@ pub(super) fn render_contextual_hint(
     ink: egui::Color32,
     locale: &LocaleManager,
 ) {
-    let line = contextual_line(context);
+    let line = crate::i18n::platform_shortcut_text(contextual_line(context));
     let localized = locale.text(contextual_line_key(context));
     let response =
         ui.add(egui::Label::new(egui::RichText::new(localized).color(ink).size(11.5)).truncate());
