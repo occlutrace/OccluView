@@ -86,6 +86,7 @@ help-hint-sculpt-remove-or-strengthen-the-active-brush-mode = Aktiven Pinselmodu
 help-hint-sculpt-change-brush-size = Pinselgröße ändern
 help-hint-sculpt-change-brush-intensity = Pinselstärke ändern
 help-hint-align-measure-place-an-alignment-point-or-measurement-point = Ausrichtungs- oder Messpunkt setzen
+help-hint-align-measure-drop-a-perpendicular-onto-a-ruler-line = Nach dem ersten Punkt ein Lot auf eine Messlinie fällen
 help-hint-align-measure-rotate-a-scan-in-align-s-manual-mode = Scan im manuellen Modus drehen
 help-hint-align-measure-erase-an-align-exclusion-region = Ausschlussbereich löschen
 help-hint-align-measure-change-align-exclusion-brush-size = Ausschlusspinselgröße ändern
@@ -687,6 +688,7 @@ layer-removed = Ebene entfernt: { $label }
 layer-face-selection = Flächenauswahl: { $label }
 
 measure-distance = Abstand: { $len }
+measure-perpendicular = Lot: { $len }
 measure-thickness = Wandstärke: { $len }
 measure-open-wall = Offene Oberfläche: keine Gegenwand entlang der Innennormale
 measure-cannot-probe = Hier nicht messbar: degenerierte Geometrie

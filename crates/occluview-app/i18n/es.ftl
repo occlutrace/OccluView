@@ -86,6 +86,7 @@ help-hint-sculpt-remove-or-strengthen-the-active-brush-mode = Quitar o reforzar 
 help-hint-sculpt-change-brush-size = Cambiar el tamaño del pincel
 help-hint-sculpt-change-brush-intensity = Cambiar la fuerza del pincel
 help-hint-align-measure-place-an-alignment-point-or-measurement-point = Colocar un punto de alineación o medición
+help-hint-align-measure-drop-a-perpendicular-onto-a-ruler-line = Tras el primer punto, trazar una perpendicular a una línea de medición
 help-hint-align-measure-rotate-a-scan-in-align-s-manual-mode = Rotar un escaneo en modo manual
 help-hint-align-measure-erase-an-align-exclusion-region = Borrar una región de exclusión
 help-hint-align-measure-change-align-exclusion-brush-size = Cambiar el tamaño del pincel de exclusión
@@ -674,6 +675,7 @@ sculpt-through-on = Selección a través
 sculpt-through-off = Selección de superficie
 
 measure-distance = Distancia: { $len }
+measure-perpendicular = Perpendicular: { $len }
 measure-thickness = Grosor de pared: { $len }
 measure-open-wall = Superficie abierta: sin pared opuesta en la normal
 measure-cannot-probe = Aquí no se puede medir: geometría degenerada

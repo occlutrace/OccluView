@@ -39,6 +39,16 @@ remain in the Git history.
 - The status line after a Brush command names the scan it reached when the Mesh
   selection narrowed it to one, instead of stating the rule as though both had
   been changed.
+- The Ruler drops a perpendicular onto a ruler line. After the first point,
+  a click on a drawn ruler line ends the measurement at the foot of the
+  perpendicular on that line, marked with a right angle, instead of at the
+  surface under the cursor. This is the Korkhaus anterior arch length: from the
+  incisal point to the line through Pont's premolar points, which runs above
+  the palate. Before, the second point could only land on the scan, so the
+  reading went down to the palate and was longer than the perpendicular. The
+  length is measured in 3D. Hovering the line shows the perpendicular and its
+  length before the click; dragging the first point or either end of the base
+  line keeps the right angle.
 
 ### Files
 
