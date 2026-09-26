@@ -13,7 +13,7 @@ mod source_tree;
 mod viewport;
 
 /// Every `.rs` file under `directory`, skipping symlinks and any `target`
-/// directory so a local build tree cannot pollute a source-tree audit.
+/// directory so a local build tree cannot pollute a source-tree check.
 pub(super) fn collect_rust_source_files(
     directory: &Path,
     files: &mut Vec<PathBuf>,
@@ -43,10 +43,10 @@ pub(super) fn collect_rust_source_files(
 ///
 /// The sibling mechanism, `include_str!`, is checked by the compiler: rename
 /// the file and the build breaks. This one is not, so it has to break itself.
-/// Returning `""` on a missing file turns every assertion about that file into
-/// an assertion about the empty string -- silently, with CI green. The negative
-/// assertions go first, and those are the ones worth having; a line budget
-/// passes in a vacuum too, since `"".lines().count()` is zero.
+/// Returning `""` on a missing file would turn every assertion about that file
+/// into an assertion about the empty string while CI stays green: negative
+/// assertions pass first, and a line count passes too, since
+/// `"".lines().count()` is zero.
 pub(super) fn repo_source_file(relative_path: &str) -> String {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.push(relative_path);

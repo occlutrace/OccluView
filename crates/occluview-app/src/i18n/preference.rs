@@ -1,6 +1,6 @@
 //! Versioned atomic sidecar for the manual UI language preference.
 //!
-//! The preference lives OUTSIDE `settings.json`: an old binary silently
+//! The preference lives outside `settings.json`: an old binary silently
 //! drops unknown JSON fields on rewrite, which would erase the language
 //! choice on downgrade. The sidecar survives installer updates and old
 //! rewrites, is ignored by old binaries, and degrades to `Auto`/English
@@ -91,7 +91,7 @@ pub(crate) fn load(state_dir: &Path) -> (UiLanguagePreference, Option<SidecarDia
         );
     };
     if document.version != SIDECAR_SCHEMA_VERSION {
-        // A newer unknown schema is NOT renamed away: downgrade-then-upgrade
+        // A newer unknown schema is not renamed away: downgrade-then-upgrade
         // must still find the operator's choice afterwards.
         return (
             UiLanguagePreference::Auto,
@@ -268,7 +268,7 @@ mod tests {
 
     #[test]
     fn garbage_is_quarantined_even_over_stale_backup() {
-        // Truly malformed content is renamed to `.bak`; a stale backup
+        // Malformed content is renamed to `.bak`; a stale backup
         // never blocks quarantine (Windows `rename` semantics).
         let dir = unique_dir("quarantine");
         std::fs::write(dir.join("ui-language-preference.json.bak"), b"stale").expect("write");
@@ -299,7 +299,7 @@ mod tests {
     #[test]
     fn explicit_unavailable_catalog_is_kept_but_renders_english() {
         // `ja` is known but not embedded: the tag survives, the manager
-        // (tested in catalog.rs) renders English for it.
+        // (tested in mod.rs) renders English for it.
         let dir = unique_dir("unavailable");
         save(&dir, &UiLanguagePreference::Explicit("ja")).expect("save ja");
         let (preference, _) = load(&dir);

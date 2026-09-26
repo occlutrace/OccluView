@@ -45,10 +45,9 @@ pub(crate) const LAYER_OVERLAY_TINT_PRESETS: [([f32; 4], &str); 8] = [
 
 /// Every action the layer context menu can raise.
 ///
-/// Exhaustive, and held that way by
-/// `every_layer_action_is_offered_by_a_surface_that_raises_it`. A variant no
-/// menu can produce is a handler nobody can run, a test that proves nothing,
-/// and a reader counting features the product does not have.
+/// Every variant must be offered by a menu surface: a variant no menu can
+/// produce is a handler that never runs and a feature the product does not
+/// have.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LayerContextAction {
     NextTint,
@@ -137,11 +136,10 @@ fn advance_layer_tint(scene: &mut Scene, index: usize) -> LayerContextApply {
     let Some(entry) = scene.meshes_mut().get_mut(index) else {
         return LayerContextApply::default();
     };
-    // Through the one gate every picked tint goes through. Cycling used to
-    // set the tint directly with its own texture-only override, so stepping
-    // into an overlay colour from this path left scan colours multiplying it
-    // into mud — the same colour behaving differently depending on which UI
-    // path assigned it.
+    // Through the one gate every picked tint goes through, so a colour
+    // reached by cycling applies the same overrides as one picked from the
+    // popup; otherwise scan colours would multiply an overlay colour into mud
+    // depending on which UI path assigned it.
     apply_picked_tint(entry, next_layer_tint(entry.tint), true);
     LayerContextApply {
         scene_changed: true,
@@ -199,10 +197,9 @@ pub(crate) fn all_layer_tints() -> impl Iterator<Item = ([f32; 4], &'static str)
 
 /// The next tint after `current`.
 ///
-/// Walks the whole palette, overlay colours included. Cycling used to know
-/// only the model shades, so stepping on from an overlay colour found nothing
-/// to step on from and dropped back to Stone IV — which made the two halves of
-/// the palette behave like different features.
+/// Walks the whole palette, overlay colours included, so stepping on from an
+/// overlay colour continues through the palette instead of dropping back to
+/// Stone IV.
 pub(crate) fn next_layer_tint(current: [f32; 4]) -> [f32; 4] {
     let tints: Vec<([f32; 4], &str)> = all_layer_tints().collect();
     let current_index = tints
@@ -226,13 +223,13 @@ fn is_overlay_tint(tint: [f32; 4]) -> bool {
 /// value merely riding along on an opacity drag or a visibility toggle. The
 /// overrides fire on a click even when the value has not changed: re-picking
 /// the current overlay colour after re-enabling scan colours is a request to
-/// see that colour again, and gating it on the value made that a silent
+/// see that colour again, and gating it on the value would make that a
 /// no-op with the swatch still highlighted as current.
 ///
 /// The shader multiplies tint into whatever base the scan shows. On a scan
 /// that carries its own colours, an overlay colour times those colours is
 /// that scan darkened, so the override switches the colours off. On a scan
-/// that carries none, the base is white and tint times white IS the swatch —
+/// that carries none, the base is white and tint times white is the swatch —
 /// nothing is switched off, and the common alignment case of two plain STLs
 /// renders the overlay colours exactly. The model shades never override
 /// colours either way: they are warm neutrals meant to sit under a scan's
@@ -295,7 +292,7 @@ mod tests {
 
     #[test]
     fn an_overlay_colour_on_a_plain_scan_keeps_the_white_base() {
-        // A colourless scan's vertices are white, and white times tint IS the
+        // A colourless scan's vertices are white, and white times tint is the
         // swatch — switching colours off there would swap the exact colour
         // for the warm neutral material darkening it. The common alignment
         // case is two plain STLs, so this is the path that matters most.
@@ -314,7 +311,7 @@ mod tests {
     fn re_picking_the_current_overlay_colour_is_still_a_pick() {
         // Pick Cobalt, re-enable scan colours from the menu, pick Cobalt
         // again: the value has not changed, but the click is a request to see
-        // that colour again — gating on the value made this a silent no-op
+        // that colour again — gating on the value would make this a no-op
         // with the swatch highlighted as current.
         let mut coloured = SceneMesh::new(coloured_mesh());
         apply_picked_tint(&mut coloured, LAYER_OVERLAY_TINT_PRESETS[0].0, true);
@@ -331,7 +328,7 @@ mod tests {
     #[test]
     fn a_tint_riding_along_on_another_edit_overrides_nothing() {
         // Every row interaction carries the tint value with it; only a swatch
-        // CLICK may fire the overrides, or an opacity drag on an overlay-
+        // click may fire the overrides, or an opacity drag on an overlay-
         // tinted scan would flip its colours off.
         let mut coloured = SceneMesh::new(coloured_mesh());
         coloured.tint = LAYER_OVERLAY_TINT_PRESETS[0].0;
@@ -344,8 +341,8 @@ mod tests {
 
     #[test]
     fn an_overlay_colour_wins_over_a_scan_that_carries_its_own_colour() {
-        // The whole point of the overlay group is that the scan reads as that
-        // one colour. The shader multiplies tint into whatever the scan already
+        // The overlay group exists so the scan reads as that one
+        // colour. The shader multiplies tint into whatever the scan already
         // carries, so leaving a coloured scan's own colours on would hand back
         // that scan darkened rather than the colour the operator picked.
         let mut coloured = SceneMesh::new(coloured_mesh());
@@ -379,9 +376,8 @@ mod tests {
 
     #[test]
     fn cycling_the_tint_walks_the_overlay_colours_too() {
-        // Cycling used to know only the model shades, so stepping on from an
-        // overlay colour found nothing and dropped back to the first entry —
-        // which made half the palette unreachable by cycling.
+        // Stepping on from the last shade of either group enters the other
+        // group, so both halves of the palette are reachable by cycling.
         let last_model = LAYER_TINT_PRESETS[LAYER_TINT_PRESETS.len() - 1].0;
         assert!(tint_matches(
             next_layer_tint(last_model),
@@ -462,17 +458,6 @@ mod tests {
         assert_eq!(scene.meshes().len(), 2);
     }
 
-    /// Every action the enum declares must be offered by something the
-    /// operator can click.
-    ///
-    /// Four variants once drifted out of reach, each with a handler, a passing
-    /// test and in two cases a drawn glyph: a reader counted twenty actions in
-    /// a menu that offered sixteen.
-    ///
-    /// Searching the handler files too would let "has a handler" satisfy "can
-    /// be raised", which the drift itself would have passed. Each action names
-    /// the surface that offers it instead, so a new variant has to say where it
-    /// is raised and deleting a button fails the line that claims it.
     #[test]
     fn layer_context_action_ignores_stale_layer_identity() {
         let mut scene = Scene::new();
