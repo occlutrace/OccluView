@@ -1,6 +1,6 @@
 //! The operator-facing controls catalogue.
 //!
-//! This is deliberately data, not another input router. The handlers in the
+//! This is data, not another input router. The handlers in the
 //! app remain the authority for behavior; this catalogue gives the Help
 //! surface and the viewport reminder one spelling for the controls they
 //! already expose.

@@ -320,12 +320,11 @@ fn the_live_window_options_match_the_render_contract() {
 /// The device request must take its buffer ceiling from the adapter.
 ///
 /// `wgpu::Limits::default()` is the WebGPU default tier, whose `max_buffer_size`
-/// is 256 MiB, and `or_worse_values_from` takes the per-field MINIMUM - so a
-/// request built on the default tier capped the live device at 256 MiB even on
-/// an adapter offering gigabytes. A large scan needs a bigger vertex buffer than
-/// that, the allocation is refused, and the refusal arrives at the fault handler
-/// which LATCHES: a scan that rendered fine as a thumbnail was unopenable in the
-/// app, with a Retry that re-ran the same failing allocation.
+/// is 256 MiB, and `or_worse_values_from` takes the per-field minimum - so a
+/// request built on the default tier would cap the live device at 256 MiB even
+/// on an adapter offering gigabytes. A large scan needs a bigger vertex buffer
+/// than that; the refused allocation would arrive at the fault handler, which
+/// latches, leaving a scan that renders as a thumbnail unopenable in the app.
 #[test]
 fn the_device_request_takes_its_buffer_ceiling_from_the_adapter() {
     let generous = wgpu::Limits {
@@ -359,10 +358,8 @@ fn report_names_are_unique_even_when_failures_share_a_clock_tick() {
     assert!(second.ends_with("-1.txt"));
 }
 
-/// A `.desktop` launch has no console, so a fatal startup has to reach the
-/// desktop through whatever the image actually ships. The command lines are
-/// pinned here because a wrong flag makes the dialog never appear, which looks
-/// exactly like the silent failure this exists to prevent.
+/// The report title and body reach `osascript` as arguments, never as script
+/// source, so a crafted path cannot run AppleScript.
 #[cfg(target_os = "macos")]
 #[test]
 fn macos_dialog_keeps_report_content_out_of_osascript_source() {
@@ -378,6 +375,10 @@ fn macos_dialog_keeps_report_content_out_of_osascript_source() {
     assert_eq!(args[4], body);
 }
 
+/// A `.desktop` launch has no console, so a fatal startup has to reach the
+/// desktop through whatever the image actually ships. The command lines are
+/// pinned here because a wrong flag makes the dialog never appear, which is
+/// indistinguishable from the silent failure this exists to prevent.
 #[cfg(all(not(windows), not(target_os = "macos")))]
 #[test]
 fn every_desktop_notification_channel_builds_a_usable_command() {
@@ -406,12 +407,12 @@ fn every_desktop_notification_channel_builds_a_usable_command() {
 /// The fatal-startup notice may not hold the process open. `zenity`, `kdialog`
 /// and `xmessage` are modal dialogs that only return when dismissed, and this
 /// runs on the path that still owes the operator a non-zero exit status: an
-/// unattended launch (CI, kiosk, a `.desktop` start nobody watches) would leave
+/// unattended launch (CI, kiosk, an unwatched `.desktop` start) would leave
 /// a dead startup alive forever with no window.
 #[cfg(not(windows))]
 #[test]
 fn a_fatal_notice_cannot_block_the_failure_exit() {
-    // Stands in for a dialog nobody will dismiss: it never exits on its own.
+    // Stands in for an undismissed dialog: it never exits on its own.
     let started = Instant::now();
     let delivered = run_notification("sleep", &["30".to_string()])
         .expect("the notice program must be spawnable");
@@ -492,13 +493,11 @@ fn the_window_loop_must_return_fatal_errors_instead_of_exiting_silently() {
 }
 
 /// A crash report is meant to be attached to a public issue, so it must carry
-/// the SHAPE of the session and never the identity of a case.
+/// the shape of the session and never the identity of a case.
 ///
-/// This is the behaviour the old source-text check only claimed: it looked for
-/// the words `file_count` and `formats` in the startup log call. The property
-/// worth holding is stronger and testable — feed the real summariser a path that
-/// names a patient, and assert the report tail contains neither the directory,
-/// the file stem, nor the full path. A dental scan's filename is the identifier.
+/// The test feeds the real summariser a path that names a patient, and asserts
+/// the report tail contains neither the directory, the file stem, nor the full
+/// path. A dental scan's filename is the identifier.
 #[test]
 fn a_crash_report_never_carries_a_scan_path() {
     // Built as strings so this test's own source does not contain a path that

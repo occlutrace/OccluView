@@ -1,6 +1,6 @@
 //! The scene context menu: what a right-click on empty viewport space offers.
 //!
-//! Deliberately short. Right-clicking a mesh already opens the layer menu, so
+//! Kept short. Right-clicking a mesh already opens the layer menu, so
 //! this one only carries actions that belong to the whole scene — above all
 //! saving it, which is the only way an alignment survives the session. The
 //! viewer has no project file.
@@ -48,7 +48,7 @@ pub(crate) fn show_scene_context_menu(
     ui.add_space(2.0);
     ui.separator();
 
-    // English literals stay: the scene-menu guard pins wording and order.
+    // Each entry keeps its English wording beside the catalog key it renders.
     let entries = [
         (
             AppIcon::Export,

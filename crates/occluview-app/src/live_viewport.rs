@@ -88,12 +88,12 @@ impl LiveViewport {
     }
 
     /// `splat_viewport_px` is the viewport the callback actually paints into,
-    /// in physical pixels — NOT the clamped `render_extent_px`. The splat radius
+    /// in physical pixels — not the clamped `render_extent_px`. The splat radius
     /// is a pixel quantity (`ndc_radius = POINT_SPLAT_RADIUS_PX * 2 / viewport`),
-    /// so the clamped extent drew every splat at `radius * actual / clamped`:
-    /// 5.25 px instead of 3.5 px on a 4K fullscreen, and undersized in a window
-    /// below the floor. The camera aspect still comes from the clamped extent,
-    /// which is correct.
+    /// so the clamped extent would draw every splat at
+    /// `radius * actual / clamped`: 5.25 px instead of 3.5 px on a 4K
+    /// fullscreen, and undersized in a window below the floor. The camera
+    /// aspect still comes from the clamped extent, which is correct.
     pub(super) fn update_view(
         &mut self,
         camera: &GpuCamera,
@@ -116,8 +116,8 @@ impl LiveViewport {
     ///
     /// Returns whether the vertex buffers were re-uploaded. A caller that
     /// streams its own vertices into them — the deviation map — has to know:
-    /// a rebuild puts the scan's own colours back and would silently erase the
-    /// map, while a uniform-only reconcile leaves it exactly where it was.
+    /// a rebuild puts the scan's own colours back and erases the map, while a
+    /// uniform-only reconcile leaves it in place.
     pub(super) fn sync_scene(
         &mut self,
         sources: &[PreparedSceneSource<'_>],
@@ -215,7 +215,7 @@ impl LiveViewport {
     }
 
     /// Take the most recent wgpu uncaptured error recorded by the device error
-    /// handler, if any. The app polls this so a GPU fault surfaces as an honest
+    /// handler, if any. The app polls this so a GPU fault surfaces as an error
     /// message instead of wgpu's default panic (a hard abort in release).
     pub(super) fn take_gpu_error(&self) -> Option<String> {
         self.renderer.take_gpu_error()

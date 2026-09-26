@@ -5,9 +5,9 @@
 //! reading stops describing the scene in front of them. The geometry tests are
 //! about the number the pointer readout prints under the cursor.
 
-// Float comparisons with exact literals are the point of these tests: a
-// centroid of a uniform gradient IS the mean of its corners, and a sentinel IS
-// the same number in two crates.
+// These tests compare floats against exact literals: a centroid of a uniform
+// gradient is the mean of its corners, and a sentinel is the same number in two
+// crates.
 #![allow(
     clippy::expect_used,
     clippy::float_cmp,
@@ -132,7 +132,7 @@ fn a_surface_without_triangles_is_not_a_candidate() {
 }
 
 /// Choosing another layer drops the measurement on screen: it describes the
-/// old antagonist, and leaving it there would put the wrong colours on the
+/// previous antagonist, and leaving it there would put the wrong colours on the
 /// scans until the new answer arrives.
 #[test]
 fn choosing_another_antagonist_drops_the_measurement_it_replaces() {
@@ -158,21 +158,24 @@ fn choosing_another_antagonist_drops_the_measurement_it_replaces() {
         !state.set_antagonist(ids[2]),
         "choosing the same layer twice changes nothing"
     );
-    assert!(state.fields().is_empty(), "the old colours are gone");
+    assert!(
+        state.fields().is_empty(),
+        "the previous pair's colours are dropped"
+    );
     assert!(state.measured_keys().is_none());
     assert!(
         state.pending_request().is_none(),
-        "and the viewer is not waiting for an answer about the old pair"
+        "and the viewer is not waiting for an answer about the previous pair"
     );
     assert_eq!(
         state.status(),
         Some(ContactStatus::Measuring),
-        "the new pair is being measured, not left as the old result"
+        "the new pair is being measured, not left as the previous result"
     );
 }
 
 /// A hidden scan is not a candidate. Its geometry would measure perfectly well
-/// and the colours would land on a surface nobody can see.
+/// and the colours would land on a surface that is not visible.
 #[test]
 fn a_hidden_scan_is_never_the_antagonist() {
     let mut scene = scene_of(vec![slab(0.0, 0.0), slab(0.2, 0.0), slab(9.0, 0.0)]);
@@ -213,7 +216,7 @@ fn a_hidden_subject_cannot_be_read() {
     assert!(!can_read_contacts(&scene, id));
 }
 
-/// THE core promise of the panel: a display change must not re-measure. Keys
+/// The core promise of the panel: a display change must not re-measure. Keys
 /// are what a job is re-submitted on, so the load depth must not appear in one —
 /// if it did, every nudge of the slider would re-run a million-vertex search.
 #[test]
@@ -263,7 +266,7 @@ fn moving_a_scan_produces_new_job_keys() {
     assert_ne!(before, after, "a pose change must re-measure");
 }
 
-/// The patch rule IS an input to the measurement, so it belongs in the key.
+/// The patch rule is an input to the measurement, so it belongs in the key.
 #[test]
 fn the_patch_rule_is_part_of_the_measurement_identity() {
     let scene = scene_of(vec![slab(0.0, 0.0), slab(0.2, 0.0)]);
@@ -384,7 +387,7 @@ fn an_unmeasured_triangle_has_no_reading() {
 }
 
 /// One unmeasured corner does not poison the triangle: near an edge of a contact
-/// the honest answer is a value between "measured here" and "nothing found
+/// the accurate answer is a value between "measured here" and "nothing found
 /// nearby", which is what the paint shows too.
 #[test]
 fn one_unmeasured_corner_still_yields_a_reading() {
@@ -478,7 +481,7 @@ fn a_refusal_is_not_retried_until_something_changes() {
         "a refusal must not be retried on the next frame"
     );
 
-    // The patch rule IS an input, so turning it is a reason to try again.
+    // The patch rule is an input, so turning it is a reason to try again.
     assert!(state.set_flatten_patches(true));
     let retry = contact_job_keys(&scene, pair, true).expect("a pair in the scene");
     assert!(state.needs_measurement(retry));
@@ -576,7 +579,7 @@ fn only_a_refusal_offers_a_retry() {
 /// The reading paints both surfaces, so a readout wired to one of them is dead
 /// over half of what the feature draws. The two fields are measured in opposite
 /// directions, so the same physical spot reads a gap from one side and a load
-/// from the other — which is exactly what each side's own paint shows.
+/// from the other — which matches what each side's own paint shows.
 #[test]
 fn both_painted_arches_carry_their_own_reading() {
     let scene = scene_of(vec![slab(0.0, 0.0), slab(0.05, 0.0)]);
@@ -652,8 +655,7 @@ fn a_hand_drag_holds_the_reading_back_and_takes_the_marks_down() {
 /// The packed field is `ceil(n / width)` rows tall. At the preferred 1024-wide
 /// row, a scan of more than 8.4 million vertices asks for more rows than the
 /// texture dimension this app requests of every device, and the texture cannot
-/// be created — the reading would fail on the machine with the largest case to
-/// read, which is the one that needs it most.
+/// be created — the reading would fail on the largest cases.
 #[test]
 fn a_large_field_widens_its_rows_instead_of_overflowing_the_texture_limit() {
     let limit = crate::app_bootstrap::MAX_RENDER_TEXTURE_DIMENSION;

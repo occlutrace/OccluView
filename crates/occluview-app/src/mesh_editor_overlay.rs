@@ -6,8 +6,8 @@
 //! the viewport applies.
 //!
 //! The per-section rendering lives in the sibling [`groups`] module (declared
-//! below with an explicit path) so this file stays small and only owns the
-//! window shell and the action vocabulary.
+//! below with an explicit path); this file owns only the window shell and the
+//! action vocabulary.
 
 use eframe::egui;
 
@@ -157,9 +157,9 @@ fn sculpt_intensity_id() -> egui::Id {
     egui::Id::new("occluview_sculpt_intensity")
 }
 
-/// Brush size slider, 0..100 feel units (not mm — the operator asked for a
-/// slider). Lives in egui memory (like the Close Holes limit) so it survives
-/// while the editor is open without becoming a global preference.
+/// Brush size slider, 0..100 feel units (not mm). Lives in egui memory (like
+/// the Close Holes limit) so it survives while the editor is open without
+/// becoming a global preference.
 pub(crate) fn sculpt_size(ctx: &egui::Context) -> f32 {
     ctx.data(|data| data.get_temp::<f32>(sculpt_size_id()))
         .unwrap_or(SCULPT_SIZE_DEFAULT)

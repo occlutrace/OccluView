@@ -48,7 +48,7 @@ pub(crate) struct LayerRowChange {
     pub(crate) visible: bool,
     pub(crate) opacity: f32,
     pub(crate) tint: [f32; 4],
-    /// Whether the tint value comes from a swatch CLICK this frame, rather
+    /// Whether the tint value comes from a swatch click this frame, rather
     /// than riding along on an opacity drag or a visibility toggle. The
     /// apply side keys its colour overrides on this, so re-picking the
     /// current colour still counts as picking it.
@@ -56,7 +56,8 @@ pub(crate) struct LayerRowChange {
 }
 
 #[allow(clippy::too_many_lines)]
-// Six inherently (ui/ctx + data + locale); bundling would fake an abstraction.
+// Six inherent inputs (ui/ctx + data + locale); a struct grouping them would
+// carry no meaning of its own.
 #[expect(clippy::too_many_arguments)]
 pub(super) fn show_layer_row(
     ui: &mut egui::Ui,
@@ -186,7 +187,7 @@ pub(super) fn show_layer_row(
                 .add_enabled_ui(visible, |ui| {
                     // egui's Slider reads spacing.slider_width, even when
                     // add_sized supplies a narrower rectangle. Without this
-                    // the row widened the whole Layers frame past its rect.
+                    // the row widens the whole Layers frame past its rect.
                     ui.spacing_mut().slider_width = LAYER_ROW_SLIDER_WIDTH_PX;
                     ui.add_sized(
                         [LAYER_ROW_SLIDER_WIDTH_PX, LAYER_ROW_CONTROL_HEIGHT_PX],
@@ -291,18 +292,17 @@ fn tint_swatch(
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| {
             ui.set_min_width(170.0);
-            // Bounded and scrolling: the palette is two groups long now, and a
+            // Bounded and scrolling: the palette is two groups long, and a
             // popup opening off a layer row near the bottom of the window would
-            // otherwise run past the edge and put its last colours somewhere
-            // nobody can click.
+            // otherwise run past the edge and put its last colours out of
+            // reach.
             egui::ScrollArea::vertical()
                 .max_height(TINT_PALETTE_MAX_HEIGHT_PX)
                 .show(ui, |ui| {
-                    // Two headed groups rather than one long list. The distinction is
-                    // real work, not decoration: the model shades are neighbours on one
-                    // warm band, so two scans wearing any two of them are still hard to
-                    // tell apart where they overlap — which is the moment during an
-                    // alignment when telling them apart is the entire task.
+                    // Two headed groups rather than one long list: the model shades
+                    // are neighbours on one warm band, so two scans wearing any two of
+                    // them are still hard to tell apart where they overlap, which is
+                    // where an alignment needs them told apart.
                     for (heading, presets) in [
                         ("Model", LAYER_TINT_PRESETS.as_slice()),
                         (
@@ -349,6 +349,6 @@ fn tint_swatch(
 }
 
 // The current-swatch highlight and the apply side's override gate read the
-// SAME bit-for-bit comparison (`layer_actions::tint_matches`); a second local
-// copy here once existed and the two drifting apart would make the popup
-// highlight a colour the apply refused to treat as current.
+// same bit-for-bit comparison (`layer_actions::tint_matches`); a separate copy
+// here could drift and make the popup highlight a colour the apply refuses to
+// treat as current.

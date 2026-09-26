@@ -3,7 +3,7 @@ use occluview_core::SceneMeshId;
 /// Stable app-level identity for a layer edit session.
 ///
 /// Scene indices shift when layers are appended or removed; edit sessions use
-/// this key so future result application can reject stale layer targets.
+/// this key so applying a result can reject a stale layer target.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct LayerKey(u64);
 
@@ -25,7 +25,7 @@ impl LayerKey {
 
 /// Which primary-gesture the mesh editor's face selection is in. The three
 /// modes are mutually exclusive: only one gesture can own the primary click at a
-/// time. Surface/Through (front-facing vs. through-mesh) is an ORTHOGONAL flag
+/// time. Surface/Through (front-facing vs. through-mesh) is an orthogonal flag
 /// that refines Marquee and Lasso; it does not apply to Object, because an
 /// object is a whole connected component regardless of which way its facets
 /// face.
@@ -38,7 +38,7 @@ pub(crate) enum SelectGesture {
     /// Freehand lasso: primary presses/drag place an outline that marks every
     /// triangle it encloses (the dental CAD "Mark triangles" semantics).
     Lasso,
-    /// Object pick: a stationary primary click selects the WHOLE connected
+    /// Object pick: a stationary primary click selects the whole connected
     /// component (one object of a multi-object STL) under the cursor. A drag is
     /// left to the camera.
     Object,

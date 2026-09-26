@@ -35,7 +35,7 @@ impl BridgeSplitSourceCache {
         &mut self,
         source: &Arc<Mesh>,
     ) -> Result<Arc<PreparedBridgeSplitSource>, BridgeSplitToolError> {
-        // Keyed by geometry_id, NOT topology_id: an interactive sculpt commit
+        // Keyed by geometry_id, not topology_id: an interactive sculpt commit
         // preserves topology_id (to spare the renderer a re-upload) while its
         // positions change, so keying on topology_id would hand back a stale
         // pre-sculpt prepared solid. geometry_id changes on every geometry edit.
@@ -74,8 +74,8 @@ pub(crate) struct BridgeSplitWorker {
     queued: Option<BridgeSplitJobInput>,
     /// The compute this worker was built with, kept so `abandon` can restart the
     /// thread and the channel state without discarding it. Constructing a fresh
-    /// default worker instead would throw away a compute that was injected
-    /// (which is how the cancellation contract is tested at all).
+    /// default worker instead would throw away an injected compute (the
+    /// cancellation tests inject one).
     compute: Arc<BridgeSplitCompute>,
 }
 
@@ -134,14 +134,14 @@ impl BridgeSplitWorker {
     }
 
     /// Throw this worker's thread and channel state away and start a new one over
-    /// the SAME compute.
+    /// the same compute.
     ///
     /// A running `compute` has no cancellation flag, and its `active` guard stays
     /// set until the output arrives, so the next request would otherwise queue
     /// behind an abandoned job. Dropping the sender ends the old thread once it
     /// finishes; the fresh channels leave the next job unblocked. Output still in
-    /// flight can no longer be polled, which is correct: the session it described
-    /// is gone by definition of this being a cancel.
+    /// flight becomes unreachable, which is correct: a cancel ends the session it
+    /// described.
     pub(crate) fn abandon(&mut self) {
         *self = Self::with_compute(Arc::clone(&self.compute));
     }

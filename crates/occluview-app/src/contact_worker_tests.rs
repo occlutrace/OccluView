@@ -81,12 +81,12 @@ fn wait_for_completion(worker: &ContactWorker, deadline: Duration) -> Option<Con
     None
 }
 
-/// The whole point of the worker: a measurement comes back with a value per
+/// The worker's core contract: a measurement comes back with a value per
 /// vertex on both sides, and the counters the panel reports.
 #[test]
 fn a_measurement_comes_back_for_both_sides() {
     let worker = ContactWorker::spawn();
-    // The antagonist plate sits a twentieth of a millimetre ABOVE the
+    // The antagonist plate sits a twentieth of a millimetre above the
     // subject's plane: the subject is therefore inside the antagonist, which is
     // the case a contact reading exists to report.
     let _ = worker.submit(job(&worker, 0, 0.05));
@@ -105,8 +105,8 @@ fn a_measurement_comes_back_for_both_sides() {
             assert_eq!(diagnostics.antagonist_verts, 4);
             // Every vertex has a measurement, because two parallel plates
             // leave nothing out of reach — and the two sides read with opposite
-            // signs, which is the whole meaning of the field: a value is
-            // measured along the OPPOSING surface's outward normal. The
+            // signs, which is what the field means: a value is measured along
+            // the opposing surface's outward normal. The
             // antagonist's plane sits a twentieth of a millimetre above the
             // subject's, so the subject is inside it and reads a load, while the
             // antagonist reads the same overlap as clearance.
@@ -231,9 +231,9 @@ fn a_busy_hold_is_released_when_the_job_body_panics() {
 }
 
 /// A worker whose thread body panicked must look failed and idle, not busy
-/// forever: the bar's spinner is fed by exactly those two signals, and a job
-/// that died mid-run would otherwise leave the operator waiting for a
-/// measurement nobody is computing.
+/// forever: the bar's spinner is fed by those two signals, and a job that died
+/// mid-run would otherwise leave the operator waiting for a measurement no
+/// thread is computing.
 #[test]
 fn a_panicking_worker_latches_a_failure_and_stops_looking_busy() {
     let worker = ContactWorker::spawn_panicking();

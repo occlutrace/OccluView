@@ -13,11 +13,11 @@ impl Camera {
 
     /// Scale the camera distance and clip planes by a multiplicative factor.
     ///
-    /// The height is clamped on BOTH sides: without the ceiling, a few hundred
+    /// The height is clamped on both sides: without the ceiling, a few hundred
     /// zoom-out wheel notches overflow `orthographic_height` to infinity, the
     /// GPU projection matrix turns NaN, and a subsequent pan NaN-poisons the
     /// target — an unrecoverable blank viewport. The clamp also heals a camera
-    /// that already carries a non-finite height from legacy state.
+    /// that already carries a non-finite height.
     pub fn zoom_by(&mut self, scale: f32) {
         if !scale.is_finite() || scale <= 0.0 {
             return;

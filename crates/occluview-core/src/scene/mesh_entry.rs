@@ -10,9 +10,8 @@ use std::sync::Arc;
 /// The overlay is one RGBA array either way, and the renderer has to branch on
 /// what it is: a measured map states a value the operator reads against a
 /// legend, while paint states a colour drawn over the surface's own material.
-/// Treating paint as a measurement (which the renderer did while the brush
-/// preview and the deviation map shared one meaning) dropped the tint and the
-/// texture, so the marked scan read as a pale glossy shell.
+/// Treating paint as a measurement would drop the tint and the texture, so
+/// the marked scan would read as a pale glossy shell.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum OverlayKind {
     /// A measured colour map: the RGB is the reading, drawn opaque, with the
@@ -33,7 +32,7 @@ struct MeshOverlay {
 }
 
 /// Per-instance mesh entry in a scene.
-// Five INDEPENDENT display toggles (visibility, wireframe, orientation
+// Five independent display toggles (visibility, wireframe, orientation
 // diagnostic, vertex-color override, texture visibility) — orthogonal settings, not a
 // state machine an enum would simplify.
 #[allow(clippy::struct_excessive_bools)]
@@ -267,12 +266,12 @@ impl SceneMesh {
             show_orientation: self.show_orientation,
             show_vertex_colors: self.show_vertex_colors,
             show_texture: self.show_texture,
-            // Dropped deliberately: the overlay is indexed by the old
-            // vertices, so carrying it onto new geometry would paint whichever
-            // vertices happened to inherit those indices.
+            // Dropped: the overlay is indexed by the old vertices, so carrying
+            // it onto new geometry would paint whichever vertices happened to
+            // inherit those indices.
             overlay: None,
             source_layer_id: self.source_layer_id,
-            // Kept deliberately: same layer, same file provenance.
+            // Kept: same layer, same file provenance.
             import_units: self.import_units,
         }
     }

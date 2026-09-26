@@ -60,7 +60,7 @@ fn a_gap_reads_positive_and_an_interference_reads_negative() {
     );
 }
 
-/// The sign follows the OPPOSING surface's winding. An antagonist whose normals
+/// The sign follows the opposing surface's winding. An antagonist whose normals
 /// point the other way turns the same geometry into the opposite reading, which
 /// is a property of the measurement rather than a defect — and the reason the
 /// layer menu's "Flip normals" changes what a contact reading says.
@@ -103,7 +103,7 @@ fn a_vertex_with_no_opposing_surface_is_not_measured() {
 ///
 /// A vertex deeper inside the antagonist than the search reach finds no surface
 /// and falls back to the sentinel, which paints as clean tooth. The reach is
-/// twice the deepest saturation depth for exactly that reason, so every
+/// set above every law's saturation depth for that reason, so every
 /// interference a bite pose can produce is measured — and only overclosure that
 /// is already a garbage pose is not.
 #[test]
