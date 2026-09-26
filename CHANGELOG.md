@@ -49,6 +49,12 @@ remain in the Git history.
   length is measured in 3D. Hovering the line shows the perpendicular and its
   length before the click; dragging the first point or either end of the base
   line keeps the right angle.
+- Pressing a ruler end without moving the mouse leaves it where it is. The
+  press re-picked the end onto the surface nearest the camera under the
+  pointer, so an end seen through the model (measurements draw on top of it)
+  jumped to the front surface and the reading changed although nothing was
+  dragged. The end now follows the pointer once it moves past the click
+  tolerance.
 
 ### Files
 

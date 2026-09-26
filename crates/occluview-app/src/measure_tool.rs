@@ -75,6 +75,8 @@ pub(crate) struct MeasureTool {
     rulers: Vec<RulerMeasurement>,
     probe: Option<ThicknessProbe>,
     dragged_anchor: Option<RulerAnchorRef>,
+    /// The dragged anchor's pointer has left its press point (latched).
+    drag_moved: bool,
 }
 
 impl MeasureTool {
@@ -189,7 +191,18 @@ impl MeasureTool {
             return false;
         }
         self.dragged_anchor = Some(anchor);
+        self.drag_moved = false;
         true
+    }
+
+    /// Whether the dragged anchor may follow the pointer yet. Latched: it
+    /// turns on once the pointer moves past the click tolerance and stays on,
+    /// even back over the press point. Until then the anchor stays put, so a
+    /// press on an anchor drawn over nearer surface (the overlay has no depth
+    /// test) does not re-pick it onto that surface.
+    pub(crate) fn ruler_drag_follows(&mut self, moved_past_click: bool) -> bool {
+        self.drag_moved |= moved_past_click;
+        self.drag_moved
     }
 
     pub(crate) fn dragged_ruler_anchor(&self) -> Option<RulerAnchorRef> {
@@ -507,6 +520,31 @@ mod tests {
         assert_eq!(tool.ruler_segments()[0].b, Vec3::Y * 3.0);
         tool.end_ruler_drag();
         assert!(tool.dragged_ruler_anchor().is_none());
+    }
+
+    #[test]
+    fn a_drag_follows_the_pointer_only_after_it_moves_and_then_stays_live() {
+        let mut tool = MeasureTool::default();
+        tool.arm(MeasureMode::Ruler);
+        tool.place_ruler_point(Vec3::ZERO);
+        tool.place_ruler_point(Vec3::X);
+        let anchor = RulerAnchorRef {
+            ruler_index: 0,
+            endpoint: RulerEndpoint::A,
+        };
+        assert!(tool.begin_ruler_drag(anchor));
+        assert!(
+            !tool.ruler_drag_follows(false),
+            "a press alone moves nothing"
+        );
+        assert!(tool.ruler_drag_follows(true));
+        assert!(
+            tool.ruler_drag_follows(false),
+            "back over the press point the drag stays live"
+        );
+        tool.end_ruler_drag();
+        assert!(tool.begin_ruler_drag(anchor));
+        assert!(!tool.ruler_drag_follows(false), "each drag starts still");
     }
 
     /// The pending anchor becomes the start of the perpendicular; the foot is

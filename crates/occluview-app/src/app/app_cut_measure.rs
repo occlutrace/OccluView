@@ -581,7 +581,8 @@ impl OccluViewApp {
     }
 
     /// One frame of a ruler-end drag: the end follows the surface under the
-    /// pointer, and the drag ends on release.
+    /// pointer once the pointer has moved past the click tolerance, and the
+    /// drag ends on release.
     fn continue_ruler_drag(
         &mut self,
         response: &egui::Response,
@@ -596,7 +597,16 @@ impl OccluViewApp {
             ctx.request_repaint();
             return;
         }
-        if !response.rect.contains(pointer) {
+        let click_tolerance = ctx.options(|options| options.input_options.max_click_dist);
+        let moved_past_click = ctx.input(|input| {
+            input
+                .pointer
+                .press_origin()
+                .is_some_and(|origin| origin.distance(pointer) > click_tolerance)
+        });
+        if !response.rect.contains(pointer)
+            || !self.tools.measure.ruler_drag_follows(moved_past_click)
+        {
             return;
         }
         let Some((camera, scene)) = self.render.camera.zip(self.document.scene.clone()) else {
