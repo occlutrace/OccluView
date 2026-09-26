@@ -92,13 +92,13 @@ impl AlignSettings {
             // several millimetres off. `local_only: true` removed both the
             // global seed and the radius ladder, so a start more than a couple
             // of millimetres out converged onto whatever surface it touched
-            // first and then failed the seating gate.
+            // first and then failed the refinement gate.
             //
             // Measured on a real arch with the search enabled: a start 8 mm out
             // still seated (seated fraction 0.998, trustworthy). With
-            // `local_only: true` the same 4 mm start reported a seated fraction
-            // of 0.016 and was refused — the operator saw "Best fit matching
-            // could not confirm an improvement" for a pair the tool can seat.
+            // `local_only: true` the same 4 mm start covered almost nothing and
+            // was refused — the operator saw "Best fit matching could not confirm
+            // an improvement" for a pair the tool can seat.
             local_only: false,
             ..RefineSettings::default()
         }
