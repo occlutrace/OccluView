@@ -86,20 +86,24 @@ fn parse_texture_image(text: &str) -> Result<Option<DecodedTexture>, HpsError> {
         return Ok(None);
     };
     let bytes = base64::decode(element.body)?;
+    // A raw texture's channel order is declared, or follows the documented
+    // HPS/DirectX default, so decoding already produced the right order and no
+    // hue guess may override it. A compressed image carries no order at all,
+    // which is where the dental prior is the only signal.
     let texture = if let Some(texture) = parse_raw_texture_image(element.open_tag, &bytes)? {
         texture
     } else {
-        decode_embedded_raster(&bytes)?
+        correct_channel_order_for_dental(decode_embedded_raster(&bytes)?)?
     };
-    Ok(Some(correct_channel_order_for_dental(texture)?))
+    Ok(Some(texture))
 }
 
-/// Correct a likely source-level R/B swap using the dental-surface prior
-/// (`R >= B` on average). Localized blue material and mild blue casts remain
-/// below the uniform-bias threshold.
+/// Correct a likely source-level R/B swap using the dental-surface prior (a
+/// surface is physically warm, so blue must not dominate red across the whole
+/// atlas). Localized blue material and mild cool casts are left alone.
 fn correct_channel_order_for_dental(texture: DecodedTexture) -> Result<DecodedTexture, HpsError> {
     let (width, height, mut rgba) = texture.into_parts();
-    if texture_is_implausibly_blue(&rgba) {
+    if texture_is_implausibly_blue(width, height, &rgba) {
         tracing::debug!("texture channel correction: swapping R/B (implausibly blue)");
         for pixel in rgba.as_chunks_mut::<4>().0 {
             pixel.swap(0, 2);
@@ -113,27 +117,48 @@ fn correct_channel_order_for_dental(texture: DecodedTexture) -> Result<DecodedTe
     DecodedTexture::new(width, height, rgba)
 }
 
-/// Inspect up to 4096 deterministic samples, ignoring transparent and near-gray
-/// pixels. A source swap must produce a near-uniform blue bias; localized blue
-/// material must not.
-fn texture_is_implausibly_blue(rgba: &[u8]) -> bool {
-    const SAMPLE_BUDGET: usize = 4096;
+/// Inspect up to 4096 deterministic samples and decide whether the atlas as a
+/// whole has its red and blue channels transposed.
+///
+/// A source swap moves every pixel's hue the same way, so the test is per pixel
+/// rather than on the mean colour: at least `BLUE_BIASED_PIXEL_FRACTION` of the
+/// hue-bearing samples must be blue-shifted, and the mean blue-over-red excess
+/// averaged over *all* of them must reach `MIN_MEAN_BLUE_EXCESS` levels. The
+/// excess is absolute rather than a fraction of the mean red, so a bright atlas
+/// cannot hide a swap the way it did when the required margin grew with
+/// brightness.
+///
+/// Near-gray and transparent samples carry no hue and are skipped. The
+/// remaining rule cannot distinguish a swap from an atlas whose only hue-bearing
+/// content is a blue material, and favours correcting: a wrong channel order on
+/// a real scan is the observed failure, and a swap leaves the near-gray majority
+/// of a desaturated atlas unchanged.
+///
+/// `sample_indices` spreads the sample over a grid of rows and columns, so a
+/// power-of-two atlas is judged from the whole picture rather than one column.
+fn texture_is_implausibly_blue(width: u32, height: u32, rgba: &[u8]) -> bool {
     const MIN_ALPHA: u8 = 8;
+    /// A pixel closer to neutral than this carries no reliable hue.
     const NEAR_GRAY_DELTA: i32 = 16;
-    /// Required fraction of sampled pixels with a blue bias.
+    /// Required fraction of hue-bearing pixels that are blue-shifted.
     const BLUE_BIASED_PIXEL_FRACTION: f64 = 0.9;
+    /// Mean blue-over-red excess required across all hue-bearing pixels, in
+    /// levels. Absolute rather than a fraction of the mean red, so brightness
+    /// cannot move the verdict.
+    const MIN_MEAN_BLUE_EXCESS: i64 = 24;
 
-    let pixel_count = rgba.len() / 4;
-    if pixel_count == 0 {
+    let pixels = rgba.as_chunks::<4>().0;
+    if width == 0 || height == 0 || pixels.is_empty() {
         return false;
     }
-    let stride = (pixel_count / SAMPLE_BUDGET).max(1);
 
-    let mut red_sum: u64 = 0;
-    let mut blue_sum: u64 = 0;
     let mut blue_biased: u64 = 0;
+    let mut signed_excess: i64 = 0;
     let mut sampled: u64 = 0;
-    for pixel in rgba.as_chunks::<4>().0.iter().step_by(stride) {
+    for index in sample_indices(width, height) {
+        let Some(pixel) = pixels.get(index) else {
+            continue;
+        };
         let [r, _g, b, a] = [pixel[0], pixel[1], pixel[2], pixel[3]];
         if a < MIN_ALPHA {
             continue;
@@ -142,23 +167,60 @@ fn texture_is_implausibly_blue(rgba: &[u8]) -> bool {
         if delta.abs() < NEAR_GRAY_DELTA {
             continue;
         }
-        red_sum += u64::from(r);
-        blue_sum += u64::from(b);
+        sampled += 1;
+        signed_excess += i64::from(delta);
         if delta > 0 {
             blue_biased += 1;
         }
-        sampled += 1;
     }
     if sampled == 0 {
         return false;
     }
-    let red_mean = red_sum / sampled;
-    let blue_mean = blue_sum / sampled;
-    let margin = (red_mean / 4).max(24);
-    let mean_is_blue_biased = blue_mean > red_mean + margin;
     #[allow(clippy::cast_precision_loss)]
     let blue_biased_fraction = blue_biased as f64 / sampled as f64;
-    mean_is_blue_biased && blue_biased_fraction >= BLUE_BIASED_PIXEL_FRACTION
+    let mean_excess = signed_excess / i64::try_from(sampled).unwrap_or(i64::MAX);
+    blue_biased_fraction >= BLUE_BIASED_PIXEL_FRACTION && mean_excess >= MIN_MEAN_BLUE_EXCESS
+}
+
+/// The pixel indices the swap test inspects, spread evenly over the atlas.
+///
+/// A single pixel stride of `count / budget` is a multiple of the row length
+/// for every power-of-two atlas, so it walks one column and one row only. This
+/// lays a grid of up to 64 columns and as many rows as the budget allows, with
+/// the first and last row and column always included, so every part of the
+/// atlas is represented. The walk is deterministic.
+fn sample_indices(width: u32, height: u32) -> Vec<usize> {
+    const SAMPLE_BUDGET: usize = 4096;
+    const COLUMNS: usize = 64;
+    let width = usize::try_from(width).unwrap_or(0);
+    let height = usize::try_from(height).unwrap_or(0);
+    if width == 0 || height == 0 {
+        return Vec::new();
+    }
+    let total = width.saturating_mul(height);
+    if total <= SAMPLE_BUDGET {
+        return (0..total).collect();
+    }
+    let columns = COLUMNS.min(width);
+    let rows = (SAMPLE_BUDGET / columns).max(1).min(height);
+    // `i * (extent - 1) / (count - 1)` spaces `count` values across `extent`
+    // and always includes both ends; `extent <= 8192` and `count <= 4096`, so
+    // the product cannot overflow.
+    let spread = |count: usize, extent: usize| -> Vec<usize> {
+        if count <= 1 {
+            return vec![0];
+        }
+        (0..count).map(|i| i * (extent - 1) / (count - 1)).collect()
+    };
+    let xs = spread(columns, width);
+    let ys = spread(rows, height);
+    let mut indices = Vec::with_capacity(xs.len() * ys.len());
+    for y in ys {
+        for &x in &xs {
+            indices.push(y * width + x);
+        }
+    }
+    indices
 }
 
 fn decode_embedded_raster(bytes: &[u8]) -> Result<DecodedTexture, HpsError> {
