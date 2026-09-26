@@ -234,7 +234,7 @@ mod tests {
         let clip_top = SectionPlane::new(-Vec3::Z, 0.0).expect("plane");
 
         // A ray inside the inner radius: the outer top is clipped away, so the
-        // pick lands on the INNER surface on the kept (lower) side.
+        // pick lands on the inner surface on the kept (lower) side.
         let inside = Vec3::new(2.0, 0.0, 20.0);
         let hit_inner = scene
             .pick_scene_hit_clipped(inside, down, Some(clip_top))
@@ -253,7 +253,7 @@ mod tests {
         );
 
         // A ray between the two radii misses the inner sphere entirely, so with
-        // the same clip it returns the OUTER surface on the kept side.
+        // the same clip it returns the outer surface on the kept side.
         let between = Vec3::new(8.0, 0.0, 20.0);
         let hit_outer = scene
             .pick_scene_hit_clipped(between, down, Some(clip_top))

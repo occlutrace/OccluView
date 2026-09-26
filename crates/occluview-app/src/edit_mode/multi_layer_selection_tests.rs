@@ -207,11 +207,9 @@ fn visible_bulk_operations_ignore_hidden_layers() {
 /// A menu action must run on every marked layer, not only the clicked one.
 ///
 /// The operator marks faces with the Marquee or the Lasso, and those marks land
-/// on every visible layer they crossed. Taking Delete from the LAYER MENU used
-/// to edit only the layer the menu was opened on, which read as "it only edits
-/// one object". The action follows the same visible-selection plan the Mesh
-/// Editor's buttons use, so this pins that plan as the thing that decides the
-/// target set.
+/// on every visible layer they crossed. Delete from the layer menu follows the
+/// same visible-selection plan the Mesh Editor's buttons use, so that plan
+/// decides the target set.
 #[test]
 fn a_menu_action_targets_every_marked_visible_layer() {
     let Some(mesh_a) = two_triangle_mesh("A") else {
@@ -230,7 +228,7 @@ fn a_menu_action_targets_every_marked_visible_layer() {
     assert!(controller.select_face_hit(&scene, hit(index_a, id_a, 0)));
     assert!(controller.select_face_hit(&scene, hit(index_b, id_b, 1)));
 
-    // Exactly what the context-menu path reads before it acts.
+    // The plan the context-menu path reads before it acts.
     let targets: Vec<SceneMeshId> = controller
         .visible_selection_plan(&scene)
         .into_iter()
@@ -243,7 +241,7 @@ fn a_menu_action_targets_every_marked_visible_layer() {
     );
     assert!(targets.contains(&id_a) && targets.contains(&id_b));
 
-    // And the batch executor really edits both.
+    // And the batch executor edits both.
     let Ok(apply) = apply_visible_selected_face_mesh_edit_action_with_limit(
         &mut scene,
         &mut controller,

@@ -29,8 +29,8 @@ pub(crate) fn layer_label(
     locale.tr_with("layer-unnamed", &[("n", &(index + 1).to_string())])
 }
 
-/// ASCII fallback stem for default export filenames. Deliberately not
-/// localized: a default filename must survive any filesystem locale
+/// ASCII fallback stem for default export filenames. Not localized: a
+/// default filename must survive any filesystem locale
 /// (see the `layer-unnamed` catalog key for the operator-visible name).
 pub(crate) fn ascii_layer_stem(index: usize) -> String {
     format!("layer-{}", index + 1)

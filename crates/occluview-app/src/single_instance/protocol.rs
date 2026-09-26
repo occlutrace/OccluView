@@ -3,7 +3,7 @@ use anyhow::{bail, Context, Result};
 
 use std::path::PathBuf;
 const REQUEST_MAGIC: &[u8; 4] = b"OCVQ";
-/// Envelope carrying only file paths (the historical layout).
+/// Envelope carrying only file paths (the v1 layout).
 const REQUEST_VERSION_PATHS_ONLY: u16 = 1;
 /// Envelope that appends a forwarded window-activation token after the paths.
 /// The token carries the launching process's user-interaction provenance so

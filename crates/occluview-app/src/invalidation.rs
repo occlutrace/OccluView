@@ -6,7 +6,7 @@
 //! each consumer tracks its own cursor, so one path consuming an update
 //! cannot hide it from the other path.
 //!
-//! Costs are preserved from the previous boolean flags: a camera-only change
+//! Each cause carries its own cost: a camera-only change
 //! requests a repaint without touching uploaded geometry, a scene change
 //! rebuilds both prepared scenes and the overlay, and a mid-stroke sculpt
 //! topology change rebuilds the scenes while leaving the overlay alone.
@@ -14,9 +14,8 @@
 /// Owner of redraw and cache-staleness state for the viewport.
 ///
 /// Lives in the application state; the live and offscreen render paths query
-/// and consume their own cursors where they previously read and cleared
-/// shared boolean flags. `Copy` because it is a small generation snapshot,
-/// not a resource handle.
+/// and consume their own cursors. `Copy` because it is a small generation
+/// snapshot, not a resource handle.
 ///
 /// Staleness is unconditional: a scene change stales the live consumer even
 /// when no live viewport is attached. That is intentional — an unread cursor

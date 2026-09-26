@@ -2,12 +2,11 @@
 //!
 //! [`occluview_core::Mesh`] stores interleaved vertices, and
 //! [`occluview_align`] takes flat `xyz` triples, so every job's positions have
-//! to be built by hand. Building them per submit is what made the heatmap feel
-//! slow: Measure is re-submitted on every settings change, and a 945k-vertex
-//! arch costs eleven megabytes of copying each time — for geometry that has not
-//! changed since the last press.
+//! to be built by hand. Measure is re-submitted on every settings change, and
+//! building the arrays per submit copies eleven megabytes for a 945k-vertex
+//! arch each time, for geometry that has not changed since the last press.
 //!
-//! Both caches here are keyed by what the arrays were built FROM (the mesh's
+//! Both caches here are keyed by what the arrays were built from (the mesh's
 //! geometry identity, and for world positions its pose), never by a layer id.
 //! A sculpt mints a fresh geometry id precisely so geometry-derived caches can
 //! tell that the surface moved under them.
@@ -189,11 +188,10 @@ impl PaintedVertices {
 
     /// Rewrite only `touched`, leaving every other vertex as it was.
     ///
-    /// The whole point of the brush being fast. A dab the size of a cusp
-    /// touches a few hundred vertices out of a million; repainting the array
-    /// for those is thirty-four megabytes of memory traffic, and the upload
-    /// that follows it is thirty-four more. Together they are what made
-    /// painting run at three frames a second.
+    /// This keeps the brush fast. A dab the size of a cusp touches a few
+    /// hundred vertices out of a million; repainting the array for those is
+    /// thirty-four megabytes of memory traffic, and the upload that follows it
+    /// is thirty-four more.
     pub(crate) fn patch(
         &mut self,
         mesh: &Mesh,
@@ -230,7 +228,7 @@ impl PaintedVertices {
             .any(|slot| slot.geometry == Some(id) && slot.vertices.len() == count)
     }
 
-    /// Drop the arrays. The overlay is gone, so the scratch should be too.
+    /// Drop the arrays when the overlay is removed.
     pub(crate) fn clear(&mut self) {
         self.slots = Default::default();
     }
@@ -257,8 +255,8 @@ mod tests {
         .expect("valid mesh")
     }
 
-    /// The whole point: a second job over unchanged geometry must not copy the
-    /// mesh again. Sharing the same allocation is what makes that observable.
+    /// A second job over unchanged geometry must not copy the mesh again.
+    /// Sharing the same allocation is what makes that observable.
     #[test]
     fn unchanged_geometry_is_handed_out_without_being_rebuilt() {
         let entry = SceneMesh::new(triangle());
@@ -276,8 +274,8 @@ mod tests {
     }
 
     /// World positions are a function of the pose, so moving the layer has to
-    /// invalidate them — a stale array would measure against where the scan
-    /// used to be.
+    /// invalidate them — a stale array would measure against the scan's earlier
+    /// position.
     #[test]
     fn moving_a_layer_rebuilds_its_world_positions() {
         let mut entry = SceneMesh::new(triangle());
@@ -295,7 +293,7 @@ mod tests {
     ///
     /// Asserting that one pose keys the same way twice says nothing: the
     /// function is pure and its argument is `Copy`. What matters is that two
-    /// DIFFERENT poses key differently -- a key over translation alone lets a
+    /// different poses key differently -- a key over translation alone lets a
     /// rotated layer reuse the entry cached for its unrotated self, which is
     /// stale geometry presented as current.
     #[test]

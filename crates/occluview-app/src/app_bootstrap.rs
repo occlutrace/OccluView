@@ -79,7 +79,7 @@ pub fn main_entry() {
 
 fn real_main() -> Result<()> {
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    // Console output PLUS an in-memory ring buffer of the last few log lines,
+    // Console output plus an in-memory ring buffer of the last few log lines,
     // so a crash report can show what the app was doing right before it died.
     tracing_subscriber::registry()
         .with(env_filter)
@@ -131,8 +131,8 @@ fn real_main() -> Result<()> {
 
     // Shape, not identity. This line goes into the ring buffer that
     // `write_crash_report` dumps to disk, and a dental scan's path is the case
-    // it belongs to. Someone asked to attach a crash report to a public issue
-    // should not be attaching patient identifiers with it.
+    // it belongs to. A crash report attached to a public issue must not carry
+    // patient identifiers.
     tracing::info!(
         file_count = args.files.len(),
         formats = ?crate::file_extensions(&args.files),
@@ -154,7 +154,7 @@ fn real_main() -> Result<()> {
         return Ok(());
     }
 
-    // The PRIMARY instance also inherits the launcher's activation token; the
+    // The primary instance also inherits the launcher's activation token; the
     // first startup load uses it to claim focus on X11 (see activation.rs).
     // Capture it before eframe/winit runs so nothing consumes the env first.
     let startup_activation_token = single_instance::capture_activation_token();
@@ -184,10 +184,10 @@ fn real_main() -> Result<()> {
             // which the fallback's cure is a second wgpu device building the
             // same pipelines from the same shaders.
             //
-            // The branch stays, but it is not "this machine has no GPU"
-            // coverage; that case never arrives here. The same overlay body as
-            // the live path runs it (see `show_viewport_overlays`), which is
-            // what stops it rotting for the operators it does serve.
+            // The branch is not "no GPU" coverage; that case never arrives
+            // here. It runs the same overlay body as the live path (see
+            // `show_viewport_overlays`), so it stays current with the live
+            // viewport.
             let live_viewport = cc.wgpu_render_state.as_ref().and_then(|state| {
                 match live_viewport::LiveViewport::from_render_state(state, live_sample_count) {
                     Ok(viewport) => Some(viewport),
@@ -354,7 +354,7 @@ fn adapter_supports_live_sample_count(
 
 /// Check the complete format contract used by the live egui render pass.
 ///
-/// `sample_count_supported(1)` is deliberately true even for formats that
+/// `sample_count_supported(1)` is true even for formats that
 /// cannot be render attachments, so checking the sample count alone lets an
 /// adapter pass preflight and fail later while eframe creates the swapchain or
 /// a custom pipeline. The live color target is also used by translucent
@@ -499,7 +499,7 @@ fn live_sample_count_for(
     // the profile from every working candidate is the only default that never
     // asks eframe for a pass the eventual adapter cannot satisfy.
     //
-    // The cost is real and documented in the README: a hybrid machine that
+    // The cost is documented in the README: a hybrid machine that
     // enumerates one device without 4x support renders the whole session at one
     // sample, even when the device it actually presents on supports 4x. The
     // operator override is the escape hatch in both directions.
@@ -586,12 +586,11 @@ fn preflight_graphics_devices() -> Result<GraphicsPreflight> {
                 // whether the adapter can give one. That is also why the CPU
                 // adapter is skipped above it — a software driver starts its
                 // worker threads when the device is created and does not stop
-                // them when the device is dropped, so probing llvmpipe left
+                // them when the device is dropped, so probing llvmpipe leaves
                 // three Vulkan helper threads and ten llvmpipe workers spinning
-                // for the life of the process. Measured on this machine: the
-                // viewer sat at 10% CPU with NO document open and 20% with one,
-                // simply because the preflight had touched the software
-                // adapter.
+                // for the life of the process. Measured: with the software
+                // adapter probed, the viewer idles at 10% CPU with no document
+                // open and 20% with one.
                 working_adapters.push(AdapterIdentity::from_adapter(&adapter));
                 tracing::info!(
                     adapter = %info.name,
@@ -633,10 +632,9 @@ fn preflight_graphics_devices() -> Result<GraphicsPreflight> {
 }
 
 /// Build the smallest valid device request for the selected adapter while
-/// keeping the normal egui/wgpu defaults on modern hardware. The old eframe
-/// default hard-coded an 8192 2D texture limit even for a GL adapter whose
-/// advertised limit could be lower; wgpu rejects such a request before the
-/// application creator runs.
+/// keeping the normal egui/wgpu defaults on modern hardware. A request with a
+/// fixed 8192 2D texture limit is rejected by wgpu before the application
+/// creator runs when a GL adapter advertises a lower limit.
 fn device_limits_for_backend(backend: wgpu::Backend, supported: &wgpu::Limits) -> wgpu::Limits {
     let base_limits = if backend == wgpu::Backend::Gl {
         wgpu::Limits::downlevel_webgl2_defaults()
@@ -647,16 +645,13 @@ fn device_limits_for_backend(backend: wgpu::Backend, supported: &wgpu::Limits) -
         max_texture_dimension_2d: MAX_RENDER_TEXTURE_DIMENSION,
         // `wgpu::Limits::default()` is the WebGPU default tier, whose
         // `max_buffer_size` is 256 MiB. `or_worse_values_from` takes the
-        // per-field MINIMUM, so the request capped the live device at 256 MiB
-        // even on an adapter offering gigabytes — while the offscreen path had
-        // already been raised to the adapter's real ceiling for exactly this
-        // reason ("a scan of three million triangles needs a 309 MiB vertex
-        // buffer, the allocation was refused, and the frame came back empty").
-        // The refused allocation arrives at the fault handler, which LATCHES:
-        // the viewport stops drawing and offers a Retry that re-runs the same
-        // failing allocation, so a scan that renders fine as a thumbnail was
-        // unopenable in the app. Asking for the adapter's own number leaves the
-        // intersection unable to lower it.
+        // per-field minimum, so a default request caps the live device at
+        // 256 MiB even on an adapter offering gigabytes, while a scan of three
+        // million triangles needs a 309 MiB vertex buffer. A refused allocation
+        // arrives at the fault handler, which latches: the viewport stops
+        // drawing and offers a Retry that re-runs the same failing allocation.
+        // Asking for the adapter's own number, as the offscreen path does,
+        // leaves the intersection unable to lower it.
         max_buffer_size: supported.max_buffer_size,
         ..base_limits
     }
@@ -700,11 +695,10 @@ fn root_viewport_builder() -> egui::ViewportBuilder {
 
 /// `--version` for scripts and packaging checks, printed before the
 /// single-instance handshake so it never focuses a running viewer. On
-/// Windows this is a GUI-subsystem binary: with no console attached the
-/// line is discarded when no console is attached; it prints whenever stdout is
-/// piped or redirected, and always on Linux.
-/// Attaching a parent console would drag in Win32 console plumbing for one
-/// line.
+/// Windows this is a GUI-subsystem binary: with no console attached the line
+/// is discarded; it prints whenever stdout is piped or redirected, and always
+/// on Linux. Attaching a parent console would drag in Win32 console plumbing
+/// for one line.
 #[allow(clippy::print_stdout)]
 fn print_version_line() {
     println!("occluview {}", env!("CARGO_PKG_VERSION"));
@@ -855,9 +849,9 @@ fn startup_stage_line(stage: &str, stamp_nanos: u128, pid: u32) -> String {
 }
 
 /// Leave a tiny persistent breadcrumb at the last startup boundary. It is
-/// Metadata only: native driver crashes can happen before Rust
-/// reaches the panic hook, but the next report can still say whether the
-/// process reached logging, graphics initialization, or the window callback.
+/// metadata only: native driver crashes can happen before Rust reaches the
+/// panic hook, but the next report can still say whether the process reached
+/// logging, graphics initialization, or the window callback.
 fn append_startup_stage(stage: &str) {
     let line = startup_stage_line(stage, unix_timestamp_nanos(), std::process::id());
     for path in startup_journal_paths() {
@@ -1145,10 +1139,8 @@ fn show_startup_fatal_message(report_path: Option<&Path>, details: &str) {
         // A .desktop launch has no console. Give the operator the full path,
         // not just a filename they cannot locate, and put the same actionable
         // value in the next startup breadcrumb if every dialog channel fails.
-        // Keep the no-file state machine-readable. This sentinel is also
-        // handled by the Windows diagnostics dialog below; a prose fallback
-        // here would bypass the presentation-sink contract before the locale
-        // manager exists.
+        // The no-file state stays the machine-readable `none` sentinel, as in
+        // `show_diagnostics_message`.
         let report =
             report_path.map_or_else(|| "none".to_owned(), |path| path.display().to_string());
         tracing::error!(report, details, "OccluView could not continue");
@@ -1201,8 +1193,8 @@ fn notify_desktop(title: &str, report: &str, urgency: &str) -> &'static str {
             Ok(false) => {
                 // The program ran and refused the message: `notify-send`
                 // exits non-zero when no notification daemon answers, which
-                // is the common case on a bare session. Trying the next
-                // channel is the whole point of the list.
+                // is the common case on a bare session. The list exists so the
+                // next channel is tried.
                 tracing::warn!(channel, "the desktop did not accept the notice");
             }
             Err(error) => {
@@ -1230,8 +1222,8 @@ fn notify_desktop(title: &str, report: &str, urgency: &str) -> &'static str {
 /// that only return when dismissed, which is right for the message but wrong for
 /// the process: this runs on the fatal-startup path, where `main_entry` still
 /// owes the operator a non-zero exit status, and an unattended `xmessage` (a CI
-/// host, a kiosk, a `.desktop` launch nobody is looking at) would otherwise keep
-/// a dead startup alive forever with no window.
+/// host, a kiosk, an unwatched `.desktop` launch) would otherwise keep a dead
+/// startup alive forever with no window.
 #[cfg(not(windows))]
 fn run_notification(program: &str, args: &[String]) -> std::io::Result<bool> {
     use std::time::Instant;
@@ -1259,7 +1251,7 @@ fn run_notification(program: &str, args: &[String]) -> std::io::Result<bool> {
 /// How long a fatal-startup notice may hold the process open.
 ///
 /// Long enough for a `notify-send` round trip or a dialog that appears at once;
-/// short enough that nobody mistakes a hung startup for a slow one.
+/// short enough that a hung startup is not mistaken for a slow one.
 #[cfg(not(windows))]
 const NOTIFICATION_DISMISS_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 

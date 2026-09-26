@@ -1,9 +1,8 @@
-//! Which scan moves onto which, said out loud in the panel.
+//! Which scan moves onto which, stated in the panel.
 //!
 //! The tool decides this from the operator's first click, and with two scans in
-//! view it guesses beforehand so a plain comparison needs no clicks at all. A
-//! guess that nothing on screen states is a guess the operator finds out about
-//! from the result: an arch that jumped when they expected the other one to.
+//! view it guesses beforehand so a plain comparison needs no clicks at all. An
+//! unstated guess would surface only in the result, as the other arch moving.
 //!
 //! So the line below always names both scans in the direction the fit will run,
 //! and offers one button to turn it around.
@@ -157,8 +156,8 @@ mod tests {
         assert!(roles(false).hint(&english()).contains("moves"));
     }
 
-    /// A guess says it is a guess. It used to say nothing at all, and then the
-    /// operator learnt about it from an arch that jumped the wrong way.
+    /// A guess says it is a guess, so the direction can be checked before the
+    /// fit runs.
     #[test]
     fn a_guess_admits_to_being_one() {
         let guessed = roles(true).sentence(&english());
@@ -169,8 +168,8 @@ mod tests {
         assert!(roles(true).hint(&english()).contains("first click decides"));
     }
 
-    /// Two scans from one case differ at the END of the name, so that is the
-    /// end that has to survive. Front-anchored truncation printed the same
+    /// Two scans from one case differ at the end of the name, so that is the
+    /// end that has to survive. Front-anchored truncation would print the same
     /// string for both.
     #[test]
     fn a_long_name_keeps_the_part_that_tells_two_scans_apart() {

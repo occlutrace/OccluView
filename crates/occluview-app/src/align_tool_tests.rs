@@ -1,4 +1,4 @@
-//! Tests for the Align Scans click model, split out of `align_tool.rs`.
+//! Tests for the Align Scans click model in `align_tool.rs`.
 #![allow(clippy::expect_used)]
 
 use crate::align_tool::{AlignPoint, AlignTool, ClickOutcome};
@@ -241,11 +241,10 @@ fn disarming_drops_the_session() {
 
 /// The arm-time guess is a guess, and the first click overrides it.
 ///
-/// This is the bug an operator reported as "it aligned the other way round". Two
-/// scans in view, so the pair was implied from scene order — which is the order
-/// the files were opened in. Clicking the scan they wanted moved then landed on
-/// whichever role that scan had been handed, and half the time the alignment ran
-/// backwards for reasons nothing on screen explained.
+/// With two scans in view the pair is implied from scene order, which is the
+/// order the files were opened in. The scan the operator clicks first moves,
+/// whichever role the guess had handed it, so the alignment never runs
+/// backwards for a reason nothing on screen explains.
 #[test]
 fn the_first_clicked_scan_is_the_one_that_moves_even_after_a_guess() {
     let [a, b, _] = ids();
@@ -392,10 +391,10 @@ fn clearing_a_guessed_pair_leaves_nothing_guessed() {
 
 /// Leaving for the Manually tab drops the arrows and keeps the pair.
 ///
-/// The operator asked for this by name. A hand nudge moves the scan out from
-/// under every point placed on it, so arrows that survived the trip described a
-/// fit that no longer held. The two scan names are a different thing — they chose
-/// those two scans and did not un-choose them, and a plain comparison needs them.
+/// A hand nudge moves the scan out from under every point placed on it, so
+/// arrows kept across the trip would describe a fit that does not hold. The two
+/// scan names stay: the operator chose those two scans, and a plain comparison
+/// needs them.
 #[test]
 fn clearing_the_arrows_keeps_the_pair() {
     let [a, b, _] = ids();

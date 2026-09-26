@@ -332,8 +332,8 @@ fn trackball_orbit_keeps_moving_during_large_repeated_drags() {
 #[test]
 fn sustained_zoom_out_never_bricks_the_camera() {
     // A free-spinning wheel can deliver hundreds of notches in seconds.
-    // Without a ceiling, orthographic_height overflowed to infinity, the GPU
-    // matrix went NaN, and no amount of zooming back in could recover.
+    // Without a ceiling, orthographic_height overflows to infinity, the GPU
+    // matrix goes NaN, and no amount of zooming back in can recover.
     let mut camera = Camera::default();
     let out = zoom_factor_from_scroll(-120.0);
     for _ in 0..10_000 {
@@ -356,7 +356,7 @@ fn sustained_zoom_out_never_bricks_the_camera() {
         camera.orthographic_height
     );
 
-    // A camera already poisoned by legacy state heals on the next zoom.
+    // A camera that already carries a non-finite height heals on the next zoom.
     camera.orthographic_height = f32::INFINITY;
     camera.zoom_by(out);
     assert!(camera.orthographic_height.is_finite());
@@ -396,9 +396,8 @@ fn pointer_motion_orbit_delta_is_relative_and_unbounded() {
 
 #[test]
 fn pointer_motion_orbit_delta_uses_crisp_responsive_gain() {
-    // House rule (2026-07-10): no braked camera. Dragging half the smaller
-    // viewport dimension must land near a half turn, and never overshoot
-    // into twitchiness.
+    // The orbit is unbraked: dragging half the smaller viewport dimension
+    // must land near a half turn without overshooting.
     let viewport = Vec2::new(400.0, 200.0);
     let right =
         orbit_delta_from_pointer_motion(Vec2::new(100.0, 0.0), viewport).unwrap_or(Vec2::ZERO);
@@ -635,11 +634,11 @@ fn snap_to_vertical_axes_uses_clamped_pitch() {
     assert!(bottom_eye.y < camera.target.y - 90.0, "eye={bottom_eye}");
 }
 
-/// The v0.1.20 bug: open ~10 small objects, then scroll-zoom in. As the
-/// eye closes on the wide scene, the nearest corners fall behind the eye and the
-/// old `near = (min_depth - padding).max(0.001)` clamp planted an invisible clip
-/// plane in front of the camera, eating half the objects. Sweep 20 zoom levels
-/// across several orbit angles and require no corner is ever clipped.
+/// Open ~10 small objects, then scroll-zoom in. As the eye closes on the wide
+/// scene, the nearest corners fall behind the eye; a positive near clamp such
+/// as `near = (min_depth - padding).max(0.001)` would put a clip plane in front
+/// of the camera and hide half the objects. Sweep 20 zoom levels across
+/// several orbit angles and require no corner is ever clipped.
 #[test]
 fn zoomed_in_multi_object_scene_never_clips_any_corner() {
     let bbox = spread_multi_object_bbox();
@@ -677,8 +676,8 @@ fn zoomed_in_multi_object_scene_never_clips_any_corner() {
                 .any(|&depth| depth < 0.0)
             {
                 saw_corner_behind_eye = true;
-                // This is exactly where the old clamp failed: near must be
-                // allowed to go behind the eye rather than snapping to +0.001.
+                // Near must be allowed to go behind the eye rather than
+                // snapping to a small positive value.
                 assert!(
                     camera.near < 0.0,
                     "{ctx}: near={} should follow geometry behind the eye",
@@ -690,7 +689,7 @@ fn zoomed_in_multi_object_scene_never_clips_any_corner() {
 
     assert!(
         saw_corner_behind_eye,
-        "sweep never reproduced the behind-eye condition that triggers the bug"
+        "sweep never reached the condition with a corner behind the eye"
     );
 }
 

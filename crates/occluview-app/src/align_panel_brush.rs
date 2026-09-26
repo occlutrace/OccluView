@@ -2,11 +2,10 @@
 //! software uses, control for control.
 //!
 //! A **separate movable window**, opened by the "Matching: Exclude selected
-//! parts" checkbox on the automatic tab, exactly as the operator's dental CAD
-//! software opens it. It is not a section of the main window and not a mode
-//! of the manual tab: the operator is painting on the mesh with one hand
-//! while reading the alignment controls with the other, so the two have to
-//! be positionable independently.
+//! parts" checkbox on the automatic tab, as dental CAD software opens it. It
+//! is not a section of the main window and not a mode of the manual tab: the
+//! operator is painting on the mesh with one hand while reading the alignment
+//! controls with the other, so the two have to be positionable independently.
 
 use eframe::egui;
 
@@ -42,7 +41,7 @@ pub(crate) struct BrushPanelView<'a> {
 
 /// Show the Brush tool window; returns what the operator asked for.
 pub(crate) fn show(ctx: &egui::Context, view: BrushPanelView<'_>) -> Option<BrushPanelAction> {
-    // Opens to the LEFT of the main window's default corner, so the two do not
+    // Opens to the left of the main window's default corner, so the two do not
     // land on top of each other the first time the checkbox is ticked.
     let default_pos = view.viewport_rect.right_top() + egui::vec2(-WINDOW_WIDTH - 300.0, 16.0);
     let mut action = None;
@@ -199,7 +198,7 @@ fn header(ui: &mut egui::Ui, locale: &crate::i18n::LocaleManager) -> Option<Brus
     action
 }
 
-/// The same whole-mesh commands the operator's dental CAD software offers,
+/// The same whole-mesh commands dental CAD software offers,
 /// driven off the command list itself so a new one cannot be added to the
 /// enum and forgotten here.
 fn commands(
@@ -266,8 +265,7 @@ fn size(
     }
 }
 
-/// The same "Mark automatic" control and radius the operator's dental CAD
-/// software uses.
+/// The same "Mark automatic" control and radius dental CAD software uses.
 fn automatic(
     ui: &mut egui::Ui,
     brush: &mut AlignBrush,

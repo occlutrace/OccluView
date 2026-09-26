@@ -20,8 +20,8 @@ use unic_langid::LanguageIdentifier;
 
 use super::tags::FALLBACK_TAG;
 
-/// Catalogs compiled into this binary (pilot + wave 1 Latin scripts;
-/// CJK stays out until the font spike lands).
+/// Catalogs compiled into this binary. All use Latin or Cyrillic scripts,
+/// which the default fonts cover; CJK needs a bundled font (see `fonts.rs`).
 pub(crate) const EMBEDDED_TAGS: &[&str] = &["en", "ru", "de", "es", "fr", "it", "pt-BR"];
 /// Pseudo-locale tag for layout testing. Never user-selectable.
 #[cfg(test)]
@@ -39,7 +39,7 @@ const SOURCES: &[(&str, &str)] = &[
 
 /// One compiled locale bundle.
 pub(crate) struct Catalog {
-    /// Diagnostic identity (also asserted by the en-wording lock tests).
+    /// Diagnostic identity, read through [`Self::tag`] in tests.
     #[allow(dead_code)]
     tag: &'static str,
     bundle: FluentBundle<FluentResource>,
@@ -160,7 +160,7 @@ fn pseudo_source(source: &str) -> String {
         let (prefix, body) = split_pseudo_prefix(line, in_placeable);
         out.push_str(prefix);
         // `opened` restarts every line: text expands unless a placeable was
-        // opened (and not yet closed) on THIS line. The carried depth only
+        // opened (and not yet closed) on this line. The carried depth only
         // tells whether we are inside a multiline select; it must not send
         // a freshly reopened `{ $var }` down the expansion path.
         let mut opened = false;
@@ -442,9 +442,9 @@ fn select_shapes_match(tag: &str, base: &[BTreeSet<String>], entry: &[BTreeSet<S
         })
 }
 
-/// English key set for the code→catalog pin test: every id the UI
-/// resolves must exist in `en` (a missing one renders the ⟦id⟧ marker
-/// instead of failing loudly, so the test fails first).
+/// English key set for the tests that check every id the UI resolves
+/// exists in `en` (a missing one renders the ⟦id⟧ marker instead of
+/// failing loudly, so the test fails first).
 ///
 /// Test-only helper: `expect` marks fixture bugs (a missing `en`
 /// baseline), the same convention as the `mod tests` allows below.
@@ -613,9 +613,8 @@ mod tests {
 
     #[test]
     fn validator_catches_flat_string_where_en_selects() {
-        // Regression: ru repair toasts once shipped as flat strings while
-        // en selected plurals. Variable sets matched, so only the select
-        // count catches it.
+        // A flat string where `en` selects on a count has the same
+        // variable set, so only the select count catches it.
         let base = contract_of(
             "n = { $count ->\n    [one] { $count } thing\n   *[other] { $count } things\n}\n",
         )
@@ -738,8 +737,8 @@ mod tests {
     /// that layout tests cannot exercise.
     #[test]
     fn pseudo_locale_covers_every_embedded_key() {
-        // Pinned: adding a key without pseudo coverage must update this
-        // number AND the loop below in the same change.
+        // Adding a key must update this number and its pseudo coverage
+        // in the same change.
         const EXPECTED_EN_KEYS: usize = 683;
         let (_, source) = SOURCES
             .iter()
