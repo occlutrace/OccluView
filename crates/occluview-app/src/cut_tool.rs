@@ -140,13 +140,10 @@ impl CutTool {
 
     /// Zoom the section window, and take the disc with it.
     ///
-    /// The operator asked for the two to be one gesture: scroll in the little
-    /// section window and the disc in the 3D view resizes to match. The disc is
-    /// what the window is looking at, so they move opposite ways — magnify the
-    /// section and the disc narrows onto the detail, pull back and it opens out.
-    /// Before this they were separate knobs that both changed how big the section
-    /// read, which is why a freshly planted disc could look far too small with no
-    /// obvious way to fix it from the window you were reading.
+    /// The two are one gesture: scroll in the section window and the disc in the
+    /// 3D view resizes to match. The disc is what the window is looking at, so
+    /// they move opposite ways — magnify the section and the disc narrows onto
+    /// the detail, pull back and it opens out.
     pub(super) fn zoom_slice_at_cursor(
         &mut self,
         viewport_rect: egui::Rect,
@@ -161,7 +158,7 @@ impl CutTool {
         if let Some(pose) = self.manipulator.pose() {
             let wanted =
                 crate::cut_manipulator::radius_after_slice_zoom(pose.radius_mm, before, after);
-            // The clip plane is untouched: a radius is how much disc is DRAWN,
+            // The clip plane is untouched: a radius is how much disc is drawn,
             // and the plane it lies in has not moved. Dropping the cached plane
             // here would blank the clipping for a frame.
             if self.manipulator.set_radius_mm(wanted) {
@@ -196,10 +193,9 @@ impl CutTool {
             // `true` is the hollow (discard-only) cut: the cross-section shows
             // the ghost of the cut-away side and the section panel's contour,
             // not a filled cap. The stencil cap path in the renderer
-            // (`show_hollow: false`) is therefore not reachable from the
-            // viewer today; it is exercised only by the renderer's golden-image
-            // tests. Keep that difference in mind when reading "solid cut"
-            // claims, and set this to `false` to reach the cap passes.
+            // (`show_hollow: false`) is not reachable from the viewer; only the
+            // renderer's golden-image tests exercise it. Set this to `false` to
+            // reach the cap passes.
             show_hollow: true,
         })
     }

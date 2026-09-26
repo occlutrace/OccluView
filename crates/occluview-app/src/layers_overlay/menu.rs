@@ -9,9 +9,9 @@ use occluview_core::SceneMeshId;
 /// labels room to breathe without turning the menu into a second panel.
 const MENU_WIDTH: f32 = 244.0;
 
-/// Everything the layer context menu needs about one layer. Shared verbatim by
-/// the layers-overlay rows and the viewport right-click menu so both surface the
-/// identical action set through the same plumbing.
+/// Everything the layer context menu needs about one layer. Shared by the
+/// layers-overlay rows and the viewport right-click menu so both surface the
+/// same action set through the same plumbing.
 // Five independent display/state flags, not a state machine — see SceneMesh.
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Clone)]
@@ -261,7 +261,7 @@ fn show_contact_actions(
     // The entry is offered but disabled rather than hidden: an operator who
     // right-clicks a lone scan is asking whether contacts exist here at all, and
     // a greyed line that explains itself answers that better than a menu that
-    // silently loses an entry. `menu_item` paints no tooltip, so the reason goes
+    // drops the entry. `menu_item` paints no tooltip, so the reason goes
     // on the row response.
     let response = layer_menu_button(
         ui,
@@ -327,12 +327,11 @@ fn show_layer_actions(
 
 struct LayerMenuButton<'a> {
     icon: AppIcon,
-    /// English wording pinned by source guards (operator vocabulary + README
-    /// sync). Rendering uses `key`; this stays as the canonical reference.
+    /// English wording of the entry, kept beside its catalog key as the
+    /// reference text. Rendering uses `key`.
     #[allow(dead_code)]
     label: &'a str,
-    /// Catalog key rendering the localized label. The English `label`
-    /// literal stays: source guards pin the operator wording.
+    /// Catalog key rendering the localized label.
     key: &'static str,
     enabled: bool,
     action: LayerContextAction,
@@ -506,7 +505,7 @@ fn elide_middle(text: &str, max_width: f32, measure: impl Fn(&str) -> f32) -> St
 #[cfg(test)]
 mod tests {
     // The elision tests use a fake monospace measure (chars × px) and assert on a
-    // literal file extension; both are deliberate in test scaffolding.
+    // literal file extension; both are intended in test scaffolding.
     #![allow(
         clippy::cast_precision_loss,
         clippy::case_sensitive_file_extension_comparisons

@@ -6,7 +6,7 @@ use occluview_core::{Mesh, Scene, SceneMesh, SceneMeshId, ScenePickHit, Vertex};
 
 /// A two-object soup mesh: object A (soup triangles 0,1) near the origin and
 /// object B (soup triangles 2,3) far along +x. Each object is a quad emitted as
-/// two edge-connected triangles with private, unshared vertices — exactly the
+/// two edge-connected triangles with private, unshared vertices — the
 /// multi-object STL soup the Object mode must resolve to whole objects.
 fn two_object_soup_mesh(name: &str) -> Option<Mesh> {
     let mut vertices = Vec::new();
@@ -179,7 +179,7 @@ fn undo_stack_noop_op_preserves_redo_history() {
 
 #[test]
 fn undo_stack_committed_op_still_clears_redo() {
-    // A real (content-changing) op must invalidate redo as before.
+    // A real (content-changing) op still invalidates redo.
     let mut undo = UndoStack::new(8, 4096);
     assert!(undo.push_undo("before-edit".to_string(), 4));
     undo.commit_last_undo();
@@ -363,8 +363,8 @@ fn controller_restores_scene_snapshot_when_layer_set_is_unchanged() {
 
 #[test]
 fn controller_refuses_scene_snapshot_when_layer_was_removed_since() {
-    // Honest guard: a whole-scene restore is refused when the live scene lost a
-    // layer since the structural step, rather than silently resurrecting it.
+    // Structural-history guard: a whole-scene restore is refused when the live
+    // scene lost a layer since the structural step, rather than resurrecting it.
     let Some(first_mesh) = triangle_mesh("first") else {
         return;
     };
@@ -403,9 +403,8 @@ fn controller_refuses_scene_snapshot_when_layer_was_removed_since() {
 
 #[test]
 fn controller_refuses_scene_snapshot_when_layer_was_appended_since() {
-    // The data-loss case scenario 6 targets: a layer appended after a
-    // structural op must not be silently deleted by an undo that restores the
-    // pre-append whole-scene snapshot.
+    // Data-loss case: a layer appended after a structural op must not be
+    // deleted by an undo that restores the pre-append whole-scene snapshot.
     let Some(mesh) = triangle_mesh("source") else {
         return;
     };
@@ -563,7 +562,7 @@ fn controller_can_accumulate_invert_and_clear_selection_without_leaving_edit_mod
         },
         false,
     ));
-    // Plain clicks ACCUMULATE (dental CAD convention — no replace).
+    // Plain clicks accumulate (dental CAD convention — no replace).
     assert!(controller.select_face_hit_with_mode(
         &scene,
         ScenePickHit {
@@ -580,7 +579,7 @@ fn controller_can_accumulate_invert_and_clear_selection_without_leaving_edit_mod
     };
     assert_eq!(selection.as_slice(), &[true, true]);
 
-    // SHIFT-click un-marks the clicked face only.
+    // Shift-click un-marks the clicked face only.
     assert!(controller.select_face_hit_with_mode(
         &scene,
         ScenePickHit {
@@ -675,7 +674,7 @@ fn object_click_selects_whole_component_accumulating_with_shift_unmark() {
     assert!(controller.begin_face_selection(&scene.meshes()[layer_index], &scene));
     assert!(controller.set_object_mode(true));
 
-    // Click a facet of object A (triangle 0): its WHOLE object (0,1) is marked,
+    // Click a facet of object A (triangle 0): its whole object (0,1) is marked,
     // object B (2,3) is untouched — not confetti, not the neighbour.
     assert!(controller.select_component_hit(&scene, pick_hit(layer_index, layer_id, 0), false));
     let Some(selection) = controller.selected_faces_for_layer(layer_id) else {
@@ -690,7 +689,7 @@ fn object_click_selects_whole_component_accumulating_with_shift_unmark() {
     };
     assert_eq!(selection.as_slice(), &[true, true, true, true]);
 
-    // SHIFT-click on object A un-marks the whole object A.
+    // Shift-click on object A un-marks the whole object A.
     assert!(controller.select_component_hit(&scene, pick_hit(layer_index, layer_id, 1), true));
     let Some(selection) = controller.selected_faces_for_layer(layer_id) else {
         return;

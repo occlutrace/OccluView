@@ -95,8 +95,8 @@ fn read_token_user_sid(token: HANDLE) -> Option<String> {
 /// `None` when the SID cannot be read, and callers must decline rather than
 /// substitute a fixed string. A predictable shared name is worse than no
 /// single-instance check at all: a squatter holding the mutex makes every
-/// launch believe it is the second instance and write its scan paths to him
-/// before exiting.
+/// launch believe it is the second instance and write its scan paths to the
+/// squatter before exiting.
 fn user_sid_suffix() -> Option<String> {
     let sid = current_user_sid_string()?;
     // FNV-1a, only to keep the object names short and free of SID punctuation.
@@ -109,13 +109,12 @@ fn user_sid_suffix() -> Option<String> {
     Some(format!("{hash:016x}"))
 }
 
-/// A security descriptor granting the current user full access and nobody else
-/// anything, for the listening end of the hand-off pipe.
+/// A security descriptor granting the current user full access and no other
+/// principal any access, for the listening end of the hand-off pipe.
 ///
-/// The default DACL would let any signed-in user on a shared workstation --
-/// a clinic reception machine is exactly that -- connect and read what travels
-/// over the pipe, which is a list of scan paths, which in dental work names the
-/// patient.
+/// The default DACL would let any signed-in user on a shared workstation (a
+/// clinic reception machine, for example) connect and read what travels over
+/// the pipe: a list of scan paths, which in dental work name the patient.
 ///
 /// The returned descriptor is a `LocalAlloc`'d buffer the caller must free.
 fn owner_only_security_descriptor() -> Option<PSECURITY_DESCRIPTOR> {
@@ -175,7 +174,7 @@ pub(super) fn acquire() -> Result<SingleInstance> {
 /// squatted name never clears. Retrying it every 50 ms writes a warning each
 /// time and overwrites the whole 50-line crash-report ring in under three
 /// seconds, leaving the process with one repeated line for diagnostics. Five
-/// covers a genuinely transient failure; past that the disk fallback listener
+/// covers a transient failure; past that the disk fallback listener
 /// beside this one carries the hand-off.
 const MAX_CONSECUTIVE_PIPE_FAILURES: u32 = 5;
 
@@ -282,14 +281,14 @@ fn read_pipe_open_request() -> Result<Option<OpenRequest>> {
     //
     // FILE_FLAG_FIRST_PIPE_INSTANCE makes the create fail if the name already
     // exists, rather than quietly becoming a second instance beside whoever got
-    // there first. The DACL grants the current user and nobody else, so on a
-    // shared workstation another signed-in account cannot read the scan paths
-    // that travel over this pipe.
+    // there first. The DACL grants only the current user, so on a shared
+    // workstation another signed-in account cannot read the scan paths that
+    // travel over this pipe.
     //
-    // No descriptor, no pipe: creating it with the default DACL would be the
-    // shared-workstation squat this function exists to prevent, reached by a
-    // silent downgrade. Hand-off is not load-bearing -- the disk fallback
-    // listener runs beside this one and carries the request.
+    // No descriptor, no pipe: creating it with the default DACL would silently
+    // reopen the shared-workstation exposure this function prevents. The pipe
+    // is not the only hand-off path -- the disk fallback listener runs beside
+    // this one and carries the request.
     let Some(descriptor) = owner_only_security_descriptor() else {
         bail!("refusing to create the single-instance pipe without an owner-only DACL");
     };

@@ -1,7 +1,7 @@
 //! Raise the viewer through the compositor's activation protocol.
 //!
-//! A plain `ViewportCommand::Focus` is deliberately insufficient for an
-//! already-running Linux window: X11 window managers require a valid
+//! A plain `ViewportCommand::Focus` does not raise an already-running Linux
+//! window: X11 window managers require a valid
 //! `_NET_ACTIVE_WINDOW` request, while Wayland requires the launcher's
 //! `xdg-activation` token. eframe 0.29 exposes raw handles but not winit's
 //! `Window`, so this module uses the raw X11/Wayland surface only for the

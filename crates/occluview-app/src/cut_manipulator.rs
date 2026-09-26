@@ -471,7 +471,7 @@ mod tests {
         let framed_after = 1.6 * radius / step;
         assert!(
             framed_after < framed_before,
-            "magnifying has to show LESS of the plane: {framed_before} then {framed_after}"
+            "magnifying has to show less of the plane: {framed_before} then {framed_after}"
         );
         assert!(
             framed_after > framed_before / (step * step),

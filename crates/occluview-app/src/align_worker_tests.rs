@@ -1,7 +1,7 @@
 //! Tests for [`super`]: the worker's colouring and its reuse contract.
 //!
-//! A `#[path]` child module of `align_worker.rs`, split out to hold the
-//! workspace's 800-line file budget.
+//! A `#[path]` child module of `align_worker.rs`, so the tests reach its
+//! private items.
 #![allow(
     clippy::expect_used,
     clippy::float_cmp,
@@ -19,12 +19,11 @@ use occluview_align::{
 
 /// Best fit must run the full search, not a local-only refinement.
 ///
-/// This is the regression that made "Best fit matching" stop finding an arch
-/// that was more than a couple of millimetres out: `local_only: true` removed
-/// the global feature seed and the radius ladder, so the fit kept whatever
-/// surface it first touched and then failed the refinement gate. Measured on a
-/// real arch, the full search seated a start 8 mm out (seated fraction 0.998,
-/// trustworthy) while the local-only path reported 0.016 at 4 mm and refused.
+/// `local_only: true` drops the global feature seed and the radius ladder, so a
+/// start more than a couple of millimetres out keeps whatever surface it first
+/// touches and then fails the refinement gate. Measured on a real arch, the full
+/// search seats a start 8 mm out (seated fraction 0.998, trustworthy) while the
+/// local-only path reports 0.016 at 4 mm and refuses.
 ///
 /// The assertion is on the setting the app builds, because that is the value
 /// that decides whether the search runs at all.
@@ -67,9 +66,9 @@ fn map() -> DeviationMap {
 }
 
 /// The worker colours in parallel to keep a re-colour instant. It must be
-/// the SAME ramp the rest of the tool reads — the legend calls
-/// `ramp_color`, and a map painted a shade off from its own legend is a
-/// measurement nobody can trust.
+/// the same ramp the rest of the tool reads — the legend calls
+/// `ramp_color`, and a map painted a shade off from its own legend is not a
+/// trustworthy measurement.
 #[test]
 fn colouring_in_parallel_matches_the_library() {
     let map = map();
@@ -152,13 +151,12 @@ fn only_the_settings_that_change_the_distances_change_the_key() {
 ///
 /// Dentistry works to a tenth of a millimetre. A map whose ends are five
 /// millimetres apart cannot show a fit that is either good or bad in that
-/// regime, and a range that FOLLOWS the measurement walks straight out of it
-/// the moment two meshes are roughly placed — which is how an operator ended up
-/// reading an arch in red and blue mosaic and calling it a thermal camera.
+/// regime, and a range that follows the measurement leaves it as soon as two
+/// meshes are only roughly placed, painting the arch as a red and blue mosaic.
 ///
-/// The magnitude ramp is intentionally continuous across the whole working
-/// range. Tolerance is a measurement/statistics setting, not a hidden colour
-/// plateau, so small but real differences remain visible to the operator.
+/// The magnitude ramp is continuous across the whole working range. Tolerance
+/// is a measurement/statistics setting, not a hidden colour plateau, so small
+/// but real differences remain visible to the operator.
 #[test]
 fn the_window_opens_on_the_working_range() {
     let settings = AlignSettings::default();
@@ -209,7 +207,7 @@ fn the_display_range_is_absolute_zero_to_one_tenth() {
 }
 
 #[test]
-fn production_heatmap_ignores_legacy_banding_and_stays_continuous() {
+fn production_heatmap_ignores_banding_and_stays_continuous() {
     let settings = AlignSettings {
         bands: Some(5),
         ..AlignSettings::default()
@@ -218,7 +216,7 @@ fn production_heatmap_ignores_legacy_banding_and_stays_continuous() {
     assert_eq!(
         settings.ramp().bands,
         None,
-        "the compact heatmap has no banded mode; old persisted bands must not quantize it"
+        "the compact heatmap has no banded mode; a persisted band count must not quantize it"
     );
 }
 
@@ -287,11 +285,10 @@ fn tilted_sheet(offset_mm: f32) -> (Vec<f32>, Vec<u32>) {
 /// The end of the chain, on geometry with a deviation a lab would care about:
 /// a 0.30 mm standoff that closes to nothing across the surface.
 ///
-/// Three separate bugs have already reached the screen here — a mirrored
-/// legend, a ramp default that painted every good result one flat blue, and an
-/// unlit draw that flattened the form. This one covers the first two at once:
-/// the map has to show a TRANSITION rather than one colour, and every colour on
+/// The map has to show a transition rather than one colour, and every colour on
 /// the surface has to be a colour the legend also shows, at the same distance.
+/// Together these reject a mirrored legend and a ramp that paints every good
+/// result one flat colour.
 #[test]
 fn a_real_third_of_a_millimetre_shows_a_transition_the_legend_agrees_with() {
     use crate::align_overlay::legend_value_mm;
@@ -341,7 +338,7 @@ fn a_real_third_of_a_millimetre_shows_a_transition_the_legend_agrees_with() {
     // The range the tool picks for itself, which is what the operator sees.
     // The nominal band is set well inside the 0.30 mm standoff on purpose: a
     // band as wide as the deviation is a legitimate way to get two colours, and
-    // this test is about the ramp BETWEEN them.
+    // this test is about the ramp between them.
     let ramp = RampSettings {
         min_mm: 0.0,
         scale_mm: suggested_scale_mm(&stats),
@@ -375,7 +372,7 @@ fn a_real_third_of_a_millimetre_shows_a_transition_the_legend_agrees_with() {
     let distinct: std::collections::BTreeSet<[u8; 4]> = colors.iter().copied().collect();
     assert!(
         distinct.len() > 8,
-        "the map came out in {} colours — this is the flat-blue bug",
+        "the map came out in {} colours instead of a transition",
         distinct.len()
     );
 
@@ -629,8 +626,9 @@ fn line_measure_job(generation: u64) -> super::AlignJob {
 }
 
 /// Poll until a result arrives, or give up. Bounded so a wedged worker fails the
-/// test instead of hanging the suite. `is_busy` is no good here: it is still
-/// false in the moment between submitting and the thread picking the job up.
+/// test instead of hanging the suite. `is_busy` cannot be used here: it is
+/// still false in the moment between submitting and the thread picking the job
+/// up.
 fn harvest_one(worker: &super::AlignWorker) -> Vec<super::AlignCompletion> {
     for _ in 0..600 {
         let batch = worker.drain();
@@ -714,16 +712,15 @@ fn a_worker_lock_failure_is_observable() {
 
 /// A result the operator has overtaken never comes back.
 ///
-/// This is the mechanism behind the whole class of "it undid what I just did"
-/// reports: a **refine** result carries a pose and commits it. One landing after
-/// a hand drag or a Ctrl+Z put the scan back where the operator had just taken it
+/// A **refine** result carries a pose and commits it. One landing after a hand
+/// drag or a Ctrl+Z would put the scan back where the operator had just taken it
 /// from, as a fresh history step, with nothing on screen to say why.
 #[test]
 fn a_result_from_an_abandoned_generation_is_dropped() {
     let worker = super::AlignWorker::spawn();
     let generation = worker.generation();
     worker.submit(measure_job(generation));
-    // Exactly what a hand drag, a step through history, or a turned-around pair
+    // What a hand drag, a step through history, or a turned-around pair
     // does: everything in flight stops being about this scan.
     let next = worker.bump_generation();
     assert!(next > generation, "the generation has to move");
@@ -829,8 +826,8 @@ fn cylinder_indices(around: usize, along: usize) -> Vec<u32> {
 /// doing real work. That is a *warning about the measurement*, not a reason to
 /// withhold it: the deviation map is still the operator's evidence, the
 /// observability estimate is what bounds its blind mode, and refusing here
-/// blocked legitimate full-arch alignments — the sensitivity a real arch scan is
-/// allowed in `real_scans.rs` reaches below the same threshold.
+/// would block legitimate full-arch alignments — the sensitivity a real arch
+/// scan is allowed in `real_scans.rs` reaches below the same threshold.
 #[test]
 fn a_weakly_observable_surface_still_produces_its_map() {
     let cancel = occluview_align::CancelFlag::new();

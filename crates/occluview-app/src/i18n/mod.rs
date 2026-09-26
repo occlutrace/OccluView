@@ -296,7 +296,7 @@ mod tests {
 
     #[test]
     fn unavailable_catalog_renders_english_keeping_tag() {
-        // `ja` is known but not embedded (CJK waits for the font spike).
+        // `ja` is known but not embedded (CJK needs a bundled font).
         let source = Fixed(vec!["ja-JP"]);
         let (manager, snapshot) = LocaleManager::startup(None, &source);
         assert_eq!(snapshot.active_tag, "ja");
@@ -414,11 +414,10 @@ mod tests {
 
     #[test]
     fn pseudo_spot_checks_bracket_single_line_keys() {
-        // Superseded in coverage by `pseudo_locale_covers_every_embedded_key`
-        // in catalog.rs; kept as a readable spot check with exact rendering.
+        // A readable spot check with exact rendering; full coverage is
+        // `pseudo_locale_covers_every_embedded_key` in catalog.rs.
         let pseudo = Catalog::pseudo().expect("pseudo builds");
-        // `app-title` was a key nothing resolved; the live title key is
-        // `app-window-title` (`NATIVE_TITLE_KEY`).
+        // The window title key is `app-window-title` (`NATIVE_TITLE_KEY`).
         for key in ["app-window-title", "settings-shortcuts", "about-tagline"] {
             let rendered = pseudo.text(key).unwrap_or_else(|| key.to_owned());
             assert!(

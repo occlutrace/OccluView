@@ -19,7 +19,8 @@ use glam::Vec3;
 use crate::{measure_draw, probe_section::SliceProbe, ui_theme};
 
 /// Two planes are "the same section" when their normals and offsets agree within
-/// these tolerances; a larger change discards the ruler (its section is gone).
+/// these tolerances; a larger change is a different section and discards the
+/// ruler.
 const PLANE_NORMAL_EPS: f32 = 1.0e-3;
 const PLANE_DISTANCE_EPS: f32 = 1.0e-3;
 
@@ -227,9 +228,9 @@ impl SlicePlaneMap {
     }
 }
 
-/// One in-slice wall-thickness measurement (the probe-linked seed of feature D
-/// and the panel's one-click probe of feature E), anchored in world section-plane
-/// coordinates like the two-point ruler.
+/// One in-slice wall-thickness measurement (the probe-linked seed and the
+/// panel's one-click probe), anchored in world section-plane coordinates like
+/// the two-point ruler.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct ThicknessMark {
     entry: Vec3,
@@ -249,7 +250,7 @@ pub(crate) struct CutRuler {
 }
 
 impl CutRuler {
-    /// Drop the measurement when the live plane no longer matches the one it was
+    /// Drop the measurement when the live plane differs from the one it was
     /// placed against. Cheap; call once per frame with the current slice camera
     /// before drawing.
     pub(crate) fn sync_plane(&mut self, cam: SliceCam) {
@@ -276,7 +277,7 @@ impl CutRuler {
 
     /// Set the one-click wall-thickness reading (world `entry`/`exit` on the
     /// section plane), replacing any distance points. Shared by the panel probe
-    /// (feature E) and the probe-linked seed (feature D).
+    /// and the probe-linked seed.
     pub(crate) fn set_thickness(
         &mut self,
         entry: Vec3,
@@ -330,7 +331,7 @@ impl CutRuler {
     }
 
     /// Draw the current measurement through `map` (so it scales with zoom/pan),
-    /// using the SHARED measure-draw "ray" look so the panel reads identically to
+    /// using the shared measure-draw "ray" look so the panel reads identically to
     /// the main-viewport thickness probe.
     pub(crate) fn draw(&self, painter: &egui::Painter, map: &SlicePlaneMap) {
         if let Some(mark) = self.thickness {

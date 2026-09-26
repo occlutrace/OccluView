@@ -1,8 +1,8 @@
 //! What a bridge-split job is given, and when it is replaced.
 //!
-//! Split out of `tests.rs` for the file-size budget. These are the tests about
-//! the snapshot the worker receives: shared between submits, refreshed by a
-//! restart, and always the layer as it stands when the job is queued.
+//! These tests cover the snapshot the worker receives: shared between submits,
+//! refreshed by a restart, and always the layer as it stands when the job is
+//! queued.
 
 use super::tests::{
     poll_controller_until, poll_controller_until_job_started, sample_entry, sample_guard,

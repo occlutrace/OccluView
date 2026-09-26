@@ -20,7 +20,7 @@ const PANEL_BOTTOM_GAP_PX: f32 = 16.0;
 
 /// Contour stroke width (logical px) for `Lines` mode.
 const SECTION_LINE_PX: f32 = 1.5;
-/// Magnet snap radius, in PANEL pixels (constant on screen regardless of zoom).
+/// Magnet snap radius, in panel pixels (constant on screen regardless of zoom).
 const SNAP_RADIUS_PX: f32 = 8.0;
 
 /// The Section panel's display mode. `Lines` (the default) draws only the crisp
@@ -45,7 +45,7 @@ pub(crate) enum SliceMeasureMode {
 
 /// What the Section panel should render this frame. `texture` is consulted only
 /// in `Mesh` mode; `section` (the cached world-space contour) drives `Lines`
-/// drawing AND magnet snapping in BOTH modes; `color_for` tints each layer's
+/// drawing and magnet snapping in both modes; `color_for` tints each layer's
 /// contour to match the main-viewport overlay.
 pub(crate) struct SectionRender<'a, F> {
     pub(crate) mode: SectionDisplay,
@@ -94,11 +94,11 @@ struct RulerPlacement<'a> {
     section: Option<&'a SceneSection>,
 }
 
-/// The docked Section-panel rectangle (bottom-RIGHT), or `None` if the viewport
+/// The docked Section-panel rectangle (bottom-right), or `None` if the viewport
 /// is too small to host it without crowding the chrome or the bottom-right
 /// orientation gizmo.
 ///
-/// The panel ADAPTS to the window instead of painting over the chrome: its
+/// The panel adapts to the window instead of painting over the chrome: its
 /// image side shrinks from [`MAX_IMAGE_SIDE_PX`] until it would drop
 /// below [`MIN_IMAGE_SIDE_PX`], budgeting (vertically) the room needed to lift
 /// the bottom-right gizmo above it and (horizontally) the bottom-left status
@@ -167,13 +167,14 @@ fn section_image_rect(panel_rect: egui::Rect) -> egui::Rect {
 /// Draw the docked bottom-right "Section" panel: a header with the Lines/Mesh
 /// display toggle and the magnet-snap toggle, the section content (crisp contour
 /// polylines in `Lines` mode, the shaded offscreen slice in `Mesh` mode), and the
-/// two-point measuring ruler. Inside the image: left-drag OR right-drag pans;
+/// two-point measuring ruler. Inside the image: left-drag or right-drag pans;
 /// left-click places a measurement point (a third restarts), snapping to the
 /// nearest contour point when the magnet is on; right-click clears. Markers are
 /// anchored in section-plane millimeters and re-project as the disc scales, so
-/// lines, ruler, zoom and pan stay exactly consistent.
+/// lines, ruler, zoom and pan stay consistent.
 #[cfg(test)]
-// Six inherently (ui/ctx + data + locale); bundling would fake an abstraction.
+// Six inherent inputs (ui/ctx + data + locale); a struct grouping them would
+// carry no meaning of its own.
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn show_section_panel<F>(
     ui: &mut egui::Ui,
@@ -246,7 +247,7 @@ where
 
     // In `Lines` mode the pan shifts the (vector) view immediately; in `Mesh`
     // mode the texture is a raster that re-renders next frame, so keep the ruler
-    // pinned to the displayed texture by NOT shifting the draw map there.
+    // pinned to the displayed texture by not shifting the draw map there.
     let draw_cam = if matches!(render.mode, SectionDisplay::Lines) {
         SliceCam {
             focus: cam.focus + gesture.pan_delta,
@@ -383,7 +384,6 @@ fn draw_section_header(
                         ui_theme::text_weak()
                     },
                 );
-                // Canonical label "Close section" pinned by source guards.
                 let close_clicked = close
                     .on_hover_text(locale.tr("cut-close-section"))
                     .clicked();
@@ -412,7 +412,7 @@ fn draw_section_header(
 }
 
 /// Handle one frame of pointer interaction inside the section image: pan on a
-/// left OR right drag, place a (optionally snapped) measurement point on a left
+/// left or right drag, place a (optionally snapped) measurement point on a left
 /// click, clear on a right click.
 fn handle_panel_gesture(
     ui: &mut egui::Ui,
@@ -447,8 +447,7 @@ fn handle_panel_gesture(
     } else if response.secondary_clicked() {
         // RMB also pans this panel. Only a near-static right-click clears the
         // ruler -- the same tolerance the viewport measure tool applies, so a
-        // short pan the platform reports as a click cannot wipe measurements
-        // (the "Thickness exits on rotation" bug class).
+        // short pan the platform reports as a click cannot wipe measurements.
         const RMB_CLEAR_MAX_MOVE_PX: f32 = 3.0;
         let press = ui
             .ctx()
@@ -478,8 +477,8 @@ fn handle_panel_gesture(
 
 /// Apply one panel click for the active measuring mode: place a distance point
 /// (magnet-snapped when enabled), or cast a one-click in-slice wall-thickness ray
-/// from the contour. A thickness click that hits no opposite edge is an honest
-/// no-op — nothing is placed.
+/// from the contour. A thickness click that hits no opposite edge is a no-op —
+/// nothing is placed.
 fn place_measurement(
     click: egui::Pos2,
     map: &SlicePlaneMap,
@@ -607,7 +606,7 @@ where
     drawn
 }
 
-/// Honest empty state when the plane misses every mesh (or only point clouds are
+/// Empty state when the plane misses every mesh (or only point clouds are
 /// visible): a centered note, never a stale picture.
 fn draw_empty_state(
     painter: &egui::Painter,

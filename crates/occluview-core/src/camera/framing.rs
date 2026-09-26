@@ -32,11 +32,11 @@ impl Camera {
     /// camera forward axis with a scene-proportional margin.
     ///
     /// Orthographic depth is **linear and uniform**, so the near plane may sit
-    /// *behind* the eye (a negative near) and that is perfectly valid. The old
-    /// implementation clamped near to a small positive value; with a wide scene
-    /// viewed from a close orbit radius the nearest corners fall behind the eye
-    /// (`min_depth < 0`), so that clamp planted an invisible clip plane in front
-    /// of the camera and ate every object whose view-depth was smaller than it.
+    /// *behind* the eye (a negative near). Near is not clamped to a positive
+    /// value: with a wide scene viewed from a close orbit radius the nearest
+    /// corners fall behind the eye (`min_depth < 0`), and such a clamp would
+    /// put a clip plane in front of the camera that hides every object whose
+    /// view-depth is smaller than it.
     pub fn fit_clip_planes_to_bbox(&mut self, bbox: Aabb) {
         if bbox.is_empty() {
             return;
@@ -60,15 +60,15 @@ impl Camera {
             return;
         }
 
-        // Margin scales with the box (never an absolute crutch); the 1 mm floor
+        // Margin scales with the box (not an absolute distance); the 1 mm floor
         // only guards a degenerate zero-size box so near stays strictly < far.
         let bbox_radius = (bbox.size().length() * 0.5).max(1.0);
         let padding = (bbox_radius * 0.35).max(1.0);
 
         match self.projection {
-            // Bracket the box symmetrically. `near` may be negative — do NOT
-            // clamp it: for the linear ortho depth that only clips the scene.
-            // A future perspective arm MUST clamp near > 0 instead (the match
+            // Bracket the box symmetrically. `near` may be negative; clamping
+            // it would only clip the scene for the linear ortho depth. A
+            // perspective arm must clamp near > 0 instead (the match
             // is exhaustive, so adding a variant forces that decision here).
             CameraProjection::Orthographic => {
                 self.near = min_depth - padding;

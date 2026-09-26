@@ -1,8 +1,7 @@
 //! Best-fit matching settings cluster of the Align window.
 //!
-//! Split from the window body (`align_panel`) so both files stay within the
-//! per-file line budget. Presentation only — values edit `AlignSettings` in
-//! place and return through the existing panel actions.
+//! Presentation only — values edit `AlignSettings` in place and return through
+//! the existing panel actions of the window body (`align_panel`).
 
 use eframe::egui;
 use occluview_align::Orientation;

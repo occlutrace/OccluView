@@ -120,18 +120,17 @@ fn slice_cam() -> SliceCam {
     }
 }
 
-/// Regression for the destroyed-texture submit crash: hovering the surface in
-/// cut mode crashed at `Queue::submit` ("texture ... has been destroyed") the
-/// moment the follow disc first re-rendered its slice. Root cause was a fresh
-/// egui texture id per render, whose dropped predecessor egui-wgpu 0.29 frees
-/// (destroys) before submit. The preview must instead reuse ONE texture id.
+/// Hovering the surface in cut mode re-renders the follow disc's slice. With a
+/// fresh egui texture id per render, egui-wgpu 0.29 frees (destroys) the
+/// dropped predecessor before submit and `Queue::submit` fails with "texture
+/// ... has been destroyed". The preview therefore reuses one texture id.
 #[test]
 fn slice_preview_reuses_one_texture_id_across_pose_changes() {
     let ctx = egui::Context::default();
     let eye = Vec3::new(0.0, 0.0, 100.0);
     let mut tool = CutTool::default();
     tool.enable();
-    // This regression is about the Mesh-mode offscreen texture lifecycle;
+    // This test covers the Mesh-mode offscreen texture lifecycle;
     // Lines mode (the default) has no texture to keep alive.
     tool.section.set_display_mode(SectionDisplay::Mesh);
 
@@ -157,14 +156,14 @@ fn slice_preview_reuses_one_texture_id_across_pose_changes() {
     let second_id = tool.section.texture_id().expect("slice texture");
     assert_eq!(
         first_id, second_id,
-        "the slice preview must update ONE texture id in place"
+        "the slice preview must update one texture id in place"
     );
     assert!(tool.slice_visible());
 }
 
 /// Frame-boundary invariant that egui-wgpu turns into the crash: a texture id
-/// a frame paints must NOT be in that frame's `textures_delta.free`. egui-wgpu
-/// 0.29 destroys freed textures AFTER recording the frame's draws but BEFORE
+/// a frame paints must not be in that frame's `textures_delta.free`. egui-wgpu
+/// 0.29 destroys freed textures after recording the frame's draws but before
 /// `queue.submit`, so a painted-and-freed id is destroyed mid-flight. Driving
 /// the persistent-handle pattern through a real egui frame, the painted slice
 /// id is never freed.
@@ -206,7 +205,7 @@ fn a_painted_slice_texture_is_never_freed_in_the_same_frame() {
             let id = handle.as_ref().expect("handle").id();
             ui.image((id, egui::vec2(4.0, 4.0)));
             // Second render pass (mirrors the post-input render-pending
-            // pass): update in place, do NOT reallocate.
+            // pass): update in place, do not reallocate.
             handle
                 .as_mut()
                 .expect("handle")
@@ -223,11 +222,10 @@ fn a_painted_slice_texture_is_never_freed_in_the_same_frame() {
     }
 }
 
-/// Keeps the invariant test above honest: the PRE-FIX pattern (a fresh
-/// `load_texture` per render, dropping the just-painted handle) really does
-/// put the painted id into this frame's `textures_delta.free` — exactly the
-/// condition egui-wgpu destroys before submit. If this ever stops
-/// reproducing, the guard test has gone vacuous.
+/// Control for the invariant test above: a fresh `load_texture` per render,
+/// dropping the just-painted handle, does put the painted id into this frame's
+/// `textures_delta.free` — the condition egui-wgpu destroys before submit. If
+/// this stops reproducing, the invariant test is vacuous.
 #[test]
 fn load_texture_per_render_frees_the_painted_id_in_frame() {
     use egui::epaint::Primitive;
@@ -261,7 +259,7 @@ fn load_texture_per_render_frees_the_painted_id_in_frame() {
     let freed: BTreeSet<_> = out.textures_delta.free.iter().copied().collect();
     assert!(
         !painted.is_disjoint(&freed),
-        "pre-fix load_texture-per-render must free the painted id in-frame (repro sanity)"
+        "load_texture per render must free the painted id in-frame (control)"
     );
     out.drop_without_applying_deltas();
 }
@@ -349,10 +347,10 @@ fn probe_plant_is_world_fixed_seeds_the_thickness_and_keeps_the_main_view_whole(
     assert!(tool.is_active() && tool.is_planted() && tool.is_probe_linked());
     assert_eq!(tool.pose().expect("pose"), pose);
     // Additional view, not a slice of the main model: the viewport clip stays
-    // OFF so the 3D model (and its thickness marker) stays whole.
+    // off so the 3D model (and its thickness marker) stays whole.
     assert_eq!(tool.viewport_clip_plane(bbox()).enabled, 0);
     // The section panel shows straight from the live pose (Lines default) and
-    // carries the SAME wall reading.
+    // carries the same wall reading.
     assert!(tool.slice_visible());
     assert_eq!(tool.section.ruler().thickness_reading_mm(), Some(2.0));
     assert_eq!(tool.section.measure_mode(), SliceMeasureMode::Thickness);

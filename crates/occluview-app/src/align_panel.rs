@@ -47,12 +47,12 @@ impl AlignTab {
 /// What the operator asked for this frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AlignPanelAction {
-    /// Fit the clicked pairs — the operator's dental CAD "Perform alignment".
+    /// Fit the clicked pairs — "Perform alignment" in dental CAD software.
     Align,
-    /// Seat the surfaces against each other — the operator's dental CAD
-    /// "Best fit matching".
+    /// Seat the surfaces against each other — "Best fit matching" in dental
+    /// CAD software.
     Refine,
-    /// Remove the last arrow — the operator's dental CAD "Back".
+    /// Remove the last arrow — "Back" in dental CAD software.
     Back,
     /// Turn the pair around: the scan that was staying put is the one that moves.
     SwapRoles,
@@ -86,8 +86,8 @@ pub(crate) struct AlignPanelView<'a> {
     pub(crate) constraint: &'a mut DragConstraint,
     /// Whether the Brush tool window is open, edited in place.
     pub(crate) excluding: &'a mut bool,
-    /// Set when a half-placed arrow has to go, because the tab that places
-    /// arrows is no longer open.
+    /// Set when a half-placed arrow has to go, because the operator left the
+    /// tab that places arrows.
     pub(crate) drop_pending: &'a mut bool,
     /// The last thing that happened, in a sentence.
     pub(crate) status: Option<&'a str>,
@@ -300,7 +300,8 @@ fn automatically(
 }
 
 /// The Manually tab: the three drag constraints and the history buttons.
-// Six inherently (ui/ctx + data + locale); bundling would fake an abstraction.
+// Six inherent inputs (ui/ctx + data + locale); a struct grouping them would
+// carry no meaning of its own.
 #[expect(clippy::too_many_arguments)]
 fn manually(
     ui: &mut egui::Ui,
@@ -336,8 +337,8 @@ fn manually(
     ui.add_space(2.0);
     // States the rule, because the rule is not what the other tab does. There
     // the roles are fixed and named; here the scan under the cursor is the one
-    // that moves, the fixed scan included — and an operator who grabbed the arch
-    // they did not mean to had nothing on screen to tell them so.
+    // that moves, the fixed scan included — and without this line an operator
+    // who grabs the wrong arch has nothing on screen to say so.
     hint(ui, &locale.tr("align-manual-drag-hint"));
     ui.add_space(4.0);
 
@@ -495,9 +496,8 @@ fn status(ui: &mut egui::Ui, status: Option<&str>) {
 
 /// Cancel and Done, the same commit pair the mesh editor ends on.
 ///
-/// Cancel means what it says: every scan goes back where it was. Closing a tool
-/// and silently keeping what it did is how an operator loses work they thought
-/// they had discarded.
+/// Cancel means what it says: every scan goes back where it was, so closing
+/// the tool never keeps changes the operator meant to discard.
 fn commit(
     ui: &mut egui::Ui,
     moved: bool,
@@ -510,11 +510,10 @@ fn commit(
     ui.horizontal(|ui| {
         let width = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
         if tall_button(ui, width, &locale.tr("align-commit-cancel"), false)
-            // Spelt out when there is something to lose. An operator who reads
-            // Cancel as "close the window" loses every move they made in the
-            // session, and the only clue afterwards was a status line they had
-            // already scrolled past. Ctrl+Z does bring it back — the restore is
-            // one history step — so that is said here, where the decision is.
+            // Spelt out when there is something to lose: an operator who reads
+            // Cancel as "close the window" loses every move made in the
+            // session. Ctrl+Z brings it back — the restore is one history
+            // step — so that is said here, where the decision is.
             .on_hover_text(if moved {
                 cancel_hint_moved.as_str()
             } else {

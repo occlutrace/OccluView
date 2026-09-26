@@ -41,7 +41,7 @@ struct Node {
     is_leaf: bool,
 }
 
-/// A median-split triangle BVH over one mesh's LOCAL-space triangles.
+/// A median-split triangle BVH over one mesh's local-space triangles.
 #[derive(Clone, Debug)]
 pub(crate) struct TriangleBvh {
     nodes: Vec<Node>,
@@ -116,7 +116,7 @@ impl TriangleBvh {
         }
     }
 
-    /// Nearest triangle hit of the LOCAL ray `origin + t·direction` whose local
+    /// Nearest triangle hit of the local ray `origin + t·direction` whose local
     /// point satisfies `keep`. `direction` need not be unit; the returned
     /// distance is along the normalized direction.
     #[allow(clippy::too_many_arguments)]
@@ -306,7 +306,7 @@ fn position(vertices: &[Vertex], raw: u32) -> Vec3 {
 }
 
 /// Reciprocal of a ray-direction component. For an axis-parallel component
-/// (near zero) it returns a large FINITE value rather than infinity: `INFINITY`
+/// (near zero) it returns a large finite value rather than infinity: `INFINITY`
 /// would make `0 · ∞ = NaN` in the slab test whenever a box face lies exactly on
 /// the ray origin's coordinate, silently dropping that node (and any hit inside
 /// it). A huge finite reciprocal keeps the slab math correct and NaN-free.

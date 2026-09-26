@@ -22,10 +22,9 @@ fn windows_app_identity_value_matches_shell_registration() {
 /// is tagged with, or the taskbar groups the running viewer under a second,
 /// unnamed entry and the jump list disappears.
 ///
-/// This is the value-agreement half of the guard the source-text removal left
-/// behind: the constant is compared against the MSI that actually ships, not
-/// against a second copy of the string. Runs on the Windows CI job, where
-/// `APP_USER_MODEL_ID` exists.
+/// The constant is compared against the MSI that ships, not against a second
+/// copy of the string. Runs on the Windows CI job, where `APP_USER_MODEL_ID`
+/// exists.
 #[cfg(windows)]
 #[test]
 fn windows_app_identity_value_matches_the_shipped_shortcut() {
@@ -45,8 +44,8 @@ fn third_party_notices_stay_generated_and_gated() {
     let ci = ci_workflow_source();
     let script = include_str!("../../../../scripts/gen-third-party.sh");
 
-    // The attribution file is generated, so the only honest state is
-    // "regenerates identically in CI": pin the generator, fail on drift.
+    // The attribution file is generated, so the committed copy must
+    // regenerate identically in CI: pin the generator, fail on drift.
     assert!(
         ci.contains("cargo install cargo-about --version 0.8.4 --locked"),
         "CI should install the pinned cargo-about"
@@ -55,9 +54,9 @@ fn third_party_notices_stay_generated_and_gated() {
         ci.contains("git diff --exit-code -- THIRD-PARTY-NOTICES.md"),
         "CI should fail when the committed notices drift from the lockfile"
     );
-    // The generator polices its own output: the font licenses whose
-    // notice-retention terms forced this file into existence must be
-    // present, and no first-party crate may attribute itself.
+    // The generator polices its own output: the font licenses that require
+    // this attribution file must be present, and no first-party crate may
+    // attribute itself.
     assert!(script.contains("SIL OPEN FONT LICENSE"));
     assert!(script.contains("UBUNTU FONT LICENCE"));
     assert!(script.contains("first-party crate leaked"));
@@ -255,8 +254,8 @@ fn the_release_path_can_be_rehearsed_and_refuses_to_ship_a_broken_artifact() {
         "every packaging job needs a budget; the default is six hours"
     );
 
-    // --override-filename takes a base name. Passing a full file name produced
-    // sbom-windows.json.json, and the move that followed failed the release.
+    // --override-filename takes a base name. A full file name produces
+    // sbom-windows.json.json, and the move that follows fails the release.
     assert!(!package.contains("--override-filename sbom-windows.json"));
     assert!(!package.contains("--override-filename sbom-linux.json"));
     for sbom in [
@@ -279,7 +278,7 @@ fn the_release_path_can_be_rehearsed_and_refuses_to_ship_a_broken_artifact() {
     assert!(package.contains("No Authenticode certificate configured"));
 
     // The signing key and the key compiled into the updater must agree, or
-    // every installed copy silently stops updating.
+    // every installed copy rejects every update.
     assert!(package.contains("UPDATE_PUBKEY"));
     assert!(package.contains("crates/occluview-update/src/lib.rs"));
     assert!(package.contains("minisign -V -P \"$pubkey\""));
@@ -297,7 +296,7 @@ fn the_release_path_can_be_rehearsed_and_refuses_to_ship_a_broken_artifact() {
     assert!(
         ci.contains("--all-features --all-targets --locked -- -D warnings")
             && ci.contains("cargo test -p occluview-hps -p occluview-formats --all-features"),
-        "CI must build the private-hps-key combination that actually ships"
+        "CI must build the private-hps-key combination that ships"
     );
 }
 
@@ -305,13 +304,11 @@ fn the_release_path_can_be_rehearsed_and_refuses_to_ship_a_broken_artifact() {
 fn the_fuzz_manifest_declares_every_target_and_ci_runs_them() {
     // The wiring is what breaks, and nothing else here can check it: building
     // the targets needs a nightly toolchain and a linker pass, which belong in
-    // the fuzz job. Every fuzz step in CI failed from the day it was written,
-    // three ways at once, and the badge never showed it because nobody read
-    // the job. No `cargo-fuzz = true` marker, so `cargo fuzz` refused the
-    // manifest; no `[[bin]]` stanzas, on the premise that cargo auto-discovers
-    // `fuzz_targets/` (it discovers only `src/bin/`); and
-    // `working-directory: fuzz`, which sends cargo-fuzz looking for
-    // `fuzz/fuzz/Cargo.toml`.
+    // the fuzz job. Each of three wiring faults stops every fuzz step: no
+    // `cargo-fuzz = true` marker, so `cargo fuzz` refuses the manifest; no
+    // `[[bin]]` stanzas (cargo auto-discovers only `src/bin/`, not
+    // `fuzz_targets/`); and `working-directory: fuzz`, which sends cargo-fuzz
+    // looking for `fuzz/fuzz/Cargo.toml`.
     let manifest = include_str!("../../../../fuzz/Cargo.toml");
     let ci = ci_workflow_source();
     let runner = include_str!("../../../../scripts/run-fuzz.sh");
@@ -342,8 +339,8 @@ fn the_fuzz_manifest_declares_every_target_and_ci_runs_them() {
         !ci.contains("working-directory: fuzz"),
         "cargo-fuzz resolves <cwd>/fuzz/Cargo.toml and must run from the repo root"
     );
-    // The seeds are the point: without them the budget goes on rediscovering
-    // magic numbers, and the writable corpus must never be the tracked one.
+    // Without the seeds the fuzzing time goes on rediscovering magic numbers,
+    // and the writable corpus must never be the tracked one.
     assert!(runner.contains("fuzz/seeds/$target"));
     assert!(runner.contains("fuzz/corpus/$target"));
     assert!(runner.contains("-dict=$dictionary"));
@@ -353,8 +350,7 @@ fn the_fuzz_manifest_declares_every_target_and_ci_runs_them() {
     );
 
     // The crate is outside the workspace, so no gate here resolves its
-    // lockfile, and `cargo fuzz` does not pass --locked. It had fallen a
-    // dependency behind with nothing to say so.
+    // lockfile, and `cargo fuzz` does not pass --locked.
     assert!(
         ci.contains("cargo check --manifest-path fuzz/Cargo.toml --locked"),
         "the fuzz job should resolve the fuzz lockfile before it fuzzes"
@@ -401,9 +397,9 @@ fn the_statically_linked_cpp_components_are_attributed() {
 fn the_workflows_name_the_package_they_built_instead_of_globbing_for_it() {
     // `dpkg-deb --info target/deb/*.deb` reads every argument after the first
     // as a control-file name, so a second package in the directory turns the
-    // check into an error about a missing control file -- or, worse, checks
-    // only the oldest one. A fresh runner has exactly one package, which is
-    // why this survived; a developer machine has every version ever built.
+    // check into an error about a missing control file, or checks only the
+    // oldest one. A fresh runner has one package, so CI alone does not expose
+    // this; a developer machine has every version ever built.
     //
     // build-deb.sh prints the path it wrote as its last line, so both
     // workflows take it from there.

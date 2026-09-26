@@ -5,7 +5,7 @@ use occluview_core::{Camera, CameraAxisView};
 use crate::app_settings::ViewportBackground;
 
 /// The gizmo is a small projected axis triad, not a second toolbar. Its
-/// footprint is deliberately larger than the painted arms so pointer routing
+/// footprint is larger than the painted arms so pointer routing
 /// and painting share one stable rectangle.
 const AXIS_GIZMO_ARM_PX: f32 = 36.0;
 const AXIS_GIZMO_FOOTPRINT_PX: f32 = 96.0;

@@ -25,7 +25,7 @@ fn image_rect() -> egui::Rect {
 fn section_panel_docks_bottom_right_clear_of_left_chrome() {
     let vp = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1600.0, 900.0));
     let panel = section_panel_rect(vp).unwrap();
-    // Bottom-RIGHT: hugs the right and bottom edges within the margins.
+    // Bottom-right: hugs the right and bottom edges within the margins.
     assert!(
         (vp.right() - panel.right() - PANEL_MARGIN_PX).abs() < 0.5,
         "panel right edge should sit one margin from the viewport right: {panel:?}"
@@ -34,7 +34,7 @@ fn section_panel_docks_bottom_right_clear_of_left_chrome() {
         (vp.bottom() - panel.bottom() - PANEL_BOTTOM_GAP_PX).abs() < 0.5,
         "panel bottom edge should sit one gap from the viewport bottom: {panel:?}"
     );
-    // Its left edge is well past center, so the bottom-LEFT scale bar/status
+    // Its left edge is well past center, so the bottom-left scale bar/status
     // chrome is never covered.
     assert!(
         panel.left() > vp.center().x,
@@ -63,10 +63,10 @@ fn section_panel_scales_with_a_compact_viewport() {
 
 #[test]
 fn section_panel_never_collides_with_chrome_across_window_sizes() {
-    // Adversarial sweep (144 violations in the pre-fix layout): wherever
-    // the panel decides to show, it must coexist with the lifted bottom-right triad
-    // and the bottom-left status pill — at EVERY window
-    // size. Where it cannot, it hides instead of painting over chrome.
+    // Adversarial sweep: wherever the panel decides to show, it must coexist
+    // with the lifted bottom-right triad and the bottom-left status pill at
+    // every window size. Where it cannot, it hides instead of painting over
+    // chrome.
     let mut shown = 0usize;
     for w in (320..=2000).step_by(20) {
         for h in (240..=1200).step_by(20) {
@@ -212,7 +212,7 @@ fn changing_the_plane_clears_the_measurement() {
 #[test]
 fn zoom_at_cursor_keeps_the_section_point_under_the_pointer_fixed() {
     // Magnify (half_ratio < 1) anchored at an off-center pixel: the section
-    // point that WAS under the cursor must map to the SAME pixel after the
+    // point that was under the cursor must map to the same pixel after the
     // zoom, and the ruler mm mapping must stay exact under the new framing.
     let c = cam(Vec3::new(1.0, 0.3, -0.2), 8.0);
     let rect = image_rect();
@@ -284,7 +284,7 @@ fn pan_moves_the_world_point_with_the_cursor_and_stays_in_plane() {
         egui::vec2(-50.0, 40.0),
         egui::vec2(0.0, 0.0),
     ] {
-        // `pointer` is where the cursor IS now (after moving by `delta`).
+        // `pointer` is where the cursor is now (after moving by `delta`).
         let pan = map.pan_delta_for_drag(cursor + delta, delta);
         // In-plane only: the plane offset (normal · focus) is unchanged.
         let n = c.normal.normalize();
@@ -339,7 +339,7 @@ fn pan_leaves_the_measured_distance_unchanged() {
 
 #[test]
 fn zoom_at_cursor_holds_after_an_extreme_pan() {
-    // Hostile: shove the focus thousands of mm in-plane, THEN zoom-to-cursor.
+    // Hostile: shove the focus thousands of mm in-plane, then zoom-to-cursor.
     // The point under the pointer must still stay fixed (no precision blowup).
     let c = cam(Vec3::new(1.0, 0.2, -0.3), 8.0);
     let rect = image_rect();

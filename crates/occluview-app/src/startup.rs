@@ -1,9 +1,8 @@
 //! Startup composition helpers behind the library boundary.
 //!
 //! Pure argument parsing, file-extension reporting, and single-instance
-//! open-state decisions. No windowing, GPU, or filesystem effects here so the
-//! binary can delegate without changing startup behavior; tests pin the
-//! current contracts.
+//! open-state decisions. No windowing, GPU, or filesystem effects here, so
+//! tests can pin these contracts directly.
 
 use std::ffi::OsStr;
 use std::path::PathBuf;

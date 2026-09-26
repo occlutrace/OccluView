@@ -1,8 +1,8 @@
 //! Adversarial state-machine tests for the interactive cut disc.
 //!
-//! These are deliberately hostile sequences aimed at the drag lifecycle, the
-//! Esc ladder, the follow/plant boundary, radius clamping, the kept-side
-//! freeze, and the follow-normal degeneracy threshold. They complement the
+//! These are hostile sequences aimed at the drag lifecycle, the Esc ladder,
+//! the follow/plant boundary, radius clamping, the kept-side freeze, and the
+//! follow-normal blend near a degenerate view. They complement the
 //! per-function unit tests inside `cut_manipulator` / `cut_geometry` by driving
 //! the *stateful* machine through multi-frame gestures.
 
@@ -79,7 +79,7 @@ fn ctrl_pressed_mid_translate_does_not_switch_to_tilt() {
     grab_center(&mut m); // Translate drag now active.
     let before = m.pose().expect("pose").plane_normal;
     // Ctrl comes down mid-drag and the pointer moves: must stay a Translate
-    // (normal unchanged), never silently become a Tilt.
+    // (normal unchanged), never become a Tilt.
     m.update(&CutFrameInput {
         primary_down: true,
         ctrl: true,
@@ -229,7 +229,7 @@ fn button_release_ends_the_drag_cleanly() {
     assert!(moved.x > 1.0, "the held drag actually moved the disc");
     // Release frame: the gesture is completing, so it still consumes the
     // pointer this frame (nothing else should act on the up-edge) and clears
-    // the drag. The pose must NOT jump to the release-frame ray origin.
+    // the drag. The pose must not jump to the release-frame ray origin.
     let out = m.update(&CutFrameInput {
         primary_down: false,
         ray_origin: Vec3::new(30.0, 0.0, 100.0),
@@ -343,7 +343,7 @@ fn wheel_radius_clamps_hard_at_both_ends() {
 #[test]
 fn kept_side_freezes_at_plant_and_ignores_later_camera_moves() {
     // Plant with the eye on +X of an X-facing plane; keep_positive is frozen.
-    // Orbiting the camera to the other side must NOT flip the clip side.
+    // Orbiting the camera to the other side must not flip the clip side.
     let mut m = CutManipulator::default();
     m.arm();
     m.update(&CutFrameInput {
@@ -354,7 +354,7 @@ fn kept_side_freezes_at_plant_and_ignores_later_camera_moves() {
         ..base()
     });
     let side_at_plant = m.clip(Vec3::new(50.0, 0.0, 0.0)).expect("clip").0;
-    // Evaluate the clip from the OPPOSITE eye: planted side must not depend on
+    // Evaluate the clip from the opposite eye: planted side must not depend on
     // eye at all.
     let side_from_far_side = m.clip(Vec3::new(-50.0, 0.0, 0.0)).expect("clip").0;
     assert_eq!(
@@ -381,12 +381,13 @@ fn follow_side_tracks_the_camera_but_planted_does_not() {
     );
 }
 
-// ── Follow-normal degeneracy threshold ─────────────────────────────────────
+// ── Follow-normal blend near a degenerate view ─────────────────────────────
 
 #[test]
-fn follow_normal_blends_continuously_across_the_old_degenerate_boundary() {
-    // The old hard threshold snapped from camera-right to the surface cross.
-    // Nearby samples on opposite sides of that boundary must now stay nearby.
+fn follow_normal_blends_continuously_near_a_degenerate_surface_cross() {
+    // A view nearly along the surface normal degenerates the surface cross.
+    // Nearby samples either side of sin^2 = 1e-3 must give nearby normals
+    // rather than snapping between camera-right and the surface cross.
     let right = Vec3::new(0.0, 0.0, 1.0);
     let surface = Vec3::Y;
     let nearly_down = {
@@ -403,7 +404,7 @@ fn follow_normal_blends_continuously_across_the_old_degenerate_boundary() {
     assert!((n_ok.length() - 1.0).abs() < 1e-5);
     assert!(
         n_deg.dot(n_ok) > 0.999,
-        "straddling the old boundary must not snap: {n_deg} / {n_ok}"
+        "straddling sin^2 = 1e-3 must not snap: {n_deg} / {n_ok}"
     );
 }
 
@@ -425,14 +426,14 @@ fn smoothing_damps_a_normal_jump_across_a_sharp_edge() {
     }
     let n0 = m.pose().expect("pose").plane_normal;
     // Cross a sharp edge: surface flips to +X (follow normal +Y), 90 deg away,
-    // for ONE frame.
+    // for one frame.
     m.update(&CutFrameInput {
         surface_hit: hit(Vec3::ZERO, Vec3::X),
         ..base()
     });
     let n1 = m.pose().expect("pose").plane_normal;
     let step1 = n0.distance(n1);
-    // Hold the new normal: second frame moves further in the SAME direction,
+    // Hold the new normal: second frame moves further in the same direction,
     // and by no more than the first step (a damped approach, not a bounce).
     m.update(&CutFrameInput {
         surface_hit: hit(Vec3::ZERO, Vec3::X),
@@ -481,9 +482,9 @@ fn ctrl_press_anywhere_on_the_disc_begins_tilt_not_translate() {
 
 #[test]
 fn press_that_misses_all_handles_does_not_consume() {
-    // This is the load-bearing coexistence contract: a planted disc consumes
-    // ONLY its own handle presses. A press well outside the disc must leave the
-    // pointer free (so lasso / marquee / face-pick / camera still work).
+    // The coexistence contract: a planted disc consumes only its own handle
+    // presses. A press well outside the disc must leave the pointer free (so
+    // lasso / marquee / face-pick / camera still work).
     let mut m = planted();
     let out = m.update(&CutFrameInput {
         primary_pressed: true,
@@ -550,7 +551,7 @@ fn orbited_frame() -> CutFrameInput {
 
 #[test]
 fn idle_frame_leaves_the_planted_disc_fixed() {
-    // An unchanged camera must reproduce the pose EXACTLY and report no pose
+    // An unchanged camera must reproduce the pose exactly and report no pose
     // change (guards against spurious per-frame re-renders while idle).
     let mut m = planted_off_target();
     let before = m.pose().expect("pose");
@@ -567,7 +568,7 @@ fn idle_frame_leaves_the_planted_disc_fixed() {
 #[test]
 fn orbit_does_not_move_the_world_fixed_disc() {
     // Invariant: with a disc planted, orbiting the main-viewport camera must
-    // NOT sweep the section — the world pose stays put and nothing re-renders.
+    // not sweep the section — the world pose stays put and nothing re-renders.
     let mut m = planted_off_target();
     let before = m.pose().expect("pose");
     let out = m.update(&orbited_frame());
