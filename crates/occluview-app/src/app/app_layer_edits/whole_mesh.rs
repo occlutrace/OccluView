@@ -1,5 +1,5 @@
 //! Layer mesh ops (Close Holes / Keep Largest / Invert Normals): dispatch with
-//! honest content no-ops, plus the operator status lines.
+//! content no-ops that leave the mesh untouched, plus the operator status lines.
 
 use super::super::{
     EditModeCommand, LayerContextAction, LayerContextApply, LayerContextRequest, OccluViewApp,
@@ -181,8 +181,8 @@ pub(super) fn apply_layer_mesh_edit_action_with_limit(
     };
 
     // Content no-op (nothing filled / nothing dropped / nothing moved): leave
-    // the mesh alone so the caller reports an honest status instead of a
-    // phantom edit. The report still rides along so a no-op can say so.
+    // the mesh alone so the caller reports a no-op status instead of recording
+    // an edit. The report still rides along so a no-op can say so.
     let content_changed = match action {
         LayerContextAction::CloseHoles => edited.report.filled_holes > 0,
         _ => true,
@@ -219,7 +219,7 @@ fn close_holes_options(close_holes_limit_mm: Option<f32>) -> MeshEditOptions {
             // Heal the cut line first: a digitally extracted tooth leaves a
             // jagged rim (needle/lone triangles, near-coincident seam verts) —
             // clean it so the socket closes instead of reporting dozens of
-            // "damaged" nick rims. This is the behaviour operators expect.
+            // "damaged" nick rims.
             heal_boundary_rims: true,
             ..MeshEditOptions::default()
         },
@@ -233,7 +233,7 @@ fn close_holes_options(close_holes_limit_mm: Option<f32>) -> MeshEditOptions {
 
 /// Route the status line: Close Holes gets the mm-aware phrasing, every other
 /// layer action keeps the shared status helpers untouched.
-/// Dispatch to the Close-Holes-aware status when the action needs it.
+///
 /// Six cohesive dispatch inputs (label, action, report, limit, outcome,
 /// locale); a struct would only be built to be destructured again.
 #[expect(clippy::too_many_arguments)]
@@ -255,9 +255,9 @@ fn close_holes_aware_status(
     }
 }
 
-/// Honest selection-scoped Close Holes status. Partial success is reported as it
+/// Selection-scoped Close Holes status. Partial success is reported as it
 /// happens (some rims close while others are skipped), skips name the mm budget
-/// so the operator knows why a rim stayed open, and it must NOT claim "no holes"
+/// so the operator knows why a rim stayed open, and it must not claim "no holes"
 /// when loops were found but refused.
 fn close_holes_status(
     layer_label: &str,
@@ -340,7 +340,7 @@ pub(super) fn layer_edit_status(
     _report: Option<&MeshEditReport>,
     locale: &crate::i18n::LocaleManager,
 ) -> String {
-    // English labels are pinned by the lock test below; rendering uses keys.
+    // Action labels render through the `batchedit-*` catalog keys.
     let action_key = match action {
         LayerContextAction::InvertNormals => "batchedit-invert",
         LayerContextAction::DeleteSelectedFaces => "batchedit-delete",

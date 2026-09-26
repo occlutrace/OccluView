@@ -3,34 +3,32 @@
 //!
 //! # Separate contract ("Separate marked area", the dental-CAD convention)
 //!
-//! Separate splits the MARKED material off a layer. Connectivity is computed on
-//! the mesh's TRUE shared topology — STL and other soup formats store three
+//! Separate splits the marked material off a layer. Connectivity is computed on
+//! the mesh's true shared topology — STL and other soup formats store three
 //! independent vertices per triangle, so the kernel welds those bit-identical
 //! corners back before analysis (`selected_connected_components_in_mesh`).
-//! Without that weld a soup model read as one component per selected triangle and
-//! Separate exploded into hundreds of thousands of one-triangle "parts" (a real
-//! case: a soup export split into 317k single-triangle parts); computing
-//! components on welded topology makes that failure mode structurally
-//! impossible.
+//! Without that weld a soup model reads as one component per selected triangle,
+//! and Separate would split a soup export into hundreds of thousands of
+//! single-triangle parts.
 //!
 //! Given a valid selection, the results are:
 //! - **One connected marked patch** (e.g. an open scan, one lasso patch) →
-//!   the source keeps the unselected remainder and ONE new layer holds the patch.
+//!   the source keeps the unselected remainder and one new layer holds the patch.
 //! - **A through-mode lasso that marks two walls of a closed hollow model** (the
 //!   ray pierces both the outer and the inner wall) → the two marked caps are
-//!   geometrically disjoint, so each becomes its OWN new layer. Remainder + 2
+//!   geometrically disjoint, so each becomes its own new layer. Remainder + 2
 //!   parts.
 //! - **Several disjoint marked islands** → each island becomes its own layer, in
 //!   deterministic order (ascending by lowest source-triangle index), with each
 //!   part stepping the tint palette so the split is visible.
 //!
-//! The REMAINDER (everything unselected) always stays a SINGLE layer, even when
+//! The remainder (everything unselected) always stays a single layer, even when
 //! removing the marked islands disconnects it into multiple shells — matching
 //! the dental CAD convention that "the rest stays the base". A whole-mesh
 //! selection is refused upstream (it would leave a dead empty source), and a
 //! selection that fragments past
-//! [`MAX_SEPARATE_COMPONENTS`] is refused with an honest count instead of a layer
-//! storm.
+//! [`MAX_SEPARATE_COMPONENTS`] is refused with a status that states the count
+//! instead of creating that many layers.
 
 use super::super::{EditModeController, LayerContextAction, LayerContextApply, Scene};
 use super::selection_ops::selected_face_edit_result;
@@ -41,10 +39,10 @@ use occluview_core::{
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-/// Upper bound on the layers a single Separate ("Divide") may spawn. A dental
-/// user never wants hundreds of new layers; a selection that fragments past
-/// this is a noisy lasso, not a real divide, so we refuse with an honest status
-/// instead of grinding the scene. Exposed for the status caller and tests.
+/// Upper bound on the layers a single Separate ("Divide") may spawn. A
+/// selection that fragments past this is a noisy lasso, not a real divide, so
+/// it is refused with a status that states the count instead of spawning
+/// hundreds of layers. Exposed for the status caller and tests.
 pub(super) const MAX_SEPARATE_COMPONENTS: usize = 256;
 
 pub(super) fn apply_cut_selection_to_new_layer(
@@ -86,7 +84,7 @@ pub(super) fn apply_cut_selection_to_new_layer(
             .with_tint(crate::layer_actions::next_layer_tint(source_entry.tint)),
     );
     // Stamp the structural snapshot with this post-op id-set so a later undo
-    // can refuse honestly if a layer is appended/removed before it runs.
+    // can refuse if a layer is appended/removed before it runs.
     let _ = edit_mode.finish_scene_edit_success(context.token, scene);
     Ok(structural_scene_apply())
 }
@@ -125,10 +123,10 @@ pub(super) fn apply_separate_selected_components(
         return Ok(LayerContextApply::default());
     }
 
-    // Build the remainder and every component mesh in ONE sweep over the source
-    // triangles, sharing a single vertex-remap pass. The old path cropped the
-    // full mesh once per component — O(components × mesh) time, which is what
-    // hung "Divide" on a fragmented half-model selection.
+    // Build the remainder and every component mesh in one sweep over the source
+    // triangles, sharing a single vertex-remap pass. Cropping the full mesh once
+    // per component would cost O(components × mesh) time and hang "Divide" on
+    // a fragmented half-model selection.
     let split = match split_selection_into_meshes(&source_entry.mesh, &components) {
         Ok(split) => split,
         Err(error) => {
@@ -160,7 +158,7 @@ pub(super) fn apply_separate_selected_components(
         );
     }
     // Stamp the structural snapshot with this post-op id-set so a later undo
-    // can refuse honestly if a layer is appended/removed before it runs.
+    // can refuse if a layer is appended/removed before it runs.
     let _ = edit_mode.finish_scene_edit_success(context.token, scene);
     Ok(structural_scene_apply())
 }
@@ -199,22 +197,19 @@ pub(super) fn split_selection_into_meshes(
         }
     }
 
-    // local[bucket][v] = the index `v` was copied to in THAT bucket.
+    // local[bucket][v] = the index `v` was copied to in that bucket.
     //
-    // The pair this replaces recorded only the LAST bucket a vertex was copied
-    // into, with a single `local[v]`. A vertex shared between the selected patch
-    // and the remainder is copied into bucket A, then into bucket B, and a later
-    // triangle of A then finds `stamp[v] == B`, so it mints a SECOND copy in A:
-    // the output has two coincident vertices where the source had one and its
-    // triangles stop sharing a corner. That is guaranteed whenever the patch's
-    // triangles are not a contiguous run of the source triangle order — a lasso
-    // over a few triangles in the middle of an arch is the ordinary case — and
-    // every in-app topology consumer welds by position, so the visible cost was
-    // the duplicated rows saved into the layer plus a Repair click reporting
-    // "welded N vertices" for damage this code introduced.
-    //
-    // Keying by (bucket, vertex) makes the revisit reuse the index already
+    // Keying by (bucket, vertex) makes a revisit reuse the index already
     // assigned for that bucket, which is what "true shared topology" means here.
+    // A single `local[v]` would record only the last bucket a vertex was copied
+    // into: a vertex shared between the selected patch and the remainder is
+    // copied into bucket A, then into bucket B, and a later triangle of A would
+    // find `stamp[v] == B` and mint a second copy in A. The output would have
+    // two coincident vertices where the source had one, its triangles would stop
+    // sharing a corner, and Repair would report welded vertices for damage the
+    // split introduced. That happens whenever the patch's triangles are not a
+    // contiguous run of the source triangle order; a lasso over a few triangles
+    // in the middle of an arch is the ordinary case.
     let mut local: Vec<BTreeMap<usize, u32>> = vec![BTreeMap::new(); bucket_count];
     let mut out_vertices: Vec<Vec<Vertex>> = vec![Vec::new(); bucket_count];
     let mut out_indices: Vec<Vec<u32>> = vec![Vec::new(); bucket_count];

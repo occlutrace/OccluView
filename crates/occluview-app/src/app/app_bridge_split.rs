@@ -46,7 +46,7 @@ impl OccluViewApp {
         }
 
         // Size the starting disc to the object: a fraction of its world bounding
-        // diagonal, floored at the historical default, so a big arch gets a disc
+        // diagonal, floored at `DEFAULT_DISC_RADIUS_MM`, so a big arch gets a disc
         // that usually already covers the connector instead of the tiny minimum.
         let object_radius = {
             let world_diagonal = entry.mesh.bbox_cached().size().length()
@@ -503,11 +503,10 @@ fn bridge_surface_sample(
     // The BVH is built on a background thread when the tool opens, precisely so
     // the first hover does not freeze the UI on a large scan. That only holds if
     // the pick waits for it: `pick_ray_local` reaches `OnceLock::get_or_init`,
-    // which BLOCKS the calling thread until the build finishes, so picking here
+    // which blocks the calling thread until the build finishes, so picking here
     // either performs the whole scan-sized build on the UI thread or stalls
-    // behind the warm. `Mesh::bvh_is_ready` exists for exactly this and the
-    // sculpt path already uses it. The disc simply follows the cursor once the
-    // warm lands.
+    // behind the warm. `Mesh::bvh_is_ready` answers without blocking, as on the
+    // sculpt path; the disc follows the cursor once the warm lands.
     if !scene
         .meshes()
         .iter()

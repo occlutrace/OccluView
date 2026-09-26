@@ -159,7 +159,6 @@ impl OccluViewApp {
                 ui.add_space(6.0);
                 ui.separator();
                 ui.add_space(4.0);
-                // These labels are pinned by the UI contract tests.
                 centered_about_row(ui, ABOUT_ACTION_WIDTH * 2.0 + ABOUT_ACTION_GAP, |ui| {
                     ui.spacing_mut().item_spacing.x = ABOUT_ACTION_GAP;
                     if about_link(

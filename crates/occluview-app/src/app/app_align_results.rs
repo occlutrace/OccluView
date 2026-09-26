@@ -138,13 +138,13 @@ impl OccluViewApp {
                 // An open contact reading owns the per-surface colouring, and
                 // the two overlays describe different measurements. The reading
                 // clears the deviation map when it opens ("Contact and deviation
-                // overlays are mutually exclusive"), but nothing reciprocated:
-                // arming Align never closed the reading and this arm re-armed
-                // the map unconditionally after `commit_align_pose` had turned it
-                // off. One layer then wore `contact_map = 1` AND `measured_map =
-                // 1` at once, both panels claimed their own map was live, and the
-                // shader mixed the contact ramp into a colour taken from the
-                // deviation ramp, so the colours belonged to neither reading.
+                // overlays are mutually exclusive"); in the other direction a
+                // refined fit closes an open reading and leaves the map off.
+                // With both up, one layer would wear `contact_map = 1` and
+                // `measured_map = 1` at once, both panels would claim their own
+                // map is live, and the shader would mix the contact ramp into a
+                // colour taken from the deviation ramp, so the colours would
+                // belong to neither reading.
                 if self.tools.contacts.is_open() {
                     let ctx = self.ui.repaint_ctx.clone();
                     self.close_contacts(&ctx);
@@ -184,8 +184,8 @@ impl OccluViewApp {
     }
 
     /// Apply one landed measurement: adopt its display scale, paint the
-    /// deviation colours, and report the summary. Split from
-    /// `apply_align_outcome` so each outcome arm stays reviewable.
+    /// deviation colours, and report the summary. Separate from
+    /// `apply_align_outcome` so each outcome arm stays readable.
     fn apply_measured_outcome(
         &mut self,
         colors: Vec<[u8; 4]>,
@@ -376,11 +376,10 @@ impl OccluViewApp {
             .edit_mode
             .finish_scene_edit_success(token, &next);
         self.set_scene(next, false);
-        // An aligned scan is unsaved work, exactly as a hand-dragged one is. The
-        // viewer has no project file, so the pose IS the work product — and the
-        // close guard reads this one flag. Without it the app closed without
-        // asking and the whole alignment was gone: the fit the operator had just
-        // watched land, and every fit before it.
+        // An aligned scan is unsaved work, as a hand-dragged one is. The viewer
+        // has no project file, so the pose is the work product, and the close
+        // guard reads this one flag. Without it the app would close without
+        // asking and the alignment would be lost, along with every earlier fit.
         self.document.mark_mesh_edits_unsaved(moving_id);
         true
     }
@@ -391,8 +390,8 @@ impl OccluViewApp {
     /// Called where the pose stops being the one the fit produced — a hand drag,
     /// a step through history. The red "ignored as an outlier" marks index pairs
     /// by position and describe one particular fit, so they cannot outlive it:
-    /// left up after a Ctrl+Z they marked pairs as rejected by a fit that had
-    /// been undone.
+    /// left up after a Ctrl+Z they would mark pairs as rejected by a fit that
+    /// has been undone.
     pub(super) fn forget_align_fit(&mut self, reason: &str) {
         self.tools.align.rejected.clear();
         self.invalidate_deviation_map(reason);
@@ -400,7 +399,7 @@ impl OccluViewApp {
 }
 
 /// Catalog coordinates for a typed align failure, resolved here at the
-/// presentation boundary. English values mirror the former inline sentences.
+/// presentation boundary.
 fn align_failure_parts(failure: AlignFailure) -> (&'static str, String, String) {
     match failure {
         AlignFailure::FixedSurfaceMissing => {
@@ -436,10 +435,10 @@ impl OccluViewApp {
     /// The Align worker, replacing one that has died.
     ///
     /// `AlignWorker::submit` refuses every job once the thread has failed, and
-    /// an align worker can fail on a panic inside the refinement. Nothing
-    /// replaced it, so Align stayed dead for the rest of the session: the tool
-    /// armed, the operator pressed Best fit, and no job ever ran again. The
-    /// contact worker already respawns this way; this is the same rule.
+    /// an align worker can fail on a panic inside the refinement. Without a
+    /// replacement Align would stay dead for the rest of the session: the tool
+    /// armed, Best fit pressed, and no job ever running. The contact worker
+    /// respawns the same way.
     pub(super) fn align_worker_mut(&mut self) -> &mut AlignWorker {
         if self
             .tools

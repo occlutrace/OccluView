@@ -82,8 +82,6 @@ impl OccluViewApp {
     }
 
     /// Rewrite only the vertices the last dab touched, and upload only those.
-    ///
-    /// Update only touched vertices and upload the sparse change.
     pub(super) fn patch_overlay_colors(
         &mut self,
         layer: SceneMeshId,
@@ -556,7 +554,7 @@ mod tests {
         assert_eq!(
             app.tools.align.overlay,
             AlignOverlay::Nothing,
-            "a map is exactly what the drop is for"
+            "a map is what the drop is for"
         );
         assert!(!app.align_overlay_is_up());
         assert!(layer_entry(&app, moving).overlay_colors().is_none());
