@@ -1,25 +1,23 @@
 //! Pure decision logic for the armed mesh-edit lasso (the dental-CAD-style
 //! outline).
 //!
-//! # Why this exists (the bug it fixes)
+//! # Press-edge capture
 //!
 //! egui only reports `Response::clicked()` when the pointer moved less than
 //! `InputOptions::max_click_dist` (6.0 px in egui 0.29) between the button press
 //! and its release — see `PointerState::begin_pass` /
 //! `could_any_button_be_click` in `egui/src/input_state/mod.rs`. A fast hand or
 //! a high-DPI mouse exceeds 6 px on almost every click, so egui reclassifies the
-//! gesture as a *drag* and never emits a click. The previous lasso added a point
-//! on `response.clicked_by(Primary)`, so those points were silently dropped and
-//! the operator saw only the rare, sparse clicks that happened to stay under
-//! 6 px — the reported "clicks do nothing, only stray angular segments appear".
+//! gesture as a *drag* and never emits a click. A lasso driven by
+//! `response.clicked_by(Primary)` would lose most of its points.
 //!
-//! The fix is to capture on the primary **press** edge (which egui always
-//! reports), and to additionally sample points while the button is held so a
+//! The lasso therefore captures on the primary **press** edge (which egui always
+//! reports), and additionally samples points while the button is held so a
 //! drag draws a smooth freehand outline. Both gestures — discrete click-click
 //! corners and press-and-drag freehand — are handled by the same machine and
 //! can be mixed freely.
 //!
-//! This module is intentionally free of egui side effects: it takes a snapshot
+//! This module is free of egui side effects: it takes a snapshot
 //! of the current frame's pointer/keyboard facts plus the outline collected so
 //! far, and returns a single [`LassoEvent`]. The viewport adapter feeds it real
 //! egui input and applies the event. That keeps the decision logic exhaustively
@@ -53,8 +51,8 @@ pub(crate) struct LassoFrameInput {
     pub pressed: bool,
     /// Primary button is currently held (`i.pointer.button_down`).
     pub down: bool,
-    /// egui classified a double-click this frame. Kept as a close trigger, but
-    /// no longer the only reliable one (it shares egui's move-distance limit).
+    /// egui classified a double-click this frame. A close trigger, but not a
+    /// reliable one on its own (it shares egui's move-distance limit).
     pub double_clicked: bool,
     /// Enter was pressed this frame (explicit close).
     pub enter: bool,
@@ -78,7 +76,7 @@ pub(crate) struct LassoFrameInput {
 /// What the viewport adapter should do with the current frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum LassoEvent {
-    /// Append a deliberate vertex at this position (first press or a click
+    /// Append an explicit vertex at this position (first press or a click
     /// corner). Creates the outline if none exists yet.
     AddPoint(Pos2),
     /// Append a freehand sample point at this position (drag).
@@ -116,7 +114,7 @@ pub(crate) fn decide(input: &LassoFrameInput) -> LassoEvent {
         return LassoEvent::None;
     }
 
-    // Primary PRESS: the dental-CAD point-placement edge. egui always reports
+    // Primary press: the dental-CAD point-placement edge. egui always reports
     // this, so no input is lost regardless of how far the click travels.
     if input.pressed {
         if !input.over_viewport {
@@ -180,8 +178,8 @@ mod tests {
 
     #[test]
     fn fast_press_still_places_a_point_when_egui_would_drop_the_click() {
-        // The core regression: even if egui never reports a click (the pointer
-        // moved > max_click_dist), a primary PRESS over the viewport adds a point.
+        // Even if egui never reports a click (the pointer moved more than
+        // max_click_dist), a primary press over the viewport adds a point.
         let input = LassoFrameInput {
             pressed: true,
             down: true,
@@ -193,7 +191,7 @@ mod tests {
 
     #[test]
     fn click_click_makes_straight_segments() {
-        // A second deliberate press, far from the first, adds another corner.
+        // A second press, far from the first, adds another corner.
         let input = LassoFrameInput {
             pressed: true,
             down: true,

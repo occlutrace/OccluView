@@ -266,9 +266,9 @@ fn finish(
 
 /// Horn's closed-form fit over the pairs named by `keep`.
 ///
-/// The quaternion form is deliberate: it can only ever produce a proper
-/// rotation, so a mirrored point set yields the best real rotation instead of
-/// a reflection that would silently turn a scan inside out.
+/// The quaternion form can only ever produce a proper rotation, so a mirrored
+/// point set yields the best real rotation instead of a reflection that would
+/// silently turn a scan inside out.
 ///
 /// Degeneracy is tested on both sides. Collinear clicks leave rotation about
 /// the line undetermined.

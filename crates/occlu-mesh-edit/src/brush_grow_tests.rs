@@ -1,9 +1,8 @@
 //! Tests for dynamic-topology densification under the Smooth brush.
 //!
-//! The fixture is the case the operator named: a coarse crease where two large
-//! facets meet at a sharp dihedral, far coarser than the brush. Without
-//! densification a held Smooth stroke there is a no-op — there are no vertices
-//! on the crease to relax.
+//! The fixture is a coarse crease where two large facets meet at a sharp
+//! dihedral, far coarser than the brush. Without densification a held Smooth
+//! stroke there is a no-op — there are no vertices on the crease to relax.
 
 use std::collections::HashMap;
 
@@ -293,7 +292,7 @@ fn border_edges(mesh: &MeshEditBuffers) -> Vec<(u32, u32)> {
     edges
 }
 
-/// Distance from `point` to the ORIGINAL mesh's open-boundary polyline. A
+/// Distance from `point` to the original mesh's open-boundary polyline. A
 /// pinned rim means every boundary vertex — original or minted by a split —
 /// still sits exactly on it.
 fn distance_to_border(point: Vec3, mesh: &MeshEditBuffers, edges: &[(u32, u32)]) -> f32 {
@@ -354,7 +353,7 @@ fn smooth_densifies_a_coarse_crease_and_takes_the_dihedral_down() {
     );
 
     // (b) a measurably lower dihedral spread. Across the whole disc the spread
-    // must collapse; the MAXIMUM only falls right down in the core, because the
+    // must collapse; the maximum only falls right down in the core, because the
     // rim is where the flattened patch meets the crease the brush never reached
     // — a transition that has to carry the leftover angle somewhere.
     assert!(

@@ -164,9 +164,6 @@ mod tests {
 
     #[test]
     fn the_name_column_takes_what_the_controls_leave() {
-        // The old form asserted `C + max(w - C, 0) <= max(w, C)`, which is the
-        // same expression on both sides and true for any constants at all --
-        // the control stack could have been five thousand pixels wide.
         for row_width in [120.0, 216.0, 260.0, 320.0] {
             let name = layer_name_width(row_width);
             let expected = (row_width - LAYER_ROW_CONTROL_WIDTH_PX).max(0.0);

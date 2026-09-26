@@ -308,7 +308,7 @@ impl Offscreen {
                         }),
                         stencil_ops: Some(wgpu::Operations {
                             // The second face pass must consume the mask made
-                            // by the first; clearing here silently makes the
+                            // by the first; clearing here makes the
                             // cap test zero for every pixel.
                             load: if index == 0 {
                                 wgpu::LoadOp::Clear(0)

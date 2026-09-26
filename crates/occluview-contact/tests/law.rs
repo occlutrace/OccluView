@@ -21,9 +21,8 @@ use occluview_contact::{
 
 /// Every named stop reproduces the colour the law was written with.
 ///
-/// The one place a typo in the conversion matrices can hide is here: these
-/// hexes came from a designer's table, and the evaluator has to land on them
-/// exactly.
+/// A typo in the conversion matrices shows up here: these hexes are the design
+/// table, and the evaluator has to land on them exactly.
 #[test]
 fn every_stop_reads_the_colour_it_was_written_with() {
     for law in [&TIGHTNESS, &CLINICAL] {
@@ -116,10 +115,10 @@ fn the_gate_and_the_paint_agree_on_what_is_shown() {
 
 /// Red must sit on the load side and nowhere earlier.
 ///
-/// Red at the far end put a red ring around every mark, because a tooth curves
-/// away from a contact within half a millimetre and the geometry then guarantees
-/// the ring. So warmth has to rise the whole way INTO the bite, from the
-/// lightest contact there is to where the law says red has arrived.
+/// Red at the far end would put a red ring around every mark, because a tooth
+/// curves away from a contact within half a millimetre and the geometry then
+/// guarantees the ring. So warmth has to rise the whole way into the bite, from
+/// the lightest contact there is to where the law says red has arrived.
 #[test]
 fn red_rises_into_the_bite_and_never_comes_back_out() {
     let scale = ContactScale::new(&TIGHTNESS, TIGHTNESS.load_mm);
@@ -180,9 +179,8 @@ fn the_paint_leaves_by_opacity_and_never_by_turning_pale() {
 
 /// Articulating paper leaves the rest of the tooth bare.
 ///
-/// The lesson the reference paid for twice: paint the whole approach band and a
-/// case with a handful of real contacts reads as a field of colour with the
-/// marks lost inside it.
+/// Paint the whole approach band and a case with a handful of real contacts
+/// reads as a field of colour with the marks lost inside it.
 #[test]
 fn articulating_paper_leaves_the_rest_of_the_tooth_bare() {
     let scale = ContactScale::new(&TIGHTNESS, TIGHTNESS.load_mm);
@@ -241,7 +239,7 @@ fn the_slider_scales_penetration_stops_only() {
                 // The penetration side scales with the slider until the ramp
                 // would ask for a depth the probe cannot reach; past that it
                 // clamps. A stop deeper than the reach paints nothing, so the
-                // clamp is what keeps every colour the ramp draws wear-able.
+                // clamp is what keeps every colour the ramp draws reachable.
                 let scaled = mm * (LOAD_MAX_MM / law.load_mm);
                 let expected = scaled.max(-SEARCH_RADIUS_MM);
                 assert!(
@@ -314,11 +312,11 @@ fn warmth(colour: [u8; 4]) -> i32 {
 /// The ramp must never demand a depth the probe cannot reach.
 ///
 /// The "heavy at" slider scales every penetration stop by `load / law.load_mm`,
-/// so at the top of its range the deepest stop sat at 1.36 mm (TIGHTNESS) or
-/// 1.75 mm (Approach), while a vertex deeper than `SEARCH_RADIUS_MM` inside the
-/// antagonist finds no surface at all. Those stops painted nothing — the field
-/// reports `NO_CONTACT_MM` and the mark has a bare-tooth hole in it — and the
-/// legend named depths no reading could ever show.
+/// so uncapped, the top of its range would put the deepest stop at 1.36 mm
+/// (TIGHTNESS) or 1.75 mm (CLINICAL), while a vertex deeper than
+/// `SEARCH_RADIUS_MM` inside the antagonist finds no surface at all. Such stops
+/// would paint nothing — the field reports `NO_CONTACT_MM` and the mark has a
+/// bare-tooth hole in it — and the legend would name depths no reading can show.
 #[test]
 fn no_ramp_stop_is_deeper_than_the_probe_can_reach() {
     for law in [&TIGHTNESS, &CLINICAL] {

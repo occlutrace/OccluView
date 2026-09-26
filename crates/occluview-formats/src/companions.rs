@@ -2,9 +2,9 @@
 //!
 //! OBJ reaches its image through `mtllib` and a `map_Kd` line; PLY names one in
 //! a `comment TextureFile` line. Neither format holds the image in the file
-//! itself — that is why the PLY writer here embeds it as its own comment, and
-//! why a file from another program arrives with a companion the reader has to
-//! find.
+//! itself, which is why a file from another program arrives with a companion
+//! the reader has to find, and why OccluView's own exports bake the colour into
+//! the vertices rather than writing a second file.
 //!
 //! The reader itself takes bytes and nothing else, on purpose: a file another
 //! process is replacing mid-import must not change what was parsed. Finding a
@@ -100,7 +100,7 @@ pub(crate) enum LocateKind {
     Obj,
     /// A PLY, which may name it in a `comment TextureFile` line.
     Ply,
-    /// Neither: the format keeps its image inside the file.
+    /// Neither: this format has no companion lookup.
     None,
 }
 
@@ -251,7 +251,7 @@ fn same_stem_image(path: &Path, directory: &Path) -> Option<PathBuf> {
 }
 
 /// Errors from a companion are not errors of the import: the mesh is what the
-/// operator asked for, and a texture that could not be read is reported by the
+/// operator opened, and a texture that could not be read is reported by the
 /// format's own loss warning when it is written back out.
 #[allow(dead_code)]
 fn _error_type_is_shared(_: FormatError) {}

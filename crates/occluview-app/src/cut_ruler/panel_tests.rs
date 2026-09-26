@@ -114,7 +114,7 @@ fn panel_click_with_small_jitter_places_a_point() {
     let vp = proof_viewport();
     let p = section_image_rect_for(vp).unwrap().center();
     let mut ruler = CutRuler::default();
-    // Warm-up frame: egui 0.29 hit-tests pointer events against the PREVIOUS
+    // Warm-up frame: egui 0.29 hit-tests pointer events against the previous
     // frame's widget rects, so the ruler widget must exist before the press.
     run_panel_frame(&ctx, vp, vec![egui::Event::PointerMoved(p)], &mut ruler);
     run_panel_frame(
@@ -161,7 +161,7 @@ fn panel_drag_pans_and_places_nothing() {
         &mut ruler,
     );
     assert!(out.panned, "a past-threshold drag must pan the section");
-    // Release far away — even OUTSIDE the panel: still no point placed.
+    // Release far away — even outside the panel: still no point placed.
     let outside = egui::pos2(20.0, 20.0);
     run_panel_frame(
         &ctx,
@@ -216,8 +216,8 @@ fn proof_section() -> (SceneSection, SliceCam) {
 #[test]
 fn one_click_thickness_places_a_wall_reading_and_a_second_mode_switch_is_clean() {
     // The panel's Thickness mode places a one-click wall reading from the
-    // contour (feature E); switching back to Distance and placing two points
-    // replaces it with a distance, and each mode's clear is honest.
+    // contour; switching back to Distance and placing two points replaces it
+    // with a distance and leaves no stale thickness.
     let (section, cam) = proof_section();
     let (_right, up) = slice_view_basis(cam.normal);
     let map = SlicePlaneMap::new(cam, image_rect());
@@ -268,9 +268,9 @@ fn one_click_thickness_places_a_wall_reading_and_a_second_mode_switch_is_clean()
 }
 
 #[test]
-fn thickness_click_off_the_contour_is_an_honest_no_op() {
+fn thickness_click_with_no_contour_places_nothing() {
     // A thickness click with no section, or far from any edge that has no
-    // opposite wall, places nothing (honest).
+    // opposite wall, places nothing.
     let (section, cam) = proof_section();
     let map = SlicePlaneMap::new(cam, image_rect());
     let mut ruler = CutRuler::default();
@@ -288,7 +288,7 @@ fn thickness_click_off_the_contour_is_an_honest_no_op() {
     );
     assert!(ruler.thickness_reading_mm().is_none());
     assert!(ruler.anchors().is_empty());
-    // A real section but the click is on the contour: it DOES read (guards
+    // A real section but the click is on the contour: it does read (guards
     // the test above against being vacuous).
     let (_r, up) = slice_view_basis(cam.normal);
     place_measurement(

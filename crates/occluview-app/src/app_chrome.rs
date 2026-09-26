@@ -20,8 +20,8 @@ const STATUS_HEIGHT_PX: f32 = 22.0;
 const STATUS_BOTTOM_OFFSET_PX: f32 = 44.0;
 const STATUS_MAX_WIDTH_PX: f32 = 360.0;
 
-/// Bottom-left status row. It is deliberately a transparent, compact text
-/// target rather than a framed pill: the scale bar keeps the bottom edge and
+/// Bottom-left status row. It is a transparent, compact text target rather
+/// than a framed pill: the scale bar keeps the bottom edge and
 /// the render remains visible behind transient messages.
 pub(crate) fn status_overlay_rect(viewport_rect: egui::Rect) -> egui::Rect {
     let width = (viewport_rect.width() - 28.0).clamp(0.0, STATUS_MAX_WIDTH_PX);
@@ -175,7 +175,7 @@ mod tests {
     #[test]
     fn status_overlay_clears_the_scale_bar_band() {
         // The status pill and the scale bar are both bottom-left; the pill must
-        // sit strictly above the scale bar so it no longer covers the ruler.
+        // sit strictly above the scale bar so it never covers the ruler.
         // The highest scale-bar pixel is its mm label top: bar line (bottom - 16)
         // minus the 22 px label offset baked into `app_scale_bar::paint_scale_bar`.
         for size in [

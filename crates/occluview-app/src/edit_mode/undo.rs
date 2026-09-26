@@ -15,8 +15,8 @@ pub(crate) struct UndoStack<T> {
     max_bytes: usize,
     /// Redo stack displaced by the most recent `push_undo`, kept aside until
     /// the op is known to have changed content. A real edit `commit`s it away;
-    /// a content no-op `discard`s the pushed undo and RESTORES this — otherwise
-    /// a no-op op would silently destroy a valid redo history.
+    /// a content no-op `discard`s the pushed undo and restores this — otherwise
+    /// a no-op op would destroy a valid redo history.
     displaced_redo: Option<(VecDeque<UndoSnapshot<T>>, usize)>,
 }
 
@@ -66,7 +66,7 @@ impl<T> UndoStack<T> {
 
     /// Mutable access to the most recent undo snapshot, so a caller can stamp
     /// late-known metadata onto it (the structural-history guard fingerprint is
-    /// only knowable AFTER the op that pushed the snapshot has mutated the
+    /// only knowable after the op that pushed the snapshot has mutated the
     /// scene). The stored byte size is unchanged by such in-place edits.
     pub(crate) fn peek_undo_mut(&mut self) -> Option<&mut T> {
         self.undo.back_mut().map(|snapshot| &mut snapshot.value)
@@ -112,7 +112,7 @@ impl<T> UndoStack<T> {
         Some(snapshot.value)
     }
 
-    /// Drop the most recent undo snapshot, and RESTORE the redo history that
+    /// Drop the most recent undo snapshot, and restore the redo history that
     /// its `push_undo` displaced. Used when an op turns out to be a content
     /// no-op: its pre-op snapshot must not linger as a phantom undo step, and
     /// the redo stack must survive exactly as it was before the op ran.

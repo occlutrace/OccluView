@@ -3,11 +3,10 @@
 #
 # The align acceptance tests need real scans, and real scans are patient data:
 # they live outside the repository and CI never has them. The tests therefore
-# skip when OCCLUVIEW_ALIGN_FIXTURES is unset, which is honest and useless at
-# release time — a green CI run proves the maths on synthetic domes, not that a
-# real arch comes home inside 0.05 mm.
+# skip when OCCLUVIEW_ALIGN_FIXTURES is unset, so a green CI run covers the
+# synthetic surfaces only, not whether a real arch seats within 0.05 mm.
 #
-# This script is the missing gate. It fails when the corpus is absent instead of
+# This script is that gate. It fails when the corpus is absent instead of
 # skipping, runs the acceptance tests with the corpus required, and writes a
 # receipt that says which corpus was used and what it proved. The receipt names
 # no scan: the corpus is identified by a fingerprint over hashed file names, so

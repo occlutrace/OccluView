@@ -14,14 +14,14 @@ use std::path::{Path, PathBuf};
 /// (`app_layer_edits::whole_mesh`): the mm perimeter slider does the real
 /// limiting, so the edge count is only a safety valve under the ear-clip's rim
 /// limit.
-// One number, owned by the kernel: a private copy here would silently pin the
-// ceiling, because the selection gate takes the maximum of the two.
+// One number, owned by the kernel: a private copy here would pin the ceiling,
+// because the selection gate takes the maximum of the two.
 use occluview_core::CLOSE_HOLES_EDGE_CEILING;
 
 /// Load a mesh (STL loads as a triangle soup), run the whole-mesh Close Holes
-/// pipeline — exactly the app's button path — and write the closed result.
+/// pipeline — the app's button path — and write the closed result.
 ///
-/// Returns the honest edit report so the caller can print counts.
+/// Returns the kernel's edit report so the caller can print counts.
 pub(crate) fn close_holes_file(
     input: &Path,
     output: &Path,
@@ -31,17 +31,15 @@ pub(crate) fn close_holes_file(
         .with_context(|| format!("loading {}", input.display()))?;
     let format = ExportFormat::from_output_path(output)?;
 
-    // Mirror `app_layer_edits::whole_mesh::close_holes_options` EXACTLY, and
-    // the mirror has to include the branch, not just the fields it sets.
+    // Mirror `app_layer_edits::whole_mesh::close_holes_options` exactly,
+    // including the branch, not just the fields it sets.
     //
     // The app omits `max_boundary_loop` when no mm limit was given, which leaves
-    // the kernel default (8192). This used to set `CLOSE_HOLES_EDGE_CEILING`
-    // (20000) unconditionally, so the same nominal command closed a rim of
-    // 8193..20000 edges headlessly while the app's button reported it as
-    // "Skipped (oversize)" — two different output meshes for one documented
-    // operation. The ceiling belongs only to the mm-limited branch, which is
-    // where the app puts it: the perimeter budget is what makes a wider edge
-    // count acceptable, because the operator asked for a bounded rim.
+    // the kernel default (8192); setting `CLOSE_HOLES_EDGE_CEILING` (20000)
+    // there would close rims of 8193..20000 edges that the app's button reports
+    // as "Skipped (oversize)". The ceiling belongs only to the mm-limited
+    // branch: the perimeter limit is what makes a wider edge count acceptable,
+    // because the operator requested a bounded rim.
     let options = match limit_mm {
         Some(limit_mm) => MeshEditOptions {
             compact_vertices: true,

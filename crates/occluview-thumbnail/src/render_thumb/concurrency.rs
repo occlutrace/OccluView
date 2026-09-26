@@ -27,15 +27,15 @@ const MAX_THUMBNAIL_RENDERERS: usize = 1;
 /// Lock a shared thumbnail mutex, recovering the guard even if a previous
 /// holder panicked and poisoned it.
 ///
-/// Poison-tolerance is deliberate and load-bearing for **per-request
-/// isolation**: the thumbnail statics (renderer pool, job gate, in-flight map)
-/// are shared by every concurrent `IThumbnailProvider` in a `dllhost`
-/// surrogate. If one file's render panicked *while* one of these locks was held
-/// and we treated the resulting poison as fatal, every *other* file in the
-/// folder would then fail to check out a renderer / release a permit — a single
-/// bad file would silently blank the whole mixed folder. The pool/gate/map
-/// state is plain bookkeeping (idle renderers, an active-job counter, a
-/// coalescing map); recovering it is always safe and self-correcting.
+/// Poison tolerance provides per-request isolation: the thumbnail statics
+/// (renderer pool, job gate, in-flight map) are shared by every concurrent
+/// `IThumbnailProvider` in a `dllhost` surrogate. If one file's render panicked
+/// while one of these locks was held and the resulting poison were fatal,
+/// every other file in the folder would then fail to check out a renderer /
+/// release a permit — a single bad file would blank the whole mixed folder.
+/// The pool/gate/map state is plain bookkeeping (idle renderers, an active-job
+/// counter, a coalescing map); recovering it is always safe and
+/// self-correcting.
 fn lock_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -93,8 +93,8 @@ enum InflightThumbnailState {
 ///
 /// Followers must inherit the leader's transient/deterministic split: handing
 /// a follower a placeholder bitmap while the leader reported a transient
-/// failure would put exactly the cacheable stand-in into Explorer's thumbcache
-/// that the split exists to prevent.
+/// failure would put the cacheable stand-in that the split exists to prevent
+/// into Explorer's thumbcache.
 #[derive(Clone)]
 enum InflightThumbnailResult {
     Bitmap(Vec<u8>),
@@ -225,11 +225,10 @@ impl ThumbnailRendererPool {
                 drop(state);
                 // The slot is claimed before the device exists, so every way
                 // out of the create has to give it back. An unwind out of wgpu
-                // -- a driver reset during device creation is exactly the kind
-                // of thing a long-lived surrogate sees -- would otherwise leave
-                // the pool believing its one renderer is in use forever, and
-                // every later request waiting for a renderer that is not
-                // coming.
+                // -- a long-lived surrogate does see driver resets during
+                // device creation -- would otherwise leave the pool believing
+                // its one renderer is in use forever, and every later request
+                // waiting for a renderer that is not coming.
                 match panic::catch_unwind(AssertUnwindSafe(|| {
                     (self.create)(deadline, adapter_policy)
                 })) {
@@ -517,7 +516,8 @@ pub(super) fn render_coalesced_thumbnail_by(
     }
 }
 
-/// request budget by waiting once for setup and again for rendering.
+/// Run `work` under one deadline fixed at entry, so waiting for setup and
+/// rendering share a single request budget.
 #[cfg(test)]
 pub(super) fn run_thumbnail_job_with_deadline<T, F>(
     timeout: Duration,
@@ -527,12 +527,11 @@ where
     T: Send + 'static,
     F: FnOnce(mpsc::SyncSender<ThumbnailJobProgress<T>>) + Send + 'static,
 {
-    // One budget for the whole request. Waiting for a slot and then rendering
-    // each took the full timeout of their own, so a file could spend twice
-    // what the caller asked for -- twelve seconds against six -- and under
-    // Explorer's Apartment hosting that is twelve seconds the rest of the
-    // folder spends queued behind it. The deadline is fixed here, once, and
-    // both halves spend the same one.
+    // One budget for the whole request. If waiting for a slot and rendering
+    // each took the full timeout, a file could spend twice what the caller
+    // asked for -- twelve seconds against six -- and under Explorer's
+    // Apartment hosting the rest of the folder queues behind it. The deadline
+    // is fixed here, once, and both halves spend the same one.
     let deadline = Instant::now() + timeout;
     run_thumbnail_job_by_deadline(deadline, work)
 }
@@ -552,8 +551,6 @@ where
     run_thumbnail_job_by(permit, deadline, work)
 }
 
-/// Variant of [`run_thumbnail_job_with_deadline`] for the Windows shell path,
-/// which reserves a gate permit before it copies an `IStream`.
 /// Run `work` on a worker thread against a deadline the caller already fixed,
 /// so that a wait which has already happened is spent, not forgotten.
 ///

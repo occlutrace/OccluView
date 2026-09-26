@@ -41,8 +41,7 @@ impl ViewportBackground {
     }
 
     /// The clear color in the renderer's linear space, converted from the
-    /// sRGB intent so the two representations can never drift apart (they once
-    /// did: the dark preset's linear values encoded back to a medium gray).
+    /// sRGB intent so the two representations can never drift apart.
     pub(crate) fn linear(self) -> [f64; 4] {
         let color = self.srgb();
         [
@@ -83,6 +82,29 @@ impl UnitDisplay {
     }
 }
 
+/// How a ruler ending on another ruler's line meets it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum RulerLineAngle {
+    /// The end goes where the pointer is along the line, and the ruler reads
+    /// out the angle it makes with the line.
+    #[default]
+    Free,
+    /// The end is the foot of the perpendicular and stays at 90 degrees.
+    Perpendicular,
+}
+
+impl RulerLineAngle {
+    pub(crate) const OPTIONS: [Self; 2] = [Self::Free, Self::Perpendicular];
+
+    /// The other choice, which Shift selects while it is held.
+    pub(crate) const fn other(self) -> Self {
+        match self {
+            Self::Free => Self::Perpendicular,
+            Self::Perpendicular => Self::Free,
+        }
+    }
+}
+
 /// UI chrome theme.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum ThemePreference {
@@ -97,10 +119,10 @@ impl ThemePreference {
 
 /// Entries the Open menu's recent list keeps.
 ///
-/// Fixed rather than a preference: it changed how long a menu was, which has no
-/// clinical outcome, and it sat in a panel of choices that change what the
-/// operator sees on a scan. The field stays in the settings file so an existing
-/// document keeps loading, but nothing writes it any more.
+/// Fixed rather than a preference: menu length has no clinical outcome, and the
+/// preferences panel holds choices that change what the operator sees on a
+/// scan. The field stays in the settings file so an existing document keeps
+/// loading, but no control sets it.
 pub(crate) const RECENT_FILES_LIMIT: usize = 8;
 /// Fewest recent scenes the Open chevron keeps.
 pub(crate) const RECENT_FILES_LIMIT_MIN: usize = 4;
@@ -132,6 +154,8 @@ pub(crate) struct Settings {
     /// Draw the cut-away side as a translucent ghost during a cut view.
     pub(crate) show_cut_ghost: bool,
     pub(crate) unit_display: UnitDisplay,
+    /// How a ruler ending on another ruler's line meets it.
+    pub(crate) ruler_line_angle: RulerLineAngle,
     /// UI scale multiplier on the system pixel density, clamped at use to
     /// 0.85..=1.5 (1.0 keeps the platform default).
     pub(crate) ui_scale: f32,
@@ -159,6 +183,7 @@ impl Default for Settings {
             viewport_background: ViewportBackground::default(),
             show_cut_ghost: true,
             unit_display: UnitDisplay::default(),
+            ruler_line_angle: RulerLineAngle::default(),
             ui_scale: 1.0,
             theme: ThemePreference::default(),
             remember_sculpt_brush: true,
@@ -367,9 +392,9 @@ mod tests {
         let settings: Settings = serde_json::from_slice(legacy)?;
         let rewritten = serde_json::to_value(settings)?;
 
-        // The save format is no longer a stored preference, so a document
-        // written while it was one loads without complaint and is rewritten
-        // without it.
+        // The save format is not a stored preference: a document that carries
+        // the format fields loads without complaint and is rewritten without
+        // them.
         assert!(rewritten.get("default_export_format").is_none());
         assert!(rewritten.get("fallback_export_format").is_none());
         assert!(rewritten.get("keep_source_export_format").is_none());
@@ -384,10 +409,10 @@ mod tests {
         Ok(())
     }
 
-    /// A settings document from before the switch existed still loads, and the
-    /// format fields it carries are simply dropped.
+    /// A settings document that carries obsolete export-format fields loads, and
+    /// those fields are dropped.
     #[test]
-    fn legacy_export_format_fields_still_load() -> Result<()> {
+    fn documents_with_obsolete_export_format_fields_load() -> Result<()> {
         for legacy in [
             r#"{"default_export_format":"Auto"}"#,
             r#"{"default_export_format":"Stl"}"#,

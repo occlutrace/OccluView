@@ -117,11 +117,11 @@ pub struct Element {
 
 /// What the header's comments say about a texture.
 ///
-/// PLY has no texture element, so two conventions meet here. Other tools name
-/// an image beside the file in a `comment TextureFile <name>` line, which this
-/// reader resolves against the file's own folder. OccluView's exports carry the
-/// encoded image inside the file instead, in `OccluViewTexture*` comments, so a
-/// single `.ply` moved on its own still has its texture.
+/// Two conventions meet here. Other tools name an image beside the file in a
+/// `comment TextureFile <name>` line, which this reader resolves against the
+/// file's own folder. An `OccluViewTexture*` comment carries the image itself,
+/// which earlier OccluView releases wrote and this reader still decodes.
+/// Current exports write neither.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TextureComments {
     /// The image file the header names, if it names one.
@@ -168,7 +168,7 @@ pub struct ParsedHeader<'a> {
 /// - [`FormatError::Truncated`] if `end_header` is never found.
 pub fn parse(bytes: &[u8]) -> Result<ParsedHeader<'_>, FormatError> {
     // The header is ASCII; the binary data section that follows `end_header`
-    // may contain arbitrary bytes (raw floats) and must NOT be validated as
+    // may contain arbitrary bytes (raw floats) and must not be validated as
     // UTF-8. So: find the `end_header` line at the byte level first, split, and
     // only then parse the header portion as UTF-8.
 

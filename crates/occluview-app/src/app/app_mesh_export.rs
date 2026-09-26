@@ -85,9 +85,9 @@ impl OccluViewApp {
                 let warnings = mesh_export_warning_summary(&report.warnings, &self.ui.locale);
                 // Named, and with the pose called out. An operator who aligns two
                 // scans and exports one has no other way to check they exported
-                // the arch they moved: a file written in its original position and
-                // a file written in its aligned one both just said "Exported
-                // layer". Whichever it is, it is now on the status line.
+                // the arch they moved: a bare "Exported layer" reads the same for
+                // a file written in its original position and one written in its
+                // aligned position.
                 let name = self
                     .layer_display_name(request.layer_id)
                     .unwrap_or_else(|| {
@@ -156,19 +156,18 @@ impl OccluViewApp {
     /// Refuse an export while a Sculpt stroke is still being rebuilt.
     ///
     /// The scene only advances to a stroke's result when its worker lands, so
-    /// an export started mid-stroke writes the geometry from BEFORE the stroke
-    /// — or an intermediate rebuild — reports success, and the operator finds
-    /// out by re-opening the file. `save_scene_dialog`, `save_each_layer_dialog`
-    /// and `save_layer_export_dialog` are three separate entry points to the
-    /// same scene, and the close/replace guard was the only one that knew this
-    /// rule; every path asks here instead.
+    /// an export started mid-stroke would write the geometry from before the
+    /// stroke (or an intermediate rebuild) and report success.
+    /// `save_scene_dialog`, `save_each_layer_dialog` and
+    /// `save_layer_export_dialog` are three separate entry points to the same
+    /// scene, so every path asks here, as the close/replace guard does.
     ///
     /// Returns true when the caller must stop.
     pub(super) fn refuse_export_during_stroke(&mut self, ctx: &egui::Context) -> bool {
         if !self.document.unsaved_sculpt_stroke {
             return false;
         }
-        // Ask the worker to finish, exactly as Save does, so the next attempt
+        // Ask the worker to finish, as Save does, so the next attempt
         // writes the stroke instead of nothing.
         let _ = self.commit_sculpt_stroke(ctx);
         self.ui.status_message = Some(self.ui.locale.tr("edit-session-busy"));
@@ -235,7 +234,7 @@ impl OccluViewApp {
 
 /// Whether this layer sits anywhere other than where its file put it.
 ///
-/// Exactly the test the export bake uses, so the sentence on the status line and
+/// The same test the export bake uses, so the sentence on the status line and
 /// the geometry in the file cannot disagree.
 fn moved_from_source(scene: &Scene, request: LayerContextRequest) -> bool {
     scene
@@ -355,8 +354,8 @@ fn mesh_export_format_from_source_path(path: &Path) -> Option<MeshWriteFormat> {
         "ply" => Some(MeshWriteFormat::PlyBinaryLittleEndian),
         "stl" => Some(MeshWriteFormat::StlBinary),
         "obj" => Some(MeshWriteFormat::Obj),
-        // HPS/DCM and GLB are currently readable but do not have a matching
-        // writer in the public export contract. Keep the fallback explicit.
+        // HPS/DCM and GLB are readable but do not have a matching writer in
+        // the public export contract. Keep the fallback explicit.
         _ => None,
     }
 }
@@ -437,8 +436,8 @@ fn source_format_that_carries(
 ///   has any of them opens its save dialog on PLY instead.
 ///
 /// The colour rule is what a `.dcm`/HPS scan needs: those formats have no
-/// writer, so the save dialog came up on the operator's fallback format, and a
-/// fallback of STL silently proposed a colourless file for a colour scan.
+/// writer, so without it a fallback of STL would propose a colourless file for
+/// a colour scan.
 pub(super) fn representable_export_format(
     format: MeshWriteFormat,
     mesh: &occluview_core::Mesh,
@@ -514,7 +513,7 @@ pub(super) fn default_layer_export_stem(
     index: usize,
     format: MeshWriteFormat,
 ) -> String {
-    // Deliberately prefer an ASCII-safe source/file stem, then the mesh name,
+    // Prefer an ASCII-safe source/file stem, then the mesh name,
     // then a numbered fallback. This name is used by both single-layer and
     // batch exports, so they cannot drift into different naming rules.
     let source_stem = source_path_for_export_defaults(paths, index)
@@ -763,7 +762,7 @@ mod tests {
     }
 
     /// A scan keeps the format it was opened in when the viewer can write it,
-    /// and that is the whole rule for a plain geometry scan: no switch, no
+    /// and that is the only rule for a plain geometry scan: no switch, no
     /// per-session choice.
     #[test]
     fn a_scan_keeps_its_own_writable_format() {
@@ -788,8 +787,8 @@ mod tests {
 
     /// A point cloud cannot be written as STL, so the format actually offered
     /// has to be one the geometry can be written as. The writer refuses a
-    /// non-triangle mesh, and a forced STL used to propose a name whose write
-    /// was guaranteed to fail into the error dialog.
+    /// non-triangle mesh, and a forced STL would propose a name whose write is
+    /// guaranteed to fail into the error dialog.
     #[test]
     fn a_forced_stl_falls_back_to_ply_for_a_point_cloud() {
         let cloud = Mesh::point_cloud(Some("points".to_owned()), vec![Vertex::at(Vec3::ZERO)]);
@@ -818,10 +817,10 @@ mod tests {
         );
     }
 
-    /// STL carries geometry only, so proposing it for a colour scan silently
-    /// throws the colour away. This is the `.dcm` case: the format has no
-    /// writer, the dialog comes up on the fallback, and a fallback of STL used
-    /// to propose a colourless file for a scan captured in colour.
+    /// STL carries geometry only, so proposing it for a colour scan discards
+    /// the colour. This is the `.dcm` case: the format has no writer, so the
+    /// proposed format comes from what the scan holds, never from a fallback
+    /// that could be a colourless STL.
     #[test]
     fn a_forced_stl_falls_back_to_ply_so_colour_is_not_thrown_away() {
         use occluview_core::MeshTexture;
@@ -885,10 +884,10 @@ mod tests {
         );
     }
 
-    /// The operator's exact case: a `.dcm` opened and saved.
+    /// A `.dcm` opened and saved.
     ///
     /// A `.dcm`/HPS has no writer, so there is no source format to keep. The
-    /// format now follows what the scan holds: a colour scan is offered as PLY,
+    /// format follows what the scan holds: a colour scan is offered as PLY,
     /// and a geometry-only scan as STL. There is no preference that can turn a
     /// colour scan into a colourless `.stl`.
     #[test]
@@ -1314,7 +1313,7 @@ mod tests {
         for extension in ["ply", "stl", "obj"] {
             let mut scene = exportable_scene()?;
             // A drag composes its steps onto whatever pose is already there, so
-            // this is a turn AND a shift, not just a translation.
+            // this is a turn and a shift, not just a translation.
             let pose = Affine3A::from_rotation_z(std::f32::consts::FRAC_PI_2)
                 * Affine3A::from_translation(Vec3::new(7.0, -3.0, 11.0));
             scene.meshes_mut()[0].transform = pose;
@@ -1355,7 +1354,7 @@ mod tests {
     }
 
     /// The status line names the layer and says whether it carries a pose, so an
-    /// operator who exported the arch they did NOT move can see that.
+    /// operator who exported the arch they did not move can see that.
     #[test]
     fn the_export_reports_whether_the_scan_had_been_moved() -> Result<()> {
         let mut scene = exportable_scene()?;

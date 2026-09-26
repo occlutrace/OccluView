@@ -26,8 +26,8 @@ fn corner_view_depths(camera: &Camera, bbox: Aabb) -> [f32; 8] {
     .map(|corner| (corner - eye).dot(forward))
 }
 
-/// Assert the invariant the near-plane bug violated: after a refit, EVERY bbox
-/// corner's view-depth lies within `[near, far]`, so nothing is clipped.
+/// Assert that after a refit every bbox corner's view-depth lies within
+/// `[near, far]`, so nothing is clipped.
 fn assert_all_corners_within_clip(camera: &Camera, bbox: Aabb, ctx: &str) {
     assert!(
         camera.far > camera.near,

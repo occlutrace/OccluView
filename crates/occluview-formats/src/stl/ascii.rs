@@ -14,7 +14,7 @@
 //! endsolid [<optional name>]
 //! ```
 //!
-//! We are deliberately lenient: case-insensitive keywords, any whitespace
+//! We are lenient: case-insensitive keywords, any whitespace
 //! separation, optional `solid`/`endsolid` name, and we stop at the first
 //! token we can't make sense of, returning what we parsed so far on a hard EOF
 //! (some scanners forget the trailing `endsolid`).

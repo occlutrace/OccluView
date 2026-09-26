@@ -15,10 +15,10 @@
 //!     longest-interior-edge bisection of every triangle larger than the
 //!     local target edge scale, with Lawson flips between passes.
 //!  2. Curvature-following lift: a quadric height field is least-squares fitted
-//!     to the rim AND a band of surface samples just outside it (the rim ring
+//!     to the rim and a band of surface samples just outside it (the rim ring
 //!     alone is nearly planar and carries no curvature). Interior vertices are
 //!     distributed evenly in-plane, then lifted onto that quadric. Pure
-//!     umbrella relaxation in 3D converges to the MINIMAL surface, which sinks
+//!     umbrella relaxation in 3D converges to the minimal surface, which sinks
 //!     into a visible dent on any curved hole; lifting onto the fitted surface
 //!     removes the dent.
 //!
@@ -47,14 +47,14 @@ const HARMONIC_ITERATIONS: usize = 128;
 /// Density is set by the rim edge scale; this is only a runaway safety valve.
 const MAX_GENERATED_PER_RIM: usize = 32;
 /// Absolute interior-vertex budget per hole. Rim-density refinement of a large
-/// hole needs `O(rim_len^2)` interior vertices, which made a 1000-edge rim take
-/// seconds and a 20 000-edge rim minutes. When the density estimate exceeds
+/// hole needs `O(rim_len^2)` interior vertices: a 1000-edge rim takes seconds
+/// and a 20 000-edge rim minutes. When the density estimate exceeds
 /// this budget, the target edge scale is raised so refinement terminates at a
 /// uniformly coarser (still even) sampling instead of stalling mid-pass.
 const CAP_INTERIOR_BUDGET: usize = 12_000;
 
 /// A refined cap: generated interior vertices plus the full cap triangulation
-/// in LOCAL indices (`0..rim_len` = rim order, `rim_len..` = generated).
+/// in local indices (`0..rim_len` = rim order, `rim_len..` = generated).
 pub(super) struct RefinedCap {
     pub(super) generated: Vec<EditVertex>,
     pub(super) triangles: Vec<[usize; 3]>,
@@ -100,23 +100,23 @@ pub(super) fn refine_and_relax(
 
     // A first Lawson repair turns the ear-clip fan into the Delaunay
     // triangulation of the rim before any splitting, so we densify a clean
-    // base. The edge→owner map built here stays LIVE through every bisection
-    // and flip below (`CapMesh`), replacing the retired whole-cap flip sweeps
-    // that made a ~1000-edge rim cost seconds (issue #9).
+    // base. The edge→owner map built here stays live through every bisection
+    // and flip below (`CapMesh`), so each repair touches only rewritten edges
+    // instead of sweeping the whole cap.
     let mut cap_mesh = CapMesh::new(initial);
     let all_edges: BTreeSet<(usize, usize)> = cap_mesh.edges_sorted().into_iter().collect();
     cap_mesh.lawson(&uv, all_edges);
 
-    // Density refinement by LONGEST-INTERIOR-EDGE bisection (Rivara-style),
+    // Density refinement by longest-interior-edge bisection (Rivara-style),
     // with incremental Lawson repair between passes. Bisection is the
     // sliver-proof choice: the ear-clip base of a many-thousand-edge rim is a
     // fan of long slivers that flips alone cannot fully regularize, and
-    // centroid (1:3) splits of slivers cascade — a 8000-edge rim used to blow
+    // centroid (1:3) splits of slivers cascade — an 8000-edge rim runs
     // straight to the runaway valve (256k vertices, minutes of work).
     // Halving the longest edge attacks exactly the sliver axis, provably
     // terminates (each split halves one edge, lengths are bounded below by
     // the target scale), and the per-pass repairs restore Delaunay quality —
-    // seeded ONLY by the edges the pass's splits actually rewrote.
+    // seeded only by the edges the pass's splits actually rewrote.
     let mut patch = CapPatch { uv, scale, attrs };
     for _ in 0..MAX_REFINE_PASSES {
         let split_any = bisect_pass(
@@ -143,7 +143,7 @@ pub(super) fn refine_and_relax(
     // quadric). The rim of a wavy surface undulates off the smooth quadric; a
     // pure quadric cap meets it with a slope crease. Harmonically interpolating
     // that residual inward makes the cap meet the rim tangentially, then decays
-    // to the quadric in the interior. Only the SMALL residual is harmonic, so
+    // to the quadric in the interior. Only the small residual is harmonic, so
     // no minimal-surface dent is reintroduced.
     let mut residual = vec![0.0f32; uv.len()];
     for index in 0..rim_len {
@@ -227,8 +227,8 @@ fn bisect_pass(
 
 /// Raise the target edge scale so the estimated interior vertex count stays
 /// within [`CAP_INTERIOR_BUDGET`]. Refinement density is quadratic in the rim
-/// length for round holes; without this, a 20 000-edge rim generated 640 000
-/// interior vertices and the fill ran for minutes. Rims small enough to fit
+/// length for round holes; without this, a 20 000-edge rim generates 640 000
+/// interior vertices and the fill runs for minutes. Rims small enough to fit
 /// the budget (~250 edges for a round hole) are left byte-for-byte unchanged.
 fn rescale_for_budget(uv: &[Vec2], rim_len: usize, scale: &mut [f32]) {
     if rim_len < 3 {

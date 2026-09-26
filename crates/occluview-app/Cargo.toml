@@ -68,6 +68,11 @@ x11rb             = "0.13"
 wayland-client    = { workspace = true }
 wayland-protocols = { workspace = true }
 
+# Finder document-open callbacks extend the existing winit AppKit delegate
+# without replacing the delegate that owns the event loop.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "=0.2.7"
+
 # Windows shell and windowing integration.
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [

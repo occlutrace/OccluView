@@ -1,6 +1,6 @@
 //! Launch-time update check and the "update available" notice.
 //!
-//! Policy: OFFER, never install silently. On launch a
+//! Policy: offer, never install silently. On launch a
 //! background thread fetches the signed manifest once; if a newer release
 //! exists, a quiet corner notice offers Download → Install & restart. All
 //! network and verification work lives in `occluview-update`; this module is
@@ -42,8 +42,8 @@ fn store_skipped_version(version: &str) {
         }
     }
     // A write that fails means the release is offered again next launch. The
-    // operator asked not to be told about it, so this is a log line rather
-    // than a dialog, but it must not vanish.
+    // operator chose to skip this version, so this is a log line rather than
+    // a dialog, but it must not vanish.
     if let Err(error) = std::fs::write(path, version) {
         tracing::warn!(error = ?error, "could not remember the skipped version");
     }
@@ -408,7 +408,7 @@ fn draw_available(
             }
         } else {
             // The release exists but publishes no installer for this
-            // platform: point at the release page instead of pretending.
+            // platform: point at the release page instead of a download.
             ui.hyperlink_to(
                 locale.text("update-open-release"),
                 "https://github.com/occlutrace/OccluView/releases/latest",
@@ -449,7 +449,8 @@ fn draw_downloading(
     );
 }
 
-// Six inherently (ui/ctx + data + locale); bundling would fake an abstraction.
+// Six inherent inputs (ui/ctx + data + locale); a struct grouping them would
+// carry no meaning of its own.
 #[expect(clippy::too_many_arguments)]
 fn draw_ready(
     ui: &mut egui::Ui,
@@ -466,7 +467,7 @@ fn draw_ready(
         ))
         .strong(),
     );
-    // Canonical handoff wording pinned by source guards; rendering resolves
+    // The handoff wording is platform-specific:
     // `update-ready-hint-windows` / `update-ready-hint-other`.
     let handoff_hint = if cfg!(target_os = "windows") {
         locale.tr("update-ready-hint-windows")
@@ -509,7 +510,7 @@ fn draw_failed(
 }
 
 /// Progress in permille keeps the division in integer space (installer sizes
-/// are far below u64/1000), so no float-precision lint gymnastics are needed.
+/// are far below u64/1000), so no float-precision lint exception is needed.
 fn progress_fraction(received: u64, total: Option<u64>) -> f32 {
     let Some(total) = total.filter(|&total| total > 0) else {
         return 0.0;

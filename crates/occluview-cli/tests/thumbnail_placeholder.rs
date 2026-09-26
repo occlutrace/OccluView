@@ -14,10 +14,9 @@ fn unique_tmp(name: &str) -> PathBuf {
 
 /// One triangle per entry, as a binary STL: face normal, then the three corners.
 ///
-/// The corners of a fixture must be DISTINCT. Coincident corners make the
+/// The corners of a fixture must be distinct. Coincident corners make the
 /// decoder refuse the file and the CLI writes the picture of that failure
-/// instead, which is how an earlier version of the real-mesh fixture passed
-/// while proving nothing about the render path.
+/// instead, so a test would pass without exercising the render path.
 fn binary_stl(triangles: &[[[f32; 3]; 3]]) -> Vec<u8> {
     let mut bytes = vec![0u8; 80];
     let count = u32::try_from(triangles.len()).expect("fixture triangle count");
@@ -85,14 +84,14 @@ fn thumbnail_of_corrupt_file_exits_zero_and_writes_placeholder_png() {
     let _ = std::fs::remove_file(output);
 }
 
-/// A file the thumbnailer cannot OPEN is a failure, and the exit code says so.
+/// A file the thumbnailer cannot open is a failure, and the exit code says so.
 ///
-/// The two cases are deliberately different. A corrupt CONTAINER is a verdict
-/// about content: the badge is written and the command succeeds, which is what
-/// the test above pins. A missing, unreadable or non-file path is the command
-/// FAILING to do its job, and a script running
+/// The two cases differ. A corrupt container is a verdict about content: the
+/// badge is written and the command succeeds, which is what the test above
+/// pins. A missing, unreadable or non-file path is the command failing to do
+/// its job, and a script running
 /// `occluview-cli thumbnail "$f" -o "$o" && use "$o"` must be able to tell the
-/// difference. Before this, both exited 0 with a placeholder.
+/// difference.
 #[test]
 fn an_unopenable_input_exits_non_zero_and_still_writes_a_png() {
     let directory = std::env::temp_dir().join(format!(
@@ -126,16 +125,14 @@ fn an_unopenable_input_exits_non_zero_and_still_writes_a_png() {
     std::fs::remove_dir_all(&directory).ok();
 }
 
-/// A real mesh on disk renders a REAL thumbnail, which is only possible if the
+/// A real mesh on disk renders a real thumbnail, which is only possible if the
 /// CLI goes through the file-backed path.
 ///
-/// This is the behaviour the removed source-text check described (it looked for
-/// the words `try_render_thumbnail_file` in main.rs). The property worth
-/// holding is the outcome: the bytes path cannot read metadata, work out the
-/// extension, or cache by file identity, so if the CLI ever switched to the
-/// in-memory stream entry point, a file on disk would come back as a plain
-/// placeholder. This asserts the opposite — that the picture of a real scan is
-/// not the placeholder — which is what an operator sees in the file manager.
+/// The bytes path cannot read metadata, work out the extension, or cache by
+/// file identity, so if the CLI used the in-memory stream entry point, a file
+/// on disk would come back as a plain placeholder. This asserts that the
+/// picture of a real scan is not the placeholder, which is what an operator
+/// sees in the file manager.
 #[test]
 fn a_real_mesh_on_disk_renders_a_real_thumbnail() {
     let directory = std::env::temp_dir().join(format!(

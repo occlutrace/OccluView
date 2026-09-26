@@ -164,13 +164,12 @@ impl FaceDecoder {
         }
         let current = self.edges[self.current_edge_idx];
         self.add_face(vertex, current.end, current.start)?;
-        // One edge becomes two, in place. Written as a remove and two inserts
-        // this shifted the tail of the list three times per command, and the
-        // list grows by one per command: 20 000 commands took 0.06 s, 40 000
-        // took 0.23 s, 160 000 took 4.08 s -- four times the work for twice
-        // the file. Splicing shifts it once. The growth is still quadratic in
-        // a stream that never restarts (a real one restarts, which clears the
-        // list), and the request deadline is what bounds that.
+        // One edge becomes two, in place, with a single splice. A remove and
+        // two inserts would shift the tail of the list three times per
+        // command while the list grows by one per command (measured: 20 000
+        // commands 0.06 s, 40 000 0.23 s, 160 000 4.08 s). The growth is still
+        // quadratic in a stream that never restarts (a real one restarts,
+        // which clears the list), and the request deadline bounds that.
         let _ = self.edges.splice(
             self.current_edge_idx..=self.current_edge_idx,
             [
