@@ -124,9 +124,13 @@ Press **F1** — or open **Settings → Keyboard shortcuts** — for the complet
   changed.
 - In Sculpt, **1** chooses Add/Remove and **2** chooses Smooth. **Shift+wheel** changes Sculpt brush size; **Ctrl+wheel** changes Sculpt brush intensity.
   Holding **Shift** during a drag removes or strengthens the active brush mode.
-- In Ruler, after the first point, a click on a drawn ruler line drops a
-  perpendicular onto it (for example the Korkhaus arch length from the incisal
-  point to the Pont premolar line); the length is the 3D perpendicular.
+- In Ruler, after the first point, a click on a drawn ruler line ends the
+  ruler on that line (for example the Korkhaus arch length from the incisal
+  point to the Pont premolar line). The end goes where you click along the
+  line and the ruler shows its 3D length and the smaller angle to the line;
+  drag that end to slide it along the line. The strip at the top of the
+  viewport switches between "Any angle" and "90°" (the perpendicular); hold
+  **Shift** for the other choice.
 - In Align, **Shift** erases an Align exclusion region; **Ctrl/Command+drag** rotates a scan in Align Manual mode; stationary **RMB click** undoes the last alignment point.
 - Right-click a layer to read its **occlusal contacts**: the marks land on both
   scans, and the pointer reports the depth under the cursor.

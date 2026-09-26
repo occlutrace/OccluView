@@ -39,22 +39,17 @@ remain in the Git history.
 - The status line after a Brush command names the scan it reached when the Mesh
   selection narrowed it to one, instead of stating the rule as though both had
   been changed.
-- The Ruler drops a perpendicular onto a ruler line. After the first point,
-  a click on a drawn ruler line ends the measurement at the foot of the
-  perpendicular on that line, marked with a right angle, instead of at the
+- The Ruler can end on another ruler's line. After the first point, a click on
+  a drawn ruler line ends the measurement on that line instead of on the
   surface under the cursor. This is the Korkhaus anterior arch length: from the
   incisal point to the line through Pont's premolar points, which runs above
-  the palate. Before, the second point could only land on the scan, so the
-  reading went down to the palate and was longer than the perpendicular. The
-  length is measured in 3D. Hovering the line shows the perpendicular and its
-  length before the click; dragging the first point or either end of the base
-  line keeps the right angle.
-- Pressing a ruler end without moving the mouse leaves it where it is. The
-  press re-picked the end onto the surface nearest the camera under the
-  pointer, so an end seen through the model (measurements draw on top of it)
-  jumped to the front surface and the reading changed although nothing was
-  dragged. The end now follows the pointer once it moves past the click
-  tolerance.
+  the palate, so a second point on the scan landed on the palate and read too
+  long. The end goes where the click is along the line, and the ruler reads
+  its 3D length and the smaller angle it makes with the line; the end can be
+  dragged along the line afterwards. A strip over the viewport, and Settings,
+  choose between any angle and 90°, where the end is the foot of the
+  perpendicular and stays square when either ruler moves. Holding Shift uses
+  the other choice while it is held.
 
 ### Files
 
