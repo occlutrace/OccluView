@@ -24,8 +24,8 @@ pub(crate) fn vertex_at(positions: &[f32], vertex: usize) -> Option<DVec3> {
 /// stride comes from the usable count, so a level with no usable vertex returns
 /// nothing at every budget, and no budget can report evidence where another
 /// reports none. (The sampled *sets* do not nest, because each budget chooses
-/// its own stride alignment.) A refine that treated "the dense level returned
-/// nothing" as recoverable was guarding a state this property makes unreachable.
+/// its own stride alignment.) The refine stage's empty-dense-level refusal
+/// therefore guards a state this property makes unreachable.
 #[must_use]
 pub(crate) fn sample_vertices(soup: Soup<'_>, budget: usize) -> Vec<u32> {
     let count = soup.vertex_count();
@@ -33,8 +33,8 @@ pub(crate) fn sample_vertices(soup: Soup<'_>, budget: usize) -> Vec<u32> {
         return Vec::new();
     }
     // Count usable vertices first. Computing the stride from the raw vertex
-    // count let a periodic exclusion mask alias every sampled index away,
-    // returning no evidence even while valid triangles remained between the
+    // count would let a periodic exclusion mask alias every sampled index away,
+    // returning no evidence even while valid triangles remain between the
     // stride positions. A second linear pass keeps the output bounded without
     // allocating a temporary vector containing the whole mesh.
     let usable = (0..count)

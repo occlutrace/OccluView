@@ -343,7 +343,7 @@ mod tests {
     }
 
     /// A mesh without a texture still carries its mapping, as per-vertex
-    /// properties, so the coordinates are not silently dropped on the way out.
+    /// properties, so the coordinates are not dropped on the way out.
     #[test]
     fn coordinates_survive_without_an_image() {
         let mut mesh = textured_triangle();

@@ -53,7 +53,7 @@ const ROBUST_BOUNDS_SAMPLE_LIMIT: usize = 16_384;
 /// Sized to the thumbnail's native pixel resolution: once a decimated mesh is
 /// framed to fill the ~256 px tile, each occupied cell projects to at most ~1
 /// output pixel, so neighboring cells rasterize to adjacent pixels and leave no
-/// gaps. This is what keeps a decimated surface reading as a SOLID surface
+/// gaps. This is what keeps a decimated surface reading as a solid surface
 /// rather than the see-through sieve that per-Nth-triangle striding produced.
 const FAST_CLUSTER_GRID: u32 = 256;
 const STL_HEADER_SIZE: usize = 80;
@@ -78,7 +78,7 @@ pub fn try_read_fast_thumbnail_mesh_for_kind(kind: FormatKind, bytes: &[u8]) -> 
             }
         }
         FormatKind::Obj => fast_obj_thumbnail_mesh(bytes).ok(),
-        // The PLY fast reader builds a decimated point cloud ONLY for genuine
+        // The PLY fast reader builds a decimated point cloud only for genuine
         // faceless point-cloud PLYs; it declines (returns an error, hence `None`
         // here) for surface PLYs that declare faces, so the caller falls through
         // to the full `occluview-formats` reader and gets a real triangulated
@@ -309,10 +309,10 @@ mod tests {
     #[test]
     fn binary_stl_fast_path_clusters_dense_surface_into_a_solid_reduced_mesh() {
         // A finely tessellated 10x10 plane with far more triangles than the
-        // cluster grid can resolve. The fast path must WELD onto the grid (a
+        // cluster grid can resolve. The fast path must weld onto the grid (a
         // contiguous, hole-free surface) instead of dropping every Nth triangle
         // (the see-through speckle). So the output must stay a real triangle
-        // SURFACE, be meaningfully reduced, and stay bounded by the grid.
+        // surface, be meaningfully reduced, and stay bounded by the grid.
         const CELLS: usize = 400; // 400x400 quads -> 320,000 triangles
         let span = 10.0_f32;
         let step = span / CELLS as f32;
@@ -517,7 +517,7 @@ v 0 1 0 0.5 0.25 0.0
 
     #[test]
     fn obj_fast_path_declines_when_declared_faces_are_all_degenerate() {
-        // Faces ARE declared but every one is zero-area (a repeated vertex
+        // Faces are declared but every one is zero-area (a repeated vertex
         // index), so clustering emits nothing. Decline to the full reader rather
         // than splatting the surface file as a cloud of points.
         let bytes = b"v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 1 1\nf 2 2 2\n";
@@ -555,8 +555,8 @@ end_header
 
     #[test]
     fn ply_surface_fast_path_declines_so_full_reader_renders_a_surface() {
-        // A PLY that declares faces is a SURFACE. The fast reader must NOT
-        // return it as a point cloud (that is the point-soup bug); it declines
+        // A PLY that declares faces is a surface. The fast reader must not
+        // return it as a point cloud (a point soup); it declines
         // so `load_thumbnail_mesh_*` falls through to the full reader, which
         // triangulates the faces into a real surface.
         let bytes = br"ply
@@ -588,7 +588,7 @@ end_header
         );
 
         // The full reader that the caller falls through to yields a triangle
-        // SURFACE, never a point cloud, for this same surface PLY.
+        // surface, never a point cloud, for this same surface PLY.
         let mesh = occluview_formats::ply::read(bytes).expect("full PLY reader");
         assert!(
             !mesh.is_point_cloud(),

@@ -182,7 +182,7 @@ f 1 2 3
         let obj = obj_with_early_faces(800 * 1024);
         assert!(
             obj.len() >= 800 * 1024,
-            "fixture should cover the reported small OBJ size; got {} bytes",
+            "fixture should cover an 800 KiB OBJ; got {} bytes",
             obj.len()
         );
 
@@ -199,7 +199,7 @@ f 1 2 3
         let obj = noisy_obj_with_early_faces(800 * 1024);
         assert!(
             obj.len() >= 800 * 1024,
-            "fixture should cover the reported small OBJ size; got {} bytes",
+            "fixture should cover an 800 KiB OBJ; got {} bytes",
             obj.len()
         );
 

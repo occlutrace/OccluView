@@ -1,4 +1,4 @@
-//! `occluview-formats` — 3D file format readers (and eventually writers).
+//! `occluview-formats` — 3D file format readers and writers.
 //!
 //! Each format has its own module implementing the [`FormatReader`] trait, so a
 //! new format is added by writing a module + registering it in [`dispatch`] — no
@@ -141,7 +141,7 @@ mod tests {
         // Pin the claim, not two substrings. "`.hps` and `.dcm` appear
         // somewhere in the file" passes on a README stating the opposite, and
         // `.dcm` appears here several times for other reasons -- including a
-        // paragraph about NOT claiming the extension.
+        // paragraph about not claiming the extension.
         let readme = include_str!("../../../README.md");
         let promise = readme
             .lines()

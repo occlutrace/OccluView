@@ -170,7 +170,7 @@ pub fn prewarm_thumbnail_renderer() {
 /// Outcome of one thumbnail request against the shared pipeline.
 ///
 /// The distinction exists because Explorer's thumbnail cache permanently
-/// stores ANY bitmap a provider returns with `S_OK`, keyed by the file's
+/// stores any bitmap a provider returns with `S_OK`, keyed by the file's
 /// modification time ("once a thumbnail is computed ... it is cached and your
 /// handler won't be called again for that item unless you invalidate the cache
 /// by updating the modification date" — Microsoft, `RecipeThumbnailProvider`).
@@ -347,7 +347,7 @@ pub fn render_thumbnail_file_or_placeholder_with_timeout(
 /// instead of masking them as placeholder pixels.
 ///
 /// This is the shell-facing entry point: see [`ThumbnailAttempt`] for why a
-/// timeout must NOT become a bitmap when the caller is Explorer's thumbnail
+/// timeout must not become a bitmap when the caller is Explorer's thumbnail
 /// cache.
 #[must_use]
 pub fn try_render_thumbnail_file(
@@ -524,10 +524,9 @@ fn render_file_thumbnail_job(
 /// Translate a worker outcome into the cache-safety split: decode verdicts
 /// become pixels, everything a retry could plausibly fix stays a failure.
 ///
-/// A render/GPU error is deliberately on the transient side even though the
-/// old behavior painted a plain placeholder: a lost device or a driver reset
-/// says nothing about the file, and the retry path is cheap because the pool
-/// discards the sick renderer and the next attempt gets a fresh one. An I/O
+/// A render/GPU error is transient rather than a plain placeholder: a lost
+/// device or a driver reset says nothing about the file, and the retry path is
+/// cheap because the pool discards the sick renderer and the next attempt gets a fresh one. An I/O
 /// error mid-decode is transient for the same reason the metadata preflight
 /// is: on Windows the common cause is a sharing violation while the scanner
 /// is still writing the file, which the next browse will not reproduce.

@@ -1,8 +1,7 @@
 //! The `IThumbnailProvider` COM class.
 //!
-//! Split out of `com.rs` to hold the workspace's 800-line file budget. The
-//! shared COM plumbing — HRESULT helpers, `com_entry`, the DLL exports, the
-//! GDI bitmap conversion — stays in the parent module; this file owns the
+//! The shared COM plumbing — HRESULT helpers, `com_entry`, the DLL exports,
+//! the GDI bitmap conversion — lives in the parent module; this file owns the
 //! provider's state machine from `Initialize` through `GetThumbnail`.
 
 use super::{

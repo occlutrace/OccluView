@@ -69,7 +69,7 @@ pub enum HpsError {
     },
 }
 
-/// A parser failure or an error returned verbatim by a caller-supplied key provider.
+/// A parser failure or an error returned unchanged by a caller-supplied key provider.
 #[derive(Debug, Error)]
 pub enum ReadError<E> {
     /// HPS detection, decoding, or validation failed.

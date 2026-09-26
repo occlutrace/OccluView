@@ -7,7 +7,7 @@
 //! cargo test -p occluview-formats --release -- --ignored --nocapture load_
 //! ```
 //!
-//! Reference timings from the original release-mode, eight-thread run:
+//! Reference timings from a release-mode, eight-thread run:
 //!
 //! ```text
 //! load_binary_stl_500k_triangles   0.24 s

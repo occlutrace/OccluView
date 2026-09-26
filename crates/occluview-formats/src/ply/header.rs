@@ -168,7 +168,7 @@ pub struct ParsedHeader<'a> {
 /// - [`FormatError::Truncated`] if `end_header` is never found.
 pub fn parse(bytes: &[u8]) -> Result<ParsedHeader<'_>, FormatError> {
     // The header is ASCII; the binary data section that follows `end_header`
-    // may contain arbitrary bytes (raw floats) and must NOT be validated as
+    // may contain arbitrary bytes (raw floats) and must not be validated as
     // UTF-8. So: find the `end_header` line at the byte level first, split, and
     // only then parse the header portion as UTF-8.
 

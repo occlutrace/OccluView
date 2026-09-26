@@ -22,7 +22,7 @@ pub(super) fn make_fallback_texture_bind_group(
     queue: &wgpu::Queue,
     renderer: &Renderer,
 ) -> wgpu::BindGroup {
-    // The returned textures are deliberately not kept: the bind group holds a
+    // The returned textures are not kept: the bind group holds a
     // reference to each view, and a view keeps its texture alive.
     let (_base_texture, tex_view, sampler) = white_base(device, queue);
     let (_field_texture, field_view) = inert_field_texture(device, queue);
@@ -188,8 +188,8 @@ impl Offscreen {
         // driver has reported anything it refused. The device's error handler
         // records rather than panics (a panic in the shell surrogate is a
         // crash), so nothing else asks. Unasked, a refused buffer allocation
-        // or a lost device produced a frame of zeroes that the caller returned
-        // as a perfectly good transparent thumbnail -- which Explorer then
+        // or a lost device would produce a frame of zeroes that the caller
+        // returns as a valid transparent thumbnail -- which Explorer then
         // caches against the file's timestamp and never recomputes.
         if let Some(error) = self.renderer.take_gpu_error() {
             output_buffer.unmap();
@@ -238,9 +238,8 @@ impl Offscreen {
         // already documents — egui paints the buffer untouched, the section
         // ruler's `SlicePlaneMap` puts +up at the top, `pixels_to_hbitmap`
         // builds a top-down DIB, and the CLI writes a PNG in row order.
-        // Reversing here made the data bottom-up and silently mirrored the
-        // Explorer thumbnail, the CLI's PNG and the fallback viewport, while
-        // the preview pane compensated with a second reversal.
+        // Reversing here would make the data bottom-up and mirror the
+        // Explorer thumbnail, the CLI's PNG and the fallback viewport.
         Ok(pixels)
     }
 }

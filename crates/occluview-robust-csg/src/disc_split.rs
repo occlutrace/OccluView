@@ -133,8 +133,8 @@ pub fn split_with_separator_disc(
 /// Rebuild a closed mesh after storage-position quantization.
 ///
 /// # Errors
-/// Returns [`RobustCsgError`] when the quantized mesh is no longer a valid
-/// closed manifold.
+/// Returns [`RobustCsgError`] when the quantized mesh is not a valid closed
+/// manifold.
 pub fn normalize_closed_mesh(mesh: &RobustMesh) -> Result<RobustMeshPart, RobustCsgError> {
     let manifold = manifold_from_mesh(mesh)?;
     extract_part(manifold)
