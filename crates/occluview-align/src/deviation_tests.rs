@@ -583,3 +583,184 @@ fn the_reasons_survive_a_measurement_too_small_to_summarise() {
     assert_eq!(stats.unmeasured.excluded, 1);
     assert_eq!(stats.unmeasured.out_of_reach, 1);
 }
+
+/// A `nx` x `ny` grid on z = 0 from (`x0`, `y0`), spacing `step`.
+fn grid(x0: f32, y0: f32, nx: u32, ny: u32, step: f32) -> (Vec<f32>, Vec<u32>) {
+    let mut positions = Vec::new();
+    for j in 0..=ny {
+        for i in 0..=nx {
+            #[allow(clippy::cast_precision_loss)]
+            positions.extend_from_slice(&[x0 + i as f32 * step, y0 + j as f32 * step, 0.0]);
+        }
+    }
+    let mut indices = Vec::new();
+    for j in 0..ny {
+        for i in 0..nx {
+            let a = j * (nx + 1) + i;
+            let (b, c, d) = (a + 1, a + nx + 1, a + nx + 2);
+            indices.extend_from_slice(&[a, b, d, a, d, c]);
+        }
+    }
+    (positions, indices)
+}
+
+fn map_against(fixed: (&[f32], &[u32], Option<&[u8]>), moving: (&[f32], &[u32])) -> DeviationMap {
+    let index = SurfaceIndex::build(Soup {
+        positions: fixed.0,
+        indices: fixed.1,
+        mask: fixed.2,
+    })
+    .expect("fixed index");
+    deviation(
+        Soup {
+            positions: moving.0,
+            indices: moving.1,
+            mask: None,
+        },
+        &index,
+        Rigid::IDENTITY,
+        &DeviationSettings {
+            influence_radius_mm: 2.0,
+            orientation: Orientation::Match,
+        },
+        &CancelFlag::new(),
+    )
+}
+
+/// Two coincident sheets, the moving one running 2 mm past the fixed border.
+/// Everywhere they overlap the true deviation is zero; past the border there is
+/// nothing to compare against. The rim distance there (up to the 2 mm radius)
+/// used to be reported as deviation and dragged p95 to 1.5 mm.
+#[test]
+fn a_scan_running_past_the_other_border_is_not_measured_there() {
+    let (fixed_p, fixed_i) = grid(0.0, 0.0, 40, 40, 0.25);
+    let (moving_p, moving_i) = grid(-2.0, 0.0, 48, 40, 0.25);
+    let map = map_against((&fixed_p, &fixed_i, None), (&moving_p, &moving_i));
+    for (vertex, state) in map.validity.iter().enumerate() {
+        let x = moving_p[vertex * 3];
+        if x < -0.01 {
+            assert_eq!(*state, Validity::BeyondBorder, "overhang vertex at x = {x}");
+        } else if x > 0.01 {
+            assert_eq!(*state, Validity::Measured, "overlap vertex at x = {x}");
+        }
+    }
+    let stats = deviation_stats(&map, 0.01);
+    let summary = stats.summary.expect("enough measured");
+    assert!(summary.max_abs < 1e-5, "{summary:?}");
+    assert_eq!(
+        stats.unmeasured.out_of_reach,
+        u32::try_from(
+            map.validity
+                .iter()
+                .filter(|s| **s == Validity::BeyondBorder)
+                .count()
+        )
+        .unwrap(),
+        "past the border counts as nothing opposite"
+    );
+}
+
+/// A vertex standing over the rim still reads its deviation there.
+#[test]
+fn a_vertex_over_the_rim_is_still_measured() {
+    let (fixed_p, fixed_i) = grid(0.0, 0.0, 8, 8, 0.5);
+    let moving_p = vec![0.0, 2.0, 0.3, 0.0, 2.5, 0.3, 0.02, 2.0, 0.3];
+    let map = map_against((&fixed_p, &fixed_i, None), (&moving_p, &[0, 1, 2]));
+    for (value, state) in map.signed_mm.iter().zip(&map.validity) {
+        assert_eq!(*state, Validity::Measured);
+        assert!((value - 0.3).abs() < 1e-4, "{value}");
+    }
+}
+
+/// A region painted out of the fixed scan leaves a hole; the moving surface
+/// over it has no counterpart and used to read its distance to the hole's rim.
+#[test]
+fn a_hole_painted_out_of_the_fixed_scan_is_not_measured_as_rim_distance() {
+    let (fixed_p, fixed_i) = grid(0.0, 0.0, 40, 40, 0.25);
+    let hole = |x: f32, y: f32| ((x - 5.0).powi(2) + (y - 5.0).powi(2)).sqrt() <= 1.5;
+    let mask: Vec<u8> = fixed_p
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|p| {
+            if hole(p[0], p[1]) {
+                crate::EXCLUDED
+            } else {
+                crate::INCLUDED
+            }
+        })
+        .collect();
+    let (moving_p, moving_i) = grid(0.0, 0.0, 40, 40, 0.25);
+    let map = map_against((&fixed_p, &fixed_i, Some(&mask)), (&moving_p, &moving_i));
+    let mut inside = 0;
+    for (vertex, state) in map.validity.iter().enumerate() {
+        let (x, y) = (moving_p[vertex * 3], moving_p[vertex * 3 + 1]);
+        if ((x - 5.0).powi(2) + (y - 5.0).powi(2)).sqrt() <= 1.0 {
+            inside += 1;
+            assert_eq!(*state, Validity::BeyondBorder, "({x}, {y}) over the hole");
+        }
+    }
+    assert!(inside > 30);
+    let summary = deviation_stats(&map, 0.01).summary.expect("measured");
+    assert!(summary.max_abs < 1e-5, "{summary:?}");
+}
+
+/// Two faces meeting at a ridge sharper than 90 degrees. Every point above the
+/// ridge is outside the solid and must read positive whichever face the file
+/// lists first; the face normal of the tie-winning triangle got half of them
+/// negative.
+#[test]
+fn outside_a_sharp_ridge_reads_positive_in_either_face_order() {
+    let positions: Vec<f32> = vec![
+        0.0, 0.0, 0.0, //
+        0.0, 4.0, 0.0, //
+        -1.0, 0.0, -3.0, //
+        -1.0, 4.0, -3.0, //
+        1.0, 0.0, -3.0, //
+        1.0, 4.0, -3.0,
+    ];
+    let left = [0, 3, 2, 0, 1, 3];
+    let right = [0, 5, 1, 0, 4, 5];
+    for indices in [[left, right].concat(), [right, left].concat()] {
+        for (x, z) in [(0.5, 0.5), (-0.5, 0.5), (0.0, 0.7), (0.3, 0.9), (-0.3, 0.9)] {
+            let moving_p = vec![x, 2.0, z, x + 0.001, 2.0, z, x, 2.001, z];
+            let map = map_against((&positions, &indices, None), (&moving_p, &[0, 1, 2]));
+            assert_eq!(map.validity[0], Validity::Measured);
+            assert!(
+                map.signed_mm[0] > 0.0,
+                "({x}, {z}) read {}",
+                map.signed_mm[0]
+            );
+        }
+    }
+}
+
+/// STL repeats every corner per facet. Welding by position keeps the ridge an
+/// interior edge shared by both faces; unwelded, every edge would look like
+/// open border and the points above the ridge would read as beyond it.
+#[test]
+fn an_unwelded_soup_still_shares_its_edges() {
+    let welded: Vec<f32> = vec![
+        0.0, 0.0, 0.0, //
+        0.0, 4.0, 0.0, //
+        -1.0, 0.0, -3.0, //
+        -1.0, 4.0, -3.0, //
+        1.0, 0.0, -3.0, //
+        1.0, 4.0, -3.0,
+    ];
+    let mut positions = Vec::new();
+    for vertex in [0usize, 3, 2, 0, 1, 3, 0, 5, 1, 0, 4, 5] {
+        positions.extend_from_slice(&welded[vertex * 3..vertex * 3 + 3]);
+    }
+    let indices: Vec<u32> = (0..12).collect();
+    for (x, z) in [(0.5, 0.5), (-0.5, 0.5), (0.3, 0.9)] {
+        let moving_p = vec![x, 2.0, z, x + 0.001, 2.0, z, x, 2.001, z];
+        let map = map_against((&positions, &indices, None), (&moving_p, &[0, 1, 2]));
+        assert_eq!(map.validity[0], Validity::Measured, "({x}, {z})");
+        assert!(
+            map.signed_mm[0] > 0.0,
+            "({x}, {z}) read {}",
+            map.signed_mm[0]
+        );
+    }
+}

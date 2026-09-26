@@ -428,6 +428,7 @@ fn fit_rejection_parts(rejection: FitRejection) -> (&'static str, String, String
         FitRejection::NoImprovement => "align-reject-no-improvement",
         FitRejection::Ambiguous => "align-reject-ambiguous",
         FitRejection::NonFinite => "align-reject-nonfinite",
+        FitRejection::Inconsistent { .. } => "align-reject-inconsistent",
     };
     (key, String::new(), String::new())
 }

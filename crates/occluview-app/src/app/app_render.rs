@@ -752,7 +752,7 @@ impl OccluViewApp {
         true
     }
 
-    pub(super) fn set_scene(&mut self, scene: Scene, reset_camera: bool) {
+    pub(super) fn set_scene(&mut self, mut scene: Scene, reset_camera: bool) {
         self.document.content_revision = self.document.content_revision.wrapping_add(1);
         // The drag is ended here, and WHICH form is decided by what happens to
         // the layer, not by where the code sits. `set_scene` is reached by two
@@ -784,7 +784,17 @@ impl OccluViewApp {
         // WITHOUT necessarily changing topology_id (a sculpt commit preserves
         self.tools.sculpt.invalidate_session();
         self.document.unsaved_sculpt_stroke = false;
+        // A measured map is display state derived from one pose, and this
+        // install invalidates it (`forget_align_fit` below). One arriving here
+        // came from a history step or a snapshot taken while a map was up; the
+        // tool no longer shows it, so nothing would ever take it off again.
+        for entry in scene.meshes_mut() {
+            if entry.overlay_kind() == Some(occluview_core::OverlayKind::Measured) {
+                entry.clear_overlay();
+            }
+        }
         self.document.scene = Some(Arc::new(scene));
+        self.enrol_align_arrivals();
         self.clear_live_viewport();
         self.render.prepared_scene = None;
         self.render.prepared_selection_overlay = None;
