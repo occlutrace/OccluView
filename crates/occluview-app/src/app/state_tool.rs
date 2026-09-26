@@ -49,7 +49,7 @@ pub(super) struct ToolState {
     pub(super) align: AlignState,
     /// The occlusal contact reading: the pair it runs between, the law it is
     /// read under, the load depth, the packed fields the viewport paints, and
-    /// its own worker. Deliberately independent of `align`: a reading runs over
+    /// its own worker. Independent of `align`: a reading runs over
     /// its own pair and takes its roles as arguments, so nothing here can pick
     /// up whichever scans the alignment happened to be looking at.
     pub(super) contacts: crate::contact::ContactState,

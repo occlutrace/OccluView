@@ -22,7 +22,7 @@ struct DabInput {
     kind: SculptToolKind,
     shift: bool,
     dt: f32,
-    /// Whether the primary button was PRESSED this frame, i.e. a fresh edge.
+    /// Whether the primary button was pressed this frame, i.e. a fresh edge.
     ///
     /// A stroke may only begin on an edge. Carried through the input rather than
     /// re-read inside the dab loop so the frame that decides it is the same one
@@ -30,7 +30,7 @@ struct DabInput {
     fresh_press: bool,
 }
 
-/// A frame's dab request in WORLD space plus the resolved kernel mode/strength;
+/// A frame's dab request in world space plus the resolved kernel mode/strength;
 /// [`schedule_dabs`] converts to the layer's local space and spaces the dabs.
 struct DabParams {
     hit_world: Vec3,
@@ -242,14 +242,14 @@ impl OccluViewApp {
         false
     }
 
-    /// Arm a sculpt tool idempotently — the hotkey only turns a tool ON.
+    /// Arm a sculpt tool idempotently — the hotkey only turns a tool on.
     fn arm_sculpt_tool(&mut self, kind: SculptToolKind, ctx: &egui::Context) {
         if self.tools.sculpt.armed != Some(kind) {
             self.toggle_sculpt_tool(kind, ctx);
         }
     }
 
-    /// One frame of the sculpt gesture. Returns `true` only while the PRIMARY
+    /// One frame of the sculpt gesture. Returns `true` only while the primary
     /// button drives a sculpt this frame, so RMB orbit / MMB / wheel keep
     /// working with a brush armed.
     pub(super) fn handle_sculpt_drag(
@@ -364,25 +364,25 @@ impl OccluViewApp {
             }
             Some(_) => {}
             None => {
-                // A stroke starts on a PRESS EDGE, never on a held button.
+                // A stroke starts on a press edge, never on a held button.
                 //
                 // Two paths reach here with the button already down and no
                 // stroke. Ctrl+Z mid-drag is the important one: the shortcut is
                 // read before the viewport input, it takes the stroke, queues
                 // the worker `Finish` and — because the worker is busy — parks
                 // `pending_history` instead of undoing. This frame still sees
-                // `Primary` down, so the old code built a SECOND StrokeState and
-                // fed dabs behind the first stroke's Finish. The parked undo
-                // then could not run while the worker had work, and the operator
-                // kept dragging, so the undo did nothing for as long as the drag
-                // lasted and finally undid that second stroke — not the one they
-                // were looking at when they asked. The other path is a mid-drag
-                // invalidation (the sculpted layer hidden), which re-armed the
-                // brush on whichever layer `sculpt_target` fell back to while
-                // the editor still named the hidden one.
+                // `Primary` down, so starting here would build a second
+                // StrokeState and feed dabs behind the first stroke's Finish.
+                // The parked undo cannot run while the worker has work, so it
+                // would do nothing for as long as the drag lasts and finally
+                // undo that second stroke, not the one the operator was looking
+                // at. The other path is a mid-drag invalidation (the sculpted
+                // layer hidden), which would re-arm the brush on whichever layer
+                // `sculpt_target` falls back to while the editor still names the
+                // hidden one.
                 //
-                // Waiting for a fresh press is the general fix: it covers every
-                // invalidation, not just the undo one.
+                // Waiting for a fresh press covers every invalidation, not just
+                // the undo one.
                 if !input.fresh_press || self.tools.sculpt.pending_history.is_some() {
                     ctx.request_repaint();
                     return;
@@ -919,8 +919,8 @@ fn sculpt_target(
         })
 }
 
-/// Quiet semantic colors: build, carve, and smooth remain distinguishable but
-/// do not introduce the saturated blue accent used by the old editor chrome.
+/// Quiet semantic colors: build, carve, and smooth remain distinguishable
+/// without introducing a saturated blue accent.
 fn sculpt_cursor_color(kind: SculptToolKind, shift: bool) -> egui::Color32 {
     match (kind, shift) {
         (SculptToolKind::AddRemove, false) => egui::Color32::from_rgb(255, 145, 58),

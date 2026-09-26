@@ -56,7 +56,7 @@ impl OccluViewApp {
             return;
         }
         // screen_rect unavailable (first frame): leave the count unrecorded so
-        // the next frame retries instead of silently dropping the request.
+        // the next frame retries instead of dropping the request.
         let Some(screen) = ctx.input(|input| input.raw.screen_rect) else {
             return;
         };
@@ -119,24 +119,25 @@ impl OccluViewApp {
 
         // Structural edits remain synchronous and may be expensive on large meshes.
         //
-        // A contact action takes its own path first and NEVER builds a draft: it
+        // A contact action takes its own path first and never builds a draft: it
         // measures the scene and may clear an align overlay, and clearing that
-        // overlay edits the document's LIVE scene in place. `live_scene_mut`
+        // overlay edits the document's live scene in place. `live_scene_mut`
         // asserts in debug that it holds the only `Arc<Scene>`, and `scene` is a
         // second handle held by the caller (the layer menu and the viewport
-        // right-click menu both pass one), so a normal gesture — Layers or
-        // right-click -> Contacts while a Best-fit heatmap is up — tripped the
-        // assertion in a debug build; in release the document copied the scene
-        // and the caller's handle went stale for the rest of the action.
-        // The draft below must therefore not be built for this case, and the
-        // borrowed scene has to be gone before the action runs.
+        // right-click menu both pass one), so with that handle alive a normal
+        // gesture — Layers or right-click -> Contacts while a Best-fit heatmap
+        // is up — would trip the assertion in a debug build, and in release the
+        // document would copy the scene and the caller's handle would go stale
+        // for the rest of the action. The draft below must therefore not be
+        // built for this case, and the borrowed scene has to be gone before the
+        // action runs.
         if let Some(request) = changes.context_request {
             if matches!(
                 request.action,
                 crate::layer_actions::LayerContextAction::Contacts
                     | crate::layer_actions::LayerContextAction::HideContacts
             ) {
-                // The draft is a COPY of the scene, so it carries the layers the
+                // The draft is a copy of the scene, so it carries the layers the
                 // action needs while being no handle on the live one. Dropping
                 // `scene` first is what leaves `live_scene_mut` holding the only
                 // `Arc` when the clear runs.
@@ -224,8 +225,8 @@ impl OccluViewApp {
     }
 
     /// Keep one restore history for every visibility owner, not only the
-    /// Ctrl+Middle shortcut. Layer-row toggles and any future context action
-    /// therefore participate in the same Shift+Ctrl restore stack.
+    /// Ctrl+Middle shortcut. Layer-row toggles therefore participate in the
+    /// same Shift+Ctrl restore stack.
     fn remember_visibility_changes(&mut self, before: &Scene, after: &Scene) {
         for entry in after.meshes() {
             let previous = before
@@ -301,11 +302,11 @@ impl OccluViewApp {
     /// on — the two facts the layer rows and the viewport menu need.
     ///
     /// Computed once per frame from the live scene rather than stored beside the
-    /// reading: readability depends on the OTHER layers (a reading needs a
+    /// reading: readability depends on the other layers (a reading needs a
     /// second visible surface), so a stored copy would go stale the moment a
     /// scan was hidden or removed.
     pub(super) fn contact_rows(&self, scene: &Scene) -> (Vec<bool>, Vec<bool>) {
-        // Which layers the menu offers to CLOSE on. A reading paints BOTH arches,
+        // Which layers the menu offers to close on. A reading paints both arches,
         // so either participant can take the marks down — `HideContacts` closes
         // the pair whichever row raised it.
         let pair = self.tools.contacts.pair();
@@ -464,7 +465,7 @@ impl OccluViewApp {
 
     /// Shift+MiddleClick: toggle the layer under the cursor between opaque and
     /// a translucent inspection state, remembering its previous opacity so a
-    /// second toggle restores exactly what the operator had.
+    /// second toggle restores what the operator had.
     pub(super) fn toggle_layer_translucency_under_cursor(
         &mut self,
         response: &egui::Response,
@@ -619,13 +620,8 @@ mod tests {
         );
     }
 
-    /// Both arches of a reading must offer to close it.
-    ///
-    /// A reading paints both participants, so a row that wears marks must say
-    /// so or its menu offers to open a *second* reading on the same two scans
-    /// while the first is still up. The rows are built from the pair, not from
-    /// its subject: this pins the shape that makes that possible — a flag per
-    /// layer, since one "marked index" can only ever name one of the two.
+    /// Opening the context menu abandons an in-progress lasso outline and
+    /// leaves a marquee drag untouched.
     #[test]
     fn context_menu_drops_only_an_in_progress_lasso() {
         let mut lasso = Some(MeshSelectionDrag::Lasso {

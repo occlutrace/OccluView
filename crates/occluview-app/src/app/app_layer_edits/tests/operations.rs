@@ -92,7 +92,7 @@ fn undo_leaves_the_restored_layer_with_a_cached_bounding_box() {
         return;
     };
 
-    // Make the layer cold BEFORE the edit, so the snapshot the history keeps
+    // Make the layer cold before the edit, so the snapshot the history keeps
     // is the cold one and the undo restores it.
     let vertices = scene.meshes()[0].mesh.vertices().to_vec();
     let Some(cold) = scene.meshes()[0]
@@ -289,7 +289,7 @@ fn selected_face_mesh_edit_refuses_whole_mesh_selection() {
         let Ok(apply) = apply else {
             return;
         };
-        // Refused honestly: nothing changed, no phantom undo, not dirty.
+        // Refused: nothing changed, no undo step, not dirty.
         assert!(!apply.scene_changed);
         assert_eq!(scene.meshes().len(), 1);
         assert_eq!(scene.meshes()[0].mesh.triangle_count(), 2);
@@ -459,11 +459,11 @@ fn selected_face_mesh_cut_creates_new_layer_and_scene_undo_restores_structure() 
 
 #[test]
 fn structural_undo_is_refused_when_a_layer_is_appended_after_the_cut() {
-    // Scenario 6: cut spawns a new layer, then the operator appends ANOTHER
+    // Scenario 6: cut spawns a new layer, then the operator appends another
     // layer (a separate load). Undoing the cut would restore the pre-cut
-    // whole-scene snapshot and silently delete the appended layer, so it is
-    // refused: the scene is left untouched (the wrapper reports the honest
-    // "scene changed since" status).
+    // whole-scene snapshot and delete the appended layer, so it is refused:
+    // the scene is left untouched (the wrapper reports the "scene changed
+    // since" status).
     let Some(mut scene) = scene_with_two_triangles() else {
         return;
     };

@@ -1,9 +1,8 @@
 //! The pointer-and-camera arithmetic both disc tools build a frame from.
 //!
 //! Cut View and Bridge Split drive the same [`crate::cut_manipulator`] with the
-//! same gestures over the same Section panel. Everything here was written out
-//! twice, once in each tool, which is how two tools come to disagree about what
-//! the wheel does over one panel.
+//! same gestures over the same Section panel. Sharing this arithmetic keeps the
+//! two tools from disagreeing about what the wheel does over one panel.
 
 use super::app_cut_measure::CUT_WHEEL_PX_PER_NOTCH;
 use super::egui;
@@ -14,9 +13,7 @@ use glam::Vec3;
 /// notches, draining it so it never reaches the camera.
 ///
 /// Both disc tools scope the wheel the same way: the same drain, the same
-/// division by [`CUT_WHEEL_PX_PER_NOTCH`], the same ctrl branch. Change the
-/// gesture in one copy and an operator gets two tools whose wheels behave
-/// differently over one panel.
+/// division by [`CUT_WHEEL_PX_PER_NOTCH`], the same ctrl branch.
 pub(super) fn section_panel_wheel(
     ctx: &egui::Context,
     over_section_panel: bool,
@@ -46,8 +43,8 @@ pub(super) struct DiscViewGeometry {
 
 /// Where the pointer's ray starts and which way the camera is facing.
 ///
-/// With no pointer the ray starts at the eye, which is what a disc nobody is
-/// aiming wants.
+/// With no pointer the ray starts at the eye, which suits a disc that is not
+/// being aimed.
 pub(super) fn disc_view_geometry(
     camera: &occluview_core::Camera,
     viewport_rect: egui::Rect,

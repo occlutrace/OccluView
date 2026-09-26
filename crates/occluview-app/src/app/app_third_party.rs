@@ -9,8 +9,7 @@ use std::sync::OnceLock;
 
 /// The attribution file the artifacts ship, embedded verbatim. `include_str!`
 /// ties the app's rebuild to regeneration, so this window and the installed
-/// file cannot disagree — and a missing file is a compile error, not a
-/// shipping surprise.
+/// file cannot disagree, and a missing file is a compile error.
 const THIRD_PARTY_NOTICES: &str = include_str!("../../../../THIRD-PARTY-NOTICES.md");
 
 /// The notices split once into lines. A quarter-megabyte in one label would
@@ -22,7 +21,7 @@ fn notice_lines() -> &'static [&'static str] {
 }
 
 impl OccluViewApp {
-    // Canonical title "Third-party licenses" pinned by source guards.
+    // Canonical title "Third-party licenses".
     pub(super) fn show_third_party_window(&mut self, ctx: &egui::Context) {
         if self.ui.information_dialog != InformationDialog::ThirdPartyNotices {
             return;

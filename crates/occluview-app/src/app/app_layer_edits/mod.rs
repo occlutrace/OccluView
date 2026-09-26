@@ -73,9 +73,9 @@ pub(super) fn apply_layer_context_action_with_status(
     ) {
         // The operator marks faces with the Marquee or the Lasso, and those
         // marks live on every visible layer they crossed. Running the action
-        // against only the layer the menu was opened on left the other marked
-        // layers untouched — "it only edits one object" — so the action follows
-        // the same visible-selection plan the Mesh Editor's own buttons use.
+        // against only the layer the menu was opened on would leave the other
+        // marked layers untouched, so the action follows the same
+        // visible-selection plan the Mesh Editor's own buttons use.
         return apply_visible_selection_action_with_status(app, scene, paths, request);
     }
 
@@ -204,7 +204,7 @@ pub(super) fn with_undoable_note(
 /// [`commit_layer_edit`].
 pub(super) enum LayerEditResolution {
     /// Applied; `changed` selects the undoable commit (unsaved-tracked,
-    /// undoability-noted status) from the honest noop (snapshot discarded,
+    /// undoability-noted status) from the content no-op (snapshot discarded,
     /// status as written).
     Applied { changed: bool, status: String },
     /// Refused by the kernel; rendered into the shared failure dialog.

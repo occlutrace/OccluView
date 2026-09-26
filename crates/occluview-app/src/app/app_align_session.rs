@@ -45,7 +45,7 @@ impl OccluViewApp {
     ///
     /// Walks the live scene, not the snapshot: a layer that arrived mid-session
     /// is inside the transaction too, and reporting "nothing moved" after
-    /// dragging it would be a lie Cancel then acts on.
+    /// dragging it would be a false report that Cancel then acts on.
     pub(super) fn align_session_moved(&self) -> bool {
         let Some(scene) = self.document.scene.as_ref() else {
             return false;
@@ -68,11 +68,11 @@ impl OccluViewApp {
 
     /// Put every layer back to the pose the session started from.
     ///
-    /// The restore is itself one history step. Without it the scene changed
-    /// under a history stack that still described the discarded poses, so
-    /// Ctrl+Z after Cancel resurrected work the operator had just thrown away.
-    /// As one step, Ctrl+Z means "actually, put the alignment back" — which is
-    /// what an operator who cancelled by mistake wants.
+    /// The restore is itself one history step. Without it the scene would change
+    /// under a history stack that still describes the discarded poses, and
+    /// Ctrl+Z after Cancel would resurrect work the operator has just discarded.
+    /// As one step, Ctrl+Z after Cancel puts the alignment back, which recovers
+    /// a Cancel made by mistake.
     fn restore_session_poses(&mut self) -> bool {
         if !self.align_session_moved() {
             return false;

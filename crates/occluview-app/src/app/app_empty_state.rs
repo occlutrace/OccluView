@@ -6,8 +6,8 @@ use super::{egui, OccluViewApp};
 impl OccluViewApp {
     /// While files hover anywhere over the window, switch to the copy cursor so
     /// a drag is answered with "this will open" before the operator lets go.
-    /// The viewport itself stays visually clean; the old full-surface stroke
-    /// made a permanent-looking strip around the 3D canvas.
+    /// The viewport itself stays visually clean: a full-surface stroke would
+    /// read as a permanent strip around the 3D canvas.
     pub(super) fn set_drop_hover_cursor_if_hovering(ctx: &egui::Context) {
         let hovering = ctx.input(|input| !input.raw.hovered_files.is_empty());
         if !hovering {
@@ -18,7 +18,7 @@ impl OccluViewApp {
 
     /// The viewport's empty state: a centered call to action over the bare
     /// clear color. Clicking it opens the same native dialog as the toolbar
-    /// Open button; the Ctrl+O hint is real — it is the one wired shortcut.
+    /// Open button; the Ctrl+O hint names the one wired shortcut.
     pub(super) fn show_empty_state(
         &mut self,
         ui: &mut egui::Ui,

@@ -1,8 +1,7 @@
 //! Moving a scan by hand while Align Scans is armed.
 //!
-//! Split from `app_align` because it answers a different question: that module
-//! routes clicks and jobs, this one owns one continuous pointer gesture and the
-//! single history entry it becomes.
+//! `app_align` routes clicks and jobs; this module owns one continuous pointer
+//! gesture and the single history entry it becomes.
 
 use eframe::egui;
 use glam::{Affine3A, Vec3};
@@ -63,9 +62,9 @@ impl OccluViewApp {
     ) -> bool {
         // Dragging a scan lives in the Manually tab, the way lab software
         // splits it. In the Automatically tab a press is always a landmark:
-        // egui promotes a press to a drag after six pixels OR eight tenths of a
-        // second, so without this gate a careful click on a cusp moved the scan
-        // instead of placing a point.
+        // egui promotes a press to a drag after six pixels or eight tenths of a
+        // second, so without this gate a careful click on a cusp would move the
+        // scan instead of placing a point.
         if self.tools.align.tab != crate::align_panel::AlignTab::Manually {
             return self.finish_align_drag();
         }
@@ -134,12 +133,11 @@ impl OccluViewApp {
             // The scan being placed gets first refusal on the grab.
             //
             // Two scans in an alignment overlap by definition, so the nearest
-            // surface under the cursor is often the OTHER one. An operator aiming
-            // at the arch they are placing grabbed the reference instead, moved
-            // it, pressed Done, then exported the arch they had aimed at — which
-            // came back in its original position, with nothing anywhere
-            // connecting the two. Only after the moving scan misses entirely does
-            // the general pick run, so deliberately grabbing the reference still
+            // surface under the cursor is often the other one. Picking it would
+            // move the reference while the operator aims at the arch being
+            // placed, and exporting that arch would return it in its original
+            // position. Only after the moving scan misses entirely does the
+            // general pick run, so grabbing the reference on purpose still
             // works: aim where the moving scan is not.
             let hit = self
                 .tools
@@ -164,8 +162,8 @@ impl OccluViewApp {
             //
             // The inverse is guarded, and the guard has to be a magnitude check,
             // not `is_finite` alone. A nearly singular pose (a scale a few orders
-            // below a millimetre) inverts to a FINITE matrix with entries around
-            // 1e30, so `is_finite` passes and the pivot lands light-years away;
+            // below a millimetre) inverts to a finite matrix with entries around
+            // 1e30, so `is_finite` passes and the pivot lands far off the scene;
             // the step built from it then carries the scan off screen. The
             // relative bound is applied later, against the layer's own size, so
             // the decision does not depend on where the scene sits in the world.
@@ -183,16 +181,16 @@ impl OccluViewApp {
             // Nothing below reads the scene, and what follows edits it in
             // place: `forget_align_fit` reaches `live_scene_mut` through the
             // deviation overlay, and a second handle alive there copies the
-            // container. It survives today only because of an early return
-            // three modules away, which is not a guarantee this function makes.
+            // container. This function drops its own handle instead of relying
+            // on an early return in another module.
             drop(scene);
             // The map describes the pose the scan is leaving. Dropped once, at
-            // the start of the gesture, rather than at the end: for the whole
-            // duration of a hand-drag the colours stayed welded to the surface
-            // at distances that were no longer true, which reads as a heatmap
-            // that agrees with wherever the operator drags it.
+            // the start of the gesture, rather than at the end: otherwise for
+            // the whole hand-drag the colours would stay on the surface at
+            // distances that are no longer true, reading as a heatmap that
+            // agrees with wherever the operator drags it.
             self.forget_align_fit(&self.ui.locale.tr("align-status-moving-hand"));
-            // Said at the START as well as the end, because this is the moment
+            // Said at the start as well as the end, because this is the moment
             // the operator can still let go and try again if they grabbed the
             // arch they did not mean to.
             if let Some(name) = self.layer_display_name(hit.layer_id) {
@@ -232,7 +230,7 @@ impl OccluViewApp {
 
     /// The world-space step one drag frame applies.
     ///
-    /// Split out of the gesture handler so the pivot decision, the constraint
+    /// Kept apart from the gesture handler so the pivot decision, the constraint
     /// handling and the screen-to-world conversion are readable on their own and
     /// the handler stays a state machine. `None` means the frame produced no
     /// usable step (a rotation whose pivot could not be resolved), which is not
@@ -279,7 +277,7 @@ impl OccluViewApp {
         // Which point the turn fixes is always the point the operator grabbed:
         // the constraint chooses the rotation axis, never the pivot. The grabbed
         // point is carried in the layer's own frame and mapped through its
-        // CURRENT pose, so a gesture that has already moved the scan keeps
+        // current pose, so a gesture that has already moved the scan keeps
         // turning about the same physical point under the cursor. A grab that
         // cannot be trusted (a singular pose, a point outside the scan) falls
         // back to the layer centre rather than freezing the gesture.
@@ -301,9 +299,9 @@ impl OccluViewApp {
     ///
     /// The update goes through the material path, not the structural one. A
     /// pose change is four rows of numbers; routing it through `set_scene` per
-    /// mouse-move frame cancelled the bridge-split session, invalidated the
-    /// sculpt session, and wiped every ruler measurement on screen — mid-drag.
-    /// It goes in PLACE, too. A pose is a transform, and the commit path that
+    /// mouse-move frame would cancel the bridge-split session, invalidate the
+    /// sculpt session, and wipe every ruler measurement on screen mid-drag.
+    /// It also goes in place. A pose is a transform, and the commit path that
     /// would carry it also rebuilds bookkeeping the drag would then have to
     /// undo each frame; going in place keeps a mouse-move frame to the fields
     /// it actually changes.
@@ -356,12 +354,12 @@ impl OccluViewApp {
         {
             entry.transform = drag.start;
         }
-        // Marked unsaved BEFORE the history step is attempted, because the pose is
-        // already in the live scene — `nudge_align_layer` put it there frame by
-        // frame. When the edit state machine was busy at the release frame this
-        // function returned here, and the move went unrecorded AND unflagged: the
-        // scan sat in its new pose, the close guard could not see it, and the app
-        // shut without asking.
+        // Marked unsaved before the history step is attempted, because the pose
+        // is already in the live scene (`nudge_align_layer` put it there frame
+        // by frame). A moved scan is unsaved work: the viewer has no project
+        // file, so the pose is the work product. When the edit state machine is
+        // busy at the release frame this function returns without a history
+        // step, and the flag still lets the close guard ask before the app shuts.
         self.document.mark_mesh_edits_unsaved(drag.layer);
         let Some(token) = self.document.edit_mode.begin_scene_edit(
             &before,
@@ -383,14 +381,9 @@ impl OccluViewApp {
             .edit_mode
             .finish_scene_edit_success(token, &after);
         self.set_scene(after, false);
-        // A moved scan is unsaved work. The viewer has no project file, so the
-        // pose IS the work product: without this the app closes without asking
-        // and the alignment is gone.
-        // Named, and with the distance. This tool moves whichever scan the
-        // operator grabbed — the fixed one included — and nothing on screen said
-        // which that was. An operator who grabs the wrong arch by accident finds
-        // out later, from an export that came back in its original place, with no
-        // way to connect the two.
+        // The status names the scan and the distance. This tool moves whichever
+        // scan the operator grabbed, the fixed one included, so the status is
+        // where an operator who grabbed the wrong arch by accident finds out.
         let moved_mm = f64::from((current.translation - drag.start.translation).length());
         let name = self
             .layer_display_name(drag.layer)
@@ -441,8 +434,8 @@ mod tests {
     ///
     /// This is the end-to-end path the unit tests below cannot reach — the
     /// constraint choice, the local-to-world mapping and the pre-multiplication
-    /// all live in `align_drag_step`, so a regression there (for example falling
-    /// back to the layer centre) would otherwise ship green.
+    /// all live in `align_drag_step`, so a pivot error there (for example
+    /// falling back to the layer centre) would otherwise go undetected.
     #[test]
     fn a_ctrl_drag_step_turns_about_the_grabbed_point_for_every_constraint() {
         for constraint in [

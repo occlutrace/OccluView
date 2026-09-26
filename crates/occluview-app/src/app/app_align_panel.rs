@@ -1,8 +1,7 @@
 //! What the Align Scans windows asked for, and what happens when they ask.
 //!
-//! Split from `app_align` because it answers a different question: that module
-//! routes viewport clicks and worker jobs, this one owns the two windows — the
-//! panel and the Brush tool — and the actions they return.
+//! `app_align` routes viewport clicks and worker jobs; this module owns the two
+//! windows — the panel and the Brush tool — and the actions they return.
 
 use eframe::egui;
 
@@ -24,10 +23,10 @@ fn action_after_tab_change(
 impl OccluViewApp {
     /// A stationary right-click takes the last point back.
     ///
-    /// The operator asked for this by name: placing the first half of a pair
-    /// and then having to reach for a button to undo it is a trip away from
-    /// the geometry they are looking at. A right-click that has nothing to take
-    /// back is left alone, so the scene menu still opens on empty space.
+    /// Undoing a half-placed pair stays on the geometry the operator is looking
+    /// at instead of requiring a trip to a button. A right-click that has
+    /// nothing to take back is left alone, so the scene menu still opens on
+    /// empty space.
     pub(super) fn handle_align_undo_click(
         &mut self,
         response: &egui::Response,
@@ -148,10 +147,10 @@ impl OccluViewApp {
             // A running job holds the settings snapshot it was submitted with,
             // so its generation is dead the moment one of these inputs moves.
             // Abandoning is therefore unconditional: gating it on the refined
-            // claim let an orientation edit land inside a running Best fit, and
-            // that job then armed the claim from inputs the operator had
-            // already changed. The user-facing "measure again" notice still
-            // waits for a fit that actually existed.
+            // claim would let an orientation edit land inside a running Best
+            // fit, and that job would then arm the claim from inputs the
+            // operator has already changed. The user-facing "measure again"
+            // notice still waits for a fit that actually existed.
             if self.tools.align.refined_match_ready {
                 self.forget_align_fit(&self.ui.locale.tr("align-status-settings-changed"));
             } else {
