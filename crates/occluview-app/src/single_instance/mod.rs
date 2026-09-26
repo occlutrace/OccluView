@@ -23,8 +23,17 @@ mod windows;
 
 pub(crate) use activation::{capture_activation_token, complete_startup_notification, RaiseTarget};
 
-#[cfg(target_os = "macos")]
+/// Add the Finder document handlers as the application finishes launching.
+/// Call before the event loop runs. Nothing to do off macOS.
+pub(crate) fn install_open_files_handler_at_launch() {
+    #[cfg(target_os = "macos")]
+    macos_open_files::install_when_launching();
+}
+
+/// Add the Finder document handlers now, if the launch observer has not.
+/// Nothing to do off macOS.
 pub(crate) fn install_open_files_handler() {
+    #[cfg(target_os = "macos")]
     macos_open_files::install();
 }
 

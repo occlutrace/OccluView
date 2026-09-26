@@ -16,12 +16,13 @@ remain in the Git history.
 - Marked surface is drawn blue over the scan's own colour, texture and lighting.
 - "Fit everywhere" on a scan with nothing marked leaves the scan unchanged.
 - Ruler: after the first point, a click on a drawn ruler line ends the
-  measurement at the foot of the perpendicular on that line, marked with a right
-  angle. This measures, for example, the Korkhaus anterior arch length from the
-  incisal point to the line through Pont's premolar points, which runs above the
-  palate. The length is the 3D perpendicular. Hovering a line previews the
-  perpendicular and its length; moving the first point or either end of the
-  base line keeps the right angle.
+  measurement on that line, for example the Korkhaus anterior arch length from
+  the incisal point to the line through Pont's premolar points, which runs above
+  the palate. The end goes where the click is along the line; the ruler shows
+  its 3D length and the smaller angle to the line, and the end can be dragged
+  along the line. A strip over the viewport and Settings choose between any
+  angle and 90° (the foot of the perpendicular); Shift uses the other choice
+  while held.
 - Ruler: pressing an end without moving the mouse leaves it in place. It
   follows the pointer once the pointer moves.
 - The contact reading names the scan it is measured against when the scene has

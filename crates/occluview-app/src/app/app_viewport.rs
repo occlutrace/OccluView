@@ -359,9 +359,13 @@ impl OccluViewApp {
             }
         }
 
-        if response.hovered() {
-            // Pixel-unit wheel events pan like a dragged canvas; pinch
-            // magnification below owns zoom, while line-unit mouse wheels zoom.
+        // On macOS, pixel-unit scroll (a trackpad's two fingers) pans like a
+        // dragged canvas and the pinch below zooms, the platform's convention.
+        // Elsewhere pixel-unit scroll keeps zooming: winit reports a Wayland
+        // touchpad in pixels and has no pinch there, so panning would leave
+        // that touchpad with no way to zoom. A wheel the sculpt brush took
+        // this frame does not also move the camera.
+        if response.hovered() && cfg!(target_os = "macos") && !sculpt_wheel_used {
             changed |= pan_camera_from_point_scroll(camera, ctx, viewport_rect);
         }
 
