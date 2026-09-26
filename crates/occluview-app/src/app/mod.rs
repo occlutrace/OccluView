@@ -72,6 +72,7 @@ mod app_render;
 #[cfg(test)]
 mod app_render_characterization_tests;
 mod app_render_contact;
+mod app_ruler_options;
 mod app_scale_bar;
 mod app_scene_commit;
 mod app_scene_export;
