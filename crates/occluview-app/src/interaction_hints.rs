@@ -174,7 +174,11 @@ const ALIGN_AND_MEASURE: &[HintRow] = &[
     },
     HintRow {
         gesture: "LMB click on a ruler line",
-        key: "help-hint-align-measure-drop-a-perpendicular-onto-a-ruler-line",
+        key: "help-hint-align-measure-end-a-ruler-on-a-ruler-line",
+    },
+    HintRow {
+        gesture: "Shift in Ruler",
+        key: "help-hint-align-measure-switch-between-any-angle-and-90",
     },
     HintRow {
         gesture: "Ctrl/Command + LMB drag",
