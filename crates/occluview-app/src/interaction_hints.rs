@@ -41,11 +41,19 @@ const NAVIGATION: &[HintRow] = &[
         key: "help-hint-navigation-pan-the-camera",
     },
     HintRow {
+        gesture: "Two-finger scroll",
+        key: "help-hint-navigation-pan-the-camera",
+    },
+    HintRow {
         gesture: "LMB + RMB drag",
         key: "help-hint-navigation-pan-the-camera-2",
     },
     HintRow {
         gesture: "Wheel",
+        key: "help-hint-navigation-zoom-toward-the-pointer",
+    },
+    HintRow {
+        gesture: "Pinch",
         key: "help-hint-navigation-zoom-toward-the-pointer",
     },
     HintRow {
@@ -310,7 +318,7 @@ pub(crate) const ALL_SECTIONS: &[HintSection] = &[
 
 pub(crate) const fn contextual_line(context: HintContext) -> &'static str {
     match context {
-        HintContext::Navigation => "RMB drag orbit · MMB drag pan · Wheel zoom · MMB click focus",
+        HintContext::Navigation => "RMB drag orbit · MMB drag pan · Trackpad scroll pan · Wheel/pinch zoom · MMB click focus",
         HintContext::MeshEditing => {
             "LMB select · Shift+click unmark · Drag rectangle · Ctrl+Z undo"
         }

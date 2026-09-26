@@ -25,6 +25,33 @@ fn missing_marker(id: &str) -> String {
     format!("⟦{id}⟧")
 }
 
+/// Render the command modifier with the platform's actual key name.
+///
+/// The catalogs keep Ctrl/Strg terminology for Windows and Linux; macOS binds
+/// these shortcuts to Command, so every localized tooltip and status message
+/// uses the native ⌘ glyph instead.
+pub(crate) fn platform_shortcut_text(text: &str) -> String {
+    #[cfg(target_os = "macos")]
+    {
+        let mut rendered = text.to_owned();
+        for (source, native) in [
+            ("Ctrl/Command", "⌘"),
+            ("Ctrl/Cmd", "⌘"),
+            ("Strg/Command", "⌘"),
+            ("Strg/Cmd", "⌘"),
+            ("Ctrl", "⌘"),
+            ("Strg", "⌘"),
+        ] {
+            rendered = rendered.replace(source, native);
+        }
+        rendered
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        text.to_owned()
+    }
+}
+
 /// Catalog key for the native window title.
 pub(crate) const NATIVE_TITLE_KEY: &str = "app-window-title";
 
@@ -208,10 +235,10 @@ impl LocaleManager {
     /// Localized text with Fluent arguments.
     pub(crate) fn text_with(&self, id: &str, args: Option<&FluentArgs<'_>>) -> String {
         if let Some(rendered) = self.active_catalog().format(id, args) {
-            return rendered;
+            return platform_shortcut_text(&rendered);
         }
         if let Some(rendered) = self.fallback.format(id, args) {
-            return rendered;
+            return platform_shortcut_text(&rendered);
         }
         missing_marker(id)
     }
@@ -230,6 +257,29 @@ mod tests {
     impl OsLocaleSource for Fixed {
         fn preferred_languages(&self) -> Vec<String> {
             self.0.iter().map(|item| (*item).to_owned()).collect()
+        }
+    }
+
+    #[test]
+    fn localized_shortcuts_use_the_host_command_modifier() {
+        let (mut manager, _) = LocaleManager::startup(None, &Fixed(vec!["en"]));
+        for tag in ["en", "de", "es", "fr", "it", "pt-BR", "ru"] {
+            manager.set_preference(UiLanguagePreference::Explicit(tag));
+            let hint = manager.text("help-hintline-align");
+            if cfg!(target_os = "macos") {
+                assert!(
+                    hint.contains('⌘'),
+                    "{tag} hint did not show Command: {hint}"
+                );
+                assert!(!hint.contains("Ctrl"), "{tag} hint retained Ctrl: {hint}");
+                assert!(!hint.contains("Strg"), "{tag} hint retained Strg: {hint}");
+            } else {
+                assert!(
+                    hint.contains("Ctrl") || hint.contains("Strg"),
+                    "{tag} hint lost its PC modifier: {hint}"
+                );
+                assert!(!hint.contains('⌘'), "{tag} hint showed a Mac glyph: {hint}");
+            }
         }
     }
 

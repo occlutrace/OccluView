@@ -29,6 +29,57 @@ pub(super) fn wheel_delta_from_events(
     })
 }
 
+fn point_scroll_delta_from_events(events: &[egui::Event]) -> egui::Vec2 {
+    events.iter().fold(egui::Vec2::ZERO, |sum, event| {
+        let egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta,
+            modifiers,
+            ..
+        } = event
+        else {
+            return sum;
+        };
+        let delta = if modifiers.shift {
+            egui::vec2(delta.x + delta.y, 0.0)
+        } else {
+            *delta
+        };
+        sum + delta
+    })
+}
+
+/// Consume pixel-unit scroll events so precision scroll surfaces can pan the viewport.
+pub(super) fn take_raw_point_wheel_delta(ctx: &egui::Context) -> egui::Vec2 {
+    ctx.input_mut(|input| {
+        let has_point_events = input.raw.events.iter().any(|event| {
+            matches!(
+                event,
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    ..
+                }
+            )
+        });
+        if !has_point_events {
+            return egui::Vec2::ZERO;
+        }
+
+        let delta = point_scroll_delta_from_events(&input.raw.events);
+        input.raw.events.retain(|event| {
+            !matches!(
+                event,
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    ..
+                }
+            )
+        });
+        input.smooth_scroll_delta = egui::Vec2::ZERO;
+        delta
+    })
+}
+
 /// Read this pass's unsmoothed wheel events without consuming them.
 pub(super) fn raw_wheel_delta(ctx: &egui::Context) -> egui::Vec2 {
     let line_scroll_speed = ctx.options(|options| options.input_options.line_scroll_speed);
@@ -87,6 +138,32 @@ mod tests {
         assert_eq!(
             wheel_delta_from_events(&events, 40.0, 600.0),
             egui::vec2(2.5, -7.0)
+        );
+    }
+
+    #[test]
+    fn point_scroll_delta_uses_only_pixel_events_and_respects_shift() {
+        let events = [
+            wheel(
+                egui::MouseWheelUnit::Point,
+                egui::vec2(4.0, -6.0),
+                egui::Modifiers::NONE,
+            ),
+            wheel(
+                egui::MouseWheelUnit::Line,
+                egui::vec2(100.0, 200.0),
+                egui::Modifiers::NONE,
+            ),
+            wheel(
+                egui::MouseWheelUnit::Point,
+                egui::vec2(2.0, 3.0),
+                egui::Modifiers::SHIFT,
+            ),
+        ];
+
+        assert_eq!(
+            point_scroll_delta_from_events(&events),
+            egui::vec2(9.0, -6.0)
         );
     }
 
