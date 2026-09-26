@@ -133,11 +133,11 @@ fn bind_socket_listener() -> std::io::Result<UnixListener> {
 
 /// How long a peer may hold the read open without finishing its request.
 ///
-/// A same-user peer that connects and then sends nothing kept `read_to_end`
-/// blocked indefinitely, which wedged the listener thread for the rest of the
-/// session — every later second-instance launch was refused even though the
-/// primary was healthy. The bound is generous for a handful of paths on a local
-/// socket and still bounds the damage.
+/// Without a bound, a same-user peer that connects and then sends nothing
+/// blocks `read_to_end` indefinitely and wedges the listener thread for the
+/// rest of the session, so every later second-instance launch is refused even
+/// though the primary is healthy. The bound is generous for a handful of paths
+/// on a local socket.
 const SOCKET_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 fn read_socket_open_request(stream: UnixStream) -> std::io::Result<Option<OpenRequest>> {

@@ -39,11 +39,10 @@ pub(crate) struct PendingSceneLoad {
     pub(crate) dirty_at_request: bool,
     /// When this request was made.
     ///
-    /// The load's OWN start time, which is already an `Instant`. A load that
-    /// finishes after a newer request was parked can compare it against the
-    /// parking's stamp and recognise that it is the older one; without that it
-    /// overwrote the newer parking and the operator's last request was dropped
-    /// without a word.
+    /// The load's own start time, which is already an `Instant`. A load that
+    /// finishes after a newer request was parked compares it against the
+    /// parking's stamp and recognises that it is the older one, so it cannot
+    /// overwrite the newer parking and drop the operator's last request.
     pub(crate) requested_at: Instant,
 }
 

@@ -137,11 +137,11 @@ pub struct Mesh {
     /// by [`Mesh::with_sculpted_vertices`] so a renderer that streamed new
     /// positions out-of-band does not re-upload.
     topology_id: u64,
-    /// Identity of the geometric CONTENT (positions/indices). Unlike
-    /// `topology_id`, this DOES change on [`Mesh::with_sculpted_vertices`], so
+    /// Identity of the geometric content (positions/indices). Unlike
+    /// `topology_id`, this changes on [`Mesh::with_sculpted_vertices`], so
     /// caches that precompute from geometry (e.g. the bridge-split prepared
     /// solid) can tell a sculpted mesh from its pre-sculpt self even though the
-    /// GPU-buffer token was deliberately held frozen.
+    /// GPU-buffer token stays frozen.
     geometry_id: u64,
     /// Lazily-built ray-pick acceleration structure (see
     /// [`Mesh::pick_ray_local`]). Shared across clones (same geometry → same
@@ -381,8 +381,8 @@ impl Mesh {
         self.topology_id
     }
 
-    /// Stable identity for the geometric CONTENT (positions/indices), fresh on
-    /// every construction AND on [`Mesh::with_sculpted_vertices`] — unlike
+    /// Stable identity for the geometric content (positions/indices), fresh on
+    /// every construction and on [`Mesh::with_sculpted_vertices`] — unlike
     /// [`Mesh::topology_id`], which a sculpt commit holds frozen. Content-derived
     /// caches (the bridge-split prepared solid) key on this so a sculpted mesh is
     /// never mistaken for its pre-sculpt self.
@@ -392,7 +392,7 @@ impl Mesh {
         self.geometry_id
     }
 
-    /// Nearest triangle hit of a MESH-LOCAL ray, using a lazily-built (and then
+    /// Nearest triangle hit of a mesh-local ray, using a lazily-built (and then
     /// cached) BVH so a pick is O(log n) instead of O(triangles) — the
     /// difference between an instant sculpt cursor and a per-frame stall on a
     /// million-triangle scan. `keep` filters candidate hit points (mesh-local);
@@ -544,13 +544,13 @@ impl Mesh {
     }
 
     /// Return a copy of this mesh with vertex positions and normals replaced
-    /// by `vertices`, KEEPING the same [`Mesh::topology_id`] so a renderer that
+    /// by `vertices`, keeping the same [`Mesh::topology_id`] so a renderer that
     /// already streamed the new positions into its GPU buffers out-of-band
-    /// (an interactive sculpt stroke) does NOT trigger a full re-upload.
+    /// (an interactive sculpt stroke) does not trigger a full re-upload.
     ///
     /// `vertices` must have the same length and order as this mesh's own
     /// vertex array (it is a sculpted copy of it); a length mismatch would make
-    /// the preserved `topology_id` lie about the GPU buffer size, so it is
+    /// the preserved `topology_id` misstate the GPU buffer size, so it is
     /// rejected and the caller must rebuild the mesh normally instead. Indices,
     /// texture, name, and the color/UV flags are unchanged; the bounding box
     /// and principal frame are recomputed from the new positions so picking,
@@ -565,7 +565,7 @@ impl Mesh {
         )));
         let cached_principal_frame =
             principal_axis::principal_frame(vertices.iter().map(|v| Vec3::from_array(v.position)));
-        // Sculpt keeps triangle topology fixed. If the old mesh was already
+        // Sculpt keeps triangle topology fixed. If this mesh is already
         // pick-warmed (the normal interactive path), refit its tree to the new
         // positions so the next stroke remains immediate instead of forcing a
         // full BVH rebuild after every committed stroke.
@@ -596,9 +596,9 @@ impl Mesh {
     /// [`Self::with_sculpted_vertices`] eagerly rebuilds the bounding box, the
     /// PCA frame and a refitted BVH, which is right for a mesh that is about to
     /// go back into the scene and be picked against. It is wrong for a mesh
-    /// that is only being kept in case someone presses undo: most strokes are
-    /// never undone, and the work lands on the stroke's first dab, where the
-    /// operator is waiting.
+    /// that is only kept for a possible undo: most strokes are never undone,
+    /// and the work lands on the stroke's first dab, where the operator is
+    /// waiting.
     ///
     /// Measured on a one-million-vertex layer: the full form costs 48 ms, of
     /// which 24 ms is the vertex copy the snapshot genuinely needs and the rest
@@ -609,8 +609,8 @@ impl Mesh {
     /// UI thread. The principal frame does not. `principal_frame_cached` is a
     /// plain getter with no fallback and nothing recomputes it, so a mesh that
     /// arrives here without one never gets one, and the cut view and bridge
-    /// split both drop to the view-coupled fallback for that layer with nothing
-    /// said.
+    /// split both drop to the view-coupled fallback for that layer without
+    /// reporting it.
     ///
     /// So the frame is carried, not recomputed: it is a per-mesh-constant
     /// global-shape signal, unaffected by local surface bumps, which is what a
@@ -655,10 +655,10 @@ impl Mesh {
     }
 
     /// The mesh's own principal-axis frame (PCA centroid + orthonormal
-    /// axes), from the constructor-time cache — a STABLE, per-mesh-constant
+    /// axes), from the constructor-time cache — a stable, per-mesh-constant
     /// "global shape" signal: `axes[0]` is a dental arch or bridge span's own
     /// mesiodistal direction, unaffected by cursor position or local surface
-    /// bumps, and the LOCAL direction from `centroid` to any surface point,
+    /// bumps, and the local direction from `centroid` to any surface point,
     /// projected onto the `axes[0]`/`axes[1]` plane, rotates smoothly around
     /// the arch. `None` when the mesh has fewer than 3 distinct vertex
     /// positions (no well-defined frame — e.g. an empty mesh, or one

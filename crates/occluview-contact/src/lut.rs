@@ -1,18 +1,16 @@
 //! Packing the signed field into a GPU texture.
 //!
-//! The renderer reads the field in its VERTEX stage and passes the value to the
+//! The renderer reads the field in its vertex stage and passes the value to the
 //! fragment stage as an interpolated varying, so the field travels as a texture
-//! rather than as a vertex attribute. That is not a preference: the core vertex
-//! format is fixed at 36 bytes and shared with every other layer in the scene,
-//! and the web reference reached the same place — one scalar attribute on the
-//! geometry, no second buffer.
+//! rather than as a vertex attribute: the core vertex format is fixed at 36
+//! bytes and shared with every other layer in the scene.
 //!
 //! `Rgba8Unorm` is the format every wgpu adapter can filter, and filtering is
 //! what makes the interpolated field smooth. There is no 32-bit float format
 //! with the same guarantee, which is why the field's bits are stored in four
 //! unsigned bytes rather than in a float texture: the value survives the round
 //! trip exactly, and the only thing the hardware is allowed to do to it is
-//! interpolate, which is precisely what a per-fragment colour lookup needs.
+//! interpolate, which is what a per-fragment colour lookup needs.
 //!
 //! Byte 0 of a texel is the least significant byte of the little-endian `f32`,
 //! so the decode on the GPU is a shift-and-or and a `bitcast`, with no per-texel
@@ -24,8 +22,8 @@
 /// varying produces `0 × ∞` in the fragment stage — a single bad fragment can
 /// take a whole triangle with it — and zero because zero is a real reading:
 /// exact touch, fully painted. So the sentinel is a finite value beyond every
-/// law's far edge *and* feather, which is exactly the region the paint weight
-/// already reports as nothing to paint. It is also inside the search radius, so
+/// law's far edge *and* feather, in the region the paint weight already
+/// reports as nothing to paint. It is also inside the search radius, so
 /// a caller that reads the packed field back during a hover gets a plausible
 /// "nothing here" distance rather than a number it has to special-case.
 pub const FIELD_FAR_SENTINEL_MM: f32 = 0.5;

@@ -89,16 +89,15 @@ impl AlignSettings {
             // button an operator presses to find the other arch, and it has to
             // work from a pose that is not already close: a scan dropped in at
             // its own origin, an arch picked up mid-case, or a rescan that sits
-            // several millimetres off. `local_only: true` removed both the
-            // global seed and the radius ladder, so a start more than a couple
-            // of millimetres out converged onto whatever surface it touched
-            // first and then failed the seating gate.
+            // several millimetres off. `local_only: true` drops both the global
+            // seed and the radius ladder, so a start more than a couple of
+            // millimetres out converges onto whatever surface it touches first
+            // and then fails the seating gate.
             //
             // Measured on a real arch with the search enabled: a start 8 mm out
-            // still seated (seated fraction 0.998, trustworthy). With
-            // `local_only: true` the same 4 mm start reported a seated fraction
-            // of 0.016 and was refused — the operator saw "Best fit matching
-            // could not confirm an improvement" for a pair the tool can seat.
+            // seats (seated fraction 0.998, trustworthy). With
+            // `local_only: true` a 4 mm start reports a seated fraction of 0.016
+            // and is refused.
             local_only: false,
             ..RefineSettings::default()
         }
@@ -120,8 +119,8 @@ impl AlignSettings {
             scale_mm: self.scale_mm.clamp(WORKING_SCALE_MIN_MM, WORKING_MAX_MM),
             tolerance_mm: self.tolerance_mm,
             // The operator-facing Align Meshes map is one continuous absolute
-            // scale. Keep the field only for loading old state; never let that
-            // legacy value quantize a production measurement.
+            // scale. The field exists only so stored settings load; a stored
+            // band count never quantizes a measurement.
             bands: None,
             mode: self.ramp_mode,
         }
@@ -129,7 +128,7 @@ impl AlignSettings {
 }
 
 /// Whether a settings edit changes the optimizer's interpretation of a fit.
-/// Display range and visibility are deliberately excluded: they can recolour
+/// Display range and visibility are excluded: they can recolour
 /// an already landed measurement, while these three inputs require a new Best
 /// fit result before the heatmap may describe the session again.
 pub(crate) fn matching_inputs_changed(before: AlignSettings, after: AlignSettings) -> bool {
@@ -548,12 +547,13 @@ fn run_worker(
         };
         *slot = Some(cancel.clone());
         drop(slot);
-        // RAII, not a hand-written pair. The panic boundary is OUTSIDE this
-        // loop, so an unwind inside `execute` skipped the `fetch_sub` and left
-        // the counter above zero forever: `is_busy` then reports busy for the
-        // rest of the session, the panel keeps its spinner, and
-        // `finish_align_session` claims the session closed "while a fit was
-        // still running". The contact worker already uses this guard.
+        // RAII, not a hand-written pair. The panic boundary is outside this
+        // loop, so an unwind inside `execute` would skip a hand-written
+        // `fetch_sub` and leave the counter above zero forever: `is_busy` would
+        // report busy for the rest of the session, the panel would keep its
+        // spinner, and `finish_align_session` would claim the session closed
+        // "while a fit was still running". The contact worker uses the same
+        // guard.
         let _busy = Busy::new(busy);
 
         let outcome = execute(&job, &cancel, &mut cached);
@@ -638,7 +638,7 @@ struct WorkerCache {
     /// The last summary, and the measurement and tolerance it was taken at.
     summary: Option<(MeasureKey, u64, DeviationStats)>,
     /// What that measurement was capable of seeing. Independent of the ramp and
-    /// the tolerance, so it survives a re-colour exactly as the map does.
+    /// the tolerance, so it survives a re-colour as the map does.
     seen: Option<(MeasureKey, Option<Observability>)>,
 }
 
@@ -750,13 +750,13 @@ fn paint(
     // surface cannot determine the motion that produced them.
     //
     // `None` is the degenerate end of that: too little surface, or samples that
-    // do not span six degrees of freedom. It is deliberately not extended to a
-    // *weak* blind direction. `observability()` exists to report those (see
+    // do not span six degrees of freedom. It is not extended to a *weak* blind
+    // direction. `observability()` exists to report those (see
     // `hidden_displacement_mm`, measured at 0.94-1.007 of the truth on real arch
     // scans), and `has_blind_direction` is the threshold that says "the estimate
     // is doing real work here", not "this measurement is worthless". Refusing on
-    // it blocked legitimate full-arch alignments: the sensitivity allowed for a
-    // real arch in `real_scans.rs` extends below it.
+    // it would block legitimate full-arch alignments: the sensitivity allowed
+    // for a real arch in `real_scans.rs` extends below it.
     if stats.summary.is_some() && seen.is_none() {
         return AlignOutcome::Failed {
             rejection: AlignFailure::MeasurementUnobservable,
@@ -862,8 +862,7 @@ fn align_from_pairs(job: &AlignJob, moving: Soup<'_>) -> AlignOutcome {
     }
 }
 
-// Split out to hold the workspace's 800-line file budget. A `#[path]` child
-// module so the tests still reach this file's private items.
+// A `#[path]` child module so the tests reach this file's private items.
 #[cfg(test)]
 #[path = "align_worker_tests.rs"]
 mod tests;

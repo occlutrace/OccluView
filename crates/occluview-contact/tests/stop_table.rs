@@ -3,13 +3,12 @@
 //! The renderer re-runs the ramp in WGSL — it interpolates the stop table in
 //! Oklab and converts to display sRGB — while the panel, the hover readout and
 //! the legend read [`ContactScale::color_at`] on the CPU. Nothing in the type
-//! system connects the two, so this file re-runs the SHADER'S algorithm in Rust
+//! system connects the two, so this file re-runs the shader's algorithm in Rust
 //! over the table and asserts it lands on the CPU's colour.
 //!
-//! That is the whole point of the table being a compiled artifact: the two
-//! evaluations share their numbers by construction, and this test is what
-//! catches the day someone changes one of them. The renderer lane's offscreen
-//! test then pins the WGSL against the same expectation.
+//! The table is a compiled artifact so the two evaluations share their numbers
+//! by construction; this test fails when either evaluation changes on its own.
+//! The renderer's offscreen test checks the WGSL against the same expectation.
 
 #![allow(
     clippy::unwrap_used,

@@ -36,10 +36,10 @@ fn fitted_render_extent_px(width_px: f32, height_px: f32) -> [u16; 2] {
     // growth pushes the long axis past the ceiling the final per-axis clamp
     // below lands it on the same bounds shrinking would have chosen.
     let scale = if grow > 1.0 { grow } else { shrink };
-    // The exception, and it is the only one: a viewport longer than the
-    // ceiling-to-floor ratio cannot satisfy both bounds at any single scale.
-    // Squaring off the offending axis is the lesser evil there — the
-    // alternative is a render target with a useless dimension.
+    // The only exception: a viewport longer than the ceiling-to-floor ratio
+    // cannot satisfy both bounds at any single scale. The per-axis clamp then
+    // squares off the offending axis rather than produce a render target with
+    // a useless dimension.
     [
         clamped_render_dimension_px(width_px * scale),
         clamped_render_dimension_px(height_px * scale),
@@ -63,10 +63,8 @@ mod tests {
 
     #[test]
     fn desired_render_extent_clamps_to_reasonable_bounds() {
-        // Both of the clamped cases keep the viewport's shape. They used to be
-        // [256, 256] and [2560, 1800] — a 2:3 viewport rendered square and a
-        // 16:9 one rendered at 1.42:1, which is the stretch this file exists to
-        // prevent.
+        // Both clamped cases keep the viewport's aspect ratio (2:3 and 16:9):
+        // the bounds scale both axes together instead of clamping each one.
         assert_eq!(
             desired_render_extent_px(egui::vec2(120.0, 180.0), 1.0),
             Some([256, 384])
@@ -83,11 +81,10 @@ mod tests {
 
     #[test]
     fn a_fullscreen_4k_viewport_keeps_its_shape() {
-        // The reported bug: models distorted on a 4K display, seen in
-        // fullscreen, because that is where the width first passes the
-        // 2560 ceiling while the height does not. Clamped per axis that gave a
-        // 2560x2160 target painted across a 3840x2160 rect — every model half
-        // again too wide.
+        // A fullscreen 4K viewport is where the width first passes the 2560
+        // ceiling while the height does not. Clamped per axis, that would give
+        // a 2560x2160 target painted across a 3840x2160 rect, stretching every
+        // model 1.5x horizontally.
         //
         // Both ways a 4K viewport arrives: as raw pixels, and as points at the
         // 1.5x scaling Windows sets on a 4K panel by default.
@@ -121,7 +118,7 @@ mod tests {
     #[test]
     fn every_viewport_shape_survives_the_bounds() {
         // The property behind both tests above, swept over the range a desktop
-        // window can actually take: whatever shape is asked for is the shape
+        // window can take: whatever shape is asked for is the shape
         // that comes back, inside the bounds.
         for width in [300.0_f32, 800.0, 1920.0, 2560.0, 3840.0, 5120.0] {
             for height in [300.0_f32, 600.0, 1080.0, 1440.0, 2160.0] {
@@ -153,10 +150,9 @@ mod tests {
     #[test]
     fn a_viewport_too_long_for_the_bounds_lands_on_them_rather_than_degenerating() {
         // A window dragged very short is longer than the ceiling and the floor
-        // can express between them, so its shape cannot be kept. Say what
-        // happens instead of leaving it to be discovered: both axes land on a
-        // bound, which is a mild stretch, and not the zero-height render target
-        // the alternative would be.
+        // can express between them, so its shape cannot be kept. Both axes
+        // land on a bound, a mild stretch, rather than a zero-height render
+        // target.
         let [width, height] =
             desired_render_extent_px(egui::vec2(3840.0, 300.0), 1.0).unwrap_or([0, 0]);
 
@@ -169,8 +165,8 @@ mod tests {
 
     #[test]
     fn an_overflowing_product_is_refused_rather_than_a_zero_size_target() {
-        // Finite times finite can still be infinite, and infinity used to
-        // ride the shared scale into a NaN and out the far end as a
+        // Finite times finite can still be infinite; if not refused, infinity
+        // would ride the shared scale into a NaN and out the far end as a
         // zero-size texture.
         assert_eq!(
             desired_render_extent_px(egui::vec2(f32::MAX, 1080.0), 2.0),

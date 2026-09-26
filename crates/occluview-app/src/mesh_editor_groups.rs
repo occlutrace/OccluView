@@ -1,10 +1,10 @@
 //! Section rendering for the mesh editor window (see `mesh_editor_overlay`).
 //!
-//! Extracted so the window file stays small. The layout follows the same "3D
-//! Data Editor" presentation dental CAD software uses: calm section captions
-//! with a thin hairline instead of shouting bold headers, one uniform
-//! icon-cell grid, an unmistakable lit state for the mode toggles, and an
-//! OK/Cancel-style commit bar with the primary `Done` pinned bottom-right.
+//! The layout follows the same "3D Data Editor" presentation dental CAD
+//! software uses: section captions with a thin hairline instead of bold
+//! headers, one uniform icon-cell grid, a distinct lit state for the mode
+//! toggles, and an OK/Cancel-style commit bar with the primary `Done` pinned
+//! bottom-right.
 //! Presentation only — each cell emits exactly one [`MeshEditorAction`].
 
 use eframe::egui;
@@ -22,7 +22,7 @@ const TAB_H: f32 = 28.0;
 
 /// Height of one tool cell: a glyph over a small caption (the same toolbar
 /// button style dental CAD software uses). The text commit buttons share the
-/// height so the bottom row aligns. Trimmed to keep the palette compact
+/// height so the bottom row aligns. Sized to keep the palette compact
 /// while the glyphs stay legible.
 pub(super) const ROW_H: f32 = 46.0;
 
@@ -212,9 +212,7 @@ pub(super) fn selection(
     action.or(selection_bulk(ui, enabled, locale))
 }
 
-/// The dental CAD All / None / Invert bulk-marking row. Split out of
-/// [`selection`] so that function stays within the line budget after the
-/// Object cell landed.
+/// The dental CAD All / None / Invert bulk-marking row.
 fn selection_bulk(
     ui: &mut egui::Ui,
     enabled: bool,
@@ -336,8 +334,8 @@ pub(super) fn edit_selection(
 
 /// Repair safe interior holes across the visible scene. With marked faces the
 /// repair is scoped to those marks; without marks every visible layer is
-/// considered. The optional perimeter restraint is deliberately off by
-/// default, because outer scan borders are protected by the kernel already.
+/// considered. The optional perimeter restraint is off by default because
+/// the kernel already protects outer scan borders.
 pub(super) fn close_holes(
     ui: &mut egui::Ui,
     enabled: bool,
@@ -418,7 +416,7 @@ pub(super) fn sculpt(
 
 /// Size/intensity sliders for the sculpt tools. Both live in egui memory (like
 /// the Close Holes limit) so they hold while the editor is open, and both are
-/// abstract 0..100 feel sliders — not millimeters — per the operator's request.
+/// abstract 0..100 feel sliders, not millimeters.
 fn sculpt_settings_row(ui: &mut egui::Ui, enabled: bool, locale: &crate::i18n::LocaleManager) {
     let ctx = ui.ctx().clone();
     let mut size = super::sculpt_size(&ctx);
@@ -505,8 +503,8 @@ fn sculpt_slider_row(
     response.on_hover_text(control.tooltip)
 }
 
-/// Reserve the full available content width for the slider rail. Kept pure so
-/// the compact control geometry is explicit and regression-testable.
+/// Reserve the full available content width for the slider rail. Pure so the
+/// compact control geometry is explicit and unit-testable.
 fn sculpt_slider_width(available_width: f32) -> f32 {
     available_width.max(0.0)
 }
@@ -622,7 +620,7 @@ fn row(ui: &mut egui::Ui, count: usize, add_contents: impl FnOnce(&mut egui::Ui,
 }
 
 /// One icon tool cell of the given width and the shared row height.
-// Thin forwarder to `icon_button`; the arg list mirrors it deliberately.
+// Thin forwarder to `icon_button`; the arg list mirrors it.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn icon(
     ui: &mut egui::Ui,
@@ -681,9 +679,7 @@ mod tests {
         assert!((width - 48.5).abs() < 0.01, "unexpected cell width {width}");
         // Four cells plus three gaps exactly refill the row (aligned grid).
         assert!((4.0 * width + 3.0 * 6.0 - 212.0).abs() < 0.01);
-        // The width has to answer to all three inputs. Calling the same pure
-        // function twice with the same arguments says nothing -- a body that
-        // ignored the count and the gap passed that.
+        // The width depends on all three inputs: vary each one in turn.
         assert!(
             cell_width(212.0, 3, 6.0) > cell_width(212.0, 4, 6.0),
             "fewer controls in the same row means wider cells"

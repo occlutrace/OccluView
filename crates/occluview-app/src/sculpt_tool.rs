@@ -535,7 +535,7 @@ impl SculptSession {
                 return None;
             }
             // Vertex ids the caller already knows stay valid — densification
-            // only APPENDS — but the array grew and the triangle list changed,
+            // only appends — but the array grew and the triangle list changed,
             // so a sparse write into the old buffers would be a corruption.
             // Hand back the rebuilt layer instead and drop this dab's ids.
             return match self.rebuild_after_densify(cancel) {
@@ -695,7 +695,7 @@ impl SculptSession {
             target.position = source.position;
             // The kernel normally includes moved vertices in its normal scope.
             // Copying this here as well keeps the position update self-contained
-            // if a future kernel mode reports a narrower normal scope.
+            // if a kernel mode reports a narrower normal scope.
             target.normal = source.normal;
         }
         for &vertex_id in normal_vertices {

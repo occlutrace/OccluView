@@ -89,7 +89,7 @@ fn finish_edit_session_keeps_undo_history_for_stepwise_undo() {
     assert!(!controller.is_dirty());
     assert_eq!(controller.undo_len(), 1);
     assert_eq!(controller.undo_layer_id(), Some(layer.id()));
-    // Cancel is no longer available: nothing to revert to.
+    // Cancel is unavailable after Done: nothing to revert to.
     assert!(controller.cancel_edit_session().is_none());
     // Undo still works against the current layer.
     let restored = controller.undo_last_layer_edit(&current);
@@ -183,14 +183,14 @@ fn sync_to_scene_rearms_empty_selection_between_session_ops() {
     scene.meshes_mut()[layer_index].mesh = std::sync::Arc::new(single_triangle);
     controller.sync_to_scene(&scene);
 
-    // The session panel survives the op: an EMPTY selection sized to the
+    // The session panel survives the op: an empty selection sized to the
     // new topology is re-armed, ready for the next mark + op.
     assert_eq!(controller.selected_layer_id(), Some(layer_id));
     assert_eq!(controller.selected_face_count(), 0);
     assert!(controller.select_all_faces());
     assert_eq!(controller.selected_face_count(), 1);
 
-    // Second op in the SAME session works without re-entering edit mode.
+    // Second op in the same session works without re-entering edit mode.
     let current = scene.meshes()[layer_index].clone();
     let Some(token) = controller.begin_layer_edit(&current, EditModeCommand::CloseHoles) else {
         return;
@@ -344,7 +344,7 @@ fn mixed_structural_and_layer_history_unwinds_in_order_and_cancel_reverts_all() 
         BusyFinish::Applied
     );
     // ...then a structural op (scene snapshot) that spawns a layer. As in the
-    // real cut, the product is inserted BEFORE the op finishes, so the post-op
+    // real cut, the product is inserted before the op finishes, so the post-op
     // fingerprint covers it and the immediate undo is safe.
     let Some(token) =
         controller.begin_scene_edit(&scene, layer_id, EditModeCommand::CutSelectionToNewLayer)
@@ -399,11 +399,11 @@ fn oversized_snapshot_applies_edit_without_phantom_undo() {
         controller.finish_layer_edit_success(token),
         BusyFinish::Applied
     );
-    // The edit applied (dirty) but is not undoable — and nothing lies about it.
+    // The edit applied (dirty) but is not undoable, and the undo state says so.
     assert!(controller.is_dirty());
     assert_eq!(controller.undo_layer_id(), None);
 
-    // A no-op finish with a skipped snapshot must not discard someone else's
+    // A no-op finish with a skipped snapshot must not discard unrelated
     // history either (there is none here; it must simply not panic/underflow).
     let Some(token) = controller.begin_layer_edit(&layer, EditModeCommand::CloseHoles) else {
         return;
@@ -417,9 +417,9 @@ fn oversized_snapshot_applies_edit_without_phantom_undo() {
 
 #[test]
 fn append_preserves_active_session_and_undo_on_original_layer() {
-    // Scenario 2: begin a session on A, then simulate appending layer B (a
-    // second load). The session — selection, dirty state, undo history — is
-    // keyed by SceneMeshId, so it survives the append and still applies to A.
+    // Begin a session on A, then simulate appending layer B (a second load).
+    // The session — selection, dirty state, undo history — is keyed by
+    // SceneMeshId, so it survives the append and still applies to A.
     let Some(mesh_a) = two_triangle_mesh("A") else {
         return;
     };
@@ -463,9 +463,9 @@ fn append_preserves_active_session_and_undo_on_original_layer() {
 
 #[test]
 fn edit_on_other_layer_during_session_keeps_session_on_original() {
-    // Scenario 8: session active on A; a whole-mesh op runs on a DIFFERENT layer
-    // B. The global undo stack records B's edit (LIFO), but the session's
-    // recoverable identity — selection and baseline — stays anchored to A.
+    // Session active on A; a whole-mesh op runs on a different layer B. The
+    // global undo stack records B's edit (LIFO), but the session's recoverable
+    // identity — selection and baseline — stays anchored to A.
     let Some(mesh_a) = two_triangle_mesh("A") else {
         return;
     };
@@ -533,7 +533,7 @@ fn begin_face_selection_arms_lasso_by_default_and_resets_between_sessions() {
     assert!(controller.set_lasso_armed(false));
     assert!(!controller.lasso_armed());
 
-    // Done disarms; the NEXT session re-arms regardless of the prior toggle.
+    // Done disarms; the next session re-arms regardless of the prior toggle.
     controller.finish_edit_session();
     assert!(!controller.lasso_armed());
     assert!(controller.begin_face_selection(&layer, &scene));
@@ -566,7 +566,7 @@ fn begin_face_selection_defaults_to_through_mesh_and_resets_between_sessions() {
     assert!(controller.set_through_mesh(false));
     assert!(!controller.through_mesh());
 
-    // Done ends the session; the NEXT session re-forces Through regardless of
+    // Done ends the session; the next session re-forces Through regardless of
     // the prior toggle.
     controller.finish_edit_session();
     assert!(controller.begin_face_selection(&layer, &scene));

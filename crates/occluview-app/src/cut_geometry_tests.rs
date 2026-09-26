@@ -1,5 +1,4 @@
-//! Tests for [`crate::cut_geometry`], split into their own file to hold the
-//! workspace's 800-line file budget. A `#[path]` child module of
+//! Tests for [`crate::cut_geometry`]. A `#[path]` child module of
 //! `cut_geometry`, so private helpers stay reachable via `super::*`.
 
 #![allow(clippy::float_cmp, clippy::expect_used)]
@@ -66,7 +65,7 @@ fn follow_normal_changes_continuously_near_the_occlusal_view_without_an_arch_fra
         Vec3::NEG_Z,
         Vec3::X,
     );
-    let just_past_old_threshold = follow_plane_normal(
+    let slightly_less_axial = follow_plane_normal(
         None,
         Vec3::ZERO,
         Vec3::new(0.04, 0.0, 1.0),
@@ -74,8 +73,8 @@ fn follow_normal_changes_continuously_near_the_occlusal_view_without_an_arch_fra
         Vec3::X,
     );
     assert!(
-        almost_axial.dot(just_past_old_threshold) > 0.95,
-        "nearby surface samples must not snap the disc: {almost_axial} / {just_past_old_threshold}"
+        almost_axial.dot(slightly_less_axial) > 0.95,
+        "nearby surface samples must not snap the disc: {almost_axial} / {slightly_less_axial}"
     );
 }
 
@@ -107,11 +106,11 @@ fn follow_normal_is_the_local_arch_tangent_at_the_hit_point() {
 
 #[test]
 fn follow_normal_never_lays_the_disc_flat_at_the_side_of_the_arch() {
-    // The reported bug: from a facial/tilted view the old view-coupled
-    // cross product drifted toward the vertical axis at the arch's sides,
-    // so the DISC lay flat and cut "top to bottom". With an arch frame the
-    // plane normal must stay IN the arch plane (zero occlusal component)
-    // for every view direction: the disc always stands upright.
+    // From a facial or tilted view a view-coupled cross product drifts
+    // toward the vertical axis at the arch's sides, laying the disc flat to
+    // cut "top to bottom". With an arch frame the plane normal must stay in
+    // the arch plane (zero occlusal component) for every view direction: the
+    // disc always stands upright.
     let frame = ArchFrame {
         centroid: Vec3::ZERO,
         axis0: Vec3::X,
@@ -133,9 +132,9 @@ fn follow_normal_never_lays_the_disc_flat_at_the_side_of_the_arch() {
 
 #[test]
 fn follow_normal_with_an_arch_frame_is_immune_to_per_triangle_surface_noise() {
-    // The reported bug: as the cursor crosses triangles, the LOCAL
-    // surface normal jumps around; with an arch frame available and the
-    // hit POINT fixed, the result must not move at all.
+    // As the cursor crosses triangles the local surface normal jumps
+    // around; with an arch frame available and the hit point fixed, the
+    // result must not move at all.
     let frame = ArchFrame {
         centroid: Vec3::ZERO,
         axis0: Vec3::Z,
@@ -164,8 +163,8 @@ fn follow_normal_with_an_arch_frame_is_immune_to_per_triangle_surface_noise() {
 fn follow_normal_stays_anatomically_planted_as_the_camera_orbits() {
     // The cut orientation is a property of the surface point, not of the
     // camera: orbiting to inspect the same spot from another angle must
-    // NOT re-tilt the disc (the view-coupled re-aim is exactly what laid
-    // it flat at the arch's sides from a facial view).
+    // not re-tilt the disc (a view-coupled re-aim lays it flat at the
+    // arch's sides from a facial view).
     let frame = ArchFrame {
         centroid: Vec3::ZERO,
         axis0: Vec3::X,
@@ -194,9 +193,9 @@ fn follow_normal_falls_back_to_local_surface_when_no_arch_frame_is_available() {
     let real_point = Vec3::new(5.0, 0.0, 0.0); // off the centroid: a real direction exists
     let with_frame = follow_plane_normal(Some(frame), real_point, Vec3::Y, Vec3::NEG_Z, Vec3::X);
     let without_frame = follow_plane_normal(None, real_point, Vec3::Y, Vec3::NEG_Z, Vec3::X);
-    // Same inputs, but a point sitting EXACTLY at the centroid has no
-    // well-defined local direction, and must behave exactly like "no
-    // frame at all" rather than silently returning a zero vector.
+    // Same inputs, but a point sitting exactly at the centroid has no
+    // well-defined local direction, and must behave like "no frame at
+    // all" rather than returning a zero vector.
     let at_centroid =
         follow_plane_normal(Some(frame), frame.centroid, Vec3::Y, Vec3::NEG_Z, Vec3::X);
     assert_eq!(at_centroid, without_frame);
@@ -211,9 +210,7 @@ fn follow_normal_rotates_as_the_point_moves_around_a_curved_arch() {
     // A circle in the axis0/axis1 plane stands in for a horseshoe arch's
     // own curve; the local direction from the centroid through a point on
     // it should track that point's own angle around the curve, not stay
-    // fixed for the whole mesh like the old constant axis did -- the
-    // reported "disc gets stuck facing one direction as you drag along
-    // the arch" bug.
+    // fixed for the whole mesh as a constant axis would.
     let frame = ArchFrame {
         centroid: Vec3::ZERO,
         axis0: Vec3::X,
@@ -429,14 +426,14 @@ fn xy(w: Vec3) -> Pos2 {
 #[test]
 fn snap_picks_the_true_nearest_segment_point_not_a_vertex() {
     // Click hovers over the interior of the horizontal leg: the exact snap is
-    // the foot of the perpendicular (5, 0), NOT the nearer polyline vertex.
+    // the foot of the perpendicular (5, 0), not the nearer polyline vertex.
     let snapped = snap_to_contour(pos2(5.0, 1.0), l_segments(), xy, 8.0);
     let snapped = snapped.expect("within radius");
     assert!(
         (snapped - Vec3::new(5.0, 0.0, 0.0)).length() < 1e-4,
         "expected the exact perpendicular foot, got {snapped}"
     );
-    // The nearest vertex would be (0,0) or (10,0); prove we did better.
+    // The nearest vertex would be (0,0) or (10,0); the snap lands closer.
     assert!(snapped.distance(Vec3::new(0.0, 0.0, 0.0)) > 4.0);
 }
 

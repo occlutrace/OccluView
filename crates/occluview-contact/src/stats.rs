@@ -29,24 +29,20 @@ use crate::NO_CONTACT_MM;
 /// A vertex this close to the antagonist counts as touching, in millimetres.
 ///
 /// Twenty micrometres: below what a scan pair resolves, and wide enough that a
-/// real contact is never missed by a rounding step. It is deliberately NOT the
-/// tightness law's paint gate (10 um): the painted band is the reading a
-/// technician takes one mark at a time, while this gate measures how much of the
-/// arch is carrying, and a band that stopped exactly where the paint stops would
-/// report an area short by the whole feather. The two numbers differ by one
+/// real contact is never missed by a rounding step. It is not the tightness
+/// law's paint gate (10 um): the painted band is the reading a technician takes
+/// one mark at a time, while this gate measures how much of the arch is
+/// carrying, and a band that stopped where the paint stops would report an area
+/// short by the whole feather. The two numbers differ by one
 /// feather's width and say two different things.
 pub(crate) const TOUCH_MM: f32 = 0.02;
 
 /// Chaining radius for counting separate contacts, in millimetres.
 ///
-/// Not the flatten radius (0.75 mm, [`CONTACT_CLUSTER_RADIUS_MM`]'s sibling in
-/// `components`): this one answers "how many marks does this bite have", and it
-/// has to hold a whole occlusal patch together on a coarse scan while keeping
-/// two teeth apart. Three millimetres does both on a dental arch.
-///
-/// An earlier version of this comment justified the number against a "hover
-/// region radius (1.6 mm)" that exists nowhere in the tree; the hover readout
-/// takes no radius at all.
+/// Not the flatten radius (0.75 mm, `FLATTEN_RADIUS_MM` in `components`): this
+/// one answers "how many marks does this bite have", and it has to hold a whole
+/// occlusal patch together on a coarse scan while keeping two teeth apart.
+/// Three millimetres does both on a dental arch.
 pub(crate) const CONTACT_CLUSTER_RADIUS_MM: f64 = 3.0;
 
 /// What one contact reading counted.

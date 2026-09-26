@@ -100,7 +100,7 @@ pub(super) fn run_worker(
                     let vertices = shadow.clone();
                     // `base_mesh` already tracks any mid-stroke rebuild, so the
                     // lengths match whether or not the stroke densified. Undo
-                    // restores `before`, which still has the PRE-stroke
+                    // restores `before`, which still has the pre-stroke
                     // topology — coarse triangles and all.
                     let mesh = session.base_mesh.with_sculpted_vertices(vertices);
                     if let Some(mesh) = mesh {

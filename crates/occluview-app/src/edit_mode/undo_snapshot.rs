@@ -14,9 +14,9 @@ pub(super) enum MeshEditUndoSnapshot {
         focus_layer_id: SceneMeshId,
         /// The exact set of layer ids the live scene is expected to hold for
         /// this whole-scene snapshot to be safely restorable. A structural
-        /// undo/redo swaps the ENTIRE scene, so it is only honest when the live
+        /// undo/redo swaps the entire scene, so it is only safe when the live
         /// scene still holds exactly these ids: a layer appended since would be
-        /// silently deleted, and a layer removed since would be resurrected.
+        /// deleted, and a layer removed since would be resurrected.
         /// Stamped to the post-op id-set when the op finishes (undo direction),
         /// or to the restored scene's id-set when a reverse step is pushed.
         guard_ids: Vec<SceneMeshId>,
@@ -39,9 +39,9 @@ pub(crate) enum StructuralHistoryStep {
     /// edit rather than a whole-scene snapshot.
     NotAvailable,
     /// A structural step exists, but the live scene gained or lost layers since
-    /// it was recorded. A blind whole-scene restore would silently delete a
-    /// layer added since (or resurrect one removed since), so it is refused —
-    /// the caller reports an honest "scene changed since" status.
+    /// it was recorded. A blind whole-scene restore would delete a layer added
+    /// since (or resurrect one removed since), so it is refused — the caller
+    /// reports a "scene changed since" status.
     SceneChanged,
     /// The scene to swap into the viewport.
     Restored(Scene),
@@ -186,7 +186,7 @@ impl EditModeController {
 
     /// Whether the most recent `begin_*_edit` stored its pre-op snapshot. An
     /// oversized snapshot is skipped: the edit applies but cannot be undone,
-    /// and the operator deserves to hear that.
+    /// and the caller reports that to the operator.
     pub(crate) fn last_edit_undoable(&self) -> bool {
         self.last_undo_push_stored
     }
@@ -264,9 +264,9 @@ impl EditModeController {
 
     /// Undo/redo a structural (whole-scene) snapshot in `direction`. Mirrors
     /// `navigate_layer_edit` for the `MeshEditUndoSnapshot::Scene` variant, plus
-    /// the honest guard: a whole-scene restore is refused when the live scene
-    /// gained or lost layers since the snapshot was recorded, so an appended
-    /// layer is never silently deleted (nor a removed one resurrected).
+    /// the structural-history guard: a whole-scene restore is refused when the
+    /// live scene gained or lost layers since the snapshot was recorded, so an
+    /// appended layer is never deleted (nor a removed one resurrected).
     fn navigate_scene_edit(
         &mut self,
         current: &Scene,

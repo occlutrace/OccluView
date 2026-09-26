@@ -1,7 +1,7 @@
 //! Guards over the documents the build ships with.
 //!
 //! The changelog against the version being prepared, and the README against
-//! the keys the viewer actually binds. Both drift silently: nothing fails to
+//! the keys the viewer binds. The compiler checks neither: nothing fails to
 //! compile when an operator instruction describes a shortcut the build lacks.
 
 use super::*;
@@ -72,22 +72,14 @@ fn the_changelog_only_names_versions_that_can_be_released() {
         seen.push(parsed);
     }
 
-    // Ordering is not yet the rule the test name promises. A section below the
-    // newest claims something was released, so a tag has to exist for it. Tags
-    // come from git; a source tarball has none, and there the ordering above is
-    // all there is.
-    // No tags at all means the rule below cannot be evaluated, and skipping
-    // quietly is what made this test unreachable: CI checks out with a
-    // depth-1 clone that fetches no tags, and this repository ships no release
-    // tag by design, so the loop that fails an untagged section never ran
-    // anywhere. An empty tag list is now stated rather than assumed, so a
-    // checkout that gains tags starts enforcing the rule instead of continuing
-    // to pass for the wrong reason.
+    // Ordering alone is not the rule the test name promises. A section below
+    // the newest claims something was released, so a tag has to exist for it.
+    // Tags come from git; a source tarball has none, and there the ordering
+    // above is all there is.
     let Some(tags) = repository_tags() else {
-        // The CI checkout that runs this test now fetches tags, so "no tags" is
-        // no longer the ordinary case — it means either a source tarball or a
-        // checkout that lost them, and silently skipping is what let the rule
-        // below go unchecked everywhere. Stated, not silent.
+        // The CI checkout that runs this test fetches tags, so "no tags" means
+        // a source tarball or a checkout that lost them. The skip is logged so
+        // the unchecked rule below is visible.
         tracing::info!(
             "changelog ordering: this checkout carries no tags, so only the ordering \
              assertion above is checked"
@@ -113,7 +105,7 @@ fn the_changelog_only_names_versions_that_can_be_released() {
             tags.iter().any(|tag| tag == &format!("v{number}")),
             "the changelog has a section for {number}, which was never tagged; \
              an untagged section publishes nothing and advertises a version \
-             nobody can download"
+             that cannot be downloaded"
         );
     }
 }
@@ -192,7 +184,7 @@ fn the_readme_documents_the_shortcuts_the_build_implements() {
 ///
 /// The README is checked in both directions against this table: a key the
 /// build reads and README never names leaves an operator guessing, and a key
-/// it names that nothing reads is an invention.
+/// it names that nothing reads documents a shortcut that does not exist.
 const VIEWER_KEY_BINDINGS: &[(&str, &[&str])] = &[
     ("A", &["**A**", "**Ctrl+A**"]),
     ("Backspace", &["**Backspace**"]),
@@ -221,7 +213,7 @@ fn keys_the_viewer_binds() -> std::collections::BTreeSet<String> {
 
     let mut keys = std::collections::BTreeSet::new();
     for path in sources {
-        // Test modules name keys they never bind, which is the point of them.
+        // Test modules name keys they never bind.
         if path
             .components()
             .any(|part| part.as_os_str().to_string_lossy().contains("tests"))
@@ -245,13 +237,12 @@ fn keys_the_viewer_binds() -> std::collections::BTreeSet<String> {
 
 #[test]
 fn the_readme_names_every_key_the_viewer_binds_and_no_others() {
-    // README and code drift both ways with nothing comparing them: `F` framing
-    // a measurement, which the build does not do, and Shift+Middle-click,
-    // which it does and the guide skipped.
+    // README and code can drift both ways: a documented key the build does not
+    // bind, or a bound key the guide skips.
     //
-    // Meaning is out of reach here. `F` really is bound, and the guide really
-    // did say it framed the cut when it flips which half is kept. Keys are
-    // covered, so the prose is the only part a reviewer has to re-read.
+    // Meaning is out of reach here: a key can be bound while the guide
+    // describes the wrong action for it. Keys are covered, so the prose is the
+    // only part a reviewer has to re-read.
     let readme = include_str!("../../../../README.md");
     let bound = keys_the_viewer_binds();
 
@@ -275,13 +266,13 @@ fn the_readme_names_every_key_the_viewer_binds_and_no_others() {
         assert!(
             bound.contains(*name),
             "README.md documents {spellings:?} but nothing in the viewer \
-             reads egui::Key::{name} any more"
+             reads egui::Key::{name}"
         );
     }
 
     // The other direction has to read the README, not the table: checking only
-    // the spellings already listed here says nothing about a shortcut somebody
-    // invented in the prose. Every bold token in the README that looks like a
+    // the spellings already listed here says nothing about a shortcut that
+    // exists only in the prose. Every bold token in the README that looks like a
     // key has to be one of them.
     for token in readme.split("**").skip(1).step_by(2) {
         if !looks_like_a_key(token) {
@@ -303,8 +294,8 @@ fn the_readme_names_every_key_the_viewer_binds_and_no_others() {
 /// Bold tokens that are real bindings the keyboard table does not cover.
 ///
 /// `W` is read by the Explorer preview window rather than the viewer. The
-/// pointer chords are verified where they are implemented, in the layer
-/// interaction guard, and `Shift` on its own is a modifier held during a drag,
+/// pointer chords are verified by the tests of the input handlers that
+/// implement them, and `Shift` on its own is a modifier held during a drag,
 /// not a shortcut.
 const NON_KEYBOARD_BINDINGS: &[&str] = &[
     "Help",

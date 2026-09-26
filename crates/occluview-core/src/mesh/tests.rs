@@ -114,13 +114,13 @@ fn an_uncached_sculpt_snapshot_holds_the_same_geometry_without_the_caches() {
     assert!(mesh.with_sculpted_vertices_uncached(Vec::new()).is_none());
 }
 
-/// A pile of coincident vertices used to cost k^2 dot products on the loading
-/// thread, with no cancellation and no ceiling: measured 19 ms at k=2000,
-/// 214 ms at k=8000 and 1.30 s at k=20000, which extrapolates to minutes at
-/// k=200000 -- inside `dllhost`, holding a thumbnail lane long after Explorer
-/// has given up on the request. Judging agreement against the group mean above
-/// a threshold makes it linear: the same three sizes now cost 2.3 ms, 4.9 ms
-/// and 11.4 ms.
+/// Pairwise agreement within a pile of coincident vertices costs k^2 dot
+/// products on the loading thread, with no cancellation: measured 19 ms at
+/// k=2000, 214 ms at k=8000 and 1.30 s at k=20000, which extrapolates to
+/// minutes at k=200000 -- inside `dllhost`, holding a thumbnail lane long after
+/// Explorer has given up on the request. Judging agreement against the group
+/// mean above a threshold makes it linear: the same three sizes cost 2.3 ms,
+/// 4.9 ms and 11.4 ms.
 #[test]
 fn a_huge_coincident_vertex_group_stays_linear() {
     let group = 20_000usize;
@@ -146,17 +146,14 @@ fn a_huge_coincident_vertex_group_stays_linear() {
     let elapsed = started.elapsed();
 
     assert_eq!(mesh.vertices().len(), group * 3);
-    // The ceiling has to sit between the two forms, so both were measured here
-    // in the test profile at this k: linear 8.6 ms, quadratic 1.14 s -- 130x
+    // The ceiling has to sit between the two forms, so both were measured in
+    // the test profile at this k: linear 8.6 ms, quadratic 1.14 s -- 130x
     // apart. 300 ms leaves the linear form 35x of headroom, which survives a
-    // runner far slower than this one, and still catches the quadratic form on
-    // a machine three times faster -- 1.14 s over three is still past it.
-    //
-    // The ceiling was 10 s against a fixture of k=4000, where the quadratic
-    // form costs 53 ms. It could not have failed.
+    // much slower runner, and still catches the quadratic form on a machine
+    // three times faster -- 1.14 s over three is still past it.
     assert!(
         elapsed < std::time::Duration::from_millis(300),
-        "coincident-group normal smoothing took {elapsed:?}; it has gone quadratic again"
+        "coincident-group normal smoothing took {elapsed:?}; expected the linear path"
     );
     // The coherent group agrees, so every member keeps a usable normal.
     let shared = mesh
@@ -351,9 +348,8 @@ fn vertex_no_uv_is_not_detected() {
 
 #[test]
 fn vertex_layout_has_uv_appended() {
-    // Adding `uv` ([f32;2] = 8 bytes) after `color` grew the struct from
-    // 28 to 36 bytes. The layout is position@0, normal@12, color@24,
-    // uv@28 — no padding holes, all naturally aligned (max align = 4).
+    // 36 bytes: position@0, normal@12, color@24, uv@28 ([f32;2] = 8 bytes
+    // after `color`) — no padding holes, all naturally aligned (max align = 4).
     assert_eq!(size_of::<Vertex>(), 36);
     let sample = Vertex {
         position: [1.0, 2.0, 3.0],

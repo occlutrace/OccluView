@@ -2,11 +2,9 @@
 //!
 //! This is the bottom layer of the workspace: it imports nothing but glam, and
 //! higher-level OccluView crates may depend on it without creating cycles. The
-//! constants here decide which vertices weld and which facets shade; they used
-//! to be copied across `occlu-mesh-edit`, `occluview-core` and
-//! `occluview-hps`, and the copies
-//! drifted once (the 2026-07-25 fix took four weeks to reach all three
-//! crates). One home means one change.
+//! constants here decide which vertices weld and which facets shade. They are
+//! defined once and shared by `occlu-mesh-edit`, `occluview-core` and
+//! `occluview-hps`, so the three crates cannot diverge on those thresholds.
 
 #![forbid(unsafe_code)]
 
@@ -23,8 +21,9 @@ use glam::Vec3;
 /// be merged with this one.
 pub const DEGENERATE_AREA_SIN: f32 = 1e-10;
 
-/// A facet is degenerate when its area falls below this fraction of its own
-/// longest edge squared.
+/// Whether a facet is not degenerate under [`DEGENERATE_AREA_SIN`]: its
+/// face-normal length squared (twice its area, squared) exceeds the threshold
+/// times its longest edge to the fourth power.
 #[inline]
 #[must_use]
 pub fn facet_contributes_normal(longest_edge_sq: f32, face_normal_length_sq: f32) -> bool {
@@ -48,19 +47,17 @@ pub const MAX_PAIRWISE_DUPLICATE_GROUP: usize = 256;
 pub const MAX_DUPLICATE_CLUSTERS: usize = 16;
 
 /// Dot-product threshold for two normals to count as the same direction when
-/// averaging a coincident-position group. One name across crates; it used to
-/// be `DUPLICATE_NORMAL_DOT` in `occlu-mesh-edit` and
-/// `SMOOTH_DUPLICATE_NORMAL_DOT` in `occluview-core`.
+/// averaging a coincident-position group. Shared by `occlu-mesh-edit` and
+/// `occluview-core` so both apply the same threshold.
 pub const DUPLICATE_NORMAL_DOT: f32 = 0.5;
 
 /// Two positions within this distance are the same point for shading.
 ///
 /// One number decides which vertices share a normal, and three crates need it:
 /// core welds at load, mesh-edit welds after every brush stroke and hole fill,
-/// and the same scan must shade the same way on both paths. Written twice,
-/// under two names, with two byte-identical key functions, the same scan
-/// shades one way on open and another way after any edit -- a seam that
-/// appears mid-session with nothing to blame.
+/// and the same scan must shade the same way on both paths. If the paths used
+/// different tolerances, the same scan would shade one way on open and another
+/// way after any edit -- a seam that appears mid-session.
 pub const COINCIDENT_POSITION_EPS_MM: f32 = 0.002;
 
 /// Quantize a position onto the [`COINCIDENT_POSITION_EPS_MM`] lattice.
@@ -139,9 +136,8 @@ mod tests {
 
     #[test]
     fn one_tolerance_decides_which_vertices_share_a_normal() {
-        // The seam described on `COINCIDENT_POSITION_EPS_MM`: two copies of
-        // the number and the same scan shades one way on open, another after
-        // any edit.
+        // Guards the seam described on `COINCIDENT_POSITION_EPS_MM`: the
+        // loader and the edit kernels must key positions identically.
         let origin = [0.0_f32, 0.0, 0.0];
         let inside = [COINCIDENT_POSITION_EPS_MM * 0.4, 0.0, 0.0];
         let outside = [COINCIDENT_POSITION_EPS_MM * 4.0, 0.0, 0.0];

@@ -1,20 +1,17 @@
-// File-size exception (>500): the probe geometry keeps its hostile test meshes
-// (nested-cube shell, NaN-poisoned, degenerate) next to the math it guards.
-
 //! Viewport measurement tools: the two-point ruler and the wall-thickness probe.
 //!
 //! State machine + geometry only, pure and unit-tested. Painting lives in
 //! [`crate::measure_overlay`], the input adapter in `app::app_viewport`, the
-//! toolbar toggles in `app::app_dialogs`. Anchors are WORLD-SPACE points on the
+//! toolbar toggles in `app::app_dialogs`. Anchors are world-space points on the
 //! mesh surface: they re-project through the live camera every frame, so the
 //! drawn segment orbits/zooms/pans with the model (matching the dental CAD
 //! ruler behaviour).
 //!
-//! The thickness probe is honest, not a proxy: from the picked surface point it
-//! casts a ray INWARD (opposite the barycentric-interpolated surface normal at
-//! the hit) against the SAME layer's triangles; the nearest exit intersection is
-//! the local wall thickness (the normal chord). No exit means an open scan, and
-//! the reading says so instead of inventing a number.
+//! The thickness probe measures the wall directly: from the picked surface
+//! point it casts a ray inward (opposite the barycentric-interpolated surface
+//! normal at the hit) against the same layer's triangles; the nearest exit
+//! intersection is the local wall thickness (the normal chord). No exit means
+//! an open scan, and the reading says so instead of inventing a number.
 
 use glam::{Vec3, Vec3A};
 use occluview_core::SceneMesh;
@@ -61,7 +58,7 @@ impl RulerMeasurement {
     }
 }
 
-/// The honest outcome of one thickness probe.
+/// The outcome of one thickness probe.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum ThicknessReading {
     /// The inward ray crossed the opposite wall: the normal chord.
@@ -252,7 +249,7 @@ pub(crate) fn format_length(mm: f64, unit: crate::app_settings::UnitDisplay) -> 
 /// Casts a ray from `point` opposite the interpolated surface normal of
 /// triangle `triangle_index` (into the solid) against the same layer's
 /// triangles; the nearest exit intersection past the self-hit epsilon is the
-/// wall. Returns `None` when the surface normal is genuinely undeterminable
+/// wall. Returns `None` when the surface normal is undeterminable
 /// (degenerate geometry) — the probe refuses instead of guessing.
 pub(crate) fn probe_wall_thickness(
     entry: &SceneMesh,
@@ -290,8 +287,8 @@ fn world_triangle(entry: &SceneMesh, tri: &[u32]) -> Option<[Vec3; 3]> {
     Some(out)
 }
 
-/// Interpolated world-space surface normal at `point` on the triangle, with an
-/// honest fallback ladder: barycentric vertex normals, then the geometric face
+/// Interpolated world-space surface normal at `point` on the triangle, with a
+/// fallback ladder: barycentric vertex normals, then the geometric face
 /// normal, then `None` (degenerate — refuse rather than guess a direction).
 fn surface_normal_at(
     entry: &SceneMesh,
@@ -347,10 +344,9 @@ fn barycentric_weights(point: Vec3, corner_a: Vec3, corner_b: Vec3, corner_c: Ve
 /// distance (= thickness, `direction` is unit) and the exit point.
 ///
 /// The search starts just past the entry wall and goes through the mesh's own
-/// cached BVH. Walking every triangle instead — three affine transforms each,
-/// before the ray test — froze the window for a tenth of a second per click on
-/// a full arch, using none of the acceleration structure the very same click
-/// had just used to pick the entry point.
+/// cached BVH, the same structure that picked the entry point. A linear walk
+/// over every triangle (three affine transforms each, before the ray test)
+/// takes about a tenth of a second per click on a full arch.
 fn nearest_exit(
     entry: &SceneMesh,
     origin_triangle: usize,

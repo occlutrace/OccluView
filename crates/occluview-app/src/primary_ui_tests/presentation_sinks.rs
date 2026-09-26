@@ -2,10 +2,8 @@
 //! exist in the embedded English catalogue, so a rename cannot reach the
 //! operator as a `⟦key⟧` marker.
 //!
-//! The former "no inline English prose at a sink" scanner was a source-text
-//! test over the crate's own `.rs` and was removed with the rest of that
-//! class. The remaining check is cross-artifact: code call sites against the
-//! shipped `en` catalogue.
+//! The check is cross-artifact: code call sites against the shipped `en`
+//! catalogue.
 //!
 //! Test code never scans as production: every `#[cfg(test)]`-gated item is cut
 //! by [`strip_test_regions`], which covers the non-standard module names a
@@ -336,10 +334,9 @@ fn skip_balanced(source: &str, i: usize) -> usize {
 /// Read the string literal starting at `bytes[i]` (which points at the
 /// opening `"`). Returns the literal body and the index past the closing quote.
 ///
-/// Backslash escapes are walked, not scanned: the old loop stopped at the first
-/// `"` it saw, so a future `ui.label("a \"quoted\" word")` truncated the literal
-/// and everything after the escape became invisible to BOTH catalog scanners —
-/// a sink that silently stops being checked.
+/// Backslash escapes are walked, not scanned: stopping at the first `"` would
+/// truncate a literal such as `ui.label("a \"quoted\" word")` and hide
+/// everything after the escape from the catalog scan.
 fn read_literal(bytes: &[u8], mut i: usize) -> (String, usize) {
     debug_assert_eq!(bytes[i], b'"');
     i += 1;
