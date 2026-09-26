@@ -7,6 +7,14 @@ remain in the Git history.
 
 ### Viewer
 
+- "Best fit matching" accepts a scan of part of a jaw against a scan of all of
+  it again. The acceptance gate had briefly required a fixed fraction of the
+  moving surface to seat inside 0.05 mm, which a real partial overlap cannot
+  reach — the overlap seated exactly (median 0.000 mm) and the gate still
+  refused it, so the button did nothing and no heatmap appeared. The median
+  residual decides acceptance, as it did in v1.2.0, with the worst-fifth tail
+  still bounded so a fit that slid onto a neighbouring surface is refused. Two
+  different jaws stay refused.
 - Excluding surface from best-fit matching with the Brush tool marks and
   commands both scans again. Selecting one mesh had narrowed "Fit everywhere",
   "Fit nowhere", "Invert markings" and "Mark automatic" to that single scan, so

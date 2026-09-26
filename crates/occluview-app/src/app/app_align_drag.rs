@@ -46,6 +46,7 @@ impl OccluViewApp {
     /// Discard a drag when its scene is replaced or cleared.
     pub(super) fn discard_align_drag(&mut self) {
         self.tools.align.drag = None;
+        self.tools.align.drag_press_origin = None;
         self.document.unsaved_drag_pose = false;
     }
 
@@ -81,6 +82,33 @@ impl OccluViewApp {
         };
         let motion = ctx.input(|input| input.pointer.delta());
 
+        // Record where the primary button goes down, from the press EVENT.
+        //
+        // Not from the current pointer position: when a move (or a second
+        // button's press) is coalesced into the same frame as the primary press,
+        // `interact_pointer_pos` and `hover_pos` already hold the moved point,
+        // and the anchor would land behind the operator's finger — worse than
+        // before, because the recorded value is preferred over egui's own.
+        //
+        // And not from egui's `press_origin` either: it keeps ONE slot for
+        // every button, so a secondary press overwrites it and a secondary
+        // release clears it while the primary stays down. The event stream is
+        // the only place the primary press carries its own position.
+        let press_at = ctx.input(|input| {
+            input.events.iter().find_map(|event| match event {
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    ..
+                } => Some(*pos),
+                _ => None,
+            })
+        });
+        if let Some(press_at) = press_at {
+            self.tools.align.drag_press_origin = Some(press_at);
+        }
+
         if self.tools.align.drag.is_none() {
             if !response.drag_started_by(egui::PointerButton::Primary) {
                 return false;
@@ -88,6 +116,21 @@ impl OccluViewApp {
             let Some((camera, scene)) = self.render.camera.zip(self.document.scene.clone()) else {
                 return false;
             };
+            // The grab is cast at the point the operator PRESSED, not where the
+            // pointer has already reached. egui only promotes a press to a drag
+            // once the pointer has moved past a few pixels, so on this frame
+            // `interact_pointer_pos` is that far from the press; ray-casting
+            // there put the pivot beside the operator's finger instead of under
+            // it, and the scan then turned about a point they never chose. That
+            // is exactly the "it does not understand where I clicked" report,
+            // and the error grows as the view is pulled back, where the
+            // threshold spans more millimetres of surface.
+            let grab = self
+                .tools
+                .align
+                .drag_press_origin
+                .or_else(|| ctx.input(|input| input.pointer.press_origin()))
+                .unwrap_or(pointer);
             // The scan being placed gets first refusal on the grab.
             //
             // Two scans in an alignment overlap by definition, so the nearest
@@ -104,9 +147,9 @@ impl OccluViewApp {
                 .tool
                 .moving_layer()
                 .and_then(|moving| {
-                    crate::viewer::pick_layer_hit(&camera, response.rect, pointer, &scene, moving)
+                    crate::viewer::pick_layer_hit(&camera, response.rect, grab, &scene, moving)
                 })
-                .or_else(|| pick_scene_hit(&camera, response.rect, pointer, &scene));
+                .or_else(|| pick_scene_hit(&camera, response.rect, grab, &scene));
             let Some(hit) = hit else {
                 // A drag from empty space is the camera's, not the tool's.
                 return false;
@@ -290,6 +333,7 @@ impl OccluViewApp {
     /// Close an open drag, recording the whole gesture as one undo step.
     pub(super) fn finish_align_drag(&mut self) -> bool {
         self.document.unsaved_drag_pose = false;
+        self.tools.align.drag_press_origin = None;
         let Some(drag) = self.tools.align.drag.take() else {
             return false;
         };
@@ -363,7 +407,7 @@ impl OccluViewApp {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used)]
+    #![allow(clippy::expect_used, clippy::panic)]
 
     use super::*;
     use crate::app::app_test_support::{named_scene, test_app};
@@ -492,6 +536,154 @@ mod tests {
         assert!(
             rotation.angle_between(Quat::IDENTITY) < 1e-4,
             "a plain drag must not rotate: {rotation:?}"
+        );
+    }
+
+    /// The whole gesture, driven through the real handler: press on the surface,
+    /// then drag with Ctrl held.
+    ///
+    /// Every test above starts from a hand-built `AlignDrag`, so none of them
+    /// exercises the grab itself — which ray is cast, which point is stored, and
+    /// whether the stored point survives into the step. That gap is exactly
+    /// where "the turn is not about where I clicked" can hide while every unit
+    /// test still passes, so this drives the handler with real pointer events
+    /// and checks the point the operator pressed on does not move.
+    #[test]
+    fn a_real_ctrl_drag_gesture_turns_about_the_grabbed_surface_point() {
+        use crate::align_panel::AlignTab;
+        use occluview_core::{Mesh, Scene, SceneMesh, Vertex};
+        use std::sync::Arc;
+
+        /// A wide triangle, so a click lands well off the mesh centre.
+        fn wide_scene() -> (Scene, SceneMeshId) {
+            let mesh = Mesh::new(
+                Some("jaw".to_string()),
+                vec![
+                    Vertex::at(Vec3::new(0.0, 0.0, 0.0)),
+                    Vertex::at(Vec3::new(40.0, 0.0, 0.0)),
+                    Vertex::at(Vec3::new(0.0, 40.0, 0.0)),
+                ],
+                vec![0, 1, 2],
+            )
+            .expect("a triangle is a mesh");
+            let mut scene = Scene::new();
+            scene.add(SceneMesh::new(mesh));
+            let id = scene.meshes()[0].id();
+            (scene, id)
+        }
+
+        let mut app = test_app("real-ctrl-drag-gesture");
+        let (scene, id) = wide_scene();
+        app.document.scene = Some(Arc::new(scene));
+        let bbox = app.document.scene.as_ref().expect("scene").bbox();
+        let camera = Camera::default().frame_occlusal(bbox, 45.0_f32.to_radians());
+        app.render.camera = Some(camera);
+        app.tools.align.tool.arm();
+        app.tools.align.tab = AlignTab::Manually;
+
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 600.0));
+        // A point on the surface, far from the centre at (20, 20, 0).
+        let target = Vec3::new(30.0, 5.0, 0.0);
+        let (press_at, _) = crate::viewer::project_world_to_viewport(&camera, rect, target)
+            .expect("a surface point must project into the viewport");
+        let modifiers = egui::Modifiers::COMMAND;
+        let viewport_id = egui::Id::new("gesture-viewport");
+
+        // The interaction state must persist across frames, so one context
+        // drives every frame of the gesture.
+        let ctx = egui::Context::default();
+        let mut frame = |events: Vec<egui::Event>| {
+            let raw = egui::RawInput {
+                screen_rect: Some(rect),
+                events,
+                ..Default::default()
+            };
+            ctx.run_ui(raw, |ui| {
+                let response = ui.interact(rect, viewport_id, egui::Sense::click_and_drag());
+                let frame_ctx = ui.ctx().clone();
+                app.handle_align_drag(&response, &frame_ctx);
+            })
+            .drop_without_applying_deltas();
+        };
+
+        // Frame 0: register the viewport widget so egui can hit-test the press.
+        frame(vec![]);
+        // Frame 1: the COALESCED frame. A fast flick, or a delayed egui pass,
+        // delivers the primary press and the pointer's move in one batch: the
+        // press lands on the surface, then the pointer is already 60 px away by
+        // the end of the same frame. The frame's current pointer position is
+        // therefore NOT where the button went down, and neither `hover_pos` nor
+        // `interact_pointer_pos` can be used to anchor the turn.
+        frame(vec![
+            egui::Event::ModifiersChanged(modifiers),
+            egui::Event::PointerMoved(press_at),
+            egui::Event::PointerButton {
+                pos: press_at,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers,
+            },
+            egui::Event::PointerMoved(press_at + egui::vec2(60.0, 20.0)),
+        ]);
+        // Frame 2: a secondary press lands ELSEWHERE. egui keeps a single
+        // `press_origin` for every button, so this is what would displace the
+        // anchor if the grab read that shared slot.
+        frame(vec![
+            egui::Event::PointerButton {
+                pos: press_at + egui::vec2(-120.0, -60.0),
+                button: egui::PointerButton::Secondary,
+                pressed: true,
+                modifiers,
+            },
+            egui::Event::PointerMoved(press_at + egui::vec2(90.0, 40.0)),
+        ]);
+        // Frame 3: no button is being pressed now, so egui promotes the held
+        // primary to a drag and the grab is resolved.
+        frame(vec![
+            egui::Event::ModifiersChanged(modifiers),
+            egui::Event::PointerMoved(press_at + egui::vec2(100.0, 45.0)),
+        ]);
+
+        let Some(drag) = app.tools.align.drag else {
+            panic!("a Ctrl-drag over the surface must open a drag");
+        };
+        let scene = app.document.scene.as_ref().expect("scene");
+        let entry = scene.meshes().iter().find(|e| e.id() == id).expect("layer");
+        let centre = entry.mesh.bbox_cached().center();
+
+        // The fixture must be an off-centre grab, or a centre pivot would look
+        // identical and the test would prove nothing.
+        assert!(
+            (drag.pivot_local - centre).length() > 5.0,
+            "the grab {:?} is too close to the centre {centre:?} to tell the two apart",
+            drag.pivot_local
+        );
+        // The grab must be the surface point under the cursor, not the centre.
+        assert!(
+            (drag.pivot_local - target).length() < 0.5,
+            "the grab stored {:?} but the operator pressed on {target:?}",
+            drag.pivot_local
+        );
+
+        // The surface point the operator pressed must be a fixed point of the
+        // applied turn.
+        //
+        // Asserting this of `drag.pivot_local` would prove nothing: a turn
+        // built by `rotation_about_pivot` fixes whatever pivot it was handed,
+        // so that version passes even when the stored point is wrong — which is
+        // the whole defect. Pinning the world point the press actually landed
+        // on is the operator-visible property, and it fails when the grab is
+        // taken from anywhere else.
+        let pinned = entry.transform.transform_point3(target);
+        assert!(
+            (pinned - target).length() < 1e-2,
+            "the point the operator pressed ({target:?}) moved to {pinned:?}: the \
+             gesture did not turn about what they clicked"
+        );
+        assert_ne!(
+            entry.transform,
+            Affine3A::IDENTITY,
+            "the Ctrl-drag produced no pose change at all"
         );
     }
 }
