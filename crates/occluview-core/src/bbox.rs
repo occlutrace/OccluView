@@ -1,8 +1,7 @@
 //! Axis-aligned bounding box.
 //!
-//! Computed from a mesh's vertices; used for camera framing, scale-bar sizing,
-//! and the (future) Properties tab in Explorer. Reported dimensions are in the
-//! [`crate::units::Millimeters`] unit.
+//! Computed from a mesh's vertices; used for camera framing and scale-bar
+//! sizing. Reported dimensions are in the [`crate::units::Millimeters`] unit.
 
 use crate::units::Millimeters;
 use glam::Vec3;
@@ -21,13 +20,12 @@ impl Aabb {
     ///
     /// Slab test. Answers "the operator clicked past the model, so what did
     /// they mean" -- the fallback both the main viewport and the Explorer
-    /// preview use when a click misses every triangle. It lived in both of
-    /// them, byte for byte, and the preview's own header promises that the two
-    /// feel the same; the preview is Windows-only, so a change made to the
-    /// app's copy would have reached a customer before it reached CI.
+    /// preview use when a click misses every triangle. Both call this one
+    /// implementation so the two behave the same; the preview is Windows-only,
+    /// so sharing the code keeps its behaviour covered by the tests here.
     ///
-    /// A ray starting inside the box returns its exit point, so a click from
-    /// within the model still resolves to a point on it.
+    /// A ray starting inside the box returns its own origin, so a click from
+    /// within the model resolves to where the click was.
     #[must_use]
     pub fn ray_entry(&self, origin: Vec3, direction: Vec3) -> Option<Vec3> {
         let mut t_min = 0.0_f32;

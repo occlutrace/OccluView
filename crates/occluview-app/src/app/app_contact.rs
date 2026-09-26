@@ -158,8 +158,8 @@ impl OccluViewApp {
             return;
         }
         // Escape closes what is in front of the operator. The details popover
-        // is: closing the whole reading from under it took the panel away while
-        // the operator was aiming at one row in it.
+        // is: closing the whole reading from under it would take the panel away
+        // while the operator is aiming at one row in it.
         if self.tools.contacts.details_open() {
             if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
                 self.tools.contacts.toggle_details();
@@ -351,7 +351,7 @@ impl OccluViewApp {
     ///
     /// A thread that panicked publishes nothing, so the pending request would
     /// stay in flight forever: the bar would show a spinner with no status text
-    /// and no retry, and re-opening the reading would only queue work nobody
+    /// and no retry, and re-opening the reading would only queue work no worker
     /// drains. The failure latch is the only signal that the executor is gone.
     fn release_a_reading_whose_worker_died(&mut self, worker_failed: bool, ctx: &egui::Context) {
         if !worker_failed {
@@ -456,7 +456,7 @@ fn field_width(field: Option<&ContactLayerField>) -> u32 {
     field.map_or(CONTACT_FIELD_TEXTURE_WIDTH, |field| field.texels.width)
 }
 
-/// Pack one field using the contact crate's sentinel and the DEVICE's limit.
+/// Pack one field using the contact crate's sentinel and the device's limit.
 ///
 /// `texture_limit` is the granted `max_texture_dimension_2d`, not the request
 /// ceiling; see `RenderState::granted_texture_dimension`.

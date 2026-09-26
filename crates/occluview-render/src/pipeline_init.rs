@@ -49,7 +49,7 @@ impl Renderer {
     /// Create a headless renderer on one explicit adapter kind.
     ///
     /// The offscreen policy layer owns fallback and verification. This lower
-    /// layer deliberately makes one adapter request only, so a consumer cannot
+    /// layer makes exactly one adapter request, so a consumer cannot
     /// mistake a successful device allocation for a verified hardware frame.
     pub(crate) async fn new_headless_on_adapter(
         target_format: wgpu::TextureFormat,
@@ -79,13 +79,12 @@ impl Renderer {
                 // The conservative floor, raised to what the adapter
                 // actually offers. `downlevel_defaults` caps
                 // `max_texture_dimension_2d` at 2048, while the format
-                // readers accept textures up to 8192 -- so a scan with a
-                // 4096-pixel atlas decoded, cost its memory, and then had
-                // nowhere to go. `using_resolution` copies the three
-                // texture dimensions and nothing else, so the 256 MiB
-                // buffer floor stayed: a scan of three million triangles
-                // needs a 309 MiB vertex buffer, the allocation was
-                // refused, and the frame came back empty.
+                // readers accept textures up to 8192, so a scan with a
+                // 4096-pixel atlas needs the adapter's texture limits.
+                // `using_resolution` copies the three texture dimensions
+                // and nothing else, so the buffer size is raised
+                // separately: a scan of three million triangles needs a
+                // 309 MiB vertex buffer, above the 256 MiB floor.
                 required_limits: wgpu::Limits {
                     max_buffer_size: adapter.limits().max_buffer_size,
                     ..wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits())
@@ -156,7 +155,7 @@ impl Renderer {
         let sample_count = sample_count.max(1);
         let multisample = multisample_state(sample_count);
 
-        // Replace wgpu's default uncaptured-error handler (which logs AND
+        // Replace wgpu's default uncaptured-error handler (which logs and
         // panics) with one that records the message. In a release build
         // (`panic = "abort"`), the default handler would turn a recoverable GPU
         // validation error or a transient device fault into a hard crash. Every
@@ -175,7 +174,7 @@ impl Renderer {
             // Device-lost is distinct from an uncaptured error: a laptop GPU
             // reset (TDR) or a driver update mid-session tears the device down.
             // `Destroyed` fires on our own normal teardown (device dropped) and
-            // is NOT a fault; anything else is a real loss to surface.
+            // is not a fault; anything else is a real loss to surface.
             let sink = Arc::clone(&gpu_error);
             let faulted = Arc::clone(&gpu_faulted);
             device.set_device_lost_callback(move |reason, message| {

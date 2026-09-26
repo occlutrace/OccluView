@@ -22,7 +22,7 @@ pub struct GpuCamera {
     pub view: [f32; 16],
     /// Projection matrix (camera -> clip).
     pub projection: [f32; 16],
-    /// Direction TO the light from the scene (unit length expected).
+    /// Direction to the light from the scene (unit length expected).
     pub light_dir: [f32; 3],
     /// Point-splat viewport width during upload; initialized to zero.
     pub pad0: f32,

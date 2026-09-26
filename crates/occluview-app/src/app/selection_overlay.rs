@@ -51,9 +51,8 @@ pub(super) fn selection_overlay_for_scene(
 
 /// Build one CPU overlay scene from all supplied layer selections.
 ///
-/// The function deliberately accepts selections directly instead of reaching
-/// into edit-mode state. That keeps it pure and lets the current one-layer API
-/// remain unchanged while a future selection API can pass every layer here.
+/// The function accepts selections directly instead of reaching into edit-mode
+/// state, which keeps it pure and lets a caller pass any number of layers.
 pub(super) fn selection_overlay_scene_for_selections<I>(
     scene: &Scene,
     selections: I,

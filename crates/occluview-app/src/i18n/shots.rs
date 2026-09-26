@@ -7,8 +7,8 @@
 //!
 //! Test-only. Renders real egui surfaces without a GPU: solid fills for
 //! painted shapes, magenta outline boxes for text extents (real font
-//! metrics from layout — glyph rasterization is out of scope, overflow
-//! detection is the point). PNGs go to `target/i18n-shots/` (gitignored
+//! metrics from layout — glyph rasterization is out of scope; the images
+//! show text overflow). PNGs go to `target/i18n-shots/` (gitignored
 //! build dir, never committed). A human looks at them during visual
 //! review; the shape of German/Russian expansion and CJK wrapping is
 //! what matters, not glyph art.

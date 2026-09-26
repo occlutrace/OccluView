@@ -33,13 +33,13 @@ pub(super) struct RenderedFrame {
 pub(super) struct RenderState {
     pub(super) camera: Option<Camera>,
     pub(super) live_viewport: Option<SharedLiveViewport>,
-    /// The live viewport's REAL size in physical pixels.
+    /// The live viewport's real size in physical pixels.
     ///
     /// Not `render_extent_px`: that one is clamped into 256..=2560 so the
     /// offscreen target and the render-size invalidation stay bounded, while the
     /// live callback paints into egui's render pass at the full viewport. The
-    /// point-splat radius is a PIXEL quantity, so dividing it by the clamped
-    /// extent drew every splat at `3.5 * actual / clamped` pixels — 5.25 px
+    /// point-splat radius is a pixel quantity, so dividing it by the clamped
+    /// extent would draw every splat at `3.5 * actual / clamped` pixels: 5.25 px
     /// instead of 3.5 px on a 4K fullscreen, and too small in a tiny window.
     /// Kept here because only the frame that allocates the viewport rect knows
     /// it.
@@ -52,8 +52,8 @@ pub(super) struct RenderState {
     /// When the last retryable offscreen failure happened.
     ///
     /// A readback deadline is not a device verdict, so the fallback path gets
-    /// another attempt — but not on every repaint, which is the storm the
-    /// terminal latch was added to stop. The wait is short enough that an
+    /// another attempt, but not on every repaint: that retry storm is what the
+    /// terminal latch prevents. The wait is short enough that an
     /// operator who repositions the cut plane does not notice it and long
     /// enough that a machine under load is not asked to fail on a loop.
     pub(super) offscreen_retry_after: Option<Instant>,
@@ -69,19 +69,18 @@ pub(super) struct RenderState {
 }
 
 impl RenderState {
-    /// The texture edge the DEVICE will accept, not the one we wish for.
+    /// The texture edge the device accepts, not the requested one.
     ///
     /// `MAX_RENDER_TEXTURE_DIMENSION` is the request ceiling handed to
-    /// `or_worse_values_from`, which is a per-field MINIMUM — so an adapter
-    /// reporting 2048 gets 2048 and the constant becomes a lie. Sizing a packed
-    /// buffer against the request made `contact_field_width` take its
-    /// "one texel per vertex" branch for any count up to `1024 x 8192` and
-    /// produce a height the device then refused: a wgpu validation error, a
-    /// latched GPU fault, and a frozen viewport instead of a contact map — on
-    /// exactly the largest layers the widening branch exists for. The live
-    /// device is preferred because it is the one that will upload the field;
-    /// the offscreen renderer is the fallback for a machine where the live
-    /// viewport could not be created.
+    /// `or_worse_values_from`, which is a per-field minimum, so an adapter
+    /// reporting 2048 gets 2048 and the constant overstates the limit. Sizing a
+    /// packed buffer against the request would make `contact_field_width` take
+    /// its "one texel per vertex" branch for any count up to `1024 x 8192` and
+    /// produce a height the device refuses: a wgpu validation error, a latched
+    /// GPU fault, and a frozen viewport instead of a contact map, on the largest
+    /// layers the widening branch exists for. The live device is preferred
+    /// because it uploads the field; the offscreen renderer is the fallback when
+    /// the live viewport could not be created.
     pub(super) fn granted_texture_dimension(&self) -> u32 {
         if let Some(viewport) = self.live_viewport.as_ref() {
             if let Ok(viewport) = viewport.lock() {

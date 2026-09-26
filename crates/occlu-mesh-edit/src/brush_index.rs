@@ -3,7 +3,7 @@
 //!
 //! Built once when a [`super::brush::BrushSession`] is prepared (rayon-
 //! parallel bucket assignment), then rebuilt with cell size matched to the
-//! current brush radius on a deliberate size change — keeping a radius
+//! current brush radius on an explicit size change — keeping a radius
 //! query's cell scan bounded regardless of brush size vs. mesh scale.
 
 use glam::Vec3;
@@ -52,7 +52,7 @@ impl VertexGrid {
         Self::build_with_cell_size(positions, cell_size)
     }
 
-    /// Build the index with an EXPLICIT cell size, so a session can match the
+    /// Build the index with an explicit cell size, so a session can match the
     /// grid to the current brush radius (bounding `reach`, hence the query's
     /// cell-scan cost, regardless of brush size vs. mesh scale). A tiny brush
     /// on a huge scan and a huge brush on a small crop both stay cheap.
@@ -104,8 +104,8 @@ impl VertexGrid {
 
     /// Move `vertex_id` from the cell of `from` to the cell of `to`, if they
     /// differ. Keeps the index exact as a stroke moves vertices — O(touched)
-    /// per dab — instead of periodically rebuilding the whole grid (O(n), the
-    /// stall a big scan showed). A within-cell move is a near-free no-op.
+    /// per dab — instead of periodically rebuilding the whole grid (O(n), which
+    /// stalls on a big scan). A within-cell move is a near-free no-op.
     pub(crate) fn relocate(&mut self, vertex_id: usize, from: Vec3, to: Vec3) {
         let from_key = cell_key(from, self.origin, self.cell_size);
         let to_key = cell_key(to, self.origin, self.cell_size);
@@ -125,8 +125,8 @@ impl VertexGrid {
     /// Every vertex id within `radius` of `center` (by cell coverage — a
     /// conservative superset; callers filter by exact distance).
     /// Deterministic without sorting: each vertex lives in one cell, and the
-    /// scan visits cells in a fixed `(dx, dy, dz)` order (sorting per dab was
-    /// a real cost on a big brush). The rare radius-dwarfs-the-grid fallback
+    /// scan visits cells in a fixed `(dx, dy, dz)` order, so a big brush does
+    /// not pay for a per-dab sort. The rare radius-dwarfs-the-grid fallback
     /// still sorts, since it walks the hash map in unspecified order.
     pub(crate) fn query_radius(&self, center: Vec3, radius: f32) -> Vec<usize> {
         if !(radius.is_finite() && radius > 0.0) {

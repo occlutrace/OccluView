@@ -1,8 +1,8 @@
 //! The align tool's whole state, one struct.
 //!
-//! `Align Scans` is the largest tool in the app. Its state used to be eighteen
-//! loose fields on `OccluViewApp`; they are grouped here so the tool reads as
-//! one unit and the app struct carries a single `align: AlignState` field.
+//! `Align Scans` is the largest tool in the app. Its state is grouped here so
+//! the tool reads as one unit and the app struct carries a single
+//! `align: AlignState` field.
 //!
 //! The struct is a plain field container; the methods that act on it are
 //! `impl OccluViewApp` blocks in `app_align*.rs` and `align_*.rs` that access
@@ -50,6 +50,13 @@ pub(crate) struct AlignState {
     /// caches downstream hearing about it.
     pub(crate) markings: AlignMarkings,
     pub(crate) drag: Option<AlignDrag>,
+    /// Where the primary button went down, captured on the frame it happened.
+    ///
+    /// egui keeps ONE `press_origin` for every button: a secondary press during
+    /// the gesture overwrites it and a secondary release clears it, so by the
+    /// time egui promotes the primary press to a drag that value can belong to
+    /// another button or be gone. This record is ours and cannot be displaced.
+    pub(crate) drag_press_origin: Option<egui::Pos2>,
     pub(crate) constraint: DragConstraint,
     pub(crate) brush: AlignBrush,
     /// What the per-vertex colours on the moving scan currently mean.

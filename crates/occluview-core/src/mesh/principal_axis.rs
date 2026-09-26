@@ -134,8 +134,8 @@ const JACOBI_NEGLIGIBLE_PAIR: f64 = 1e-15;
 /// non-finite.
 ///
 /// Single-letter names below (`a`, `v`, `p`, `q`, `c`, `s`, `t`) mirror the
-/// standard Jacobi-rotation reference notation deliberately, so the
-/// implementation stays checkable line-by-line against it.
+/// standard Jacobi-rotation reference notation, so the implementation stays
+/// checkable line-by-line against it.
 #[allow(clippy::many_single_char_names)]
 fn jacobi_eigen_symmetric_3x3(mut a: [[f64; 3]; 3]) -> Option<([f64; 3], [[f64; 3]; 3])> {
     for row in &a {
@@ -305,7 +305,7 @@ mod tests {
     #[test]
     fn perfectly_symmetric_cube_corners_still_produce_a_valid_orthonormal_frame() {
         // No unique long axis (all three extents equal), but the function
-        // must still return SOME valid orthonormal right-handed frame rather
+        // must still return some valid orthonormal right-handed frame rather
         // than degenerating.
         let points = vec![
             Vec3::new(-1.0, -1.0, -1.0),
@@ -339,7 +339,7 @@ mod tests {
 
     #[test]
     fn diagonal_covariance_recovers_axis_aligned_eigenvectors() {
-        // A point cloud whose covariance is EXACTLY diagonal (axis-aligned
+        // A point cloud whose covariance is exactly diagonal (axis-aligned
         // spread): symmetric about the origin along each axis independently,
         // with distinctly different variances so the ranking is unambiguous.
         let mut points = Vec::new();

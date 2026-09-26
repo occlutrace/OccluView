@@ -52,7 +52,7 @@ pub struct BridgeSplitResult {
 
 /// Two surface pieces produced when the source is an open dental surface.
 ///
-/// This deliberately does not claim that the outputs are manufacturing solids:
+/// The outputs are not claimed to be manufacturing solids:
 /// natural source borders are preserved instead of being capped speculatively.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SurfaceSplitResult {

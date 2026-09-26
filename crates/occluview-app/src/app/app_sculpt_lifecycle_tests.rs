@@ -181,7 +181,7 @@ fn pump_sculpt_worker_until_idle(app: &mut OccluViewApp) {
     }
 }
 
-/// Wait until the worker owes the frame both a densifying rebuild AND a sparse
+/// Wait until the worker owes the frame both a densifying rebuild and a sparse
 /// vertex update, without draining either. The stroke stays open, so the
 /// rebuild has no completion behind it.
 fn wait_for_rebuild_and_sparse_update(app: &OccluViewApp) {
@@ -404,10 +404,9 @@ fn a_stroke_that_ends_without_a_worker_does_not_latch_the_guards() {
 
 /// An export started while a Sculpt stroke is still being rebuilt must not
 /// write anything. The scene only advances to a stroke's result when its
-/// worker lands, so the old code wrote the pre-stroke geometry, reported
-/// success, and the operator found out by re-opening the file. All three
-/// export entry points read the same scene and must tell the operator to
-/// finish the stroke instead.
+/// worker lands, so an export during the stroke would write the pre-stroke
+/// geometry and report success. All three export entry points read the same
+/// scene and must tell the operator to finish the stroke instead.
 #[test]
 fn every_export_path_refuses_while_a_stroke_is_in_flight() {
     // The layer export path takes the scene directly.
@@ -450,7 +449,7 @@ fn every_export_path_refuses_while_a_stroke_is_in_flight() {
     assert!(!app.refuse_export_during_stroke(&ctx));
 }
 
-/// A brush-mode switch during a drag must FINISH the stroke. Aborting instead
+/// A brush-mode switch during a drag must finish the stroke. Aborting instead
 /// throws away every dab the operator has already laid and reverts the layer
 /// to the pre-stroke mesh.
 #[test]
@@ -581,8 +580,8 @@ fn abort_also_reverts_a_released_stroke_waiting_in_the_worker() {
 }
 
 /// The worker queue is bounded, so a finish can be refused while older dabs
-/// drain. A refused finish must keep the drag and retry it, not silently drop
-/// the released stroke.
+/// drain. A refused finish must keep the drag and retry it, not drop the
+/// released stroke.
 #[test]
 fn a_rejected_finish_keeps_the_stroke_for_a_later_retry() {
     let (mut app, _layer_id) = app_with_a_live_stroke("sculpt-finish-retry");
@@ -693,7 +692,7 @@ fn completions_walk_the_topology_chain_before_leftover_rebuilds_install() {
     let (mut app, layer_id) = app_with_a_live_stroke("sculpt-topology-chain");
     let base_len = sculpt_shadow_len(&app);
 
-    // Stroke 1 densifies and is released, so its rebuild AND its completion
+    // Stroke 1 densifies and is released, so its rebuild and its completion
     // are waiting for the frame.
     {
         let worker = app.tools.sculpt.worker.as_ref().expect("worker");

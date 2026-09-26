@@ -70,7 +70,7 @@ fn close_holes_button_requires_selection_and_scopes_to_selected_rim() {
     assert_eq!(scene.meshes()[0].mesh.triangle_count(), before);
 
     // Mark only the lower rim's owning faces. The opposite rim is left open,
-    // exactly like a dental CAD selection that does not fully cover it.
+    // as in a dental CAD selection that does not fully cover it.
     let selection = tube_bottom_selection();
     let selected = super::super::whole_mesh::apply_layer_mesh_edit_action_with_limit(
         &mut scene,
@@ -125,10 +125,7 @@ fn mesh_editor_close_holes_requires_face_selection() {
     assert!(result.is_ok(), "mesh-editor close holes failed: {result:?}");
     let Ok(apply) = result else { return };
 
-    assert!(
-        !apply.scene_changed,
-        "empty selection must be an honest no-op"
-    );
+    assert!(!apply.scene_changed, "empty selection must be a no-op");
     assert_eq!(
         scene.meshes()[0].mesh.indices(),
         before.meshes()[0].mesh.indices()

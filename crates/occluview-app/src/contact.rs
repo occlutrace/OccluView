@@ -273,13 +273,11 @@ impl ContactState {
             self.status,
             Some(ContactStatus::SubjectUnusable | ContactStatus::AntagonistUnusable)
         ) {
-            // Say what is actually true. Showing "Re-measuring…" here promised a
-            // measurement that nothing had started: hiding and showing a layer
-            // changes neither the geometry id nor the pose, so the job keys are
-            // unchanged and `needs_measurement` stays false — the sentence then
-            // sat in the details popover forever with no worker running. The
-            // fields are dropped with the override, so the next frame really does
-            // resubmit and the spinner has something behind it.
+            // "Re-measuring…" is shown only when a job will follow. Hiding and
+            // showing a layer changes neither the geometry id nor the pose, so
+            // the job keys are unchanged and `needs_measurement` alone stays
+            // false. The fields are dropped with the override, so the next frame
+            // resubmits and the spinner has a job behind it.
             if self.fields.is_empty() {
                 self.status = None;
             } else {
@@ -320,7 +318,7 @@ impl ContactState {
 
     /// Read against a different layer. Returns whether the pair moved.
     ///
-    /// The measurement on screen describes the old antagonist, so it is
+    /// The measurement on screen describes the previous antagonist, so it is
     /// dropped: the frame loop re-submits for the new pair.
     pub(crate) fn set_antagonist(&mut self, antagonist: SceneMeshId) -> bool {
         let Some(pair) = self.pair.as_mut() else {
@@ -471,9 +469,9 @@ impl ContactState {
 
     /// The worker, started on first use.
     ///
-    /// A worker that has latched a failure is replaced here: its thread is gone
-    /// and it refuses every later job, so keeping it would make the "Read
-    /// again" the bar offers a button that can never work.
+    /// A worker that has latched a failure is replaced here: its thread has
+    /// exited and it refuses every later job, so keeping it would make the
+    /// "Read again" the bar offers a button that can never work.
     pub(crate) fn worker_mut(&mut self) -> &mut ContactWorker {
         if self.worker.as_ref().is_some_and(ContactWorker::has_failed) {
             self.worker = None;
@@ -525,7 +523,7 @@ impl ContactState {
         self.failed = None;
     }
 
-    /// Close a reading whose pair is no longer present and return affected layers.
+    /// Close a reading whose pair has left the scene and return affected layers.
     pub(crate) fn forget_missing(&mut self, scene: &Scene) -> Vec<SceneMeshId> {
         let Some(pair) = self.pair else {
             return Vec::new();
@@ -554,7 +552,7 @@ impl ContactState {
 /// operator should not have to give it. A case with an upper, a lower, a
 /// pre-op and a wax-up does not: two of those sit at almost the same centre,
 /// and proximity alone cannot say which one is the antagonist. The list is
-/// therefore the honest answer to "what can this be measured against", and the
+/// therefore the complete answer to "what can this be measured against", and the
 /// automatic pick is its head — the operator is offered the same order the
 /// rule uses.
 ///

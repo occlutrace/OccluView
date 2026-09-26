@@ -24,7 +24,7 @@ expected.
 Keep process material outside the repository. Do not commit prompts, exported
 agent sessions, handoffs, audit dumps, scratch plans, generated process
 documents, agent instruction files such as `AGENTS.md`, or files whose only
-purpose is to direct an AI worker. Add a file only when it is product
+purpose is to direct an automated tool. Add a file only when it is product
 documentation or an explicit build, release, security, or contribution
 contract.
 
@@ -40,7 +40,7 @@ For behaviour changes, add or update tests. Prefer behavioural assertions over
 source-text checks. Keep performance thresholds tied to a reproducible
 measurement.
 
-The workspace test list is the audit baseline. Refresh it before deleting or
+The workspace test list is the baseline. Refresh it before deleting or
 adding a large group of tests:
 
 ```bash

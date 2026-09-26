@@ -1,13 +1,13 @@
 //! Incremental Lawson machinery for cap refinement: a cap triangulation with a
-//! PERSISTENT edge→owner map, a deterministic suspect-edge worklist, and the
+//! persistent edge→owner map, a deterministic suspect-edge worklist, and the
 //! conforming 2:4 edge bisection.
 //!
-//! Why not sweep: the previous scheme re-tested EVERY cap edge up to 64 times
-//! after every bisection pass, rebuilding the edge map from scratch each sweep.
-//! On a ~1000-edge rim (a routine lasso cut, issue #9) that made refinement
-//! cost ~5 s of the total fill. After a split or a flip only the edges of the
-//! rewritten quads can newly violate the Delaunay criterion, so a worklist
-//! seeded by exactly those edges does the same repair in near-linear time.
+//! After a split or a flip only the edges of the rewritten quads can newly
+//! violate the Delaunay criterion, so a worklist seeded by those edges does
+//! the repair in near-linear time. A full sweep that re-tests every cap edge
+//! up to 64 times after every bisection pass, rebuilding the edge map each
+//! sweep, costs ~5 s of the total fill on a ~1000-edge rim (a routine lasso
+//! cut).
 //! The worklist is a `BTreeSet` and candidate edges are visited in sorted
 //! order, so the output stays bit-deterministic run to run.
 
@@ -32,7 +32,7 @@ fn edge_key(u: usize, v: usize) -> (usize, usize) {
 }
 
 /// A cap triangulation whose edge→owner map stays live across bisections and
-/// flips. Triangle SLOTS are stable: a flip rewrites the two owner slots in
+/// flips. Triangle slots are stable: a flip rewrites the two owner slots in
 /// place, a bisection rewrites both owners and pushes two children.
 pub(super) struct CapMesh {
     triangles: Vec<[usize; 3]>,
@@ -166,8 +166,7 @@ impl CapMesh {
     /// Lawson repair from a seed set: pop suspect edges in ascending order,
     /// flip any interior edge violating the Delaunay criterion (with the
     /// cocircular shorter-diagonal tie-break), and re-seed the four quad
-    /// boundary edges of every flip. Convex-quad and new-diagonal guards are
-    /// identical to the retired sweep implementation.
+    /// boundary edges of every flip.
     pub(super) fn lawson(&mut self, uv: &[Vec2], mut suspects: BTreeSet<(usize, usize)>) {
         let mut budget = self
             .triangles
@@ -187,7 +186,7 @@ impl CapMesh {
             else {
                 continue;
             };
-            // The flipped diagonal must be a NEW edge, or the cap goes
+            // The flipped diagonal must be a new edge, or the cap goes
             // non-manifold.
             let diagonal = edge_key(apex1, apex2);
             if self.owners.contains_key(&diagonal) {
@@ -258,7 +257,7 @@ mod tests {
     }
 
     /// Bisection keeps the owner map consistent: every edge of every triangle
-    /// owns the right slots, and the parent edge is gone.
+    /// owns the right slots, and the parent edge is removed.
     #[test]
     fn bisect_keeps_owner_map_consistent() {
         let mut cap = CapMesh::new(vec![[0, 1, 2], [0, 2, 3]]);
@@ -266,7 +265,10 @@ mod tests {
         let owners = cap.owner_pair((0, 2)).expect("interior edge");
         cap.bisect((0, 2), owners, 4, &mut suspects);
         assert_eq!(cap.triangles().len(), 4);
-        assert!(cap.owner_pair((0, 2)).is_none(), "split edge must be gone");
+        assert!(
+            cap.owner_pair((0, 2)).is_none(),
+            "split edge must be removed"
+        );
         // Rebuild from scratch and compare owner maps.
         let rebuilt = CapMesh::new(cap.triangles().to_vec());
         let mut expected: Vec<_> = rebuilt.owners.iter().collect();

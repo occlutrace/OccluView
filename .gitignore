@@ -24,7 +24,11 @@ flamegraph.svg
 # Generated docs locally
 /target/doc
 
-# Internal planning docs
+# Local downloads / media / logs
+*.zip
+*.mp4
+*.log
+node_modules/
 
 # OS junk
 ehthumbs.db

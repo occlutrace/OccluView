@@ -1,7 +1,7 @@
 //! One-click Repair mesh executor: runs the full occlu-mesh-edit repair
 //! pipeline (weld / slivers / duplicates / non-manifold / orientation /
-//! debris / pinholes) on a whole layer as ONE undo step, with honest no-op
-//! semantics and a per-pass status line that reports only what happened.
+//! debris / pinholes) on a whole layer as one undo step. A content no-op leaves
+//! the mesh untouched, and a per-pass status line reports only what happened.
 
 use super::super::{
     EditModeCommand, LayerContextApply, LayerContextRequest, OccluViewApp, PathBuf, Scene,
@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 /// What one repair run did to the requested layer.
 pub(super) enum LayerRepairOutcome {
-    /// The request no longer matches the live scene; nothing was touched.
+    /// The request does not match the live scene; nothing was touched.
     Stale,
     /// The pipeline found nothing to fix; the mesh is untouched.
     Clean(RepairReport),
@@ -53,14 +53,15 @@ pub(super) fn apply_layer_repair_action_with_status(
                     status,
                 },
             );
-            // The toast above is the glance; the card is the detail — one human
-            // line per non-zero pass, kept open until the operator dismisses it.
+            // The toast above is the summary; the card is the detail: one
+            // readable line per non-zero pass, kept open until the operator
+            // dismisses it.
             app.ui.repair_report.present(&layer_label, report);
             structural_scene_apply()
         }
         Ok(LayerRepairOutcome::Clean(report)) => {
-            // Honest no-op: mesh untouched, snapshot discarded, session not
-            // dirtied — but the operator still hears about open rims left.
+            // Content no-op: mesh untouched, snapshot discarded, session not
+            // dirtied, but the operator is still told about open rims left.
             let status = clean_status(&layer_label, &report, &app.ui.locale);
             super::commit_layer_edit(
                 &mut app.document,
@@ -117,7 +118,7 @@ pub(super) fn apply_layer_repair_action(
     Ok(LayerRepairOutcome::Repaired(result.report))
 }
 
-/// "Repaired {layer}: ..." listing ONLY the non-zero pass counts, plus the
+/// "Repaired {layer}: ..." listing only the non-zero pass counts, plus the
 /// skipped-rim warning tail when the fill pass refused non-simple rims.
 pub(super) fn repaired_status(
     layer_label: &str,
@@ -136,8 +137,8 @@ pub(super) fn repaired_status(
 }
 
 /// Status for a mesh the pipeline had nothing to fix on. Open rims larger
-/// than the pinhole cap are the scan's natural boundary — informational, but
-/// the operator deserves to hear they exist.
+/// than the pinhole cap are the scan's natural boundary: informational, but
+/// still reported to the operator.
 pub(super) fn clean_status(
     layer_label: &str,
     report: &RepairReport,

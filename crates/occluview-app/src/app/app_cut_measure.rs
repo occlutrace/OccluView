@@ -12,6 +12,7 @@
 //! `probe_section`.
 
 use super::{egui, layers_overlay, pick_scene_hit, CutTool, OccluViewApp, Scene};
+use crate::app_settings::RulerLineAngle;
 use crate::cut_manipulator::{ArchFrame, CutCursor, CutFrameInput, SurfaceSample};
 use crate::cut_overlay;
 use crate::measure_overlay;
@@ -80,7 +81,7 @@ pub(super) fn triangle_world_normal(
 }
 
 /// The hit mesh's own principal-axis frame, transformed into world space.
-/// `centroid` is a POINT (needs the transform's translation), `axis0`/`axis1`
+/// `centroid` is a point (needs the transform's translation), `axis0`/`axis1`
 /// are directions (only the linear part, no translation). Shared by Cut View
 /// and Bridge Split, both of which drive the same [`crate::cut_manipulator`]
 /// follow orientation from it. `None` propagates through to the disc's
@@ -275,7 +276,7 @@ impl OccluViewApp {
             }
         }
 
-        // Responsiveness: render THIS frame's slice before painting the panel, so
+        // Responsiveness: render this frame's slice before painting the panel, so
         // a plant/drag/orbit/zoom shows its fresh section with no frame of lag.
         // `maybe_render_cut_view` consumes the dirty flag (`take_needs_render`),
         // so this stays one slice render per frame — the top-of-loop pass then
@@ -370,9 +371,9 @@ impl OccluViewApp {
         if !self.tools.measure.is_active() {
             return false;
         }
-        // Invariants: an edit session owns LMB (marquee/lasso), an INTERACTIVE
+        // Invariants: an edit session owns LMB (marquee/lasso), an interactive
         // cut owns the viewport, and a closed scene has nothing to measure. A
-        // PROBE-LINKED cut is the exception: it was opened by this very tool and
+        // probe-linked cut is the exception: it was opened by this very tool and
         // is passive, so the marker and the section coexist. The tool stands down
         // instead of fighting the others.
         if self.document.edit_mode.has_active_session()
@@ -395,12 +396,13 @@ impl OccluViewApp {
             return false;
         }
         // Align Scans owns the primary click while it is armed. Without this
-        // one click would place an align point AND a ruler anchor.
+        // one click would place an align point and a ruler anchor.
         if self.align_active() {
             self.tools.measure.disarm();
             return false;
         }
         let viewport_rect = response.rect;
+        self.show_ruler_options(ctx, viewport_rect);
         let consumed = self.handle_measure_pointer(response, suppress_click, ctx);
         let hover = ctx
             .input(|input| input.pointer.hover_pos())
@@ -430,6 +432,7 @@ impl OccluViewApp {
                 &self.tools.measure,
                 self.persistence.settings.unit_display,
                 hover,
+                self.ruler_line_angle(ctx),
             );
         }
         consumed
@@ -480,7 +483,8 @@ impl OccluViewApp {
 
     /// Route the frame's stationary clicks: LMB on the model places a ruler
     /// anchor or probes thickness (off-mesh clicks do nothing — no floating
-    /// air-points); RMB clears every measurement, and a stationary RMB with
+    /// air-points, except an end on another ruler's line, which is in the air
+    /// by design); RMB clears every measurement, and a stationary RMB with
     /// nothing left to clear falls through to the shared scene menu, so
     /// saving stays reachable while the tool is up. Click detection is egui's
     /// press+release-without-drag, so a drag still orbits.
@@ -496,35 +500,8 @@ impl OccluViewApp {
         else {
             return false;
         };
-        let primary_down =
-            ctx.input(|input| input.pointer.button_down(egui::PointerButton::Primary));
         if self.tools.measure.dragged_ruler_anchor().is_some() {
-            ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
-            if primary_down && response.rect.contains(pointer) {
-                if let Some((camera, scene)) = self.render.camera.zip(self.document.scene.clone()) {
-                    if let Some(hit) = pick_scene_hit(&camera, response.rect, pointer, &scene) {
-                        if let Some(distance_mm) = self.tools.measure.update_ruler_drag(hit.point) {
-                            self.ui.status_message = Some(
-                                self.ui.locale.tr_with(
-                                    "measure-distance",
-                                    &[(
-                                        "len",
-                                        measure_tool::format_length(
-                                            distance_mm,
-                                            self.persistence.settings.unit_display,
-                                        )
-                                        .as_str(),
-                                    )],
-                                ),
-                            );
-                            ctx.request_repaint();
-                        }
-                    }
-                }
-            } else if !primary_down {
-                self.tools.measure.end_ruler_drag();
-                ctx.request_repaint();
-            }
+            self.continue_ruler_drag(response, pointer, ctx);
             return true;
         }
         if !self.pointer_on_bare_viewport(ctx, response.rect, pointer) {
@@ -550,9 +527,9 @@ impl OccluViewApp {
         if response.secondary_clicked() {
             // RMB is also the orbit button. Only a truly stationary right-click
             // clears: `viewport_secondary_gesture_moved_since_press` is armed by
-            // ANY pointer motion during the press (including sub-threshold
-            // motion the platform may classify as a click), which is exactly
-            // the "Thickness exits on rotation" guard. Note `press_origin()`
+            // any pointer motion during the press (including sub-threshold
+            // motion the platform may classify as a click), which is the
+            // "Thickness exits on rotation" guard. Note `press_origin()`
             // cannot be used here — egui wipes it on every release, so on the
             // click frame it is always None.
             if self.ui.viewport_secondary_gesture_moved_since_press {
@@ -580,6 +557,24 @@ impl OccluViewApp {
         let Some((camera, scene)) = self.render.camera.zip(self.document.scene.clone()) else {
             return false;
         };
+        // A click on a drawn ruler line, with an anchor pending, ends the
+        // ruler on that line; the end is not on the surface, so it takes
+        // precedence over whatever mesh lies under the line.
+        if self.tools.measure.mode() == Some(MeasureMode::Ruler) {
+            if let Some((base, placement)) = measure_overlay::line_target(
+                &camera,
+                response.rect,
+                &self.tools.measure,
+                pointer,
+                self.ruler_line_angle(ctx),
+            ) {
+                if self.tools.measure.place_on_line(base, placement).is_some() {
+                    self.report_ruler(self.tools.measure.ruler_count() - 1);
+                    ctx.request_repaint();
+                    return true;
+                }
+            }
+        }
         if let Some(hit) = pick_scene_hit(&camera, response.rect, pointer, &scene) {
             self.apply_measure_click(&scene, hit);
             ctx.request_repaint();
@@ -589,24 +584,76 @@ impl OccluViewApp {
         true
     }
 
+    /// One frame of a ruler-end drag: once the pointer has moved past the click
+    /// tolerance, the end follows the surface under the pointer, or, for an
+    /// end on another ruler's line, the place on that line under the pointer
+    /// (the foot of the perpendicular while Shift is held). The drag ends on
+    /// release.
+    fn continue_ruler_drag(
+        &mut self,
+        response: &egui::Response,
+        pointer: egui::Pos2,
+        ctx: &egui::Context,
+    ) {
+        ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+        let primary_down =
+            ctx.input(|input| input.pointer.button_down(egui::PointerButton::Primary));
+        if !primary_down {
+            self.tools.measure.end_ruler_drag();
+            ctx.request_repaint();
+            return;
+        }
+        let click_tolerance = ctx.options(|options| options.input_options.max_click_dist);
+        let moved_past_click = ctx.input(|input| {
+            input
+                .pointer
+                .press_origin()
+                .is_some_and(|origin| origin.distance(pointer) > click_tolerance)
+        });
+        if !response.rect.contains(pointer)
+            || !self.tools.measure.ruler_drag_follows(moved_past_click)
+        {
+            return;
+        }
+        let Some(camera) = self.render.camera else {
+            return;
+        };
+        let Some(anchor) = self.tools.measure.dragged_ruler_anchor() else {
+            return;
+        };
+        let moved = if let Some(base) = self.tools.measure.dragged_line_end_base() {
+            // Sliding an end along its line is free; Shift squares it.
+            let angle = if ctx.input(|input| input.modifiers.shift) {
+                RulerLineAngle::Perpendicular
+            } else {
+                RulerLineAngle::Free
+            };
+            self.tools
+                .measure
+                .ruler_segment(base)
+                .and_then(|base| {
+                    measure_overlay::line_placement(&camera, response.rect, &base, pointer, angle)
+                })
+                .and_then(|placement| self.tools.measure.update_line_end_drag(placement))
+        } else {
+            let Some(scene) = self.document.scene.clone() else {
+                return;
+            };
+            pick_scene_hit(&camera, response.rect, pointer, &scene)
+                .and_then(|hit| self.tools.measure.update_ruler_drag(hit.point))
+        };
+        if moved.is_some() {
+            self.report_ruler(anchor.ruler_index);
+            ctx.request_repaint();
+        }
+    }
+
     /// Apply one on-mesh measure click for the armed mode.
     fn apply_measure_click(&mut self, scene: &Scene, hit: ScenePickHit) {
         match self.tools.measure.mode() {
             Some(MeasureMode::Ruler) => {
-                if let Some(distance_mm) = self.tools.measure.place_ruler_point(hit.point) {
-                    self.ui.status_message = Some(
-                        self.ui.locale.tr_with(
-                            "measure-distance",
-                            &[(
-                                "len",
-                                measure_tool::format_length(
-                                    distance_mm,
-                                    self.persistence.settings.unit_display,
-                                )
-                                .as_str(),
-                            )],
-                        ),
-                    );
+                if self.tools.measure.place_ruler_point(hit.point).is_some() {
+                    self.report_ruler(self.tools.measure.ruler_count() - 1);
                 }
             }
             Some(MeasureMode::Thickness) => self.apply_thickness_probe(scene, hit),
@@ -614,7 +661,40 @@ impl OccluViewApp {
         }
     }
 
-    /// Probe the wall of the hit layer and report the reading honestly.
+    /// Put the reading of ruler `ruler_index` on the status line in the
+    /// operator's unit: its length, and for a ruler on another ruler's line
+    /// the angle between the two.
+    fn report_ruler(&mut self, ruler_index: usize) {
+        let Some(ruler) = self.tools.measure.ruler_segment(ruler_index) else {
+            return;
+        };
+        let length = measure_tool::format_length(
+            ruler.distance_mm(),
+            self.persistence.settings.unit_display,
+        );
+        let message = match ruler.foot {
+            Some(foot) if foot.perpendicular => self
+                .ui
+                .locale
+                .tr_with("measure-perpendicular", &[("len", length.as_str())]),
+            Some(foot) if foot.angle_deg.is_some() => {
+                let angle = foot
+                    .angle_deg
+                    .map_or_else(String::new, measure_tool::format_angle);
+                self.ui.locale.tr_with(
+                    "measure-to-line",
+                    &[("len", length.as_str()), ("angle", angle.as_str())],
+                )
+            }
+            _ => self
+                .ui
+                .locale
+                .tr_with("measure-distance", &[("len", length.as_str())]),
+        };
+        self.ui.status_message = Some(message);
+    }
+
+    /// Probe the wall of the hit layer and report the reading.
     fn apply_thickness_probe(&mut self, scene: &Scene, hit: ScenePickHit) {
         let Some(entry) = scene.meshes().get(hit.layer_index) else {
             return;
@@ -639,8 +719,8 @@ impl OccluViewApp {
                     ThicknessReading::Open => self.ui.locale.tr("measure-open-wall"),
                 });
                 self.tools.measure.set_probe(probe);
-                // Feature D: the same click ALSO opens the Cut View at this
-                // cross-section (Wall readings only), showing the same chord.
+                // The same click also opens the Cut View at this cross-section
+                // (Wall readings only), showing the same chord.
                 self.drive_probe_cut_view(scene, &probe);
             }
             None => {
@@ -654,8 +734,8 @@ impl OccluViewApp {
     /// A `Wall` reading with a buildable cross-section plane plants a world-fixed
     /// disc whose plane contains the entry->exit chord, so the wall reads edge-on
     /// in the Section panel with the same measurement. An `Open` reading (or a
-    /// degenerate chord we cannot section) plants nothing and closes any cut view
-    /// this probe flow had opened — honest: there is nothing to section.
+    /// degenerate chord that cannot be sectioned) plants nothing and closes any
+    /// cut view this probe flow had opened: there is nothing to section.
     fn drive_probe_cut_view(&mut self, scene: &Scene, probe: &ThicknessProbe) {
         let planned = if let ThicknessReading::Wall { exit, thickness_mm } = probe.reading {
             let scale_hint = scene.bbox().half_diagonal();
@@ -723,7 +803,7 @@ impl OccluViewApp {
             self.tools.cut_view.slice_visible(),
         );
 
-        // A probe-linked cut is PASSIVE: the measure tool owns the main-viewport
+        // A probe-linked cut is passive: the measure tool owns the main-viewport
         // pointer and the Esc/F keys, so the disc is not draggable, does not
         // re-plant, and never consumes Escape here (Esc goes to the measure tool,
         // which closes both). This is what lets the two tools coexist.
@@ -747,7 +827,7 @@ impl OccluViewApp {
             && self.tools.cut_view.is_planted()
             && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F));
 
-        // Wheel scoping: the wheel acts ONLY inside the Section
+        // Wheel scoping: the wheel acts only inside the Section
         // panel; over the bare viewport it stays camera zoom. Inside the panel,
         // Ctrl+wheel resizes the disc (manipulator radius) and a plain wheel
         // zooms the slice to the cursor. Drain the scroll in both cases so it

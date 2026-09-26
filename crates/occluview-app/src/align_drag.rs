@@ -55,11 +55,10 @@ impl DragConstraint {
 
 /// How many millimetres one viewport pixel spans.
 ///
-/// The brush ring and the hand drag both need this, in opposite directions, and
-/// each used to compute it with its own degenerate-input guard: one floored the
-/// camera height, the other floored the viewport height. A viewport of zero
-/// height with a near-zero camera height was therefore safe on one path and not
-/// the other. Both operands are floored here, once.
+/// The brush ring and the hand drag both need this, in opposite directions, so
+/// they share one degenerate-input guard. Both operands are floored here, once:
+/// a zero-height viewport or a near-zero camera height stays finite on both
+/// paths.
 pub(crate) fn mm_per_pixel(orthographic_height: f32, viewport_height: f32) -> f32 {
     orthographic_height.max(f32::EPSILON) / viewport_height.max(1.0)
 }
@@ -115,12 +114,12 @@ pub(crate) fn rotation_from_drag(
 ///
 /// The chips are labelled for movement — "Move in z-direction", "Move in
 /// xy-plane" — and only Free says "Move/rotate in all directions". A Ctrl+drag
-/// used to spin about the camera's axes whatever was selected, so the panel
-/// showed one restriction and the scan obeyed none.
+/// therefore obeys the selected chip, so the scan follows the restriction the
+/// panel shows.
 ///
 /// Both restricted modes turn about world **Z**, and in a dental scene that is
-/// the one rotation an operator asks for by name: an arch spun about the
-/// vertical while it stays seated. Horizontal drag only, because a vertical drag
+/// the rotation an operator needs: an arch spun about the vertical while it
+/// stays seated. Horizontal drag only, because a vertical drag
 /// under a Z-only rotation has nothing left to mean.
 pub(crate) fn constrained_rotation_from_drag(
     delta_px: egui::Vec2,
@@ -153,7 +152,7 @@ pub(crate) fn constrained_rotation_from_drag(
 /// A non-finite pivot yields the identity: it is unreachable from the drag
 /// handler, because `drag_pivot_local` has already replaced an unusable grab
 /// with the layer centre, and guessing a pivot here would turn the scan about a
-/// point nobody chose.
+/// point the operator did not choose.
 pub(crate) fn rotation_about_pivot(turn: Quat, pivot: Vec3) -> Affine3A {
     if !pivot.is_finite() {
         return Affine3A::IDENTITY;
@@ -169,7 +168,7 @@ pub(crate) fn rotation_about_pivot(turn: Quat, pivot: Vec3) -> Affine3A {
 /// The bound is relative on purpose. An absolute metre says nothing about a
 /// 70 mm arch — it passes a pivot fourteen times the whole scan — and it is
 /// anchored to the world origin, so a layer legitimately placed a metre away
-/// had every Ctrl-drag silently refused. A grab further than this multiple of
+/// would have every Ctrl-drag refused. A grab further than this multiple of
 /// the scan's own size is a pose artefact, not a point on the surface.
 pub(crate) const DRAG_PIVOT_EXTENT_MULTIPLE: f32 = 10.0;
 
@@ -183,15 +182,14 @@ pub(crate) const MIN_PIVOT_EXTENT_MM: f32 = 10.0;
 /// "where am I pulling, and by what": that point must stay under the cursor
 /// while the scan turns around it. The drag constraint chooses the rotation
 /// *axis*, never the pivot — a cusp pulled under any chip must not slide
-/// sideways, and "it just spun around an axis" is precisely the report this
-/// answers.
+/// sideways.
 ///
 /// The trade-off is worth stating, because it is visible: a rotation about a
 /// point that is not the centre necessarily moves the centre. Under `ZOnly` and
 /// `XyPlane` the turn is still about world Z, but the arch's centre travels in
 /// XY by roughly `2*sin(angle/2)*offset`. Keeping the centre fixed instead would
-/// put the turn back on an axis the operator did not choose, which is the
-/// behaviour this replaced, so the grabbed point wins. The constraint chips
+/// put the turn on an axis the operator did not choose, so the grabbed point
+/// wins. The constraint chips
 /// describe *translation* ("Move in z-direction"); the Ctrl gesture is a turn,
 /// and the panel says the turn follows the grab.
 ///
@@ -212,9 +210,8 @@ pub(crate) fn drag_pivot_local(grabbed_local: Vec3, centre_local: Vec3, radius_l
 mod tests {
     use super::*;
 
-    /// One conversion, one guard. The brush ring and the hand drag each had
-    /// their own, guarding a different operand, so a zero-height viewport was
-    /// safe on one path and produced an infinity on the other.
+    /// One conversion, one guard: the brush ring and the hand drag share it, so
+    /// a zero-height viewport yields a finite scale on both paths.
     #[test]
     fn a_degenerate_viewport_never_produces_an_infinity() {
         for (camera_mm, viewport_px) in [
@@ -359,7 +356,7 @@ mod tests {
             "expected {expected:?}, got {actual:?}"
         );
 
-        // And it is not the centre pivot: the world origin is NOT pinned.
+        // And it is not the centre pivot: the world origin is not pinned.
         let origin_moved = step.transform_point3(Vec3::ZERO).length();
         assert!(
             origin_moved > 1e-3,
@@ -381,12 +378,11 @@ mod tests {
 
     /// The price of pivoting on the grab: an off-centre turn moves the centre.
     ///
-    /// This is the documented trade-off, asserted so it cannot change silently
-    /// and cannot be mistaken for a bug later. Pivoting on the grabbed point is
-    /// what the operator asked for, and a Z-axis turn about a point that is not
-    /// the centre necessarily carries the centre in XY. Keeping the centre fixed
-    /// is the alternative that was rejected, so this pins the consequence rather
-    /// than forbidding it.
+    /// This is the documented trade-off, asserted so it cannot change unnoticed.
+    /// Pivoting on the grabbed point keeps the pulled surface under the cursor,
+    /// and a Z-axis turn about a point that is not the centre necessarily
+    /// carries the centre in XY. This pins that consequence rather than
+    /// forbidding it.
     #[test]
     fn an_off_centre_turn_moves_the_centre_within_the_plane() {
         let centre = Vec3::ZERO;
@@ -427,9 +423,9 @@ mod tests {
     /// The grabbed point is the pivot, under every drag constraint.
     ///
     /// A cusp pulled under any chip must stay under the cursor. The constraint
-    /// chooses the rotation axis; letting it also choose the pivot is what made
-    /// a constrained Ctrl-drag "just spin around an axis" with the pulled point
-    /// sliding away.
+    /// chooses the rotation axis; letting it also choose the pivot would make a
+    /// constrained Ctrl-drag spin around an axis with the pulled point sliding
+    /// away.
     ///
     /// The axis must still follow the constraint, which is what keeps this from
     /// passing vacuously on a build where the constraint was dropped entirely:

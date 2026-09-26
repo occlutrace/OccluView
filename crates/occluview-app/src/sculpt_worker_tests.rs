@@ -1,8 +1,7 @@
 //! Tests for [`super`]: worker ordering, topology identity, pick-readiness,
 //! and the retry/full-sync recovery contract.
 //!
-//! A `#[path]` child module of `sculpt_worker.rs`, split out to hold the
-//! workspace's 800-line file budget.
+//! A `#[path]` child module of `sculpt_worker.rs`.
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_precision_loss,
@@ -409,9 +408,9 @@ fn repeated_completions_survive_scene_and_edit_state_commit() {
     }
 }
 
-/// Densification changes the topology, and the ids must say so honestly:
-/// the rebuilt layer gets a FRESH `topology_id` (the renderer's cue to drop
-/// its exactly-sized buffers), while the undo baseline keeps the PRE-stroke
+/// Densification changes the topology, and the ids must reflect it: the
+/// rebuilt layer gets a fresh `topology_id` (the renderer's cue to drop its
+/// exactly-sized buffers), while the undo baseline keeps the pre-stroke
 /// identity and the pre-stroke triangle list.
 #[test]
 fn a_densifying_stroke_mints_a_new_topology_id_and_keeps_a_coarse_undo_baseline() {
@@ -431,14 +430,14 @@ fn a_densifying_stroke_mints_a_new_topology_id_and_keeps_a_coarse_undo_baseline(
     assert!(worker.finish_stroke());
     let completion = wait_for_completion(&worker);
 
-    // The rebuilt layer really grew, and its token describes ITSELF — a
-    // mismatch here is exactly how a stale GPU buffer gets written.
+    // The rebuilt layer grew, and its token describes itself; a mismatch
+    // here would write a stale GPU buffer.
     assert!(rebuild.mesh.vertices().len() > original_vertices);
     assert!(rebuild.mesh.triangle_count() > original_triangles);
     assert_ne!(
         rebuild.mesh.topology_id(),
         original_topology_id,
-        "a grown mesh must NOT reuse the frozen sculpt topology id"
+        "a grown mesh must not reuse the frozen sculpt topology id"
     );
     assert_eq!(
         rebuild.topology,
@@ -461,16 +460,14 @@ fn a_densifying_stroke_mints_a_new_topology_id_and_keeps_a_coarse_undo_baseline(
     assert_eq!(completion.mesh.topology_id(), rebuild.mesh.topology_id());
 }
 
-/// A densified layer must arrive PICK-READY, and stay pick-ready across the
-/// commit — or the brush dies for good.
+/// A densified layer must arrive pick-ready and stay pick-ready across the
+/// commit, or no later stroke can land.
 ///
-/// The failure chain: the viewport lays a dab only where the cursor
-/// hits the surface, the hit test refuses to build a scan-sized BVH on the
-/// egui thread, and the only thing that ever warmed one was the session
-/// preparation. A densifying dab swapped in a rebuilt mesh with a cold BVH,
-/// the session still "matched" so no re-preparation ever ran, and from that
-/// moment every stroke on the layer found no surface and silently did
-/// nothing. First stroke worked, everything after it was dead.
+/// The viewport lays a dab only where the cursor hits the surface, and the
+/// hit test refuses to build a scan-sized BVH on the egui thread; session
+/// preparation is what warms one. A densifying dab swaps in a rebuilt mesh
+/// without re-preparing the session, so the rebuild must carry a warm BVH or
+/// every later stroke on the layer finds no surface and does nothing.
 #[test]
 fn a_densified_layer_is_still_pickable_so_the_next_stroke_can_land() {
     let mesh = coarse_ridge_mesh();
@@ -498,8 +495,8 @@ fn a_densified_layer_is_still_pickable_so_the_next_stroke_can_land() {
     );
 }
 
-/// The un-densified path is untouched: a stroke that changes no topology
-/// still streams sparsely and still freezes the topology id.
+/// A stroke that changes no topology streams sparsely and freezes the
+/// topology id.
 #[test]
 fn a_stroke_that_does_not_densify_still_freezes_the_topology_id() {
     let worker = test_worker();
@@ -561,8 +558,9 @@ fn terminal_finish_invariant_errors_stop_the_worker_command_loop() {
 }
 
 /// The worker hands its shutdown token into the kernel, so a dab already
-/// running stops instead of finishing a traversal nobody will ever read. The
-/// session is dropped mid-dab on every undo, layer removal and scene replace.
+/// running stops instead of finishing a traversal whose result is discarded.
+/// The session is dropped mid-dab on every undo, layer removal and scene
+/// replace.
 #[test]
 fn worker_passes_its_cancellation_token_into_the_kernel() {
     let worker = test_worker();
@@ -586,7 +584,7 @@ fn worker_passes_its_cancellation_token_into_the_kernel() {
         "the worker has to pick the dab up"
     );
     thread::sleep(Duration::from_millis(200));
-    // Exactly what `Drop` does when the session goes away.
+    // The same store `Drop` makes when the session goes away.
     worker.state.stopping.store(true, Ordering::Release);
     drop(held);
 
@@ -660,7 +658,7 @@ fn assert_no_further_output(worker: &SculptWorker) {
 fn densification_failure_is_not_silently_dropped() {
     let mesh = coarse_ridge_mesh();
     let mut session = session_for(&mesh);
-    // Arm the forced rebuild failure for exactly this worker's layer.
+    // Arm the forced rebuild failure for this worker's layer only.
     crate::sculpt_tool::FORCE_REBUILD_FAILURE_LAYER.store(session.layer_id.get(), Ordering::SeqCst);
     session.dirty_stroke = false;
     session.stroke_start_mesh = None;
