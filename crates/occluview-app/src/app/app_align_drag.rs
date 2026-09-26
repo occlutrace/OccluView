@@ -81,7 +81,7 @@ impl OccluViewApp {
         };
         let motion = ctx.input(|input| input.pointer.delta());
 
-        // Record where the primary button goes down, from the press EVENT.
+        // Record where the primary button goes down, from the press event.
         //
         // Not from the current pointer position: when a move (or a second
         // button's press) is coalesced into the same frame as the primary press,
@@ -115,7 +115,7 @@ impl OccluViewApp {
             let Some((camera, scene)) = self.render.camera.zip(self.document.scene.clone()) else {
                 return false;
             };
-            // The grab is cast at the point the operator PRESSED, not where the
+            // The grab is cast at the point the operator pressed, not where the
             // pointer has already reached. egui only promotes a press to a drag
             // once the pointer has moved past a few pixels, so on this frame
             // `interact_pointer_pos` is that far from the press; ray-casting
@@ -601,7 +601,7 @@ mod tests {
 
         // Frame 0: register the viewport widget so egui can hit-test the press.
         frame(vec![]);
-        // Frame 1: the COALESCED frame. A fast flick, or a delayed egui pass,
+        // Frame 1: the coalesced frame. A fast flick, or a delayed egui pass,
         // delivers the primary press and the pointer's move in one batch: the
         // press lands on the surface, then the pointer is already 60 px away by
         // the end of the same frame. The frame's current pointer position is
@@ -618,7 +618,7 @@ mod tests {
             },
             egui::Event::PointerMoved(press_at + egui::vec2(60.0, 20.0)),
         ]);
-        // Frame 2: a secondary press lands ELSEWHERE. egui keeps a single
+        // Frame 2: a secondary press lands elsewhere. egui keeps a single
         // `press_origin` for every button, so this is what would displace the
         // anchor if the grab read that shared slot.
         frame(vec![

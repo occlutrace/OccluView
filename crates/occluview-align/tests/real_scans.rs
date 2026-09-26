@@ -973,13 +973,14 @@ fn a_distinct_prep_pair_has_one_accepted_pose_from_near_and_distant_starts() {
     }
 }
 
-/// The operator's supplied partial-overlap pair. Keep the scans outside Git;
+/// A partial-overlap pair kept outside Git (`2.stl` fixed, `3.stl` moving);
 /// the rough pose is the input to local refinement, not a request to search
 /// the whole scene for a different answer.
 #[test]
 fn a_partial_pair_refines_locally_from_nearby_starts_when_fixtures_are_present() {
-    let Some(directory) = std::env::var_os("OCCLUVIEW_ALIGN_OWNER_PAIR").map(PathBuf::from) else {
-        eprintln!("skipped: set OCCLUVIEW_ALIGN_OWNER_PAIR to 2.stl and 3.stl");
+    let Some(directory) = std::env::var_os("OCCLUVIEW_ALIGN_PARTIAL_PAIR").map(PathBuf::from)
+    else {
+        eprintln!("skipped: set OCCLUVIEW_ALIGN_PARTIAL_PAIR to the pair directory");
         return;
     };
     let (fixed_positions, fixed_indices) = read_binary_stl(&directory.join("2.stl"));
