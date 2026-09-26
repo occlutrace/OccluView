@@ -1,19 +1,19 @@
 //! `OccluViewApp` itself: the root coordinator over owned state domains.
 //!
-//! Extracted domains live in their own modules with their invariants (see
+//! Each domain lives in its own module with its invariants (see
 //! `state_render`, `state_document`, `state_persistence`); the root only
 //! orchestrates transitions across domains.
 //!
 //! State ownership by domain:
 //!
-//! - Document: extracted into [`DocumentState`].
-//! - Render: extracted into [`RenderState`]. Call sites name a semantic
-//!   invalidation cause; each render path consumes its own cursor, so
-//!   camera-only redraws never touch uploaded geometry.
-//! - Tools: extracted into [`ToolState`].
-//! - UI: extracted into [`UiState`].
-//! - Platform: extracted into [`PlatformState`].
-//! - Persistence: extracted into [`PersistenceState`].
+//! - Document: [`DocumentState`].
+//! - Render: [`RenderState`]. Call sites name a semantic invalidation cause;
+//!   each render path consumes its own cursor, so camera-only redraws never
+//!   touch uploaded geometry.
+//! - Tools: [`ToolState`].
+//! - UI: [`UiState`].
+//! - Platform: [`PlatformState`].
+//! - Persistence: [`PersistenceState`].
 //!
 use super::information_dialog::InformationDialog;
 use super::state_document::DocumentState;
@@ -95,11 +95,11 @@ impl OccluViewApp {
     }
     /// Edit hotkeys, refused while a dialog is up.
     ///
-    /// The callee is named `_unguarded` rather than `_impl` because it is not
-    /// the same thing: one plausible call from a neighbouring module deletes
-    /// faces or replays an undo while the unsaved-changes prompt is open,
-    /// quietly changing what "Save" then writes. A name nobody reaches for out
-    /// of habit is the guard.
+    /// The callee is named `_unguarded` rather than `_impl` because it skips
+    /// the dialog check: a direct call from a neighbouring module could delete
+    /// faces or replay an undo while the unsaved-changes prompt is open,
+    /// changing what "Save" then writes. The name makes such a call a visible
+    /// choice.
     pub(super) fn handle_edit_shortcuts(&mut self, ctx: &egui::Context) {
         // The bridge tool owns the scene while it is armed, which is not a
         // dialog and so is not part of the shared predicate.
@@ -181,10 +181,10 @@ impl OccluViewApp {
 impl eframe::App for OccluViewApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.ui.sync_native_title(ctx);
-        // Sync the brush sliders into settings BEFORE persisting, so a close
+        // Sync the brush sliders into settings before persisting, so a close
         // request that flushes the debounce is written by the save on this same
-        // frame. In the old order the save ran first and the flushed value
-        // waited for the next frame, which a closing window does not get.
+        // frame. With the save first, the flushed value would wait for the next
+        // frame, which a closing window does not get.
         self.persistence.sync_sculpt_preferences(ctx);
         self.persistence.persist_settings_if_due(ctx);
         let preference = self.ui.locale.snapshot().preference.clone();

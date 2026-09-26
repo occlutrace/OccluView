@@ -50,7 +50,7 @@ fn repair_layer_action_repairs_defects_and_records_single_undo() {
         edit_mode.finish_layer_edit_success(token),
         crate::edit_mode::BusyFinish::Applied
     );
-    // The whole pipeline is exactly ONE undo step.
+    // The whole pipeline is one undo step.
     assert_eq!(edit_mode.undo_len(), 1);
     assert_eq!(edit_mode.undo_layer_id(), Some(layer_id));
 }
@@ -81,8 +81,8 @@ fn repair_layer_noop_pushes_no_undo_and_preserves_redo() {
     assert_eq!(edit_mode.undo_len(), 0);
     assert_eq!(edit_mode.redo_layer_id(), Some(dirty_layer_id));
 
-    // Repairing the already-clean layer is an honest no-op: no phantom undo
-    // step, and the redo history survives exactly as it was.
+    // Repairing the already-clean layer is a content no-op: no undo step is
+    // recorded, and the redo history survives unchanged.
     let Some(token) = edit_mode.begin_layer_edit(&scene.meshes()[1], EditModeCommand::RepairMesh)
     else {
         return;

@@ -235,8 +235,9 @@ fn read_again_after_a_worker_death_reaches_a_new_worker() {
 
 /// The sentence that explains why nothing is being measured must go away when
 /// the reason does. Hiding a scan says "show it again and the reading
-/// resumes"; nothing cleared the override, so the bar kept saying it forever —
-/// and when the override replaced a failure, the retry it hid never came back.
+/// resumes"; if the override is not cleared, the bar keeps saying it
+/// indefinitely, and when the override replaced a failure, the retry it hid
+/// never comes back.
 #[test]
 fn showing_a_scan_again_clears_the_unusable_sentence() {
     let mut app = test_app("contact-unusable-clears");
@@ -305,7 +306,8 @@ fn a_dropped_answer_releases_the_request_so_the_scene_can_be_measured_again() {
     app.tools.contacts.resume_after_drag();
     assert!(
         app.tools.contacts.needs_measurement(keys),
-        "with the drag over, the dropped answer must not be treated as still          pending: nothing is running and nothing would ever submit one"
+        "with the drag over, the dropped answer must not be treated as still \
+         pending: nothing is running and nothing would ever submit one"
     );
     app.sync_contacts_with_scene(&ctx);
 
@@ -317,16 +319,16 @@ fn a_dropped_answer_releases_the_request_so_the_scene_can_be_measured_again() {
     );
     assert_ne!(
         resubmitted.id, request.id,
-        "and it is a NEW measurement, not the request whose answer was dropped"
+        "and it is a new measurement, not the request whose answer was dropped"
     );
 }
 
 /// The same rule for the Align worker: a dead one is replaced, not latched.
 ///
-/// `AlignWorker::submit` refuses every job once its thread has failed, and
-/// nothing used to replace it, so one panic inside the refinement left Align
-/// dead for the rest of the session — the tool armed, the button responded, and
-/// no job ever ran again.
+/// `AlignWorker::submit` refuses every job once its thread has failed, so
+/// without a replacement one panic inside the refinement would leave Align dead
+/// for the rest of the session: the tool armed, the button responsive, and no
+/// job ever running.
 #[test]
 fn the_align_worker_is_replaced_after_it_dies() {
     let mut app = test_app("align-worker-respawn");
@@ -423,22 +425,20 @@ fn opening_a_reading_clears_the_align_heatmap() {
 /// Opening a contact reading from the layer menu while a Best-fit heatmap is up
 /// must not edit the live scene while another handle to it is alive.
 ///
-/// This is the path the operator actually takes, and it is the one a removed
-/// source-text guard claimed to protect: that guard parsed the source for a
-/// `scene.clone()` held across an in-place edit, and it did not see this one,
-/// because the clone lives in `apply_layer_overlay_changes` and the edit happens
-/// two calls below it. In a debug build the assertion in `live_scene_mut` fired
-/// on a normal gesture; in release the document silently copied the scene and
-/// the caller's handle went stale for the rest of the action.
+/// This is the path the operator actually takes: the clone lives in
+/// `apply_layer_overlay_changes` and the edit happens two calls below it. With
+/// a second handle alive, a debug build fires the assertion in `live_scene_mut`
+/// on a normal gesture, and a release build silently copies the scene so the
+/// caller's handle goes stale for the rest of the action.
 ///
 /// The test drives the real entry point with the menu's own `Arc` — the same
-/// shape `show_layers_overlay` and the viewport right-click menu pass — so a
-/// reintroduced clone under this path fails here.
+/// shape `show_layers_overlay` and the viewport right-click menu pass — so an
+/// extra clone under this path fails here.
 #[test]
 fn opening_contacts_from_the_menu_does_not_edit_the_scene_under_a_second_handle() {
     let (scene, first, _second, _third) = three_layer_scene();
     let mut app = test_app("contacts-menu-heatmap-up");
-    // Install the scene as the SOLE handle so the setup's own in-place edits
+    // Install the scene as the sole handle so the setup's own in-place edits
     // (attaching the map colours) are legal, then take the menu's clone.
     let vertex_count = scene.meshes()[0].mesh.vertices().len();
     app.document.scene = Some(std::sync::Arc::new(scene));
@@ -449,14 +449,14 @@ fn opening_contacts_from_the_menu_does_not_edit_the_scene_under_a_second_handle(
         "fixture: the heatmap has colours to clear"
     );
     // The menu takes the document's handle the way `show_layers_overlay` and the
-    // viewport right-click menu do: one clone, which is then MOVED into the
+    // viewport right-click menu do: one clone, which is then moved into the
     // dispatcher. Modeling an extra clone here would be stricter than the real
     // path and would fail for a reason the product does not have.
     let scene = app.document.scene.as_ref().expect("scene").clone();
     let scene_ptr = std::sync::Arc::as_ptr(&scene);
 
     // The menu's request, through the real dispatcher, with the menu's own
-    // scene handle still alive exactly as `show_layers_overlay` holds it.
+    // scene handle still alive as `show_layers_overlay` holds it.
     let index = 0usize;
     let layer_id = first;
     let request = LayerContextRequest {
@@ -482,7 +482,7 @@ fn opening_contacts_from_the_menu_does_not_edit_the_scene_under_a_second_handle(
     assert_eq!(
         app.tools.align.overlay,
         AlignOverlay::Nothing,
-        "and the heatmap gives way to it, which is the edit that used to trip"
+        "and the heatmap gives way to it, which is the in-place edit under test"
     );
     // The second handle must still be looking at the same scene, i.e. nothing
     // copied it out from under the caller.
@@ -495,7 +495,7 @@ fn opening_contacts_from_the_menu_does_not_edit_the_scene_under_a_second_handle(
 
 /// The shader reads a vertex's field texel as `(index % width, index / width)`,
 /// with `width` taken from the uniform's `contact_field_width`. The uniform is
-/// built from the PACKED field's own row length, so a field narrower than the
+/// built from the packed field's own row length, so a field narrower than the
 /// 1024-texel ceiling must reach the GPU with its real width. A hardcoded
 /// ceiling here makes every vertex past the first row decode the wrong texel and
 /// paint a plausible but wrong map — which is worse than painting none.
@@ -508,7 +508,7 @@ fn the_shader_is_told_the_width_the_field_was_packed_with() {
     assert!(open_contacts_on(&mut app, first));
     let request = pending(&app);
 
-    // A 7-texel-wide packed field, deliberately not the 1024 ceiling.
+    // A 7-texel-wide packed field, chosen to differ from the 1024 ceiling.
     let texels =
         Arc::new(ContactFieldTexels::new(vec![0u8; 7 * 4], 7, 1).expect("a 7x1 packed field"));
     let subject_field = ContactLayerField {

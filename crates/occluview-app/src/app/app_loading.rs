@@ -4,8 +4,8 @@
 //! holds the ones that arrived while another was in flight, so a multi-file
 //! drop or a burst of shell hand-offs is serialised rather than raced.
 //!
-//! A load is either REPLACE (menu Open, a recent file, a hand-off classified
-//! as replace) or APPEND (a second scan added to the current scene). Every
+//! A load is either replace (menu Open, a recent file, a hand-off classified
+//! as replace) or append (a second scan added to the current scene). Every
 //! replace goes through the guard here first: if the session has unsaved mesh
 //! edits, the open is parked behind the confirmation dialog instead of
 //! destroying them. Append needs no guard, and neither do the camera rules --
@@ -72,10 +72,10 @@ fn native_drop_paths(files: &[egui::DroppedFileHandle]) -> Vec<PathBuf> {
 }
 
 impl OccluViewApp {
-    /// Guarded entry for every REPLACE open (menu Open, recent, drop/handoff
+    /// Guarded entry for every replace open (menu Open, recent, drop/handoff
     /// classified as replace). If a live session is dirty or unsaved edits
     /// exist, the open is parked behind the edit-session guard dialog instead of
-    /// silently destroying the session; otherwise it starts immediately.
+    /// destroying the session; otherwise it starts immediately.
     pub(super) fn replace_paths(&mut self, paths: &[PathBuf], source: &'static str) {
         if paths.is_empty() {
             return;
@@ -84,11 +84,11 @@ impl OccluViewApp {
             // Newest replace supersedes an older parked one; the open is held,
             // never dropped, until the operator answers the dialog.
             //
-            // It supersedes QUEUED replaces too. A Replace that arrives while
+            // It supersedes queued replaces too. A Replace that arrives while
             // dirty never reaches `queue_request_while_active` (whose contract is
-            // exactly "a newer Replace supersedes every pending request"), so a
-            // decode still running with an older Replace behind it would later
-            // start that older one and clobber the scene this request opened.
+            // "a newer Replace supersedes every pending request"), so a decode
+            // still running with an older Replace behind it would later start
+            // that older one and clobber the scene this request opened.
             self.supersede_queued_replaces();
             self.ui.pending_replace_open = Some(PendingReplaceOpen {
                 paths: paths.to_vec(),
@@ -108,7 +108,7 @@ impl OccluViewApp {
     }
 
     /// Start a replace open the operator confirmed at the guard dialog (or that
-    /// never needed guarding). The live session is intentionally NOT torn down
+    /// never needed guarding). The live session is intentionally not torn down
     /// here: the load's success path replaces the scene (and clears the
     /// session); a load that fails leaves the session and its edits intact.
     pub(super) fn replace_paths_confirmed(&mut self, paths: &[PathBuf], source: &'static str) {
@@ -290,13 +290,13 @@ impl OccluViewApp {
 
     fn start_next_queued_load(&mut self) {
         if self.document.active_load.is_none() && self.ui.pending_replace_open.is_none() {
-            // Any survivor may start, including a Replace. An OBSOLETE queued
+            // Any survivor may start, including a Replace. An obsolete queued
             // Replace never reaches this point: it is dropped by
             // `supersede_queued_replaces` at the moment a newer request arrives
             // (parked or confirmed). What is left in the queue is either an
             // append or a Replace that is itself the newest request — the
-            // successor of a decode that was superseded, which is exactly the
-            // one that must start.
+            // successor of a decode that was superseded, which is the one that
+            // must start.
             if let Some(request) = self.document.queued_loads.pop_front() {
                 self.start_scene_load(request);
             }
@@ -333,13 +333,13 @@ impl OccluViewApp {
     fn park_loaded_replace_for_reconfirmation(&mut self, pending: PendingSceneLoad) {
         // New edits outrank an older permission to replace the scene.
         //
-        // But an older LOAD finishing here must not outrank a NEWER parked
-        // request. The operator opened F1, edited while it decoded, then opened
-        // F2 (parked); when F1 landed this used to overwrite the parked F2 and
-        // clear the status, so the file they asked for last was silently
-        // discarded and answering the dialog opened F1. The parked request is
-        // kept when it is newer — the status line then says so instead of
-        // leaving the operator with a dialog whose headline changed under them.
+        // But an older load finishing here must not outrank a newer parked
+        // request. If the operator opens F1, edits while it decodes, then opens
+        // F2 (parked), F1 landing must not overwrite the parked F2 and clear the
+        // status: that would discard the file asked for last, and answering the
+        // dialog would open F1. The parked request is kept when it is newer,
+        // and the status line says so instead of leaving the operator with a
+        // dialog whose headline changed under them.
         let newer_request_parked = self
             .ui
             .pending_replace_open
@@ -415,17 +415,14 @@ impl OccluViewApp {
                 self.persistence.current_paths = current_paths;
                 self.persistence.push_recent_scene(&recent_paths);
                 self.persistence.save_recent_files();
-                // A glTF declares METERS while scanner exports carry
+                // A glTF declares meters while scanner exports carry
                 // millimeter numbers, so the format crate flags the layer
-                // ambiguous and applies no scale. Nothing in the app read that
-                // flag, so a spec-compliant file loaded 1000x small with every
-                // derived number wrong by that factor — ruler, scale bar,
-                // thickness, brush steps, deviation ranges — and no surface
-                // saying the units were unverified. The recommendation helper
-                // and the conversion it feeds existed with no caller at all.
-                // Say it in the status line, where every other load outcome
-                // lands, and keep the suggestion advisory exactly as the
-                // module doc requires.
+                // ambiguous and applies no scale. Unreported, a spec-compliant
+                // file would load 1000x small with every derived number wrong
+                // by that factor — ruler, scale bar, thickness, brush steps,
+                // deviation ranges. Say it in the status line, where every
+                // other load outcome lands, and keep the suggestion advisory as
+                // the module doc requires.
                 self.ui.status_message = self.ambiguous_units_notice();
                 tracing::info!(
                     source = pending.source,
@@ -497,10 +494,10 @@ impl OccluViewApp {
 
     pub(super) fn handle_dropped_files(&mut self, ctx: &egui::Context) {
         // A drop is a load request like any other, and a modal in front of the
-        // viewport owns the frame. Letting it through parked an open behind a
-        // guard window the modal layer kept dimmed and unclickable, with nothing
-        // on screen connecting the drop to the dialog the operator could not
-        // reach.
+        // viewport owns the frame. Letting it through would park an open behind
+        // a guard window the modal layer keeps dimmed and unclickable, with
+        // nothing on screen connecting the drop to the dialog the operator
+        // cannot reach.
         if self.ui.modal_dialog_open() {
             return;
         }
@@ -693,7 +690,7 @@ mod tests {
         );
         assert!(
             logged.contains("unexpected end of file"),
-            "the reason is the whole point of the line: {logged}"
+            "the line must keep the failure reason: {logged}"
         );
         assert!(
             logged.contains("<stl>"),

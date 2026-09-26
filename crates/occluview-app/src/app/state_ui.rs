@@ -67,15 +67,15 @@ pub(super) struct UiState {
     /// Persistent post-repair report card, populated by the Repair executor and
     /// drawn in `ui()`; shows what a repair changed (or that nothing did).
     pub(super) repair_report: crate::repair_report::RepairReportDialog,
-    /// Whether a popup was open at the START of this frame.
+    /// Whether a popup was open at the start of this frame.
     ///
     /// Read instead of asking egui live, because egui closes a popup on a
-    /// NON-consuming read of Escape *inside* `Popup::show`, and every popup in
+    /// non-consuming read of Escape *inside* `Popup::show`, and every popup in
     /// this app is drawn before the tool hotkeys and the tool Escape handlers
     /// ask. By that point the popup has already removed itself from egui's open
-    /// set, so a live `Popup::is_any_open` returns false and the same Escape
-    /// still reached the tool behind the popup — one press dismissed the
-    /// recent-files dropdown AND ran `cancel_align_session`. Snapshotted at the
+    /// set, so a live `Popup::is_any_open` would return false and the same
+    /// Escape would reach the tool behind the popup: one press would dismiss the
+    /// recent-files dropdown and run `cancel_align_session`. Snapshotted at the
     /// top of the frame, before anything can close it, the answer describes the
     /// frame the operator actually saw.
     pub(super) popup_open_at_frame_start: bool,
@@ -110,11 +110,10 @@ pub(super) struct PendingReplaceOpen {
     ///
     /// A parked open and a load already in flight can finish in either order, and
     /// the doc on `pending_replace_open` promises "newest replace supersedes an
-    /// older parked one; the open is held, never dropped". Without a recency
-    /// value that rule could not be applied: a finishing OLDER load overwrote the
-    /// parked NEWER request and cleared the status, so the file the operator
-    /// asked for second was silently discarded and answering the dialog opened
-    /// the first one.
+    /// older parked one; the open is held, never dropped". This value is what
+    /// applies that rule: without it a finishing older load would overwrite the
+    /// parked newer request and clear the status, discarding the file the
+    /// operator asked for second, and answering the dialog would open the first.
     pub(super) requested_at: Instant,
 }
 
@@ -146,12 +145,10 @@ impl UiState {
     /// Whether a modal dialog owns the keyboard.
     ///
     /// Escape belongs to the dialog in front of the operator, never to a tool
-    /// behind it. Decided inline, that list drifts: the cut and align tools
-    /// missed the replace-open guard and nobody counted the third-party
-    /// licences window, so with either up Escape tore the tool down behind the
-    /// dialog -- and for align also ran `cancel_align_session`, putting every
-    /// scan back where it started. One predicate, so the next dialog gets
-    /// remembered once.
+    /// behind it. Tools ask this one predicate instead of listing dialogs
+    /// inline: a list that misses a dialog lets Escape tear the tool down behind
+    /// it, and for align also run `cancel_align_session`, putting every scan
+    /// back where it started.
     pub(super) fn modal_dialog_open(&self) -> bool {
         OpenDialogs {
             close_guard: self.close_guard_open,

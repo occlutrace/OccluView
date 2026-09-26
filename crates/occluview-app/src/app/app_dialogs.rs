@@ -27,7 +27,7 @@ impl OccluViewApp {
         {
             egui::Popup::close_id(&ctx, settings_popup_id());
         }
-        // The only wired file shortcut; its tooltip hint is therefore real.
+        // The only wired file shortcut, which the Open tooltip names.
         let open_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::O);
         // Plain-letter tool hotkeys, mirrored in each button's tooltip. Guarded
         // by the modal check below so a dialog never leaks keystrokes into a
@@ -61,9 +61,8 @@ impl OccluViewApp {
                 toggle_edit_mesh = true;
             }
         }
-        // F1 opens the keyboard and mouse reference. It is the one key every
-        // desktop app agrees on, and it replaces the toolbar button that used
-        // to be the only way in.
+        // F1 opens the keyboard and mouse reference, the help key desktop apps
+        // share; the toolbar has no Help button.
         let mut open_shortcuts = false;
         if !self.ui.modal_dialog_open() && !ctx.egui_wants_keyboard_input() {
             open_shortcuts =
@@ -71,9 +70,9 @@ impl OccluViewApp {
         }
         let mut do_add = false;
         // Ctrl+O obeys the same gate as every other shortcut above. Outside it,
-        // the native dialog opened ON TOP of an information modal and, with
-        // unsaved edits, parked an open behind a guard window that the modal
-        // layer left dimmed and unclickable until the modal was closed.
+        // the native dialog would open on top of an information modal and, with
+        // unsaved edits, park an open behind a guard window that the modal
+        // layer leaves dimmed and unclickable until the modal is closed.
         let mut do_open = !self.ui.modal_dialog_open()
             && !ctx.egui_wants_keyboard_input()
             && ctx.input_mut(|input| input.consume_shortcut(&open_shortcut));
@@ -275,11 +274,9 @@ impl OccluViewApp {
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        // No Help button here. What it opened is a keyboard and
-                        // mouse reference, and a permanent toolbar slot for a
-                        // list nobody reads twice took the width the real tools
-                        // need. It lives in Settings, on F1, and behind the
-                        // viewport's own hint line.
+                        // No Help button here: the keyboard and mouse reference
+                        // lives in Settings, on F1, and behind the viewport's
+                        // own hint line, so the toolbar width goes to the tools.
                         let response = show_settings_toolbar_toggle(
                             ui,
                             !self.ui.close_guard_open,
@@ -473,8 +470,7 @@ impl OccluViewApp {
         }
         let edited_count = self.document.unsaved_edit_layer_ids.len().max(1);
         let mut do_save = false;
-        // Canonical wording pinned by source guards; rendering resolves the
-        // `guard-close-*` catalog keys below.
+        // Rendering resolves the `guard-close-*` catalog keys below.
         let headline = if edited_count == 1 {
             self.ui.locale.tr("guard-close-headline-one")
         } else {
@@ -521,7 +517,7 @@ impl OccluViewApp {
         }
     }
 
-    /// Guard an incoming REPLACE open (parked in `pending_replace_open`) while a
+    /// Guard an incoming replace open (parked in `pending_replace_open`) while a
     /// live edit session is dirty or unsaved edits exist. Mirrors the
     /// close-guard wording: "Save…" writes each edited layer then opens,
     pub(super) fn guard_pending_replace_open(&mut self, ctx: &egui::Context) {

@@ -5,9 +5,9 @@ use crate::app_settings::{UnitDisplay, ViewportBackground};
 ///
 /// The scale comes from the camera, not from the scene's size: an orthographic
 /// view puts `orthographic_height / viewport_height` millimetres in a pixel, and
-/// that is the only number the bar can honestly be built from. It used to be
-/// derived from the mesh's bounding box, so the bar was right for the first frame
-/// after a file opened and wrong from the first scroll onwards.
+/// that is the only number the bar can be built from accurately. A bar derived
+/// from the mesh's bounding box would be correct for the first frame after a
+/// file opens and wrong from the first scroll onwards.
 pub(super) fn paint_scale_bar(
     ui: &egui::Ui,
     image_rect: egui::Rect,

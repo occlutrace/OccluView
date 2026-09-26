@@ -465,10 +465,10 @@ fn paint_legend(
 ) {
     let law = scale.law();
     let far = law.paint_far_mm;
-    // Read the ramp's own deepest stop instead of recomputing it. The two
-    // disagreed: the ramp clamps its tail at the probe's reach, while this
-    // label printed `load x clamp / load_mm` — 1.36 mm at the top of the
-    // slider, against a field that cannot report past 0.6 mm.
+    // Read the ramp's own deepest stop instead of recomputing it: the ramp
+    // clamps its tail at the probe's reach, and a recomputed
+    // `load x clamp / load_mm` would print 1.36 mm at the top of the slider,
+    // against a field that cannot report past 0.6 mm.
     let deepest = scale.stop_mm(law.stops.len().saturating_sub(1)).min(0.0);
     let width = width.clamp(LEGEND_MIN_WIDTH, LEGEND_MAX_WIDTH);
     let (rect, response) = ui.allocate_exact_size(
@@ -698,8 +698,8 @@ fn paint_stats(
     unit: UnitDisplay,
 ) {
     // Area stays in mm² — it is the unit this measurement is specified in — but
-    // the DEPTH is a length like the ruler's, and it follows the operator's
-    // preference. The panel was the one measurement family that ignored it.
+    // the depth is a length like the ruler's, and it follows the operator's
+    // preference.
     let depth_unit = match unit {
         UnitDisplay::Millimeters => occluview_contact::ContactLengthUnit::Millimeters,
         UnitDisplay::Inches => occluview_contact::ContactLengthUnit::Inches,
@@ -732,10 +732,8 @@ fn paint_stats(
                         .size(11.0)
                         .color(ui_theme::text_weak()),
                 );
-                // "Area each side" is a mid-line split, not a contact count, and
-                // the caveat that said so was a catalogue key nothing resolved —
-                // it was deleted as dead, and this hover is where an operator can
-                // still find the meaning.
+                // "Area each side" is a mid-line split, not a contact count;
+                // this hover is where an operator finds that meaning.
                 if key == "contact-stats-balance" {
                     label.on_hover_text(locale.tr("contact-stats-balance-hover"));
                 }
