@@ -7,145 +7,64 @@ remain in the Git history.
 
 ### Viewer
 
-- "Best fit matching" accepts a scan of part of a jaw against a scan of all of
-  it again. The acceptance gate had briefly required a fixed fraction of the
-  moving surface to seat inside 0.05 mm, which a real partial overlap cannot
-  reach — the overlap seated exactly (median 0.000 mm) and the gate still
-  refused it, so the button did nothing and no heatmap appeared. The median
-  residual decides acceptance, as it did in v1.2.0, with the worst-fifth tail
-  still bounded so a fit that slid onto a neighbouring surface is refused. Two
-  different jaws stay refused.
-- Excluding surface from best-fit matching with the Brush tool marks and
-  commands both scans again. Selecting one mesh had narrowed "Fit everywhere",
-  "Fit nowhere", "Invert markings" and "Mark automatic" to that single scan, so
-  with an upper and a lower arch open the button an operator pressed did not do
-  what its own sentence said: one arch was taken out of the match and the other
-  was left in it. The Brush window's Mesh selection now offers both scans, which
-  is what it opens on, and naming one scan still narrows a command for the
-  overlapping case.
-- A stroke paints the scan under the cursor on either arch of the pair. The
-  previous behaviour aimed every dab at whichever mesh the Mesh selection named,
-  so painting the other arch did nothing at all until the operator noticed the
-  selection and changed it.
-- The marked region is drawn as paint over the scan's own surface, not as a
-  measured colour map. Marked surface reads blue; everything else keeps the
-  scan's own colour, texture and lighting. The preview had been shaded through
-  the deviation map's path, which drops the layer tint and the texture and
-  reduces the light, so opening the brush turned both arches into a pale glossy
-  shell and a textured scan lost the colour it was being read against.
-- A whole-mesh command no longer repaints a scan that has nothing marked on it:
-  "Fit everywhere" leaves a mask that marks nothing, and attaching it uploaded a
-  whole vertex array for a picture identical to the scan.
-- The status line after a Brush command names the scan it reached when the Mesh
-  selection narrowed it to one, instead of stating the rule as though both had
-  been changed.
-- The Ruler drops a perpendicular onto a ruler line. After the first point,
-  a click on a drawn ruler line ends the measurement at the foot of the
-  perpendicular on that line, marked with a right angle, instead of at the
-  surface under the cursor. This is the Korkhaus anterior arch length: from the
-  incisal point to the line through Pont's premolar points, which runs above
-  the palate. Before, the second point could only land on the scan, so the
-  reading went down to the palate and was longer than the perpendicular. The
-  length is measured in 3D. Hovering the line shows the perpendicular and its
-  length before the click; dragging the first point or either end of the base
-  line keeps the right angle.
-- Pressing a ruler end without moving the mouse leaves it where it is. The
-  press re-picked the end onto the surface nearest the camera under the
-  pointer, so an end seen through the model (measurements draw on top of it)
-  jumped to the front surface and the reading changed although nothing was
-  dragged. The end now follows the pointer once it moves past the click
-  tolerance.
+- Best fit matching accepts a scan of part of a jaw against a scan of the whole
+  jaw again. Two different jaws are still refused.
+- The Brush commands ("Fit everywhere", "Fit nowhere", "Invert markings",
+  "Mark automatic") apply to both scans of the pair. Choosing one scan in Mesh
+  selection narrows a command to it, and the status line names that scan.
+- A brush stroke paints the scan under the cursor, on either arch.
+- Marked surface is drawn blue over the scan's own colour, texture and lighting.
+- "Fit everywhere" on a scan with nothing marked leaves the scan unchanged.
+- Ruler: after the first point, a click on a drawn ruler line ends the
+  measurement at the foot of the perpendicular on that line, marked with a right
+  angle. This measures, for example, the Korkhaus anterior arch length from the
+  incisal point to the line through Pont's premolar points, which runs above the
+  palate. The length is the 3D perpendicular. Hovering a line previews the
+  perpendicular and its length; moving the first point or either end of the
+  base line keeps the right angle.
+- Ruler: pressing an end without moving the mouse leaves it in place. It
+  follows the pointer once the pointer moves.
+- The contact reading names the scan it is measured against when the scene has
+  more than one candidate, and offers the others.
+- A contact measurement that fails says so and offers "Read again".
+- Settings shows "Keyboard and mouse" and "About OccluView" as one row of two
+  buttons.
 
 ### Files
 
-- Saving a layer back out keeps the format it was opened in by default. Scans
-  already round-tripped PLY/STL/OBJ that way, but a scan opened from a format
-  with no writer (HPS, GLB, OFF) silently became a PLY, and the preference that
-  produced the substitution was not stated anywhere. Settings now asks one
-  question with two answers — save each scan in its own
-  format, or save every scan in a chosen format — instead of a switch beside a
-  format that looked like it applied either way. The format chips appear only in
-  the mode that uses them, and the mode in force is always named. Whichever
-  mode is chosen, a scan whose geometry cannot be written in the resulting
-  format is saved as PLY rather than STL.
-- A merged scene is saved in the fallback format instead of always PLY, so
-  "Save scene as" follows the same preference as the layers.
-- A PLY export of a textured scan writes the atlas as per-vertex RGBA, at each
-  vertex's texture coordinate. PLY stores coordinates but not an image, so this
-  is the only way the colour travels with the geometry. The `OccluViewTexture*`
-  header comments are no longer written: a 4 MB `.dcm` could become a ~50 MB
-  `.ply` that most other tools would not read. Coordinates are omitted once the
-  colour is baked, because `s`/`t` with no image makes readers draw the scan
-  white. A PLY an earlier release wrote with the header comment still opens in
-  colour. An OBJ export of the same scan carries the colour the same way, as
-  per-vertex RGB. A layer that also carries its own colours exports the atlas
-  and reports that the other colours were replaced.
-- A scan that names its image beside it arrives with the image. An OBJ with its
-  `mtllib`/`map_Kd` pair — or with an image sharing its name — and a PLY from
-  another tool with a `comment TextureFile` line are read with the texture
-  attached, instead of being imported untextured and losing the colour the scan
-  was captured with. A file larger than 1 GB, or a companion image larger than
-  64 MB, is refused rather than read.
-- A crafted PLY header can no longer make the importer hold a second copy of a
-  base64 payload it was always going to reject, and a header whose
-  `OccluViewTexture` keys were re-cased by a text editor reads as before,
-  matching the case-insensitive treatment `TextureFile` already had.
-- An HPS/DCM scan whose texture has its red and blue channels transposed is
-  corrected to warm at any brightness. The check previously compared a
-  brightness-scaled margin, so the same swap was caught on a dark atlas and
-  missed on a bright one; a 3Shape lab scanner writes the bright kind, and
-  those scans opened with cyan gingiva and blue-tinted enamel. It now measures
-  the blue bias per hue-bearing pixel and requires a near-uniform bias of at
-  least 24 levels on average. The sample spans rows and columns, so a
-  power-of-two atlas is judged from the whole picture. A texture whose format
-  is declared explicitly is decoded as declared and never re-guessed.
-- The save format is no longer a setting. Settings used to ask "each scan keeps
-  its own format" or "chosen format", with a format to pick in the second mode
-  and two lines explaining the consequence — and the mode that was in force
-  could still propose a colourless `.stl` for a scan captured in colour, leaving
-  only a status-line warning after the name had been picked. That whole question
-  is gone, together with the two notes under it. A scan keeps the format it was
-  opened in when the viewer can write it; a scan from a format it cannot write
-  is saved as PLY when it holds a texture, vertex colours or a mapping, and as
-  STL when it is geometry alone. There is nothing left to choose and nothing
-  left to contradict.
-- Settings is shorter and the two references sit side by side. "Keyboard and
-  mouse" and "About OccluView" were two full-width text lines; they are now one
-  row of two equal buttons.
-- A malformed binary PLY can no longer hang the viewer or the Explorer preview.
-  A face element declared with rows but no property used to consume no bytes per
-  row, so the reader looped forever on the same empty state; it is now refused
-  with a typed error, as the ASCII reader already refused it.
-- Opening several scans at once parses two of them at a time and holds at most
-  half a gigabyte of file data in memory, instead of parsing every dropped file
-  at once — a scan larger than that budget is parsed on its own, up to the 1 GB
-  a single file may be. A bigger file is refused with a sentence in the
-  operator's language that gives both sizes in gigabytes.
-- The contact reading says which scan it is measured against when the scene has
-  more than one candidate, and offers the others: an upper, a lower and a wax-up
-  used to resolve by proximity alone, which cannot tell two similar arches
-  apart. With one obvious antagonist the automatic pick stands and nothing
-  changes.
-- A contact measurement whose worker thread died reports a failure and offers
-  "Read again" instead of leaving the bar measuring forever with no status text
-  and no way out.
+- Saving keeps the format a scan was opened in when OccluView can write it. A
+  scan from a format it cannot write (HPS, GLB, OFF) is saved as PLY when it
+  holds colour, a texture or a mapping, and as STL when it is geometry alone.
+  "Save scene as" follows the same rule. The save format is no longer a setting.
+- PLY and OBJ export of a textured scan write the texture colour per vertex
+  (RGBA in PLY, RGB in OBJ), so the colour opens in other tools and the files
+  stay close to the size of their geometry. PLY files with an embedded texture
+  written by earlier releases still open in colour. When a layer's own vertex
+  colours are replaced by the texture, the export says so.
+- OBJ files with an `mtllib`/`map_Kd` texture, or with an image of the same name
+  beside them, and PLY files with a `comment TextureFile` line open with their
+  texture. Files larger than 1 GB and companion images larger than 64 MB are
+  refused.
+- HPS/DCM scans from 3Shape lab scanners with red and blue swapped in the
+  texture open in their correct colours.
+- A malformed binary PLY is refused with an error instead of hanging the viewer
+  or the Explorer preview. A crafted PLY header can no longer make the importer
+  hold a second copy of a payload it rejects.
+- Opening several scans at once parses two at a time and keeps at most about
+  half a gigabyte of file data in memory. A file larger than 1 GB is refused
+  with a message that gives both sizes.
 
 ### macOS
 
-- Added an Apple Silicon `aarch64-apple-darwin` build targeting macOS 14+, with
-  Application Support state, kernel-backed single-instance locking, and local
-  open-file handoff.
-- Added Finder document-open integration for STL, PLY, OBJ, GLB, HPS, and the
-  legacy `.dcm` HPS container. `.dcm` is declared only as an alternate handler,
-  so it appears in "Open With" without taking medical DICOM files from their own
-  software; a real DICOM file is still refused by its `DICM` signature.
-- Added `.app`, `.dmg`, and `.pkg` packaging, plus verified `.pkg` handoff to
-  macOS Installer. The release workflow builds them on Apple Silicon with the
-  same embedded HPS key as the Windows and Linux packages, and publishes them
-  (and offers them to the updater) only once they are signed with Developer ID
-  and notarized; until then they stay workflow artifacts for testing.
-- Added Command-key shortcut labels, trackpad scrolling for viewport pan, and
-  pinch zoom.
+- OccluView runs natively on Apple Silicon Macs with macOS 14 or later, as a
+  `.dmg` with the app and a `.pkg` installer. Downloads are offered once the
+  packages are signed and notarized; the in-app updater installs the `.pkg`
+  through the macOS Installer.
+- Finder opens STL, PLY, OBJ, GLB, HPS and `.dcm` files with OccluView. `.dcm`
+  is offered under "Open With" only, so medical DICOM files keep their own
+  default application, and a DICOM file is refused.
+- Shortcuts show the Command key, a trackpad scroll pans the view, and pinch
+  zooms.
 
 ## 1.2.0 - 2026-09-14
 
