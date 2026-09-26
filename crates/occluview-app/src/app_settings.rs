@@ -83,6 +83,29 @@ impl UnitDisplay {
     }
 }
 
+/// How a ruler ending on another ruler's line meets it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum RulerLineAngle {
+    /// The end goes where the pointer is along the line, and the ruler reads
+    /// out the angle it makes with the line.
+    #[default]
+    Free,
+    /// The end is the foot of the perpendicular and stays at 90 degrees.
+    Perpendicular,
+}
+
+impl RulerLineAngle {
+    pub(crate) const OPTIONS: [Self; 2] = [Self::Free, Self::Perpendicular];
+
+    /// The other choice, which Shift selects while it is held.
+    pub(crate) const fn other(self) -> Self {
+        match self {
+            Self::Free => Self::Perpendicular,
+            Self::Perpendicular => Self::Free,
+        }
+    }
+}
+
 /// UI chrome theme.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum ThemePreference {
@@ -132,6 +155,8 @@ pub(crate) struct Settings {
     /// Draw the cut-away side as a translucent ghost during a cut view.
     pub(crate) show_cut_ghost: bool,
     pub(crate) unit_display: UnitDisplay,
+    /// How a ruler ending on another ruler's line meets it.
+    pub(crate) ruler_line_angle: RulerLineAngle,
     /// UI scale multiplier on the system pixel density, clamped at use to
     /// 0.85..=1.5 (1.0 keeps the platform default).
     pub(crate) ui_scale: f32,
@@ -159,6 +184,7 @@ impl Default for Settings {
             viewport_background: ViewportBackground::default(),
             show_cut_ghost: true,
             unit_display: UnitDisplay::default(),
+            ruler_line_angle: RulerLineAngle::default(),
             ui_scale: 1.0,
             theme: ThemePreference::default(),
             remember_sculpt_brush: true,
