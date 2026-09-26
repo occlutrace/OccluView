@@ -11,13 +11,22 @@ use ::windows::Win32::Foundation::{CloseHandle, HANDLE};
 
 mod activation;
 mod fallback;
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "macos")]
+mod macos_open_files;
 mod protocol;
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "macos")))]
 mod unix;
 #[cfg(windows)]
 mod windows;
 
 pub(crate) use activation::{capture_activation_token, complete_startup_notification, RaiseTarget};
+
+#[cfg(target_os = "macos")]
+pub(crate) fn install_open_files_handler() {
+    macos_open_files::install();
+}
 
 /// One file-open handoff from a second instance: the files to open plus, when
 /// available, the launcher's window-activation token (used to raise the running
@@ -31,15 +40,17 @@ pub(crate) struct OpenRequest {
 const REQUEST_DIR: &str = "open-requests";
 const FALLBACK_POLL_INTERVAL: Duration = Duration::from_millis(50);
 #[cfg(not(windows))]
-const LINUX_OPEN_REQUEST_WAKE_BURST_INTERVAL: Duration = Duration::from_millis(25);
+const OPEN_REQUEST_WAKE_BURST_INTERVAL: Duration = Duration::from_millis(25);
 #[cfg(not(windows))]
-const LINUX_OPEN_REQUEST_WAKE_BURST_STEPS: usize = 48;
+const OPEN_REQUEST_WAKE_BURST_STEPS: usize = 48;
 
 pub(crate) struct SingleInstance {
     #[cfg(windows)]
     handle: Option<HANDLE>,
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(target_os = "macos")))]
     lock_path: Option<PathBuf>,
+    #[cfg(target_os = "macos")]
+    lock_file: Option<std::fs::File>,
     secondary: bool,
 }
 
@@ -50,7 +61,12 @@ impl SingleInstance {
             windows::acquire()
         }
 
-        #[cfg(not(windows))]
+        #[cfg(target_os = "macos")]
+        {
+            macos::acquire()
+        }
+
+        #[cfg(all(not(windows), not(target_os = "macos")))]
         {
             unix::acquire()
         }
@@ -69,10 +85,16 @@ impl Drop for SingleInstance {
             let _ = unsafe { CloseHandle(handle) };
         }
 
-        #[cfg(not(windows))]
+        #[cfg(all(not(windows), not(target_os = "macos")))]
         if let Some(path) = self.lock_path.take() {
             let _ = std::fs::remove_file(path);
         }
+
+        // On macOS the open file descriptor owns the kernel lock. Dropping the
+        // field releases it; leave the stable lock file in place so a second
+        // process can never race a pathname replacement against the lock.
+        #[cfg(target_os = "macos")]
+        let _ = self.lock_file.take();
     }
 }
 
@@ -82,7 +104,7 @@ pub(crate) fn write_open_request(request: &OpenRequest) -> Result<()> {
         return Ok(());
     }
 
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(target_os = "macos")))]
     if unix::send_socket_open_request(request).is_ok() {
         return Ok(());
     }
@@ -114,7 +136,7 @@ impl OpenRequestListener {
         let (sender, receiver) = mpsc::channel();
         #[cfg(windows)]
         windows::spawn_pipe_listener(sender.clone(), repaint_ctx.clone());
-        #[cfg(not(windows))]
+        #[cfg(all(not(windows), not(target_os = "macos")))]
         unix::spawn_socket_listener(sender.clone(), repaint_ctx.clone());
         fallback::spawn_disk_fallback_listener(sender, repaint_ctx);
         Self { receiver }
@@ -132,8 +154,8 @@ fn request_open_handoff_repaint(repaint_ctx: &egui::Context) {
     {
         let repaint_ctx = repaint_ctx.clone();
         std::thread::spawn(move || {
-            for _ in 0..LINUX_OPEN_REQUEST_WAKE_BURST_STEPS {
-                std::thread::sleep(LINUX_OPEN_REQUEST_WAKE_BURST_INTERVAL);
+            for _ in 0..OPEN_REQUEST_WAKE_BURST_STEPS {
+                std::thread::sleep(OPEN_REQUEST_WAKE_BURST_INTERVAL);
                 repaint_ctx.request_repaint();
             }
         });

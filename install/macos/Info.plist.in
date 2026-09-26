@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleExecutable</key>
+  <string>occluview</string>
+  <key>CFBundleIconFile</key>
+  <string>occluview.icns</string>
+  <key>CFBundleIdentifier</key>
+  <string>ai.occlutrace.OccluView</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>OccluView</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>@VERSION@</string>
+  <key>CFBundleVersion</key>
+  <string>@VERSION@</string>
+  <key>LSApplicationCategoryType</key>
+  <string>public.app-category.utilities</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>14.0</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>NSPrincipalClass</key>
+  <string>NSApplication</string>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>OccluView 3D Models</string>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>ai.occlutrace.occluview.stl</string>
+        <string>ai.occlutrace.occluview.ply</string>
+        <string>ai.occlutrace.occluview.obj</string>
+        <string>ai.occlutrace.occluview.glb</string>
+        <string>ai.occlutrace.occluview.hps</string>
+        <string>ai.occlutrace.occluview.dcm</string>
+      </array>
+    </dict>
+  </array>
+  <key>UTImportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeConformsTo</key>
+      <array><string>public.data</string></array>
+      <key>UTTypeDescription</key>
+      <string>STL 3D Model</string>
+      <key>UTTypeIdentifier</key>
+      <string>ai.occlutrace.occluview.stl</string>
+      <key>UTTypeTagSpecification</key>
+      <dict><key>public.filename-extension</key><array><string>stl</string></array></dict>
+    </dict>
+    <dict>
+      <key>UTTypeConformsTo</key>
+      <array><string>public.data</string></array>
+      <key>UTTypeDescription</key>
+      <string>PLY 3D Model</string>
+      <key>UTTypeIdentifier</key>
+      <string>ai.occlutrace.occluview.ply</string>
+      <key>UTTypeTagSpecification</key>
+      <dict><key>public.filename-extension</key><array><string>ply</string></array></dict>
+    </dict>
+    <dict>
+      <key>UTTypeConformsTo</key>
+      <array><string>public.data</string></array>
+      <key>UTTypeDescription</key>
+      <string>Wavefront OBJ 3D Model</string>
+      <key>UTTypeIdentifier</key>
+      <string>ai.occlutrace.occluview.obj</string>
+      <key>UTTypeTagSpecification</key>
+      <dict><key>public.filename-extension</key><array><string>obj</string></array></dict>
+    </dict>
+    <dict>
+      <key>UTTypeConformsTo</key>
+      <array><string>public.data</string></array>
+      <key>UTTypeDescription</key>
+      <string>glTF Binary 3D Model</string>
+      <key>UTTypeIdentifier</key>
+      <string>ai.occlutrace.occluview.glb</string>
+      <key>UTTypeTagSpecification</key>
+      <dict><key>public.filename-extension</key><array><string>glb</string></array></dict>
+    </dict>
+    <dict>
+      <key>UTTypeConformsTo</key>
+      <array><string>public.data</string></array>
+      <key>UTTypeDescription</key>
+      <string>OccluView HPS Package</string>
+      <key>UTTypeIdentifier</key>
+      <string>ai.occlutrace.occluview.hps</string>
+      <key>UTTypeTagSpecification</key>
+      <dict><key>public.filename-extension</key><array><string>hps</string></array></dict>
+    </dict>
+    <dict>
+      <key>UTTypeConformsTo</key>
+      <array><string>public.data</string></array>
+      <key>UTTypeDescription</key>
+      <string>OccluView HPS Package (legacy .dcm)</string>
+      <key>UTTypeIdentifier</key>
+      <string>ai.occlutrace.occluview.dcm</string>
+      <key>UTTypeTagSpecification</key>
+      <dict><key>public.filename-extension</key><array><string>dcm</string></array></dict>
+    </dict>
+  </array>
+</dict>
+</plist>

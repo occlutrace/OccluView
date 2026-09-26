@@ -38,11 +38,39 @@ pub const UPDATE_PUBKEY: &str = "RWRoIIL40qxwrFOI5OeCx0Fcf1ClUksy36PrIZrdKkGhQq2
 pub const UPDATE_PUBKEYS: &[&str] = &[UPDATE_PUBKEY];
 
 /// Manifest platform key for the running build.
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 pub const PLATFORM: &str = "windows-x86_64";
 /// Manifest platform key for the running build.
-#[cfg(not(target_os = "windows"))]
+#[cfg(all(target_os = "windows", target_arch = "aarch64"))]
+pub const PLATFORM: &str = "windows-aarch64";
+/// Manifest platform key for the running build.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub const PLATFORM: &str = "linux-x86_64";
+/// Manifest platform key for the running build.
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+pub const PLATFORM: &str = "linux-aarch64";
+/// Manifest platform key for the running build.
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+pub const PLATFORM: &str = "macos-x86_64";
+/// Manifest platform key for the running build.
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+pub const PLATFORM: &str = "macos-aarch64";
+/// Manifest platform key for builds with no published platform key.
+#[cfg(not(any(
+    all(
+        target_os = "windows",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ),
+    all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ),
+    all(
+        target_os = "macos",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ),
+)))]
+pub const PLATFORM: &str = "unsupported";
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(20);
 /// Hard ceiling for a downloaded installer (corrupt-manifest guard).
@@ -73,9 +101,12 @@ pub enum UpdateError {
     /// this account.
     #[error("refusing to download an installer into a shared directory: {0}")]
     UnsafeDownloadDir(String),
-    /// Installer handoff is only implemented for Windows MSI builds.
+    /// Installer handoff is not implemented for this platform.
     #[error("in-app install is not supported on this platform")]
     Unsupported,
+    /// macOS handoff only accepts a package Installer can install.
+    #[error("macOS update artifact must be a .pkg installer")]
+    UnsupportedInstallerFormat,
 }
 
 #[derive(serde::Deserialize)]
@@ -403,17 +434,35 @@ pub fn verify_and_launch_installer(
     launch_installer(installer)
 }
 
+/// Build the macOS `LaunchServices` command only for package installer payloads.
+#[cfg(target_os = "macos")]
+fn macos_installer_command(installer: &Path) -> Result<std::process::Command, UpdateError> {
+    let is_package = installer
+        .extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("pkg"));
+    if !is_package {
+        return Err(UpdateError::UnsupportedInstallerFormat);
+    }
+
+    let mut command = std::process::Command::new("/usr/bin/open");
+    command.arg(installer);
+    Ok(command)
+}
+
 /// Hand the verified installer to the OS and let the app exit.
 ///
 /// Windows spawns `msiexec /i` (the MSI's major-upgrade logic replaces the
 /// install; a per-machine install shows the expected UAC prompt). Linux opens
 /// the verified `.deb` with the desktop's package installer via `xdg-open` —
 /// the operator confirms the privileged install there; nothing runs as root
-/// from inside OccluView.
+/// from inside OccluView. macOS opens the verified `.pkg` with `LaunchServices`;
+/// Installer presents the package and the operator approves writing to
+/// `/Applications`.
 ///
 /// # Errors
-/// Spawn failure, or [`UpdateError::Unsupported`] on platforms without an
-/// installer handoff.
+/// Spawn failure, an unsupported macOS installer extension, or
+/// [`UpdateError::Unsupported`] on platforms without an installer handoff.
 pub fn launch_installer(installer: &Path) -> Result<(), UpdateError> {
     #[cfg(target_os = "windows")]
     {
@@ -432,7 +481,14 @@ pub fn launch_installer(installer: &Path) -> Result<(), UpdateError> {
             .map_err(UpdateError::Io)?;
         Ok(())
     }
-    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    #[cfg(target_os = "macos")]
+    {
+        macos_installer_command(installer)?
+            .spawn()
+            .map_err(UpdateError::Io)?;
+        Ok(())
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     {
         let _ = installer;
         Err(UpdateError::Unsupported)
