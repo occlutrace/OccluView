@@ -1,10 +1,13 @@
 //! Settings controls and their UI actions.
 
-use crate::app_settings::{Settings, ThemePreference, UnitDisplay, ViewportBackground};
+use crate::app_settings::{
+    RulerLineAngle, Settings, ThemePreference, UnitDisplay, ViewportBackground,
+};
 use crate::i18n::catalog::EMBEDDED_TAGS;
 use crate::i18n::preference::UiLanguagePreference;
 use crate::i18n::{endonym, LocaleManager};
 use crate::icons::AppIcon;
+use crate::measure_overlay::ruler_line_angle_key;
 use crate::ui_theme;
 use crate::update_notice::UpdateCheckStatus;
 use eframe::egui;
@@ -49,6 +52,7 @@ pub(super) enum SettingsAction {
     SetViewportBackground(ViewportBackground),
     SetShowCutGhost(bool),
     SetUnitDisplay(UnitDisplay),
+    SetRulerLineAngle(RulerLineAngle),
     SetTheme(ThemePreference),
     SetUiScale {
         value: f32,
@@ -189,6 +193,16 @@ pub(super) fn show_settings_popup(
                         |option, _locale| option.label().to_owned(),
                         &mut action,
                         SettingsAction::SetUnitDisplay,
+                    );
+                    segmented_row(
+                        ui,
+                        locale,
+                        &locale.tr("measure-line-angle"),
+                        settings.ruler_line_angle,
+                        &RulerLineAngle::OPTIONS,
+                        |option, locale| locale.tr(ruler_line_angle_key(option)),
+                        &mut action,
+                        SettingsAction::SetRulerLineAngle,
                     );
                     let mut frame_on_open = settings.frame_scene_on_open;
                     ui.allocate_ui_with_layout(

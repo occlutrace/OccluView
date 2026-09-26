@@ -74,8 +74,8 @@ pub struct GpuMeshUniform {
     /// The map keeps its own hue and drops the tint, so a ramp reaches the
     /// screen at the colour it was measured at. Lighting is *reduced*, not
     /// removed: a fully unlit surface has no shading at all and reads as a
-    /// flat silhouette, which is useless for judging a scan. Taken from the
-    /// former tail padding, so the buffer layout is unchanged.
+    /// flat silhouette, which is useless for judging a scan. The field
+    /// occupies a slot that would otherwise be tail padding.
     pub measured_map: u32,
     /// 1 = this layer paints an occlusal contact field from `contact_stops`.
     ///
@@ -83,12 +83,10 @@ pub struct GpuMeshUniform {
     /// its own hue under a single reduced shade factor, and the specular
     /// highlight (which would move the hue at every bright pixel) is skipped.
     ///
-    /// This does NOT pair with `measured_map = 1`. An earlier version of this
-    /// comment said it did, which is the opposite of the app's rule: the two
-    /// overlays are mutually exclusive because they are different measurements,
-    /// and setting both painted the contact ramp into a colour taken from the
-    /// deviation ramp. A caller that followed the old sentence re-created
-    /// exactly the all-white layer that rule exists to prevent.
+    /// This does not pair with `measured_map = 1`: the two overlays are
+    /// mutually exclusive because they are different measurements, and setting
+    /// both paints the contact ramp into a colour taken from the deviation
+    /// ramp -- the all-white layer the app's rule exists to prevent.
     pub contact_map: u32,
     /// Texels per row of the packed field texture, so the shader can turn a
     /// vertex index into a texture coordinate without `textureDimensions`.
@@ -112,10 +110,10 @@ pub struct GpuMeshUniform {
     /// The RGB is a paint colour and the alpha is the weight mixed over the
     /// surface's own material, so alpha 0 leaves the scan bit-for-bit as it
     /// renders — its tint, its texture and its lighting included. Without the
-    /// distinction the brush preview was shaded as a measured map (tint
-    /// dropped, lighting cut to 42%, gloss added), which is what made a marked
-    /// scan read as a pale shiny shell. Taken from the tail padding, so the
-    /// buffer layout is unchanged.
+    /// distinction the brush preview would be shaded as a measured map (tint
+    /// dropped, lighting cut to 42%, gloss added), and a marked scan would read
+    /// as a pale shiny shell. The field occupies a slot that would otherwise be
+    /// tail padding.
     pub overlay_paint: u32,
     /// Explicit tail padding: a uniform struct is 16-byte aligned in WGSL even
     /// though each scalar field here is four-byte aligned.
@@ -317,15 +315,16 @@ mod tests {
                 .filter_map(|line| line.split(':').next())
                 .collect();
             // `model` must be first in every copy: it is the only field the
-            // feedback pass reads, and a reorder is exactly the silent case.
+            // feedback pass reads, and a reorder breaks it without any other
+            // check failing.
             assert_eq!(
                 fields.first().copied(),
                 Some("model"),
-                "a shader's MeshUniform no longer starts with `model`"
+                "a shader's MeshUniform does not start with `model`"
             );
             assert!(
                 fields.contains(&"tint") && fields.contains(&"opacity"),
-                "a shader's MeshUniform no longer matches GpuMeshUniform's prefix"
+                "a shader's MeshUniform does not match GpuMeshUniform's prefix"
             );
         }
     }
@@ -444,9 +443,9 @@ mod tests {
     }
 
     /// Pins the shader's hand-copied `NEUTRAL_MATERIAL_RGB` (`mesh.wgsl`)
-    /// against the core crate's own untextured-mesh tint, so the two can
-    /// never silently drift apart — this is the test `mesh.wgsl`'s doc
-    /// comment for that constant promises exists.
+    /// against the core crate's own untextured-mesh tint, so the two cannot
+    /// drift apart; `mesh.wgsl`'s doc comment for that constant refers to
+    /// this test.
     #[test]
     fn neutral_material_matches_the_core_untextured_tint() {
         const NEUTRAL_MATERIAL_RGB: [f32; 3] = [0.82, 0.68, 0.42];

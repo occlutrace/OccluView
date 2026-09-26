@@ -1,4 +1,4 @@
-//! Scene-sync regression tests kept separate from the core controller suite.
+//! Scene-sync tests, separate from the core controller suite.
 
 use occluview_core::{Scene, SceneMesh, ScenePickHit};
 

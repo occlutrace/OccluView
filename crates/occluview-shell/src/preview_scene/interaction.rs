@@ -256,9 +256,9 @@ mod tests {
         assert_matches_main_viewer(Vec2::new(0.0, 64.0));
     }
 
-    /// DELTA-LEVEL PIN. A downward Win32 drag driven through the FULL preview
+    /// Delta-level check. A downward Win32 drag driven through the full preview
     /// input adapter (`win32_preview_orbit_delta` -> `orbit_drag_delta`) must
-    /// move the camera in the SAME direction as the known-good app viewport
+    /// move the camera in the same direction as the known-good app viewport
     /// handler for the same logical gesture, and horizontal drags must stay
     /// mirror-symmetric and pitch-free. The app math is inlined here so this test
     /// stands on its own if the app changes: the app feeds the raw egui delta
@@ -266,7 +266,7 @@ mod tests {
     /// then `Camera::orbit_view_by` — see `occluview-app` viewer/interaction.rs.
     #[test]
     fn preview_input_adapter_matches_app_for_down_and_is_symmetric_left_right() {
-        // Inline app-equivalent expectation for the SAME gesture (declared first
+        // Inline app-equivalent expectation for the same gesture (declared first
         // to satisfy `items_after_statements`).
         fn app_camera_after(drag: Vec2, viewport_vec: Vec2, base: Camera) -> Camera {
             let mut cam = base;
@@ -322,8 +322,8 @@ mod tests {
         assert!(
             left_state.orbit_drag_delta(win32_preview_orbit_delta(Vec2::new(-64.0, 0.0)), viewport)
         );
-        // Horizontal drags must not move the eye vertically (the vertical fix must
-        // not leak into yaw)...
+        // Horizontal drags must not move the eye vertically (the pitch mapping
+        // must not leak into yaw)...
         assert!(
             (right_state.camera.eye().y - base.eye().y).abs() < 1e-4
                 && (left_state.camera.eye().y - base.eye().y).abs() < 1e-4,

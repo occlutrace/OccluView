@@ -85,12 +85,11 @@ pub fn mesh_from_edit_buffers_like(
 }
 
 /// Rebuild a core mesh from a live sculpt session, for the one case where a dab
-/// changed the TOPOLOGY: Smooth densifies the surface under the brush, so the
+/// changed the topology: Smooth densifies the surface under the brush, so the
 /// session's vertex array grows and its triangle list is rewritten, and
-/// [`Mesh::with_sculpted_vertices`] — which deliberately freezes `topology_id`
-/// because only positions moved — no longer applies. This mints a fresh
-/// `topology_id`, exactly the signal a renderer needs to drop its
-/// exactly-sized GPU buffers and re-upload.
+/// [`Mesh::with_sculpted_vertices`] — which freezes `topology_id` because
+/// only positions move — does not apply. This mints a fresh `topology_id`,
+/// which tells a renderer to drop its exactly-sized GPU buffers and re-upload.
 ///
 /// # Errors
 /// Returns [`CoreError`] if the session's buffers are not valid triangle data.

@@ -116,13 +116,12 @@ fn smooth_duplicate_position_normals(vertices: &mut [Vertex]) {
     }
 
     // Pair each vertex with its quantized position key, then sort by
-    // `(key, original_index)`. Equal keys land in a contiguous run — this
-    // replaces the old `HashMap<[i32; 3], Vec<usize>>` grouping with a single
-    // sort, avoiding one hashmap entry + one `Vec` allocation per group.
-    // Sorting on the original index as a tiebreaker keeps each run in
-    // ascending vertex-index order, exactly matching the old insertion order
-    // (groups were built by iterating vertices 0..n), which is required for
-    // bit-identical floating point summation below.
+    // `(key, original_index)`. Equal keys land in a contiguous run, so one
+    // sort groups them without a hashmap entry and a `Vec` allocation per
+    // group. Sorting on the original index as a tiebreaker keeps each run in
+    // ascending vertex-index order, which fixes the floating point summation
+    // order below and keeps it bit-identical to the `HashMap` reference in the
+    // tests.
     // The index is a `u32`, which makes the entry 16 bytes rather than 24. An
     // STL soup duplicates nearly every vertex, so this is the largest
     // temporary in the loader. Meshes larger than a `u32` can index cannot be
@@ -143,13 +142,13 @@ fn smooth_duplicate_position_normals(vertices: &mut [Vertex]) {
 
     // One array, not two. It holds each vertex's own normalized normal, and
     // the group results are written into it once every read of it is done --
-    // the parallel pass below reads it and writes only into `slots`. The clone
-    // it replaces existed to hold values that are then either overwritten or
-    // left alone.
+    // the parallel pass below reads it and writes only into `slots`, so no
+    // second copy is needed.
     //
-    // Both changes together, measured through the CLI on a 980k-triangle STL
-    // soup: 0.538 s and 350 MB peak become 0.440 s and 294 MB, with the
-    // converted output byte-identical.
+    // Measured through the CLI on a 980k-triangle STL soup: 0.440 s and 294 MB
+    // peak with the `u32` key and the single array, against 0.538 s and 350 MB
+    // with a `usize` key and a cloned normal array; the converted output is
+    // byte-identical.
     let mut source_normals: Vec<Vec3> = vertices
         .iter()
         .map(|vertex| {
@@ -180,8 +179,8 @@ fn smooth_duplicate_position_normals(vertices: &mut [Vertex]) {
     // averaged independently in parallel.
     //
     // One slot per keyed entry, not a collected `Vec<(usize, Vec3)>` of
-    // updates. That tuple vector was the largest temporary in the loader: 24
-    // bytes per duplicated vertex, and an STL soup duplicates nearly all of
+    // updates. That tuple vector would be the largest temporary in the loader:
+    // 24 bytes per duplicated vertex, an STL soup duplicates nearly all of
     // them, and rayon's collect builds it per thread before concatenating, so
     // the peak is a multiple again. Slots are sized by total run length, so a
     // welded mesh allocates almost nothing and a soup pays 12 bytes per vertex
@@ -320,10 +319,10 @@ mod tests {
     fn a_crease_survives_a_group_past_the_pairwise_threshold() {
         // Two clusters ninety degrees apart at one position: a hard crease in
         // a triangle soup, where K coincident vertices means K triangles
-        // meeting one point. Judging the whole group against its own mean put
-        // that mean on the bisector, accepted both clusters into it -- 0.707
-        // is above the 0.5 threshold -- and welded the crease flat. Measured
-        // before the fix: 45 degrees of error on every member.
+        // meeting one point. Judging the whole group against its own mean would
+        // put that mean on the bisector, accept both clusters into it -- 0.707
+        // is above the 0.5 threshold -- and weld the crease flat, with 45
+        // degrees of error on every member.
         let group = MAX_PAIRWISE_DUPLICATE_GROUP + 144;
         let mut vertices = Vec::with_capacity(group);
         for i in 0..group {
@@ -387,7 +386,7 @@ mod tests {
         }
     }
 
-    /// Deterministic LCG (NOT the `rand` crate) so parity tests are
+    /// Deterministic LCG (not the `rand` crate) so parity tests are
     /// reproducible without a dependency.
     struct Lcg(u64);
 
@@ -408,9 +407,9 @@ mod tests {
         }
     }
 
-    /// Brute-force reference replicating the OLD `HashMap`-based grouping and
-    /// averaging algorithm exactly (pre-sort-based-rewrite), used to prove
-    /// the new implementation is bit-identical.
+    /// Independent brute-force reference: `HashMap`-based grouping and
+    /// averaging in vertex-index order, used to prove the sort-based
+    /// implementation is bit-identical.
     fn brute_force_smooth_duplicate_position_normals(vertices: &mut [Vertex]) {
         let mut groups: HashMap<[i32; 3], Vec<usize>> = HashMap::with_capacity(vertices.len());
         for (index, vertex) in vertices.iter().enumerate() {

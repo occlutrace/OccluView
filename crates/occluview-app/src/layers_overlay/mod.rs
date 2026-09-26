@@ -38,8 +38,8 @@ pub(crate) struct LayerContactRows<'a> {
     /// Whether each layer is currently wearing contact marks, one entry per
     /// scene layer.
     ///
-    /// A reading paints BOTH arches of its pair, so both rows offer to close it;
-    /// a single "the" marked index could only ever name one of them and left the
+    /// A reading paints both arches of its pair, so both rows offer to close it;
+    /// a single marked index could name only one of them and would leave the
     /// other offering to open a second reading on the same scans.
     ///
     /// Shorter than the layer list means "not marked".
@@ -49,7 +49,8 @@ pub(crate) struct LayerContactRows<'a> {
     pub(crate) readable: &'a [bool],
 }
 
-// Six inherently (ui/ctx + data + locale); bundling would fake an abstraction.
+// Six inherent inputs (ui/ctx + data + locale); a struct grouping them would
+// carry no meaning of its own.
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn show(
     ui: &mut egui::Ui,

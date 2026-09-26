@@ -18,8 +18,8 @@ pub struct MeshBuilder {
 
 /// Bytes of geometry a reader may build per byte of file.
 ///
-/// Measured across sixty real scans on this machine, the highest ratio is 3.2:
-/// a dense text OBJ, whose short coordinate lines are the least efficient
+/// Measured across sixty real scans in the local corpus, the highest ratio is
+/// 3.2: a dense text OBJ, whose short coordinate lines are the least efficient
 /// encoding a scanner writes. Twelve leaves that nearly four times over, and
 /// still refuses the shapes that end a process: a face line whose fan
 /// triangulation emits a fresh vertex per token (measured at 25), an OFF
@@ -204,8 +204,8 @@ mod tests {
         );
     }
 
-    /// The budget must leave every real scan alone. Measured across sixty on
-    /// this machine, the densest is 3.2 bytes of geometry per byte of file.
+    /// The budget must leave every real scan alone. Measured across sixty real
+    /// scans, the densest is 3.2 bytes of geometry per byte of file.
     #[test]
     fn the_ratio_a_real_scan_reaches_is_well_inside_the_budget() {
         // A text OBJ reaches 3.2 bytes of geometry per byte of file; the

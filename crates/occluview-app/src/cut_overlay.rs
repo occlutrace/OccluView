@@ -149,12 +149,11 @@ fn plane_basis(normal: Vec3) -> (Vec3, Vec3) {
 ///
 /// The tint is the number the renderer draws with, and nothing encodes on the
 /// way out of the shader, so it is already in the space this stroke is drawn
-/// in. Running it through `egui::Rgba`, which is egui's linear type, applied a
-/// transfer the viewport does not: the stroke came out about twice as bright
-/// as the surface it outlines, and the default untextured tint -- warm dental
-/// stone -- collapsed to within three levels of neutral grey, so two layers on
-/// the two nearest stone shades were outlined in the same colour, which is the
-/// one thing this function exists to prevent.
+/// in. Running it through `egui::Rgba`, egui's linear type, would apply a
+/// transfer the viewport does not: the stroke would come out about twice as
+/// bright as the surface it outlines, and the default untextured tint -- warm
+/// dental stone -- would collapse to within three levels of neutral grey, so
+/// two layers on the two nearest stone shades would share one outline colour.
 pub(crate) fn contour_color(tint: [f32; 4]) -> egui::Color32 {
     let channel = |value: f32| -> u8 {
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
@@ -219,7 +218,7 @@ mod tests {
 
     #[test]
     fn two_neighbouring_stone_shades_still_get_different_contours() {
-        // The whole purpose: telling layers apart, including across the warm
+        // The purpose: telling layers apart, including across the warm
         // stone shades a transfer would flatten together.
         let stone = contour_color([0.82, 0.68, 0.42, 1.0]);
         let plaster = contour_color([0.86, 0.83, 0.76, 1.0]);

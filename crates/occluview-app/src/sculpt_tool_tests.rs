@@ -200,8 +200,8 @@ fn invalid_shadow_mapping_fails_before_partial_publish() {
 }
 
 /// A brush session is prepared off the UI thread, so for a frame or two there
-/// is no worker yet — and the mesh edit that a worker would gate on is exactly
-/// the one that must wait for the preparation. Reporting quiet there lets a
+/// is no worker yet — and the mesh edit that a worker would gate on must also
+/// wait for the preparation. Reporting quiet there lets a
 /// Done/undo/structural edit invalidate the session being built.
 #[test]
 fn sculpt_preparation_counts_as_busy_before_the_worker_exists() {
@@ -362,8 +362,8 @@ fn shadow_shape_mismatch_is_not_treated_as_an_empty_dab() {
 
 /// Disarming abandons a preparation that is still in flight, and the abandoned
 /// worker never installs its session. A preparation that landed after the tool
-/// was disarmed would attach a worker the operator no longer has a brush for —
-/// and, worse, warm a picking tree for a scan nobody is sculpting.
+/// was disarmed would attach a worker with no armed brush and warm a picking
+/// tree for a scan that is not being sculpted.
 #[test]
 fn an_abandoned_preparation_never_installs_its_session() {
     let mut tool = SculptTool::default();

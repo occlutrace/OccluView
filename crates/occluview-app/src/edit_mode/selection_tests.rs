@@ -136,8 +136,8 @@ fn screen_polygon_selection_surface_mode_excludes_back_faces() {
 
 #[test]
 fn screen_polygon_selection_accumulates_and_shift_unmarks() {
-    // Dental CAD convention: completed outlines ACCUMULATE into the highlight
-    // by default; an outline with unmark=true (SHIFT) clears its interior.
+    // Dental CAD convention: completed outlines accumulate into the highlight
+    // by default; an outline with unmark=true (Shift) clears its interior.
     let mesh = Mesh::new(
         Some("two".into()),
         vec![
@@ -183,7 +183,7 @@ fn screen_polygon_selection_accumulates_and_shift_unmarks() {
     );
     assert_eq!(selection.selected_faces, vec![true, false]);
 
-    // Second outline without SHIFT accumulates into the highlight.
+    // Second outline without Shift accumulates into the highlight.
     assert_eq!(
         selection.select_screen_polygon(
             &scene,
@@ -199,7 +199,7 @@ fn screen_polygon_selection_accumulates_and_shift_unmarks() {
     );
     assert_eq!(selection.selected_faces, vec![true, true]);
 
-    // SHIFT outline un-marks its interior, leaving the rest highlighted.
+    // Shift outline un-marks its interior, leaving the rest highlighted.
     assert_eq!(
         selection.select_screen_polygon(
             &scene,
@@ -234,7 +234,7 @@ fn screen_polygon_selection_accumulates_and_shift_unmarks() {
 #[test]
 fn screen_polygon_marquee_selects_every_enclosed_face_on_dense_mesh() {
     // An 8x8 quad grid (128 triangles). The marquee is a 4-point polygon
-    // through the same path as the lasso: EVERY enclosed front face must
+    // through the same path as the lasso: every enclosed front face must
     // be taken — no per-pixel-cell decimation.
     let side: u32 = 8;
     let mut vertices = Vec::new();
@@ -320,10 +320,10 @@ fn polygon_selected(
 
 #[test]
 fn micro_triangle_selects_in_surface_mode_when_zoomed() {
-    // Hi-res lab scanners emit facets with ~15 um edges. The old absolute
-    // degeneracy epsilon (mm^4 units) silently culled them from surface
-    // mode no matter how large they were on screen; degeneracy must be
-    // relative to the triangle's own scale.
+    // Hi-res lab scanners emit facets with ~15 um edges. An absolute
+    // degeneracy epsilon (mm^4 units) would cull them from surface mode no
+    // matter how large they were on screen; degeneracy must be relative to
+    // the triangle's own scale.
     let micro = Mesh::new(
         Some("micro-tri".into()),
         vec![
@@ -375,11 +375,10 @@ fn zero_area_triangle_still_skipped_in_surface_mode() {
 }
 
 #[test]
-fn small_lasso_marks_huge_flat_quad_the_old_all_verts_rule_dropped() {
-    // The operator's bug: a large FLAT surface (a few huge triangles) with a
-    // lasso smaller than a triangle selected NOTHING under the old "all three
-    // vertices inside" rule, while dense curved regions (many tiny triangles)
-    // always caught. A quad filling the viewport is two triangles whose
+fn small_lasso_on_a_huge_flat_quad_marks_both_triangles() {
+    // A large flat surface (a few huge triangles) must mark under a lasso
+    // smaller than one triangle, as dense curved regions (many tiny
+    // triangles) do. A quad filling the viewport is two triangles whose
     // vertices sit at the far corners; a small central lasso encloses none of
     // them but straddles their shared diagonal. Intersection marks both.
     let quad = Mesh::new(
@@ -398,9 +397,9 @@ fn small_lasso_marks_huge_flat_quad_the_old_all_verts_rule_dropped() {
         return;
     };
     // A small box at the screen center; every quad vertex projects to a far
-    // corner, so no triangle vertex lands inside it (the old rule -> 0).
+    // corner, so no triangle vertex lands inside it (containment -> 0).
     let lasso = box_polygon(egui::pos2(180.0, 180.0), egui::pos2(220.0, 220.0));
-    // Surface mode (through_mesh = false) — exactly the reported condition.
+    // Surface mode (through_mesh = false).
     let (sel, total) = polygon_selected(quad, &ortho_camera_above(), &lasso, false);
     assert_eq!(total, 2, "quad is two triangles");
     assert_eq!(
@@ -437,8 +436,8 @@ fn lasso_fully_inside_one_giant_triangle_marks_it() {
 #[test]
 fn lasso_edge_crossing_big_triangle_marks_it() {
     // A wide, thin horizontal lasso spans the full width across the middle of
-    // a big triangle: every lasso corner is left/right OUTSIDE the triangle,
-    // every triangle vertex is above/below OUTSIDE the lasso — so only the
+    // a big triangle: every lasso corner is left/right outside the triangle,
+    // every triangle vertex is above/below outside the lasso — so only the
     // edge-crossing test can catch it.
     let triangle = Mesh::new(
         Some("cross-tri".into()),
@@ -486,12 +485,12 @@ fn circular_lasso(point_count: u32, radius: f32) -> Vec<egui::Pos2> {
 #[allow(clippy::print_stderr)]
 #[test]
 fn perf_dense_lasso_over_large_mesh_stays_bounded() {
-    // Perf smoke: a 200-point lasso over a ~500k-triangle grid, measured for
+    // Perf smoke: a 200-point lasso over a 180k-triangle grid, measured for
     // two lasso sizes — a representative regional selection (target < 150 ms)
     // and a near-worst-case one covering ~half the mesh. Prints both wall
-    // times and asserts only a LOOSE bound (the box is shared under
-    // concurrent load; this is a smoke guard against an O(N*P) blow-up, not a
-    // precise benchmark). The bbox prune makes the effective cost scale with
+    // times and asserts only a loose bound (wall times vary under concurrent
+    // load; this is a smoke guard against an O(N*P) blow-up, not a precise
+    // benchmark). The bbox prune makes the effective cost scale with
     // the triangles under the outline, not the whole mesh.
     let cells: u32 = 300; // 2 * 300 * 300 = 180_000 triangles.
     let stride = cells + 1;
@@ -557,12 +556,12 @@ fn perf_dense_lasso_over_large_mesh_stays_bounded() {
         measured.push((label, elapsed));
     }
 
-    // The prune is what this test is for, and its signature is the RATIO: with
+    // The prune is what this test is for, and its signature is the ratio: with
     // it, cost follows the triangles under the outline, so a regional lasso is
     // several times cheaper than one covering half the mesh. Without it both
     // scan everything and the two times converge. An absolute ceiling cannot
-    // see that -- at ten seconds this test passed with the prune disabled and
-    // the regional case a hundred times slower.
+    // see that: a ten-second ceiling passes with the prune disabled and the
+    // regional case a hundred times slower.
     let regional = measured
         .iter()
         .find(|(label, _)| *label == "regional")
@@ -577,7 +576,7 @@ fn perf_dense_lasso_over_large_mesh_stays_bounded() {
     assert!(
         wide > regional * 2,
         "a regional lasso took {regional:?} against {wide:?} for one covering \
-         half the mesh; the outline bbox is no longer pruning"
+         half the mesh; the outline bbox is not pruning"
     );
 }
 
@@ -712,13 +711,11 @@ fn surface_selects_tilted_planes() {
 
 #[test]
 fn surface_selects_oblique_flat_patch_offset_from_view_axis() {
-    // Regression for the ortho front-facing bug: a genuinely front-facing
-    // flat patch (normal z-component cos(beta) > 0) that is oblique AND
-    // laterally offset from the view axis. The old `eye - centroid` test
-    // swung the effective view vector with the lateral offset and culled the
-    // WHOLE patch (0 selected); the ortho-consistent constant view direction
-    // selects all of it. This is the "flat surface off to the side won't
-    // select" the operator reported.
+    // A front-facing flat patch (normal z-component cos(beta) > 0) that is
+    // oblique and laterally offset from the view axis. A per-face
+    // `eye - centroid` test would swing the effective view vector with the
+    // lateral offset and cull the whole patch (0 selected); the
+    // ortho-consistent constant view direction selects all of it.
     for &beta in &[70.0_f32, 78.0, 84.0] {
         let a = beta.to_radians();
         for &off_x in &[20.0_f32, 30.0] {
@@ -751,7 +748,7 @@ fn surface_selects_dome_front_but_not_back() {
 #[test]
 fn surface_selects_by_geometry_ignoring_stored_vertex_normals() {
     // A flat plane facing the camera (geometry front-faces +z) but with
-    // every STORED vertex normal deliberately pointing AWAY (-z). If the
+    // every stored vertex normal pointing away (-z). If the
     // surface test trusted stored normals it would cull the whole plane;
     // because it recomputes the face normal from positions, it selects all.
     // (Mesh::new repairs all-zero normals, so hostile-but-usable normals are

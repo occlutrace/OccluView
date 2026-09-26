@@ -193,9 +193,9 @@ fn path_extension(path: &Path) -> Option<String> {
 /// The caller owns the returned handle.
 ///
 /// The offscreen readback already delivers top-down rows (the app viewport
-/// paints them into egui untouched); flipping here again vertically MIRRORED
-/// every thumbnail and the preview pane, which read as "inverted vertical
-/// orbit" in the live preview. Keep this top-down end to end.
+/// paints them into egui untouched); flipping here again would mirror every
+/// thumbnail and the preview pane vertically, which reads as an inverted
+/// vertical orbit in the live preview. Keep this top-down end to end.
 fn pixels_to_hbitmap(pixels: &[u8], width: u32, height: u32) -> windows::core::Result<HBITMAP> {
     if width == 0 || height == 0 || pixels.len() != (width * height * 4) as usize {
         return Err(e_fail());
@@ -220,13 +220,12 @@ fn pixels_to_hbitmap(pixels: &[u8], width: u32, height: u32) -> windows::core::R
 
 /// Allocate a 32bpp top-down BGRA DIB and fill it with `bgra`.
 ///
-/// The one place this crate calls `CreateDIBSection`. Written twice -- here
-/// and for the context-menu glyphs -- both copies carry the same hand-written
-/// GDI leak guard for the null-bits path, inside a DLL that lives in
-/// `explorer.exe` for a whole session; fix a leak or a header field in one and
-/// the other stays wrong, in a `cfg(windows)` crate no Linux gate compiles.
-/// The callers differ only in how they produce the bytes: this one swizzles
-/// RGBA, the glyph path premultiplies.
+/// The one place this crate calls `CreateDIBSection`, shared with the
+/// context-menu glyphs so one GDI leak guard for the null-bits path covers
+/// both, inside a DLL that lives in `explorer.exe` for a whole session and in
+/// a `cfg(windows)` crate no Linux gate compiles. The callers differ only in
+/// how they produce the bytes: this one swizzles RGBA, the glyph path
+/// premultiplies.
 ///
 /// The caller owns the returned handle.
 fn create_top_down_bgra_dib(
@@ -314,10 +313,10 @@ impl IClassFactory_Impl for PreviewHandler_Impl {
 
 /// `E_FAIL` as a `windows::core::Error`.
 ///
-/// These helpers wrap the canonical `Win32::Foundation` constants. Earlier
-/// revisions hand-transcribed the decimal values and drifted into
-/// `0x8000FF85`-style non-codes — still failures, but meaningless to anyone
-/// reading an Explorer trace. Never write an HRESULT literal here again.
+/// These helpers wrap the canonical `Win32::Foundation` constants rather than
+/// HRESULT literals: a hand-transcribed value can drift into a
+/// `0x8000FF85`-style non-code that is still a failure but is meaningless in an
+/// Explorer trace.
 fn e_fail() -> windows::core::Error {
     windows::core::Error::from_hresult(E_FAIL)
 }

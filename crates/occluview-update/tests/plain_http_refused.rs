@@ -5,16 +5,14 @@
 //! host answering with an `http://` Location would be followed down — inside the
 //! signature boundary, but outside the promise made to the reader.
 //!
-//! This is an INTEGRATION test deliberately. The agent is built with
+//! This must be an integration test. The agent is built with
 //! `.https_only(!cfg!(test))` in `src/lib.rs`, and `cfg!(test)` is true only
 //! inside the crate's own unit tests. An integration test links the crate as an
 //! ordinary dependency, so the flag is `https_only(true)` here: this drives the
-//! same agent a shipped build uses, which is the thing that has to hold.
+//! same agent a shipped build uses.
 //!
-//! The check it replaces read `src/lib.rs` and asserted the text
-//! `.https_only(!cfg!(test))` appeared in it. That passes on the text and says
-//! nothing about behaviour. This one opens a loopback HTTP listener, points the
-//! real `check_with` entry point at it, and asserts the request never arrives.
+//! The test opens a loopback HTTP listener, points the real `check_with` entry
+//! point at it, and asserts the request never arrives.
 
 #![allow(clippy::expect_used)]
 
@@ -32,7 +30,7 @@ fn observing_listener() -> (String, mpsc::Receiver<()>) {
 
     std::thread::spawn(move || {
         // Answer at most one connection with a minimal response, so a client
-        // that DOES connect is measured as "it connected" rather than timing
+        // that does connect is measured as "it connected" rather than timing
         // out, and the assertion is about the refusal, not about latency.
         if let Ok((mut stream, _)) = listener.accept() {
             let _ = connected_tx.send(());

@@ -1,7 +1,7 @@
 //! Reusable passive Section view: framing, ruler, panel controls, and texture.
 //!
 //! A tool supplies a world-space disc pose and plane normal. This type owns no
-//! viewport gesture state, so Cut View and Bridge Split can share the exact
+//! viewport gesture state, so Cut View and Bridge Split can share the same
 //! section UI without competing for the same pointer interaction.
 
 use crate::cut_manipulator::{pose_moved, DiscPose};
@@ -108,7 +108,7 @@ impl SectionViewFrame {
 }
 
 /// One passive section-panel session shared by tools that already own their own
-/// placement interaction. It deliberately has no manipulator or viewport clip.
+/// placement interaction. It has no manipulator or viewport clip.
 #[derive(Default)]
 pub(super) struct SectionView {
     texture: Option<egui::TextureHandle>,
@@ -136,12 +136,11 @@ impl SectionView {
     pub(super) fn sync(&mut self, frame: Option<SectionViewFrame>) -> bool {
         let changed = frames_moved(self.current_frame, frame)
             || (self.slice_ready && frames_moved(self.rendered_frame, frame));
-        // The operator's pan and zoom are dropped only when the PLANE moves, not
-        // when the disc merely changes size. The framing already follows the
-        // radius live — `posed_focus` reads it every frame — so resetting on a
-        // resize threw away a pan for nothing, and once the section wheel started
-        // resizing the disc it also cancelled its own zoom on the next frame,
-        // leaving the wheel looking broken.
+        // The operator's pan and zoom are dropped only when the plane moves, not
+        // when the disc changes size. The framing already follows the radius
+        // live — `posed_focus` reads it every frame — so resetting on a resize
+        // would discard a pan, and because the section wheel resizes the disc
+        // it would also cancel its own zoom on the next frame.
         let replanted = plane_moved(self.current_frame, frame);
         self.current_frame = frame;
         if let Some(frame) = frame {
@@ -464,11 +463,10 @@ impl SectionView {
     }
 }
 
-/// Whether the section PLANE is somewhere else — a new centre or a new facing.
+/// Whether the section plane is somewhere else — a new centre or a new facing.
 ///
-/// Deliberately blind to the disc's radius: a wider disc cuts the same plane, so
-/// nothing the operator set up about where they are looking has stopped making
-/// sense.
+/// Ignores the disc's radius: a wider disc cuts the same plane, so nothing the
+/// operator set up about where they are looking stops making sense.
 fn plane_moved(lhs: Option<SectionViewFrame>, rhs: Option<SectionViewFrame>) -> bool {
     const POS_EPS: f32 = 1.0e-4;
     const NORMAL_EPS: f32 = 1.0e-5;

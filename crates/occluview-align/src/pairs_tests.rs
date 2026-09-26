@@ -1,5 +1,4 @@
-//! Tests for the point-pair fit, split out of `pairs.rs` to hold the
-//! workspace's file budget.
+//! Tests for the point-pair fit.
 
 use crate::pairs::{fit_pairs, FitBounds, FitRejection, PairFit};
 use crate::Rigid;
@@ -13,7 +12,7 @@ fn pose() -> Rigid {
 }
 
 /// Four well-spread points: not collinear, not coincident, and far enough
-/// apart that a fit is genuinely determined.
+/// apart that a fit is fully determined.
 fn spread() -> Vec<DVec3> {
     vec![
         DVec3::new(0.0, 0.0, 0.0),
@@ -200,7 +199,7 @@ fn a_fit_that_throws_the_scan_clear_of_its_partner_is_refused() {
 
 #[test]
 fn turning_a_scan_over_where_it_stands_is_not_a_runaway() {
-    // The case the guard used to refuse, at full-arch scale: an 88 mm bounding-box
+    // The case the runaway guard must accept, at full-arch scale: an 88 mm bounding-box
     // diagonal whose vertices sit 71 mm from the file's own zero — the shape
     // real exports take. The partner scan is the same arch 2.3 mm away, stored with the
     // opposite occlusal convention — the ordinary difference between a .dcm
@@ -423,9 +422,9 @@ fn collinear_fixed_clicks_are_refused_like_collinear_moving_ones() {
 #[test]
 fn one_wild_click_is_an_outlier_not_a_unit_problem() {
     // A click on the wrong side of an arch lands ~60 mm off. Gating the unit
-    // check on MEAN pairwise distances read that as "3x apart in size —
-    // probably different units" and sent the operator to import scaling,
-    // while the trimming loop that exists for exactly that click never ran.
+    // check on mean pairwise distances would read that as "3x apart in size —
+    // probably different units" and send the operator to import scaling,
+    // while the trimming loop that exists for that click never runs.
     // Seven clean anchors, so the fit cannot tilt far enough to absorb the
     // wild click into everyone's residuals.
     let mut moving = spread();
@@ -445,7 +444,7 @@ fn one_wild_click_is_an_outlier_not_a_unit_problem() {
 
 #[test]
 fn the_overlap_allowance_sits_exactly_at_touching_spheres() {
-    // Pin the guard's SHAPE, not only its origin-independence: the boundary
+    // Pin the guard's shape, not only its origin-independence: the boundary
     // is the sum of the two bounding-sphere radii. A fit landing just inside
     // passes; just outside is refused; and two tiny scans fall back to the
     // one-millimetre floor.

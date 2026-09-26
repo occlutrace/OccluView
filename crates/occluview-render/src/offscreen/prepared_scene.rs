@@ -142,7 +142,7 @@ impl PreparedScene {
         true
     }
 
-    /// Overwrite the vertex-buffer CONTENT of the entry whose uploaded
+    /// Overwrite the vertex-buffer content of the entry whose uploaded
     /// topology matches `topology` with fresh CPU vertices — the live path an
     /// interactive sculpt stroke uses to show each brush frame without
     /// re-preparing the whole scene. The uploaded topology identity is
@@ -189,7 +189,7 @@ impl PreparedScene {
         touched: &[usize],
     ) -> bool {
         // The run-coalescing below needs `touched` strictly ascending and
-        // in-range. Validate in release builds as well: silently skipping a
+        // in-range. Validate in release builds as well: skipping a
         // bad id would report a successful upload while leaving part of the
         // GPU shadow stale, and an unsorted id could make a range slice panic.
         if !touched.windows(2).all(|pair| pair[0] < pair[1])
@@ -212,7 +212,7 @@ impl PreparedScene {
             return false;
         }
         let queue = renderer.queue();
-        // A big brush touches array-SCATTERED soup vertices, which coalesce into
+        // A big brush touches array-scattered soup vertices, which coalesce into
         // many short runs — thousands of tiny `write_buffer` calls whose per-call
         // overhead would stutter. Past a threshold, one whole-buffer write is
         // cheaper than the pile of small ones.
@@ -299,9 +299,8 @@ impl PreparedSceneEntry {
     /// wins, then the scan's own material texture, then the shared fallback.
     ///
     /// One method because four draw paths (opaque, transparent, wireframe,
-    /// ghost) each used to compute this inline, and a contact field that
-    /// reached three of them would read as a map that flickers with the
-    /// layer's opacity.
+    /// ghost) need it, and a contact field that reached only three of them
+    /// would read as a map that flickers with the layer's opacity.
     fn group2<'a>(&'a self, fallback: &'a wgpu::BindGroup) -> &'a wgpu::BindGroup {
         if let Some(contact) = self.contact.as_ref() {
             return contact.material.bind_group();

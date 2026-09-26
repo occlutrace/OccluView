@@ -80,7 +80,7 @@ impl SculptCommandQueue {
         set_worker_error(&self.error, SculptFailure::WorkerStatePoisoned);
     }
 
-    /// Keep each stroke's APPLY backlog bounded by replacing its oldest queued
+    /// Keep each stroke's Apply backlog bounded by replacing its oldest queued
     /// dab when the worker is busy. The stroke id is essential: a global cap
     /// would evict all dabs between two Finish markers when the operator makes
     /// two quick strokes, leaving the second stroke with no geometry to apply.
@@ -214,7 +214,7 @@ impl SculptCommandQueue {
 }
 
 /// Make one slot available without ever removing a stroke boundary. Dropping
-/// the oldest sample is deliberate lossy backpressure: the worker still sees
+/// the oldest sample is the lossy backpressure policy: the worker still sees
 /// an ordered, finite stroke and the newest pointer position replaces stale
 /// input, while the queue can never grow with mouse frequency.
 fn make_room_for_apply(state: &mut QueueState) -> bool {
@@ -238,7 +238,7 @@ struct WorkerState {
     pending_touched: Mutex<Vec<usize>>,
     full_sync: AtomicBool,
     /// Ordered whole-layer rebuilds from densifying dabs. A later unread
-    /// rebuild from the SAME stroke may replace its predecessor because no
+    /// rebuild from the same stroke may replace its predecessor because no
     /// completion can refer to an intermediate topology within one stroke;
     /// rebuilds from different strokes remain queued in order.
     rebuild: Mutex<VecDeque<PendingRebuild>>,
@@ -682,8 +682,8 @@ impl SculptWorker {
     ///
     /// The panic is raised inside `run_worker` on the worker thread, so it is
     /// the real entry guard — not a mock around it — that is being exercised.
-    /// A kernel failure mode cannot unwind today, which is why this test-only
-    /// trigger exists at all.
+    /// No kernel failure mode unwinds, so this test-only trigger is the only
+    /// way to exercise the guard.
     ///
     /// [`spawn`]: SculptWorker::spawn
     #[cfg(test)]
@@ -798,7 +798,7 @@ impl SculptWorker {
     }
 
     /// Take the pending whole-layer rebuild, if a dab densified the mesh.
-    /// Must be drained BEFORE `take_update`, so a sparse write never lands on
+    /// Must be drained before `take_update`, so a sparse write never lands on
     /// buffers the rebuild is about to replace. The `Err` result is a
     /// contention signal: a completion can only be interpreted after the UI
     /// has successfully observed every earlier rebuild.
@@ -906,17 +906,15 @@ impl Drop for SculptWorker {
         let Some(worker_thread) = self.worker_thread.take() else {
             return;
         };
-        // The worker never owns this handle, so this branch is defensive only;
-        // still avoid a self-join if a future refactor moves the owner into
-        // the worker closure.
+        // The worker never owns this handle, so this branch is defensive: it
+        // avoids a self-join if the drop ever runs on the worker thread.
         if worker_thread.thread().id() != thread::current().id() {
             let _ = worker_thread.join();
         }
     }
 }
 
-// Split out to hold the workspace's 800-line file budget. A `#[path]` child
-// module so the tests still reach this file's private items.
+// A `#[path]` child module so the tests reach this file's private items.
 #[cfg(test)]
 #[path = "sculpt_worker_tests.rs"]
 mod tests;

@@ -240,13 +240,13 @@ fn brightest_lit_pixel(pixels: &[u8]) -> Option<[u8; 4]> {
 ///
 /// The render target is `Rgba8Unorm` and nothing encodes on the way out, so
 /// whatever the shader returns is treated as sRGB. Vertex colours arrive as
-/// `byte / 255`, already in that space. Typing the texture as sRGB made
-/// `textureSample` decode to linear, and that value was then written out as if
-/// it were sRGB: measured on this exact triangle, sRGB 128 came out as 70
+/// `byte / 255`, already in that space. Typing the texture as sRGB would make
+/// `textureSample` decode to linear, and that value would then be written out
+/// as if it were sRGB: measured on this triangle, sRGB 128 comes out as 70
 /// through a texture against 129 through a vertex, and sRGB 200 as 159 against
-/// 198. That is the flagship formats (HPS, GLB -- colour in a texture) and the
-/// open ones (PLY, OBJ -- colour in vertices) disagreeing about the same
-/// physical colour, in a viewer that is used to judge colour.
+/// 198. That would be the flagship formats (HPS, GLB -- colour in a texture)
+/// and the open ones (PLY, OBJ -- colour in vertices) disagreeing about the
+/// same physical colour, in a viewer that is used to judge colour.
 #[test]
 fn a_colour_reaches_the_screen_the_same_way_through_a_texture_or_a_vertex() {
     const TOLERANCE: i32 = 20;

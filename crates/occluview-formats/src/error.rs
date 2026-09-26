@@ -5,7 +5,7 @@ use thiserror::Error;
 /// Errors raised by a format reader.
 ///
 /// Variants are narrow and carry context (offset, reason) so the caller can
-/// show a useful message and we can write targeted fuzz regression tests.
+/// show a useful message and we can write targeted fuzz tests.
 #[derive(Debug, Error)]
 pub enum FormatError {
     /// The first bytes did not match the format's signature / magic.
@@ -75,8 +75,8 @@ pub enum FormatError {
     /// Three situations arrive here and one message has to fit all of them: a
     /// deferred reader (3MF), a fast thumbnail path handing back to the full
     /// reader, and an encrypted container with no key configured. "Not enabled
-    /// yet" fits the first and tells the third that their file type is
-    /// unsupported, which is the opposite of the truth.
+    /// yet" fits the first but would tell the third that their file type is
+    /// unsupported, which is wrong.
     #[error("{format} was recognized but not read: {reason}")]
     Deferred {
         /// The recognized format family.

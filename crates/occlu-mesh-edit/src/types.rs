@@ -94,13 +94,13 @@ pub struct MeshEditOptions {
     pub max_boundary_loop: usize,
     /// Attribute policy for generated vertices.
     pub attribute_policy: MeshEditAttributePolicy,
-    /// Optional cap on a boundary rim's PERIMETER, in mesh units (mm), for
+    /// Optional cap on a boundary rim's perimeter, in mesh units (mm), for
     /// whole-mesh (unselected) hole filling. `None` means no perimeter
     /// restraint: every interior hole closes (the scan border is protected by
     /// `protect_scan_border` instead). When a face selection is present the
     /// operator's explicit intent wins and this mm cap is ignored.
     pub max_rim_perimeter_mm: Option<f32>,
-    /// Whole-mesh (unselected) fill only: protect the scan's natural OUTER
+    /// Whole-mesh (unselected) fill only: protect the scan's natural outer
     /// boundary. A rim is treated as scan border when its perimeter is both
     /// at least half of the largest rim's perimeter and at least half of the
     /// mesh bounding-box diagonal; border rims stay open (reported per
@@ -113,7 +113,7 @@ pub struct MeshEditOptions {
     /// near-coincident boundary vertices are welded, so a jagged lasso cut (a
     /// digitally extracted tooth) yields clean simple rims that cap instead of
     /// dozens of "damaged" nick loops. The Close Holes path enables it; the
-    /// repair pipeline leaves it OFF and stays byte-for-byte unchanged.
+    /// repair pipeline leaves it off, so repair output does not depend on it.
     pub heal_boundary_rims: bool,
 }
 
@@ -248,8 +248,8 @@ pub struct MeshEditReport {
     /// boundary vertices welded. Zero unless `heal_boundary_rims` is enabled.
     pub healed_rims: usize,
     /// Non-fatal warnings. For hole filling this stays one entry per skipped
-    /// loop of ANY kind (long-standing contract); the three `skipped_*`
-    /// counters above break the same total down by reason.
+    /// loop of any kind; the three `skipped_*` counters above break the same
+    /// total down by reason.
     pub warnings: Vec<MeshEditWarning>,
 }
 

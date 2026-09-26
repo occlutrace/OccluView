@@ -89,9 +89,9 @@ pub(crate) fn paint_pairs(painter: &egui::Painter, view: &PairPaint<'_>) {
         } else {
             ui_theme::accent()
         };
-        // An arrow, not a bare line. The operator's dental CAD software calls
-        // each correspondence an arrow and its Back button undoes one, so the
-        // operator counts arrows; the head sits at the FIXED end, which is
+        // An arrow, not a bare line. Dental CAD software calls each
+        // correspondence an arrow and its Back button undoes one, so the
+        // operator counts arrows; the head sits at the fixed end, which is
         // where the surface is going.
         let stroke = egui::Stroke::new(1.1_f32, ink.gamma_multiply(0.7));
         painter.line_segment([moving, fixed], stroke);
@@ -163,7 +163,7 @@ const LEGEND_STEPS: usize = 64;
 ///
 /// The magnitude ramp has **no negative side**: it runs from its exact zero
 /// colour at the left to the selected absolute maximum at the right. The
-/// signed ramp is the diagnostic variant and genuinely runs `-scale` to
+/// signed ramp is the diagnostic variant and runs `-scale` to
 /// `+scale`, so only it is swept across both signs.
 pub(crate) fn legend_value_mm(step: usize, steps: usize, mode: RampMode, scale_mm: f64) -> f64 {
     #[allow(clippy::cast_precision_loss)]
@@ -198,7 +198,7 @@ fn legend_bounds(mode: RampMode, scale_mm: f64) -> (String, String) {
 /// scale linearly would paint the whole bar as exact zero while the measured
 /// surface reads beyond it, so the two stops are painted directly here. The
 /// signed ramp has the same zero argument, with the sign choosing the stop. Any
-/// other scale is the honest linear sweep of the values the bar labels.
+/// other scale is a linear sweep of the values the bar labels.
 pub(crate) fn legend_color_at(
     step: usize,
     steps: usize,
@@ -255,8 +255,8 @@ pub(crate) fn paint_legend(
         min_mm: settings.min_display_mm,
         scale_mm: settings.scale_mm,
         tolerance_mm: settings.tolerance_mm,
-        // The production Align Meshes legend is continuous too; old
-        // persisted band counts must not disagree with the map.
+        // The legend is continuous like the map; a persisted band count must
+        // not make the two disagree.
         bands: None,
         mode: settings.ramp_mode,
     };
@@ -298,11 +298,10 @@ pub(crate) fn paint_legend(
 
 /// The grey swatch, named.
 ///
-/// Grey is the one colour on the surface that the ramp above cannot explain, and
-/// it sat there unlabelled: an operator found a bridge that exists on one arch
-/// only painted grey and read it as a bug. The key goes here rather than in the
-/// numbers block because this is where the eye already is when it asks what a
-/// colour means.
+/// Grey is the one colour on the surface that the ramp above cannot explain: a
+/// bridge that exists on one arch only is painted grey, and unlabelled it reads
+/// as a fault. The key goes here rather than in the numbers block because this
+/// is where the eye already is when it asks what a colour means.
 fn no_data_key(ui: &mut egui::Ui, locale: &crate::i18n::LocaleManager) {
     const SWATCH: f32 = 9.0;
 
@@ -391,8 +390,8 @@ mod tests {
 
     /// The signed ramp has the same zero-maximum state, and it needs the input
     /// the mapping would receive: the nominal stop at exact zero and the two
-    /// saturated sides for the signed ends. A magnitude-only special case left
-    /// it as a solid nominal green bar under a red/blue surface.
+    /// saturated sides for the signed ends. A magnitude-only special case would
+    /// leave it a solid nominal green bar under a red/blue surface.
     #[test]
     fn a_zero_maximum_signed_legend_still_spans_both_sides() {
         let signed = ramp(RampMode::Signed, 0.0);
@@ -477,7 +476,7 @@ mod tests {
         }
     }
 
-    /// The signed ramp genuinely has two sides, and its bar must still show
+    /// The signed ramp has two sides, and its bar must still show
     /// both: blue below, green at nominal, red above.
     #[test]
     fn the_signed_legend_still_spans_both_sides() {
