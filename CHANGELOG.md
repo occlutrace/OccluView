@@ -54,29 +54,24 @@ remain in the Git history.
   format is saved as PLY rather than STL.
 - A merged scene is saved in the fallback format instead of always PLY, so
   "Save scene as" follows the same preference as the layers.
-- A PLY export of a textured scan carries the texture instead of dropping it,
-  inside the file. PLY has no texture element — every other tool stores the
-  image beside the `.ply` and names it in a `comment TextureFile` line — so the
-  image travels as an OccluView header comment, and the export is one file with
-  nothing to keep together. Texture coordinates go out with it, both as the
-  per-face `texcoord` list other software understands and, for a scan with no
-  image, as per-vertex `s`/`t`. Opening an OccluView export again shows the scan
-  in colour, and a scan that carries both per-vertex colours and an atlas is
-  written with both.
+- A PLY export of a textured scan writes the atlas as per-vertex RGBA, at each
+  vertex's texture coordinate. PLY stores coordinates but not an image, so this
+  is the only way the colour travels with the geometry. The `OccluViewTexture*`
+  header comments are no longer written: a 4 MB `.dcm` could become a ~50 MB
+  `.ply` that most other tools would not read. Coordinates are omitted once the
+  colour is baked, because `s`/`t` with no image makes readers draw the scan
+  white. A PLY an earlier release wrote with the header comment still opens in
+  colour. An OBJ export of the same scan carries the colour the same way, as
+  per-vertex RGB. A layer that also carries its own colours exports the atlas
+  and reports that the other colours were replaced.
 - A scan that names its image beside it arrives with the image. An OBJ with its
   `mtllib`/`map_Kd` pair — or with an image sharing its name — and a PLY from
   another tool with a `comment TextureFile` line are read with the texture
   attached, instead of being imported untextured and losing the colour the scan
   was captured with. A file larger than 1 GB, or a companion image larger than
   64 MB, is refused rather than read.
-- A PLY export no longer writes a texture its own reader would refuse. An atlas
-  with an edge past 8192 px, or one whose decoded surface is past 256 MiB, used
-  to compress into a small PNG, land in the header and be reported as a success,
-  while re-opening the file showed no colour at all. The export now drops the
-  image and says so, and keeps the coordinates for the next tool. The image
-  bytes carried in a PLY header are no longer accumulated past the size the
-  reader accepts either, so a crafted header cannot make the importer hold a
-  second copy of a payload it was always going to reject. A header whose
+- A crafted PLY header can no longer make the importer hold a second copy of a
+  base64 payload it was always going to reject, and a header whose
   `OccluViewTexture` keys were re-cased by a text editor reads as before,
   matching the case-insensitive treatment `TextureFile` already had.
 - An HPS/DCM scan whose texture has its red and blue channels transposed is
