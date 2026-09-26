@@ -117,11 +117,11 @@ pub struct Element {
 
 /// What the header's comments say about a texture.
 ///
-/// PLY has no texture element, so two conventions meet here. Other tools name
-/// an image beside the file in a `comment TextureFile <name>` line, which this
-/// reader resolves against the file's own folder. OccluView's exports carry the
-/// encoded image inside the file instead, in `OccluViewTexture*` comments, so a
-/// single `.ply` moved on its own still has its texture.
+/// Two conventions meet here. Other tools name an image beside the file in a
+/// `comment TextureFile <name>` line, which this reader resolves against the
+/// file's own folder. An `OccluViewTexture*` comment carries the image itself,
+/// which earlier OccluView releases wrote and this reader still decodes.
+/// Current exports write neither.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TextureComments {
     /// The image file the header names, if it names one.
