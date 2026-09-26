@@ -8,9 +8,9 @@
 //! toolbar toggles in `app::app_dialogs`. Anchors are WORLD-SPACE points on the
 //! mesh surface: they re-project through the live camera every frame, so the
 //! drawn segment orbits/zooms/pans with the model (matching the dental CAD
-//! ruler behaviour). A ruler either joins two picked points or drops a
-//! perpendicular from a picked point onto an earlier ruler's line; the ruler
-//! geometry lives in [`crate::measure_ruler`].
+//! ruler behaviour). A ruler either joins two picked points or ends on an
+//! earlier ruler's line, at a place along it or at the foot of the
+//! perpendicular; the ruler geometry lives in [`crate::measure_ruler`].
 //!
 //! The thickness probe is honest, not a proxy: from the picked surface point it
 //! casts a ray INWARD (opposite the barycentric-interpolated surface normal at
@@ -21,7 +21,7 @@
 use glam::{Vec3, Vec3A};
 use occluview_core::SceneMesh;
 
-use crate::measure_ruler::{self, RulerEnd, RulerMeasurement, RulerSegment};
+use crate::measure_ruler::{self, LinePlacement, RulerEnd, RulerMeasurement, RulerSegment};
 
 /// Ignore intersections closer than this to the probe origin (mm), so the probe
 /// never reports the entry triangle's edge-neighbors as an "exit".
@@ -31,7 +31,7 @@ const SELF_HIT_EPS_MM: f32 = 1.0e-3;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum MeasureMode {
     /// Two clicks on the surface; distance in millimeters between them. A
-    /// second click on a drawn ruler line drops a perpendicular onto it.
+    /// second click on a drawn ruler line ends the ruler on that line.
     Ruler,
     /// One click on a shell; local wall thickness along the inward normal.
     Thickness,
@@ -129,29 +129,37 @@ impl MeasureTool {
         }
     }
 
-    /// Complete the pending pair as the perpendicular from the pending anchor
-    /// onto the line of ruler `base`, returning its length in millimeters.
-    /// Refused (the anchor stays pending) when nothing is pending or `base`
-    /// does not exist.
-    pub(crate) fn place_perpendicular(&mut self, base: usize) -> Option<f64> {
-        if base >= self.rulers.len() {
+    /// Complete the pending pair on the line of ruler `base`, as `placement`
+    /// says, returning its length in millimeters. Refused (the anchor stays
+    /// pending) when nothing is pending, `base` does not exist, or the place
+    /// along the line is not finite.
+    pub(crate) fn place_on_line(&mut self, base: usize, placement: LinePlacement) -> Option<f64> {
+        if base >= self.rulers.len() || self.pending.is_none() {
             return None;
         }
+        let end = line_end(base, placement)?;
         let from = self.pending.take()?;
-        self.rulers.push(RulerMeasurement {
-            a: from,
-            end: RulerEnd::FootOn(base),
-        });
+        self.rulers.push(RulerMeasurement { a: from, end });
         self.ruler_distance_mm(self.rulers.len() - 1)
     }
 
-    /// What a click on ruler `base` would place right now: the perpendicular
-    /// from the pending anchor onto its line.
-    pub(crate) fn perpendicular_preview(&self, base: usize) -> Option<RulerSegment> {
+    /// What a click on ruler `base` would place right now: the ruler from the
+    /// pending anchor to its line, as `placement` says.
+    pub(crate) fn line_preview(
+        &self,
+        base: usize,
+        placement: LinePlacement,
+    ) -> Option<RulerSegment> {
         let from = self.pending?;
+        line_end(base, placement)?;
         let segments = self.ruler_segments();
         let base_segment = segments.get(base)?;
-        Some(measure_ruler::perpendicular_onto(from, base_segment, base))
+        Some(measure_ruler::onto_line(
+            from,
+            base_segment,
+            base,
+            placement,
+        ))
     }
 
     /// Every completed ruler resolved to world-space endpoints, index-aligned
@@ -160,10 +168,14 @@ impl MeasureTool {
         measure_ruler::resolve(&self.rulers)
     }
 
-    pub(crate) fn is_perpendicular(&self, ruler_index: usize) -> bool {
-        self.rulers
-            .get(ruler_index)
-            .is_some_and(|ruler| matches!(ruler.end, RulerEnd::FootOn(_)))
+    /// How many rulers are completed.
+    pub(crate) fn ruler_count(&self) -> usize {
+        self.rulers.len()
+    }
+
+    /// One completed ruler resolved to world-space endpoints.
+    pub(crate) fn ruler_segment(&self, ruler_index: usize) -> Option<RulerSegment> {
+        self.ruler_segments().get(ruler_index).copied()
     }
 
     fn ruler_distance_mm(&self, ruler_index: usize) -> Option<f64> {
@@ -181,13 +193,10 @@ impl MeasureTool {
         self.probe = None;
     }
 
-    /// Start dragging a picked ruler end. A perpendicular's foot is derived
-    /// from its base line, so only its picked start can be dragged.
+    /// Start dragging a ruler end. An end on another ruler's line slides
+    /// along that line (see [`Self::update_line_end_drag`]).
     pub(crate) fn begin_ruler_drag(&mut self, anchor: RulerAnchorRef) -> bool {
-        let Some(ruler) = self.rulers.get(anchor.ruler_index) else {
-            return false;
-        };
-        if anchor.endpoint == RulerEndpoint::B && matches!(ruler.end, RulerEnd::FootOn(_)) {
+        if anchor.ruler_index >= self.rulers.len() {
             return false;
         }
         self.dragged_anchor = Some(anchor);
@@ -209,6 +218,22 @@ impl MeasureTool {
         self.dragged_anchor
     }
 
+    /// The base ruler of the dragged end, when that end lies on another
+    /// ruler's line: the pointer then moves it along the line, not onto the
+    /// surface.
+    pub(crate) fn dragged_line_end_base(&self) -> Option<usize> {
+        let anchor = self.dragged_anchor?;
+        if anchor.endpoint != RulerEndpoint::B {
+            return None;
+        }
+        match self.rulers.get(anchor.ruler_index)?.end {
+            RulerEnd::OnLine { base, .. } | RulerEnd::FootOn(base) => Some(base),
+            RulerEnd::Point(_) => None,
+        }
+    }
+
+    /// Move the dragged end to the picked surface `point`. Refused for an end
+    /// on another ruler's line, which only moves along that line.
     pub(crate) fn update_ruler_drag(&mut self, point: Vec3) -> Option<f64> {
         if !point.is_finite() {
             return None;
@@ -218,8 +243,18 @@ impl MeasureTool {
         match (anchor.endpoint, &mut ruler.end) {
             (RulerEndpoint::A, _) => ruler.a = point,
             (RulerEndpoint::B, RulerEnd::Point(b)) => *b = point,
-            (RulerEndpoint::B, RulerEnd::FootOn(_)) => return None,
+            (RulerEndpoint::B, RulerEnd::OnLine { .. } | RulerEnd::FootOn(_)) => return None,
         }
+        self.ruler_distance_mm(anchor.ruler_index)
+    }
+
+    /// Move the dragged end that lies on another ruler's line to `placement`
+    /// on that same line.
+    pub(crate) fn update_line_end_drag(&mut self, placement: LinePlacement) -> Option<f64> {
+        let base = self.dragged_line_end_base()?;
+        let anchor = self.dragged_anchor?;
+        let end = line_end(base, placement)?;
+        self.rulers.get_mut(anchor.ruler_index)?.end = end;
         self.ruler_distance_mm(anchor.ruler_index)
     }
 
@@ -244,6 +279,25 @@ impl MeasureTool {
 
     pub(crate) fn probe(&self) -> Option<&ThicknessProbe> {
         self.probe.as_ref()
+    }
+}
+
+/// The stored end for `placement` on the line of ruler `base`, or `None` for a
+/// place along the line that is not finite.
+fn line_end(base: usize, placement: LinePlacement) -> Option<RulerEnd> {
+    match placement {
+        LinePlacement::At(t) => t.is_finite().then_some(RulerEnd::OnLine { base, t }),
+        LinePlacement::Perpendicular => Some(RulerEnd::FootOn(base)),
+    }
+}
+
+/// `73.4°`: the angle between two rulers, one decimal. Non-finite input reads
+/// as `n/a`.
+pub(crate) fn format_angle(degrees: f64) -> String {
+    if degrees.is_finite() {
+        format!("{degrees:.1}°")
+    } else {
+        "n/a".to_string()
     }
 }
 
@@ -547,72 +601,142 @@ mod tests {
         assert!(!tool.ruler_drag_follows(false), "each drag starts still");
     }
 
-    /// The pending anchor becomes the start of the perpendicular; the foot is
-    /// on the base line, not on anything under the cursor.
+    /// The pending anchor becomes the start of the ruler; its end is on the
+    /// base line, not on anything under the cursor, and the click places
+    /// exactly what was previewed.
     #[test]
-    fn a_pending_anchor_drops_a_perpendicular_onto_a_ruler() {
-        let mut tool = MeasureTool::default();
-        tool.arm(MeasureMode::Ruler);
-        tool.place_ruler_point(Vec3::new(-16.0, 0.0, 0.0));
-        tool.place_ruler_point(Vec3::new(16.0, 0.0, 0.0));
-        assert!(
-            tool.place_perpendicular(0).is_none(),
-            "no pending anchor: nothing to drop from"
-        );
-        tool.place_ruler_point(Vec3::new(1.0, 24.0, 7.0));
-        let preview = tool
-            .perpendicular_preview(0)
-            .expect("preview while pending");
-        assert_eq!(tool.place_perpendicular(0), Some(25.0));
-        assert!(tool.pending_anchor().is_none());
-        let placed = tool.ruler_segments()[1];
-        assert_eq!(
-            placed, preview,
-            "the click places exactly what was previewed"
-        );
-        assert_eq!(placed.b, Vec3::new(1.0, 0.0, 0.0));
-        assert!(tool.is_perpendicular(1) && !tool.is_perpendicular(0));
+    fn a_pending_anchor_ends_on_a_ruler_line_where_the_preview_showed() {
+        for (placement, end, length) in [
+            (LinePlacement::Perpendicular, Vec3::new(1.0, 0.0, 0.0), 25.0),
+            (
+                LinePlacement::At(0.75),
+                Vec3::new(8.0, 0.0, 0.0),
+                (49.0_f64 + 576.0 + 49.0).sqrt(),
+            ),
+        ] {
+            let mut tool = MeasureTool::default();
+            tool.arm(MeasureMode::Ruler);
+            tool.place_ruler_point(Vec3::new(-16.0, 0.0, 0.0));
+            tool.place_ruler_point(Vec3::new(16.0, 0.0, 0.0));
+            assert!(
+                tool.place_on_line(0, placement).is_none(),
+                "no pending anchor: nothing to start from"
+            );
+            tool.place_ruler_point(Vec3::new(1.0, 24.0, 7.0));
+            let preview = tool
+                .line_preview(0, placement)
+                .expect("preview while pending");
+            let placed_length = tool.place_on_line(0, placement).expect("placed");
+            assert!((placed_length - length).abs() < 1.0e-5);
+            assert!(tool.pending_anchor().is_none());
+            let placed = tool.ruler_segment(1).expect("second ruler");
+            assert_eq!(
+                placed, preview,
+                "the click places exactly what was previewed"
+            );
+            assert_eq!(placed.b, end);
+            assert_eq!(
+                placed.foot.map(|foot| foot.perpendicular),
+                Some(placement == LinePlacement::Perpendicular)
+            );
+        }
     }
 
     #[test]
-    fn a_perpendicular_onto_a_missing_ruler_keeps_the_anchor_pending() {
+    fn ending_on_a_missing_ruler_or_nowhere_keeps_the_anchor_pending() {
         let mut tool = MeasureTool::default();
         tool.arm(MeasureMode::Ruler);
         tool.place_ruler_point(Vec3::ZERO);
-        assert!(tool.place_perpendicular(0).is_none());
+        assert!(tool
+            .place_on_line(0, LinePlacement::Perpendicular)
+            .is_none());
         assert_eq!(tool.pending_anchor(), Some(Vec3::ZERO));
-        assert!(tool.perpendicular_preview(0).is_none());
+        assert!(tool.line_preview(0, LinePlacement::At(0.5)).is_none());
+        tool.place_ruler_point(Vec3::X * 4.0);
+        tool.place_ruler_point(Vec3::Y);
+        assert!(tool.place_on_line(0, LinePlacement::At(f32::NAN)).is_none());
+        assert_eq!(tool.pending_anchor(), Some(Vec3::Y));
     }
 
+    /// The end on a line is a handle: it slides along the line, may become the
+    /// perpendicular and back, and never jumps onto the surface.
     #[test]
-    fn dragging_moves_the_picked_start_and_never_the_derived_foot() {
+    fn an_end_on_a_line_slides_along_it_and_never_onto_the_surface() {
         let mut tool = MeasureTool::default();
         tool.arm(MeasureMode::Ruler);
         tool.place_ruler_point(Vec3::ZERO);
         tool.place_ruler_point(Vec3::X * 10.0);
         tool.place_ruler_point(Vec3::new(3.0, 4.0, 0.0));
-        tool.place_perpendicular(0);
-        let foot = RulerAnchorRef {
+        tool.place_on_line(0, LinePlacement::Perpendicular);
+        let end = RulerAnchorRef {
             ruler_index: 1,
             endpoint: RulerEndpoint::B,
         };
-        assert!(!tool.begin_ruler_drag(foot));
-        let start = RulerAnchorRef {
-            ruler_index: 1,
-            endpoint: RulerEndpoint::A,
-        };
-        assert!(tool.begin_ruler_drag(start));
-        assert_eq!(tool.update_ruler_drag(Vec3::new(7.0, 6.0, 0.0)), Some(6.0));
-        assert_eq!(tool.ruler_segments()[1].b, Vec3::new(7.0, 0.0, 0.0));
+        assert!(tool.begin_ruler_drag(end));
+        assert_eq!(tool.dragged_line_end_base(), Some(0));
+        assert_eq!(
+            tool.update_ruler_drag(Vec3::new(5.0, 5.0, 5.0)),
+            None,
+            "a surface point is not a place on the line"
+        );
+        assert_eq!(tool.update_line_end_drag(LinePlacement::At(0.6)), Some(5.0));
+        let slid = tool.ruler_segment(1).expect("second ruler");
+        assert_eq!(slid.b, Vec3::new(6.0, 0.0, 0.0));
+        let foot = slid.foot.expect("still on the line");
+        assert!(!foot.perpendicular);
+        let angle = foot.angle_deg.expect("an angle");
+        assert!((angle - 53.130_102).abs() < 1.0e-4, "angle {angle}");
+        assert_eq!(
+            tool.update_line_end_drag(LinePlacement::Perpendicular),
+            Some(4.0)
+        );
         tool.end_ruler_drag();
-        // Dragging an end of the base carries the foot along with the line.
+        assert_eq!(tool.dragged_line_end_base(), None);
+    }
+
+    #[test]
+    fn dragging_the_start_keeps_a_perpendicular_square_and_a_place_where_it_is() {
+        let mut tool = MeasureTool::default();
+        tool.arm(MeasureMode::Ruler);
+        tool.place_ruler_point(Vec3::ZERO);
+        tool.place_ruler_point(Vec3::X * 10.0);
+        tool.place_ruler_point(Vec3::new(3.0, 4.0, 0.0));
+        tool.place_on_line(0, LinePlacement::Perpendicular);
+        tool.place_ruler_point(Vec3::new(3.0, 4.0, 0.0));
+        tool.place_on_line(0, LinePlacement::At(0.3));
+        for ruler_index in [1, 2] {
+            assert!(tool.begin_ruler_drag(RulerAnchorRef {
+                ruler_index,
+                endpoint: RulerEndpoint::A,
+            }));
+            assert_eq!(tool.dragged_line_end_base(), None);
+            tool.update_ruler_drag(Vec3::new(7.0, 6.0, 0.0));
+            tool.end_ruler_drag();
+        }
+        let segments = tool.ruler_segments();
+        assert_eq!(segments[1].b, Vec3::new(7.0, 0.0, 0.0));
+        assert_eq!(segments[2].b, Vec3::new(3.0, 0.0, 0.0));
+        // Dragging an end of the base carries both along with the line.
         assert!(tool.begin_ruler_drag(RulerAnchorRef {
             ruler_index: 0,
             endpoint: RulerEndpoint::B,
         }));
         tool.update_ruler_drag(Vec3::new(10.0, 10.0, 0.0));
-        let moved = tool.ruler_segments()[1];
-        assert!((moved.a - moved.b).dot(Vec3::new(10.0, 10.0, 0.0)).abs() < 1.0e-4);
+        let moved = tool.ruler_segments();
+        assert!(
+            (moved[1].a - moved[1].b)
+                .dot(Vec3::new(10.0, 10.0, 0.0))
+                .abs()
+                < 1.0e-4
+        );
+        assert!(moved[2].b.distance(Vec3::new(3.0, 3.0, 0.0)) < 1.0e-5);
+    }
+
+    #[test]
+    fn format_angle_is_one_decimal_and_never_nan() {
+        assert_eq!(format_angle(73.44), "73.4°");
+        assert_eq!(format_angle(90.0), "90.0°");
+        assert_eq!(format_angle(f64::NAN), "n/a");
     }
 
     #[test]
