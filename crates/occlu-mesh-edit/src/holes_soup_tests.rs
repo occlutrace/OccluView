@@ -1,17 +1,16 @@
 //! STL-soup Close Holes coverage.
 //!
-//! An STL loads as a triangle SOUP: every triangle stores its three corners as
+//! An STL loads as a triangle soup: every triangle stores its three corners as
 //! fresh, independent vertices (see `occluview-formats` binary STL reader), so
-//! no two triangles share a vertex index. In index space EVERY edge is then a
+//! no two triangles share a vertex index. In index space every edge is then a
 //! boundary half-edge and the whole model reads as a cloud of disconnected
-//! needles. On such input the pre-fill cut-line healing used to see every
-//! triangle as an "isolated nick" and chew the entire mesh — a real digital-
-//! waxup STL once reported "524560 nicks healed, none closed".
+//! needles. Unless the soup is welded first, the pre-fill cut-line healing sees
+//! every triangle as an "isolated nick" and deletes the entire mesh.
 //!
-//! These fixtures reproduce that exact shape: build a CLOSED welded solid,
-//! explode it to soup (the STL round-trip), punch real holes, and assert Close
-//! Holes now reports honest counts and actually closes the rims — including
-//! strongly curved ones.
+//! These fixtures reproduce that shape: build a closed welded solid, explode it
+//! to soup (the STL round-trip), punch real holes, and assert Close Holes
+//! reports accurate counts and closes the rims — including strongly curved
+//! ones.
 
 // Grid/geometry fixtures use conventional short axis names (i, j, u, v, x, y).
 #![allow(clippy::many_single_char_names)]
@@ -132,10 +131,10 @@ fn torus_point(big_r: f32, small_r: f32, u_turn: f32, v_turn: f32) -> Vec3 {
     Vec3::new(ring * u.cos(), ring * u.sin(), small_r * v.sin())
 }
 
-/// THE bug: a soup STL with punched holes must report honest counts (no phantom
-/// "nicks", no chewed mesh) and actually close every curved rim watertight.
+/// A soup STL with punched holes must report accurate counts (no phantom
+/// "nicks", no deleted mesh) and close every curved rim watertight.
 #[test]
-fn soup_close_holes_reports_honest_counts_and_closes_curved_rims() {
+fn soup_close_holes_reports_accurate_counts_and_closes_curved_rims() {
     let (big_r, small_r) = (10.0_f32, 3.0_f32);
     let welded = torus(96, 48, big_r, small_r);
     let soup = explode_to_soup(&welded);
@@ -161,7 +160,7 @@ fn soup_close_holes_reports_honest_counts_and_closes_curved_rims() {
     );
     assert_eq!(
         closed.report.skipped_damaged_rims, 0,
-        "honest curved rims must not be refused as damaged"
+        "simple curved rims must not be refused as damaged"
     );
     // The punched holes close.
     assert!(
@@ -169,7 +168,7 @@ fn soup_close_holes_reports_honest_counts_and_closes_curved_rims() {
         "every punched hole must close (got {})",
         closed.report.filled_holes
     );
-    // The mesh is not chewed away: the body survives and gains caps.
+    // The mesh is not deleted: the body survives and gains caps.
     assert!(
         closed.report.output_triangles >= input_triangles,
         "the body must survive and gain caps, not be deleted (out {}, in {})",
@@ -252,7 +251,7 @@ fn soup_close_holes_is_deterministic() {
 }
 
 /// The mm-perimeter path (the app's Close Holes slider) also welds the soup
-/// first, so small curved holes close honestly under a budget.
+/// first, so small curved holes close under the mm restraint.
 #[test]
 fn soup_close_holes_with_mm_limit_closes_small_curved_holes() {
     let (big_r, small_r) = (10.0_f32, 3.0_f32);
@@ -293,12 +292,11 @@ fn select_faces_near(mesh: &MeshEditBuffers, center: Vec3, radius: f32) -> Vec<b
         .collect()
 }
 
-/// A LARGE hole punched across the tightest curvature of the tube (the inner
+/// A large hole punched across the tightest curvature of the tube (the inner
 /// wall, where the surface bends most), closed via a lasso selection —
-/// curved, folded-over rims the tool used to refuse. With the operator's
-/// explicit selection the border guard is off, so the honest strongly-curved
-/// rim must close through the fallback chain (interpolated → membrane → lid) and
-/// is never refused as damaged.
+/// curved, folded-over rims. With the operator's explicit selection the border
+/// guard is off, so the strongly curved rim must close through the fallback
+/// chain (interpolated → membrane → lid) and is never refused as damaged.
 #[test]
 fn soup_strongly_curved_inner_wall_socket_closes_with_selection() {
     let (big_r, small_r) = (8.0_f32, 2.5_f32);
@@ -314,7 +312,7 @@ fn soup_strongly_curved_inner_wall_socket_closes_with_selection() {
     let closed = fill_holes(&punched, Some(&selection), close_holes_options()).expect("close");
     assert_eq!(
         closed.report.skipped_damaged_rims, 0,
-        "an honest curved rim must not be refused as damaged"
+        "a simple curved rim must not be refused as damaged"
     );
     assert!(
         closed.report.filled_holes >= 1,
@@ -324,12 +322,12 @@ fn soup_strongly_curved_inner_wall_socket_closes_with_selection() {
     assert_eq!(open_edge_count(&closed.mesh), 0, "watertight after close");
 }
 
-/// A COLOR SEAM (coincident positions, different vertex colors — flat-shaded
+/// A color seam (coincident positions, different vertex colors — flat-shaded
 /// CAD exports do this) is an index-space slit. Close Holes fuses it during
-/// rim healing ON PURPOSE: leaving the slit open would hand the filler two
-/// giant phantom rims to wall off with membranes. The pinned contract: the
-/// real hole closes, the seam fuses into closed topology (honest healed
-/// counter), and NO phantom membranes are added along the seam line.
+/// rim healing on purpose: leaving the slit open would hand the filler two
+/// giant phantom rims to wall off with membranes. The contract: the real hole
+/// closes, the seam fuses into closed topology (counted as healed), and no
+/// phantom membranes are added along the seam line.
 #[test]
 fn color_seam_fuses_into_closed_topology_instead_of_growing_membranes() {
     let (nu, nv) = (48_usize, 24_usize);
@@ -347,7 +345,7 @@ fn color_seam_fuses_into_closed_topology_instead_of_growing_membranes() {
         duplicate_of[original as usize] = (seamed.vertices.len()) as u32;
         seamed.vertices.push(red);
     }
-    // Triangles of the LAST column (i == nu-1) reference i == 0 vertices
+    // Triangles of the last column (i == nu-1) reference i == 0 vertices
     // through the wrap; re-point exactly those references at the duplicates.
     let triangle_count = seamed.indices.len() / 3;
     for t in 0..triangle_count {
@@ -367,7 +365,7 @@ fn color_seam_fuses_into_closed_topology_instead_of_growing_membranes() {
         open_edge_count(&seamed) > 0,
         "the color seam must read as an index-space slit"
     );
-    // Punch one REAL hole away from the seam.
+    // Punch one real hole away from the seam.
     let punched = punch_holes(
         &seamed,
         &[(torus_point(big_r, small_r, 0.55, 0.25), 1.6_f32)],

@@ -94,14 +94,14 @@ fn a_lower_residual_cannot_discard_the_coverage_it_does_not_explain() {
 }
 
 /// The coverage the candidate keeps is measured against the incumbent, not
-/// against a fixed number of points. An absolute allowance did not matter in
-/// the fixture above (a 50-point gap either way) but decided the outcome within
+/// against a fixed number of points. An absolute allowance does not matter in
+/// the fixture above (a 50-point gap either way) but decides the outcome within
 /// two points of the 1% search floor, which is where a small patch competes
 /// with the operator's start.
 #[test]
 fn a_residual_win_near_the_search_floor_cannot_shrink_coverage_by_half() {
     // The incumbent is already close to the floor, so an absolute two-point
-    // allowance used to accept the loss of most of what it had.
+    // allowance would accept the loss of most of what it had.
     let near_floor_start = candidate(0.35, 0.025, Some(0.80));
     let thinner = candidate(0.05, 0.010, Some(0.70));
     assert!(
@@ -116,7 +116,7 @@ fn a_residual_win_near_the_search_floor_cannot_shrink_coverage_by_half() {
     );
     // Losing the fixed-surface evidence entirely is not a gain: a moving point
     // cloud has no reverse surface to query, and treating that absence as one
-    // let a residual-only win discard the operator's coverage.
+    // would let a residual-only win discard the operator's coverage.
     let cloud_start = candidate(0.35, 1.0, None);
     let cloud_patch = candidate(0.05, 0.30, None);
     assert!(
@@ -192,7 +192,7 @@ fn correlated_motion_columns_are_marked_weak_even_with_large_diagonals() {
 fn independent_motion_columns_are_not_scaled_into_degeneracy() {
     let mut matrix = [[0.0; 6]; 6];
     for (index, row) in matrix.iter_mut().enumerate() {
-        // Deliberately span twelve orders of magnitude. These are different
+        // Span twelve orders of magnitude. These are different
         // units in a real normal matrix, so raw diagonal comparison must not
         // reject the smaller columns merely because the mesh is large.
         row[index] = if index < 3 { 1.0e12 } else { 1.0e-6 };
@@ -230,8 +230,8 @@ fn equally_supported_poses_in_one_component_are_ambiguous() {
     );
 
     // The same call with the two poses six micrometres apart — one seating,
-    // parameterised twice — must NOT be treated as two answers. This is the
-    // case that refused every real arch pair.
+    // parameterised twice — must not be treated as two answers. Real arch
+    // pairs produce this pair of hypotheses.
     let mut nudge = candidate(0.05, 0.8, Some(0.8));
     nudge.rigid = crate::Rigid::new(
         DQuat::from_axis_angle(DVec3::Z, 0.0109),
@@ -301,10 +301,8 @@ fn radius_ladder_widens_past_a_six_point_edge_patch() {
     let result = correspondences_at_radius(&level, level.start, &radii, &mut radius_slot);
 
     assert!(result.is_ok(), "the useful 2 mm band was not reached");
-    // The operator's own 2 mm is now the FIRST rung, so a six-point edge patch
-    // 2 mm away is found without any widening at all. This used to assert slot
-    // 2, which was the third rung of a ladder that started at a quarter of the
-    // operator's setting.
+    // The operator's own 2 mm is the first rung, so a six-point edge patch
+    // 2 mm away is found without any widening at all.
     assert_eq!(
         radius_slot, 0,
         "the operator's own radius must be the first rung, not a later one"
@@ -313,12 +311,10 @@ fn radius_ladder_widens_past_a_six_point_edge_patch() {
 
 /// A hypothesis that is worse on both axes is not a rival answer.
 ///
-/// The equivalence test used to be an absolute difference against each
-/// tolerance. A candidate 1.9 % worse in residual AND 1.9 % worse in coverage
-/// therefore counted as "equally plausible", the ambiguity guard refused the
-/// fit, and the operator saw the tool give up on a pair it could have seated.
-/// Nothing about such a candidate is better than the incumbent, so it is search
-/// noise: the guard must keep the better pose and carry on.
+/// A candidate 1.9 % worse in residual and 1.9 % worse in coverage is within
+/// each absolute tolerance, but nothing about it is better than the incumbent,
+/// so it is search noise: the ambiguity guard must keep the better pose and
+/// carry on rather than refuse a pair it can seat.
 #[test]
 fn a_candidate_worse_on_both_axes_is_not_a_rival_answer() {
     let mut best = candidate(0.050, 0.800, Some(0.800));
@@ -333,8 +329,8 @@ fn a_candidate_worse_on_both_axes_is_not_a_rival_answer() {
         "a candidate worse in residual and coverage must not refuse the fit"
     );
 
-    // The real rival is unchanged: a hypothesis that explains the same surface
-    // exactly as well, two millimetres away, is still a second answer.
+    // A real rival stays ambiguous: a hypothesis that explains the same surface
+    // equally well, two millimetres away, is a second answer.
     let twin = {
         let mut twin = candidate(0.050, 0.800, Some(0.800));
         twin.rigid = crate::Rigid::IDENTITY;
@@ -364,32 +360,21 @@ fn the_search_radius_starts_at_the_operators_own_setting() {
     );
 }
 
-/// A level that can no longer move the surface is converged, whatever its
+/// A level that cannot move the surface further is converged, whatever its
 /// residual measured.
 ///
-/// `converged` used to also require the residual to be at or below a
-/// nanometre. Two real surfaces never meet that closely — their best possible
-/// answer carries the sampling error between them — so a level that had
-/// genuinely stopped was reported as unconverged and the worker turned it into
-/// "Best fit could not confirm an improvement". The stopping rule may only
-/// describe the step that was taken; how good the fit turned out to be is the
-/// trust gate's judgement, not this one's.
-/// A level that can no longer move the surface is converged, whatever its
-/// residual measured.
-///
-/// `converged` used to also require the residual to be at or below a
-/// nanometre. Two independently sampled real surfaces never meet that closely
-/// — their best possible answer carries the sampling error between them — so a
-/// level that had genuinely stopped was reported as unconverged, and the worker
-/// turned that into "Best fit could not confirm an improvement" on a pair the
-/// solver had in fact seated. The stopping rule may only describe the step that
-/// was taken; how good the fit turned out to be is the trust gate's judgement.
+/// Two independently sampled real surfaces never meet within a nanometre —
+/// their best possible answer carries the sampling error between them — so a
+/// residual threshold in the stopping rule would report a stopped level as
+/// unconverged, and the worker would turn that into "Best fit could not confirm
+/// an improvement" on a pair the solver has seated. The stopping rule describes
+/// only the step that was taken; how good the fit is remains the trust gate's
+/// judgement.
 ///
 /// The moving surface is sampled independently of the fixed one, so a step can
 /// reduce the residual without ever reaching zero. A mesh fitted to an index
-/// built from its own vertices reaches an exact zero and would let the old rule
-/// pass by accident — which is why the fixtures in this file could stay green
-/// while the real tool refused every pair.
+/// built from its own vertices reaches an exact zero and would satisfy a
+/// residual threshold by accident.
 #[test]
 fn a_level_that_cannot_move_any_further_is_converged_whatever_its_residual() {
     // Half a cell apart at the same physical extent: no rigid pose seats these

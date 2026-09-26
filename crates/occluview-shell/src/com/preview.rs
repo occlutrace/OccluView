@@ -56,9 +56,9 @@ enum PreviewDragMode {
 // `Agile = false` because the struct below holds `RefCell`/`Cell` state and is
 // therefore `!Sync`. The attribute defaults to `Agile = true`, which makes the
 // generated `QueryInterface` answer `IID_IAgileObject` and `IID_IMarshal` with a
-// free-threaded marshaler — i.e. a client in another apartment receives the SAME
+// free-threaded marshaler — i.e. a client in another apartment receives the same
 // raw pointer instead of a proxy, and two threads reach the `RefCell` borrow
-// flag and the cached buffers. The registration deliberately relies on STA
+// flag and the cached buffers. The registration relies on STA
 // serialisation (`registration/clsid.rs`: "COM hosts every Apartment instance on
 // one host STA, so all extractions of this CLSID serialize"), so advertising
 // agility contradicts the premise the class is built on. Marshalling instead
@@ -363,7 +363,7 @@ impl PreviewHandler {
     fn destroy_preview_window(&self) {
         let hwnd = self.preview_hwnd.replace(HWND::default());
         if !hwnd.0.is_null() {
-            // Cut the window's link to this object BEFORE destroying it, and do
+            // Cut the window's link to this object before destroying it, and do
             // it unconditionally. The window holds a raw `&PreviewHandler` in
             // GWLP_USERDATA, and `DestroyWindow` only works from the thread
             // that created the window -- so when it does not, the window

@@ -64,10 +64,10 @@ pub(super) fn emit_primitive(
             let (a, b, c) = (chunk[0], chunk[1], chunk[2]);
             // A corner is arbitrary input, and `base + a` is unchecked: with
             // the release profile's wrapped arithmetic a sentinel such as
-            // 0xFFFF_FFFF in the second primitive aliased a valid vertex and
-            // silently built a triangle from the wrong one, because `Mesh::new`
-            // only ever saw the wrapped result. A debug build panicked instead,
-            // which is a process death under panic = "abort".
+            // 0xFFFF_FFFF in the second primitive would alias a valid vertex
+            // and build a triangle from the wrong one without an error, because
+            // `Mesh::new` only sees the wrapped result. A debug build would
+            // panic instead, which ends the process under panic = "abort".
             let limit = u32::try_from(vertex_count).unwrap_or(u32::MAX);
             if a >= limit || b >= limit || c >= limit {
                 return Err(malformed("index out of range for this primitive"));

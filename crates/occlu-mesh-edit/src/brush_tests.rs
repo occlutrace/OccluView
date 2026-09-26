@@ -1,5 +1,4 @@
-//! Tests for the freeform sculpting brush kernel (split out of
-//! `brush.rs` to hold the workspace's 800-line file budget).
+//! Tests for the freeform sculpting brush kernel.
 
 use crate::brush::*;
 use crate::brush_math::shortest_incident_edge;
@@ -60,7 +59,7 @@ fn height_variance(mesh: &MeshEditBuffers, n: usize) -> f32 {
 /// A dab centered at the origin. `view_dir` points into the scene from a
 /// camera above the +Z face, so the camera-oriented brush normal comes out
 /// +Z: Add builds toward +Z, Remove carves toward -Z (matching the flat
-/// patch's own outward normal, but now robust to inverted normals too).
+/// patch's own outward normal, and independent of inverted normals).
 fn center_stroke(radius_mm: f32, strength: f32) -> BrushStroke {
     BrushStroke {
         center: [0.0, 0.0, 0.0],
@@ -146,8 +145,8 @@ fn smooth_reports_normals_recomputed_for_the_affected_ring() {
 #[test]
 fn cancelling_incident_faces_replace_a_stale_normal_with_the_deterministic_fallback() {
     // Two opposite-wound copies of one triangle leave vertex 0 with no
-    // accumulated geometric direction. The input normal is deliberately
-    // stale so retaining it would be observable.
+    // accumulated geometric direction. The input normal is set stale so
+    // retaining it would be observable.
     let mut mesh = MeshEditBuffers {
         vertices: vec![
             EditVertex::at([0.0, 0.0, 0.0]),
@@ -250,9 +249,9 @@ fn add_builds_toward_the_camera_and_remove_carves_away() {
 
 #[test]
 fn add_builds_toward_the_camera_with_a_partially_inverted_patch() {
-    // A realistic messy patch: a MINORITY (~1 in 3) of the normals are flipped,
+    // A realistic messy patch: a minority (~1 in 3) of the normals are flipped,
     // the rest correct. The front (camera-facing) bucket still dominates, so the
-    // brush normal comes from AVERAGING the trusted majority — not the pure
+    // brush normal comes from averaging the trusted majority — not the pure
     // camera fallback that a fully-inverted patch would take — and Add still
     // builds toward the camera (+Z).
     let mut mesh = bumpy_patch(0.0);
@@ -272,13 +271,13 @@ fn add_builds_toward_the_camera_with_a_partially_inverted_patch() {
 
 #[test]
 fn the_clamp_holds_on_soup_duplicates_of_a_tiny_edged_corner() {
-    // Two triangles sharing an edge as SOUP, scaled so the real edges are 0.1mm.
+    // Two triangles sharing an edge as soup, scaled so the real edges are 0.1mm.
     // The shared corner has duplicate array slots whose own welded ring is empty
-    // — pre-fix they'd inherit the generous isolated-vertex budget and overrun
-    // the representative's tight clamp. The step must stay bounded by the REAL
-    // 0.1mm edge (budget 0.1 * 0.5 = 0.05mm), not the loose 0.5mm fallback, even
-    // under a dab whose raw amplitude (radius 1.0 * gain 0.045 = 0.045mm) exceeds
-    // the correct budget.
+    // — without cluster propagation they would inherit the generous
+    // isolated-vertex budget and overrun the representative's tight clamp. The
+    // step must stay bounded by the real 0.1mm edge (budget 0.1 * 0.5 =
+    // 0.05mm), not the loose 0.5mm fallback, even under a dab whose raw
+    // amplitude (radius 1.0 * gain 0.045 = 0.045mm) exceeds the correct budget.
     let s = 0.1_f32;
     let vertices = vec![
         v([0.0, 0.0, 0.0]),
@@ -305,7 +304,7 @@ fn the_clamp_holds_on_soup_duplicates_of_a_tiny_edged_corner() {
         },
         BrushMode::Add,
     );
-    // Both soup copies of the shared corner (1 and 3) must move together AND by
+    // Both soup copies of the shared corner (1 and 3) must move together and by
     // no more than the real-edge budget.
     let moved_1 = session.position(1);
     let moved_3 = session.position(3);
@@ -324,7 +323,7 @@ fn the_clamp_holds_on_soup_duplicates_of_a_tiny_edged_corner() {
 #[test]
 fn add_builds_toward_the_camera_even_with_inverted_normals() {
     // A flat patch whose normals have been flipped to -Z (an inverted-normal
-    // scan patch). The camera is still above (+Z), so Add must STILL build
+    // scan patch). The camera is still above (+Z), so Add must still build
     // toward the camera (+Z) — the brush normal is chosen by camera agreement,
     // not by the scan's untrustworthy per-vertex normals.
     let mut mesh = bumpy_patch(0.0);
@@ -342,8 +341,8 @@ fn add_builds_toward_the_camera_even_with_inverted_normals() {
 
 #[test]
 fn add_pushes_the_region_coherently_without_carving_a_pothole() {
-    // The old per-vertex-normal push left potholes: an interior vertex could
-    // end up LOWER than its neighbors. Coherent single-normal push must leave
+    // A per-vertex-normal push can leave potholes: an interior vertex can end
+    // up lower than its neighbors. The coherent single-normal push must leave
     // the brushed dome monotone — the center is the highest point, and every
     // ring closer to the center is at least as high as the ring outside it.
     let mesh = bumpy_patch(0.0);
@@ -401,10 +400,10 @@ fn guard_prevents_triangle_inversion_under_a_large_add_stroke() {
 
 #[test]
 fn one_session_survives_hundred_add_and_smooth_dabs() {
-    // A brush session is intentionally persistent across mouse releases. This
-    // is the regression for the reported "works once, then stops" state leak:
-    // every dab must keep finding candidates, keep all coordinates finite, and
-    // leave the source topology usable for the next dab.
+    // A brush session is intentionally persistent across mouse releases, so
+    // it must not leak state between dabs: every dab must keep finding
+    // candidates, keep all coordinates finite, and leave the source topology
+    // usable for the next dab.
     let mesh = bumpy_patch(0.35);
     let mut session = BrushSession::prepare(&mesh).expect("prepare");
     let mut add_hits = 0;
@@ -471,7 +470,7 @@ fn one_session_survives_hundred_add_and_smooth_dabs() {
 
 #[test]
 fn soup_duplicates_of_one_corner_never_crack_apart() {
-    // Two triangles sharing an edge, expressed as SOUP: every corner is
+    // Two triangles sharing an edge, expressed as soup: every corner is
     // its own vertex, so the shared edge's two corners each appear twice
     // at byte-identical positions/colors/uv.
     let p0 = [0.0, 0.0, 0.0];
@@ -507,7 +506,7 @@ fn soup_duplicates_of_one_corner_never_crack_apart() {
     let result = session.finish();
 
     // Vertex 1 (soup copy of p1 in triangle 0) and vertex 3 (soup copy of
-    // p1 in triangle 1) must end up at the SAME position — no crack.
+    // p1 in triangle 1) must end up at the same position — no crack.
     assert_eq!(
         result.mesh.vertices[1].position, result.mesh.vertices[3].position,
         "soup duplicates of the same physical corner must move together"
@@ -517,7 +516,7 @@ fn soup_duplicates_of_one_corner_never_crack_apart() {
 #[test]
 fn soup_corners_with_submicron_writer_drift_stay_coherent() {
     // Some STL exporters round the same shared corner through separate code
-    // paths. The two copies are physically the same point but no longer
+    // paths. The two copies are physically the same point but not
     // bit-identical; sculpt preparation must still weld the working topology
     // and scatter the final move to both source slots.
     let drift = 0.00004_f32;
@@ -627,8 +626,7 @@ fn stroke_application_is_deterministic() {
     }
 }
 
-// Regression for the anti-inversion guard's budget floor (issue review
-// 2026-07-18): a genuinely small welded edge must NOT be floored, or
+// Anti-inversion guard: a genuinely small welded edge must not be floored, or
 // `clamp_step` permits a larger step than the local topology can tolerate.
 #[test]
 fn shortest_incident_edge_does_not_floor_a_genuinely_small_edge() {
@@ -698,9 +696,9 @@ fn coherent_push_keeps_a_genuinely_tiny_edge_valid() {
     let center_index = 3 * 7 + 3;
     let before_z = mesh.vertices[center_index].position[2];
 
-    // The old per-vertex shortest-edge clamp froze this point while its
-    // neighbors moved. Sculpt now keeps the displacement coherent and uses a
-    // whole-dab inversion backoff instead.
+    // The displacement stays coherent across the dab and a whole-dab inversion
+    // backoff guards the tiny edges, so this point moves with its neighbors
+    // instead of freezing.
     let outcome = session.apply_stroke(center_stroke(0.5, 1.0), BrushMode::Add);
     assert!(!outcome.touched_vertices.is_empty());
     let after_z = session.position(center_index).z;
@@ -724,10 +722,9 @@ fn coherent_push_keeps_a_genuinely_tiny_edge_valid() {
     }
 }
 
-// Regression for the spatial-grid staleness bug (issue review 2026-07-18):
 // `VertexGrid` indexes positions as of its last build, so a session that moves
-// a vertex far without rebuilding would keep searching near its STALE original
-// bucket and silently miss it once the cursor follows it there.
+// a vertex far without updating the grid would keep searching near its stale
+// original bucket and miss it once the cursor follows it there.
 #[test]
 fn apply_stroke_still_finds_a_vertex_after_sustained_building_far_from_its_start() {
     let mesh = bumpy_patch(0.0); // flat patch, easy to reason about
@@ -745,10 +742,10 @@ fn apply_stroke_still_finds_a_vertex_after_sustained_building_far_from_its_start
         "the vertex should have built up meaningfully: {moved_position}"
     );
 
-    // The real test: a dab on the SAME session, centered on the vertex's NEW
+    // A dab on the same session, centered on the vertex's new
     // location. This only succeeds if the spatial grid tracked the drift -- a
     // grid indexed only by the pre-build positions would keep the vertex
-    // bucketed near its stale original spot and silently miss it here.
+    // bucketed near its stale original spot and miss it here.
     let outcome = session.apply_stroke(
         BrushStroke {
             center: moved_position.to_array(),

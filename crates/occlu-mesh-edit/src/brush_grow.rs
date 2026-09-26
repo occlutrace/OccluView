@@ -162,7 +162,7 @@ impl BrushSession {
 
     /// A vertex to flood the dab region from, or `None` when refinement cannot
     /// help: no vertex anywhere near the dab, or a disc that is already dense
-    /// AND fine-grained, where the flood would cost a millisecond to find
+    /// and fine-grained, where the flood would cost a millisecond to find
     /// nothing. The density precondition matters — a sparse disc is exactly the
     /// giant-triangle case whose edges never show up in a vertex query.
     fn refinement_seed(&self, center: Vec3, radius: f32, split_above: f32) -> Option<usize> {
@@ -314,7 +314,7 @@ impl BrushSession {
         closest_point_on_triangle(center, a, b, c).distance_squared(center) <= radius * radius
     }
 
-    /// Welded edges of the region that are over-long AND whose midpoint is
+    /// Welded edges of the region that are over-long and whose midpoint is
     /// inside the dab sphere, longest first. The ordering is a total one (the
     /// endpoint pair breaks ties), so the split sequence — and every vertex id
     /// it mints — is identical run to run and thread count to thread count.

@@ -420,7 +420,7 @@ f 1 2 3\n";
     }
 
     /// Every face corner becomes a vertex, so a file of short face lines makes
-    /// a mesh many times its own size: 22 MB of `f 1 2 3` produced 288 MB of
+    /// a mesh many times its own size: 22 MB of `f 1 2 3` produces 288 MB of
     /// geometry, and at the sizes the shell accepts that allocation fails --
     /// which aborts, uncatchably, taking the surrogate and the whole folder's
     /// thumbnails with it.

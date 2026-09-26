@@ -10,12 +10,12 @@ use occluview_core::MeshBuilder;
 /// glTF requires the node hierarchy to be a strict tree: a node has at most
 /// one parent and cycles are forbidden. Nothing in the file enforces that, and
 /// `children` comes straight out of attacker-controlled JSON, so a node that
-/// lists itself — or two nodes that list each other — recursed until the stack
-/// was exhausted. A stack overflow is not a panic: it is a guard-page fault,
-/// so none of the `catch_unwind` barriers around the COM entry points can
-/// intercept it, and `.glb` is registered machine-wide for both the thumbnail
-/// provider and the preview handler. One crafted file in a folder took down
-/// the Explorer host and blanked every thumbnail around it.
+/// lists itself — or two nodes that list each other — would recurse until the
+/// stack is exhausted. A stack overflow is not a panic: it is a guard-page
+/// fault, so none of the `catch_unwind` barriers around the COM entry points
+/// can intercept it, and `.glb` is registered machine-wide for both the
+/// thumbnail provider and the preview handler. One crafted file in a folder
+/// would end the Explorer host and every thumbnail around it.
 ///
 /// Refusing a second entry also bounds the diamond case, where no cycle exists
 /// but shared children multiply the traversal exponentially with depth.
@@ -24,10 +24,11 @@ pub(super) struct VisitedNodes(Vec<bool>);
 /// How many levels of node hierarchy may nest.
 ///
 /// [`VisitedNodes`] bounds revisits, not depth. `0 -> 1 -> 2 -> ...` is a
-/// strict tree, passes that check, and recurses once per link: a 1.2 MB file
-/// of 60000 chained nodes aborts the CLI on its main thread, and the viewer
-/// parses on a spawned thread with the 2 MiB default, where 139 KB is enough.
-/// The overflow arrives the same way as above, uncatchable.
+/// strict tree, passes that check, and recurses once per link: without a depth
+/// bound a 1.2 MB file of 60000 chained nodes aborts the CLI on its main
+/// thread, and the viewer parses on a spawned thread with the 2 MiB default,
+/// where 139 KB is enough. The overflow arrives the same way as above,
+/// uncatchable.
 ///
 /// The root sits at level 0, so 256 nodes may sit on one chain and the 257th
 /// is refused. Real exports nest a handful of levels. Measured from the
@@ -64,9 +65,9 @@ impl VisitedNodes {
 /// the walk already rejected never reaches this one.
 ///
 /// `visited` spans every root of one read rather than one call. Allocating it
-/// per call made the search cost one zeroed byte per node per root: a document
-/// of 500000 rootless nodes -- 4.9 MB, no material anywhere, so every root is
-/// searched -- took 2.56 s where the same file now takes 0.09 s. The thumbnail
+/// per call costs one zeroed byte per node per root: a document of 500000
+/// rootless nodes -- 4.9 MB, no material anywhere, so every root is searched --
+/// takes 2.56 s that way and 0.09 s with the shared set. The thumbnail
 /// deadline is six seconds, and the lane is held for the whole of it.
 pub(super) fn first_primitive_material(
     doc: &json::GltfDoc,

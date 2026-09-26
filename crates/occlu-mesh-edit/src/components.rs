@@ -13,7 +13,7 @@ use super::{
 /// ascending.
 ///
 /// The weld only remaps vertex ids; triangle order and count are preserved, so
-/// the returned member lists are indices into the CALLER's original mesh and
+/// the returned member lists are indices into the caller's original mesh and
 /// stay valid for it. The weld is a no-op (no allocation of new buffers) on an
 /// already-welded mesh.
 ///
@@ -24,8 +24,8 @@ use super::{
 ///
 /// Grouping runs in near-linear time: each selected triangle's three edges are
 /// emitted once, sorted, and triangles sharing an edge key are merged with a
-/// union-find. This replaced an edge→triangle `HashMap<_, Vec<_>>` that spent
-/// most of its time hashing and heap-allocating a `Vec` per edge.
+/// union-find, avoiding the per-edge hashing and `Vec` allocation of an
+/// edge→triangle `HashMap<_, Vec<_>>`.
 ///
 /// # Errors
 /// Returns typed validation errors for unsupported point clouds, malformed
@@ -299,7 +299,7 @@ mod tests {
         assert_eq!(
             components.len(),
             1,
-            "a connected soup patch is ONE island, never one-per-triangle"
+            "a connected soup patch is one island, never one-per-triangle"
         );
         assert_eq!(components[0].len(), soup.triangle_count());
     }

@@ -3,8 +3,8 @@
 //! PLY has no texture element, so the image travels inside the file as encoded
 //! comment lines and nothing is written beside it: one scan in, one scan out.
 //! This walks the whole chain — a textured GLB in, a PLY out, the same PLY read
-//! back — and compares the pixels, because a texture that arrives re-encoded is
-//! a texture that did not arrive.
+//! back — and compares the pixels, because a re-encoded texture is not the
+//! original.
 
 #![allow(clippy::expect_used, clippy::panic)]
 
