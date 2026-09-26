@@ -2,10 +2,10 @@
 
 /// Which modal dialogs are up this frame.
 ///
-/// Written out by hand at each of five call sites, the set drifted to three,
-/// four and six terms, which is how Escape came to tear down the tool behind
-/// an open dialog. Named once, it is enumerable -- and testable without an
-/// egui context, which the call sites are not.
+/// Named once so every call site gates on the same set: a call site missing a
+/// term lets Escape tear down the tool behind an open dialog. The set is
+/// enumerable and testable without an egui context, which the call sites are
+/// not.
 // The independent guards remain bools because an error can arrive while the
 // unsaved-changes prompt is up. Information surfaces are mutually exclusive,
 // so their enum is already reduced to one bool at this boundary.
@@ -16,8 +16,8 @@ pub(super) struct OpenDialogs {
     pub(super) pending_replace: bool,
     pub(super) error: bool,
     /// Any egui popup — the settings popup, the recent-files dropdown, either
-    /// context menu. The name predates the widening; the assignment in
-    /// `modal_dialog_open` is `Popup::is_any_open`.
+    /// context menu. Despite the name it covers every popup: `modal_dialog_open`
+    /// fills it from `Popup::is_any_open`.
     pub(super) settings_popup: bool,
     pub(super) information_dialog: bool,
     pub(super) repair_report: bool,
@@ -80,9 +80,9 @@ mod open_dialogs_tests {
 
     #[test]
     fn every_dialog_on_its_own_holds_escape_back() {
-        // Dropping any single term is the failure this type exists to prevent:
-        // with that dialog up and no other, Escape reached the tool behind it,
-        // and for Align Scans that put every scan back where it started.
+        // Dropping any single term lets Escape reach the tool behind that
+        // dialog when it is the only one up; for Align Scans that puts every
+        // scan back where it started.
         for index in 0..OpenDialogs::none_open().terms().len() {
             let dialogs = OpenDialogs::with_term(index);
             let (name, _) = dialogs.terms()[index];

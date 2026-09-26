@@ -3,7 +3,7 @@
 //! Two paths draw the same scene with the same `occluview-render` pipeline: an
 //! eframe/wgpu paint callback into the live surface, and an offscreen render
 //! whose result is blitted as an egui texture. The live path is used when the
-//! backend gave us one; the offscreen path is the fallback and is also what
+//! backend provides one; the offscreen path is the fallback and is also what
 //! produces the cut-view preview.
 //!
 //! Both consume their own [`crate::invalidation::RenderInvalidation`]
@@ -37,10 +37,10 @@ const APP_OFFSCREEN_INITIALIZATION_TIMEOUT: Duration = Duration::from_secs(8);
 /// A readback deadline is not that: it measures how long this process was
 /// willing to wait, and the deadline is a liveness bound rather than a device
 /// verdict. The application's own timeout doc says as much. Treating it as
-/// terminal latched the whole offscreen path off for the rest of the session —
-/// the section panel kept showing the previous plane and, with no live
-/// viewport, the viewport stopped repainting entirely — on a machine whose GPU
-/// was fine, with no dialog or control that could clear it.
+/// terminal would latch the whole offscreen path off for the rest of the
+/// session: the section panel would keep showing the previous plane and, with
+/// no live viewport, the viewport would stop repainting entirely, on a machine
+/// whose GPU is fine, with no dialog or control that could clear it.
 fn terminal_offscreen_render_error(error: &RenderError) -> bool {
     matches!(error, RenderError::Surface(_) | RenderError::NoAdapter)
 }
@@ -116,7 +116,7 @@ impl OccluViewApp {
                 // the status line and keep the reason where the operator can
                 // find it, but do not raise the modal. On a machine that misses
                 // the deadline repeatedly, one dialog per attempt would bury the
-                // viewport and offer no way out. The TERMINAL case DOES raise the
+                // viewport and offer no way out. The terminal case does raise the
                 // modal, because the offscreen path is the only viewport there
                 // and the operator would otherwise get a blank area with no
                 // explanation — and it carries the retry action, which clears
@@ -127,13 +127,13 @@ impl OccluViewApp {
                         title: self.ui.locale.tr("render-failed-title"),
                         summary: self.ui.locale.tr("render-failed-summary"),
                         details: format!("Render failed\n\n{e:#}"),
-                        // Retryable here, and that is the whole point: on a
-                        // machine where the offscreen path IS the viewport, this
-                        // dialog is the only surface the operator sees, and
-                        // `AppErrorAction::None` left the latch unreachable from
-                        // the UI. `retry_gpu_after_fault` clears the offscreen
-                        // latch (and the live one when there is a live viewport),
-                        // so the button now has something to do on both paths.
+                        // Retryable here: on a machine where the offscreen path
+                        // is the viewport, this dialog is the only surface the
+                        // operator sees, and `AppErrorAction::None` would leave
+                        // the latch unreachable from the UI.
+                        // `retry_gpu_after_fault` clears the offscreen latch
+                        // (and the live one when there is a live viewport), so
+                        // the button acts on both paths.
                         action: AppErrorAction::RetryGraphics,
                     });
                 }
@@ -146,12 +146,12 @@ impl OccluViewApp {
             [usize::from(spec.size_px[0]), usize::from(spec.size_px[1])],
             &pixels,
         );
-        // Reuse ONE persistent egui texture id: update it in place with
+        // Reuse one persistent egui texture id: update it in place with
         // `TextureHandle::set` (a texture-`set` delta) rather than
         // `Context::load_texture` (a fresh id whose previous handle, dropped
         // here, emits a texture-`free`). egui-wgpu 0.29 runs `free_texture` —
-        // which calls `wgpu::Texture::destroy` — AFTER recording this frame's
-        // draws but BEFORE `queue.submit`. The second render-pending pass
+        // which calls `wgpu::Texture::destroy` — after recording this frame's
+        // draws but before `queue.submit`. The second render-pending pass
         // (see `state.rs`) re-renders the viewport image *after* the central
         // panel already painted it, so a fresh id would destroy the just-painted
         // texture mid-frame and `Queue::submit` fails validation ("texture ...
@@ -345,8 +345,8 @@ impl OccluViewApp {
             // Typed, because the caller classifies the failure by its cause. A
             // bare string would fall through to the conservative "cannot
             // classify" branch and latch the path off permanently — turning the
-            // deferral into exactly the state it exists to avoid, on the first
-            // frame that arrives inside the wait.
+            // deferral into the state it exists to avoid, on the first frame
+            // that arrives inside the wait.
             return Err(Error::new(RenderError::ReadbackTimeout {
                 timeout: OFFSCREEN_RETRY_DELAY,
             })
@@ -490,9 +490,9 @@ impl OccluViewApp {
     /// CPU core, so a failure always consumes the redraw. What differs is what
     /// happens after: a broken graphics stack latches the path off until the
     /// operator restarts, while a missed readback deadline only defers the next
-    /// attempt. Latching a deadline off for the session left the section panel
-    /// showing a previous plane and, with no live viewport, stopped the viewport
-    /// repainting at all — on hardware that was never shown to be broken.
+    /// attempt. Latching a deadline off for the session would leave the section
+    /// panel showing a previous plane and, with no live viewport, stop the
+    /// viewport repainting at all, on hardware never shown to be broken.
     fn note_offscreen_failure_anyhow(&mut self, error: &Error) {
         if let Some(render_error) = error
             .chain()
@@ -585,8 +585,7 @@ impl OccluViewApp {
 
     pub(super) fn sync_live_viewport(&mut self) {
         // A rebuild uploads the scan's own colours, so a live deviation map
-        // has to be pushed again or it silently vanishes on the next scene
-        // change.
+        // has to be pushed again or it vanishes on the next scene change.
         let restore_deviation = self.align_overlay_is_up();
         let Some(live_viewport) = self.render.live_viewport.clone() else {
             return;
@@ -628,8 +627,8 @@ impl OccluViewApp {
                     let sources = self.prepared_scene_sources(scene);
                     let updates = self.prepared_scene_updates(scene);
                     // Only a real rebuild re-uploads the scan's own colours. A
-                    // uniform-only reconcile leaves the map on the GPU exactly
-                    // where it was, so pushing it again would move thirty-four
+                    // uniform-only reconcile leaves the map on the GPU where it
+                    // was, so pushing it again would move thirty-four
                     // megabytes to write what is already there.
                     rebuilt = viewport.sync_scene(&sources, &updates);
                     self.render.invalidation.consume_live_scene();
@@ -692,17 +691,16 @@ impl OccluViewApp {
     /// fault stops the frame loop from feeding a broken device; it is not a
     /// verdict that the device is gone. A driver reset, a recovered eGPU, or a
     /// rebuilt offscreen device can all leave this latch set on a working
-    /// renderer, and until now the only documented recovery was to close the
+    /// renderer; without this retry the only recovery would be to close the
     /// viewer and lose the scene.
     ///
     /// Nothing is repaired here: the next frame either paints or raises the
     /// fault again, and a new message re-arms the dialog.
     pub(super) fn retry_gpu_after_fault(&mut self, ctx: &egui::Context) {
-        // The offscreen latch is cleared here too. It used to return early
-        // without a live viewport — which is precisely the machine where the
-        // offscreen path IS the viewport, so the only recovery the UI offers did
-        // nothing on the machine that needed it, and the fault stayed latched
-        // for the session.
+        // The offscreen latch is cleared first, whether or not a live viewport
+        // exists: without one the offscreen path is the viewport, and skipping
+        // it would make the only recovery the UI offers do nothing on the
+        // machine that needs it.
         self.render.offscreen_failed = false;
         self.render.offscreen_retry_after = None;
         if let Some(live_viewport) = self.render.live_viewport.as_ref() {
@@ -721,8 +719,8 @@ impl OccluViewApp {
     }
 
     /// Poll the live viewport's GPU error latch once per frame. wgpu reports
-    /// draw/submit validation faults and device-lost events through the handler
-    /// we installed instead of panicking; surface any message honestly (status
+    /// draw/submit validation faults and device-lost events through the
+    /// installed handler instead of panicking; surface any message (status
     /// line always, copyable dialog only when no other error is showing, so a
     /// GPU that faults every frame cannot spam modal dialogs).
     pub(super) fn poll_gpu_errors(&mut self) -> bool {
@@ -754,17 +752,18 @@ impl OccluViewApp {
 
     pub(super) fn set_scene(&mut self, scene: Scene, reset_camera: bool) {
         self.document.content_revision = self.document.content_revision.wrapping_add(1);
-        // The drag is ended here, and WHICH form is decided by what happens to
+        // The drag is ended here, and which form is decided by what happens to
         // the layer, not by where the code sits. `set_scene` is reached by two
         // different transitions:
         //
         // - Replace (and the scene-destroying paths): the layer and the pose
         //   both go. Recording would push a history step describing the
-        //   OUTGOING scene, and the guard never refused it (it matches layer
-        //   ids), so the first Ctrl+Z showed the edit undone and the second put
-        //   it back and rewound the pose. `forget_replaced_scene_state` already
-        //   drops the gesture for this path before the scene is installed.
-        // - Append: the layer SURVIVES into the combined scene, so the pose
+        //   outgoing scene, and the guard would not refuse it (it matches layer
+        //   ids), so the first Ctrl+Z would show the edit undone and the second
+        //   would put it back and rewind the pose. `forget_replaced_scene_state`
+        //   already drops the gesture for this path before the scene is
+        //   installed.
+        // - Append: the layer survives into the combined scene, so the pose
         //   sitting on it is just as real there. Dropping it would leave a scan
         //   in a pose that no history step describes and no save prompt names.
         //   It must be committed.
@@ -772,8 +771,8 @@ impl OccluViewApp {
         // `abandon_align_drag` is the commit form and is the right default here:
         // on the Replace path the drag is already `None` (dropped by
         // `forget_replaced_scene_state`), so it is a no-op, and on the Append
-        // path it records the move. Calling `discard` here instead is what let
-        // an append carry a moved pose forward with nothing recording it.
+        // path it records the move. Calling `discard` here instead would let an
+        // append carry a moved pose forward with nothing recording it.
         self.abandon_align_drag();
         self.tools.bridge_split.cancel();
         self.tools.bridge_split_disc.disarm();
@@ -781,7 +780,8 @@ impl OccluViewApp {
         self.document.edit_mode.sync_to_scene(&scene);
         // A structural scene swap (load, delete, another mesh edit, undo/redo)
         // reverts the geometry the persistent sculpt session was prepared over,
-        // WITHOUT necessarily changing topology_id (a sculpt commit preserves
+        // without necessarily changing topology_id (a sculpt commit preserves
+        // it), so drop the session here and re-prepare on the next stroke.
         self.tools.sculpt.invalidate_session();
         self.document.unsaved_sculpt_stroke = false;
         self.document.scene = Some(Arc::new(scene));
@@ -795,12 +795,11 @@ impl OccluViewApp {
         self.document.mesh_selection_drag = None;
         self.render.rendered = None;
         // Whatever the align tool was showing described the geometry that just
-        // got replaced. Undo and redo already dropped it by hand; every other
-        // structural path — repair, close holes, crop, cut, separate, a bridge
-        // split commit, a cancelled mesh-edit session — did not, so a repaired
-        // scan kept a map of its own former surface, lost its tint to the map
-        // shading, and the panel went on reporting a percentage for a surface
-        // that no longer existed. Hoisted to the one place they all pass through.
+        // got replaced. Every structural path (undo, redo, repair, close holes,
+        // crop, cut, separate, a bridge split commit, a cancelled mesh-edit
+        // session) passes through here. Left up, the map would keep describing
+        // the former surface, take the scan's tint, and the panel would report
+        // a percentage for a surface that no longer exists.
         self.forget_align_fit(&self.ui.locale.tr("align-status-scan-changed"));
         // Structural scene change: world anchors may now dangle over deleted or
         // replaced geometry, so measurements are cleared (the tool stays armed
@@ -811,13 +810,12 @@ impl OccluViewApp {
             self.tools.measure.disarm();
         }
         if self.can_render_cut_view() {
-            // A planted disc holds a WORLD-space plane. Scanner vendors place
+            // A planted disc holds a world-space plane. Scanner vendors place
             // models at wildly different origins, so a plane kept across a
             // scene replace usually leaves the new case entirely on the
             // clipped-away side, drawing as a faint ghost — which reads as "the
             // file loaded wrong". Re-arm instead: the tool stays on, the stale
-            // placement does not. Bridge split already does this three lines
-            // above; only the cut view was left behind.
+            // placement does not. Bridge split does the same just above.
             if self.tools.cut_view.is_active() {
                 self.tools.cut_view.enable();
             }
@@ -902,18 +900,19 @@ impl OccluViewApp {
                 let available = ui.available_size();
                 let viewport_rect = egui::Rect::from_min_size(ui.cursor().min, available);
                 let response = ui.allocate_rect(viewport_rect, egui::Sense::click_and_drag());
-                // The callback paints into egui's render pass at THIS rect, so
+                // The callback paints into egui's render pass at this rect, so
                 // it is the real viewport; `render_extent_px` is clamped for the
                 // offscreen target and the invalidation threshold. The splat
                 // radius is measured in pixels of the former.
                 let ppp = ctx.pixels_per_point();
                 let live_px = response.rect.size() * ppp;
                 self.render.live_viewport_px = Some([
-                    // Deliberately NOT clamped to the render-extent bounds: this
-                    // is the viewport the callback actually paints, and clamping
-                    // it is the bug being fixed. A non-finite or negative size
-                    // cannot reach here (egui rects are finite and non-negative),
-                    // so the cast is a plain round with a floor of one pixel.
+                    // Not clamped to the render-extent bounds: this is the
+                    // viewport the callback actually paints, and the splat
+                    // radius is measured against it. A non-finite or negative
+                    // size cannot reach here (egui rects are finite and
+                    // non-negative), so the cast is a plain round with a floor
+                    // of one pixel.
                     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                     {
                         live_px.x.round().max(1.0) as u32
@@ -956,12 +955,10 @@ impl OccluViewApp {
     /// Every overlay the viewport draws, and the input arbitration that
     /// follows them.
     ///
-    /// One body, called by both branches of `show_central_panel_impl`. Written
-    /// twice, every new tool has to be wired into both copies with nothing to
-    /// say when one is missed, and the one that gets missed is the offscreen
-    /// copy: it never runs on a developer machine, only for operators whose
-    /// driver could not give the app a live viewport, who are the people least
-    /// able to diagnose "the Align button does nothing". The branches differ
+    /// One body, called by both branches of `show_central_panel_impl`, so a new
+    /// tool reaches the offscreen branch too. That branch runs only for
+    /// operators whose driver could not give the app a live viewport, where a
+    /// tool missing from it would be hardest to diagnose. The branches differ
     /// only in how they obtain `response`.
     fn show_viewport_overlays(
         &mut self,
@@ -1050,7 +1047,7 @@ impl OccluViewApp {
                 self.render.invalidation.consume_redraw();
                 // Wake up when the wait is over. Without this the retry waits
                 // for the operator's next input, and on a machine with no live
-                // viewport - exactly the machine this path serves - a still
+                // viewport, which is the machine this path serves, a still
                 // window would never try again.
                 if let Some(deadline) = self.render.offscreen_retry_after {
                     let remaining = deadline.saturating_duration_since(Instant::now());

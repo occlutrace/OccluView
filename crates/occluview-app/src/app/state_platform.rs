@@ -96,7 +96,7 @@ mod tests {
 
     #[test]
     fn raise_token_keeps_only_the_most_recent_provenance() {
-        // Deterministic: exercises the exact remember/take sequence against a
+        // Deterministic: exercises the remember/take sequence against a
         // plain slot, with no single-instance guard and no early return.
         let mut slot: Option<String> = None;
         assert!(slot.take().is_none());

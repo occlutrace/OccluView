@@ -226,7 +226,7 @@ mod tests {
         assert_eq!(
             reconcile_scene_paths(&old_scene, &[], &new_scene),
             vec![PathBuf::new()],
-            "a layer that came from nowhere must not borrow someone else's file"
+            "a layer without a source file must not borrow another layer's file"
         );
     }
 }

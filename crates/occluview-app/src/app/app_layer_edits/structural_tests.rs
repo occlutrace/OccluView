@@ -1,5 +1,5 @@
 //! Structural-op tests: Separate/Cut single-pass correctness, the component
-//! cap, and a headline perf harness for the "Divide" hang.
+//! cap, and a perf harness for Separate ("Divide") on fragmented selections.
 #![allow(
     clippy::expect_used,
     clippy::print_stdout,
@@ -48,7 +48,7 @@ fn grid_mesh(cols: usize, rows: usize) -> Mesh {
 /// Select every triangle in the even grid rows. Odd rows stay unselected and
 /// break vertical connectivity, so each selected row is its own connected
 /// component: this yields `rows.div_ceil(2)` components — the fragmented
-/// "select a noisy half" shape that made Separate hang.
+/// "select a noisy half" shape that stresses Separate.
 fn even_row_strip_selection(cols: usize, rows: usize) -> (FaceSelection, usize) {
     let tris_per_row = 2 * cols;
     let mut mask = vec![false; tris_per_row * rows];
@@ -133,9 +133,8 @@ fn perf_label_1m() {
     let tris = mesh.triangle_count();
     let found = labelled.len();
     println!("LABEL {tris} tris -> {found} components (expected {components}) in {elapsed:?}");
-    // The expected count was computed, printed next to the found one, and never
-    // compared -- so a labeller returning one component per triangle printed a
-    // wrong number and passed.
+    // A labeller returning one component per triangle must fail here, not only
+    // print a wrong number.
     assert_eq!(found, components);
     assert_perf_ceiling(elapsed, "perf_label_1m");
 }
@@ -190,8 +189,8 @@ fn separate_two_strips_yields_two_layers_and_deterministic_order() {
 #[test]
 fn separate_preserves_vertex_attributes_on_components() {
     let mut mesh = grid_mesh(4, 1);
-    // Tag every vertex with a distinct color so we can prove attributes carry
-    // through the single-pass remap unchanged.
+    // Tag every vertex with a distinct color so the test can prove attributes
+    // carry through the single-pass remap unchanged.
     let colored: Vec<Vertex> = mesh
         .vertices()
         .iter()
@@ -238,7 +237,7 @@ fn isolated_triangles_mesh(n: usize) -> Mesh {
 
 #[test]
 fn separate_refuses_selection_that_explodes_past_the_cap() {
-    // One more component than the cap allows -> honest no-op, no layer storm.
+    // One more component than the cap allows -> no-op, no new layers.
     let count = MAX_SEPARATE_COMPONENTS + 1;
     let mut scene = scene_with_mesh(isolated_triangles_mesh(count));
     let mut edit_mode = EditModeController::new(4, usize::MAX);
@@ -262,7 +261,7 @@ fn separate_refuses_selection_that_explodes_past_the_cap() {
     assert!(!apply.scene_changed, "capped Separate must be a no-op");
     assert_eq!(scene.meshes().len(), 1, "no new layers were spawned");
     assert_eq!(scene.meshes()[0].mesh.triangle_count(), count);
-    // The refusal discarded its pre-op snapshot: no phantom undo step.
+    // The refusal discarded its pre-op snapshot: no undo step is recorded.
     assert_eq!(edit_mode.undo_layer_id(), None);
 }
 
@@ -356,10 +355,9 @@ fn cut_moves_selection_to_a_new_layer_preserving_presentation() {
 #[test]
 #[ignore = "perf harness: run with --ignored --nocapture"]
 fn perf_separate_soup_500k() {
-    // A real-world case: a large STL-style SOUP model with a two-wall
-    // (fragmented) selection. This exercises the full executor Separate INCLUDING
-    // the soup->shared-topology weld, which is the cost the fix adds. It must
-    // stay interactive (sub-second), not regress to minutes.
+    // A large STL-style soup model with a two-wall (fragmented) selection. This
+    // exercises the full executor Separate including the soup->shared-topology
+    // weld. It must stay interactive (sub-second).
     let (cols, rows) = (500, 500); // 500k triangles, 1.5M soup vertices
     let welded = grid_mesh(cols, rows);
     let soup = explode_mesh_to_soup(&welded);
@@ -376,7 +374,7 @@ fn perf_separate_soup_500k() {
         "SEPARATE-SOUP-500K {tri_count} tris, {vtx_count} soup verts, \
          {components} selected strips -> {layers} layers in {elapsed:?}"
     );
-    // The one-layer-per-triangle case again, from the other side.
+    // One layer per selected strip plus the remainder, not one per triangle.
     assert_eq!(layers, components + 1);
     assert_perf_ceiling(elapsed, "perf_separate_soup_500k");
 }
@@ -403,9 +401,8 @@ fn perf_separate_1m() {
 
 /// Explode a welded mesh into STL-style soup: three fresh vertices per triangle
 /// corner, sequential indices, nothing shared — byte-for-byte the topology a
-/// binary STL reader produces. Separate on this used to explode into one part
-/// per triangle (a real case reported "317000 parts"); it must now weld back to the true
-/// island count before splitting.
+/// binary STL reader produces. Separate must weld this back to the true island
+/// count before splitting; without the weld it yields one part per triangle.
 fn explode_mesh_to_soup(mesh: &Mesh) -> Mesh {
     let mut vertices = Vec::with_capacity(mesh.indices().len());
     let mut indices = Vec::with_capacity(mesh.indices().len());
@@ -418,11 +415,10 @@ fn explode_mesh_to_soup(mesh: &Mesh) -> Mesh {
 
 #[test]
 fn separate_soup_connected_patch_is_one_part_not_confetti() {
-    // Case (a): an open scan with ONE selected patch. The patch is two
-    // edge-connected triangles; as STL soup they share no vertex index, so the
-    // old index-topology path saw two islands (and a real dental patch of tens
-    // of thousands of triangles exploded into that many parts). After the weld
-    // it is a single island: source remainder + exactly one extracted part.
+    // Case (a): an open scan with one selected patch. The patch is two
+    // edge-connected triangles; as STL soup they share no vertex index, so
+    // index topology alone sees two islands. After the weld it is a single
+    // island: source remainder + exactly one extracted part.
     let soup = explode_mesh_to_soup(&grid_mesh(3, 1));
     let mut scene = scene_with_mesh(soup);
     let mut edit_mode = EditModeController::new(4, usize::MAX);
@@ -435,7 +431,7 @@ fn separate_soup_connected_patch_is_one_part_not_confetti() {
     assert_eq!(
         scene.meshes().len(),
         2,
-        "one connected soup patch -> remainder + one part (not confetti)"
+        "one connected soup patch -> remainder + one part (not one per triangle)"
     );
     assert_eq!(scene.meshes()[0].mesh.triangle_count(), 4, "remainder");
     assert_eq!(scene.meshes()[1].mesh.triangle_count(), 2, "the patch");
@@ -444,11 +440,11 @@ fn separate_soup_connected_patch_is_one_part_not_confetti() {
 #[test]
 fn separate_soup_two_walls_become_two_parts_plus_one_remainder() {
     // Case (b)/(c): a through-mode lasso on a closed hollow model marks a patch
-    // on BOTH the outer and the inner wall in one gesture — two disjoint islands.
+    // on both the outer and the inner wall in one gesture — two disjoint islands.
     // Modelled here as two disconnected soup strips (columns 0 and 3 of a 4x1
     // grid, columns 1-2 unselected between). Contract: each disjoint marked
     // island becomes its own layer (deterministic source order, stepped tints);
-    // the remainder stays ONE layer.
+    // the remainder stays one layer.
     let soup = explode_mesh_to_soup(&grid_mesh(4, 1));
     let mut scene = scene_with_mesh(soup);
     let mut edit_mode = EditModeController::new(4, usize::MAX);
@@ -475,7 +471,7 @@ fn separate_soup_two_walls_become_two_parts_plus_one_remainder() {
 
 #[test]
 fn separate_remainder_stays_one_layer_even_when_the_cut_disconnects_it() {
-    // Contract: the remainder is always a SINGLE layer, even when removing the
+    // Contract: the remainder is always a single layer, even when removing the
     // marked island splits the leftover surface into disjoint shells. Select the
     // middle column of a 3x1 soup grid: the marked island is one part, and the
     // remainder (columns 0 and 2) is geometrically disconnected yet stays one
@@ -510,8 +506,8 @@ fn separate_remainder_stays_one_layer_even_when_the_cut_disconnects_it() {
 fn separate_parts_get_distinct_tints_so_the_split_is_visible() {
     // The spawned parts are geometrically coincident with where they sat in
     // the source, so with the source tint the divide would be invisible on
-    // screen (a real "Separate does nothing" report). Every spawned
-    // layer must step the palette, matching the dental CAD convention.
+    // screen. Every spawned layer must step the palette, matching the dental
+    // CAD convention.
     let mesh = grid_mesh(4, 4);
     let tris_per_row = 2 * 4;
     let mut mask = vec![false; mesh.triangle_count()];

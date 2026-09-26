@@ -1,15 +1,7 @@
 //! Turning a finished contact reading into the per-mesh uniform the viewport
 //! draws.
 //!
-//! Two independent facts have to reach the GPU before a layer can paint a
-//! contact map: the packed field (bound in group 2, which the prepared scene
-//! owns) and the ramp the field is read through. The ramp travels in the
-//! per-mesh uniform as a stop table, and that is the whole reason the "heavy at"
-//! slider is free — moving it rewrites sixteen `vec4`s instead of re-measuring a
-//! million vertices, re-uploading a field, or rebuilding a bind group.
-//!
-//! Kept out of `app_render.rs` on purpose: that module owns the frame, and this
-//! is one layer's material.
+//! `app_render.rs` owns the frame; this module owns one layer's material.
 
 use super::app_render::scene_mesh_uniform;
 use occluview_core::SceneMesh;
@@ -19,10 +11,12 @@ use occluview_render::GpuMeshUniform;
 ///
 /// The paint is two independent facts and both are needed before a layer draws a
 /// contact map: the packed field (bound in group 2, which the prepared scene
-/// owns) and the ramp the field is read through (in this uniform, which is why
-/// moving the slider costs a uniform write and nothing else). The stop table is
-/// rebuilt per frame from the live scale rather than cached, because it is 16
-/// `vec4`s and rebuilding it is cheaper than tracking when it went stale.
+/// owns) and the ramp the field is read through. The ramp travels in this
+/// uniform as a stop table, so moving the "heavy at" slider rewrites sixteen
+/// `vec4`s instead of re-measuring a million vertices, re-uploading a field, or
+/// rebuilding a bind group. The stop table is rebuilt per frame from the live
+/// scale rather than cached, because it is 16 `vec4`s and rebuilding it is
+/// cheaper than tracking when it went stale.
 pub(super) fn scene_mesh_uniform_with_contacts(
     entry: &SceneMesh,
     contact: Option<&occluview_contact::ContactScale>,
@@ -39,10 +33,10 @@ pub(super) fn scene_mesh_uniform_with_contacts(
         );
         // The layer keeps the treatment the operator gave it. A reading paints
         // the marks and nothing else: the ramp is mixed over the finished
-        // surface in the shader, so the scan must NOT switch to the
+        // surface in the shader, so the scan must not switch to the
         // measured-map treatment, which drops the tint and flattens the
-        // lighting across the whole layer. Doing that turned every scan white
-        // the moment a reading opened — a display change for a measurement.
+        // lighting across the whole layer and would turn every scan white the
+        // moment a reading opens.
     }
     uniform
 }
@@ -72,10 +66,9 @@ mod tests {
     /// A reading paints its marks and changes nothing else about the layer.
     ///
     /// The ramp is mixed over the finished surface in the shader, so the layer
-    /// must NOT switch to the measured-map treatment: that drops the tint and
-    /// flattens the lighting across the whole scan, which turned every model
-    /// white the moment a reading opened. A measurement is not a reason to
-    /// restyle the thing being measured.
+    /// must not switch to the measured-map treatment: that drops the tint and
+    /// flattens the lighting across the whole scan, turning every model white
+    /// the moment a reading opens.
     #[test]
     fn a_reading_does_not_restyle_the_layer_it_measures() {
         use occluview_contact::ContactScale;
