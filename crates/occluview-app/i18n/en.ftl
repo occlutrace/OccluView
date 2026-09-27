@@ -159,8 +159,8 @@ load-open-failed-stopped = Open failed: loader stopped
 load-loader-failed-summary = The background scene loader could not be started.
 # A file larger than the viewer reads. The limit is in the message because
 # the operator's next step depends on how far over it they are.
-load-file-too-large = This file is { $size } GB, which is above the { $limit } GB the viewer reads in one piece
-load-memory-budget-exceeded = The current scene and these files need about { $size } GB; the viewer's import limit is { $limit } GB. Close layers or load fewer files.
+load-file-too-large = This file is { $size } GiB, which is above the { $limit } GiB the viewer reads in one piece
+load-memory-budget-exceeded = The current scene and these files need about { $size } GiB; the viewer's import limit is { $limit } GiB. Close layers or load fewer files.
 load-action-failed-open = Open failed: { $detail }
 load-action-failed-add = Add failed: { $detail }
 
