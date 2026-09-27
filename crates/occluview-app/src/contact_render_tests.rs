@@ -12,9 +12,8 @@
 //! therefore loose clinical sanity checks rather than exact values, and the
 //! render is written to `target/contact-verify/` for inspection.
 //!
-//! The fixtures are the local scan corpus. Ordinary test runs report a visible
-//! skip without the corpus; `OCCLUVIEW_ALIGN_FIXTURES_REQUIRED=1` makes missing
-//! data fail in the private acceptance gate.
+//! The fixture-backed tests are ignored in ordinary runs and run through
+//! `scripts/validate-release-private.sh` with the private scan corpus.
 
 #![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
 
@@ -44,41 +43,19 @@ const OUTPUT_DIR: &str = "contact-verify";
 ///
 /// The corpus is local scans, not a repository asset: a checkout has no
 /// articulated pair in it, and shipping one would be shipping a patient's case.
-/// So the directory is chosen at run time and the test reports a skip when it
-/// is unset in an ordinary test run.
+/// So the directory is chosen at run time and required when an ignored test is
+/// explicitly run.
 ///
 /// The directory holds either a single pair (`upper.*` and `lower.*`) or
 /// subdirectories each holding one, named after the case.
 const FIXTURE_DIR_ENV: &str = "OCCLUVIEW_CONTACT_FIXTURES";
 
-/// Whether this run is a release gate rather than an ordinary test run.
-///
-/// This module is the only end-to-end check of a real reading — the numbers the
-/// panel shows as a clinical measurement. A release gate uses the same required
-/// fixture opt-in as the alignment acceptance tests.
-fn fixtures_are_required() -> bool {
-    std::env::var_os("OCCLUVIEW_ALIGN_FIXTURES_REQUIRED").is_some_and(|value| value != "0")
-}
-
-/// Whether this run requires every GPU-dependent acceptance frame.
-fn gpu_tests_are_required() -> bool {
-    std::env::var_os("OCCLUVIEW_REQUIRE_GPU_TESTS").is_some_and(|value| value != "0")
-}
-
 /// Every available `(case, upper, lower)` triple, found in the fixture
 /// directory at run time.
 fn available_fixtures() -> Vec<(String, PathBuf, PathBuf)> {
-    let Some(dir) = std::env::var_os(FIXTURE_DIR_ENV).map(PathBuf::from) else {
-        assert!(
-            !fixtures_are_required(),
-            "OCCLUVIEW_ALIGN_FIXTURES_REQUIRED is set, so {FIXTURE_DIR_ENV} must name the contact corpus"
-        );
-        tracing::warn!(
-            env = FIXTURE_DIR_ENV,
-            "skipped: contact corpus is not configured"
-        );
-        return Vec::new();
-    };
+    let dir = std::env::var_os(FIXTURE_DIR_ENV)
+        .map(PathBuf::from)
+        .expect("set OCCLUVIEW_CONTACT_FIXTURES before running ignored contact tests");
     assert!(dir.is_dir(), "{FIXTURE_DIR_ENV} must name a directory");
 
     // A directory holding the two meshes directly is the one-pair case.
@@ -107,15 +84,9 @@ fn available_fixtures() -> Vec<(String, PathBuf, PathBuf)> {
         }
     }
     assert!(
-        !cases.is_empty() || !fixtures_are_required(),
-        "OCCLUVIEW_ALIGN_FIXTURES_REQUIRED is set, so {FIXTURE_DIR_ENV} must contain an upper/lower pair"
+        !cases.is_empty(),
+        "{FIXTURE_DIR_ENV} must contain an upper/lower pair"
     );
-    if cases.is_empty() {
-        tracing::warn!(
-            env = FIXTURE_DIR_ENV,
-            "skipped: no contact scan pair was found"
-        );
-    }
     cases
 }
 
@@ -190,7 +161,7 @@ fn occlusal_camera(center: Vec3, radius: f32) -> GpuCamera {
     GpuCamera::new(view, proj, Vec3::new(0.25, -0.5, -0.83), eye)
 }
 
-/// The frame the harness writes, or `None` when no GPU adapter is available.
+/// Render one acceptance frame, preserving any adapter or rendering error.
 ///
 /// Both arches are drawn, each wearing its own reading, because that is what the
 /// viewer shows: the field is measured in both directions and the operator reads
@@ -343,13 +314,6 @@ fn write_renders(
             &measured.antagonist_signed_mm,
         ) {
             Ok(frame) => frame,
-            Err(RenderError::NoAdapter) if !gpu_tests_are_required() => {
-                tracing::warn!(
-                    case = id,
-                    "skipped: no GPU adapter available for the render"
-                );
-                return;
-            }
             Err(error) => panic!("{id}: contact render failed: {error}"),
         };
         let png = dir.join(format!("{id}{suffix}.png"));
@@ -386,7 +350,7 @@ fn extents(subject: &[f32], antagonist: &[f32]) -> f64 {
     (span[0] * span[0] + span[1] * span[1] + span[2] * span[2]).sqrt()
 }
 
-/// Create the render directory, or `None` when it cannot be created.
+/// Create the render directory or fail with the case name and filesystem error.
 fn prepare_output_dir(case: &str) -> PathBuf {
     let dir = output_dir();
     std::fs::create_dir_all(&dir)
@@ -411,10 +375,12 @@ fn output_dir() -> PathBuf {
 /// that happens: a bare tooth surface with no marks on it, which is the correct
 /// answer, rather than noise or a false contact.
 #[test]
+#[ignore = "requires private upper/lower STL scans and a GPU; run scripts/validate-release-private.sh with OCCLUVIEW_ALIGN_FIXTURES=/path/to/corpus"]
 fn a_pair_that_cannot_meet_paints_nothing() {
-    let Some((id, upper, lower)) = available_fixtures().into_iter().next() else {
-        return;
-    };
+    let (id, upper, lower) = available_fixtures()
+        .into_iter()
+        .next()
+        .expect("fixture validation guarantees a contact pair");
     let upper_entry = load(&upper).unwrap_or_else(|| panic!("{id}: upper scan failed to load"));
     let lower_entry = load(&lower).unwrap_or_else(|| panic!("{id}: lower scan failed to load"));
     let (subject_positions, subject_indices) = soup(&upper_entry.mesh);
@@ -478,11 +444,9 @@ fn a_pair_that_cannot_meet_paints_nothing() {
 
 /// The acceptance run. Every pair in the local corpus, measured and painted.
 #[test]
+#[ignore = "requires private upper/lower STL scans and a GPU; run scripts/validate-release-private.sh with OCCLUVIEW_ALIGN_FIXTURES=/path/to/corpus"]
 fn real_scan_pairs_measure_and_render_a_readable_contact_map() {
     let fixtures = available_fixtures();
-    if fixtures.is_empty() {
-        return;
-    }
     for (id, upper, lower) in fixtures {
         run_case(&id, upper, lower);
     }
