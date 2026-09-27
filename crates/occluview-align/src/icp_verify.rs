@@ -13,8 +13,9 @@
 //! "Zippered polygon meshes", SIGGRAPH 1994), and the answer is
 //!
 //! * how much of the moving surface found a counterpart,
-//! * the median distance to it, which a true seating holds at the scanners'
-//!   own agreement and a wrong one cannot, and
+//! * the median distance to it, which compares rival poses but is not an
+//!   absolute fit limit: a prepared real arch has a correct unchanged region
+//!   with a 0.000 mm solve median and a 0.446 mm whole-surface median,
 //! * whether the part that seats tightly pins the pose down by itself: the
 //!   smallest eigenvalue of its point-to-plane information matrix, rotations
 //!   scaled by the patch's own radius so the six directions are comparable
@@ -32,11 +33,16 @@ use crate::{Rigid, Soup, SurfaceIndex};
 use super::{symmetric_eigendecomposition, Orientation, RefineSettings, DENSE_BUDGET};
 
 /// A correspondence closer than this counts as tightly seated when judging
-/// whether the seated part alone determines the pose, in millimetres: a few
-/// times the agreement of two acquisitions of the same surface.
+/// whether the seated part alone determines the pose, in millimetres. Correct
+/// real scan pairs put at least 90% of samples within 0.08101 mm; the 0.1 mm
+/// band includes that acquisition variation. Wrong crop basins overlap this
+/// band, so rival verification decides between them.
 const TIGHT_BAND_MM: f64 = 0.1;
 
-/// Fewer tightly seated samples than this determine nothing.
+/// Fewer tightly seated samples than this determine nothing. The smallest
+/// correct real scan case has 67.05% of its samples in the 0.1 mm band, well
+/// above 64 even at the 8,000-sample coarse budget; the floor keeps a handful
+/// of correspondences from defining the six-dimensional stability estimate.
 const MIN_TIGHT_SAMPLES: usize = 64;
 
 /// What the verification pass measured at one pose.
@@ -49,6 +55,16 @@ pub(crate) struct Verification {
     /// Smallest eigenvalue of the tightly seated part's normalized
     /// information matrix; zero when that part is too small to count.
     pub(crate) stability: f64,
+}
+
+/// Inputs shared by the full and bounded verification passes.
+#[derive(Clone, Copy)]
+pub(crate) struct VerificationInput<'a> {
+    pub(crate) moving: Soup<'a>,
+    pub(crate) normals: &'a [DVec3],
+    pub(crate) fixed: &'a SurfaceIndex,
+    pub(crate) pose: Rigid,
+    pub(crate) settings: &'a RefineSettings,
 }
 
 impl Verification {
@@ -69,18 +85,27 @@ pub(crate) fn verify(
     pose: Rigid,
     settings: &RefineSettings,
 ) -> Verification {
-    verify_with_budget(moving, normals, fixed, pose, settings, DENSE_BUDGET)
+    verify_with_budget(
+        VerificationInput {
+            moving,
+            normals,
+            fixed,
+            pose,
+            settings,
+        },
+        DENSE_BUDGET,
+    )
 }
 
 /// [`verify`] over at most `budget` sampled vertices.
-pub(crate) fn verify_with_budget(
-    moving: Soup<'_>,
-    normals: &[DVec3],
-    fixed: &SurfaceIndex,
-    pose: Rigid,
-    settings: &RefineSettings,
-    budget: usize,
-) -> Verification {
+pub(crate) fn verify_with_budget(input: VerificationInput<'_>, budget: usize) -> Verification {
+    let VerificationInput {
+        moving,
+        normals,
+        fixed,
+        pose,
+        settings,
+    } = input;
     let samples = sample_vertices(moving, budget);
     if samples.is_empty() || !pose.is_finite() {
         return Verification::NONE;

@@ -3,6 +3,13 @@
 This file records user-visible changes. Internal refactors and test-only work
 remain in the Git history.
 
+## Unreleased
+
+### Viewer
+
+- Best fit refuses equally plausible surface matches and tells you to mark the
+  matching area or move the scans closer before trying again.
+
 ## 1.2.1 - 2026-09-21
 
 ### Viewer
