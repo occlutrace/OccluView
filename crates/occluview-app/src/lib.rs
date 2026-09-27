@@ -31,7 +31,7 @@ pub use startup::{
 };
 
 use anyhow::{Context, Result};
-use occluview_formats::{hps::RuntimeHpsKeyProvider, read_files_with_key_provider};
+use occluview_formats::read_files_with_memory_budget;
 use std::path::PathBuf;
 
 mod align_brush;
