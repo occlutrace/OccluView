@@ -98,6 +98,29 @@ fn scene_memory_estimate_includes_each_layers_mesh_texture_and_overlay() {
 }
 
 #[test]
+fn scene_memory_estimate_includes_render_residency_for_each_layer() {
+    let mesh = Mesh::new(
+        None,
+        vec![
+            Vertex::at(Vec3::ZERO),
+            Vertex::at(Vec3::new(1.0, 0.0, 0.0)),
+            Vertex::at(Vec3::new(0.0, 1.0, 0.0)),
+        ],
+        [0, 1, 2].repeat(64),
+    )
+    .expect("valid mesh");
+    let mesh_bytes = mesh.estimated_memory_bytes();
+    let renderer_bytes = mesh.estimated_gpu_memory_bytes(true);
+    let mut scene = Scene::new();
+    scene.add(SceneMesh::new(mesh));
+
+    assert!(
+        scene.estimated_memory_bytes() >= mesh_bytes + renderer_bytes,
+        "scene admission reserves GPU geometry and the wireframe buffer"
+    );
+}
+
+#[test]
 fn empty_scene_has_no_meshes() {
     let s = Scene::new();
     assert_eq!(s.meshes().len(), 0);
