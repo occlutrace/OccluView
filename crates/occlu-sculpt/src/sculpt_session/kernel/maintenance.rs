@@ -142,12 +142,215 @@ impl SculptSession {
         scope
     }
 
-    /// Conflict-free area-weighted normal recompute for exactly the scope
-    /// groups — each group reads only its own incident faces, with no face dedup.
-    /// The same loop refreshes the per-group area used by the brush normal.
-    /// Threaded twin: per-group results depend only on that group's faces,
-    /// so any worker count collects the identical sequence.
+    /// Refresh welded brush normals and split display normals for the scope.
     pub(crate) fn refresh_scope_normals(&mut self, scope: &[u32]) {
+        if scope.is_empty() {
+            return;
+        }
+        self.prepare_normal_faces(scope);
+        self.refresh_cached_brush_scope_normals(scope);
+        self.refresh_cached_display_scope_normals(scope);
+        self.clear_normal_face_slots();
+    }
+
+    fn prepare_normal_faces(&mut self, scope: &[u32]) {
+        self.normal_triangles.clear();
+        let generation = self.next_tri_stamp();
+        for &group in scope {
+            for &triangle in self.topology.incident_triangles(group) {
+                let index = triangle as usize;
+                if self.tri_marks[index] != generation {
+                    self.tri_marks[index] = generation;
+                    self.normal_triangles.push(triangle);
+                }
+            }
+        }
+        self.compute_normal_face_data();
+        self.normal_face_slots.resize(self.tris.len() / 3, u32::MAX);
+        for (slot, &triangle) in self.normal_triangles.iter().enumerate() {
+            self.normal_face_slots[triangle as usize] = slot as u32;
+        }
+    }
+
+    fn compute_normal_face_data(&mut self) {
+        self.normal_group_faces
+            .resize(self.normal_triangles.len(), DVec3::ZERO);
+        self.normal_display_faces
+            .resize(self.normal_triangles.len(), glam::Vec3::ZERO);
+        let topology = &self.topology;
+        let positions = &self.verts;
+        let triangles = &self.tris;
+        #[cfg(feature = "parallel")]
+        if self.normal_triangles.len() >= PAR_FLOOR {
+            use rayon::prelude::*;
+            self.normal_group_faces
+                .par_iter_mut()
+                .zip(self.normal_display_faces.par_iter_mut())
+                .zip(self.normal_triangles.par_iter())
+                .for_each(|((group_face, display_face), &triangle)| {
+                    (*group_face, *display_face) =
+                        normal_face_data(topology, positions, triangles, triangle);
+                });
+            return;
+        }
+        for ((group_face, display_face), &triangle) in self
+            .normal_group_faces
+            .iter_mut()
+            .zip(&mut self.normal_display_faces)
+            .zip(&self.normal_triangles)
+        {
+            (*group_face, *display_face) =
+                normal_face_data(topology, positions, triangles, triangle);
+        }
+    }
+
+    fn clear_normal_face_slots(&mut self) {
+        for &triangle in &self.normal_triangles {
+            self.normal_face_slots[triangle as usize] = u32::MAX;
+        }
+    }
+
+    fn refresh_cached_brush_scope_normals(&mut self, scope: &[u32]) {
+        #[cfg(feature = "parallel")]
+        if scope.len() >= PAR_FLOOR {
+            use rayon::prelude::*;
+            let mut computed = std::mem::take(&mut self.normal_scratch);
+            computed.resize(scope.len(), (0.0, None));
+            computed
+                .par_iter_mut()
+                .zip(scope.par_iter())
+                .for_each(|(slot, &group)| *slot = self.cached_brush_normal(group));
+            self.publish_brush_normals(scope, &computed);
+            self.normal_scratch = computed;
+            return;
+        }
+        let computed: Vec<(f32, Option<DVec3>)> = scope
+            .iter()
+            .map(|&group| self.cached_brush_normal(group))
+            .collect();
+        self.publish_brush_normals(scope, &computed);
+    }
+
+    fn cached_brush_normal(&self, group: u32) -> (f32, Option<DVec3>) {
+        let mut sum = DVec3::ZERO;
+        let mut area = 0.0f64;
+        for &triangle in self.topology.incident_triangles(group) {
+            let slot = self.normal_face_slots[triangle as usize];
+            if slot == u32::MAX {
+                continue;
+            }
+            let face = self.normal_group_faces[slot as usize];
+            sum += face;
+            area += face.length() / 6.0;
+        }
+        let normal = sum.normalize_or_zero();
+        (area as f32, (normal.length() > 1e-12).then_some(normal))
+    }
+
+    fn publish_brush_normals(&mut self, scope: &[u32], computed: &[(f32, Option<DVec3>)]) {
+        for (&group, &(area, normal)) in scope.iter().zip(computed) {
+            self.group_area[group as usize] = area;
+            let Some(normal) = normal else {
+                continue;
+            };
+            for &vertex in self.topology.members(group) {
+                let offset = vertex as usize * 3;
+                self.brush_normals[offset..offset + 3].copy_from_slice(&[
+                    normal.x as f32,
+                    normal.y as f32,
+                    normal.z as f32,
+                ]);
+            }
+        }
+    }
+
+    fn refresh_cached_display_scope_normals(&mut self, scope: &[u32]) {
+        use glam::Vec3;
+        use occlu_geometry_math::average_duplicate_normal_group;
+
+        self.display_normals.resize(self.verts.len(), 0.0);
+        for &group in scope {
+            for &vertex in self.topology.members(group) {
+                let offset = vertex as usize * 3;
+                self.display_normals[offset..offset + 3].fill(0.0);
+            }
+        }
+        let topology = &self.topology;
+        let triangles = &self.tris;
+        let face_slots = &self.normal_face_slots;
+        let face_normals = &self.normal_display_faces;
+        for &group in scope {
+            for &triangle in topology.incident_triangles(group) {
+                let offset = triangle as usize * 3;
+                let Some(raw) = triangles.get(offset..offset + 3) else {
+                    continue;
+                };
+                let face_slot = face_slots[triangle as usize];
+                if face_slot == u32::MAX {
+                    continue;
+                }
+                let face = face_normals[face_slot as usize];
+                for &vertex in raw {
+                    if topology.group_of(vertex) != group {
+                        continue;
+                    }
+                    let offset = vertex as usize * 3;
+                    self.display_normals[offset] += face.x;
+                    self.display_normals[offset + 1] += face.y;
+                    self.display_normals[offset + 2] += face.z;
+                }
+            }
+        }
+        let display_normals = &mut self.display_normals;
+        let output = &mut self.normal_member_output;
+        for &group in scope {
+            let members = topology.members(group);
+            for &vertex in members {
+                let offset = vertex as usize * 3;
+                let normal = Vec3::new(
+                    display_normals[offset],
+                    display_normals[offset + 1],
+                    display_normals[offset + 2],
+                )
+                .normalize_or_zero();
+                display_normals[offset..offset + 3].copy_from_slice(&normal.to_array());
+            }
+            output.resize(members.len(), Vec3::ZERO);
+            let output = &mut output[..members.len()];
+            output.fill(Vec3::ZERO);
+            average_duplicate_normal_group(
+                members.len(),
+                |slot| {
+                    let offset = members[slot] as usize * 3;
+                    Vec3::new(
+                        display_normals[offset],
+                        display_normals[offset + 1],
+                        display_normals[offset + 2],
+                    )
+                },
+                output,
+            );
+            for (slot, &vertex) in members.iter().enumerate() {
+                let offset = vertex as usize * 3;
+                let own = Vec3::new(
+                    display_normals[offset],
+                    display_normals[offset + 1],
+                    display_normals[offset + 2],
+                );
+                let normal = if output[slot].length_squared() > f32::EPSILON {
+                    output[slot]
+                } else {
+                    own
+                };
+                display_normals[offset..offset + 3].copy_from_slice(&normal.to_array());
+            }
+        }
+    }
+
+    /// Refresh normals used by the geometry kernel before respace. The
+    /// display-only split normals wait until post-dab maintenance, after the
+    /// final positions for the dab are fixed.
+    pub(crate) fn refresh_brush_scope_normals(&mut self, scope: &[u32]) {
         #[cfg(feature = "parallel")]
         if scope.len() >= PAR_FLOOR {
             use rayon::prelude::*;
@@ -180,9 +383,9 @@ impl SculptSession {
                 for member_index in 0..member_count {
                     let vertex = self.topology.members(group)[member_index];
                     let k = vertex as usize * 3;
-                    self.normals[k] = normal.x as f32;
-                    self.normals[k + 1] = normal.y as f32;
-                    self.normals[k + 2] = normal.z as f32;
+                    self.brush_normals[k] = normal.x as f32;
+                    self.brush_normals[k + 1] = normal.y as f32;
+                    self.brush_normals[k + 2] = normal.z as f32;
                 }
             }
             self.normal_scratch = computed;
@@ -205,13 +408,13 @@ impl SculptSession {
             if normal.length() <= 1e-12 {
                 continue;
             }
-            let member_count = self.topology.members(group).len();
-            for member_index in 0..member_count {
-                let vertex = self.topology.members(group)[member_index];
-                let k = vertex as usize * 3;
-                self.normals[k] = normal.x as f32;
-                self.normals[k + 1] = normal.y as f32;
-                self.normals[k + 2] = normal.z as f32;
+            for &vertex in self.topology.members(group) {
+                let offset = vertex as usize * 3;
+                self.brush_normals[offset..offset + 3].copy_from_slice(&[
+                    normal.x as f32,
+                    normal.y as f32,
+                    normal.z as f32,
+                ]);
             }
         }
     }
@@ -231,4 +434,58 @@ impl SculptSession {
         }
         areas
     }
+}
+
+fn normal_face_data(
+    topology: &SurfaceTopology,
+    positions: &[f32],
+    triangles: &[u32],
+    triangle: u32,
+) -> (DVec3, glam::Vec3) {
+    use glam::Vec3;
+    use occlu_geometry_math::facet_contributes_normal;
+
+    let Some(groups) = topology.triangle(triangle) else {
+        return (DVec3::ZERO, Vec3::ZERO);
+    };
+    let group_position = |group: u32| {
+        let offset = topology.representative(group) as usize * 3;
+        DVec3::new(
+            f64::from(positions[offset]),
+            f64::from(positions[offset + 1]),
+            f64::from(positions[offset + 2]),
+        )
+    };
+    let a = group_position(groups[0]);
+    let group_face = (group_position(groups[1]) - a).cross(group_position(groups[2]) - a);
+    let offset = triangle as usize * 3;
+    let Some(raw) = triangles.get(offset..offset + 3) else {
+        return (group_face, Vec3::ZERO);
+    };
+    let raw_position = |vertex: u32| {
+        let offset = vertex as usize * 3;
+        positions
+            .get(offset..offset + 3)
+            .map(|point| Vec3::new(point[0], point[1], point[2]))
+    };
+    let (Some(a), Some(b), Some(c)) = (
+        raw_position(raw[0]),
+        raw_position(raw[1]),
+        raw_position(raw[2]),
+    ) else {
+        return (group_face, Vec3::ZERO);
+    };
+    let display_face = (b - a).cross(c - a);
+    let longest_edge_sq = (b - a)
+        .length_squared()
+        .max((c - b).length_squared())
+        .max((a - c).length_squared());
+    let display_face = if display_face.is_finite()
+        && facet_contributes_normal(longest_edge_sq, display_face.length_squared())
+    {
+        display_face
+    } else {
+        Vec3::ZERO
+    };
+    (group_face, display_face)
 }

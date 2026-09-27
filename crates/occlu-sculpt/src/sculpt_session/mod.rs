@@ -383,7 +383,13 @@ pub struct SculptSession {
     ray_test_marks: Vec<u32>,
     ray_test_epoch: u32,
     hit_triangle: Option<u32>,
-    normals: Vec<f32>,
+    brush_normals: Vec<f32>,
+    display_normals: Vec<f32>,
+    normal_member_output: Vec<glam::Vec3>,
+    normal_triangles: Vec<u32>,
+    normal_face_slots: Vec<u32>,
+    normal_group_faces: Vec<DVec3>,
+    normal_display_faces: Vec<glam::Vec3>,
     /// Spatial index over group representative positions, cell size matched
     /// to the brush radius; relocated incrementally during strokes.
     brush_grid: GroupGrid,

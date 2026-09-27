@@ -49,7 +49,13 @@ impl SculptSession {
         });
         let input_spacing_mm = kernel::input_spacing_mm(&reference_verts, &tris);
         let mut s = SculptSession {
-            normals: vec![0.0; verts.len()],
+            brush_normals: vec![0.0; verts.len()],
+            display_normals: vec![0.0; verts.len()],
+            normal_member_output: Vec::new(),
+            normal_triangles: Vec::new(),
+            normal_face_slots: vec![u32::MAX; triangle_count],
+            normal_group_faces: Vec::new(),
+            normal_display_faces: Vec::new(),
             reference_normals: vec![0.0; verts.len()],
             brush_grid,
             brush_grid_radius: 0.0,
@@ -141,7 +147,7 @@ impl SculptSession {
             hit_triangle: None,
         };
         s.refresh_all_normals();
-        s.reference_normals.clone_from(&s.normals);
+        s.reference_normals.clone_from(&s.brush_normals);
         s.step_budget = s.compute_step_budget();
         s.group_area = s.compute_all_group_areas();
         s.reserve_session_growth();
@@ -162,7 +168,8 @@ impl SculptSession {
         // session that edits more than this rehashes once more, not per stroke.
         let rows = groups / 2;
         self.verts.reserve(3 * groups);
-        self.normals.reserve(3 * groups);
+        self.brush_normals.reserve(3 * groups);
+        self.display_normals.reserve(3 * groups);
         self.reference_verts.reserve(3 * groups);
         self.reference_normals.reserve(3 * groups);
         self.stroke_mark.reserve(groups);
@@ -241,9 +248,9 @@ impl SculptSession {
     fn n(&self, i: u32) -> DVec3 {
         let k = i as usize * 3;
         DVec3::new(
-            self.normals[k] as f64,
-            self.normals[k + 1] as f64,
-            self.normals[k + 2] as f64,
+            self.brush_normals[k] as f64,
+            self.brush_normals[k + 1] as f64,
+            self.brush_normals[k + 2] as f64,
         )
     }
 
@@ -295,7 +302,7 @@ impl SculptSession {
         self.tri_epoch
     }
 
-    /// Area-weighted normals for every vertex (full pass, init/undo only).
+    /// Refresh welded brush normals and per-vertex shading normals.
     pub(super) fn refresh_all_normals(&mut self) {
         let mut group_normals = vec![DVec3::new(0.0, 0.0, 0.0); self.topology.group_count()];
         let tris = std::mem::take(&mut self.tris);
@@ -312,9 +319,49 @@ impl SculptSession {
             let normal = sum.normalize_or_zero();
             for &vertex in self.topology.members(group as u32) {
                 let k = vertex as usize * 3;
-                self.normals[k] = normal.x as f32;
-                self.normals[k + 1] = normal.y as f32;
-                self.normals[k + 2] = normal.z as f32;
+                self.brush_normals[k] = normal.x as f32;
+                self.brush_normals[k + 1] = normal.y as f32;
+                self.brush_normals[k + 2] = normal.z as f32;
+            }
+        }
+        self.refresh_all_display_normals();
+    }
+
+    fn refresh_all_display_normals(&mut self) {
+        use glam::Vec3;
+        use occlu_geometry_math::{accumulate_smooth_normals, average_duplicate_normal_group};
+
+        let vertex_count = self.verts.len() / 3;
+        let mut source_normals = accumulate_smooth_normals(vertex_count, &self.tris, |index| {
+            let offset = index * 3;
+            self.verts
+                .get(offset..offset + 3)
+                .map(|position| Vec3::new(position[0], position[1], position[2]))
+        });
+        for normal in &mut source_normals {
+            *normal = normal.normalize_or_zero();
+        }
+        self.display_normals.resize(self.verts.len(), 0.0);
+        for group in 0..self.topology.group_count() as u32 {
+            let members = self.topology.members(group);
+            self.normal_member_output.resize(members.len(), Vec3::ZERO);
+            let output = &mut self.normal_member_output[..members.len()];
+            output.fill(Vec3::ZERO);
+            average_duplicate_normal_group(
+                members.len(),
+                |slot| source_normals[members[slot] as usize],
+                output,
+            );
+            for (slot, &vertex) in members.iter().enumerate() {
+                let normal = if output[slot].length_squared() > f32::EPSILON {
+                    output[slot]
+                } else {
+                    source_normals[vertex as usize]
+                };
+                if normal.length_squared() > f32::EPSILON {
+                    let offset = vertex as usize * 3;
+                    self.display_normals[offset..offset + 3].copy_from_slice(&normal.to_array());
+                }
             }
         }
     }
@@ -408,9 +455,9 @@ impl SculptSession {
         )
     }
 
-    /// Live per-vertex normals, interleaved xyz.
+    /// Live per-vertex shading normals, interleaved xyz.
     pub fn normals(&self) -> &[f32] {
-        &self.normals
+        &self.display_normals
     }
 
     /// Faces the last [`SculptSession::dab`] may have moved or rewired,

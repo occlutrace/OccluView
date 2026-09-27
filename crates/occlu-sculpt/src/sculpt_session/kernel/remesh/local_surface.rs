@@ -30,6 +30,10 @@ impl LocalSurface {
         }
     }
 
+    pub(in crate::sculpt_session::kernel) fn clear(&mut self) {
+        self.len = 0;
+    }
+
     /// Add one face. False when the patch is full.
     pub(in crate::sculpt_session::kernel) fn push(
         &mut self,
@@ -123,17 +127,28 @@ impl SculptSession {
         groups: &[u32],
     ) -> Option<LocalSurface> {
         let mut patch = LocalSurface::new();
+        self.fill_local_surface(groups, &mut patch).then_some(patch)
+    }
+
+    pub(in crate::sculpt_session::kernel) fn fill_local_surface(
+        &self,
+        groups: &[u32],
+        patch: &mut LocalSurface,
+    ) -> bool {
+        patch.clear();
         for &group in groups {
             for &face in self.topology.incident_triangles(group) {
                 if patch.faces().iter().any(|(seen, _)| *seen == face) {
                     continue;
                 }
-                let corners = self.topology.triangle(face)?;
+                let Some(corners) = self.topology.triangle(face) else {
+                    return false;
+                };
                 if !patch.push(face, corners.map(|corner| self.group_v(corner))) {
-                    return None;
+                    return false;
                 }
             }
         }
-        Some(patch)
+        true
     }
 }
