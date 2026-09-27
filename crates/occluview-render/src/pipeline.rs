@@ -8,7 +8,9 @@ use crate::camera::GpuCamera;
 use crate::clipping::ClipPlane;
 use crate::gpu::{camera_bind_layout, GpuMesh};
 use crate::mesh_uniform::GpuMeshUniform;
-use crate::sculpt_cursor::{SculptBrushUniform, SculptToolShape, SculptToolUniform};
+use crate::sculpt_cursor::{
+    SculptBrushUniform, SculptToolShape, SculptToolUniform, SCULPT_FEEDBACK_SHADER_SRC,
+};
 use occluview_core::Vertex;
 use std::sync::{
     atomic::{AtomicU32, Ordering},
@@ -60,7 +62,6 @@ pub(crate) struct SculptSurfaceFeedbackBindings<'a> {
 
 const SHADER_SRC: &str = include_str!("../shaders/mesh.wgsl");
 const CAP_SHADER_SRC: &str = include_str!("../shaders/cap.wgsl");
-const SCULPT_FEEDBACK_SHADER_SRC: &str = include_str!("../shaders/sculpt_feedback.wgsl");
 const SCULPT_TOOL_SHADER_SRC: &str = include_str!("../shaders/sculpt_tool.wgsl");
 const POINT_SPLAT_VERTEX_COUNT: u32 = 6;
 const DEFAULT_POINT_SPLAT_VIEWPORT: [f32; 2] = [1024.0, 768.0];
@@ -513,6 +514,21 @@ impl Renderer {
     /// Access the queue (for buffer writes by callers).
     pub fn queue(&self) -> &wgpu::Queue {
         &self.queue
+    }
+
+    /// Submit staged queue writes and wait for that submission to complete.
+    /// Earlier work on the same queue completes before this returns.
+    ///
+    /// # Errors
+    /// Returns the device polling error if the queue cannot complete.
+    pub fn wait_for_queue_idle(&self) -> Result<(), wgpu::PollError> {
+        let submission = self.queue.submit(std::iter::empty());
+        self.device
+            .poll(wgpu::PollType::Wait {
+                submission_index: Some(submission),
+                timeout: None,
+            })
+            .map(|_| ())
     }
 
     /// Take the most recent wgpu uncaptured error, if any, clearing it.

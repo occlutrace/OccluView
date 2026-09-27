@@ -21,6 +21,8 @@ remain in the Git history.
 - Sculpt remeshing updates the live surface locally during a stroke. The brush
   stays visible while hovering, and Ball, Knife and Cylinder use matching tip
   glyphs and cursor shapes.
+- Sculpt keeps sharp crease shading while welding the surface for continuous
+  brush strokes.
 - Default-size Smooth strokes remain responsive on full-arch scans.
 
 ### Windows
