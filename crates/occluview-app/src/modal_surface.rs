@@ -16,6 +16,7 @@ pub(crate) fn show_information_modal<T>(
     ctx: &egui::Context,
     id: egui::Id,
     default_size: egui::Vec2,
+    close_label: &str,
     add_contents: impl FnOnce(&mut egui::Ui) -> T,
 ) -> egui::ModalResponse<T> {
     let bounds = ctx.content_rect().shrink(16.0);
@@ -39,7 +40,7 @@ pub(crate) fn show_information_modal<T>(
         .constrain_to(bounds)
         .movable(false)
         .interactable(true)
-        .sense(egui::Sense::click_and_drag())
+        .sense(egui::Sense::hover())
         .show(ctx, |ui| {
             let mut backdrop = ui.new_child(
                 egui::UiBuilder::new()
@@ -52,6 +53,7 @@ pub(crate) fn show_information_modal<T>(
             backdrop.response()
         })
         .inner;
+    crate::accessibility::button(&backdrop_response, close_label, true, None);
 
     // Only force a sizing pass when the available content rectangle changed
     // and the remembered card does not fit it. Repeating this every frame
