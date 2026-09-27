@@ -5,6 +5,11 @@ remain in the Git history.
 
 ## Unreleased
 
+### Accessibility
+
+- Screen readers receive localized names, roles, selected states, and disabled
+  states for the viewer controls, including the layer tint palette.
+
 ### Viewer
 
 - Imports estimate mesh, image, and current-scene memory before decoding and

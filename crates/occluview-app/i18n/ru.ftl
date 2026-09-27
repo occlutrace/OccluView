@@ -457,6 +457,7 @@ meshedit-slider-size = размер
 meshedit-slider-size-hint = Размер кисти (Shift + колесо мыши)
 meshedit-slider-force = сила
 meshedit-slider-force-hint = Сила кисти (Ctrl + колесо мыши)
+meshedit-limit-value = Максимальный периметр
 meshedit-limit-label = лимит
 meshedit-limit-checkbox-hint = Ограничить исправление кромками не больше этого периметра
 meshedit-limit-drag-hint = Выкл закрывает все безопасные отверстия в выбранной области; граница скана остаётся открытой
@@ -644,6 +645,7 @@ guard-cancel = Отмена
 error-retry-graphics = Попробовать снова
 error-close = Закрыть
 error-copy-details = Копировать детали
+error-details = Сведения об ошибке
 
 about-website = Сайт
 about-source = Исходники
@@ -926,6 +928,26 @@ render-failed-summary = Файл открыт, но вьюпорт отрисо�
 render-failed-status = Отрисовка не удалась
 
 tint-choose = Выбрать оттенок
+tint-group-model = Модель
+tint-group-overlays = Контрастные наложения
+tint-color-stone-iv = Камень IV
+tint-color-baked = Обожжённый
+tint-color-plaster = Штукатурка
+tint-color-sage = Шалфей
+tint-color-wax = Воск
+tint-color-glacier = Ледник
+tint-color-coral = Коралл
+tint-color-mint = Мята
+tint-color-lilac = Сирень
+tint-color-amber = Янтарь
+tint-color-cobalt = Кобальт
+tint-color-tangerine = Мандариновый
+tint-color-violet = Фиолетовый
+tint-color-lime = Лаймовый
+tint-color-teal = Бирюзовый
+tint-color-magenta = Пурпурный
+tint-color-crimson = Малиновый
+tint-color-slate = Сланцевый
 
 ## Status tail: brush, lasso, loading, GPU, align jobs. — DRAFT.
 brush-no-mesh = Кликните по точке на каждой сетке, затем красьте на любой

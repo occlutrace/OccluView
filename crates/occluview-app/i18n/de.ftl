@@ -385,6 +385,7 @@ meshedit-slider-size = Größe
 meshedit-slider-size-hint = Pinselgröße (Shift + Mausrad)
 meshedit-slider-force = Stärke
 meshedit-slider-force-hint = Pinselstärke (Strg + Mausrad)
+meshedit-limit-value = Maximaler Umfang
 meshedit-limit-label = Limit
 meshedit-limit-checkbox-hint = Reparatur auf Ränder bis zu diesem Umfang beschränken
 meshedit-limit-drag-hint = Aus schließt alle sicheren Löcher im Bereich; Scangrenze bleibt offen
@@ -568,6 +569,7 @@ guard-cancel = Abbrechen
 error-retry-graphics = Erneut versuchen
 error-close = Schließen
 error-copy-details = Details kopieren
+error-details = Fehlerdetails
 
 about-website = Website
 about-source = Quellcode
@@ -834,6 +836,26 @@ render-failed-summary = Datei geöffnet, aber Viewport nicht renderbar.
 render-failed-status = Rendern fehlgeschlagen
 
 tint-choose = Tönung wählen
+tint-group-model = Modell
+tint-group-overlays = Kontrastüberlagerungen
+tint-color-stone-iv = Stein IV
+tint-color-baked = Gebrannt
+tint-color-plaster = Putz
+tint-color-sage = Salbei
+tint-color-wax = Wachs
+tint-color-glacier = Gletscher
+tint-color-coral = Koralle
+tint-color-mint = Minze
+tint-color-lilac = Flieder
+tint-color-amber = Bernstein
+tint-color-cobalt = Kobalt
+tint-color-tangerine = Mandarine
+tint-color-violet = Violett
+tint-color-lime = Limette
+tint-color-teal = Petrol
+tint-color-magenta = Magenta
+tint-color-crimson = Karmesinrot
+tint-color-slate = Schiefer
 
 ## Status tail: brush, lasso, loading, GPU, align jobs. — DRAFT.
 brush-no-mesh = Je einen Punkt auf beiden Netzen anklicken, dann malen

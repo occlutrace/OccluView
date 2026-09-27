@@ -301,6 +301,12 @@ fn paint_strip(
                     egui::vec2(CLOSE_BUTTON_WIDTH, CHIP_HEIGHT),
                     egui::Sense::click(),
                 );
+                crate::accessibility::button(
+                    &close_response,
+                    &locale.tr("contact-close-hint"),
+                    true,
+                    None,
+                );
                 crate::icons::paint(
                     ui.painter(),
                     close_rect.shrink(5.0),
@@ -430,6 +436,7 @@ fn paint_load(
                         .show_value(show_value),
                 )
                 .on_hover_text(locale.tr("contact-load-hint"));
+            crate::accessibility::slider(&slider, &locale.tr("contact-load-label"), true, *load_mm);
             if slider.changed() {
                 request.load_mm = Some(*load_mm);
             }
