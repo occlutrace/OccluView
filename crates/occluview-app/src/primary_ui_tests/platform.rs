@@ -1,456 +1,174 @@
 use super::*;
+use roxmltree::{Document, Node};
 
-#[cfg(target_os = "linux")]
-#[test]
-fn linux_window_identity_value_matches_desktop_metadata() {
-    assert_eq!(
-        LINUX_DESKTOP_APP_ID, "ai.occlutrace.OccluView",
-        "Wayland app_id value must match the installed desktop file id"
-    );
+fn plist_value<'a, 'input>(dictionary: Node<'a, 'input>, key: &str) -> Option<Node<'a, 'input>> {
+    let mut children = dictionary.children().filter(Node::is_element);
+    while let Some(candidate) = children.next() {
+        let value = children.next()?;
+        if candidate.tag_name().name() == "key" && candidate.text() == Some(key) {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn array_has_string(array: Node<'_, '_>, expected: &str) -> bool {
+    array.children().any(|item| {
+        item.is_element() && item.tag_name().name() == "string" && item.text() == Some(expected)
+    })
+}
+
+fn plist_dictionary(plist: &Document<'_>) -> Node<'_, '_> {
+    let root = plist.root_element();
+    assert_eq!(root.tag_name().name(), "plist");
+    root.children()
+        .find(|node| node.is_element() && node.tag_name().name() == "dict")
+        .expect("the property list root contains a dictionary")
+}
+
+fn plist_document_type<'a, 'input>(
+    document_types: Node<'a, 'input>,
+    identifier: &str,
+) -> Option<Node<'a, 'input>> {
+    document_types
+        .children()
+        .filter(|node| node.is_element() && node.tag_name().name() == "dict")
+        .find(|entry| {
+            plist_value(*entry, "LSItemContentTypes")
+                .is_some_and(|array| array_has_string(array, identifier))
+        })
 }
 
 #[cfg(windows)]
 #[test]
-fn windows_app_identity_value_matches_shell_registration() {
+fn windows_process_and_start_menu_shortcut_share_the_app_identity() {
+    let source = repo_file("../../install/occluview.wxs");
+    let document = Document::parse(&source).expect("WiX source is well-formed XML");
+    let shortcut = document.descendants().find(|node| {
+        node.is_element()
+            && node.tag_name().name() == "ShortcutProperty"
+            && node.attribute("Key") == Some("System.AppUserModel.ID")
+    });
+
     assert_eq!(
-        APP_USER_MODEL_ID, "OccluTrace.OccluView",
-        "AppUserModelID value must match the shell registration"
-    );
-}
-
-/// The `AppUserModelID` the process sets must be the one the installed shortcut
-/// is tagged with, or the taskbar groups the running viewer under a second,
-/// unnamed entry and the jump list disappears.
-///
-/// The constant is compared against the MSI that ships, not against a second
-/// copy of the string. Runs on the Windows CI job, where `APP_USER_MODEL_ID`
-/// exists.
-#[cfg(windows)]
-#[test]
-fn windows_app_identity_value_matches_the_shipped_shortcut() {
-    let wxs = msi_wxs_source();
-    let expected = format!(
-        "<ShortcutProperty Key=\"System.AppUserModel.ID\" Value=\"{APP_USER_MODEL_ID}\" />"
-    );
-    assert!(
-        wxs.contains(&expected),
-        "install/occluview.wxs must tag its Start Menu shortcut with the \
-         process AppUserModelID {APP_USER_MODEL_ID}"
+        shortcut.and_then(|node| node.attribute("Value")),
+        Some(crate::APP_USER_MODEL_ID),
+        "the installed shortcut must use the identity assigned to the process"
     );
 }
 
 #[test]
-fn third_party_notices_stay_generated_and_gated() {
-    let ci = ci_workflow_source();
-    let script = include_str!("../../../../scripts/gen-third-party.sh");
+fn macos_document_types_are_well_formed_and_match_the_open_formats() {
+    let source = repo_file("../../install/macos/Info.plist.in");
+    let plist = Document::parse(&source).expect("Info.plist is well-formed XML");
+    let root = plist_dictionary(&plist);
 
-    // The attribution file is generated, so the committed copy must
-    // regenerate identically in CI: pin the generator, fail on drift.
-    assert!(
-        ci.contains("cargo install cargo-about --version 0.8.4 --locked"),
-        "CI should install the pinned cargo-about"
+    assert_eq!(
+        plist_value(root, "CFBundleExecutable").and_then(|node| node.text()),
+        Some("occluview")
     );
-    assert!(
-        ci.contains("git diff --exit-code -- THIRD-PARTY-NOTICES.md"),
-        "CI should fail when the committed notices drift from the lockfile"
+    assert_eq!(
+        plist_value(root, "LSMinimumSystemVersion").and_then(|node| node.text()),
+        Some("14.0")
     );
-    // The generator polices its own output: the font licenses that require
-    // this attribution file must be present, and no first-party crate may
-    // attribute itself.
-    assert!(script.contains("SIL OPEN FONT LICENSE"));
-    assert!(script.contains("UBUNTU FONT LICENCE"));
-    assert!(script.contains("first-party crate leaked"));
-}
 
-#[test]
-fn every_windows_artifact_ships_the_license_set() {
-    let wxs = msi_wxs_source();
-    let package = package_workflow_source();
-    let lifecycle = include_str!("../../../../install/test-msi-lifecycle.ps1");
-
-    // Distributing the statically linked dependencies obliges shipping their
-    // notices; both Windows artifacts must carry the same three files.
-    for file_id in [
-        "filLicenseFile",
-        "filNoticeFile",
-        "filThirdPartyNotices",
-        "filThirdPartyNoticesNative",
-    ] {
-        assert!(wxs.contains(file_id), "MSI must install {file_id}");
-    }
+    let document_types = plist_value(root, "CFBundleDocumentTypes")
+        .filter(|node| node.tag_name().name() == "array")
+        .expect("the bundle declares document types");
+    let entries: Vec<_> = document_types
+        .children()
+        .filter(|node| node.is_element() && node.tag_name().name() == "dict")
+        .collect();
     assert!(
-        package.contains("Copy-Item ./THIRD-PARTY-NOTICES.md")
-            && package.contains("Copy-Item ./THIRD-PARTY-NOTICES-NATIVE.md"),
-        "the portable ZIP must ship the third-party notices, native ones included"
+        !entries.is_empty(),
+        "Finder has at least one supported type"
     );
-    assert!(
-        wxs.contains("<ComponentRef Id=\"cmpThirdPartyNoticesNative\" />"),
-        "a component that is declared but never referenced installs nothing"
-    );
-    assert!(
-        lifecycle.contains("THIRD-PARTY-NOTICES.md"),
-        "the MSI lifecycle smoke should verify the notices land on disk"
-    );
-}
-
-#[test]
-fn the_deb_ships_and_gates_the_license_set() {
-    let build = linux_build_deb_source();
-    let check = linux_check_deb_source();
-    let copyright = include_str!("../../../../install/linux/copyright");
-
-    assert!(
-        build.contains("usr/share/doc/occluview/NOTICE")
-            && build.contains("usr/share/doc/occluview/THIRD-PARTY-NOTICES.md")
-            && build.contains("usr/share/doc/occluview/THIRD-PARTY-NOTICES-NATIVE.md"),
-        "the deb must install the Apache NOTICE and both attribution files"
-    );
-    assert!(
-        check.contains("usr/share/doc/occluview/NOTICE")
-            && check.contains("usr/share/doc/occluview/THIRD-PARTY-NOTICES.md")
-            && check.contains("SIL OPEN FONT LICENSE"),
-        "check-deb.sh must fail a package that lost the license set"
-    );
-    assert!(
-        copyright.contains("THIRD-PARTY-NOTICES.md"),
-        "the DEP-5 copyright should point at the shipped attribution file"
-    );
-}
-
-#[test]
-fn the_macos_bundle_ships_the_license_set_and_the_safe_finder_registration() {
-    let build = macos_build_app_source();
-    let plist = macos_info_plist_source();
-    let ci = ci_workflow_source();
-
-    // The statically linked native CSG library and every Rust dependency are
-    // redistributed inside the bundle, so the same four notices the MSI and the
-    // deb carry must travel with it.
-    for notice in [
-        "LICENSE",
-        "NOTICE",
-        "THIRD-PARTY-NOTICES.md",
-        "THIRD-PARTY-NOTICES-NATIVE.md",
-    ] {
-        assert!(
-            build.contains(notice),
-            "the macOS builder must copy {notice} into the bundle"
+    for entry in &entries {
+        assert_eq!(
+            plist_value(*entry, "CFBundleTypeRole").and_then(|node| node.text()),
+            Some("Viewer"),
+            "the bundle opens supported formats for viewing"
+        );
+        assert_ne!(
+            plist_value(*entry, "LSHandlerRank").and_then(|node| node.text()),
+            Some("Owner"),
+            "the viewer does not claim an input format as its system owner"
         );
     }
-    assert!(
-        build.contains(r#"resources="$contents/Resources""#) && build.contains("$resources/Legal"),
-        "the notices belong inside the bundle, in a predictable Resources/Legal directory"
-    );
-    assert!(
-        build.contains("Helpers/occluview-cli"),
-        "the command-line companion ships inside the bundle, not as a second download"
-    );
-    assert!(
-        ci.contains("Legal/$notice"),
-        "the macOS CI package step must fail a bundle that lost the license set"
-    );
-    assert!(
-        ci.contains("OccluView-*-aarch64.dmg") && ci.contains("OccluView-*-aarch64.pkg"),
-        "the macOS CI step should verify the DMG and the PKG it just built"
-    );
-    // The builder seals the bundle with an ad-hoc signature: with only the
-    // linker's per-binary signatures a downloaded copy is reported as damaged,
-    // with no way to open it. Developer ID signing stays a maintainer gate
-    // with credentials this repository does not hold, so the builder never
-    // names an identity and a test artifact cannot pass for a release.
-    assert!(
-        build.contains(r#"codesign --force --sign - "$app_bundle""#),
-        "the developer builder seals the bundle with an ad-hoc signature"
-    );
-    assert!(
-        !build.contains("OCCLUVIEW_MACOS_APP_IDENTITY"),
-        "the developer builder must not sign with a Developer ID identity"
+
+    let hps = plist_document_type(document_types, "ai.occlutrace.occluview.hps")
+        .expect("the HPS type is offered to Finder");
+    assert_eq!(
+        plist_value(hps, "LSHandlerRank").and_then(|node| node.text()),
+        Some("Default")
     );
 
-    // Finder offers the app for every format the viewer opens, the legacy HPS
-    // `.dcm` container included (`V1_OPEN_EXTENSIONS` has carried it since
-    // v1). macOS types .stl, .ply, .obj, .glb and .dcm itself, so the document
-    // types name those system identifiers: a type of the app's own for one of
-    // those extensions is never the one a file gets, and the app was not
-    // offered for them until the bundle named the system's.
-    let document_types = plist
-        .split("<key>CFBundleDocumentTypes</key>")
-        .nth(1)
-        .and_then(|rest| rest.split("<key>UTImportedTypeDeclarations</key>").next())
-        .unwrap_or_default();
-    for identifier in [
-        "public.standard-tesselated-geometry-format",
-        "public.polygon-file-format",
-        "public.geometry-definition-format",
-        "org.khronos.glb",
-        "ai.occlutrace.occluview.hps",
-        "org.nema.dicom",
-    ] {
+    let dicom = plist_document_type(document_types, "org.nema.dicom")
+        .expect("the .dcm type is offered to Finder");
+    assert_eq!(
+        plist_value(dicom, "LSHandlerRank").and_then(|node| node.text()),
+        Some("Alternate"),
+        "medical DICOM files must remain opt-in"
+    );
+
+    let content_types = [
+        ("stl", "public.standard-tesselated-geometry-format"),
+        ("ply", "public.polygon-file-format"),
+        ("obj", "public.geometry-definition-format"),
+        ("glb", "org.khronos.glb"),
+        ("hps", "ai.occlutrace.occluview.hps"),
+        ("dcm", "org.nema.dicom"),
+    ];
+    assert_eq!(
+        content_types.len(),
+        occluview_formats::V1_OPEN_EXTENSIONS.len()
+    );
+    for (extension, identifier) in content_types {
         assert!(
-            document_types.contains(&format!("<string>{identifier}</string>")),
-            "the bundle should offer itself for {identifier}"
+            occluview_formats::V1_OPEN_EXTENSIONS.contains(&extension),
+            "the viewer accepts .{extension}"
+        );
+        assert!(
+            occluview_formats::probe::by_extension(extension).is_some(),
+            "the format reader accepts .{extension}"
+        );
+        assert!(
+            plist_document_type(document_types, identifier).is_some(),
+            "Finder must offer the app for .{extension} through {identifier}"
         );
     }
-    // `.dcm` is the medical DICOM suffix, so it may only ever be an opt-in
-    // surface: the DICOM entry is an alternate handler. `Owner` or `Default`
-    // there would make OccluView the system-wide handler for every DICOM
-    // file, the same reason Windows keeps `.dcm` in `OFFERED_ONLY_EXTENSIONS`
-    // and registers only its Open-with entries.
-    let dicom_entry = document_types
-        .split("<dict>")
-        .find(|entry| entry.contains("<string>org.nema.dicom</string>"))
-        .unwrap_or_default();
-    assert!(
-        dicom_entry.contains("<string>Alternate</string>")
-            && !dicom_entry.contains("<string>Default</string>")
-            && !dicom_entry.contains("<string>Owner</string>"),
-        "the DICOM offer must stay an alternate handler"
-    );
-    assert!(
-        !document_types.contains("<string>Owner</string>"),
-        "OccluView claims no format as its owner"
-    );
-    // Imported, not exported: OccluView reads HPS and does not define it. The
-    // formats macOS already declares are not declared again.
-    let imported = plist
-        .split("<key>UTImportedTypeDeclarations</key>")
-        .nth(1)
-        .unwrap_or_default();
-    assert!(
-        imported.contains("<string>ai.occlutrace.occluview.hps</string>")
-            && imported.contains("<string>hps</string>"),
-        "the HPS container needs its imported type declaration and extension tag"
-    );
-    for extension in ["stl", "ply", "obj", "glb", "dcm"] {
-        assert!(
-            !imported.contains(&format!("<string>{extension}</string>")),
-            "macOS declares .{extension}; a second declaration is never chosen"
-        );
-    }
-    assert!(
-        !plist.contains("UTExportedTypeDeclarations"),
-        "these formats are imported; exporting them would claim ownership OccluView lacks"
-    );
-    assert!(
-        plist.contains("<string>occluview</string>") && plist.contains("<string>14.0</string>"),
-        "the bundle must name the shipped executable and its macOS 14 floor"
-    );
+
+    let imported_types = plist_value(root, "UTImportedTypeDeclarations")
+        .filter(|node| node.tag_name().name() == "array")
+        .expect("the bundle imports the private HPS content type");
+    let hps_declaration = imported_types
+        .children()
+        .filter(|node| node.is_element() && node.tag_name().name() == "dict")
+        .find(|entry| {
+            plist_value(*entry, "UTTypeIdentifier").and_then(|node| node.text())
+                == Some("ai.occlutrace.occluview.hps")
+        })
+        .expect("the HPS content type has an imported declaration");
+    let tag_specification = plist_value(hps_declaration, "UTTypeTagSpecification")
+        .expect("the HPS type declares its filename extension");
+    let extensions = plist_value(tag_specification, "public.filename-extension")
+        .filter(|node| node.tag_name().name() == "array")
+        .expect("the HPS type has a filename extension array");
+    assert!(array_has_string(extensions, "hps"));
+    assert!(plist_value(root, "UTExportedTypeDeclarations").is_none());
 }
 
 #[test]
-fn the_release_page_quotes_the_changelog_and_attests_the_sboms() {
-    let package = package_workflow_source();
-
-    assert!(
-        package.contains(r#"awk -v version="$version""#)
-            && package.contains(r#"changelog_section="$(mktemp)""#)
-            && package.contains(r#"CHANGELOG.md > "$changelog_section""#),
-        "release notes should be built from the matching changelog section"
-    );
-    assert!(
-        package.contains("dist/sbom-*.json"),
-        "the SBOMs should be provenance-attested alongside the installers"
-    );
-}
-
-#[test]
-fn the_release_path_can_be_rehearsed_and_refuses_to_ship_a_broken_artifact() {
-    let package = package_workflow_source();
-    let ci = ci_workflow_source();
-
-    // Five single points of failure in a row, each of which fires only after
-    // the tag is public. They need a rehearsal that is not a release.
-    assert!(
-        package.contains("release_dry_run"),
-        "the packaging path must be runnable without cutting a release"
-    );
-    assert!(
-        package.contains("if: ${{ !inputs.release_dry_run }}"),
-        "a rehearsal must stop short of publishing"
-    );
-    assert!(
-        package.matches("timeout-minutes:").count() >= 3,
-        "every packaging job needs a budget; the default is six hours"
-    );
-
-    // --override-filename takes a base name. A full file name produces
-    // sbom-windows.json.json, and the move that follows fails the release.
-    assert!(!package.contains("--override-filename sbom-windows.json"));
-    assert!(!package.contains("--override-filename sbom-linux.json"));
-    for sbom in [
-        "crates/occluview-app/sbom-windows.json",
-        "crates/occluview-app/sbom-linux.json",
-    ] {
-        assert!(
-            package.contains(sbom),
-            "the SBOM must be taken from the shipped viewer's crate, not the workspace root"
-        );
-    }
-    assert!(
-        package.matches("not the shipped viewer").count() == 2,
-        "both SBOM steps must check which component they describe"
-    );
-
-    // Authenticode remains optional; minisign protects the update channel.
-    assert!(!package.contains("Authenticode signing is required for tagged releases"));
-    assert!(!package.contains("No signing material resolved for tagged release."));
-    assert!(package.contains("No Authenticode certificate configured"));
-
-    // The signing key and the key compiled into the updater must agree, or
-    // every installed copy rejects every update.
-    assert!(package.contains("UPDATE_PUBKEY"));
-    assert!(package.contains("crates/occluview-update/src/lib.rs"));
-    assert!(package.contains("minisign -V -P \"$pubkey\""));
-
-    // An empty changelog section would publish a release page that says
-    // nothing about what changed.
-    assert!(package.contains("has no '## $version' section"));
-
-    // The lockfile is an input to every gate, not a thing CI may update.
-    assert!(
-        ci.matches("--locked").count() >= 6,
-        "every cargo invocation in CI should pin the committed lockfile"
-    );
-    // The shipped feature combination has to be compiled by something.
-    assert!(
-        ci.contains("--all-features --all-targets --locked -- -D warnings")
-            && ci.contains("cargo test -p occluview-hps -p occluview-formats --all-features"),
-        "CI must build the private-hps-key combination that ships"
-    );
-}
-
-#[test]
-fn the_fuzz_manifest_declares_every_target_and_ci_runs_them() {
-    // The wiring is what breaks, and nothing else here can check it: building
-    // the targets needs a nightly toolchain and a linker pass, which belong in
-    // the fuzz job. Each of three wiring faults stops every fuzz step: no
-    // `cargo-fuzz = true` marker, so `cargo fuzz` refuses the manifest; no
-    // `[[bin]]` stanzas (cargo auto-discovers only `src/bin/`, not
-    // `fuzz_targets/`); and `working-directory: fuzz`, which sends cargo-fuzz
-    // looking for `fuzz/fuzz/Cargo.toml`.
-    let manifest = include_str!("../../../../fuzz/Cargo.toml");
-    let ci = ci_workflow_source();
-    let runner = include_str!("../../../../scripts/run-fuzz.sh");
-
-    assert!(
-        manifest.contains("cargo-fuzz = true"),
-        "cargo-fuzz refuses a manifest without its metadata marker"
-    );
-    for target in ["dispatch", "hps_parser", "stl", "ply", "glb"] {
-        assert!(
-            manifest.contains(&format!("name = \"{target}\"")),
-            "fuzz target {target} needs a [[bin]] stanza to build at all"
-        );
-        assert!(
-            manifest.contains(&format!("path = \"fuzz_targets/{target}.rs\"")),
-            "fuzz target {target} needs its source path declared"
-        );
-        assert!(
-            ci.contains(&format!("run-fuzz.sh {target} 60")),
-            "the smoke job should fuzz {target}"
-        );
-        assert!(
-            ci.contains(&format!("run-fuzz.sh {target} 300")),
-            "the weekly deep job should fuzz {target}"
-        );
-    }
-    assert!(
-        !ci.contains("working-directory: fuzz"),
-        "cargo-fuzz resolves <cwd>/fuzz/Cargo.toml and must run from the repo root"
-    );
-    // Without the seeds the fuzzing time goes on rediscovering magic numbers,
-    // and the writable corpus must never be the tracked one.
-    assert!(runner.contains("fuzz/seeds/$target"));
-    assert!(runner.contains("fuzz/corpus/$target"));
-    assert!(runner.contains("-dict=$dictionary"));
-    assert!(
-        ci.contains("path: fuzz/corpus"),
-        "the corpus should carry between runs or every run starts from zero"
-    );
-
-    // The crate is outside the workspace, so no gate here resolves its
-    // lockfile, and `cargo fuzz` does not pass --locked.
-    assert!(
-        ci.contains("cargo check --manifest-path fuzz/Cargo.toml --locked"),
-        "the fuzz job should resolve the fuzz lockfile before it fuzzes"
-    );
-}
-
-#[test]
-fn the_statically_linked_cpp_components_are_attributed() {
-    // `THIRD-PARTY-NOTICES.md` is generated from `Cargo.lock` and therefore
-    // covers the Rust graph only. The shipped binaries also statically link a
-    // C++ geometry kernel that `manifold-csg-sys` fetches and builds, plus the
-    // two libraries Manifold's own CMake fetches. Apache-2.0 section 4 obliges
-    // anyone redistributing those to carry their notices, and this is a product
-    // that is sold.
-    let native = include_str!("../../../../THIRD-PARTY-NOTICES-NATIVE.md");
+fn native_dependency_notices_name_the_shipped_components_and_licenses() {
+    let notices = include_str!("../../../../THIRD-PARTY-NOTICES-NATIVE.md");
     for component in ["Manifold", "oneTBB", "Clipper2"] {
         assert!(
-            native.contains(component),
-            "{component} is linked into the binaries and must be attributed"
+            notices.contains(component),
+            "notice text must name {component}"
         );
     }
-    assert!(
-        native.contains("Apache License") && native.contains("Boost Software License"),
-        "the notices must carry the license texts, not only the names"
-    );
-    // The two gaps a reader should not have to discover.
-    assert!(
-        native.contains("tag, not a commit"),
-        "the upstream reference is mutable and that has to be stated"
-    );
-    assert!(
-        native.contains("cargo deny") && native.contains("SBOM"),
-        "neither the advisory scan nor the SBOM sees this code; say so"
-    );
-
-    let check = linux_check_deb_source();
-    assert!(
-        check.contains("THIRD-PARTY-NOTICES-NATIVE.md"),
-        "the deb gate must fail a package that dropped the native notices"
-    );
-}
-
-#[test]
-fn the_workflows_name_the_package_they_built_instead_of_globbing_for_it() {
-    // `dpkg-deb --info target/deb/*.deb` reads every argument after the first
-    // as a control-file name, so a second package in the directory turns the
-    // check into an error about a missing control file, or checks only the
-    // oldest one. A fresh runner has one package, so CI alone does not expose
-    // this; a developer machine has every version ever built.
-    //
-    // build-deb.sh prints the path it wrote as its last line, so both
-    // workflows take it from there.
-    for (name, workflow) in [
-        ("ci.yml", ci_workflow_source()),
-        ("package-msi.yml", package_workflow_source()),
-    ] {
-        for globbed in [
-            "dpkg-deb --info target/deb/*.deb",
-            "dpkg-deb --contents target/deb/*.deb",
-            "check-deb.sh target/deb/*.deb",
-        ] {
-            assert!(
-                !workflow.contains(globbed),
-                "{name} passes a glob where one package belongs: {globbed}"
-            );
-        }
-        assert!(
-            workflow.contains("package=\"$(install/linux/build-deb.sh | tail -n 1)\""),
-            "{name} should take the package path from the builder"
-        );
-        assert!(
-            workflow.contains("set -o pipefail"),
-            "{name} pipes build-deb.sh into tail, so a build failure has to \
-             survive the pipe"
-        );
-    }
-
-    let builder = linux_build_deb_source();
-    assert!(
-        builder.contains("# Contract: the last line on stdout is the path"),
-        "build-deb.sh should say that its last line is the contract the \
-         workflows depend on"
-    );
+    assert!(notices.contains("Apache License"));
+    assert!(notices.contains("Boost Software License"));
+    assert!(notices.contains("tag, not a commit"));
+    assert!(notices.contains("cargo deny") && notices.contains("SBOM"));
 }

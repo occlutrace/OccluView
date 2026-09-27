@@ -94,6 +94,17 @@ fn camera_looking_at_origin() -> GpuCamera {
     )
 }
 
+fn camera_looking_from_negative_z() -> GpuCamera {
+    let view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, -2.0), Vec3::ZERO, Vec3::Y);
+    let proj = Mat4::perspective_rh(45.0_f32.to_radians(), 4.0 / 3.0, 0.1, 100.0);
+    GpuCamera::new(
+        view,
+        proj,
+        Vec3::new(0.0, 0.0, -1.0),
+        Vec3::new(0.0, 0.0, -2.0),
+    )
+}
+
 fn identity_uniform() -> GpuMeshUniform {
     GpuMeshUniform {
         model: [
@@ -120,6 +131,23 @@ fn pixel_luma(pixel: &[u8]) -> i32 {
 fn pixel_at(pixels: &[u8], width: usize, x: usize, y: usize) -> &[u8] {
     let start = (y * width + x) * 4;
     &pixels[start..start + 4]
+}
+
+fn render_lighting_view(
+    offscreen: &Offscreen,
+    prepared: &PreparedScene,
+    camera: &GpuCamera,
+) -> Vec<u8> {
+    pollster::block_on(offscreen.render_prepared_viewport_with_deadline(
+        prepared,
+        camera,
+        ViewportSpec {
+            size_px: [96, 64],
+            background: [0.039, 0.039, 0.039, 1.0],
+        },
+        test_render_deadline(),
+    ))
+    .expect("render orbit lighting view")
 }
 
 fn pixel_delta_sum(left: &[u8], right: &[u8]) -> u64 {
@@ -607,6 +635,39 @@ fn studio_material_lights_opposite_normals_evenly() {
         (pixel_luma(front) - pixel_luma(back)).abs() < 24,
         "opposite normals must light evenly with no half-shadow tint: front={front:?} back={back:?}"
     );
+}
+
+#[test]
+fn studio_material_keeps_both_sides_readable_while_orbiting() {
+    let _gpu = gpu_test_lock();
+    let mesh = opposite_normal_triangles();
+    let offscreen = pollster::block_on(Offscreen::new()).expect("offscreen init");
+    let prepared = offscreen.prepare_scene(&[PreparedSceneSource {
+        mesh: &mesh,
+        uniform: identity_uniform(),
+        visible: true,
+        wireframe: false,
+        contact: None,
+    }]);
+
+    for (view, pixels) in [
+        (
+            "positive z",
+            render_lighting_view(&offscreen, &prepared, &camera_looking_at_origin()),
+        ),
+        (
+            "negative z",
+            render_lighting_view(&offscreen, &prepared, &camera_looking_from_negative_z()),
+        ),
+    ] {
+        for (x, side) in [(29, "left"), (66, "right")] {
+            let pixel = pixel_at(&pixels, 96, x, 36);
+            assert!(
+                pixel_luma(pixel) > 200,
+                "{side} surface must stay readable from {view}: pixel={pixel:?}"
+            );
+        }
+    }
 }
 
 #[test]
