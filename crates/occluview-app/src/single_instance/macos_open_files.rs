@@ -12,7 +12,7 @@
 
 use objc2::ffi;
 use objc2::rc::Retained;
-use objc2::runtime::{AnyClass, AnyObject, ClassBuilder, Imp, Sel};
+use objc2::runtime::{AnyClass, AnyObject, Imp, Sel};
 use objc2::{define_class, msg_send, sel, ClassType, MainThreadMarker, MainThreadOnly, Message};
 use objc2_app_kit::{
     NSApplication, NSApplicationDelegateReply, NSApplicationWillFinishLaunchingNotification,
@@ -146,7 +146,8 @@ fn install_now() {
         return;
     };
 
-    match add_open_methods(delegate.class()) {
+    let delegate_object: &AnyObject = delegate.as_ref().as_ref();
+    match add_open_methods(delegate_object.class()) {
         Ok(()) => tracing::info!("installed Finder document-open callbacks on winit delegate"),
         Err(reason) => {
             tracing::warn!(reason, "Finder document-open callbacks were not installed");
@@ -237,6 +238,7 @@ unsafe extern "C-unwind" fn application_open_files(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use objc2::runtime::ClassBuilder;
 
     #[test]
     fn finder_open_methods_keep_the_appkit_callback_encoding() {
