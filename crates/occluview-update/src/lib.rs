@@ -17,7 +17,6 @@
 )]
 
 use std::collections::BTreeMap;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -248,10 +247,7 @@ pub fn download_with(
         .as_ref()
         .ok_or(UpdateError::NoPlatformAsset)?;
     let agent = agent();
-    let response = agent
-        .get(&artifact.url)
-        .call()
-        .map_err(|error| UpdateError::Http(error.to_string()))?;
+    let response = call_get(&agent, &artifact.url)?;
 
     // The file name comes out of a downloaded manifest, so it is attacker-shaped
     // input even after the signature check: whoever can publish a manifest can
@@ -496,32 +492,55 @@ pub fn launch_installer(installer: &Path) -> Result<(), UpdateError> {
 }
 
 fn agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
-        .timeout(HTTP_TIMEOUT)
+    let config = ureq::Agent::config_builder()
+        .timeout_global(Some(HTTP_TIMEOUT))
+        .max_redirects(5)
         // Everything here is signature-checked, so this is not what keeps a
         // bad artifact out. It keeps the promise SECURITY.md makes -- two
         // ordinary HTTPS GETs -- independent of whether a manifest carries an
-        // http URL or a host answers with a redirect to one. ureq follows five
-        // redirects by default and would follow that one.
+        // http URL or a host answers with a redirect to one. The restriction
+        // applies to every redirect hop.
         //
         // Relaxed only for this crate's own tests, whose fixture server is a
         // loopback listener with no certificate.
         .https_only(!cfg!(test))
         .user_agent(concat!("occluview-update/", env!("CARGO_PKG_VERSION")))
-        .build()
+        .build();
+    ureq::Agent::new_with_config(config)
+}
+
+fn call_get(agent: &ureq::Agent, url: &str) -> Result<ureq::Response, UpdateError> {
+    let response = match agent.get(url).call() {
+        Err(error) if connection_closed(&error) => agent.get(url).call(),
+        result => result,
+    };
+    response.map_err(|error| UpdateError::Http(error.to_string()))
+}
+
+fn connection_closed(error: &ureq::Error) -> bool {
+    matches!(
+        error,
+        ureq::Error::Io(source)
+            if matches!(
+                source.kind(),
+                std::io::ErrorKind::ConnectionAborted | std::io::ErrorKind::ConnectionReset
+            )
+    )
 }
 
 fn fetch_bytes(agent: &ureq::Agent, url: &str, limit: u64) -> Result<Vec<u8>, UpdateError> {
-    let response = agent
-        .get(url)
-        .call()
+    let response = call_get(agent, url)?;
+    let bytes = response
+        .into_body()
+        .into_with_config()
+        .limit(limit.saturating_add(1))
+        .read_to_vec()
         .map_err(|error| UpdateError::Http(error.to_string()))?;
-    let mut bytes = Vec::new();
-    response
-        .into_reader()
-        .take(limit)
-        .read_to_end(&mut bytes)
-        .map_err(UpdateError::Io)?;
+    if bytes.len() > usize::try_from(limit).unwrap_or(usize::MAX) {
+        return Err(UpdateError::Http(format!(
+            "response exceeds the {limit}-byte limit"
+        )));
+    }
     Ok(bytes)
 }
 
