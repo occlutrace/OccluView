@@ -45,7 +45,7 @@ pub(super) struct DocumentState {
     /// restores the most recently hidden one (LIFO).
     pub(super) hidden_layer_stack: Vec<SceneMeshId>,
     /// Original opacity of layers made translucent via Shift+MiddleClick, so a
-    /// second toggle restores exactly the previous value.
+    /// second toggle restores the original value.
     pub(super) translucent_layer_restore: std::collections::HashMap<SceneMeshId, f32>,
     pub(super) mesh_selection_drag: Option<MeshSelectionDrag>,
     pub(super) active_load: Option<PendingSceneLoad>,
@@ -157,7 +157,7 @@ impl DocumentState {
 
     /// Record that `layer_id` now differs from what was loaded from disk.
     /// Every mesh-edit success path (including undo/redo) routes through here
-    /// so the save flow knows exactly which layers to offer for export.
+    /// so the save flow knows which layers to offer for export.
     pub(super) fn mark_mesh_edits_unsaved(&mut self, layer_id: SceneMeshId) {
         self.content_revision = self.content_revision.wrapping_add(1);
         self.unsaved_edit_layer_ids.insert(layer_id);

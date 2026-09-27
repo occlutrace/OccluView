@@ -1,16 +1,17 @@
 //! Pure geometry bridging the wall-thickness probe and the Section view.
 //!
 //! Two stateless, unit-tested pieces:
-//!   * [`disc_pose_through_chord`] — the cross-section plane for feature D. Given
-//!     a probe chord (entry -> exit through a wall), it builds a world cut disc
-//!     whose plane CONTAINS the chord, so the wall reads edge-on in the section
-//!     panel with the chord crossing it. Deterministic; safe on a degenerate or
-//!     non-finite chord (returns `None`, so the caller never auto-plants).
-//!   * [`slice_wall_thickness`] / [`wall_thickness_2d`] — feature E's one-click
+//!   * [`disc_pose_through_chord`] — the cross-section plane through a probe
+//!     chord. Given a chord (entry -> exit through a wall), it builds a world
+//!     cut disc whose plane contains the chord, so the wall reads edge-on in the
+//!     section panel with the chord crossing it. Deterministic; safe on a
+//!     degenerate or non-finite chord (returns `None`, so the caller never
+//!     auto-plants).
+//!   * [`slice_wall_thickness`] / [`wall_thickness_2d`] — the one-click
 //!     in-slice probe. From a click on the section contour it casts a ray along
 //!     the local contour normal to the true nearest opposite segment (exact
 //!     segment intersection, not a vertex), reporting the in-slice wall
-//!     thickness. Honest `None` when nothing is hit.
+//!     thickness. `None` when nothing is hit.
 
 use crate::cut_manipulator::{DiscPose, MAX_DISC_RADIUS_MM, MIN_DISC_RADIUS_MM};
 use glam::{Vec2, Vec3};
@@ -27,7 +28,7 @@ const RADIUS_PER_THICKNESS: f32 = 4.0;
 
 /// Build a world cut disc whose plane contains the probe chord `entry -> exit`.
 ///
-/// The plane normal is perpendicular to the chord (so the plane CONTAINS it and
+/// The plane normal is perpendicular to the chord (so the plane contains it and
 /// both endpoints lie on it), oriented deterministically: `chord x ref`, where
 /// `ref` is the world axis least parallel to the chord (a stable tie-break).
 /// The disc is centered on `entry` and sized from the wall thickness, capped by
@@ -133,7 +134,7 @@ pub(crate) struct WallProbe2d {
 /// Pure 2D one-click wall probe.
 ///
 /// Snaps `click` to the nearest contour segment (the origin), then casts a ray
-/// along both segment-normal directions and keeps the NEAREST crossing with any
+/// along both segment-normal directions and keeps the nearest crossing with any
 /// other segment (exact ray-segment intersection). For a real wall the nearest
 /// crossing is the opposite face, so the reading is the local wall thickness.
 /// `None` when there is no segment to snap to or no opposite edge is hit.
@@ -238,7 +239,7 @@ mod tests {
     #![allow(clippy::float_cmp, clippy::expect_used)]
     use super::*;
 
-    // ---- disc_pose_through_chord (feature D plane) -------------------------
+    // ---- disc_pose_through_chord (probe-chord plane) -----------------------
 
     #[test]
     fn plane_contains_the_chord_and_centers_on_entry() {
@@ -247,7 +248,7 @@ mod tests {
         let pose = disc_pose_through_chord(entry, exit, 40.0).expect("pose");
         assert_eq!(pose.center, entry, "disc centers on the entry point");
         // Plane contains the chord: its normal is perpendicular to entry->exit,
-        // and BOTH endpoints lie on the plane through `center`.
+        // and both endpoints lie on the plane through `center`.
         let chord = exit - entry;
         assert!(
             pose.plane_normal.dot(chord).abs() < 1.0e-5,
@@ -298,7 +299,7 @@ mod tests {
         assert!(capped.radius_mm >= MIN_DISC_RADIUS_MM);
     }
 
-    // ---- wall_thickness_2d (feature E in-slice probe) ----------------------
+    // ---- wall_thickness_2d (in-slice probe) --------------------------------
 
     /// Two parallel horizontal walls 2 mm apart, each spanning x in [0, 10].
     fn parallel_walls() -> Vec<(Vec2, Vec2)> {
@@ -336,7 +337,7 @@ mod tests {
     #[test]
     fn in_slice_probe_picks_the_true_nearest_opposite_segment() {
         // Click on the horizontal leg near x=3: entry (3,0). Casting +y hits the
-        // far wall at (3,6) => 6 mm. The vertical leg (the OTHER near segment)
+        // far wall at (3,6) => 6 mm. The vertical leg (the other near segment)
         // is skipped as it is parallel to the ray, and the reading is the exact
         // segment intersection, not the nearest vertex.
         let probe = wall_thickness_2d(Vec2::new(3.0, 0.1), &l_with_far_wall()).expect("probe");

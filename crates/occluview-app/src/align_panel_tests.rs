@@ -36,8 +36,7 @@ fn previously_opened_align_window_reanchors_after_narrowing() {
 ///
 /// The window is checked through the widgets it actually produced, not through
 /// its source: AccessKit is what a screen reader sees, so a control that is
-/// drawn but never registered is missing for exactly the operator who cannot
-/// see it either.
+/// drawn but never registered is missing for a screen-reader user.
 fn panel_control_labels(
     ctx: &egui::Context,
     tab: super::AlignTab,
@@ -154,10 +153,9 @@ fn the_exclusion_brush_is_offered_on_the_automatic_tab_only() {
 /// mid-flight would describe a different match than the one that lands.
 ///
 /// Drives the real `facing` control through egui and reads the disabled state
-/// back from the produced widget tree, which is stronger than the source-text
-/// check this replaced. The panel-level AccessKit node for a window does not
-/// surface per-control disabled state on this egui version, so the check runs
-/// at the control the panel delegates to.
+/// back from the produced widget tree. The panel-level AccessKit node for a
+/// window does not surface per-control disabled state on this egui version, so
+/// the check runs at the control the panel delegates to.
 #[test]
 fn the_orientation_rule_is_disabled_while_a_fit_runs() {
     use occluview_align::Orientation;

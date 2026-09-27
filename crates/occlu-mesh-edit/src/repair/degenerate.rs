@@ -6,8 +6,8 @@ use super::RepairReport;
 use crate::{EditVertex, MeshEditBuffers};
 
 /// A triangle counts as zero-area when the sine of its sharpest wedge falls
-/// below this — RELATIVE to its own edge lengths, so tiny-but-healthy
-/// triangles on fine scans survive while true slivers of any scale die.
+/// below this — relative to its own edge lengths, so tiny-but-healthy
+/// triangles on fine scans survive while true slivers of any scale are dropped.
 const DEGENERATE_SIN: f64 = 1e-5;
 
 /// Pass 2: drop triangles with repeated indices (post-weld) or relatively

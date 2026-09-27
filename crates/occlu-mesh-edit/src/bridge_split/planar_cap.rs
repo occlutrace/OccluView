@@ -369,7 +369,7 @@ fn boundaries_intersect(left: &[Point2], right: &[Point2]) -> bool {
     false
 }
 
-/// Segment PAIRS the self-crossing test may compare on one cut loop.
+/// Segment pairs the self-crossing test may compare on one cut loop.
 ///
 /// The test is quadratic and the cut rim scales with scan triangle density
 /// inside the disc, with no ceiling on its length, so a dense enough scan could

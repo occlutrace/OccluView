@@ -1,8 +1,4 @@
-//! PROOF tests for [`crate::deviation`].
-//!
-//! Split out under `#[path]` rather than left inline: the module they cover is
-//! already at the file-size budget, and a proof suite that cannot grow is a
-//! proof suite that stops being written.
+//! Tests for [`crate::deviation`].
 #![allow(clippy::expect_used)]
 
 use super::{
@@ -291,9 +287,8 @@ fn the_shared_ramp_defaults_to_absolute_deviation() {
     assert_eq!(RampSettings::default().mode, RampMode::Magnitude);
 }
 
-/// The two assertions the "always blue" report needed. A ramp that never
-/// leaves its first stop looks exactly like a correct one at the origin,
-/// so checking the ends is not enough: this walks the whole scale and
+/// A ramp that never leaves its first stop looks like a correct one at the
+/// origin, so checking the ends is not enough: this walks the whole scale and
 /// requires the hue to actually pass through cyan, green and yellow on its
 /// way to red, and requires the two hot/cold channels to move
 /// monotonically so no stop is skipped or visited twice.
@@ -305,10 +300,10 @@ fn the_magnitude_ramp_walks_blue_cyan_green_yellow_red_across_the_scale() {
     };
     let at = |position: f64| ramp_color(position * ramp.scale_mm, &ramp);
 
-    // The channel bounds are loose because the stops are deliberately
-    // pulled in from the pure extremes: a ramp built from 0 and 255 turns
-    // to ink and scab the moment the shader multiplies it by any light.
-    // What is being pinned here is the WALK, not a particular blue.
+    // The channel bounds are loose because the stops are pulled in from the
+    // pure extremes: a ramp built from 0 and 255 loses its shading as soon as
+    // the shader multiplies it by any light. This checks the walk, not a
+    // particular blue.
     let (mut cyan, mut green, mut yellow, mut red) = (false, false, false, false);
     let mut previous = at(0.0);
     assert!(
@@ -433,8 +428,8 @@ fn a_tolerance_wider_than_the_range_still_leaves_a_ramp() {
 }
 
 /// A rough two-point fit really does leave arches millimetres apart. A
-/// suggestion capped at a clinical number pins every vertex to an end stop,
-/// which is the saturated mosaic the operator reported.
+/// suggestion capped at a clinical number pins every vertex to an end stop
+/// and paints a saturated mosaic.
 #[test]
 fn the_suggested_scale_follows_a_badly_aligned_pair_instead_of_capping() {
     let summary = DeviationSummary {
@@ -544,8 +539,8 @@ fn fewer_than_min_measured_yields_none_and_the_floor_itself_yields_some() {
 /// One colour on screen, and the operator's next move differs for each: a region
 /// they painted out is what they asked for, a region with nothing opposite it is
 /// anatomy that no reach will fix, and a broken vertex is a defect in the file.
-/// Reported as one lump total, "4 vertices had nothing to measure" said all three
-/// at once and none of them usefully.
+/// One total such as "4 vertices had nothing to measure" states all three at
+/// once and none of them usefully.
 #[test]
 fn every_reason_a_vertex_is_grey_is_counted_on_its_own() {
     let map = DeviationMap {
@@ -571,7 +566,7 @@ fn every_reason_a_vertex_is_grey_is_counted_on_its_own() {
 }
 
 /// The count is kept even when there is too little measured surface to summarise
-/// — that is exactly the case where the operator needs to know why.
+/// — that is the case where the operator needs to know why.
 #[test]
 fn the_reasons_survive_a_measurement_too_small_to_summarise() {
     let map = DeviationMap {

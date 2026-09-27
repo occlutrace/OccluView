@@ -6,8 +6,8 @@
 //! (the case viewer does; a technician reads the bite from whichever side is
 //! facing them) has both fields from one call. The two indices are built one at
 //! a time and dropped before the next is built: a million-vertex scan pair
-//! holds two grids from the same memory budget, and the peak is what decides
-//! whether a laptop finishes this or dies trying.
+//! holds two grids from the same memory budget, and the peak decides whether a
+//! laptop can finish this without running out of memory.
 //!
 //! # The value
 //!
@@ -108,8 +108,8 @@ pub struct ContactField {
 ///
 /// Both are [`Soup`] — indexed triangles — and their normals come from winding
 /// rather than from imported vertex normals, so the sign describes the geometry
-/// on screen. The caller composes layer transforms itself, exactly as the align
-/// job does: this crate never sees a layer, so it can never disagree with the
+/// on screen. The caller composes layer transforms itself, as the align job
+/// does: this crate never sees a layer, so it can never disagree with the
 /// renderer about where a scan is.
 pub fn compute_contact_field(
     subject: Soup<'_>,

@@ -22,9 +22,9 @@
 //! This is nearest-surface distance, not material overlap. A scan pair whose
 //! two arches sit 0.1 mm apart reads 0.1 mm on both sides; a vertex 0.7 mm
 //! inside the antagonist reads nothing at all, because [`SEARCH_RADIUS_MM`] is
-//! 0.6 mm — deliberately, since the probe pays for its own radius on every
-//! vertex. That reach is twice the ramp's saturation depth, so the only thing
-//! it hides is overclosure no bite poses produce.
+//! 0.6 mm: the probe pays for its own radius on every vertex, so the reach is
+//! kept short. It is above every law's saturation depth, so the only thing it
+//! hides is overclosure no bite poses produce.
 //!
 //! The sign follows the *opposing* surface's winding, so an antagonist with
 //! inverted normals turns gaps into penetrations and back. This is a property
@@ -34,7 +34,7 @@
 //! # Geometry contract
 //!
 //! Inputs are [`occluview_align::Soup`]: indexed triangles in world space. The
-//! caller bakes layer poses in before calling, exactly as the align job does,
+//! caller bakes layer poses in before calling, as the align job does,
 //! and the search index derives triangle normals from winding rather than from
 //! imported vertex normals — so the sign uses the geometry that is on screen
 //! rather than whatever the file claimed.
@@ -48,22 +48,19 @@
 //! ([`TIGHTNESS`], [`CLINICAL`]), the paint gate and the GPU tables all travel
 //! together.
 //!
-//! There are three gates over the same signed field and they are deliberately
-//! different widths: [`ContactScale::is_painted`] (the hover readout and its
-//! swatch), the shader's own painted weight (what reaches the screen), and
-//! the area/contact counters' touch dead-band (see `stats`). This module used
-//! to call `is_painted` "the single predicate" they all share, which was never
-//! true
-//! after the measurement gate was widened to stop the counters falling short by
-//! a feather's width.
+//! There are three gates over the same signed field, and they have different
+//! widths: [`ContactScale::is_painted`] (the hover readout and its swatch), the
+//! shader's own painted weight (what reaches the screen), and the area/contact
+//! counters' touch dead-band (see `stats`). They are not one shared predicate:
+//! the measurement gate is wider so the counters do not fall short by a
+//! feather's width.
 //!
-//! Painting happens per FRAGMENT from the table [`ContactScale::stop_table`]
+//! Painting happens per fragment from the table [`ContactScale::stop_table`]
 //! compiles, never per vertex: the field is linear across a triangle and the
 //! ramp is not, so a per-vertex colour would smear the ramp across whole
 //! triangles and put the edge of the painted band wherever the tessellation
 //! happened to fall. The shader re-runs the same interpolation over the same
-//! numbers, which is the only reason a CPU readout and a GPU pixel can be
-//! expected to agree.
+//! numbers, so a CPU readout and a GPU pixel agree.
 
 mod components;
 mod field;
@@ -98,16 +95,15 @@ pub const NO_CONTACT_MM: f32 = f32::INFINITY;
 /// A vertex deeper inside the antagonist than this reach finds no surface and
 /// falls back to [`NO_CONTACT_MM`], which paints as clean, bare tooth in the
 /// middle of a strong interference mark — a "donut hole". The reach is therefore
-/// also the deepest depth the field can REPORT, and `ContactScale::stop_mm`
+/// also the deepest depth the field can report, and `ContactScale::stop_mm`
 /// clamps the scaled ramp at it so no colour is drawn at a depth the probe
 /// cannot deliver.
 ///
-/// The number is a compromise, and the doc used to state it wrongly ("twice the
-/// saturation depth", when 0.6 is 1.2 x the widest `clamp_mm` of 0.5). It is set
-/// above every law's saturation depth so an interference inside the ramp's usable
-/// range is never sentinelled, and low enough that a vertex in the occlusal band
-/// does not pay a long probe time. Deep overclosure past this reach is
-/// deliberately a garbage-pose reading.
+/// The number is a compromise: 0.6 mm is 1.2 x the widest `clamp_mm` (0.5 mm),
+/// above every law's saturation depth so an interference inside the ramp's
+/// usable range is never sentinelled, and low enough that a vertex in the
+/// occlusal band does not pay a long probe time. Deep overclosure past this
+/// reach is treated as a garbage-pose reading.
 pub const SEARCH_RADIUS_MM: f64 = 0.6;
 
 /// Sign dead-band, in millimetres.

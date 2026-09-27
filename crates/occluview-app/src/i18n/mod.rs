@@ -25,6 +25,33 @@ fn missing_marker(id: &str) -> String {
     format!("⟦{id}⟧")
 }
 
+/// Render the command modifier with the platform's actual key name.
+///
+/// The catalogs keep Ctrl/Strg terminology for Windows and Linux; macOS binds
+/// these shortcuts to Command, so every localized tooltip and status message
+/// uses the native ⌘ glyph instead.
+pub(crate) fn platform_shortcut_text(text: &str) -> String {
+    #[cfg(target_os = "macos")]
+    {
+        let mut rendered = text.to_owned();
+        for (source, native) in [
+            ("Ctrl/Command", "⌘"),
+            ("Ctrl/Cmd", "⌘"),
+            ("Strg/Command", "⌘"),
+            ("Strg/Cmd", "⌘"),
+            ("Ctrl", "⌘"),
+            ("Strg", "⌘"),
+        ] {
+            rendered = rendered.replace(source, native);
+        }
+        rendered
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        text.to_owned()
+    }
+}
+
 /// Catalog key for the native window title.
 pub(crate) const NATIVE_TITLE_KEY: &str = "app-window-title";
 
@@ -208,10 +235,10 @@ impl LocaleManager {
     /// Localized text with Fluent arguments.
     pub(crate) fn text_with(&self, id: &str, args: Option<&FluentArgs<'_>>) -> String {
         if let Some(rendered) = self.active_catalog().format(id, args) {
-            return rendered;
+            return platform_shortcut_text(&rendered);
         }
         if let Some(rendered) = self.fallback.format(id, args) {
-            return rendered;
+            return platform_shortcut_text(&rendered);
         }
         missing_marker(id)
     }
@@ -234,6 +261,29 @@ mod tests {
     }
 
     #[test]
+    fn localized_shortcuts_use_the_host_command_modifier() {
+        let (mut manager, _) = LocaleManager::startup(None, &Fixed(vec!["en"]));
+        for tag in ["en", "de", "es", "fr", "it", "pt-BR", "ru"] {
+            manager.set_preference(UiLanguagePreference::Explicit(tag));
+            let hint = manager.text("help-hintline-align");
+            if cfg!(target_os = "macos") {
+                assert!(
+                    hint.contains('⌘'),
+                    "{tag} hint did not show Command: {hint}"
+                );
+                assert!(!hint.contains("Ctrl"), "{tag} hint retained Ctrl: {hint}");
+                assert!(!hint.contains("Strg"), "{tag} hint retained Strg: {hint}");
+            } else {
+                assert!(
+                    hint.contains("Ctrl") || hint.contains("Strg"),
+                    "{tag} hint lost its PC modifier: {hint}"
+                );
+                assert!(!hint.contains('⌘'), "{tag} hint showed a Mac glyph: {hint}");
+            }
+        }
+    }
+
+    #[test]
     fn auto_cold_launch_resolves_os_language() {
         let source = Fixed(vec!["de-DE"]);
         let (manager, snapshot) = LocaleManager::startup(None, &source);
@@ -246,7 +296,7 @@ mod tests {
 
     #[test]
     fn unavailable_catalog_renders_english_keeping_tag() {
-        // `ja` is known but not embedded (CJK waits for the font spike).
+        // `ja` is known but not embedded (CJK needs a bundled font).
         let source = Fixed(vec!["ja-JP"]);
         let (manager, snapshot) = LocaleManager::startup(None, &source);
         assert_eq!(snapshot.active_tag, "ja");
@@ -364,11 +414,10 @@ mod tests {
 
     #[test]
     fn pseudo_spot_checks_bracket_single_line_keys() {
-        // Superseded in coverage by `pseudo_locale_covers_every_embedded_key`
-        // in catalog.rs; kept as a readable spot check with exact rendering.
+        // A readable spot check with exact rendering; full coverage is
+        // `pseudo_locale_covers_every_embedded_key` in catalog.rs.
         let pseudo = Catalog::pseudo().expect("pseudo builds");
-        // `app-title` was a key nothing resolved; the live title key is
-        // `app-window-title` (`NATIVE_TITLE_KEY`).
+        // The window title key is `app-window-title` (`NATIVE_TITLE_KEY`).
         for key in ["app-window-title", "settings-shortcuts", "about-tagline"] {
             let rendered = pseudo.text(key).unwrap_or_else(|| key.to_owned());
             assert!(

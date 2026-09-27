@@ -328,11 +328,11 @@ mod tests {
 
     #[test]
     fn far_affine_layer_contour_stays_on_the_world_plane() {
-        // Regression for the f64 world→local plane pull-back. A rotated,
-        // non-uniformly scaled, far-translated layer must still yield a contour
-        // that lies on the world section plane. Computed in f32, the `d - n·t`
-        // term cancels catastrophically and the contour drifts ~0.1 unit
-        // off-plane; in f64 it stays exact.
+        // Covers the f64 world→local plane pull-back. A rotated, non-uniformly
+        // scaled, far-translated layer must still yield a contour that lies on
+        // the world section plane. Computed in f32, the `d - n·t` term cancels
+        // catastrophically and the contour drifts ~0.1 unit off-plane; in f64
+        // it stays exact.
         use glam::Quat;
         let scale = Vec3::new(3.0, 7.0, 2.0);
         let rot = Quat::from_axis_angle(Vec3::new(0.3, 0.8, 0.5).normalize(), 0.9);
@@ -358,7 +358,7 @@ mod tests {
         }
         assert!(
             max_off < 1.0e-3,
-            "contour drifted {max_off} off the world plane (f32 cancellation regression)"
+            "contour drifted {max_off} off the world plane (f32 cancellation)"
         );
     }
 }

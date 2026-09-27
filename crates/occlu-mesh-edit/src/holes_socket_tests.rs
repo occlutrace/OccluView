@@ -124,7 +124,7 @@ fn open_edge_count(mesh: &MeshEditBuffers) -> usize {
 }
 
 /// The extracted-tooth workflow: delete then close. The socket must fully
-/// close with ZERO damaged rims, the nick triangles healed away.
+/// close with zero damaged rims, the nick triangles healed away.
 #[test]
 fn tooth_socket_close_heals_nicks_and_closes_the_socket() {
     let mesh = dome_with_tooth(140, 80);
@@ -171,7 +171,7 @@ fn tooth_socket_close_heals_nicks_and_closes_the_socket() {
     );
 }
 
-/// The socket rim is several hundred edges — past the old 256 min-area cap.
+/// The socket rim is several hundred edges — past the 256-edge min-area DP leaf.
 /// The hierarchical membrane must cap it, and the result must be a complete,
 /// internally manifold fan.
 #[test]
@@ -277,11 +277,11 @@ fn heal_boundary_rims_drops_lone_triangles_and_leaves_clean_meshes_alone() {
     );
 }
 
-/// Healing is OFF by default, so the existing (repair, default-option) callers
-/// keep the legacy walk: a lone-triangle nick is refused as damaged, not
-/// silently healed away.
+/// Healing is off by default, so repair and other default-option callers walk
+/// the unhealed rims: a lone-triangle nick is refused as damaged, not healed
+/// away.
 #[test]
-fn close_holes_without_healing_keeps_legacy_behavior() {
+fn close_holes_without_healing_refuses_lone_triangle_nick() {
     let mesh = MeshEditBuffers {
         vertices: vec![
             EditVertex::at([0.0, 0.0, 0.0]),
@@ -295,7 +295,7 @@ fn close_holes_without_healing_keeps_legacy_behavior() {
         .expect("fill")
         .report;
     assert_eq!(report.healed_rims, 0, "default options must not heal");
-    // A lone triangle's only cap is its reverse twin, so it is honestly refused.
+    // A lone triangle's only cap is its reverse twin, so it is refused.
     assert_eq!(report.filled_holes, 0);
 }
 
@@ -327,14 +327,14 @@ fn tooth_socket_close_is_deterministic() {
 }
 
 /// The 3D simplicity discriminator, driven by the local edge-scale tube, keeps
-/// an honest wiggly non-planar rim (highly non-uniform edge lengths, no
+/// a wiggly non-planar rim (highly non-uniform edge lengths, no
 /// self-approach) simple, while still refusing a genuine self-crossing.
 #[test]
-fn rim_simplicity_passes_honest_wiggles_and_catches_crossings() {
+fn rim_simplicity_passes_simple_wiggles_and_catches_crossings() {
     // A wavy, out-of-plane ring with strongly varying edge lengths (angular
-    // clustering + radius/height wiggle) but no self-approach: honest, simple.
+    // clustering + radius/height wiggle) but no self-approach: simple.
     let n = 60;
-    let honest: Vec<Vec3> = (0..n)
+    let wiggly: Vec<Vec3> = (0..n)
         .map(|k| {
             // Non-uniform angle → edge lengths span an order of magnitude, so
             // the local-scale tube (not a global mean) governs each pair.
@@ -345,8 +345,8 @@ fn rim_simplicity_passes_honest_wiggles_and_catches_crossings() {
         })
         .collect();
     assert!(
-        rim_is_simple_3d(&honest),
-        "an honest wiggly rim with non-uniform edges must stay simple"
+        rim_is_simple_3d(&wiggly),
+        "a wiggly rim with non-uniform edges must stay simple"
     );
 
     // A genuine hourglass crossing (edges 0-1 and 2-3 intersect) stays refused.
@@ -362,16 +362,15 @@ fn rim_simplicity_passes_honest_wiggles_and_catches_crossings() {
     );
 }
 
-/// Issue #9 regression: a rim well past the OLD 160-edge interpolation ceiling
-/// must still get the refined interpolated cap — not the raw min-area
-/// membrane, whose near-folded creases were the "sharp spike-like artifacts"
-/// a technician reported at the cap↔mesh transition after a lasso cut.
+/// A rim of more than 200 edges gets the refined interpolated cap, not the raw
+/// min-area membrane, whose near-folded creases show as sharp spike-like
+/// artifacts at the cap↔mesh transition after a lasso cut.
 /// Quality is asserted the way the artifact shows: via dihedral angles across
 /// the cap and its seam.
 #[test]
 fn large_rim_gets_interpolated_cap_without_spikes() {
-    // A dense curved sheet with a big round hole: the rim lands well past the
-    // retired 160-edge ceiling and stays far from the sheet's outer border, so
+    // A dense curved sheet with a big round hole: the rim has more than 200
+    // edges and stays far from the sheet's outer border, so
     // the whole-mesh path closes it while the border guard keeps the sheet
     // edge open.
     let (nu, nv) = (160, 110);
@@ -396,7 +395,7 @@ fn large_rim_gets_interpolated_cap_without_spikes() {
         .expect("cut a round hole")
         .mesh;
 
-    // Sanity: the rim really is past the old ceiling (the regression trigger).
+    // Sanity: the rim has more than 200 edges.
     let mut edge_use: HashMap<(u32, u32), i32> = HashMap::new();
     for t in cut.indices.as_chunks::<3>().0 {
         for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
@@ -428,12 +427,11 @@ fn large_rim_gets_interpolated_cap_without_spikes() {
     );
     assert!(
         result.mesh.vertices.len() > input_vertices,
-        "an interpolated cap generates interior vertices; a membrane (the old \
-         >160-edge behavior) generates none"
+        "an interpolated cap generates interior vertices; a membrane generates none"
     );
 
     // Spike metric, exactly how the artifact shows in a slicer: dihedral
-    // angles on every edge owned by at least one NEW (cap) triangle.
+    // angles on every edge owned by at least one new (cap) triangle.
     let positions: Vec<Vec3> = result
         .mesh
         .vertices

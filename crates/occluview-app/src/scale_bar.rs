@@ -13,10 +13,9 @@ impl ScaleBar {
     /// Pick a readable millimetre scale bar for a view at this scale.
     ///
     /// Takes the scale itself rather than the scene's size, because the two are
-    /// only equal for one instant: right after Fit view. This used to be derived
-    /// from the mesh's bounding box over the viewport width, which meant the bar
-    /// described the framing the scene had when it loaded and went on describing
-    /// it for the rest of the session, however far the operator zoomed.
+    /// only equal for one instant: right after Fit view. A bar derived from the
+    /// mesh's bounding box over the viewport width would keep describing the
+    /// load-time framing however far the operator zoomed.
     #[must_use]
     pub fn for_mm_per_px(mm_per_px: f32) -> Option<Self> {
         if !mm_per_px.is_finite() || mm_per_px <= 0.0 {
@@ -67,9 +66,8 @@ mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used, clippy::float_cmp)]
     use super::*;
 
-    /// Zooming changes the bar. It used to be built from the mesh's bounding box
-    /// over the viewport width, so it was right for the first frame after a file
-    /// opened and then described that framing for the rest of the session.
+    /// Zooming changes the bar: it follows the view scale, not the framing the
+    /// scene had when the file opened.
     #[test]
     fn a_closer_view_puts_fewer_millimetres_in_the_bar() {
         let wide = ScaleBar::for_mm_per_px(80.0 / 512.0).expect("a wide view");

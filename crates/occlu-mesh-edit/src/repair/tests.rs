@@ -308,7 +308,7 @@ fn open_sheet_gets_majority_fix_but_never_volume_flip() {
 
 #[test]
 fn tiny_distant_speck_is_dropped_as_debris() {
-    // The big component must dwarf the speck: 1 face < 2% of 162 faces AND
+    // The big component must dwarf the speck: 1 face < 2% of 162 faces and
     // the speck extent < 10% of the whole-mesh diagonal.
     let mut littered = grid(10);
     let base = littered.vertices.len() as u32;

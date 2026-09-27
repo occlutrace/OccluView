@@ -160,7 +160,7 @@ pub(super) fn read_color_f32(
             Ok(out)
         }
         5121 => {
-            // UNSIGNED_BYTE: the raw byte IS the 0..=255 channel we store.
+            // UNSIGNED_BYTE: the raw byte is the 0..=255 channel we store.
             let bytes = read_accessor_bytes(doc, acc_idx, comp_per_elem, bin_chunk)?;
             let mut out = Vec::with_capacity(acc.count);
             for i in 0..acc.count {
@@ -195,11 +195,10 @@ pub(super) fn read_indices(
         .get(acc_idx)
         .ok_or_else(|| malformed("accessor out of range"))?;
     // An index accessor must be SCALAR. Without this check a VEC3-declared
-    // accessor was read at a 4-byte stride out of 12-byte elements: the reader
-    // produced in-range garbage indices from the first component of every
-    // vector and built triangles from them, with no error. The component-type
-    // check right below was already here, so this is the missing half of the
-    // same validation.
+    // accessor would be read at a 4-byte stride out of 12-byte elements,
+    // producing in-range garbage indices from the first component of every
+    // vector and building triangles from them with no error. Together with the
+    // component-type check below, this validates the accessor's shape.
     if acc.type_ != "SCALAR" {
         return Err(malformed(&format!(
             "index accessor must be SCALAR, not {}",

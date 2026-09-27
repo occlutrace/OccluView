@@ -104,8 +104,7 @@ struct Readout<'a> {
     /// The exact colour the surface wears at this reading, or `None` when the
     /// reading is outside the painted band and the surface wears nothing there.
     accent: Option<egui::Color32>,
-    /// The operator's length unit, so this readout matches the ruler rather than
-    /// being the one measurement that ignores the preference.
+    /// The operator's length unit, so this readout matches the ruler.
     unit: ContactLengthUnit,
 }
 
@@ -126,9 +125,8 @@ fn paint_readout(ui: &mut egui::Ui, readout: Readout<'_>) {
         ContactReadingKind::Penetration => locale.tr("contact-readout-load"),
         ContactReadingKind::Gap => locale.tr("contact-readout-gap"),
     };
-    // The operator's length preference reaches this readout too: it used to be
-    // the only measurement in the app that ignored it, while the ruler, the
-    // thickness probe and the scale bar all follow it.
+    // The operator's length preference applies here as it does to the ruler,
+    // the thickness probe and the scale bar.
     let value = format!(
         "{label} {sign}{}",
         format_contact_value_in(reading.magnitude_mm, unit)

@@ -2,10 +2,10 @@
 //!
 //! A single vertex can be shared by two otherwise-disjoint face fans (a
 //! "bowtie" vertex) — the repair pipeline splits these so the mesh becomes
-//! edge-manifold, and hole filling splits the BOUNDARY-junction subset so two
+//! edge-manifold, and hole filling splits the boundary-junction subset so two
 //! rims that meet at one vertex become independent simple loops that both fill.
 //!
-//! Both callers only DUPLICATE vertices (exact payload copies, zero
+//! Both callers only duplicate vertices (exact payload copies, zero
 //! displacement) and re-point indices — no position ever moves and no triangle
 //! is dropped.
 
@@ -28,7 +28,7 @@ pub(crate) fn push_duplicate_vertex(
     Ok(duplicate)
 }
 
-/// Cluster `faces` (all incident to `vertex`) by shared edges THROUGH that
+/// Cluster `faces` (all incident to `vertex`) by shared edges through that
 /// vertex; the cluster containing the lowest triangle index keeps the original
 /// vertex, every other cluster gets a duplicated copy. Returns whether the
 /// vertex was actually split (more than one cluster).
@@ -60,7 +60,7 @@ pub(crate) fn split_vertex_fans(
     Ok(true)
 }
 
-/// Split every BOUNDARY-junction vertex per incident fan so adjacent rims that
+/// Split every boundary-junction vertex per incident fan so adjacent rims that
 /// meet at a single vertex become independent simple loops. A boundary
 /// junction is a vertex whose boundary in- or out-degree exceeds one (two rims,
 /// or a pinch, pass through it).

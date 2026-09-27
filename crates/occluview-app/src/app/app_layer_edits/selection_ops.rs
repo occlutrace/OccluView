@@ -133,10 +133,10 @@ pub(super) fn apply_selected_face_mesh_edit_action_with_status(
 
 /// Run a menu selection action across every layer the operator marked.
 ///
-/// The Mesh Editor's own buttons already work this way; the layer context menu
-/// did not, so an action taken from the menu edited only the layer it was
-/// opened on and left the other marked layers alone. The menu still chooses
-/// WHICH action runs — the visible selection plan decides what it runs on.
+/// This matches the Mesh Editor's own buttons: an action taken from the layer
+/// context menu applies to every marked layer, not only the layer the menu was
+/// opened on. The menu chooses which action runs; the visible selection plan
+/// decides what it runs on.
 pub(super) fn apply_visible_selection_action_with_status(
     app: &mut OccluViewApp,
     scene: &mut Scene,
@@ -352,7 +352,7 @@ pub(super) fn selected_face_edit_result(
         ),
         // Only the two face-edit actions above ever reach this adapter (the
         // callers gate on exactly those). A different action here is an internal
-        // routing error: log it and fail the edit honestly rather than abort the
+        // routing error: log it and fail the edit rather than abort the
         // process (the build ships `panic = "abort"`, so an `unreachable!` would
         // be a hard crash). Callers already surface this `Err` as a failed edit.
         other => {

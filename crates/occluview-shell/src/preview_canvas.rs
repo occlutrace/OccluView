@@ -56,8 +56,8 @@ mod tests {
     #[test]
     fn a_transparent_square_leaves_the_canvas_as_it_was() {
         // The placeholder cube's background, and the empty margin around any
-        // rendered scan. Copied rather than composited, this was the black
-        // square operators saw behind a file the viewer could not read.
+        // rendered scan. Copied rather than composited, it would show as a
+        // black square behind a file the viewer cannot read.
         let square = vec![0u8; 2 * 2 * 4];
         let canvas = center_square_on_canvas(&square, 2, 4, 4, LIGHT);
         for pixel in canvas.as_chunks::<4>().0 {

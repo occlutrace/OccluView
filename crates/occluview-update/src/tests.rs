@@ -4,6 +4,37 @@
 
 use super::*;
 
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_pkg_handoff_uses_launch_services_and_rejects_disk_images() {
+    let package = Path::new("/tmp/occluview-update.pkg");
+    let command = macos_installer_command(package).expect("a .pkg is installable");
+    assert_eq!(command.get_program().to_str(), Some("/usr/bin/open"));
+    assert_eq!(
+        command.get_args().next(),
+        Some(std::ffi::OsStr::new("/tmp/occluview-update.pkg"))
+    );
+
+    assert!(matches!(
+        macos_installer_command(Path::new("/tmp/occluview-update.dmg")),
+        Err(UpdateError::UnsupportedInstallerFormat)
+    ));
+}
+
+#[test]
+fn platform_key_tracks_the_running_os_and_architecture() {
+    let expected = match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("windows", "x86_64") => "windows-x86_64",
+        ("windows", "aarch64") => "windows-aarch64",
+        ("linux", "x86_64") => "linux-x86_64",
+        ("linux", "aarch64") => "linux-aarch64",
+        ("macos", "x86_64") => "macos-x86_64",
+        ("macos", "aarch64") => "macos-aarch64",
+        _ => "unsupported",
+    };
+    assert_eq!(PLATFORM, expected);
+}
+
 fn test_keypair() -> (minisign::KeyPair, String) {
     let keypair = minisign::KeyPair::generate_unencrypted_keypair().expect("generate test keypair");
     let pubkey = keypair.pk.to_base64();
