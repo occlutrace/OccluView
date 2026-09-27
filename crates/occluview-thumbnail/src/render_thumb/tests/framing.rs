@@ -1,7 +1,7 @@
 #![allow(clippy::panic)]
 
 use super::*;
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 use occluview_core::{Aabb, Camera, Mesh, DEFAULT_UNTEXTURED_MESH_TINT};
 
 #[test]
