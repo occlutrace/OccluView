@@ -507,6 +507,9 @@ fn fit_rejection_parts(rejection: FitRejection) -> (crate::i18n::MessageId, Stri
         }
         FitRejection::Ambiguous => crate::i18n::message_id!("align-reject-ambiguous"),
         FitRejection::NonFinite => crate::i18n::message_id!("align-reject-nonfinite"),
+        FitRejection::Inconsistent { .. } => {
+            crate::i18n::message_id!("align-reject-inconsistent")
+        }
     };
     (key, String::new(), String::new())
 }

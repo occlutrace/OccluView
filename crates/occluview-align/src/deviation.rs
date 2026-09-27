@@ -19,6 +19,14 @@ pub const NO_DATA_COLOR: [u8; 4] = [128, 128, 128, 255];
 /// the deviation would be arbitrary.
 const MIN_NORMAL_LENGTH: f64 = 1e-9;
 
+/// A vertex whose nearest fixed point is on the fixed scan's border is
+/// measured only when its offset lies within 15 degrees of the surface normal
+/// there (cos 15° ≈ 0.966), i.e. it stands over the rim rather than beside it.
+/// Within that cone the rim distance overstates the normal distance by at most
+/// 3.5 %; outside it the reading is mostly how far the scan runs past the
+/// border.
+const MIN_BORDER_ALIGNMENT: f64 = 0.966;
+
 /// Why a vertex does or does not carry a measurement.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Validity {
@@ -26,6 +34,11 @@ pub enum Validity {
     Measured,
     /// No fixed surface within the influence radius.
     OutOfReach,
+    /// The nearest fixed surface is its open border (or the rim of a region
+    /// excluded from it) and the vertex lies off to the side of it: its
+    /// counterpart is beyond what the fixed scan covers, and the distance to
+    /// the rim is not a deviation.
+    BeyondBorder,
     /// The fixed surface there has no usable normal.
     DegenerateNormal,
     /// The moving vertex itself is not finite.
@@ -73,7 +86,8 @@ pub struct DeviationMap {
 pub struct Unmeasured {
     /// Painted out of the comparison by the operator.
     pub excluded: u32,
-    /// No fixed surface within the influence radius.
+    /// No fixed surface opposite: none within the influence radius, or only
+    /// the fixed scan's open border (see [`Validity::BeyondBorder`]).
     pub out_of_reach: u32,
     /// The vertex, or the surface under it, is not usable data.
     pub unusable: u32,
@@ -295,10 +309,20 @@ fn measure_vertex(
     }
     let offset = point - hit.point;
     let distance = offset.length();
+    // Where the fixed scan ends, the nearest point slides along its rim and the
+    // distance to it grows with how far this scan runs past the border, up to
+    // the whole influence radius. That is coverage, not deviation. Only a
+    // vertex standing over the rim itself reads a deviation there.
+    if hit.on_border && offset.dot(hit.pseudo_normal).abs() < distance * MIN_BORDER_ALIGNMENT {
+        return (0.0, Validity::BeyondBorder);
+    }
+    // The side comes from the closest feature's pseudonormal: at an edge or a
+    // vertex the face normal of whichever triangle won the tie can point away
+    // from a point that is outside.
     let signed = match settings.orientation {
         Orientation::Ignored => distance,
-        Orientation::Match => signed_along(offset, hit.normal, distance),
-        Orientation::Inverted => -signed_along(offset, hit.normal, distance),
+        Orientation::Match => signed_along(offset, hit.pseudo_normal, distance),
+        Orientation::Inverted => -signed_along(offset, hit.pseudo_normal, distance),
     };
     (signed as f32, Validity::Measured)
 }
@@ -336,7 +360,9 @@ pub fn deviation_stats(map: &DeviationMap, tolerance_mm: f64) -> DeviationStats 
             match state {
                 Validity::Measured => {}
                 Validity::Excluded => count.excluded = count.excluded.saturating_add(1),
-                Validity::OutOfReach => count.out_of_reach = count.out_of_reach.saturating_add(1),
+                Validity::OutOfReach | Validity::BeyondBorder => {
+                    count.out_of_reach = count.out_of_reach.saturating_add(1);
+                }
                 Validity::DegenerateNormal | Validity::NonFinite => {
                     count.unusable = count.unusable.saturating_add(1);
                 }

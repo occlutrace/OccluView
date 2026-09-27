@@ -69,6 +69,30 @@ impl OccluViewApp {
         })
     }
 
+    /// Enrol layers that arrived while the session is open, at the pose they
+    /// arrived with.
+    ///
+    /// The session records every scan's pose when it opens; a scan added later
+    /// had no entry, so Cancel left it wherever a fit had put it while
+    /// reporting that every scan was back. Called on every scene install; a
+    /// layer already enrolled keeps its original entry.
+    pub(super) fn enrol_align_arrivals(&mut self) {
+        if !self.tools.align.tool.is_armed() {
+            return;
+        }
+        let Some(scene) = self.document.scene.clone() else {
+            return;
+        };
+        for entry in scene.meshes() {
+            if self.session_pose_of(entry.id()).is_none() {
+                self.tools
+                    .align
+                    .session_poses
+                    .push((entry.id(), entry.transform));
+            }
+        }
+    }
+
     /// The pose a layer had when the session opened, if it was there.
     fn session_pose_of(&self, layer: SceneMeshId) -> Option<Affine3A> {
         self.tools
