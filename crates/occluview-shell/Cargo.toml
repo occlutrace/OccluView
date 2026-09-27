@@ -31,6 +31,7 @@ occluview-core    = { workspace = true }
 occluview-render  = { workspace = true }
 occluview-formats = { workspace = true }
 occluview-thumbnail = { workspace = true }
+occlu-geometry-math = { workspace = true }
 tracing           = { workspace = true }
 thiserror         = { workspace = true }
 pollster          = { workspace = true }

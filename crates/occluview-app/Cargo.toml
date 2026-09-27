@@ -30,6 +30,7 @@ occluview-core    = { workspace = true, features = ["robust-csg"] }
 occluview-formats = { workspace = true }
 occluview-render  = { workspace = true }
 occluview-update  = { workspace = true }
+occlu-geometry-math = { workspace = true }
 anyhow            = { workspace = true }
 tracing           = { workspace = true }
 tracing-subscriber = { workspace = true }
