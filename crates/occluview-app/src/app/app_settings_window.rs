@@ -135,6 +135,7 @@ impl OccluViewApp {
             ctx,
             egui::Id::new("occluview-about-dialog-v2"),
             egui::vec2(320.0, 240.0),
+            &self.ui.locale.tr(message_id!("help-close")),
             |ui| {
                 ui.set_width(304.0_f32.min(ui.available_width()));
                 ui.vertical_centered(|ui| {

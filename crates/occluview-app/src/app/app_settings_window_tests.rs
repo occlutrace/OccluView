@@ -334,7 +334,7 @@ fn responsive_information_modal_frame(
             ..Default::default()
         },
         |ui| {
-            show_information_modal(ui.ctx(), id, egui::vec2(560.0, 420.0), |ui| {
+            show_information_modal(ui.ctx(), id, egui::vec2(560.0, 420.0), "Close", |ui| {
                 ui.set_width(304.0_f32.min(ui.available_width()));
                 ui.set_min_height(180.0_f32.min(ui.available_height()));
             });
@@ -824,7 +824,7 @@ fn scrollable_information_modal_stays_near_its_declared_size() -> anyhow::Result
                 ..Default::default()
             },
             |ui| {
-                show_information_modal(ui.ctx(), id, egui::vec2(560.0, 420.0), |ui| {
+                show_information_modal(ui.ctx(), id, egui::vec2(560.0, 420.0), "Close", |ui| {
                     egui::ScrollArea::both()
                         .auto_shrink([false, false])
                         .show_rows(ui, 14.0, 2_000, |ui, rows| {
@@ -860,7 +860,7 @@ fn about_modal_does_not_cycle_through_repeated_sizing_passes() -> anyhow::Result
                 ..Default::default()
             },
             |ui| {
-                show_information_modal(ui.ctx(), id, egui::vec2(320.0, 240.0), |ui| {
+                show_information_modal(ui.ctx(), id, egui::vec2(320.0, 240.0), "Close", |ui| {
                     ui.set_width(304.0_f32.min(ui.available_width()));
                     ui.vertical_centered(|ui| {
                         ui.label("OccluView");

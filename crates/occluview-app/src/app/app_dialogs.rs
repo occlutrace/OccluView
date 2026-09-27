@@ -706,9 +706,10 @@ impl OccluViewApp {
         let mut open = true;
         let mut close_clicked = false;
         let mut retry = false;
+        // The details field scrolls internally, so the dialog needs no resize handles.
         egui::Window::new(error.title.as_str())
             .open(&mut open)
-            .resizable(true)
+            .resizable(false)
             .collapsible(false)
             .default_size([460.0, 260.0])
             .show(ctx, |ui| {
