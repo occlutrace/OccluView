@@ -1,0 +1,18 @@
+[package]
+name = "occluview-i18n"
+description = "Shared Fluent catalogs and locale resolution for OccluView."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+fluent-bundle = { workspace = true }
+sys-locale = { workspace = true }
+unic-langid = { workspace = true }

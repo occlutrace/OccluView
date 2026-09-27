@@ -31,24 +31,27 @@ fn changelog_draft_and_release_sections_are_consistent() {
          of it would publish empty notes"
     );
 
-    // Unreleased carries pending notes; version sections follow newest first.
+    // An optional unreleased section may lead the changelog. The newest
+    // numbered section is the release being prepared; the rest are history.
     let sections: Vec<&str> = changelog
         .lines()
         .filter(|line| line.starts_with("## "))
         .collect();
+    let unreleased_sections = sections
+        .iter()
+        .filter(|line| **line == "## Unreleased")
+        .count();
     assert!(
-        sections
-            .first()
-            .is_some_and(|first| *first == "## Unreleased"),
-        "the pending section should lead the changelog, got {:?}",
-        sections.first()
+        unreleased_sections <= 1,
+        "the changelog may contain at most one Unreleased section"
     );
-    let release_sections = &sections[1..];
+    let version_section = usize::from(sections.first().copied() == Some("## Unreleased"));
+    let release_sections = &sections[version_section..];
     assert!(
         release_sections
             .first()
             .is_some_and(|first| first.starts_with(&heading)),
-        "the newest section should be the version about to ship, got {:?}",
+        "the newest numbered section should be the version about to ship, got {:?}",
         release_sections.first()
     );
     // Version history goes one way. A repeat or an older section above a

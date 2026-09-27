@@ -36,6 +36,7 @@ const CRASH_LOG_CAPACITY: usize = 50;
 const STARTUP_JOURNAL_CAPACITY: usize = 64;
 const STARTUP_JOURNAL_MAX_BYTES: u64 = 64 * 1024;
 const STARTUP_JOURNAL_FILE: &str = "startup-journal.log";
+const SCENE_LOAD_LOG_ENV: &str = "OCCLUVIEW_SCENE_LOAD_LOG";
 pub(crate) const MAX_RENDER_TEXTURE_DIMENSION: u32 = 8192;
 /// Binary entry behind the library boundary: install the panic hook, then run
 /// fallible startup and report failures instead of unwinding through `main`.
@@ -58,7 +59,7 @@ pub fn main_entry() {
     append_startup_stage("clean-exit");
 }
 
-fn real_main() -> Result<()> {
+fn initialize_logging() {
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     // Console output plus an in-memory ring buffer of the last few log lines,
     // so a crash report can show what the app was doing right before it died.
@@ -70,7 +71,12 @@ fn real_main() -> Result<()> {
                 .compact(),
         )
         .with(CrashLogLayer)
+        .with(SceneLoadLogLayer::from_environment())
         .init();
+}
+
+fn real_main() -> Result<()> {
+    initialize_logging();
     append_startup_stage("logging-ready");
 
     set_process_app_user_model_id();
@@ -501,16 +507,75 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for CrashLogLayer {
 #[derive(Default)]
 struct CrashLogVisitor {
     text: String,
+    message: Option<String>,
+    path_count: Option<String>,
 }
 
 impl tracing::field::Visit for CrashLogVisitor {
     fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
         use std::fmt::Write as _;
         if field.name() == "message" {
-            let _ = write!(self.text, " {value:?}");
+            let rendered = format!("{value:?}");
+            self.message = Some(rendered.trim_matches('"').to_owned());
+            let _ = write!(self.text, " {rendered}");
         } else {
+            if field.name() == "path_count" {
+                self.path_count = Some(format!("{value:?}"));
+            }
             let _ = write!(self.text, " {}={value:?}", field.name());
         }
+    }
+}
+
+/// An opt-in file sink records the path-free completion marker and input count.
+struct SceneLoadLogLayer {
+    file: Option<Mutex<std::fs::File>>,
+}
+
+impl SceneLoadLogLayer {
+    fn from_environment() -> Self {
+        let file = std::env::var_os(SCENE_LOAD_LOG_ENV).and_then(|path| {
+            OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(path)
+                .ok()
+        });
+        Self {
+            file: file.map(Mutex::new),
+        }
+    }
+}
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for SceneLoadLogLayer {
+    fn on_event(
+        &self,
+        event: &tracing::Event<'_>,
+        _ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        let Some(file) = self.file.as_ref() else {
+            return;
+        };
+        let mut visitor = CrashLogVisitor::default();
+        event.record(&mut visitor);
+        if visitor.message.as_deref() != Some("scene load completed") {
+            return;
+        }
+        let Some(path_count) = visitor.path_count else {
+            return;
+        };
+        let Ok(mut guard) = file.lock() else {
+            return;
+        };
+        let meta = event.metadata();
+        let line = format!(
+            "[{:9.3}s] {:>5} {}: scene load completed path_count={path_count}",
+            process_uptime_secs(),
+            meta.level(),
+            meta.target()
+        );
+        let _ = writeln!(&mut *guard, "{line}");
     }
 }
 
