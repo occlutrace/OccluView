@@ -259,7 +259,7 @@ mod tests {
             "the test delegate class name must be unique"
         );
         let Some(declaration) = declaration else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         let class = declaration.register();
         assert!(add_open_methods(std::ptr::from_ref::<Class>(class).cast_mut()).is_ok());

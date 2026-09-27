@@ -147,8 +147,14 @@ mod tests {
         let readme = include_str!("../../../README.md");
         let promise = readme
             .lines()
-            .find(|line| line.starts_with("- `.hps` and `.dcm`"))
-            .expect("the README's supported-format list must carry an .hps/.dcm entry");
+            .find(|line| line.starts_with("- `.hps` and `.dcm`"));
+        assert!(
+            promise.is_some(),
+            "the README's supported-format list must carry an .hps/.dcm entry"
+        );
+        let Some(promise) = promise else {
+            panic!("required test setup or expected result was missing");
+        };
         assert!(
             promise.contains("medical DICOM is not supported"),
             "the entry must keep saying that medical DICOM is refused, since \

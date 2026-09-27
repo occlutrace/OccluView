@@ -23,6 +23,9 @@
 //! and `single_instance`, `jump_list` and `update_notice` handle the desktop
 //! integration around all of it.
 
+// Test setup failures must fail the test instead of passing through an early return.
+#![cfg_attr(test, allow(clippy::panic))]
+
 pub mod invalidation;
 mod startup;
 

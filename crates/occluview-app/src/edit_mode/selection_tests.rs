@@ -43,13 +43,13 @@ fn screen_polygon_selection_takes_faces_overlapping_outline_not_disjoint_ones() 
     );
     assert!(mesh.is_ok(), "mesh should construct");
     let Ok(mesh) = mesh else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
     let layer_index = scene.add(SceneMesh::new(mesh));
     let layer_id = scene.meshes()[layer_index].id();
     let Some(mut selection) = FaceSelectionState::empty_for_layer(layer_id, 2) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let camera = ortho_camera_above();
     let viewport = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(400.0, 400.0));
@@ -90,13 +90,13 @@ fn screen_polygon_selection_surface_mode_excludes_back_faces() {
     );
     assert!(mesh.is_ok(), "mesh should construct");
     let Ok(mesh) = mesh else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
     let layer_index = scene.add(SceneMesh::new(mesh));
     let layer_id = scene.meshes()[layer_index].id();
     let Some(mut surface) = FaceSelectionState::empty_for_layer(layer_id, 2) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let camera = ortho_camera_above();
     let viewport = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(400.0, 400.0));
@@ -117,7 +117,7 @@ fn screen_polygon_selection_surface_mode_excludes_back_faces() {
     assert_eq!(surface.selected_faces, vec![true, false]);
 
     let Some(mut through) = FaceSelectionState::empty_for_layer(layer_id, 2) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     through
         .select_screen_polygon(
@@ -152,13 +152,13 @@ fn screen_polygon_selection_accumulates_and_shift_unmarks() {
     );
     assert!(mesh.is_ok(), "mesh should construct");
     let Ok(mesh) = mesh else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
     let layer_index = scene.add(SceneMesh::new(mesh));
     let layer_id = scene.meshes()[layer_index].id();
     let Some(mut selection) = FaceSelectionState::empty_for_layer(layer_id, 2) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let camera = ortho_camera_above();
     let viewport = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(400.0, 400.0));
@@ -258,13 +258,13 @@ fn screen_polygon_marquee_selects_every_enclosed_face_on_dense_mesh() {
     let mesh = Mesh::new(Some("grid".into()), vertices, indices);
     assert!(mesh.is_ok(), "grid mesh should construct");
     let Ok(mesh) = mesh else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
     let layer_index = scene.add(SceneMesh::new(mesh));
     let layer_id = scene.meshes()[layer_index].id();
     let Some(mut selection) = FaceSelectionState::empty_for_layer(layer_id, triangle_count) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let camera = ortho_camera_above();
     let viewport = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(400.0, 400.0));
@@ -335,7 +335,7 @@ fn micro_triangle_selects_in_surface_mode_when_zoomed() {
     );
     assert!(micro.is_ok(), "micro mesh should construct");
     let Ok(micro) = micro else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     // Zoom the orthographic camera until the 15 um triangle spans ~60 px.
     let mut camera = ortho_camera_above();
@@ -365,7 +365,7 @@ fn zero_area_triangle_still_skipped_in_surface_mode() {
     );
     assert!(sliver.is_ok(), "collinear mesh should construct");
     let Ok(sliver) = sliver else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let lasso = box_polygon(egui::pos2(100.0, 100.0), egui::pos2(300.0, 300.0));
     let (surface_sel, _) = polygon_selected(sliver.clone(), &ortho_camera_above(), &lasso, false);
@@ -394,7 +394,7 @@ fn small_lasso_on_a_huge_flat_quad_marks_both_triangles() {
     );
     assert!(quad.is_ok(), "quad mesh should construct");
     let Ok(quad) = quad else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     // A small box at the screen center; every quad vertex projects to a far
     // corner, so no triangle vertex lands inside it (containment -> 0).
@@ -425,7 +425,7 @@ fn lasso_fully_inside_one_giant_triangle_marks_it() {
     );
     assert!(triangle.is_ok(), "triangle mesh should construct");
     let Ok(triangle) = triangle else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let lasso = box_polygon(egui::pos2(180.0, 180.0), egui::pos2(220.0, 220.0));
     let (sel, total) = polygon_selected(triangle, &ortho_camera_above(), &lasso, false);
@@ -450,7 +450,7 @@ fn lasso_edge_crossing_big_triangle_marks_it() {
     );
     assert!(triangle.is_ok(), "triangle mesh should construct");
     let Ok(triangle) = triangle else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     // Band across screen y in [290, 310]; corners at x = 10 / 390 sit outside
     // the triangle's ~[90, 310] span there, so no corner is inside it.
@@ -485,13 +485,10 @@ fn circular_lasso(point_count: u32, radius: f32) -> Vec<egui::Pos2> {
 #[allow(clippy::print_stderr)]
 #[test]
 fn perf_dense_lasso_over_large_mesh_stays_bounded() {
-    // Perf smoke: a 200-point lasso over a 180k-triangle grid, measured for
-    // two lasso sizes — a representative regional selection (target < 150 ms)
-    // and a near-worst-case one covering ~half the mesh. Prints both wall
-    // times and asserts only a loose bound (wall times vary under concurrent
-    // load; this is a smoke guard against an O(N*P) blow-up, not a precise
-    // benchmark). The bbox prune makes the effective cost scale with
-    // the triangles under the outline, not the whole mesh.
+    // Perf smoke: a 200-point lasso over a 180k-triangle grid, measured for a
+    // regional selection and a near-worst-case selection covering half the
+    // mesh. Five alternating samples reduce scheduler noise; the median ratio
+    // guards the bbox prune without treating this as a precise benchmark.
     let cells: u32 = 300; // 2 * 300 * 300 = 180_000 triangles.
     let stride = cells + 1;
     let extent = 40.0_f32;
@@ -514,7 +511,7 @@ fn perf_dense_lasso_over_large_mesh_stays_bounded() {
     }
     let triangle_count = indices.len() / 3;
     let Ok(mesh) = Mesh::new(Some("perf".into()), vertices, indices) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
     let layer_index = scene.add(SceneMesh::new(mesh));
@@ -522,61 +519,60 @@ fn perf_dense_lasso_over_large_mesh_stays_bounded() {
     let camera = ortho_camera_above();
     let viewport = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(400.0, 400.0));
 
-    // (label, radius): a regional dense lasso then a wide near-worst-case one.
-    let mut measured: Vec<(&str, std::time::Duration)> = Vec::new();
-    for &(label, radius) in &[("regional", 55.0_f32), ("wide", 120.0_f32)] {
-        let lasso = circular_lasso(200, radius);
-        let Some(mut selection) = FaceSelectionState::empty_for_layer(layer_id, triangle_count)
-        else {
-            return;
+    // Alternate case order across samples, then compare medians so scheduler
+    // noise does not decide the pruning assertion.
+    let mut regional_samples = [std::time::Duration::ZERO; 5];
+    let mut wide_samples = [std::time::Duration::ZERO; 5];
+    for sample in 0..5 {
+        let cases = if sample % 2 == 0 {
+            [("regional", 55.0_f32), ("wide", 120.0_f32)]
+        } else {
+            [("wide", 120.0_f32), ("regional", 55.0_f32)]
         };
-        let started = std::time::Instant::now();
-        let changed = selection.select_screen_polygon(
-            &scene,
-            &camera,
-            ScreenPolygonSelectionRequest {
-                viewport_rect: viewport,
-                polygon_px: &lasso,
-                unmark: false,
-                through_mesh: true,
-            },
-        );
-        let elapsed = started.elapsed();
-        eprintln!(
-                "perf[{label}]: {}-point lasso over {triangle_count} triangles selected {} in {elapsed:?}",
-                lasso.len(),
-                selection.selected_count(),
+        for &(label, radius) in &cases {
+            let lasso = circular_lasso(200, radius);
+            let Some(mut selection) = FaceSelectionState::empty_for_layer(layer_id, triangle_count)
+            else {
+                panic!("required test setup or expected result was missing");
+            };
+            let started = std::time::Instant::now();
+            let changed = selection.select_screen_polygon(
+                &scene,
+                &camera,
+                ScreenPolygonSelectionRequest {
+                    viewport_rect: viewport,
+                    polygon_px: &lasso,
+                    unmark: false,
+                    through_mesh: true,
+                },
             );
+            let elapsed = started.elapsed();
 
-        assert_eq!(changed, Some(true));
-        assert!(
-            selection.selected_count() > 0,
-            "the {label} lasso must select the disk it covers"
-        );
-        measured.push((label, elapsed));
+            assert_eq!(changed, Some(true));
+            assert!(
+                selection.selected_count() > 0,
+                "the {label} lasso must select the disk it covers"
+            );
+            if label == "regional" {
+                regional_samples[sample] = elapsed;
+            } else {
+                wide_samples[sample] = elapsed;
+            }
+        }
     }
 
-    // The prune is what this test is for, and its signature is the ratio: with
-    // it, cost follows the triangles under the outline, so a regional lasso is
-    // several times cheaper than one covering half the mesh. Without it both
-    // scan everything and the two times converge. An absolute ceiling cannot
-    // see that: a ten-second ceiling passes with the prune disabled and the
-    // regional case a hundred times slower.
-    let regional = measured
-        .iter()
-        .find(|(label, _)| *label == "regional")
-        .map(|(_, elapsed)| *elapsed);
-    let wide = measured
-        .iter()
-        .find(|(label, _)| *label == "wide")
-        .map(|(_, elapsed)| *elapsed);
-    let (Some(regional), Some(wide)) = (regional, wide) else {
-        panic!("both lassos should have been measured");
-    };
+    // The prune is what this test is for, and its signature is the ratio: cost
+    // follows the triangles under the outline, so a regional lasso is at least
+    // twice as fast as one covering half the mesh. An absolute ceiling cannot
+    // detect a disabled prune when both cases scan the full mesh.
+    regional_samples.sort_unstable();
+    wide_samples.sort_unstable();
+    let regional = regional_samples[2];
+    let wide = wide_samples[2];
     assert!(
         wide > regional * 2,
-        "a regional lasso took {regional:?} against {wide:?} for one covering \
-         half the mesh; the outline bbox is not pruning"
+        "the regional median {regional:?} is not less than half the wide median \
+         {wide:?}; the outline bbox is not pruning"
     );
 }
 
@@ -774,7 +770,7 @@ fn surface_selects_by_geometry_ignoring_stored_vertex_normals() {
         }
     }
     let Ok(plane) = Mesh::new(Some("hostile".into()), vertices, indices) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let (sel, total) = surface_selected(plane, &ortho_camera_above());
     assert!(

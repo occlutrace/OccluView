@@ -67,7 +67,7 @@ fn extless_hps_zip_stream_renders_mesh_thumbnail_not_placeholder() {
     let fixture = fixtures::hps_zip_triangle();
     assert!(fixture.is_ok(), "HPS ZIP fixture should build");
     let Ok(bytes) = fixture else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let pixels = render_thumbnail_or_placeholder(None, &bytes, spec);
 
@@ -101,7 +101,7 @@ fn shell_cache_sizes_render_real_thumbnails_not_placeholders() {
     let hps = fixtures::hps_zip_triangle();
     assert!(hps.is_ok(), "HPS ZIP fixture should build");
     let Ok(hps) = hps else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let obj = fixtures::colored_obj_cube().into_bytes();
     let glb = fixtures::one_triangle_glb();
@@ -144,7 +144,7 @@ fn repeated_file_backed_thumbnail_requests_stay_real_across_shell_sizes() {
     let write_result = fs::write(&path, fixtures::binary_stl_cube());
     assert!(write_result.is_ok(), "failed to write temp STL fixture");
     let Ok(()) = write_result else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
 
     for size_px in [16, 32, 96, 256, 32, 16] {

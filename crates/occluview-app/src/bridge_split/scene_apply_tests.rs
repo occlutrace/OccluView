@@ -29,16 +29,16 @@ fn split_result() -> Option<CoreBridgeSplitResult> {
 #[test]
 fn scene_apply_replaces_source_and_inserts_presentation_matched_part_b() {
     let Some(other) = mesh("Other", -1.0) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let Some(bridge) = mesh("Bridge", 0.0) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let Some(tail) = mesh("Tail", 2.0) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let Some(result) = split_result() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
     scene.add(SceneMesh::new(other));
@@ -58,7 +58,7 @@ fn scene_apply_replaces_source_and_inserts_presentation_matched_part_b() {
         apply_preview_to_scene(&scene, target, &result);
     assert!(outcome.is_ok(), "valid preview should apply");
     let Ok(applied) = outcome else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
 
     assert_eq!(applied.source_layer_id, source.id());
@@ -91,10 +91,10 @@ fn scene_apply_replaces_source_and_inserts_presentation_matched_part_b() {
 #[test]
 fn scene_apply_rejects_a_stale_or_hidden_target() {
     let Some(bridge) = mesh("Bridge", 0.0) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let Some(result) = split_result() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
     let index = scene.add(SceneMesh::new(bridge));
@@ -117,13 +117,13 @@ fn scene_apply_rejects_a_stale_or_hidden_target() {
 #[test]
 fn bridge_split_undo_restores_the_exact_pre_split_scene_without_part_b() {
     let Some(bridge) = mesh("Bridge", 0.0) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let Some(tail) = mesh("Tail", 2.0) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let Some(result) = split_result() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
     let source_index = scene.add(SceneMesh::new(bridge));
@@ -135,10 +135,10 @@ fn bridge_split_undo_restores_the_exact_pre_split_scene_without_part_b() {
 
     let Some(token) = edit_mode.begin_scene_edit(&scene, source.id(), EditModeCommand::BridgeSplit)
     else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let Ok(applied) = apply_preview_to_scene(&scene, target, &result) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(
         edit_mode.finish_scene_edit_success(token, &applied.scene),
@@ -148,7 +148,7 @@ fn bridge_split_undo_restores_the_exact_pre_split_scene_without_part_b() {
     let step = edit_mode.undo_last_scene_edit(&applied.scene, source.id());
     assert!(matches!(step, StructuralHistoryStep::Restored(_)));
     let StructuralHistoryStep::Restored(restored) = step else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(restored.meshes().len(), original.meshes().len());
     for (restored_entry, original_entry) in restored.meshes().iter().zip(original.meshes()) {
@@ -163,16 +163,16 @@ fn bridge_split_undo_restores_the_exact_pre_split_scene_without_part_b() {
 #[test]
 fn both_split_parts_are_immediately_valid_mesh_editor_targets() {
     let Some(bridge) = mesh("Bridge", 0.0) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let Some(result) = split_result() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
     let source_index = scene.add(SceneMesh::new(bridge));
     let target = BridgeSplitTarget::capture(&scene.meshes()[source_index]);
     let Ok(applied) = apply_preview_to_scene(&scene, target, &result) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let part_a = applied.scene.meshes()[source_index].clone();
     let part_b = applied.scene.meshes()[source_index + 1].clone();

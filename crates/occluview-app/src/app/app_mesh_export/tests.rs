@@ -68,7 +68,7 @@ fn default_layer_export_name_uses_source_format() -> Result<()> {
 #[test]
 fn a_scan_keeps_its_own_writable_format() {
     let Ok(scene) = exportable_scene() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let plain = (*scene.meshes()[0].mesh).clone();
 
@@ -106,10 +106,10 @@ fn a_forced_stl_falls_back_to_ply_for_a_point_cloud() {
     );
 
     let Ok(scene) = exportable_scene() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let Some(entry) = scene.meshes().first() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(
         representable_export_format(MeshWriteFormat::StlBinary, &entry.mesh),
@@ -128,7 +128,7 @@ fn a_forced_stl_falls_back_to_ply_so_colour_is_not_thrown_away() {
 
     // A textured scan: the atlas and its mapping both live only in PLY.
     let Ok(scene) = exportable_scene() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut textured = (*scene.meshes()[0].mesh).clone();
     textured.set_texture(MeshTexture::new(1, 1, vec![1, 2, 3, 255]));
@@ -199,7 +199,7 @@ fn a_dcm_is_offered_the_format_that_carries_what_it_holds() {
 
     // A textured scan must come out PLY.
     let Ok(scene) = exportable_scene() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut textured = (*scene.meshes()[0].mesh).clone();
     textured.set_texture(MeshTexture::new(1, 1, vec![1, 2, 3, 255]));
@@ -246,7 +246,7 @@ fn a_dcm_is_offered_the_format_that_carries_what_it_holds() {
 
     // A geometry-only .dcm loses nothing as STL, so STL is what it gets.
     let Ok(plain) = exportable_scene().map(|scene| (*scene.meshes()[0].mesh).clone()) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert!(!plain.has_vertex_colors() && !plain.has_uvs() && plain.texture().is_none());
     let proposed = representable_export_format(automatic_export_format(&paths, 0, &plain), &plain);
@@ -264,7 +264,7 @@ fn a_source_format_that_cannot_carry_the_payload_yields_to_ply() {
     use occluview_core::MeshTexture;
 
     let Ok(scene) = exportable_scene() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut textured = (*scene.meshes()[0].mesh).clone();
     textured.set_texture(MeshTexture::new(1, 1, vec![1, 2, 3, 255]));
@@ -382,7 +382,7 @@ fn derived_layer_uses_its_neighbour_for_folder_and_format() {
     let paths = vec![PathBuf::new(), PathBuf::from("/case/scans/upper.obj")];
 
     let Ok(scene) = exportable_scene() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let plain = (*scene.meshes()[0].mesh).clone();
     assert_eq!(
@@ -408,7 +408,7 @@ fn export_directory_prefers_the_exact_layer_source() {
         vec![PathBuf::from("/case/lower"), PathBuf::from("/case/upper")]
     );
     let Ok(scene) = exportable_scene() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let plain = (*scene.meshes()[0].mesh).clone();
     assert_eq!(
@@ -434,7 +434,7 @@ fn a_split_part_prefers_its_source_over_an_earlier_case() {
         vec![PathBuf::from("/case/scans")]
     );
     let Ok(scene) = exportable_scene() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let plain = (*scene.meshes()[0].mesh).clone();
     assert_eq!(
