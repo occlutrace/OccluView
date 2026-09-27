@@ -127,6 +127,93 @@ fn checkout_fetch_depth(workflow: &Value, job: &str) -> Option<u64> {
         .and_then(|step| step["with"]["fetch-depth"].as_u64())
 }
 
+fn assert_windows_package_modes_and_legacy_migration(package: &Value) {
+    let inputs = &package["on"]["workflow_dispatch"]["inputs"];
+    let configurations: Vec<_> = inputs["windows_configuration"]["options"]
+        .as_sequence()
+        .expect("the Windows profile is a workflow choice")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert_eq!(configurations, ["release", "diagnostic"]);
+    assert_eq!(
+        inputs["windows_configuration"]["default"].as_str(),
+        Some("release")
+    );
+    for input in [
+        "windows_msi_version",
+        "legacy_msi_run_id",
+        "legacy_msi_sha256",
+    ] {
+        assert_eq!(inputs[input]["type"].as_str(), Some("string"));
+        assert_eq!(inputs[input]["default"].as_str(), Some(""));
+    }
+
+    let build = workflow_step(package, "windows-package", "Build MSI")
+        .expect("the Windows package job builds its configured MSI");
+    assert_eq!(
+        build["env"]["OCCLUVIEW_WINDOWS_CONFIGURATION"].as_str(),
+        Some("${{ inputs.windows_configuration }}")
+    );
+    assert_eq!(
+        build["env"]["OCCLUVIEW_WINDOWS_MSI_VERSION"].as_str(),
+        Some("${{ inputs.windows_msi_version }}")
+    );
+
+    for name in [
+        "Build portable ZIP",
+        "Build upgrade smoke MSIs",
+        "Validate optional legacy MSI migration inputs",
+        "Download optional legacy MSI migration artifact",
+        "Verify optional legacy MSI migration artifact",
+        "Smoke install and uninstall",
+    ] {
+        let step = workflow_step(package, "windows-package", name)
+            .unwrap_or_else(|| panic!("Windows packaging includes {name}"));
+        assert!(step["if"].as_str().is_some_and(
+            |condition| condition.contains("inputs.windows_configuration != 'diagnostic'")
+        ));
+    }
+
+    let download = workflow_step(
+        package,
+        "windows-package",
+        "Download optional legacy MSI migration artifact",
+    )
+    .expect("legacy migration downloads a pinned run artifact");
+    assert!(download["uses"]
+        .as_str()
+        .is_some_and(|action| action.starts_with("actions/download-artifact@")));
+    assert_eq!(
+        download["with"]["run-id"].as_str(),
+        Some("${{ inputs.legacy_msi_run_id }}")
+    );
+    assert_eq!(
+        download["with"]["repository"].as_str(),
+        Some("${{ github.repository }}")
+    );
+    let verify = workflow_step(
+        package,
+        "windows-package",
+        "Verify optional legacy MSI migration artifact",
+    )
+    .expect("the downloaded legacy MSI is verified before installation");
+    assert_eq!(
+        verify["env"]["OCCLUVIEW_LEGACY_MSI_RUN_ID"].as_str(),
+        Some("${{ inputs.legacy_msi_run_id }}")
+    );
+    assert_eq!(
+        verify["env"]["OCCLUVIEW_LEGACY_MSI_SHA256"].as_str(),
+        Some("${{ inputs.legacy_msi_sha256 }}")
+    );
+    let diagnostic = workflow_step(package, "windows-package", "Diagnostic MSI lifecycle smoke")
+        .expect("the diagnostic MSI uses the lifecycle smoke");
+    assert_eq!(
+        diagnostic["if"].as_str(),
+        Some("inputs.windows_configuration == 'diagnostic'")
+    );
+}
+
 fn progid_extension(extension: &str) -> String {
     if extension == "dcm" {
         "HPS".to_owned()
@@ -438,6 +525,7 @@ fn package_workflow_parses_and_runs_real_artifact_smokes() {
     assert_ci_artifact_smokes(&ci);
     assert_package_artifact_smokes(&package);
     assert_release_gate(&package);
+    assert_windows_package_modes_and_legacy_migration(&package);
 }
 
 fn assert_ci_artifact_smokes(ci: &Value) {
