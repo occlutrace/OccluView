@@ -307,7 +307,7 @@ fn paint_strip(
                 );
                 crate::accessibility::button(
                     &close_response,
-                    &locale.tr("contact-close-hint"),
+                    &locale.tr(crate::i18n::message_id!("contact-close-hint")),
                     true,
                     None,
                 );

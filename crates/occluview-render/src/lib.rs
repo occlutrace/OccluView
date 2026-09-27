@@ -58,7 +58,8 @@ pub use offscreen::{
     AdapterPolicy, AdapterResult, ClippedMeshRequest, ContactPaintSource, CutMeshRequest,
     Offscreen, PreparedScene, PreparedSceneClipRequest, PreparedSceneSource, PreparedSceneTopology,
     PreparedSceneUpdate, PreparedViewportClipRequest, PreparedViewportRequest, RenderDeadline,
-    SceneDrawEntry, SculptSurfaceFeedbackRequest, ThumbnailSpec, ViewportSpec,
+    SceneDrawEntry, SculptBufferUpdateStats, SculptFaceUpdate, SculptSurfaceFeedbackRequest,
+    SculptTopologyDelta, SculptVertexUpdate, ThumbnailSpec, ViewportSpec,
 };
 pub use pipeline::live_depth_format;
 pub use pipeline::Renderer;

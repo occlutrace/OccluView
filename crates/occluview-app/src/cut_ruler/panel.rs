@@ -371,23 +371,7 @@ fn draw_section_header(
                 out.measure_mode = SliceMeasureMode::Thickness;
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let (close_rect, close) =
-                    ui.allocate_exact_size(egui::vec2(24.0, 20.0), egui::Sense::click());
-                crate::accessibility::button(&close, &locale.tr("cut-close-section"), true, None);
-                let close_hovered = close.hovered();
-                crate::icons::paint(
-                    ui.painter(),
-                    close_rect,
-                    crate::icons::AppIcon::Close,
-                    if close_hovered {
-                        ui_theme::text()
-                    } else {
-                        ui_theme::text_weak()
-                    },
-                );
-                let close_clicked = close
-                    .on_hover_text(locale.tr(crate::i18n::message_id!("cut-close-section")))
-                    .clicked();
+                let (close_hovered, close_clicked) = draw_close_button(ui, locale);
                 if close_clicked {
                     out.command = SectionPanelCommand::Close;
                 }
@@ -413,6 +397,25 @@ fn draw_section_header(
         },
     );
     out
+}
+
+fn draw_close_button(ui: &mut egui::Ui, locale: &crate::i18n::LocaleManager) -> (bool, bool) {
+    let (close_rect, close) = ui.allocate_exact_size(egui::vec2(24.0, 20.0), egui::Sense::click());
+    let label = locale.tr(crate::i18n::message_id!("cut-close-section"));
+    crate::accessibility::button(&close, &label, true, None);
+    let close_hovered = close.hovered();
+    crate::icons::paint(
+        ui.painter(),
+        close_rect,
+        crate::icons::AppIcon::Close,
+        if close_hovered {
+            ui_theme::text()
+        } else {
+            ui_theme::text_weak()
+        },
+    );
+    let close_clicked = close.on_hover_text(label).clicked();
+    (close_hovered, close_clicked)
 }
 
 /// Handle one frame of pointer interaction inside the section image: pan on a

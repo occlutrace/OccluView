@@ -393,8 +393,14 @@ fn information_and_error_dialog_controls_have_accessible_roles_and_names() {
     ctx.enable_accesskit();
     let mut app = OccluViewApp::new_for_tests(ctx.clone());
     app.ui.app_error = Some(AppErrorDialog {
-        title: app.ui.locale.tr("error-open-title"),
-        summary: app.ui.locale.tr("load-loader-failed-summary"),
+        title: app
+            .ui
+            .locale
+            .tr(crate::i18n::message_id!("error-open-title")),
+        summary: app
+            .ui
+            .locale
+            .tr(crate::i18n::message_id!("load-loader-failed-summary")),
         details: "GPU adapter unavailable".to_owned(),
         action: AppErrorAction::RetryGraphics,
     });
@@ -441,6 +447,10 @@ fn layer_tint_palette_names_are_translated_in_all_embedded_locales() {
     for (tag, value) in expected {
         let mut locale = crate::i18n::LocaleManager::for_tests();
         locale.set_preference(UiLanguagePreference::Explicit(tag));
-        assert_eq!(locale.tr("tint-color-cobalt"), value, "locale {tag}");
+        assert_eq!(
+            locale.tr(crate::i18n::message_id!("tint-color-cobalt")),
+            value,
+            "locale {tag}"
+        );
     }
 }

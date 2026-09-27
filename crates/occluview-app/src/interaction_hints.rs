@@ -16,10 +16,7 @@ pub(crate) struct HintRow {
 }
 
 impl HintRow {
-    pub(crate) fn action_key(
-        self,
-        scroll_behavior: ScrollBehavior,
-    ) -> crate::i18n::MessageId {
+    pub(crate) fn action_key(self, scroll_behavior: ScrollBehavior) -> crate::i18n::MessageId {
         if self.gesture == TRACKPAD_SCROLL_GESTURE {
             trackpad_scroll_action_key(scroll_behavior)
         } else {
@@ -364,11 +361,11 @@ pub(crate) const ALL_SECTIONS: &[HintSection] = &[
 
 pub(crate) const fn contextual_line(
     context: HintContext,
-    scroll_behavior: ScrollBehavior,
+    _scroll_behavior: ScrollBehavior,
 ) -> &'static str {
     match context {
         #[cfg(target_os = "macos")]
-        HintContext::Navigation => macos_navigation_line(scroll_behavior),
+        HintContext::Navigation => macos_navigation_line(_scroll_behavior),
         #[cfg(not(target_os = "macos"))]
         HintContext::Navigation => {
             "RMB drag orbit · MMB drag pan · Wheel/pinch zoom · MMB click focus"
@@ -393,11 +390,11 @@ pub(crate) const fn contextual_line(
 /// Catalog key rendering the localized contextual line for each context.
 pub(crate) const fn contextual_line_key(
     context: HintContext,
-    scroll_behavior: ScrollBehavior,
+    _scroll_behavior: ScrollBehavior,
 ) -> crate::i18n::MessageId {
     match context {
         #[cfg(target_os = "macos")]
-        HintContext::Navigation => macos_navigation_line_key(scroll_behavior),
+        HintContext::Navigation => macos_navigation_line_key(_scroll_behavior),
         #[cfg(not(target_os = "macos"))]
         HintContext::Navigation => crate::i18n::message_id!("help-hintline-navigation"),
         HintContext::MeshEditing => crate::i18n::message_id!("help-hintline-mesh-editing"),
@@ -422,18 +419,14 @@ const fn macos_navigation_line(scroll_behavior: ScrollBehavior) -> &'static str 
 }
 
 #[cfg(any(target_os = "macos", test))]
-const fn macos_navigation_line_key(
-    scroll_behavior: ScrollBehavior,
-) -> crate::i18n::MessageId {
+const fn macos_navigation_line_key(scroll_behavior: ScrollBehavior) -> crate::i18n::MessageId {
     match scroll_behavior {
         ScrollBehavior::Pan => crate::i18n::message_id!("help-hintline-navigation-macos-pan"),
         ScrollBehavior::Zoom => crate::i18n::message_id!("help-hintline-navigation-macos-zoom"),
     }
 }
 
-const fn trackpad_scroll_action_key(
-    scroll_behavior: ScrollBehavior,
-) -> crate::i18n::MessageId {
+const fn trackpad_scroll_action_key(scroll_behavior: ScrollBehavior) -> crate::i18n::MessageId {
     match scroll_behavior {
         ScrollBehavior::Pan => {
             crate::i18n::message_id!("help-hint-navigation-pan-the-camera")
@@ -475,7 +468,9 @@ mod tests {
         for behavior in [ScrollBehavior::Pan, ScrollBehavior::Zoom] {
             for context in CONTEXTS_UNDER_TEST {
                 assert_eq!(
-                    catalog.text(contextual_line_key(*context, behavior)).as_deref(),
+                    catalog
+                        .text(contextual_line_key(*context, behavior).as_str())
+                        .as_deref(),
                     Some(contextual_line(*context, behavior)),
                     "{context:?} hint line drifted from its catalog entry"
                 );
@@ -511,7 +506,7 @@ mod tests {
         let catalog = crate::i18n::catalog::Catalog::build("en").expect("en builds");
         let behavior = ScrollBehavior::Pan;
         let line = catalog
-            .text(contextual_line_key(HintContext::Navigation, behavior))
+            .text(contextual_line_key(HintContext::Navigation, behavior).as_str())
             .expect("navigation hint line exists");
         assert_eq!(line.contains("Trackpad scroll pan"), macos);
         assert_eq!(
@@ -548,8 +543,8 @@ mod tests {
             };
             assert_eq!(trackpad.action_key(behavior), action_key);
             assert_eq!(macos_navigation_line_key(behavior), line_key);
-            assert_eq!(catalog.text(line_key).as_deref(), Some(line));
-            assert!(catalog.text(action_key).is_some());
+            assert_eq!(catalog.text(line_key.as_str()).as_deref(), Some(line));
+            assert!(catalog.text(action_key.as_str()).is_some());
             assert!(
                 navigation
                     .rows

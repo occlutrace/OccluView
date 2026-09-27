@@ -115,7 +115,11 @@ fn range(
                 .fixed_decimals(3)
                 .suffix(" mm"),
         );
-        crate::accessibility::spin_button(&minimum, &locale.tr("align-map-min"), enabled);
+        crate::accessibility::spin_button(
+            &minimum,
+            &locale.tr(crate::i18n::message_id!("align-map-min")),
+            enabled,
+        );
         changed |= minimum.changed();
     });
     align_overlay::paint_legend(ui, *settings, locale);
@@ -129,7 +133,11 @@ fn range(
                 .fixed_decimals(3)
                 .suffix(" mm"),
         );
-        crate::accessibility::spin_button(&maximum, &locale.tr("align-map-max"), enabled);
+        crate::accessibility::spin_button(
+            &maximum,
+            &locale.tr(crate::i18n::message_id!("align-map-max")),
+            enabled,
+        );
         changed |= maximum.changed();
     });
     changed.then_some(AlignPanelAction::Measure)

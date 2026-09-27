@@ -9,13 +9,11 @@ use super::app_mesh_export::PendingLayerExports;
 use super::*;
 use crate::app::app_test_support::{delivered_load, test_app};
 use crate::scene_loading::SceneLoadMode;
+use crate::sculpt_kernel::{BrushMode, BrushSession, BrushStroke};
 use crate::sculpt_tool::{SculptSession, SculptToolKind, StrokeState};
 use crate::sculpt_worker::SculptWorker;
 use glam::{Affine3A, Vec3};
-use occluview_core::{
-    mesh_edit_buffers_from_mesh, BrushMode, BrushSession, BrushStroke, Mesh, Scene, SceneMesh,
-    SceneMeshId, Vertex,
-};
+use occluview_core::{mesh_edit_buffers_from_mesh, Mesh, Scene, SceneMesh, SceneMeshId, Vertex};
 use occluview_render::PreparedSceneTopology;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
@@ -63,6 +61,7 @@ fn worker_for(mesh: &Mesh, layer_id: SceneMeshId) -> SculptWorker {
         world_to_local: Affine3A::IDENTITY,
         local_per_world: 1.0,
         dirty_stroke: false,
+        topology_dirty_stroke: false,
         stroke_start_mesh: None,
     })
 }
@@ -88,6 +87,7 @@ fn app_with_a_live_stroke(name: &str) -> (OccluViewApp, SceneMeshId) {
         layer_id,
         last_dab_local: None,
         hold_seconds: 0.0,
+        last_axis: None,
     });
     app.document.unsaved_sculpt_stroke = true;
     (app, layer_id)
@@ -133,9 +133,7 @@ fn lay_densifying_dab(app: &mut OccluViewApp) {
     }
 }
 
-/// Length of the worker's live display shadow, read without blocking the
-/// kernel. A densifying dab replaces this array, so a growth means the dab's
-/// whole-layer rebuild has been computed.
+/// Length of the worker's append-only live display shadow.
 fn sculpt_shadow_len(app: &OccluViewApp) -> usize {
     app.tools
         .sculpt
@@ -181,36 +179,31 @@ fn pump_sculpt_worker_until_idle(app: &mut OccluViewApp) {
     }
 }
 
-/// Wait until the worker owes the frame both a densifying rebuild and a sparse
-/// vertex update, without draining either. The stroke stays open, so the
-/// rebuild has no completion behind it.
-fn wait_for_rebuild_and_sparse_update(app: &OccluViewApp) {
+/// Wait until a topology delta and a sparse vertex update share one frame.
+fn wait_for_topology_delta_and_sparse_update(app: &OccluViewApp) {
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         let worker = app.tools.sculpt.worker.as_ref().expect("worker");
-        if worker.has_pending_rebuild() && worker.has_pending_sparse_update() {
+        if worker.has_pending_topology_delta() && worker.has_pending_sparse_update() {
             return;
         }
         assert!(
             Instant::now() < deadline,
-            "the fixture never queued a rebuild and a sparse update together"
+            "the fixture never queued a topology delta and a sparse update together"
         );
         std::thread::sleep(Duration::from_millis(1));
     }
 }
 
-/// A densifying rebuild and a sparse update that are both pending when a frame
-/// polls must have the rebuild installed into the document, not be left on the
-/// pre-rebuild topology. The rebuild replaces the layer's whole vertex array and
-/// triangle list, so a frame that flushed the sparse write and dropped the
-/// rebuild leaves the document's `topology_id` (and thus every later sparse GPU
-/// write's target) on the coarse mesh while the worker has moved past it.
+/// The frame applies the append and face patch before sparse writes, then the
+/// final committed mesh receives a new topology identity at stroke completion.
 #[test]
-fn a_layer_rebuild_is_installed_before_any_sparse_vertex_write() {
-    let (mut app, layer_id) = app_with_a_live_stroke("sculpt-rebuild-before-sparse");
+fn topology_deltas_flush_before_sparse_writes_and_commit_at_finish() {
+    let (mut app, layer_id) = app_with_a_live_stroke("sculpt-delta-before-sparse");
     let initial_topology = layer_mesh(&app, layer_id).topology_id();
+    let initial_vertices = layer_mesh(&app, layer_id).vertices().len();
 
-    // A real densifying dab parks a whole-layer rebuild on the worker.
+    // A real densifying dab publishes a local topology patch.
     {
         let worker = app.tools.sculpt.worker.as_ref().expect("worker");
         assert!(
@@ -225,24 +218,25 @@ fn a_layer_rebuild_is_installed_before_any_sparse_vertex_write() {
         .worker
         .as_ref()
         .expect("worker")
-        .has_pending_rebuild()
+        .has_pending_topology_delta()
     {
-        assert!(Instant::now() < deadline, "the dab never rebuilt the layer");
+        assert!(
+            Instant::now() < deadline,
+            "the dab never published its delta"
+        );
         std::thread::sleep(Duration::from_millis(1));
     }
-    // Queue a sparse update the same way a dab does, so the frame genuinely has
-    // both an authoritative rebuild and stale sparse ids to reconcile.
+    // The vertex IDs remain stable across appended topology, so both outputs
+    // can safely share one frame.
     app.tools
         .sculpt
         .worker
         .as_ref()
         .expect("worker")
         .queue_sparse_for_tests(vec![0, 1, 2]);
-    wait_for_rebuild_and_sparse_update(&app);
+    wait_for_topology_delta_and_sparse_update(&app);
 
-    // Poll until the frame has drained the pending rebuild. The poll that drains
-    // it installs it into the document; a frame that flushed the sparse update
-    // and dropped the rebuild would leave the scene on the coarse topology.
+    // Poll until both local output types have reached the prepared scene.
     let ctx = app.ui.repaint_ctx.clone();
     let deadline = Instant::now() + Duration::from_secs(60);
     while app
@@ -251,24 +245,42 @@ fn a_layer_rebuild_is_installed_before_any_sparse_vertex_write() {
         .worker
         .as_ref()
         .expect("worker")
-        .has_pending_rebuild()
+        .has_pending_topology_delta()
+        || app
+            .tools
+            .sculpt
+            .worker
+            .as_ref()
+            .expect("worker")
+            .has_pending_sparse_update()
     {
         app.poll_sculpt_worker(&ctx);
-        assert!(Instant::now() < deadline, "the rebuild was never drained");
+        assert!(
+            Instant::now() < deadline,
+            "sculpt deltas were never drained"
+        );
         std::thread::sleep(Duration::from_millis(1));
     }
 
     let worker = app.tools.sculpt.worker.as_ref().expect("worker");
+    let live_vertices = worker.live_geometry().expect("live geometry").0.len();
+    assert!(live_vertices > initial_vertices);
+    assert_eq!(
+        layer_mesh(&app, layer_id).topology_id(),
+        initial_topology,
+        "the document commits only when the stroke finishes"
+    );
+    assert!(app.commit_sculpt_stroke(&ctx));
+    pump_sculpt_worker_until_idle(&mut app);
+    let worker = app.tools.sculpt.worker.as_ref().expect("worker");
     let scene_topology = layer_mesh(&app, layer_id).topology_id();
     assert_ne!(
         scene_topology, initial_topology,
-        "the frame must install the densifying rebuild into the document, not \
-         leave the layer on the pre-rebuild topology"
+        "the finished stroke must commit its changed topology"
     );
     assert_eq!(
         scene_topology, worker.topology_id,
-        "the document and the worker must agree on the layer's topology after \
-         the rebuild installs"
+        "the document and worker share the committed topology identity"
     );
     assert!(
         !worker.has_pending_sparse_update(),
@@ -282,8 +294,8 @@ fn a_replace_does_not_discard_a_layer_the_operator_is_sculpting() {
     let committed_vertices = layer_mesh(&app, layer_id).vertices().len();
     lay_densifying_dab(&mut app);
     assert!(
-        layer_mesh(&app, layer_id).vertices().len() > committed_vertices,
-        "the stroke has visibly densified the layer"
+        sculpt_shadow_len(&app) > committed_vertices,
+        "the live display geometry has densified"
     );
 
     let pending = delivered_load(
@@ -336,7 +348,7 @@ fn a_replace_does_not_discard_a_layer_the_operator_is_sculpting() {
 fn a_save_does_not_call_a_live_stroke_nothing_to_save() {
     let (mut app, layer_id) = app_with_a_live_stroke("sculpt-vs-save");
     lay_densifying_dab(&mut app);
-    let _ = layer_id;
+    assert!(sculpt_shadow_len(&app) > layer_mesh(&app, layer_id).vertices().len());
     assert!(
         app.document.unsaved_edit_layer_ids.is_empty(),
         "the fixture really is the uncommitted case: nothing is marked unsaved"
@@ -406,7 +418,7 @@ fn a_stroke_that_ends_without_a_worker_does_not_latch_the_guards() {
     assert!(!app.sculpt_has_live_work());
 }
 
-/// An export started while a Sculpt stroke is still being rebuilt must not
+/// An export started while a Sculpt stroke is still changing geometry must not
 /// write anything. The scene only advances to a stroke's result when its
 /// worker lands, so an export during the stroke would write the pre-stroke
 /// geometry and report success. All three export entry points read the same
@@ -463,15 +475,14 @@ fn every_export_path_refuses_while_a_stroke_is_in_flight() {
     assert!(!app.refuse_export_during_stroke(&ctx));
 }
 
-/// A brush-mode switch during a drag must finish the stroke. Aborting instead
-/// throws away every dab the operator has already laid and reverts the layer
-/// to the pre-stroke mesh.
+/// A brush-mode switch during a drag commits the live display geometry as one
+/// undoable mesh edit.
 #[test]
 fn switching_brush_mode_finishes_a_live_stroke_instead_of_aborting_it() {
     let (mut app, layer_id) = app_with_a_live_stroke("sculpt-mode-switch");
     let committed_vertices = layer_mesh(&app, layer_id).vertices().len();
     lay_densifying_dab(&mut app);
-    let densified_vertices = layer_mesh(&app, layer_id).vertices().len();
+    let densified_vertices = sculpt_shadow_len(&app);
     assert!(
         densified_vertices > committed_vertices,
         "the fixture must densify: {committed_vertices} -> {densified_vertices}"
@@ -516,7 +527,7 @@ fn toggling_off_does_not_drop_a_worker_with_a_queued_finish() {
     app.tools.sculpt.armed = Some(SculptToolKind::AddRemove);
     let committed_vertices = layer_mesh(&app, layer_id).vertices().len();
     lay_densifying_dab(&mut app);
-    let densified_vertices = layer_mesh(&app, layer_id).vertices().len();
+    let densified_vertices = sculpt_shadow_len(&app);
     assert!(
         densified_vertices > committed_vertices,
         "the fixture must densify"
@@ -560,8 +571,8 @@ fn abort_also_reverts_a_released_stroke_waiting_in_the_worker() {
 
     lay_densifying_dab(&mut app);
     assert!(
-        layer_mesh(&app, layer_id).vertices().len() > committed_vertices,
-        "the released stroke has a densified preview in the document"
+        sculpt_shadow_len(&app) > committed_vertices,
+        "the released stroke has a densified live preview"
     );
 
     let ctx = app.ui.repaint_ctx.clone();
@@ -671,8 +682,8 @@ fn worker_loss_invalidates_an_active_sculpt_stroke() {
     let committed_topology = committed.topology_id();
     lay_densifying_dab(&mut app);
     assert!(
-        layer_mesh(&app, layer_id).vertices().len() > committed_vertices,
-        "the stroke has a densified preview in the document"
+        sculpt_shadow_len(&app) > committed_vertices,
+        "the stroke has a densified live preview"
     );
 
     app.tools.sculpt.worker = None;
@@ -707,17 +718,14 @@ fn worker_loss_invalidates_an_active_sculpt_stroke() {
     );
 }
 
-/// A frame's completions must be committed through their topology chain
-/// before any leftover rebuild is installed. Installing a later stroke's
-/// rebuild first would advance the worker past the completion's topology, and
-/// the completed stroke would be dropped and its session invalidated.
+/// A frame commits each finished topology in order while keeping the next
+/// open stroke's local patches in the live display.
 #[test]
-fn completions_walk_the_topology_chain_before_leftover_rebuilds_install() {
+fn a_finished_stroke_commits_before_a_later_live_topology_delta() {
     let (mut app, layer_id) = app_with_a_live_stroke("sculpt-topology-chain");
     let base_len = sculpt_shadow_len(&app);
 
-    // Stroke 1 densifies and is released, so its rebuild and its completion
-    // are waiting for the frame.
+    // Stroke 1 densifies and is released.
     {
         let worker = app.tools.sculpt.worker.as_ref().expect("worker");
         assert!(worker.try_apply(densifying_stroke(), BrushMode::Smooth));
@@ -725,8 +733,7 @@ fn completions_walk_the_topology_chain_before_leftover_rebuilds_install() {
     }
     let after_first = wait_for_shadow_growth(&app, base_len);
 
-    // Stroke 2 densifies but is still open, so its rebuild is a leftover with
-    // no completion behind it yet.
+    // Stroke 2 densifies but remains open.
     {
         let worker = app.tools.sculpt.worker.as_ref().expect("worker");
         assert!(worker.try_apply(densifying_stroke(), BrushMode::Smooth));
@@ -738,7 +745,7 @@ fn completions_walk_the_topology_chain_before_leftover_rebuilds_install() {
     loop {
         app.poll_sculpt_worker(&ctx);
         if app.document.edit_mode.undo_len() == 1
-            && layer_mesh(&app, layer_id).vertices().len() == after_second
+            && layer_mesh(&app, layer_id).vertices().len() == after_first
         {
             break;
         }
@@ -763,20 +770,19 @@ fn completions_walk_the_topology_chain_before_leftover_rebuilds_install() {
             .as_ref()
             .expect("worker")
             .topology_id,
-        "the leftover rebuild installs after the completion, matching the worker"
+        "the committed mesh and worker agree while the second stroke stays open"
     );
+    assert_eq!(sculpt_shadow_len(&app), after_second);
 }
 
-/// Each completion must have its matching rebuild installed before it is
-/// committed. With two finished densifying strokes in one frame, committing
-/// without walking the chain leaves the second rebuild to install over a mesh
-/// the commit already replaced, which invalidates the session.
+/// Multiple finished strokes commit in sequence while the latest open stroke
+/// remains visible only in the live display.
 #[test]
-fn a_same_topology_completion_installs_its_rebuild_before_commit() {
+fn multiple_completions_commit_before_the_latest_live_delta() {
     let (mut app, layer_id) = app_with_a_live_stroke("sculpt-completion-chain");
     let mut shadow_len = sculpt_shadow_len(&app);
 
-    // Two released densifying strokes: two rebuilds and two completions.
+    // Two released densifying strokes produce two ordered completions.
     for _ in 0..2 {
         {
             let worker = app.tools.sculpt.worker.as_ref().expect("worker");
@@ -785,8 +791,8 @@ fn a_same_topology_completion_installs_its_rebuild_before_commit() {
         }
         shadow_len = wait_for_shadow_growth(&app, shadow_len);
     }
-    // A third, still-open stroke. Its rebuild is published after the second
-    // completion, so waiting for it proves both completions are waiting too.
+    let committed_vertices = shadow_len;
+    // A third, still-open stroke remains in the live display.
     {
         let worker = app.tools.sculpt.worker.as_ref().expect("worker");
         assert!(worker.try_apply(densifying_stroke(), BrushMode::Smooth));
@@ -798,7 +804,7 @@ fn a_same_topology_completion_installs_its_rebuild_before_commit() {
     loop {
         app.poll_sculpt_worker(&ctx);
         if app.document.edit_mode.undo_len() == 2
-            && layer_mesh(&app, layer_id).vertices().len() == final_len
+            && layer_mesh(&app, layer_id).vertices().len() == committed_vertices
         {
             break;
         }
@@ -815,4 +821,5 @@ fn a_same_topology_completion_installs_its_rebuild_before_commit() {
         "the session must survive both commits"
     );
     assert!(app.document.has_unsaved_mesh_edits());
+    assert_eq!(sculpt_shadow_len(&app), final_len);
 }

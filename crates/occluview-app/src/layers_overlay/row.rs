@@ -120,7 +120,11 @@ pub(super) fn show_layer_row(
         ui.id().with(("layer-row-background", view.index)),
         egui::Sense::click(),
     );
-    let row_actions_label = format!("{}: {}", locale.tr("layers-title"), view.label);
+    let row_actions_label = format!(
+        "{}: {}",
+        locale.tr(crate::i18n::message_id!("layers-title")),
+        view.label
+    );
     crate::accessibility::button(&row_hit, &row_actions_label, true, None);
 
     ui.allocate_ui_with_layout(
@@ -310,8 +314,7 @@ fn tint_swatch(
         view.label
     );
     crate::accessibility::button(&response, &tint_label, enabled, None);
-    let response =
-        response.on_hover_text(locale.tr(crate::i18n::message_id!("tint-choose")));
+    let response = response.on_hover_text(locale.tr(crate::i18n::message_id!("tint-choose")));
 
     let popup_id = ui.make_persistent_id(("layer_tint_palette", view.layer_id));
     egui::Popup::from_toggle_button_response(&response)
@@ -334,8 +337,14 @@ fn tint_swatch(
                     // them are still hard to tell apart where they overlap, which is
                     // where an alignment needs them told apart.
                     for (heading_key, presets) in [
-                        ("tint-group-model", LAYER_TINT_PRESETS.as_slice()),
-                        ("tint-group-overlays", LAYER_OVERLAY_TINT_PRESETS.as_slice()),
+                        (
+                            crate::i18n::message_id!("tint-group-model"),
+                            LAYER_TINT_PRESETS.as_slice(),
+                        ),
+                        (
+                            crate::i18n::message_id!("tint-group-overlays"),
+                            LAYER_OVERLAY_TINT_PRESETS.as_slice(),
+                        ),
                     ] {
                         ui.label(
                             egui::RichText::new(locale.tr(heading_key))
