@@ -3,10 +3,13 @@
 
 [graph]
 all-features = true
-# Both shipped platforms. Scanning only Windows left the Linux-only
-# dependency trees (x11rb, wayland, the xdg-portal file dialogs) outside
-# every license and advisory check.
-targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]
+# Match every platform built or cross-compiled by CI.
+targets = [
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-gnu",
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+]
 
 [advisories]
 unmaintained = "workspace"
