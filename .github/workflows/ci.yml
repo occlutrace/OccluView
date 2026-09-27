@@ -150,6 +150,7 @@ jobs:
       - name: Test the viewer and updater suites on Apple Silicon
         env:
           MACOSX_DEPLOYMENT_TARGET: "14.0"
+          OCCLUVIEW_TEST_STATE_DIR: ${{ runner.temp }}/occluview-app-test-state
         # The whole app suite, not a macOS-only subset, because the Metal
         # backed offscreen tests (contact rendering, adapter policy) are the
         # hardware acceptance that this lane exists to provide, and the
