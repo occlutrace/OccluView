@@ -49,7 +49,7 @@ mod app_contact_bar;
 mod app_contact_hover;
 #[cfg(test)]
 mod app_contact_tests;
-mod app_cut_measure;
+mod app_cut;
 mod app_dialogs;
 mod app_empty_state;
 mod app_guard_dialog;
@@ -63,6 +63,7 @@ mod app_load_errors;
 mod app_loading;
 #[cfg(test)]
 mod app_loading_tests;
+mod app_measure;
 mod app_mesh_editor;
 mod app_mesh_export;
 #[cfg(test)]
