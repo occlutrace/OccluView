@@ -8,8 +8,9 @@ use crate::measure_tool::MeasureMode;
 use crate::mesh_editor_overlay::EditorTab;
 use eframe::egui;
 
-const VIEWPORT: egui::Rect =
-    egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1200.0));
+fn viewport() -> egui::Rect {
+    egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1200.0))
+}
 
 #[derive(Debug)]
 struct AccessibleControl {
@@ -106,7 +107,7 @@ fn app_with_scene(ctx: &egui::Context) -> OccluViewApp {
 
 fn input() -> egui::RawInput {
     egui::RawInput {
-        screen_rect: Some(VIEWPORT),
+        screen_rect: Some(viewport()),
         ..Default::default()
     }
 }
@@ -124,9 +125,9 @@ fn viewer_surfaces_publish_named_controls_with_roles_and_toggle_states() {
     let mut output = ctx.run_ui(input(), |ui| {
         let render_ctx = ui.ctx().clone();
         app.show_toolbar(ui);
-        app.show_layers_overlay(ui, VIEWPORT, &render_ctx);
-        app.show_align_panel(&render_ctx, VIEWPORT);
-        app.show_ruler_options(&render_ctx, VIEWPORT);
+        app.show_layers_overlay(ui, viewport(), &render_ctx);
+        app.show_align_panel(&render_ctx, viewport());
+        app.show_ruler_options(&render_ctx, viewport());
     });
     output.textures_delta.clear();
     let controls = controls(&output, "toolbar, layers, align, ruler strip, and settings");
@@ -238,7 +239,7 @@ fn mesh_editor_and_sculpt_controls_publish_names_roles_and_selected_tabs() {
         app.tools.editor_tab = tab;
 
         let mut output = ctx.run_ui(input(), |ui| {
-            app.show_mesh_editor_overlay(VIEWPORT, ui.ctx());
+            app.show_mesh_editor_overlay(viewport(), ui.ctx());
         });
         output.textures_delta.clear();
         let controls = controls(&output, "mesh editor and sculpt panel");
@@ -302,7 +303,7 @@ fn layer_context_menu_rows_publish_names_roles_and_disabled_state() {
     ctx.enable_accesskit();
     let scene = app_test_support::named_scene("Upper arch", 0.0);
     let entry = &scene.meshes()[0];
-    let target = crate::layers_overlay::LayerContextMenuTarget {
+    let target = layers_overlay::LayerContextMenuTarget {
         label: "Upper arch".to_owned(),
         index: 0,
         layer_id: entry.id(),
@@ -324,7 +325,7 @@ fn layer_context_menu_rows_publish_names_roles_and_disabled_state() {
         egui::Area::new(egui::Id::new("accessibility-layer-menu"))
             .fixed_pos(egui::Pos2::new(20.0, 20.0))
             .show(&render_ctx, |ui| {
-                crate::layers_overlay::show_layer_context_menu(ui, &target, &mut request, &locale);
+                layers_overlay::show_layer_context_menu(ui, &target, &mut request, &locale);
             });
     });
     output.textures_delta.clear();
