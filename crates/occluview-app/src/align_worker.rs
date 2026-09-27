@@ -434,12 +434,12 @@ impl AlignWorker {
 
     /// Whether anything is queued or running.
     pub(crate) fn is_busy(&self) -> bool {
-        self.busy.load(Ordering::SeqCst) > 0
-            || self
-                .queue
-                .state
-                .lock()
-                .is_ok_and(|state| !state.jobs.is_empty())
+        let queued = self
+            .queue
+            .state
+            .lock()
+            .is_ok_and(|state| !state.jobs.is_empty());
+        queued || self.busy.load(Ordering::SeqCst) > 0
     }
 
     /// Queue the newest job and cancel every older queued/running request.
@@ -519,7 +519,7 @@ fn run_worker(
 ) {
     let mut cached = WorkerCache::default();
     loop {
-        let job = {
+        let (job, _busy) = {
             let Ok(mut state) = queue.state.lock() else {
                 mark_failed(failed, "queue lock poisoned", None);
                 return;
@@ -534,10 +534,13 @@ fn run_worker(
             if state.shutdown {
                 return;
             }
-            match state.jobs.pop_front() {
-                Some(job) => job,
-                None => continue,
-            }
+            let Some(job) = state.jobs.pop_front() else {
+                continue;
+            };
+            // The guard starts before the queue lock releases, so `is_busy`
+            // observes either queued work or a busy worker. RAII decrements it
+            // after publication and covers every early return and unwind.
+            (job, Busy::new(busy))
         };
 
         let cancel = CancelFlag::new();
@@ -547,15 +550,6 @@ fn run_worker(
         };
         *slot = Some(cancel.clone());
         drop(slot);
-        // RAII, not a hand-written pair. The panic boundary is outside this
-        // loop, so an unwind inside `execute` would skip a hand-written
-        // `fetch_sub` and leave the counter above zero forever: `is_busy` would
-        // report busy for the rest of the session, the panel would keep its
-        // spinner, and `finish_align_session` would claim the session closed
-        // "while a fit was still running". The contact worker uses the same
-        // guard.
-        let _busy = Busy::new(busy);
-
         let outcome = execute(&job, &cancel, &mut cached);
         // Cancelled stages may return structurally valid but unusable values;
         // do not publish them.
