@@ -755,23 +755,28 @@ mod tests {
             "the scene keeps the scan's own opacity"
         );
         let scene = app.document.scene.clone().expect("a scene");
-        let drawn = |app: &OccluViewApp, layer: SceneMeshId| {
+        let drawn = |app: &OccluViewApp, scene: &occluview_core::Scene, layer: SceneMeshId| {
             let index = scene
                 .meshes()
                 .iter()
                 .position(|entry| entry.id() == layer)
                 .expect("layer");
-            app.prepared_scene_updates(&scene)[index].uniform.opacity
+            app.prepared_scene_updates(scene)[index].uniform.opacity
         };
         assert!(
-            drawn(&app, fixed) < own,
+            drawn(&app, &scene, fixed) < own,
             "while the map is up the other scan is drawn faded"
         );
-        assert_eq!(drawn(&app, moving), layer_entry(&app, moving).opacity);
-
-        app.clear_deviation_overlay();
         assert_eq!(
-            drawn(&app, fixed),
+            drawn(&app, &scene, moving),
+            layer_entry(&app, moving).opacity
+        );
+
+        drop(scene);
+        app.clear_deviation_overlay();
+        let scene = app.document.scene.as_deref().expect("a scene");
+        assert_eq!(
+            drawn(&app, scene, fixed),
             own,
             "and drawn at its own opacity again after"
         );
