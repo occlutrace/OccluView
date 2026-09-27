@@ -113,6 +113,36 @@ fn run_toolbar_frame_at_with_settings(
     })
 }
 
+#[cfg(target_os = "macos")]
+fn run_app_settings_frame(
+    ctx: &egui::Context,
+    events: Vec<egui::Event>,
+    screen: egui::Rect,
+    app: &mut OccluViewApp,
+) -> anyhow::Result<(egui::Rect, egui::FullOutput)> {
+    let input = egui::RawInput {
+        screen_rect: Some(screen),
+        safe_area_insets: Some(egui::SafeAreaInsets(egui::Margin::same(4).into())),
+        events,
+        ..Default::default()
+    };
+    let mut trigger = None;
+    let mut output = ctx.run_ui(input, |ui| {
+        egui::Panel::top("app-settings-test-toolbar")
+            .exact_size(30.0)
+            .show(ui, |ui| {
+                let response = show_settings_toolbar_toggle(ui, true, &app.ui.locale);
+                trigger = Some(response.rect);
+                app.show_settings_popup(&response);
+            });
+    });
+    output.textures_delta.clear();
+    Ok((
+        trigger.ok_or_else(|| anyhow::anyhow!("the app Settings trigger should render"))?,
+        output,
+    ))
+}
+
 fn pointer_button(pos: egui::Pos2, pressed: bool) -> egui::Event {
     egui::Event::PointerButton {
         pos,
@@ -137,6 +167,34 @@ fn click(ctx: &egui::Context, position: egui::Pos2) -> anyhow::Result<ToolbarFra
             pointer_button(position, false),
         ],
     )
+}
+
+#[cfg(target_os = "macos")]
+fn click_app_settings(
+    ctx: &egui::Context,
+    screen: egui::Rect,
+    app: &mut OccluViewApp,
+    position: egui::Pos2,
+) -> anyhow::Result<()> {
+    let _ = run_app_settings_frame(
+        ctx,
+        vec![
+            egui::Event::PointerMoved(position),
+            pointer_button(position, true),
+        ],
+        screen,
+        app,
+    )?;
+    let _ = run_app_settings_frame(
+        ctx,
+        vec![
+            egui::Event::PointerMoved(position),
+            pointer_button(position, false),
+        ],
+        screen,
+        app,
+    )?;
+    Ok(())
 }
 
 fn tall_test_screen() -> egui::Rect {
@@ -379,6 +437,85 @@ fn macos_settings_offer_a_selectable_smooth_scroll_action() -> anyhow::Result<()
         selected.action,
         Some(SettingsAction::SetScrollBehavior(ScrollBehavior::Zoom))
     );
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn camera_after_saved_scroll(settings: &Settings) -> (bool, occluview_core::Camera) {
+    let ctx = egui::Context::default();
+    let viewport = egui::Rect::from_min_size(egui::pos2(100.0, 80.0), egui::vec2(800.0, 600.0));
+    let input = egui::RawInput {
+        screen_rect: Some(viewport),
+        events: vec![
+            egui::Event::PointerMoved(viewport.center()),
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, 40.0),
+                phase: egui::TouchPhase::Move,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+        ..Default::default()
+    };
+    let mut camera = occluview_core::Camera::default();
+    let mut changed = false;
+    ctx.run_ui(input, |ui| {
+        changed = super::super::app_viewport::update_camera_from_scroll(
+            &mut camera,
+            ui.ctx(),
+            viewport,
+            settings,
+        );
+    })
+    .drop_without_applying_deltas();
+    (changed, camera)
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn selected_scroll_action_persists_and_drives_viewport_zoom() -> anyhow::Result<()> {
+    let ctx = egui::Context::default();
+    let screen = tall_test_screen();
+    let mut app = OccluViewApp::new_for_tests(ctx.clone());
+    let (trigger, _) = run_app_settings_frame(&ctx, Vec::new(), screen, &mut app)?;
+    click_app_settings(&ctx, screen, &mut app, trigger.center())?;
+
+    let popup = popup_rect(&ctx, settings_popup_id())?;
+    let _ = run_app_settings_frame(
+        &ctx,
+        vec![
+            egui::Event::PointerMoved(popup.center()),
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, -1_000.0),
+                phase: egui::TouchPhase::Move,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+        screen,
+        &mut app,
+    )?;
+    let (_, visible) = run_app_settings_frame(&ctx, Vec::new(), screen, &mut app)?;
+    let zoom = direct_control_center(&visible, "Zoom")?;
+    click_app_settings(&ctx, screen, &mut app, zoom)?;
+
+    assert_eq!(
+        app.persistence.settings.scroll_behavior,
+        ScrollBehavior::Zoom
+    );
+    assert!(app
+        .persistence
+        .settings_persistence
+        .should_attempt(std::time::Instant::now()));
+    let saved = serde_json::to_vec(&app.persistence.settings)?;
+    let loaded: Settings = serde_json::from_slice(&saved)?;
+    assert_eq!(loaded.scroll_behavior, ScrollBehavior::Zoom);
+
+    let initial = occluview_core::Camera::default();
+    let (changed, zoomed) = camera_after_saved_scroll(&loaded);
+    assert!(changed);
+    assert_eq!(zoomed.target, initial.target);
+    assert!(zoomed.orthographic_height < initial.orthographic_height);
     Ok(())
 }
 
