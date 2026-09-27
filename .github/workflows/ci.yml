@@ -169,6 +169,14 @@ jobs:
       - name: Package and verify unsigned Apple Silicon app, DMG, and PKG
         run: |
           bash install/macos/build-app.sh --no-build
+          app="target/macos/OccluView.app"
+          log="$RUNNER_TEMP/occluview-scene-load.log"
+          plist="$app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Add :LSEnvironment dict' "$plist"
+          /usr/libexec/PlistBuddy -c "Add :LSEnvironment:OCCLUVIEW_SCENE_LOAD_LOG string $log" "$plist"
+          plutil -lint "$plist"
+          codesign --force --sign - "$app"
+          codesign --verify --deep --strict "$app"
           bash install/macos/build-dmg.sh --no-build
           bash install/macos/build-pkg.sh --no-build
           dmg="$(find target/macos -maxdepth 1 -type f -name 'OccluView-*-aarch64.dmg' -print -quit)"
@@ -194,8 +202,7 @@ jobs:
           test -s "$sample"
           test ! -e "$HOME/Library/Application Support/OccluView"
           sudo installer -pkg "$pkg" -target /
-          launchctl setenv OCCLUVIEW_SCENE_LOAD_LOG "$log"
-          trap 'launchctl unsetenv OCCLUVIEW_SCENE_LOAD_LOG' EXIT
+          test ! -e "$log"
           open -a /Applications/OccluView.app "$sample"
           for attempt in $(seq 1 60); do
             if grep -Fq 'scene load completed' "$log" 2>/dev/null; then
