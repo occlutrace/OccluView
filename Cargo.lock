@@ -2601,6 +2601,7 @@ version = "1.2.1"
 dependencies = [
  "glam",
  "kdtree",
+ "occluview-surface-query",
  "rayon",
 ]
 
@@ -2666,7 +2667,7 @@ name = "occluview-contact"
 version = "1.2.1"
 dependencies = [
  "glam",
- "occluview-align",
+ "occluview-surface-query",
  "rayon",
 ]
 
@@ -2754,6 +2755,14 @@ dependencies = [
  "tracing",
  "windows",
  "windows-core",
+]
+
+[[package]]
+name = "occluview-surface-query"
+version = "1.2.1"
+dependencies = [
+ "glam",
+ "serde_json",
 ]
 
 [[package]]
