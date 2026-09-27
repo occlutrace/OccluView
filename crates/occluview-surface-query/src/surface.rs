@@ -105,28 +105,35 @@ pub struct SurfaceHit {
 /// A deterministic representative of one indexed triangle for bounded
 /// fixed-to-moving overlap checks.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct SurfaceSample {
+#[doc(hidden)]
+pub struct SurfaceSample {
     /// Triangle centroid in the index's own frame.
-    pub(crate) point: DVec3,
+    pub point: DVec3,
     /// The triangle's geometric normal.
-    pub(crate) normal: DVec3,
+    pub normal: DVec3,
     /// Connected component containing this triangle.
-    pub(crate) component: usize,
+    pub component: usize,
 }
 
 /// One roughly uniform surface representative for global shape matching.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct FeaturePoint {
-    pub(crate) position: DVec3,
-    pub(crate) normal: DVec3,
+#[doc(hidden)]
+pub struct FeaturePoint {
+    /// Representative position in the index's frame.
+    pub position: DVec3,
+    /// Average geometric normal at the representative position.
+    pub normal: DVec3,
 }
 
-pub(crate) const FEATURE_VOXEL_MM: f64 = 0.7;
+#[doc(hidden)]
+/// Grid size, in millimetres, used to deduplicate sampled surface features.
+pub const FEATURE_VOXEL_MM: f64 = 0.7;
 
 /// Bounded voxel coordinates keep the feature grid meaningful and prevent
 /// overflow in the local neighbourhood walk.
+#[doc(hidden)]
 #[allow(clippy::cast_possible_truncation)]
-pub(crate) fn feature_voxel_key(point: DVec3) -> Option<(i32, i32, i32)> {
+pub fn feature_voxel_key(point: DVec3) -> Option<(i32, i32, i32)> {
     let coordinate = |value: f64| {
         let scaled = (value / FEATURE_VOXEL_MM).floor();
         (scaled.is_finite() && scaled.abs() < 1_000_000.0).then_some(scaled as i32)
@@ -319,7 +326,8 @@ impl SurfaceIndex {
     /// voxels. The source mesh's triangle count and order must not decide how
     /// much matching evidence a physical patch contributes.
     #[allow(clippy::cast_precision_loss)]
-    pub(crate) fn feature_cloud(&self) -> Vec<FeaturePoint> {
+    #[doc(hidden)]
+    pub fn feature_cloud(&self) -> Vec<FeaturePoint> {
         const SAMPLE_COUNT: usize = 30_000;
         if self.corners.len() < 10_000 {
             return Vec::new();
@@ -379,7 +387,8 @@ impl SurfaceIndex {
     /// The samples are used only as an independent overlap signal; nearest
     /// queries and deviation maps still use the complete indexed surface.
     #[must_use]
-    pub(crate) fn representative_samples(&self, budget: usize) -> Vec<SurfaceSample> {
+    #[doc(hidden)]
+    pub fn representative_samples(&self, budget: usize) -> Vec<SurfaceSample> {
         if budget == 0 || self.corners.is_empty() {
             return Vec::new();
         }
