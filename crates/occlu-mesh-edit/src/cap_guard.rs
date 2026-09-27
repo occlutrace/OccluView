@@ -1,9 +1,9 @@
 //! Post-cap self-intersection guard.
 //!
 //! A cap over a strongly curved or badly damaged rim can fold onto itself or
-//! poke through nearby surface (mesh-repair tools generally refuse such caps;
-//! we previously emitted them silently). This module answers one question:
-//! does a candidate cap PIERCE itself or the surface around its rim?
+//! poke through nearby surface (mesh-repair tools generally refuse such
+//! caps). This module answers one question: does a candidate cap pierce
+//! itself or the surface around its rim?
 //!
 //! Test model: segment-vs-triangle piercing between triangles that share no
 //! vertex id, evaluated in `f64`. Pairs sharing a vertex (cap fans around rim
@@ -189,7 +189,7 @@ pub(super) fn cap_pierces(cap: &[GuardTriangle], surround: &[GuardTriangle]) -> 
         bounds.push((lo, hi));
     }
 
-    // Sweep along the WIDEST world axis (a hole on an axis-aligned wall would
+    // Sweep along the widest world axis (a hole on an axis-aligned wall would
     // degenerate a fixed-x sweep into an all-pairs scan). Sort key falls back
     // to the index for full determinism.
     let extent = world_hi - world_lo;
@@ -245,7 +245,7 @@ fn shares_vertex(t1: &GuardTriangle, t2: &GuardTriangle) -> bool {
     t1.ids.iter().any(|id| t2.ids.contains(id))
 }
 
-/// Interior dihedral beyond this is a FOLD, not curvature: the cap's
+/// Interior dihedral beyond this is a fold, not curvature: the cap's
 /// parameterization collapsed (e.g. a strongly wrapped rim whose projection
 /// folds over, making the quadric height field two-valued).
 const FOLD_COSINE_LIMIT: f32 = -0.5; // 120 degrees

@@ -54,8 +54,8 @@ pub(crate) fn show_information_modal<T>(
         .inner;
 
     // Only force a sizing pass when the available content rectangle changed
-    // and the remembered card no longer fits. Repeating this every frame is
-    // precisely the feedback loop the regression test protects against.
+    // and the remembered card does not fit it. Repeating this every frame
+    // would recreate the resize feedback loop described above.
     let bounds_key = id.with("information-modal-bounds");
     let bounds_changed = ctx.data(|data| {
         data.get_temp::<egui::Rect>(bounds_key)

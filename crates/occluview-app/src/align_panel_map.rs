@@ -1,12 +1,12 @@
 //! The Heatmap block of the Align Scans window.
 //!
-//! Split from the window itself because it answers a different question. That
-//! module is about getting two scans onto each other; this one is about reading
-//! how far apart they ended up, and it is the part an operator stares at.
+//! Separate from the window itself because it answers a different question.
+//! That module is about getting two scans onto each other; this one is about
+//! reading how far apart they ended up.
 //!
-//! The working surface is deliberately small: one toggle, one legend, and one
-//! absolute deviation range. Fit diagnostics belong in logs, not in the window
-//! the operator is using to place two scans.
+//! The working surface is limited to one toggle, one legend, and one absolute
+//! deviation range. Fit diagnostics belong in logs, not in the window the
+//! operator is using to place two scans.
 
 use eframe::egui;
 

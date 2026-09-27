@@ -1,8 +1,8 @@
 use super::*;
 
-/// P1 lost-update regression: contention on the frame path must not drop
-/// the newest CPU state. A drained-but-unapplied update is restored, so a
-/// later poll applies authoritative latest state. Non-blocking throughout.
+/// Contention on the frame path must not drop the newest CPU state. A
+/// drained-but-unapplied update is restored, so a later poll applies
+/// authoritative latest state. Non-blocking throughout.
 #[test]
 fn drained_update_is_not_lost_on_shadow_contention() {
     let worker = test_worker();
@@ -17,7 +17,7 @@ fn drained_update_is_not_lost_on_shadow_contention() {
         worker.state.shadow.try_read().is_err(),
         "held write lock must make the flush unavailable"
     );
-    // Fixed `flush_sculpt_update` path: restore instead of dropping.
+    // The `flush_sculpt_update` path restores instead of dropping.
     worker.restore_update(drained);
     drop(write_guard);
     let retry = worker.take_update();

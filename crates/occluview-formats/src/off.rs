@@ -3,7 +3,7 @@
 //! Standard Princeton OFF: `OFF BINARY\n` header + 3x LE i32 counts + LE f64
 //! positions + LE i32 face indices; ASCII variant also supported. N-gon faces
 //! are fan-triangulated. Note: some dental CAD software emits a non-standard
-//! binary OFF variant (BE floats, compressed) that is NOT supported here.
+//! binary OFF variant (BE floats, compressed) that is not supported here.
 //!
 //! Index/count casts are allowed at module scope.
 
@@ -25,12 +25,11 @@ use occluview_core::{Mesh, MeshBuilder, Vertex};
 /// Windows (where allocations are committed eagerly) — a hard crash on a bad
 /// file.
 ///
-/// The unit matters: an element of THIS vector is a `Vec3`, so bounding the
-/// count by the remaining bytes reserved `12 x` the file. At the 1 GiB import
-/// cap that is ~12.9 GB, twice over with two files in flight, which is exactly
-/// the reservation the bound exists to prevent. A truthful file still gets its
-/// exact count, because a truthful header cannot declare more elements than
-/// the bytes could encode.
+/// The unit matters: bounding the element count by the remaining bytes, rather
+/// than by the elements those bytes can hold, would reserve `12 x` the file for
+/// a `Vec3`. At the 1 GiB import cap that is ~12.9 GB, twice over with two files
+/// in flight. A truthful file still gets its exact count, because a truthful
+/// header cannot declare more elements than the bytes could encode.
 use std::mem::size_of;
 
 fn bounded_capacity<T>(declared: usize, remaining_bytes: usize) -> usize {
@@ -75,7 +74,7 @@ fn read_binary(bytes: &[u8]) -> Result<Mesh, FormatError> {
     }
     let mut cur = cursor_start;
     let read_i32 = |b: &[u8], off: &mut usize| -> Result<i32, FormatError> {
-        // `.get()` (not `b[..]`) so truncated face/index data yields an honest
+        // `.get()` (not `b[..]`) so truncated face/index data yields a
         // `Truncated` error instead of an out-of-range slice-index panic.
         let arr: [u8; 4] = b
             .get(*off..*off + 4)
@@ -166,10 +165,10 @@ fn read_ascii(bytes: &[u8]) -> Result<Mesh, FormatError> {
     let first = lines.next().unwrap_or_default();
     // `OFFST`/`OFF ST` is the with-normals variant, so the flag letters have to
     // come off before the remainder can be read as counts. Keeping the whole
-    // tail turned `OFFST\n3 1 0` into a vertex count of "ST" and a Malformed
-    // error, on a form the reader advertises support for; and only a tail that
-    // actually starts with a digit is counts, so an unrecognised flag word
-    // falls through to the next line instead of being misparsed.
+    // tail would turn `OFFST\n3 1 0` into a vertex count of "ST" and a
+    // Malformed error on a supported form; and only a tail that starts with a
+    // digit is counts, so an unrecognised flag word falls through to the next
+    // line instead of being misparsed.
     let keyword_tail = first
         .trim_start()
         .strip_prefix("OFF")
@@ -187,11 +186,11 @@ fn read_ascii(bytes: &[u8]) -> Result<Mesh, FormatError> {
             })?
             .to_string(),
     };
-    // The counts line must be numbers. Without this an unrecognised flag on the
-    // keyword line (`OFF C 3 1 0`) fell through to the first DATA row as its
-    // counts, and `0 0 0` there parsed as zero vertices and zero faces — an empty
-    // mesh returned as success for a file that has geometry. Refusing is the
-    // honest answer, and it is the same answer a truncated header gets.
+    // The counts line must be numbers. Otherwise an unrecognised flag on the
+    // keyword line (`OFF C 3 1 0`) falls through to the first data row as its
+    // counts, and `0 0 0` there parses as zero vertices and zero faces — an
+    // empty mesh returned as success for a file that has geometry. The file is
+    // refused instead, with the same error a truncated header gets.
     if !counts_line
         .trim_start()
         .starts_with(|c: char| c.is_ascii_digit() || c == '-' || c == '+')
@@ -265,7 +264,7 @@ fn read_ascii(bytes: &[u8]) -> Result<Mesh, FormatError> {
 }
 
 /// Token-stream lexer: yields whitespace-split f32 values, skipping comments
-/// and blank lines. Replaces the closure-lifetime tangle above with a struct.
+/// and blank lines.
 struct Lexer<'a> {
     lines: std::str::Lines<'a>,
     tokens: std::vec::IntoIter<&'a str>,
@@ -301,7 +300,7 @@ impl<'a> Lexer<'a> {
 }
 
 fn read_f64_le(b: &[u8], off: &mut usize) -> Result<f64, FormatError> {
-    // `.get()` (not `b[..]`) so a truncated binary OFF yields an honest
+    // `.get()` (not `b[..]`) so a truncated binary OFF yields a
     // `Truncated` error instead of an out-of-range slice-index panic.
     let arr: [u8; 8] = b
         .get(*off..*off + 8)
@@ -394,22 +393,22 @@ mod tests {
     }
 
     #[test]
-    fn bounded_capacity_caps_liar_but_keeps_honest_count() {
+    fn bounded_capacity_caps_an_inflated_count_but_keeps_a_truthful_one() {
         // Truthful file: reserve exactly what the header declares.
         assert_eq!(bounded_capacity::<Vec3>(3, 4096), 3);
-        // Lie: a tiny file claiming billions is capped to what its bytes could
-        // encode, so the reservation cannot abort the process.
+        // Inflated header: a tiny file claiming billions is capped to what its
+        // bytes could encode, so the reservation cannot abort the process.
         assert_eq!(bounded_capacity::<Vec3>(4_000_000_000, 24), 2);
     }
 
-    /// The bound must be counted in BYTES, not elements.
+    /// The bound must be counted in bytes, not elements.
     ///
-    /// Bounding the element count by the remaining bytes reserved `size_of::<T>`
-    /// times the file: a 1 GiB OFF whose header lies reserved ~12.9 GB of
-    /// `Vec3` (and twice that with two files in flight), which is the eager
-    /// commit that aborts on Windows. A smaller element must still get its own
-    /// honest count, so an `u32` face row is not cut to a twelfth of what its
-    /// bytes hold.
+    /// Bounding the element count by the remaining bytes would reserve
+    /// `size_of::<T>` times the file: a 1 GiB OFF with an inflated header would
+    /// reserve ~12.9 GB of `Vec3` (and twice that with two files in flight),
+    /// the eager commit that aborts on Windows. A smaller element must still
+    /// get its own full count, so a `u32` face row is not cut to a twelfth of
+    /// what its bytes hold.
     #[test]
     fn the_reservation_is_bounded_by_bytes_not_elements() {
         assert_eq!(bounded_capacity::<Vec3>(1_000_000, 24_000), 2_000);
@@ -424,8 +423,8 @@ mod tests {
     #[test]
     fn counts_on_the_keyword_line_are_read_instead_of_an_empty_mesh() {
         // Several writers put the three counts on the keyword line. Discarding
-        // that line made the reader take the first vertex row as the counts and
-        // return an empty mesh with no error.
+        // that line would make the reader take the first vertex row as the
+        // counts and return an empty mesh with no error.
         let text = "OFF 3 1 0\n0 0 0\n1 0 0\n0 1 0\n3 0 1 2\n";
         let mesh = read(text.as_bytes()).expect("keyword-line counts must parse");
         assert_eq!(mesh.vertices().len(), 3);
@@ -457,7 +456,7 @@ mod tests {
 
     #[test]
     fn ascii_negative_face_degree_is_rejected_not_reserved() {
-        // A negative n-gon degree used to cast to a giant usize.
+        // A negative n-gon degree must not cast to a giant usize.
         let text = "OFF\n3 1 0\n0 0 0\n1 0 0\n0 1 0\n-9 0 1 2\n";
         // Degenerate (n<3 after clamping) faces are skipped; the file still
         // parses to its 3 vertices with no faces rather than crashing.

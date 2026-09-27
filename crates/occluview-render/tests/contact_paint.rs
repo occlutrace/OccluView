@@ -73,7 +73,7 @@ const TOUCH_STOP_OKLAB: [f32; 4] = [0.0, 0.488_198_3, -0.021_281_0, -0.216_120_2
 /// Expected sRGB of `TOUCH_STOP_OKLAB`, which the shader must arrive at.
 const TOUCH_STOP_SRGB: [u8; 3] = [29, 78, 216];
 
-/// Load, `#ef3e36` at -0.22 mm — RED STARTS HERE, and nowhere earlier.
+/// Load, `#ef3e36` at -0.22 mm — red starts here, and nowhere earlier.
 const LOAD_STOP_OKLAB: [f32; 4] = [-0.22, 0.629_783_1, 0.189_664_2, 0.100_125_4];
 /// Expected sRGB of `LOAD_STOP_OKLAB`.
 const LOAD_STOP_SRGB: [u8; 3] = [239, 62, 54];
@@ -149,13 +149,12 @@ fn field_at_column(x: usize) -> f32 {
 
 /// A uniform that paints `stops`.
 ///
-/// A reading does NOT set the measured-map flag any more. That flag makes a
-/// layer skip its tint and its lighting so a ramp keeps its own hue, and a
-/// contact reading uses it for nothing: the paint is mixed over the finished
-/// surface instead, so a scan keeps the treatment the operator gave it and only
-/// the marks change. The fixture now matches the app, which is also what exposed
-/// the earlier mismatch: the flag used to return before the paint ran, so this
-/// test had been asking for a path the viewer no longer took.
+/// A reading does not set the measured-map flag. That flag makes a layer skip
+/// its tint and its lighting so a ramp keeps its own hue, and a contact reading
+/// uses it for nothing: the paint is mixed over the finished surface instead,
+/// so a scan keeps the treatment the operator gave it and only the marks
+/// change. The fixture builds the uniform the way the app does, so the test
+/// exercises the path the viewer takes.
 fn contact_uniform(stops: &[[f32; 4]]) -> GpuMeshUniform {
     let mut uniform = GpuMeshUniform::identity();
     let copied = uniform.set_contact_paint(4, PAINT_FAR_MM, FAR_FADE_MM, stops);
@@ -209,22 +208,19 @@ fn channel_gap(left: [u8; 3], right: [u8; 3]) -> i32 {
 /// The stop colour, painted at full strength and then lit like the tooth it
 /// sits on.
 ///
-/// The mark is painted INTO the base colour, so the studio light and the clay
-/// specular act on it exactly as they act on the enamel around it. That is
-/// deliberate: it is what the owner asked for ("more gloss on the contacts"),
-/// and it is what the reference viewer this port came from does. A mark mixed
-/// over an already-lit surface cannot take a highlight at all, which is why it
-/// used to read as a flat sticker.
+/// The mark is painted into the base colour, so the studio light and the clay
+/// specular act on it exactly as they act on the enamel around it, as in the
+/// reference viewer this port came from. A mark mixed over an already-lit
+/// surface cannot take a highlight at all and reads as a flat sticker.
 ///
-/// The consequence for this test is that the old model — "the pixel is the stop
-/// colour under one scalar" — is no longer the whole truth. A lit pixel is
-/// `stop * shade + highlight`, and the highlight is ADDITIVE IN LINEAR SPACE,
+/// A lit pixel is therefore not "the stop colour under one scalar": it is
+/// `stop * shade + highlight`, and the highlight is additive in linear space,
 /// so it adds a different number of 8-bit sRGB units to a bright channel than
 /// to a dark one. That is not a hue shift; it is the signature of a specular
 /// term, and it is bounded by the highlight's own magnitude.
 ///
-/// What must still hold, because it is the whole contract of a false-colour
-/// map, is the HUE: an operator reads a mark by matching its colour against the
+/// What must hold, because it is the contract of a false-colour map, is the
+/// hue: an operator reads a mark by matching its colour against the
 /// legend, so the relative order of the three channels may not change.
 fn assert_stop_colour(actual: [u8; 3], expected: [u8; 3], what: &str) {
     let dominant = (0..3)
@@ -248,7 +244,7 @@ fn assert_stop_colour(actual: [u8; 3], expected: [u8; 3], what: &str) {
     }
     // The hue is the contract. The highlight is dimmer than any of these stops,
     // so it may brighten a mark but it may not reorder its channels: the moment
-    // the stop's channel ORDER changes, an operator reading the legend is being
+    // the stop's channel order changes, an operator reading the legend is being
     // told the wrong depth.
     let order = |c: [u8; 3]| {
         let mut ranked = [0_usize, 1, 2];
@@ -259,7 +255,7 @@ fn assert_stop_colour(actual: [u8; 3], expected: [u8; 3], what: &str) {
         order(actual),
         order(expected),
         "{what}: {actual:?} has a different channel order than {expected:?}; the \
-         highlight moved the hue and the legend no longer describes this pixel"
+         highlight moved the hue and the legend does not describe this pixel"
     );
 }
 
@@ -407,7 +403,7 @@ fn moving_the_load_stop_repaints_without_re_uploading_the_field() {
         "the tightened load stop clamps the mid-ramp depth",
     );
 
-    // A different field under the SAME revision is ignored: the caller's token
+    // A different field under the same revision is ignored: the caller's token
     // is the promise about the bytes, and honouring it is what keeps a per-frame
     // re-derivation from re-uploading the field every frame.
     let cleared = packed_field(&[0.5; 4]);

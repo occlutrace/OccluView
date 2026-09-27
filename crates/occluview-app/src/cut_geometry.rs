@@ -1,8 +1,8 @@
 //! Stateless geometry for the cut disc: follow orientation, normal smoothing,
 //! radius scaling, the handle hit-test, and the translate / push-pull / arcball
-//! transforms. Split out of [`crate::cut_manipulator`] so both the pure math and
-//! the state machine stay well under the file-size budget; every function here
-//! is a pure function of its inputs, unit-tested in `cut_geometry_tests.rs`.
+//! transforms. Kept apart from the [`crate::cut_manipulator`] state machine;
+//! every function here is a pure function of its inputs, unit-tested in
+//! `cut_geometry_tests.rs`.
 
 use crate::cut_manipulator::{
     ArchFrame, CutCursor, CutFrameInput, DiscDrag, DiscPose, CENTER_GRAB_RADIUS_PX,
@@ -18,28 +18,27 @@ use glam::{Quat, Vec3};
 const FOLLOW_BLEND_START: f32 = 0.015;
 const FOLLOW_BLEND_END: f32 = 0.12;
 
-/// Follow orientation: the disc's plane normal is the LOCAL ARCH TANGENT at
+/// Follow orientation: the disc's plane normal is the local arch tangent at
 /// `point` — the mesiodistal "along the arch" direction — so the disc plane
 /// itself spans the occlusal (vertical) axis and the radial spoke through the
-/// cursor: a saw blade standing upright, cutting TRANSVERSE to the arch at
-/// exactly that spot. This is the anatomically correct separator orientation
-/// everywhere around a horseshoe arch, and it is a WORLD-space property of
-/// the surface point alone: orbiting the camera never re-tilts it. (The
-/// previous `n x view_dir` construction only matched this from a straight
-/// occlusal view; from a tilted or facial view its cross product drifted
-/// toward the vertical axis and laid the disc flat — the reported
-/// "top-to-bottom at the sides of the arch" bug.)
+/// cursor: a saw blade standing upright, cutting transverse to the arch at
+/// that spot. This is the anatomically correct separator orientation
+/// everywhere around a horseshoe arch, and it is a world-space property of
+/// the surface point alone: orbiting the camera never re-tilts it. (A
+/// view-coupled `n x view_dir` normal matches this only from a straight
+/// occlusal view; from a tilted or facial view its cross product drifts
+/// toward the vertical axis and lays the disc flat.)
 ///
 /// The tangent comes from [`local_arch_tangent`], built on `arch_frame` — the
 /// mesh's own PCA centroid and greatest-variance axes (see
 /// [`occluview_core::Mesh::principal_frame_cached`]). Because it derives from
-/// a per-mesh-constant frame plus the hit POINT, it rotates smoothly as the
+/// a per-mesh-constant frame plus the hit point, it rotates smoothly as the
 /// cursor sweeps along the arch and is immune to per-triangle normal jitter.
 ///
 /// Only when no arch frame is available (a point cloud, or too few vertices
 /// for a well-defined frame), or `point` projects onto the centroid exactly
 /// (a defensive guard; never a real surface point), does it fall back to the
-/// legacy view-coupled construction: `surface_normal x view_dir`, blended to
+/// view-coupled construction: `surface_normal x view_dir`, blended to
 /// the camera-right axis when that cross product degenerates.
 pub(crate) fn follow_plane_normal(
     arch_frame: Option<ArchFrame>,
@@ -73,10 +72,10 @@ pub(crate) fn follow_plane_normal(
         .normalize_or(oriented_fallback)
 }
 
-/// The LOCAL along-the-arch tangent at `point`: the occlusal axis
+/// The local along-the-arch tangent at `point`: the occlusal axis
 /// (`axis0 x axis1`, the frame's least-variance direction — perpendicular to
 /// the arch plane) crossed with the radial spoke from [`local_arch_normal`].
-/// A disc whose plane NORMAL is this tangent contains both the occlusal axis
+/// A disc whose plane normal is this tangent contains both the occlusal axis
 /// and the spoke: it stands upright and cuts radially across the arch,
 /// turning continuously as `point` sweeps around the curve. `None` only when
 /// the spoke itself is undefined (point at the centroid) or the frame's axes
@@ -88,11 +87,11 @@ fn local_arch_tangent(frame: ArchFrame, point: Vec3) -> Option<Vec3> {
     (tangent.length_squared() > f32::EPSILON).then_some(tangent)
 }
 
-/// The LOCAL cross-arch direction at `point`: the vector from `frame`'s own
+/// The local cross-arch direction at `point`: the vector from `frame`'s own
 /// PCA centroid to `point`, projected onto `frame`'s `axis0`/`axis1` plane
 /// and normalized — the "spoke" direction pointing radially outward from the
 /// arch's own center through this point. For a horseshoe/U-shaped dental
-/// arch this smoothly ROTATES as `point` moves around the curve: it reduces
+/// arch this smoothly rotates as `point` moves around the curve: it reduces
 /// to (roughly) `axis0` at the arch's left/right extremes and to `axis1`
 /// near its front-center, tracking the true local cross-arch direction
 /// everywhere between — unlike a single constant axis, which is only correct
@@ -320,7 +319,7 @@ pub(crate) fn closest_param_on_segment(point: Pos2, a: Pos2, b: Pos2) -> (f32, f
 /// contour segment within `radius_px` **panel pixels**. `project` maps a world
 /// point to its panel pixel (the same mapping the ruler and the drawn contour
 /// use), so the radius is a true on-screen distance and naturally tightens as
-/// the view zooms in. Returns the EXACT segment-interpolated world point (not
+/// the view zooms in. Returns the exact segment-interpolated world point (not
 /// just the nearest vertex), or `None` when no segment is within the radius.
 pub(crate) fn snap_to_contour<I>(
     click: Pos2,

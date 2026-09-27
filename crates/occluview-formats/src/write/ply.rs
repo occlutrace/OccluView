@@ -264,7 +264,7 @@ mod tests {
         assert_eq!(read.vertices()[2].color, [0, 0, 255, 255]);
     }
 
-    /// A mesh that carries BOTH an atlas and its own per-vertex colours — a
+    /// A mesh that carries both an atlas and its own per-vertex colours — a
     /// painted or occlusion-marked HPS scan is exactly that — exports the atlas,
     /// because that is what the viewer shows by default, and reports the
     /// colours it replaced rather than dropping them without a word.
@@ -343,7 +343,7 @@ mod tests {
     }
 
     /// A mesh without a texture still carries its mapping, as per-vertex
-    /// properties, so the coordinates are not silently dropped on the way out.
+    /// properties, so the coordinates are not dropped on the way out.
     #[test]
     fn coordinates_survive_without_an_image() {
         let mut mesh = textured_triangle();

@@ -1,8 +1,7 @@
 //! Unsaved-work guard dialogs (close + replace-open).
 //!
-//! Split from the toolbar/dialog surface (`app_dialogs`) so both files stay
-//! within the per-file line budget. Content only — dispatch stays with the
-//! app methods that open each guard.
+//! Content only: dispatch stays with the app methods that open each guard
+//! (`app_dialogs` owns the toolbar/dialog surface).
 
 use eframe::egui;
 

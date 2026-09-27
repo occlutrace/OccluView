@@ -1,12 +1,11 @@
 //! What the operator has marked out of the match, on **both** scans at once.
 //!
 //! Dental CAD software lets the operator mark either mesh independently, so
-//! this owns two masks rather than one. The type exists because the pieces
-//! below have to move together and used to sit as five loose fields on the
-//! application struct: the two masks, the revision every cache keys on, and
-//! the scratch list of vertices the last dab touched.
-//! Changing one without the others is how markings ended up on one surface and
-//! not the other, and how a stale revision handed a cache the wrong answer.
+//! this owns two masks rather than one. The pieces below move together: the
+//! two masks, the revision every cache keys on, and the scratch list of
+//! vertices the last dab touched. Changing one without the others would leave
+//! markings on one surface and not the other, or hand a cache a stale
+//! revision.
 //!
 //! It also keeps a running count of what is marked. Walking a full arch's mask
 //! to answer "how much is marked?" is a two-million-byte scan, and the panel
@@ -22,9 +21,8 @@ use occluview_align::{apply_brush, invert, set_all, MaskEdit, Rigid, INCLUDED};
 /// Blue, because that is the colour dental CAD software paints an excluded
 /// region, and an operator who works in that dialog should not have to learn
 /// a second convention here. Defined next to the markings themselves because
-/// both the surface and the sentence in the Brush window use it — they were
-/// two separate literals in two files, each with a comment claiming they
-/// matched. Opaque: a marked-out vertex is fully painted.
+/// both the surface and the sentence in the Brush window use it. Opaque: a
+/// marked-out vertex is fully painted.
 pub(crate) const MARKED_OUT_COLOR: [u8; 4] = [58, 108, 196, 255];
 
 /// Which scan of the pair a marking belongs to.
@@ -44,7 +42,7 @@ impl AlignSide {
 
 /// What a whole-mesh command left behind, for the status line.
 ///
-/// `marked` is the count the mask reports as EXCLUDED, so `marked == 0` on a
+/// `marked` is the count the mask reports as `EXCLUDED`, so `marked == 0` on a
 /// non-empty mesh means the command excluded nothing. That is the normal result
 /// of `MaskCommand::FitEverywhere`, and it is the state
 /// `MaskCommand::MarkAutomatic` reaches when the brush covered the whole layer —
@@ -129,9 +127,9 @@ impl MaskCommand {
 ///
 /// A vertex count on its own is not an identity. Two arches can carry the same
 /// count, and a repair or a sculpt can replace a mesh under the tool while
-/// keeping it — so a mask checked only by length could pass, and then excluded an
-/// arbitrary region of a surface nobody had marked, with nothing on screen saying
-/// so. The geometry id changes whenever the vertices do.
+/// keeping it — so a mask checked only by length could pass and exclude an
+/// arbitrary, unmarked region of the surface with nothing on screen saying so.
+/// The geometry id changes whenever the vertices do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct MarkedOn {
     /// The mesh the marks were painted on.
@@ -171,7 +169,7 @@ impl SideMarkings {
             .filter(|mask| mask.len() == mesh.vertex_count)
     }
 
-    /// Whether marks exist that no longer describe this mesh.
+    /// Whether marks exist that were painted on other geometry.
     fn stale_for(&self, mesh: MarkedOn) -> bool {
         self.mask.is_some() && self.fitting(mesh).is_none()
     }
@@ -227,9 +225,9 @@ impl AlignMarkings {
         self.side(side).fitting(mesh).map(Arc::clone)
     }
 
-    /// Whether this side carries marks that no longer describe the mesh in front
-    /// of the operator. The panel says so rather than letting them wonder why
-    /// their excluded region stopped taking effect.
+    /// Whether this side carries marks painted on geometry other than the mesh
+    /// in front of the operator. The panel reports them, because such marks
+    /// have no effect on the match.
     pub(crate) fn stale_for(&self, side: AlignSide, mesh: MarkedOn) -> bool {
         self.side(side).stale_for(mesh)
     }
@@ -279,7 +277,7 @@ impl AlignMarkings {
     /// the operator.
     ///
     /// The panel and the preview ask this before they attach anything. A mask
-    /// that exists but marks nothing (Fit everywhere leaves exactly that) is
+    /// that exists but marks nothing (Fit everywhere leaves one) is
     /// not a reason to replace a scan's colours on the GPU, and the brush
     /// opening on an unmarked pair must not repaint both arches for nothing.
     pub(crate) fn has_marks(&self, side: AlignSide, mesh: MarkedOn) -> bool {
@@ -322,11 +320,10 @@ impl AlignMarkings {
     /// Run one whole-mesh command against one side.
     ///
     /// Returns `None` when the command reached no mask at all, else what it
-    /// left. The count is the part the caller could not see before: `MarkAutomatic`
-    /// on a layer smaller than the brush radius clears EVERY vertex, so it
-    /// excludes nothing while the status line still said "Fit only at the arrow
-    /// ends" — the next Best fit then used the whole surface under a sentence
-    /// claiming the opposite.
+    /// left. The count lets the caller report the real outcome: `MarkAutomatic`
+    /// on a layer smaller than the brush radius clears every vertex, so it
+    /// excludes nothing, and a status line saying "Fit only at the arrow ends"
+    /// would contradict the next Best fit using the whole surface.
     pub(crate) fn command(
         &mut self,
         side: AlignSide,
@@ -358,7 +355,7 @@ impl AlignMarkings {
             }
             MaskCommand::MarkAutomatic => {
                 // Written as mark-everything then clear-the-discs, because the
-                // discs are what the operator wants MATCHED and the mask stores
+                // discs are what the operator wants matched and the mask stores
                 // what is ignored.
                 set_all(mask, true);
                 let mut cleared = 0usize;
@@ -395,8 +392,8 @@ impl AlignMarkings {
     ///
     /// A marking belongs to a surface, not to a role. When the operator swaps
     /// which scan moves, leaving the masks alone would take the region they
-    /// painted on one arch and apply it to the other — silently excluding
-    /// anatomy nobody marked.
+    /// painted on one arch and apply it to the other, excluding unmarked
+    /// anatomy with no sign on screen.
     pub(crate) fn swap_sides(&mut self) -> bool {
         if !self.any() {
             return false;
@@ -455,7 +452,6 @@ impl MarkedMesh<'_> {
     }
 }
 
-// Split out to hold the workspace's 800-line file budget.
 #[cfg(test)]
 #[path = "align_markings_tests.rs"]
 mod tests;

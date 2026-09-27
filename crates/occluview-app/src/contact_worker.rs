@@ -236,8 +236,8 @@ impl ContactWorker {
     /// Whether a job is queued or running.
     ///
     /// A worker that has latched a failure is never busy: nothing it holds will
-    /// ever run, and reporting otherwise is what leaves a spinner on screen
-    /// with no way out.
+    /// ever run, and reporting otherwise would leave a spinner on screen with
+    /// no way out.
     pub(crate) fn is_busy(&self) -> bool {
         if self.has_failed() {
             return false;

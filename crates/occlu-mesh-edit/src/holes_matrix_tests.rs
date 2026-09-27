@@ -1,6 +1,6 @@
 //! Scenario-matrix tests for hole filling: the HPS-scan-like default-fill
 //! contract (close every interior hole, protect the scan border, report
-//! honestly per reason), pinch/edge-sharing rim topologies, pinhole clusters,
+//! per reason), pinch/edge-sharing rim topologies, pinhole clusters,
 //! tiny rims, unwelded seams, attribute blending, and the dense-zigzag
 //! pathological rim that must never hang.
 
@@ -129,7 +129,7 @@ fn hps_like_shell() -> (MeshEditBuffers, usize) {
     }
 
     // Pinch hole: the [a, c, b] triangle of an outermost-row cell has exactly
-    // ONE vertex (c) on the border rim. Removing it leaves a 3-edge hole that
+    // one vertex (c) on the border rim. Removing it leaves a 3-edge hole that
     // touches the border loop at that single vertex — a boundary pinch.
     let pinch_cell = (rings - 1, 200_usize);
 
@@ -199,7 +199,7 @@ fn hps_like_default_closes_all_interior_holes_and_protects_the_border() {
         "one warning per skipped loop, whatever the reason"
     );
 
-    // All remaining POSITIVE-LENGTH boundary edges belong to the border loop
+    // All remaining positive-length boundary edges belong to the border loop
     // or the refused hourglass (4 edges): no interior hole edge survives. The
     // capped pinch hole legitimately leaves one zero-length crack between the
     // two junction copies.
@@ -252,7 +252,7 @@ fn hps_like_optional_mm_restraint_still_limits_large_holes() {
 
 #[test]
 fn three_fans_meeting_at_one_vertex_all_close() {
-    // THREE bowls sharing a single pinch vertex: the junction splits into one
+    // Three bowls sharing a single pinch vertex: the junction splits into one
     // copy per fan and every rim closes independently.
     let mut vertices = vec![v([0.0, 0.0, 0.0])]; // shared pinch vertex
     let mut indices = Vec::new();
@@ -292,7 +292,7 @@ fn three_fans_meeting_at_one_vertex_all_close() {
 #[test]
 fn two_holes_joined_through_a_shared_interior_edge_close_as_one() {
     // Two bowls whose open squares share one properly-wound edge: that edge
-    // is interior (twinned), so the two openings form ONE composite 6-edge
+    // is interior (twinned), so the two openings form one composite 6-edge
     // hole. It must close watertight as a single hole.
     let mut vertices = vec![
         v([0.0, 0.0, 0.0]),  // 0: shared a
@@ -379,7 +379,7 @@ fn tiny_rims_of_three_four_and_five_edges_close_watertight() {
 
 #[test]
 fn unwelded_duplicate_position_seam_closes_watertight() {
-    // STL-soup seam: the rim passes through a POSITION that exists twice with
+    // STL-soup seam: the rim passes through a position that exists twice with
     // distinct indices (one triangle references the copy), which re-routes
     // the boundary loop over the apex as a strongly folded 6-ring.
     let mut mesh = {
@@ -398,7 +398,7 @@ fn unwelded_duplicate_position_seam_closes_watertight() {
         );
         tri_mesh(vertices, indices)
     };
-    // Duplicate rim vertex 1 (position copy, distinct index) and repoint ONE
+    // Duplicate rim vertex 1 (position copy, distinct index) and repoint one
     // incident triangle to the copy.
     let copy = mesh.vertices[1];
     mesh.vertices.push(copy);
@@ -416,9 +416,9 @@ fn unwelded_duplicate_position_seam_closes_watertight() {
     mesh.indices[slot] = duplicate;
 
     let result = fill_holes(&mesh, None, guard_off()).expect("soup fill");
-    // The rim walks as one valid 6-loop THROUGH the apex (the seam re-routes
+    // The rim walks as one valid 6-loop through the apex (the seam re-routes
     // it), its planar projection self-overlaps, and the projection-free
-    // minimum-area fallback closes it watertight. The old kernel refused it.
+    // minimum-area fallback closes it watertight.
     assert_eq!(result.report.filled_holes, 1, "seam slit closes");
     assert_eq!(result.report.skipped_damaged_rims, 0);
     assert_eq!(boundary_edge_count(&result.mesh.indices), 0);
@@ -426,14 +426,14 @@ fn unwelded_duplicate_position_seam_closes_watertight() {
 
 #[test]
 fn rim_with_duplicate_position_but_distinct_indices_on_one_loop_still_closes() {
-    // A single VALID loop that visits two distinct indices carrying the SAME
+    // A single valid loop that visits two distinct indices carrying the same
     // position (legal in dental formats). The cap must not weld or panic.
     let mut vertices = Vec::new();
     for i in 0..8 {
         let t = std::f32::consts::TAU * (i as f32) / 8.0;
         vertices.push(v([t.cos(), t.sin(), 0.1 * (2.0 * t).sin()]));
     }
-    // Vertex 8 duplicates vertex 0's position; the ring uses BOTH (0 at the
+    // Vertex 8 duplicates vertex 0's position; the ring uses both (0 at the
     // seam start, 8 as an extra rim sample stitched between 7 and 0).
     vertices.push(vertices[0]);
     vertices.push(v([0.0, 0.0, -1.5])); // apex 9
@@ -470,7 +470,7 @@ fn fifty_pinholes_in_a_plane_all_close_while_the_border_stays() {
     for y in 0..side {
         for x in 0..side {
             let (a, b, c, d) = (at(x, y), at(x + 1, y), at(x + 1, y + 1), at(x, y + 1));
-            // Punch the LOWER triangle of every 5th interior cell on a
+            // Punch the lower triangle of every 5th interior cell on a
             // diagonal-ish pattern until 50 holes exist.
             let interior = x > 1 && x < side - 2 && y > 1 && y < side - 2;
             let punch = interior && punched < 50 && x % 5 == 2 && y % 5 == 2;
@@ -540,11 +540,11 @@ fn two_tone_rim_colors_blend_into_the_cap() {
     );
 }
 
-// pathological (hang killer)
+// pathological (termination)
 
 #[test]
-fn dense_zigzag_rim_terminates_quickly_and_honestly() {
-    // The live-hang shape: a rim with THOUSANDS of tiny zigzag edges and
+fn dense_zigzag_rim_terminates_quickly_and_reports_once() {
+    // The hang-prone shape: a rim with thousands of tiny zigzag edges and
     // near-duplicate vertices, small in mm. Every stage must stay bounded:
     // either the hole closes or it is refused with a warning — never a spin.
     let n = 3000_usize;
@@ -586,13 +586,13 @@ fn dense_zigzag_rim_terminates_quickly_and_honestly() {
     );
 }
 
-/// A shell with exactly ONE rim: a dome closed at the bottom by a fan to a
+/// A shell with exactly one rim: a dome closed at the bottom by a fan to a
 /// single apex, open at the top.
 ///
 /// The border guard's ratio half is vacuous here — a rim is always at least
 /// half of itself — so the absolute anchor alone decides, and at half the
-/// bounding-box diagonal it declared a routine socket "scan border" and refused
-/// to close it. A molar socket is 25-35 mm of perimeter on a 65-75 mm arch,
+/// bounding-box diagonal it would declare a routine socket "scan border" and
+/// refuse to close it. A molar socket is 25-35 mm of perimeter on a 65-75 mm arch,
 /// right on that line.
 #[test]
 fn the_sole_rim_of_a_closed_shell_is_a_hole_not_a_scan_border() {
@@ -605,9 +605,9 @@ fn the_sole_rim_of_a_closed_shell_is_a_hole_not_a_scan_border() {
     let mut vertices = Vec::new();
     for ring in 0..RINGS {
         // A modest polar opening on an almost-closed shell — the shape of a
-        // molar socket on an arch, which is the case the guard used to refuse:
-        // 31 mm of rim on a 34 mm diagonal, comfortably over the old half-the-
-        // diagonal threshold and so wrongly declared "scan border".
+        // molar socket on an arch: 31 mm of rim on a 34 mm diagonal, comfortably
+        // over a half-the-diagonal threshold, which must not make it "scan
+        // border".
         #[allow(clippy::cast_precision_loss)]
         let phi = std::f32::consts::FRAC_PI_6
             + (std::f32::consts::PI - std::f32::consts::FRAC_PI_6) * ring as f32 / RINGS as f32;
@@ -661,9 +661,9 @@ fn the_sole_rim_of_a_closed_shell_is_a_hole_not_a_scan_border() {
     );
 }
 
-/// Rim healing deletes triangles; the report used to say it had removed none,
-/// so `input - output` disagreed with `removed_triangles` and an operator had
-/// no way to see that geometry had been dropped.
+/// Rim healing deletes triangles, and the report counts them in
+/// `removed_triangles`, so `input - output` agrees with the report and an
+/// operator can see that geometry was dropped.
 #[test]
 fn healing_reports_the_triangles_it_actually_deleted() {
     // A small fan with one dangling needle hanging off its rim.
@@ -688,7 +688,7 @@ fn healing_reports_the_triangles_it_actually_deleted() {
 
     // The contract: whatever healing deleted has to be visible in the report.
     // If the mesh came back smaller than it went in, `removed_triangles` is the
-    // only field that can explain it, and it used to be hardcoded to zero.
+    // only field that can explain it.
     let report = &filled.report;
     if report.output_triangles < report.input_triangles {
         assert!(

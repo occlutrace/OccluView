@@ -31,13 +31,46 @@ Choose one file:
 - [OccluView-Windows-Setup.msi](https://github.com/occlutrace/OccluView/releases/latest/download/OccluView-Windows-Setup.msi) — recommended; installs the viewer, Explorer previews, thumbnails, and file associations.
 - [OccluView-Windows-Portable.zip](https://github.com/occlutrace/OccluView/releases/latest/download/OccluView-Windows-Portable.zip) — runs without installation; no Explorer integration.
 
-## Quick Look
+## macOS (Apple Silicon developer build)
+
+A native `aarch64-apple-darwin` build targets macOS 14 and later. There is no
+signed or notarized public macOS release yet. On an Apple Silicon Mac with the
+repository-pinned Rust toolchain, CMake, and Xcode command-line tools, build
+local artifacts from the repository root:
+
+```sh
+bash install/macos/build-app.sh
+bash install/macos/build-dmg.sh --no-build
+bash install/macos/build-pkg.sh --no-build
+```
+
+The scripts write an unsigned `.app`, `.dmg`, and `.pkg` under `target/macos/`;
+set `OCCLUVIEW_HPS_EMBEDDED_KEY` before `build-app.sh` for a build that opens
+encrypted HPS and `.dcm` files. The Package workflow builds the same three on an
+Apple Silicon runner with the embedded key. It signs them with Developer ID,
+notarizes and staples them when the Apple signing secrets are configured (see
+[SECURITY.md](SECURITY.md)), and only such a build is attached to a release and
+offered by the update manifest. Without those secrets the packages are unsigned
+test builds in the workflow artifacts; macOS asks for confirmation the first
+time one is opened.
+
+The renderer suites that compare against stored golden images select a
+deterministic software rasterizer (Lavapipe on Linux, WARP on Windows), so they
+run on those CI lanes. Apple Silicon has no equivalent adapter: macOS coverage
+comes from the viewer test suite, whose offscreen render tests run on Metal.
+
+Finder routes STL, PLY, OBJ, GLB, HPS, and the legacy `.dcm` HPS container to
+the app. `.dcm` is declared as an alternate handler, so it stays reachable
+through **Open With** without taking medical DICOM files away from their own
+software; a real DICOM file is refused by its `DICM` signature.
+
+## Explorer preview
 
 OccluView adds a live 3D preview to Windows Explorer. Select a scan and inspect
 it immediately without opening the full viewer.
 
 <p align="center">
-  <img src="assets/explorer-preview.gif" width="640" alt="OccluView Quick Look showing a live 3D Explorer Preview Pane">
+  <img src="assets/explorer-preview.gif" width="640" alt="OccluView showing a live 3D scan in the Windows Explorer Preview Pane">
 </p>
 
 ## Alignment and Heatmap
@@ -52,9 +85,9 @@ Open both scans as layers, choose **A** (Align), and use the automatic workflow:
 2. Click `Best fit matching` to seat corresponding surfaces.
 3. Read the colour map with the explicit millimetre legend and bounded range.
 
-The heatmap is display-only evidence from the latest confirmed matching result.
-Changing the pair, optimizer settings, exclusion markings, or returning to
-Automatic clears it until a new matching result lands. Manual alignment remains
+The heatmap shows the latest confirmed matching result. Changing the pair, the
+matching settings or the exclusion markings, or returning to Automatic, clears
+it until a new matching result is available. Manual alignment remains
 available when the automatic pair is not appropriate.
 
 ## Mesh Editing
@@ -63,7 +96,7 @@ available when the automatic pair is not appropriate.
   <img src="assets/mesh-editing.png" width="900" alt="OccluView Mesh Editing panel with selection and mesh operations">
 </p>
 
-Mesh Editing keeps the common dental CAD operations in one bounded palette:
+Mesh Editing keeps the common dental CAD operations in one palette:
 
 - lasso, object, surface, and through-mesh selection;
 - select all, clear, and invert;
@@ -84,11 +117,10 @@ panel instead of consuming the whole viewport.
   <img src="assets/mesh-repair.png" width="900" alt="OccluView Mesh Repair report with concrete repair counts">
 </p>
 
-Mesh Repair runs on the selected layer and opens a bounded report card. It
-removes duplicate and degenerate geometry, repairs unsafe topology, closes only
-safe pinholes, and reports the non-zero changes together with remaining open
-rims. A clean mesh receives an explicit “nothing to repair” result rather than
-silence. `Copy details` preserves the full per-pass report for a case record.
+Mesh Repair runs on the selected layer and opens a report. It removes duplicate
+and degenerate geometry, repairs unsafe topology, closes only safe pinholes,
+and lists what it changed together with the open rims that remain. A clean mesh
+reports that there was nothing to repair. `Copy details` preserves the full per-pass report for a case record.
 
 ## Files and results
 
@@ -110,27 +142,35 @@ interface renders English.
 
 Press **F1** — or open **Settings → Keyboard shortcuts** — for the complete keyboard and mouse reference.
 
-- Open a scan with **Ctrl+O**. Opening another file adds a layer; toolbar Open
-  replaces the scene.
+- Open a scan with **Ctrl+O** (**⌘+O** on macOS). Opening another file adds a
+  layer; toolbar Open replaces the scene.
 - Toolbar tools: **C** Cut View, **M** Ruler, **T** Thickness, **A** Align, and
   **E** Mesh Editing.
-- Orbit with right-drag; pan with middle-drag or LMB+RMB drag; zoom toward the
-  pointer with the wheel; recenter on a surface with middle-click or
-  double-click.
-- In Mesh Editing, **Ctrl+A** selects all; **Delete** or **Backspace** removes;
-  **Ctrl+Z**, **Ctrl+Y**, or **Ctrl+Shift+Z** undo and redo; **Enter** closes an
-  outline; **Esc** cancels it.
+- Orbit with right-drag; pan with middle-drag or LMB+RMB drag. A mouse wheel
+  zooms toward the pointer. On a Mac trackpad, two-finger scroll pans and
+  pinch zooms.
+  Recenter on a surface with middle-click or double-click.
+- In Mesh Editing, **Ctrl+A** (**⌘+A** on macOS) selects all; **Delete** or **Backspace**
+  removes; **Ctrl+Z**, **Ctrl+Y**, or **Ctrl+Shift+Z** (the ⌘ equivalents on macOS)
+  undo and redo; **Enter** closes an outline; **Esc** cancels it.
 - Mesh Repair is available from a layer's context menu and reports exactly what
   changed.
-- In Sculpt, **1** chooses Add/Remove and **2** chooses Smooth. **Shift+wheel** changes Sculpt brush size; **Ctrl+wheel** changes Sculpt brush intensity.
+- In Sculpt, **1** chooses Add/Remove and **2** chooses Smooth. **Shift+wheel** changes Sculpt brush size; **Ctrl+wheel** (**⌘+wheel** on macOS) changes intensity.
   Holding **Shift** during a drag removes or strengthens the active brush mode.
-- In Ruler, after the first point, a click on a drawn ruler line drops a
-  perpendicular onto it (for example the Korkhaus arch length from the incisal
-  point to the Pont premolar line); the length is the 3D perpendicular.
-- In Align, **Shift** erases an Align exclusion region; **Ctrl/Command+drag** rotates a scan in Align Manual mode; stationary **RMB click** undoes the last alignment point.
+- In Ruler, after the first point, a click on a drawn ruler line ends the
+  ruler on that line (for example the Korkhaus arch length from the incisal
+  point to the Pont premolar line). The end goes where you click along the
+  line and the ruler shows its 3D length and the smaller angle to the line;
+  drag that end to slide it along the line. The strip at the top of the
+  viewport switches between "Any angle" and "90°" (the perpendicular); hold
+  **Shift** for the other choice.
+- In Align, **Shift** erases an Align exclusion region; **Ctrl/Command+drag**
+  (**⌘+drag** on macOS) rotates a scan in Align Manual mode; stationary **RMB
+  click** undoes the last alignment point.
 - Right-click a layer to read its **occlusal contacts**: the marks land on both
   scans, and the pointer reports the depth under the cursor.
-- **Ctrl+Middle-click** hides a layer; **Ctrl+Shift+Middle-click** restores the
+- **Ctrl+Middle-click** (**⌘+Middle-click** on macOS) hides a layer;
+  **Ctrl+Shift+Middle-click** (**⌘+Shift+Middle-click** on macOS) restores the
   last hidden layer; **Shift+Middle-click** toggles translucency.
 - The bottom-right axis triad follows the camera and snaps to a labeled axis
   when an endpoint is clicked.
@@ -162,8 +202,8 @@ contact area, patch count, deepest penetration — describe the scan the reading
 was opened on, named first in the panel title. **Esc** closes the reading and
 takes the marks off both scans.
 
-Two scans further apart than half a millimetre are a legitimate reading with
-nothing in it, not a failure: the panel says so and both arches stay bare.
+When the two scans are more than half a millimetre apart there is no contact to
+show; the panel says so and both arches stay bare.
 
 ## The cut view
 

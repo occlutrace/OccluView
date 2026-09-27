@@ -14,8 +14,7 @@
 //!
 //! # Three properties decide whether the map can be read at all
 //!
-//! Each was learned the expensive way upstream, and each is a mistake that is
-//! easy to make and hard to see afterwards.
+//! Each is a mistake that is easy to make and hard to see afterwards.
 //!
 //! **Red belongs on the load side.** Put red at the far end and every mark wears
 //! a red ring, because a tooth curves away from a contact within half a
@@ -61,8 +60,8 @@ pub const LOAD_MAX_MM: f64 = 0.60;
 ///
 /// The table is a fixed-size GPU payload, so the bound is part of the contract
 /// rather than a dynamic length: a law that outgrew it would truncate silently
-/// on the GPU and disagree with [`ContactScale::color_at`] on the CPU, which is
-/// the one way the picture and the numbers can come apart.
+/// on the GPU and disagree with [`ContactScale::color_at`] on the CPU, and the
+/// picture and the numbers would come apart.
 pub const MAX_CONTACT_STOPS: usize = 16;
 
 /// One colour law, as data.
@@ -114,7 +113,7 @@ pub static TIGHTNESS: ContactLaw = ContactLaw {
         (-0.12, [183, 203, 39]), // #b7cb27 about one thickness of articulating paper
         (-0.15, [252, 196, 25]), // #fcc419 firm
         (-0.18, [251, 106, 26]), // #fb6a1a strong, on its way to red
-        (-0.22, [239, 62, 54]), // #ef3e36 RED STARTS HERE, and nowhere earlier
+        (-0.22, [239, 62, 54]), // #ef3e36 red starts here, and nowhere earlier
         (-0.32, [193, 39, 45]), // #c1272d heavy
         (-0.5, [122, 18, 18]), // #7a1212 gross interference
     ],
@@ -149,11 +148,11 @@ pub static CLINICAL: ContactLaw = ContactLaw {
 /// The compiled law, as the GPU renderer consumes it.
 ///
 /// A fixed-size, `Copy` payload rather than a borrowed slice, because it crosses
-/// into a uniform buffer: the shader re-runs exactly the interpolation the CPU
-/// runs in [`ContactScale::color_at`], and the only thing that keeps the two
-/// honest is that both read the same compiled table.
+/// into a uniform buffer: the shader re-runs the interpolation the CPU runs in
+/// [`ContactScale::color_at`], and the two agree because both read the same
+/// compiled table.
 ///
-/// `Copy` rather than `Clone` deliberately: this is written per frame for a
+/// `Copy` rather than `Clone`: this is written per frame for a
 /// layer showing contacts, and an allocation there is a per-frame cost for no
 /// benefit.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -180,7 +179,7 @@ pub struct StopTable {
 ///
 /// One number, because the question a bite poses is a question about a
 /// threshold — where does close stop being contact and start being pressure —
-/// and the honest way to answer it is to move the threshold and watch the map,
+/// and the direct way to answer it is to move the threshold and watch the map,
 /// not to type a value. The gap side does not move with it: that side is about
 /// measurement noise, not about load.
 #[derive(Clone, Copy, Debug)]
@@ -225,20 +224,20 @@ impl ContactScale {
     /// side with it would make one slider change what counts as touching at the
     /// same time as what counts as heavy, and then no single reading on screen
     /// could be attributed to either.
+    ///
     /// The deepest stop is capped at the probe's reach. `depth` scales with the
-    /// operator's "heavy at" slider, and at the top of its range it put the last
-    /// stop at 1.36 mm (TIGHTNESS) or 1.75 mm (Approach) — depths the field
-    /// cannot report, because a vertex deeper than [`crate::SEARCH_RADIUS_MM`]
-    /// inside the antagonist finds no surface at all. The legend then named
-    /// depths no reading could reach.
+    /// operator's "heavy at" slider, and uncapped, the top of its range would
+    /// put the last stop at 1.36 mm (TIGHTNESS) or 1.75 mm (CLINICAL) — depths
+    /// the field cannot report, because a vertex deeper than
+    /// [`crate::SEARCH_RADIUS_MM`] inside the antagonist finds no surface at
+    /// all, so the legend would name depths no reading can reach.
     ///
     /// Collapsing the unreachable tail onto the reach makes the last stops
     /// coincide at high slider values, so the topmost colour is what a
     /// maximum-depth reading gets rather than a span nothing can occupy. The
-    /// sentinel case itself is unchanged and cannot be fixed here: a
-    /// penetration past the reach is still [`crate::NO_CONTACT_MM`], which is
-    /// why the reach is set above every law's saturation depth in the first
-    /// place.
+    /// cap does not change the sentinel case: a penetration past the reach is
+    /// still [`crate::NO_CONTACT_MM`], which is why the reach is set above
+    /// every law's saturation depth.
     pub fn stop_mm(&self, index: usize) -> f64 {
         self.law.stops.get(index).map_or(0.0, |(mm, _)| {
             if *mm < 0.0 {
@@ -253,27 +252,24 @@ impl ContactScale {
     /// feathered to nothing over the last part of the far band.
     ///
     /// Smoothstep rather than linear, so the feather has no visible crease
-    /// where it begins. Zero means bare surface, which is the point of the
-    /// tightness law rather than an edge case of it.
+    /// where it begins. Zero means bare surface, which is the tightness law's
+    /// normal result rather than an edge case of it.
     pub fn paint_weight_at(&self, signed_mm: f64) -> f64 {
         self.law.paint_weight_at(signed_mm)
     }
 
-    /// Whether this value is inside the painted range at all.
-    ///
-    /// Whether the hover SWATCH counts this value as painted.
+    /// Whether the hover swatch counts this value as painted: whether it is
+    /// inside the painted range at all.
     ///
     /// Not a shared predicate: the screen uses the shader's own weight and the
-    /// panel's counters use `stats::TOUCH_MM`, which is deliberately wider so a
-    /// measured area does not fall short by a feather's width. An earlier
-    /// version of this comment called it "the ONE predicate the paint path, the
-    /// hover readout and the panel share", which was never true of all three.
+    /// panel's counters use `stats::TOUCH_MM`, which is wider so a measured area
+    /// does not fall short by a feather's width.
     ///
     /// It is the *reach* of the map: at exactly the far edge the feather has
     /// already reached zero, so a value there is inside the map and invisible on
     /// the surface. That single point is the only difference from
-    /// [`Self::color_at`]'s alpha, and it is deliberate — a readout that
-    /// excludes the value it is standing on is worse than one that shows it.
+    /// [`Self::color_at`]'s alpha: a readout that excludes the value it is
+    /// standing on is worse than one that shows it.
     pub fn is_painted(&self, signed_mm: f64) -> bool {
         signed_mm.is_finite() && signed_mm <= self.law.paint_far_mm
     }

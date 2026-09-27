@@ -6,11 +6,11 @@
 //! chains". One implementation answers both, so a mark can never be one thing
 //! for the colour and another for the count.
 //!
-//! The chain is distance-based rather than mesh-topological on purpose. Two
-//! vertices join when a chain of hops each no longer than the radius links
-//! them, which means a coarse scan — where neighbouring vertices can be a
-//! millimetre apart — still forms one patch, while two cusps that merely touch
-//! at a single vertex stay separate marks.
+//! The chain is distance-based rather than mesh-topological. Two vertices join
+//! when a chain of hops each no longer than the radius links them, which means
+//! a coarse scan — where neighbouring vertices can be a millimetre apart —
+//! still forms one patch, while two cusps that merely touch at a single vertex
+//! stay separate marks.
 //!
 //! # Why the integer grid
 //!
@@ -28,11 +28,9 @@ use glam::DVec3;
 /// Chaining radius for per-patch penetration flattening, in millimetres.
 ///
 /// Big enough to bridge the speckle holes inside one spot, small enough not to
-/// fuse neighbouring cusps. Deliberately not the same number as the contact
-/// cluster radius (3.0 mm, `stats`) or the touch gate (0.02 mm): the three
-/// answer different questions, and unifying them would change one reading to
-/// fix another. The "hover region radius" an earlier version of this comment
-/// cited does not exist — the hover readout takes no radius.
+/// fuse neighbouring cusps. Not the same number as the contact cluster radius
+/// (3.0 mm, `stats`) or the touch gate (0.02 mm): the three answer different
+/// questions, and unifying them would change one reading to fix another.
 pub(crate) const FLATTEN_RADIUS_MM: f64 = 0.75;
 
 /// Collapse every connected penetration patch to its peak depth.
@@ -40,7 +38,7 @@ pub(crate) const FLATTEN_RADIUS_MM: f64 = 0.75;
 /// A multi-hue ramp needs this: the rim of an interference passes through every
 /// intermediate depth and paints a rainbow bullseye around the saturated
 /// centre. A single-hue ramp does not — there the flattening only destroys the
-/// force distribution INSIDE a mark, which is the reading the operator wants.
+/// force distribution inside a mark, which is the reading the operator wants.
 /// So the caller that owns the colour law decides, and this function does what
 /// it is told rather than guessing.
 pub(crate) fn flatten_penetration_patches(positions: &[f32], signed_mm: &mut [f32]) {
@@ -92,7 +90,7 @@ pub(crate) fn flatten_penetration_patches(positions: &[f32], signed_mm: &mut [f3
 /// A non-finite position aborts the whole pass rather than being skipped: the
 /// grid would put it in cell zero, next to whatever real patch happens to be
 /// there, and fusing the two would move a mark's peak depth onto a different
-/// part of the tooth. Leaving the field untouched is the honest failure.
+/// part of the tooth. Leaving the field untouched is the safe failure.
 fn points_of(positions: &[f32], members: &[usize]) -> Option<Vec<DVec3>> {
     let mut points = Vec::with_capacity(members.len());
     for vertex in members {

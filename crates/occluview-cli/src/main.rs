@@ -10,7 +10,7 @@
 //!     aggregate scene bbox (upper+lower arch case).
 //!   - `help` - show usage. `-h` / `--help` is accepted in place of a file.
 
-// CLI tool: stdout/stderr is the entire point.
+// CLI tool: stdout and stderr are its output.
 #![allow(clippy::print_stdout, clippy::print_stderr)]
 
 mod export;
@@ -57,10 +57,8 @@ fn install_tracing() {
 
 fn run() -> Result<()> {
     let mut args = std::env::args_os().skip(1);
-    // No arguments at all is a usage question, answered once on stdout. It used
-    // to print the usage TWICE — `print_usage_with_error` wrote it to stderr and
-    // then the synthesised "help" subcommand wrote it again to stdout, exiting 0
-    // — so a successful invocation produced duplicated output on two streams.
+    // No arguments at all is a usage question: the usage is printed once, on
+    // stdout, with exit code 0.
     let Some(subcommand) = args.next() else {
         print_usage();
         return Ok(());
@@ -210,16 +208,16 @@ fn cmd_thumbnail(args: &mut impl Iterator<Item = OsString>) -> Result<()> {
         spec,
         std::time::Duration::from_secs(15),
     );
-    // `TransientFailure` is the CLI FAILING to open the file: a bad path, an
+    // `TransientFailure` is the CLI failing to open the file: a bad path, an
     // unreadable file, a directory. That is the case a script must be able to
     // detect, and it exits non-zero.
     //
-    // A corrupt or unsupported CONTAINER is different, and deliberately still
-    // exits 0: the crate reached a verdict about the file's content, the PNG is
-    // that verdict (the corrupt-badged placeholder), and a file manager showing
-    // a badge is the correct outcome for a file that is simply broken. That is
-    // the freedesktop contract, and it is what the black-box test
-    // `thumbnail_of_corrupt_file_exits_zero_and_writes_placeholder_png` pins.
+    // A corrupt or unsupported container is different and exits 0: the crate
+    // reached a verdict about the file's content, the PNG is that verdict (the
+    // corrupt-badged placeholder), and a file manager showing a badge is the
+    // correct outcome for a file that is simply broken. That is the
+    // freedesktop contract, and the black-box test
+    // `thumbnail_of_corrupt_file_exits_zero_and_writes_placeholder_png` covers it.
     //
     // Comparing the pixels against a freshly generated placeholder would erase
     // that distinction — and would throw away the badge, since the corrupt
@@ -253,12 +251,10 @@ fn cmd_thumbnail(args: &mut impl Iterator<Item = OsString>) -> Result<()> {
 static NEXT_THUMBNAIL_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
 fn write_thumbnail_atomically(path: &Path, image: &image::RgbaImage) -> Result<()> {
-    // A symlink destination is followed, not replaced. Publishing with a bare
-    // rename swapped the LINK's inode for a regular file, so the file the link
-    // pointed at kept its previous image while the CLI printed "Done" — the
-    // operator checked the target and saw stale content. The mesh writer has
-    // resolved this exact case for the same reason; the thumbnailer now does
-    // the same instead of a second, weaker copy of the rule.
+    // A symlink destination is followed, not replaced. A bare rename would swap
+    // the link's inode for a regular file and leave the file the link points at
+    // with its previous image while the CLI prints "Done". The mesh writer's
+    // resolver is shared rather than duplicated here.
     let path = occluview_formats::resolve_overwrite_destination(path)?;
     let path = path.as_path();
     let parent = path
@@ -364,11 +360,9 @@ fn implicit_thumbnail_path(file: &Path) -> PathBuf {
         || "thumbnail".to_string(),
         |stem| stem.to_string_lossy().into_owned(),
     );
-    // Keep stepping. The doc above promises an occupied name is stepped aside,
-    // but the `-thumb` name was returned without a second `exists()` check, and
-    // `write_thumbnail_atomically` then renamed over it: `scan.png` plus a
-    // pre-existing `scan-thumb.png` (an unrelated file, or another tool's)
-    // silently destroyed the latter, a file the operator never named. A
+    // Keep stepping: the `-thumb` name is also checked with `exists()`, because
+    // `write_thumbnail_atomically` renames over its destination and a
+    // pre-existing `scan-thumb.png` is a file the operator never named. A
     // numbered suffix keeps escalating instead of overwriting anything.
     let mut candidate = path.clone();
     candidate.set_file_name(format!("{stem}-thumb.png"));
@@ -490,7 +484,7 @@ fn cmd_info(args: &mut impl Iterator<Item = OsString>) -> Result<()> {
         return Err(anyhow!("info: missing <file> argument"));
     }
 
-    // Single-file fast path keeps the existing output format unchanged.
+    // A single file prints the single-file format.
     if files.len() == 1 {
         return cmd_info_one(&files[0]);
     }
@@ -535,7 +529,7 @@ fn cmd_info(args: &mut impl Iterator<Item = OsString>) -> Result<()> {
     Ok(())
 }
 
-/// Single-file info (the original output format, plus a Units line).
+/// Single-file info, including a Units line.
 fn cmd_info_one(file: &Path) -> Result<()> {
     let loaded = read_file_loaded_with_key_provider(file, &RuntimeHpsKeyProvider)
         .with_context(|| format!("loading {}", file.display()))?;

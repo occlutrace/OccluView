@@ -7,8 +7,8 @@
 /// Fallback tag: plain English, always available.
 pub(crate) const FALLBACK_TAG: &str = "en";
 
-/// Canonical tags the resolver may return (first-wave policy).
-/// Only a subset is embedded yet — see `super::catalog::EMBEDDED_TAGS`.
+/// Canonical tags the resolver may return.
+/// Only a subset is embedded — see `super::catalog::EMBEDDED_TAGS`.
 /// Unavailable tags resolve here but render English (tag retained).
 pub(crate) const KNOWN_TAGS: &[&str] = &[
     "en", "ru", "de", "es", "fr", "it", "pt-BR", "zh-Hans", "ja", "ko",

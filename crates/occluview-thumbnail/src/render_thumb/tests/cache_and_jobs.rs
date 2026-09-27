@@ -163,12 +163,11 @@ fn a_job_that_outruns_its_budget_after_preparing_is_a_render_timeout() {
     let (release_worker, wait_for_release) = std::sync::mpsc::channel::<()>();
     let outcome = run_thumbnail_job_by(
         permit,
-        // A short deadline made this test depend on the test runner getting
-        // the worker scheduled before the first 30 ms elapsed. Under a full
-        // workspace run that occasionally classified the job as a setup
-        // timeout before it could publish `Prepared`. The worker now waits
-        // for an explicit release after publishing that marker, so the test
-        // exercises the render-timeout contract without a scheduler race.
+        // The worker waits for an explicit release after publishing
+        // `Prepared`, so the test exercises the render-timeout contract
+        // without depending on how quickly the runner schedules the worker; a
+        // 30 ms deadline could expire as a setup timeout under a full
+        // workspace run.
         Instant::now() + Duration::from_secs(2),
         move |progress| {
             let _ = progress.send(ThumbnailJobProgress::Prepared);

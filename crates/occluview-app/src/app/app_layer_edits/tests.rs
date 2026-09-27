@@ -1,4 +1,4 @@
-//! Layer-edit orchestration tests, moved verbatim from the single-file module.
+//! Layer-edit orchestration tests.
 
 use super::super::{
     EditModeCommand, LayerContextAction, LayerContextApply, LayerContextRequest, Scene,

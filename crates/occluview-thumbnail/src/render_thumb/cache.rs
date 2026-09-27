@@ -19,9 +19,9 @@ const MAX_CACHED_FILE_THUMBNAIL_BYTES: usize = 32 * 1024 * 1024;
 /// windows key the same, and the second one is then served the first one's
 /// picture -- the wrong arch on screen, which is the worst thing this cache
 /// can do. The budget therefore covers the scans a clinic actually holds
-/// rather than the smallest number that keeps the hash cheap: measured at
-/// 1.45 GB/s here, a 64 MB file costs about 45 ms to key exactly, and the
-/// largest real scan in the corpora on this machine is 33 MB.
+/// rather than the smallest number that keeps the hash cheap: at a measured
+/// 1.45 GB/s, a 64 MB file costs about 45 ms to key exactly, and the largest
+/// real scan in the test corpora is 33 MB.
 pub(super) const EXACT_CONTENT_HASH_BYTES: u64 = 64 * 1024 * 1024;
 const EXACT_CONTENT_HASH_BYTES_USIZE: usize = 64 * 1024 * 1024;
 const CONTENT_HASH_SAMPLE_BYTES: u64 = 64 * 1024;
@@ -349,7 +349,7 @@ pub(super) fn thumbnail_file_content_key(
     } else {
         // Past the exact budget the key is a sample, and a sample can be
         // fooled. Mixing the timestamp in bounds what a collision can cost:
-        // two files now have to share a length, three windows AND a
+        // two files have to share a length, three windows and a
         // modification time to share a picture. It costs the deduplication of
         // copies -- but only for files this large, where a folder holding two
         // copies of the same 100 MB export is a rarer thing than a re-export

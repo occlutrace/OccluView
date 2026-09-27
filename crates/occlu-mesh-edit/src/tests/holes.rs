@@ -73,7 +73,7 @@ fn fill_holes_interpolated_cap_is_watertight_and_manifold() {
 }
 
 /// Interior valence stays bounded: the ear-clip fan must be regularized into a
-/// Delaunay-quality patch, NOT left as a high-valence hub of radiating sliver
+/// Delaunay-quality patch, not left as a high-valence hub of radiating sliver
 /// triangles (the "starburst" failure). Over this ~40-edge apex rim
 /// a surviving single-hub fan would spike a vertex to valence ~40.
 #[test]
@@ -167,7 +167,7 @@ fn sphere_cap_with_apex_hole() -> (MeshEditBuffers, FaceSelection, f32) {
             // Two triangles per quad, outward winding.
             indices.extend_from_slice(&[a, d, c]);
             indices.extend_from_slice(&[a, c, b]);
-            // Leave the outermost ring of faces UNSELECTED so only the apex
+            // Leave the outermost ring of faces unselected so only the apex
             // hole is filled (the outer boundary stays open).
             let interior = ri + 1 < rings;
             mask.push(interior);
@@ -332,11 +332,11 @@ fn fill_holes_refuses_non_simple_self_intersecting_rim() {
 #[test]
 fn fill_holes_splits_and_closes_rims_sharing_a_pinch_vertex() {
     // Bowtie: two triangles joined at a single vertex (2). The pinch is split
-    // so the rims are walked independently (the dental-lab "closes random
-    // holes" bug), but each rim here belongs to a LONE triangle whose only cap
-    // is its own reverse twin — a zero-volume doubled sliver — so both fills
-    // are honestly refused. Real adjacent pinched holes (surfaces, not lone
-    // triangles) close: see holes_tests::adjacent_pinched_rims_both_close.
+    // so the rims are walked independently, but each rim here belongs to a
+    // lone triangle whose only cap is its own reverse twin — a zero-volume
+    // doubled sliver — so both fills are refused. Real adjacent pinched holes
+    // (surfaces, not lone triangles) close: see
+    // holes_tests::adjacent_pinched_rims_both_close.
     let mesh = MeshEditBuffers {
         vertices: vec![
             v([0.0, 0.0, 0.0]),
@@ -361,8 +361,8 @@ fn fill_holes_splits_and_closes_rims_sharing_a_pinch_vertex() {
 /// With healing off nothing welds, every triangle becomes its own three-edge
 /// rim, and the per-rim duplicate check scans all triangles: a 500k-triangle
 /// soup was still running after ten minutes. Every shipped caller asks for
-/// welding; `MeshEditOptions::default()` does not, which makes the obvious
-/// call the trap.
+/// welding; `MeshEditOptions::default()` does not, so a default-options call
+/// on a soup takes this path.
 #[test]
 fn a_large_unwelded_soup_is_refused_rather_than_filled() {
     let triangles = 25_000usize;
@@ -393,13 +393,11 @@ fn a_large_unwelded_soup_is_refused_rather_than_filled() {
         "expected the options to be named as the problem, got {error}"
     );
 
-    // Asking for the weld changes nothing HERE, and that is correct: this
-    // fixture puts every triangle at its own positions (x = i * 0.01), so the
-    // full-payload weld merges nothing and the buffers are still a soup. The
-    // previous assertion ("welding is what makes this shape fillable") described
-    // a shape this fixture does not have. What welding is FOR is a soup whose
-    // corners coincide, and that case is pinned by
-    // `holes_soup_tests::soup_close_holes_reports_honest_counts_and_closes_curved_rims`.
+    // Asking for the weld does not change the outcome here: this fixture puts
+    // every triangle at its own positions (x = i * 0.01), so the full-payload
+    // weld merges nothing and the buffers are still a soup. Welding is for a
+    // soup whose corners coincide, covered by
+    // `holes_soup_tests::soup_close_holes_reports_accurate_counts_and_closes_curved_rims`.
     let options = MeshEditOptions {
         heal_boundary_rims: true,
         ..MeshEditOptions::default()
