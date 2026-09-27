@@ -8,7 +8,7 @@ use super::*;
 #[test]
 fn controller_sync_to_scene_clears_stale_or_hidden_selection() {
     let Some(mesh) = two_triangle_mesh("sync") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
     let layer_index = scene.add(SceneMesh::new(mesh));
@@ -35,7 +35,7 @@ fn controller_sync_to_scene_clears_stale_or_hidden_selection() {
 #[test]
 fn controller_sync_to_scene_clears_selection_when_topology_changes() {
     let Some(mesh) = two_triangle_mesh("sync") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
     let layer_index = scene.add(SceneMesh::new(mesh));
@@ -54,7 +54,7 @@ fn controller_sync_to_scene_clears_selection_when_topology_changes() {
     ));
 
     let Some(single_triangle) = triangle_mesh("single") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     scene.meshes_mut()[0].mesh = std::sync::Arc::new(single_triangle);
     controller.sync_to_scene(&scene);
@@ -64,10 +64,10 @@ fn controller_sync_to_scene_clears_selection_when_topology_changes() {
 #[test]
 fn controller_sync_to_scene_discards_active_state_and_undo_for_removed_layer() {
     let Some(first_mesh) = triangle_mesh("first") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let Some(second_mesh) = triangle_mesh("second") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
     let first_index = scene.add(SceneMesh::new(first_mesh));
@@ -76,7 +76,7 @@ fn controller_sync_to_scene_discards_active_state_and_undo_for_removed_layer() {
     let mut controller = EditModeController::new(4, 1_000_000);
 
     let Some(token) = controller.begin_layer_edit(&layer, EditModeCommand::InvertNormals) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(
         controller.finish_layer_edit_success(token),

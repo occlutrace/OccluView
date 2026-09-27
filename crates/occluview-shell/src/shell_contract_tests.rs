@@ -1035,3 +1035,95 @@ fn shell_pin_report_handles_carriage_returns_in_python_fields() {
     );
     let _ = std::fs::remove_dir_all(&temp);
 }
+
+#[test]
+fn release_version_is_kept_in_sync_across_workspace_lockfile_and_installer() {
+    let cargo_toml = repo_file("Cargo.toml");
+    let cargo_lock = repo_file("Cargo.lock");
+    let wxs = repo_file("install/occluview.wxs");
+
+    let version = workspace_package_version(&cargo_toml);
+    assert!(version.is_some(), "workspace package version is present");
+    let Some(version) = version else {
+        panic!("required test setup or expected result was missing");
+    };
+    let wix_version = wix_product_version(&wxs);
+    assert!(
+        wix_version.is_some(),
+        "WiX fallback product version is present"
+    );
+    let Some(wix_version) = wix_version else {
+        panic!("required test setup or expected result was missing");
+    };
+    assert_eq!(
+        wix_version, version,
+        "WiX ProductVersion fallback must match Cargo workspace version"
+    );
+
+    for package in [
+        "occlu-geometry-math",
+        "occlu-mesh-edit",
+        "occlu-sculpt",
+        "occluview-align",
+        "occluview-contact",
+        "occluview-core",
+        "occluview-formats",
+        "occluview-hps",
+        "occluview-i18n",
+        "occluview-render",
+        "occluview-robust-csg",
+        "occluview-shell",
+        "occluview-surface-query",
+        "occluview-thumbnail",
+        "occluview-update",
+        "occluview-app",
+        "occluview-cli",
+    ] {
+        assert_eq!(
+            cargo_lock_package_version(&cargo_lock, package),
+            Some(version),
+            "{package} version in Cargo.lock must match Cargo workspace version"
+        );
+    }
+}
+
+fn workspace_package_version(cargo_toml: &str) -> Option<&str> {
+    let section = cargo_toml.split("[workspace.package]").nth(1)?;
+    toml_quoted_value(section, "version")
+}
+
+fn cargo_lock_package_version<'a>(cargo_lock: &'a str, package_name: &str) -> Option<&'a str> {
+    let package_line = format!("name = \"{package_name}\"");
+    cargo_lock
+        .split("[[package]]")
+        .find(|block| block.lines().any(|line| line.trim() == package_line))
+        .and_then(|block| toml_quoted_value(block, "version"))
+}
+
+fn wix_product_version(wxs: &str) -> Option<&str> {
+    let marker = "<?define ProductVersion = \"";
+    let rest = wxs.get(wxs.find(marker)? + marker.len()..)?;
+    rest.get(..rest.find('"')?)
+}
+
+fn toml_quoted_value<'a>(text: &'a str, key: &str) -> Option<&'a str> {
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        let Some(rest) = trimmed.strip_prefix(key) else {
+            continue;
+        };
+        let rest = rest.trim_start();
+        let Some(rest) = rest.strip_prefix('=') else {
+            continue;
+        };
+        let rest = rest.trim_start();
+        let Some(rest) = rest.strip_prefix('"') else {
+            continue;
+        };
+        return rest.get(..rest.find('"')?);
+    }
+    None
+}

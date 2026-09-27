@@ -340,9 +340,8 @@ fn assert_adapter_matches_test_environment(device: &wgpu::Device) {
                 expected_backend.is_some(),
                 "unsupported WGPU_BACKEND test expectation {expected:?}; supported names: noop, vulkan, metal, dx12, gl, webgpu"
             );
-            let Some(expected_backend) = expected_backend else {
-                return;
-            };
+            let expected_backend =
+                expected_backend.expect("the supported backend expectation was checked above");
             assert_eq!(
                 info.backend, expected_backend,
                 "WGPU_BACKEND={expected:?} is a test expectation, but the production renderer selected backend {:?} on adapter {:?}",
