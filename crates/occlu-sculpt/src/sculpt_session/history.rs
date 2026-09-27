@@ -74,7 +74,7 @@ impl SculptSession {
             before.extend_from_slice(&stroke_positions[slot * 3..slot * 3 + 3]);
             let offset = vertex as usize * 3;
             after.extend_from_slice(&self.verts[offset..offset + 3]);
-            normal_values.extend_from_slice(&self.normals[offset..offset + 3]);
+            normal_values.extend_from_slice(&self.display_normals[offset..offset + 3]);
         }
         normal_indices.extend_from_slice(&indices);
         // Every topology change already reached the display inside the dab

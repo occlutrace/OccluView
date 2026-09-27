@@ -72,10 +72,10 @@ impl SculptSession {
         self.live_kin.mode = dab.mode as u32;
         self.live_kin.radius = dab.radius as f32;
         self.live_kin.strength = dab.strength as f32;
+        let region_len = region_points.len();
         // A dab that commits no movement at all is the "the brush does
         // nothing" the operator reports; the weights, not the region, are
         // usually why, so count both.
-        let region_len = region_points.len();
         match dab.mode {
             BrushMode::Smooth => self.dab_smooth(dab, &region_points, facing),
             BrushMode::Deposit => self.dab_clay(dab, &region_points, facing, 1.0),
