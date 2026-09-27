@@ -28,3 +28,7 @@ pub(crate) fn read_only_text(response: &Response, label: &str, value: &str) {
         info
     });
 }
+
+pub(crate) fn panel(response: &Response, label: &str) {
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Panel, true, label));
+}

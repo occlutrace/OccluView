@@ -85,7 +85,7 @@ pub(super) fn show_settings_popup(
     save_error: Option<&str>,
     language_save_error: Option<&str>,
 ) -> Option<SettingsAction> {
-    egui::Popup::from_toggle_button_response(trigger)
+    let popup = egui::Popup::from_toggle_button_response(trigger)
         .id(settings_popup_id())
         .align(egui::RectAlign::BOTTOM_END)
         .align_alternatives(&[])
@@ -401,8 +401,15 @@ pub(super) fn show_settings_popup(
                 }
             });
             action
-        })
-        .and_then(|response| response.inner)
+        });
+
+    if let Some(popup) = popup {
+        let label = locale.tr(crate::i18n::message_id!("settings-header"));
+        crate::accessibility::panel(&popup.response, &label);
+        popup.inner
+    } else {
+        None
+    }
 }
 
 fn panel_header(ui: &mut egui::Ui, locale: &LocaleManager) {
