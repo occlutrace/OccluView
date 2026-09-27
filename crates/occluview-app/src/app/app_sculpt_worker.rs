@@ -19,23 +19,37 @@ pub(super) enum SculptFlushOutcome {
 fn describe_sculpt_failure(locale: &crate::i18n::LocaleManager, failure: &SculptFailure) -> String {
     match failure {
         SculptFailure::WorkerPanicked { message } => locale.tr_with(
-            "sculpt-failure-worker-panicked",
+            crate::i18n::message_id!("sculpt-failure-worker-panicked"),
             &[("detail", message.as_str())],
         ),
-        SculptFailure::Spawn { detail } => {
-            locale.tr_with("sculpt-failure-spawn", &[("detail", detail.as_str())])
+        SculptFailure::Spawn { detail } => locale.tr_with(
+            crate::i18n::message_id!("sculpt-failure-spawn"),
+            &[("detail", detail.as_str())],
+        ),
+        SculptFailure::KernelPool { detail } => locale.tr_with(
+            crate::i18n::message_id!("sculpt-failure-kernel-pool"),
+            &[("detail", detail.as_str())],
+        ),
+        SculptFailure::MissingUndoBaseline => locale.text(crate::i18n::message_id!(
+            "sculpt-failure-missing-undo-baseline"
+        )),
+        SculptFailure::ShadowPoisoned => {
+            locale.text(crate::i18n::message_id!("sculpt-failure-shadow-poisoned"))
         }
-        SculptFailure::KernelPool { detail } => {
-            locale.tr_with("sculpt-failure-kernel-pool", &[("detail", detail.as_str())])
+        SculptFailure::ShadowShapeMismatch => {
+            locale.text(crate::i18n::message_id!("sculpt-failure-shadow-shape"))
         }
-        SculptFailure::MissingUndoBaseline => locale.text("sculpt-failure-missing-undo-baseline"),
-        SculptFailure::ShadowPoisoned => locale.text("sculpt-failure-shadow-poisoned"),
-        SculptFailure::ShadowShapeMismatch => locale.text("sculpt-failure-shadow-shape"),
-        SculptFailure::InvalidVertexIndex => locale.text("sculpt-failure-invalid-vertex-index"),
-        SculptFailure::WorkerStatePoisoned => locale.text("sculpt-failure-worker-state-poisoned"),
-        SculptFailure::VertexCountChanged => locale.text("sculpt-failure-vertex-count-changed"),
+        SculptFailure::InvalidVertexIndex => locale.text(crate::i18n::message_id!(
+            "sculpt-failure-invalid-vertex-index"
+        )),
+        SculptFailure::WorkerStatePoisoned => locale.text(crate::i18n::message_id!(
+            "sculpt-failure-worker-state-poisoned"
+        )),
+        SculptFailure::VertexCountChanged => locale.text(crate::i18n::message_id!(
+            "sculpt-failure-vertex-count-changed"
+        )),
         SculptFailure::TopologyRebuild { detail } => locale.tr_with(
-            "sculpt-failure-topology-rebuild",
+            crate::i18n::message_id!("sculpt-failure-topology-rebuild"),
             &[("detail", detail.as_str())],
         ),
     }
@@ -319,7 +333,11 @@ impl OccluViewApp {
             return true;
         };
         let Some(worker) = self.tools.sculpt.worker.as_ref() else {
-            self.ui.status_message = Some(self.ui.locale.tr("sculpt-worker-unavailable"));
+            self.ui.status_message = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("sculpt-worker-unavailable")),
+            );
             // Without the worker there is no completion or Undo baseline. Drop
             // the shadow and return to the committed scene.
             self.invalidate_sculpt_session_silent();
@@ -330,7 +348,11 @@ impl OccluViewApp {
             // Preserve the drag and retry after queue pressure clears.
             self.tools.sculpt.stroke = Some(stroke);
             self.tools.sculpt.finish_retry = true;
-            self.ui.status_message = Some(self.ui.locale.tr("sculpt-worker-unavailable"));
+            self.ui.status_message = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("sculpt-worker-unavailable")),
+            );
             ctx.request_repaint();
             return false;
         }
@@ -364,7 +386,11 @@ impl OccluViewApp {
             before,
             EditModeCommand::Sculpt,
         ) else {
-            self.ui.status_message = Some(self.ui.locale.tr("repair-edit-busy"));
+            self.ui.status_message = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("repair-edit-busy")),
+            );
             return false;
         };
         drop(scene);
@@ -374,9 +400,13 @@ impl OccluViewApp {
             self.document.mark_mesh_edits_unsaved(layer_id);
             // Report whether the pre-edit snapshot was retained.
             self.ui.status_message = Some(if self.document.edit_mode.last_edit_undoable() {
-                self.ui.locale.tr("sculpt-applied-undo")
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("sculpt-applied-undo"))
             } else {
-                self.ui.locale.tr("sculpt-applied-locked")
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("sculpt-applied-locked"))
             });
             true
         } else {
@@ -432,8 +462,11 @@ fn sculpt_failure_dialog(
 ) -> AppErrorDialog {
     let detail = describe_sculpt_failure(locale, failure);
     AppErrorDialog {
-        title: locale.tr("sculpt-failed-title"),
-        summary: locale.tr_with("sculpt-worker-stopped", &[("detail", detail.as_str())]),
+        title: locale.tr(crate::i18n::message_id!("sculpt-failed-title")),
+        summary: locale.tr_with(
+            crate::i18n::message_id!("sculpt-worker-stopped"),
+            &[("detail", detail.as_str())],
+        ),
         details: format!("Sculpt worker stopped\n\n{detail}"),
         action: AppErrorAction::None,
     }
@@ -454,7 +487,10 @@ mod tests {
         let failure = SculptFailure::WorkerStatePoisoned;
         let dialog = super::sculpt_failure_dialog(&locale, &failure);
 
-        assert_eq!(dialog.title, locale.tr("sculpt-failed-title"));
+        assert_eq!(
+            dialog.title,
+            locale.tr(crate::i18n::message_id!("sculpt-failed-title"))
+        );
         let detail = super::describe_sculpt_failure(&locale, &failure);
         assert!(
             dialog.summary.contains(&detail),

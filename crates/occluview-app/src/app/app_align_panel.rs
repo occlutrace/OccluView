@@ -138,7 +138,11 @@ impl OccluViewApp {
 
         if drop_pending {
             self.tools.align.tool.back();
-            self.tools.align.status = Some(self.ui.locale.tr("align-status-half-dropped"));
+            self.tools.align.status = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("align-status-half-dropped")),
+            );
         }
         self.tools.align.settings = settings;
         self.tools.align.constraint = constraint;
@@ -152,7 +156,12 @@ impl OccluViewApp {
             // operator has already changed. The user-facing "measure again"
             // notice still waits for a fit that actually existed.
             if self.tools.align.refined_match_ready {
-                self.forget_align_fit(&self.ui.locale.tr("align-status-settings-changed"));
+                self.forget_align_fit(
+                    &self
+                        .ui
+                        .locale
+                        .tr(crate::i18n::message_id!("align-status-settings-changed")),
+                );
             } else {
                 self.abandon_align_jobs();
             }
@@ -214,12 +223,20 @@ impl OccluViewApp {
         if !self.tools.align.tool.swap_roles() {
             return;
         }
-        self.adopt_swapped_roles(self.ui.locale.tr("align-status-turned"));
+        self.adopt_swapped_roles(
+            self.ui
+                .locale
+                .tr(crate::i18n::message_id!("align-status-turned")),
+        );
         let named = self.align_roles().map_or_else(
-            || self.ui.locale.tr("align-status-turned"),
+            || {
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("align-status-turned"))
+            },
             |roles| {
                 self.ui.locale.tr_with(
-                    "align-roles-swapped",
+                    crate::i18n::message_id!("align-roles-swapped"),
                     &[
                         ("moving", roles.moving.as_str()),
                         ("fixed", roles.fixed.as_str()),
@@ -250,8 +267,17 @@ impl OccluViewApp {
         self.tools.align.tool.clear();
         self.clear_align_mask();
         self.tools.align.brush.reset_target();
-        self.forget_align_fit(&self.ui.locale.tr("align-status-cleared"));
-        self.tools.align.status = Some(self.ui.locale.tr("align-status-click-moving"));
+        self.forget_align_fit(
+            &self
+                .ui
+                .locale
+                .tr(crate::i18n::message_id!("align-status-cleared")),
+        );
+        self.tools.align.status = Some(
+            self.ui
+                .locale
+                .tr(crate::i18n::message_id!("align-status-click-moving")),
+        );
     }
 
     /// The operator's dental CAD "Back": drop the half-placed point, else the
@@ -262,13 +288,15 @@ impl OccluViewApp {
         }
         self.tools.align.rejected.clear();
         self.tools.align.status = Some(match self.tools.align.tool.pairs().len() {
-            0 if self.tools.align.tool.pending().is_none() => {
-                self.ui.locale.tr("align-status-click-alternate")
-            }
-            remaining => self
+            0 if self.tools.align.tool.pending().is_none() => self
                 .ui
                 .locale
-                .tr_plural("align-arrow-removed", &[], &[("n", remaining)]),
+                .tr(crate::i18n::message_id!("align-status-click-alternate")),
+            remaining => self.ui.locale.tr_plural(
+                crate::i18n::message_id!("align-arrow-removed"),
+                &[],
+                &[("n", remaining)],
+            ),
         });
         true
     }

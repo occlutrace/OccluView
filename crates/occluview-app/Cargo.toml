@@ -55,6 +55,10 @@ sys-locale        = { workspace = true }
 # cross-platform. See `src/single_instance/activation.rs`.
 raw-window-handle = "0.6"
 
+# Catalog identifiers compile against the English Fluent catalog.
+[build-dependencies]
+fluent-syntax = { workspace = true }
+
 # Test-only: catalog contract validation (AST walk) + font-coverage probing.
 [dev-dependencies]
 fluent-syntax        = { workspace = true }

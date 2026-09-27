@@ -151,8 +151,14 @@ impl OccluViewApp {
         self.align_worker_mut();
         self.imply_align_pair();
         self.tools.align.status = Some(match self.tools.align.tool.moving_layer() {
-            Some(_) => self.ui.locale.tr("align-status-two-scans"),
-            None => self.ui.locale.tr("align-status-click-moving"),
+            Some(_) => self
+                .ui
+                .locale
+                .tr(crate::i18n::message_id!("align-status-two-scans")),
+            None => self
+                .ui
+                .locale
+                .tr(crate::i18n::message_id!("align-status-click-moving")),
         });
         ctx.request_repaint();
     }
@@ -273,7 +279,11 @@ impl OccluViewApp {
             return true;
         };
         if entry.mesh.is_point_cloud() {
-            self.tools.align.status = Some(self.ui.locale.tr("align-status-no-surface"));
+            self.tools.align.status = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("align-status-no-surface")),
+            );
             return true;
         }
 
@@ -294,17 +304,30 @@ impl OccluViewApp {
         // it owes the same invalidation: without it the map would keep
         // describing the direction the panel no longer shows.
         if self.tools.align.tool.take_role_swap() {
-            self.adopt_swapped_roles(self.ui.locale.tr("align-status-turned"));
+            self.adopt_swapped_roles(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("align-status-turned")),
+            );
         }
         self.tools.align.status = Some(match outcome {
             ClickOutcome::Ignored => return true,
-            ClickOutcome::StartedPair => self.ui.locale.tr("align-status-now-other"),
-            ClickOutcome::CompletedPair(index) => self
+            ClickOutcome::StartedPair => self
                 .ui
                 .locale
-                .tr_with("align-pair-placed", &[("n", &(index + 1).to_string())]),
-            ClickOutcome::MovedPending => self.ui.locale.tr("align-status-moved"),
-            ClickOutcome::RefusedThirdLayer => self.ui.locale.tr("align-status-wrong-scan"),
+                .tr(crate::i18n::message_id!("align-status-now-other")),
+            ClickOutcome::CompletedPair(index) => self.ui.locale.tr_with(
+                crate::i18n::message_id!("align-pair-placed"),
+                &[("n", &(index + 1).to_string())],
+            ),
+            ClickOutcome::MovedPending => self
+                .ui
+                .locale
+                .tr(crate::i18n::message_id!("align-status-moved")),
+            ClickOutcome::RefusedThirdLayer => self
+                .ui
+                .locale
+                .tr(crate::i18n::message_id!("align-status-wrong-scan")),
         });
         ctx.request_repaint();
         true
@@ -389,7 +412,11 @@ impl OccluViewApp {
             self.tools.align.tool.moving_layer(),
             self.tools.align.tool.fixed_layer(),
         ) else {
-            self.tools.align.status = Some(self.ui.locale.tr("align-status-place-first"));
+            self.tools.align.status = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("align-status-place-first")),
+            );
             return;
         };
         let (Some(moving), Some(fixed)) = (layer_of(&scene, moving_id), layer_of(&scene, fixed_id))
@@ -403,19 +430,24 @@ impl OccluViewApp {
         // sixteen per cent, so the viewport would show a ghost and nothing else.
         if !moving.visible || !fixed.visible {
             let hidden = if moving.visible { fixed_id } else { moving_id };
-            let name = self
-                .layer_display_name(hidden)
-                .unwrap_or_else(|| self.ui.locale.tr("align-status-one-scan"));
-            self.tools.align.status = Some(
+            let name = self.layer_display_name(hidden).unwrap_or_else(|| {
                 self.ui
                     .locale
-                    .tr_with("align-status-hidden", &[("name", &name)]),
-            );
+                    .tr(crate::i18n::message_id!("align-status-one-scan"))
+            });
+            self.tools.align.status = Some(self.ui.locale.tr_with(
+                crate::i18n::message_id!("align-status-hidden"),
+                &[("name", &name)],
+            ));
             return;
         }
 
         let Some(pose) = Rigid::from_affine(&moving.transform) else {
-            self.tools.align.status = Some(self.ui.locale.tr("align-status-scaled"));
+            self.tools.align.status = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("align-status-scaled")),
+            );
             return;
         };
 
@@ -492,7 +524,11 @@ impl OccluViewApp {
             settings,
         });
         if !accepted {
-            self.tools.align.status = Some(self.ui.locale.tr("align-status-worker-unavailable"));
+            self.tools.align.status = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("align-status-worker-unavailable")),
+            );
             return;
         }
         if kind != AlignJobKind::Measure {
@@ -511,13 +547,26 @@ impl OccluViewApp {
             }
         }
         if stale {
-            self.tools.align.status = Some(self.ui.locale.tr("align-markings-dropped"));
+            self.tools.align.status = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("align-markings-dropped")),
+            );
             return;
         }
         self.tools.align.status = Some(match kind {
-            AlignJobKind::Align => self.ui.locale.tr("align-job-align"),
-            AlignJobKind::Refine => self.ui.locale.tr("align-job-refine"),
-            AlignJobKind::Measure => self.ui.locale.tr("align-job-measure"),
+            AlignJobKind::Align => self
+                .ui
+                .locale
+                .tr(crate::i18n::message_id!("align-job-align")),
+            AlignJobKind::Refine => self
+                .ui
+                .locale
+                .tr(crate::i18n::message_id!("align-job-refine")),
+            AlignJobKind::Measure => self
+                .ui
+                .locale
+                .tr(crate::i18n::message_id!("align-job-measure")),
         });
     }
 }

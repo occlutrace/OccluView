@@ -93,15 +93,18 @@ impl OccluViewApp {
 
                     // Shortcut glyphs interpolate as catalog variables and stay invariant.
                     let open_shortcut_text = ui.ctx().format_shortcut(&open_shortcut);
-                    let open_hint = self
-                        .ui
-                        .locale
-                        .tr_with("toolbar-open-hint", &[("shortcut", &open_shortcut_text)]);
+                    let open_hint = self.ui.locale.tr_with(
+                        crate::i18n::message_id!("toolbar-open-hint"),
+                        &[("shortcut", &open_shortcut_text)],
+                    );
                     if toolbar_toggle(
                         ui,
                         ToolbarToggle::new(
                             AppIcon::Open,
-                            &self.ui.locale.tr("toolbar-open-label"),
+                            &self
+                                .ui
+                                .locale
+                                .tr(crate::i18n::message_id!("toolbar-open-label")),
                             true,
                             false,
                             &open_hint,
@@ -125,8 +128,11 @@ impl OccluViewApp {
                                 ui_theme::text_weak()
                             },
                         );
-                        let response =
-                            response.on_hover_text(self.ui.locale.tr("toolbar-recent-hint"));
+                        let response = response.on_hover_text(
+                            self.ui
+                                .locale
+                                .tr(crate::i18n::message_id!("toolbar-recent-hint")),
+                        );
                         if let Some(action) = show_recent_files_popup(
                             &response,
                             &self.persistence.recent_files,
@@ -143,10 +149,16 @@ impl OccluViewApp {
                         ui,
                         ToolbarToggle::new(
                             AppIcon::Add,
-                            &self.ui.locale.tr("toolbar-add-label"),
+                            &self
+                                .ui
+                                .locale
+                                .tr(crate::i18n::message_id!("toolbar-add-label")),
                             self.document.scene.is_some(),
                             false,
-                            &self.ui.locale.tr("toolbar-add-hint"),
+                            &self
+                                .ui
+                                .locale
+                                .tr(crate::i18n::message_id!("toolbar-add-hint")),
                         ),
                     )
                     .clicked()
@@ -159,17 +171,23 @@ impl OccluViewApp {
                     let can_cut = self.can_render_cut_view();
                     let cut_shortcut_text = ui.ctx().format_shortcut(&cut_shortcut);
                     let cut_hint = if can_cut {
+                        self.ui.locale.tr_with(
+                            crate::i18n::message_id!("toolbar-cut-hint"),
+                            &[("shortcut", &cut_shortcut_text)],
+                        )
+                    } else {
                         self.ui
                             .locale
-                            .tr_with("toolbar-cut-hint", &[("shortcut", &cut_shortcut_text)])
-                    } else {
-                        self.ui.locale.tr("toolbar-cut-unavailable")
+                            .tr(crate::i18n::message_id!("toolbar-cut-unavailable"))
                     };
                     if toolbar_toggle(
                         ui,
                         ToolbarToggle::new(
                             AppIcon::Cut,
-                            &self.ui.locale.tr("toolbar-cut-label"),
+                            &self
+                                .ui
+                                .locale
+                                .tr(crate::i18n::message_id!("toolbar-cut-label")),
                             can_cut,
                             self.tools.cut_view.is_active(),
                             &cut_hint,
@@ -190,24 +208,32 @@ impl OccluViewApp {
                         (
                             AppIcon::Ruler,
                             MeasureMode::Ruler,
-                            self.ui.locale.tr("toolbar-ruler-label"),
-                            "toolbar-ruler-hint",
+                            self.ui
+                                .locale
+                                .tr(crate::i18n::message_id!("toolbar-ruler-label")),
+                            crate::i18n::message_id!("toolbar-ruler-hint"),
                             ruler_shortcut,
                         ),
                         (
                             AppIcon::Thickness,
                             MeasureMode::Thickness,
-                            self.ui.locale.tr("toolbar-thickness-label"),
-                            "toolbar-thickness-hint",
+                            self.ui
+                                .locale
+                                .tr(crate::i18n::message_id!("toolbar-thickness-label")),
+                            crate::i18n::message_id!("toolbar-thickness-hint"),
                             thickness_shortcut,
                         ),
                     ];
                     for (icon, mode, label, hint_key, shortcut) in entries {
                         let shortcut_text = ui.ctx().format_shortcut(&shortcut);
                         let tooltip = if edit_session_active {
-                            self.ui.locale.tr("toolbar-measure-blocked")
+                            self.ui
+                                .locale
+                                .tr(crate::i18n::message_id!("toolbar-measure-blocked"))
                         } else if !has_pickable_layer {
-                            self.ui.locale.tr("toolbar-measure-needs-layer")
+                            self.ui
+                                .locale
+                                .tr(crate::i18n::message_id!("toolbar-measure-needs-layer"))
                         } else {
                             self.ui
                                 .locale
@@ -225,15 +251,18 @@ impl OccluViewApp {
                     }
 
                     let align_shortcut_text = ui.ctx().format_shortcut(&align_shortcut);
-                    let align_hint = self
-                        .ui
-                        .locale
-                        .tr_with("toolbar-align-hint", &[("shortcut", &align_shortcut_text)]);
+                    let align_hint = self.ui.locale.tr_with(
+                        crate::i18n::message_id!("toolbar-align-hint"),
+                        &[("shortcut", &align_shortcut_text)],
+                    );
                     if toolbar_toggle(
                         ui,
                         ToolbarToggle::new(
                             AppIcon::Align,
-                            &self.ui.locale.tr("toolbar-align-label"),
+                            &self
+                                .ui
+                                .locale
+                                .tr(crate::i18n::message_id!("toolbar-align-label")),
                             can_measure,
                             self.align_active(),
                             &align_hint,
@@ -252,17 +281,23 @@ impl OccluViewApp {
                     let edit_active = self.document.edit_mode.has_active_session();
                     let edit_shortcut_text = ui.ctx().format_shortcut(&edit_shortcut);
                     let edit_hint = if edit_active {
-                        self.ui.locale.tr("toolbar-edit-open")
-                    } else {
                         self.ui
                             .locale
-                            .tr_with("toolbar-edit-hint", &[("shortcut", &edit_shortcut_text)])
+                            .tr(crate::i18n::message_id!("toolbar-edit-open"))
+                    } else {
+                        self.ui.locale.tr_with(
+                            crate::i18n::message_id!("toolbar-edit-hint"),
+                            &[("shortcut", &edit_shortcut_text)],
+                        )
                     };
                     if toolbar_toggle(
                         ui,
                         ToolbarToggle::new(
                             AppIcon::EditMesh,
-                            &self.ui.locale.tr("toolbar-edit-label"),
+                            &self
+                                .ui
+                                .locale
+                                .tr(crate::i18n::message_id!("toolbar-edit-label")),
                             can_edit_mesh,
                             edit_active,
                             &edit_hint,
@@ -425,9 +460,11 @@ impl OccluViewApp {
                     ui.add(egui::Spinner::new().size(13.0));
                     ui.add(
                         egui::Label::new(
-                            egui::RichText::new(self.ui.locale.tr("loading-scene"))
-                                .color(ink)
-                                .size(11.5),
+                            egui::RichText::new(
+                                self.ui.locale.tr(crate::i18n::message_id!("loading-scene")),
+                            )
+                            .color(ink)
+                            .size(11.5),
                         )
                         .truncate(),
                     );
@@ -472,25 +509,39 @@ impl OccluViewApp {
         let mut do_save = false;
         // Rendering resolves the `guard-close-*` catalog keys below.
         let headline = if edited_count == 1 {
-            self.ui.locale.tr("guard-close-headline-one")
-        } else {
-            self.ui.locale.tr("guard-close-headline-many")
-        };
-        let note = (edited_count > 1).then(|| {
             self.ui
                 .locale
-                .tr_with("guard-close-note", &[("count", &edited_count.to_string())])
+                .tr(crate::i18n::message_id!("guard-close-headline-one"))
+        } else {
+            self.ui
+                .locale
+                .tr(crate::i18n::message_id!("guard-close-headline-many"))
+        };
+        let note = (edited_count > 1).then(|| {
+            self.ui.locale.tr_with(
+                crate::i18n::message_id!("guard-close-note"),
+                &[("count", &edited_count.to_string())],
+            )
         });
         let response = show_guard_dialog(
             ctx,
             &self.ui.locale,
             GuardDialogSpec {
                 id: "unsaved-mesh-edits-guard",
-                title: &self.ui.locale.tr("guard-close-title"),
+                title: &self
+                    .ui
+                    .locale
+                    .tr(crate::i18n::message_id!("guard-close-title")),
                 headline: &headline,
                 note: note.as_deref(),
-                detail: &self.ui.locale.tr("guard-close-detail"),
-                destructive_label: &self.ui.locale.tr("guard-close-destructive"),
+                detail: &self
+                    .ui
+                    .locale
+                    .tr(crate::i18n::message_id!("guard-close-detail")),
+                destructive_label: &self
+                    .ui
+                    .locale
+                    .tr(crate::i18n::message_id!("guard-close-destructive")),
             },
         );
         match response.action {
@@ -536,29 +587,44 @@ impl OccluViewApp {
         let mut do_cancel = false;
         let headline = if let Some(layer) = &session_layer {
             self.ui.locale.tr_with(
-                "guard-replace-headline-session",
+                crate::i18n::message_id!("guard-replace-headline-session"),
                 &[("layer", layer.as_str())],
             )
         } else if edited_count <= 1 {
-            self.ui.locale.tr("guard-replace-headline-one")
+            self.ui
+                .locale
+                .tr(crate::i18n::message_id!("guard-replace-headline-one"))
         } else {
             self.ui.locale.tr_with(
-                "guard-replace-headline-many",
+                crate::i18n::message_id!("guard-replace-headline-many"),
                 &[("count", &edited_count.to_string())],
             )
         };
-        let busy_note = (self.document.edit_mode.is_busy() || self.sculpt_has_live_work())
-            .then(|| self.ui.locale.tr("edit-session-busy"));
+        let busy_note =
+            (self.document.edit_mode.is_busy() || self.sculpt_has_live_work()).then(|| {
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("edit-session-busy"))
+            });
         let response = show_guard_dialog(
             ctx,
             &self.ui.locale,
             GuardDialogSpec {
                 id: "edit-in-progress-guard",
-                title: &self.ui.locale.tr("guard-replace-title"),
+                title: &self
+                    .ui
+                    .locale
+                    .tr(crate::i18n::message_id!("guard-replace-title")),
                 headline: &headline,
                 note: busy_note.as_deref(),
-                detail: &self.ui.locale.tr("guard-replace-detail"),
-                destructive_label: &self.ui.locale.tr("guard-replace-destructive"),
+                detail: &self
+                    .ui
+                    .locale
+                    .tr(crate::i18n::message_id!("guard-replace-detail")),
+                destructive_label: &self
+                    .ui
+                    .locale
+                    .tr(crate::i18n::message_id!("guard-replace-destructive")),
             },
         );
         match response.action {
@@ -575,7 +641,11 @@ impl OccluViewApp {
         }
         if self.document.edit_mode.is_busy() || self.sculpt_has_live_work() {
             if do_discard || do_save {
-                self.ui.status_message = Some(self.ui.locale.tr("edit-session-busy"));
+                self.ui.status_message = Some(
+                    self.ui
+                        .locale
+                        .tr(crate::i18n::message_id!("edit-session-busy")),
+                );
             }
             return;
         }
@@ -656,15 +726,29 @@ impl OccluViewApp {
                 ui.add_space(4.0);
                 let mut retry_clicked = false;
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button(self.ui.locale.tr("error-close")).clicked() {
+                    if ui
+                        .button(self.ui.locale.tr(crate::i18n::message_id!("error-close")))
+                        .clicked()
+                    {
                         close_clicked = true;
                     }
-                    if ui.button(self.ui.locale.tr("error-copy-details")).clicked() {
+                    if ui
+                        .button(
+                            self.ui
+                                .locale
+                                .tr(crate::i18n::message_id!("error-copy-details")),
+                        )
+                        .clicked()
+                    {
                         ui.ctx().copy_text(error.details.clone());
                     }
                     if error.action == AppErrorAction::RetryGraphics
                         && ui
-                            .button(self.ui.locale.tr("error-retry-graphics"))
+                            .button(
+                                self.ui
+                                    .locale
+                                    .tr(crate::i18n::message_id!("error-retry-graphics")),
+                            )
                             .clicked()
                     {
                         retry_clicked = true;

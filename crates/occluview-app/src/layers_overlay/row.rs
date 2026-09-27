@@ -150,9 +150,9 @@ pub(super) fn show_layer_row(
                 },
             );
             let eye_hint = if visible {
-                locale.tr("layers-row-hide")
+                locale.tr(crate::i18n::message_id!("layers-row-hide"))
             } else {
-                locale.tr("layers-row-show")
+                locale.tr(crate::i18n::message_id!("layers-row-show"))
             };
             let eye_response = eye_response.on_hover_text(eye_hint);
             if eye_response.clicked() {
@@ -197,7 +197,7 @@ pub(super) fn show_layer_row(
                     )
                 })
                 .inner
-                .on_hover_text(locale.tr("layers-row-opacity"));
+                .on_hover_text(locale.tr(crate::i18n::message_id!("layers-row-opacity")));
             changed |= slider_response.changed();
             attach_layer_context_menu(slider_response, &target(visible), context_request, locale);
 
@@ -231,7 +231,8 @@ pub(super) fn show_layer_row(
                     ui_theme::text_muted()
                 },
             );
-            let remove_response = remove_response.on_hover_text(locale.tr("layers-row-remove"));
+            let remove_response = remove_response
+                .on_hover_text(locale.tr(crate::i18n::message_id!("layers-row-remove")));
             if remove_response.clicked() {
                 *context_request = Some(LayerContextRequest {
                     index: view.index,
@@ -281,7 +282,7 @@ fn tint_swatch(
             )
         })
         .inner
-        .on_hover_text(locale.tr("tint-choose"));
+        .on_hover_text(locale.tr(crate::i18n::message_id!("tint-choose")));
 
     let popup_id = ui.make_persistent_id(("layer_tint_palette", view.layer_id));
     egui::Popup::from_toggle_button_response(&response)
