@@ -43,13 +43,13 @@ fn screen_polygon_selection_takes_faces_overlapping_outline_not_disjoint_ones() 
     );
     assert!(mesh.is_ok(), "mesh should construct");
     let Ok(mesh) = mesh else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
     let layer_index = scene.add(SceneMesh::new(mesh));
     let layer_id = scene.meshes()[layer_index].id();
     let Some(mut selection) = FaceSelectionState::empty_for_layer(layer_id, 2) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let camera = ortho_camera_above();
     let viewport = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(400.0, 400.0));
@@ -90,13 +90,13 @@ fn screen_polygon_selection_surface_mode_excludes_back_faces() {
     );
     assert!(mesh.is_ok(), "mesh should construct");
     let Ok(mesh) = mesh else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
     let layer_index = scene.add(SceneMesh::new(mesh));
     let layer_id = scene.meshes()[layer_index].id();
     let Some(mut surface) = FaceSelectionState::empty_for_layer(layer_id, 2) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let camera = ortho_camera_above();
     let viewport = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(400.0, 400.0));
@@ -117,7 +117,7 @@ fn screen_polygon_selection_surface_mode_excludes_back_faces() {
     assert_eq!(surface.selected_faces, vec![true, false]);
 
     let Some(mut through) = FaceSelectionState::empty_for_layer(layer_id, 2) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     through
         .select_screen_polygon(
@@ -152,13 +152,13 @@ fn screen_polygon_selection_accumulates_and_shift_unmarks() {
     );
     assert!(mesh.is_ok(), "mesh should construct");
     let Ok(mesh) = mesh else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
     let layer_index = scene.add(SceneMesh::new(mesh));
     let layer_id = scene.meshes()[layer_index].id();
     let Some(mut selection) = FaceSelectionState::empty_for_layer(layer_id, 2) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let camera = ortho_camera_above();
     let viewport = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(400.0, 400.0));
@@ -258,13 +258,13 @@ fn screen_polygon_marquee_selects_every_enclosed_face_on_dense_mesh() {
     let mesh = Mesh::new(Some("grid".into()), vertices, indices);
     assert!(mesh.is_ok(), "grid mesh should construct");
     let Ok(mesh) = mesh else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
     let layer_index = scene.add(SceneMesh::new(mesh));
     let layer_id = scene.meshes()[layer_index].id();
     let Some(mut selection) = FaceSelectionState::empty_for_layer(layer_id, triangle_count) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let camera = ortho_camera_above();
     let viewport = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(400.0, 400.0));
@@ -335,7 +335,7 @@ fn micro_triangle_selects_in_surface_mode_when_zoomed() {
     );
     assert!(micro.is_ok(), "micro mesh should construct");
     let Ok(micro) = micro else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     // Zoom the orthographic camera until the 15 um triangle spans ~60 px.
     let mut camera = ortho_camera_above();
@@ -365,7 +365,7 @@ fn zero_area_triangle_still_skipped_in_surface_mode() {
     );
     assert!(sliver.is_ok(), "collinear mesh should construct");
     let Ok(sliver) = sliver else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let lasso = box_polygon(egui::pos2(100.0, 100.0), egui::pos2(300.0, 300.0));
     let (surface_sel, _) = polygon_selected(sliver.clone(), &ortho_camera_above(), &lasso, false);
@@ -394,7 +394,7 @@ fn small_lasso_on_a_huge_flat_quad_marks_both_triangles() {
     );
     assert!(quad.is_ok(), "quad mesh should construct");
     let Ok(quad) = quad else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     // A small box at the screen center; every quad vertex projects to a far
     // corner, so no triangle vertex lands inside it (containment -> 0).
@@ -425,7 +425,7 @@ fn lasso_fully_inside_one_giant_triangle_marks_it() {
     );
     assert!(triangle.is_ok(), "triangle mesh should construct");
     let Ok(triangle) = triangle else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let lasso = box_polygon(egui::pos2(180.0, 180.0), egui::pos2(220.0, 220.0));
     let (sel, total) = polygon_selected(triangle, &ortho_camera_above(), &lasso, false);
@@ -450,7 +450,7 @@ fn lasso_edge_crossing_big_triangle_marks_it() {
     );
     assert!(triangle.is_ok(), "triangle mesh should construct");
     let Ok(triangle) = triangle else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     // Band across screen y in [290, 310]; corners at x = 10 / 390 sit outside
     // the triangle's ~[90, 310] span there, so no corner is inside it.
@@ -514,7 +514,7 @@ fn perf_dense_lasso_over_large_mesh_stays_bounded() {
     }
     let triangle_count = indices.len() / 3;
     let Ok(mesh) = Mesh::new(Some("perf".into()), vertices, indices) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
     let layer_index = scene.add(SceneMesh::new(mesh));
@@ -528,7 +528,7 @@ fn perf_dense_lasso_over_large_mesh_stays_bounded() {
         let lasso = circular_lasso(200, radius);
         let Some(mut selection) = FaceSelectionState::empty_for_layer(layer_id, triangle_count)
         else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         let started = std::time::Instant::now();
         let changed = selection.select_screen_polygon(
@@ -774,7 +774,7 @@ fn surface_selects_by_geometry_ignoring_stored_vertex_normals() {
         }
     }
     let Ok(plane) = Mesh::new(Some("hostile".into()), vertices, indices) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let (sel, total) = surface_selected(plane, &ortho_camera_above());
     assert!(

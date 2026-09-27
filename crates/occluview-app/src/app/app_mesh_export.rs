@@ -767,7 +767,7 @@ mod tests {
     #[test]
     fn a_scan_keeps_its_own_writable_format() {
         let Ok(scene) = exportable_scene() else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         let plain = (*scene.meshes()[0].mesh).clone();
 
@@ -805,10 +805,10 @@ mod tests {
         );
 
         let Ok(scene) = exportable_scene() else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         let Some(entry) = scene.meshes().first() else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         assert_eq!(
             representable_export_format(MeshWriteFormat::StlBinary, &entry.mesh),
@@ -827,7 +827,7 @@ mod tests {
 
         // A textured scan: the atlas and its mapping both live only in PLY.
         let Ok(scene) = exportable_scene() else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         let mut textured = (*scene.meshes()[0].mesh).clone();
         textured.set_texture(MeshTexture::new(1, 1, vec![1, 2, 3, 255]));
@@ -898,7 +898,7 @@ mod tests {
 
         // A textured scan must come out PLY.
         let Ok(scene) = exportable_scene() else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         let mut textured = (*scene.meshes()[0].mesh).clone();
         textured.set_texture(MeshTexture::new(1, 1, vec![1, 2, 3, 255]));
@@ -945,7 +945,7 @@ mod tests {
 
         // A geometry-only .dcm loses nothing as STL, so STL is what it gets.
         let Ok(plain) = exportable_scene().map(|scene| (*scene.meshes()[0].mesh).clone()) else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         assert!(!plain.has_vertex_colors() && !plain.has_uvs() && plain.texture().is_none());
         let proposed =
@@ -964,7 +964,7 @@ mod tests {
         use occluview_core::MeshTexture;
 
         let Ok(scene) = exportable_scene() else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         let mut textured = (*scene.meshes()[0].mesh).clone();
         textured.set_texture(MeshTexture::new(1, 1, vec![1, 2, 3, 255]));
@@ -1085,7 +1085,7 @@ mod tests {
         let paths = vec![PathBuf::new(), PathBuf::from("/case/scans/upper.obj")];
 
         let Ok(scene) = exportable_scene() else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         let plain = (*scene.meshes()[0].mesh).clone();
         assert_eq!(
@@ -1111,7 +1111,7 @@ mod tests {
             vec![PathBuf::from("/case/lower"), PathBuf::from("/case/upper")]
         );
         let Ok(scene) = exportable_scene() else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         let plain = (*scene.meshes()[0].mesh).clone();
         assert_eq!(
@@ -1137,7 +1137,7 @@ mod tests {
             vec![PathBuf::from("/case/scans")]
         );
         let Ok(scene) = exportable_scene() else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         let plain = (*scene.meshes()[0].mesh).clone();
         assert_eq!(

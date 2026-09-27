@@ -246,14 +246,14 @@ mod tests {
         let payload = serialize_request(&original);
         assert!(payload.is_ok(), "serialize request failed: {payload:?}");
         let Ok(payload) = payload else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         // No token: the envelope must stay on the v1 layout for back-compat.
         assert_eq!(&payload[4..6], &REQUEST_VERSION_PATHS_ONLY.to_le_bytes());
         let parsed = parse_request(&payload);
         assert!(parsed.is_ok(), "parse request failed: {parsed:?}");
         let Ok(parsed) = parsed else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         assert_eq!(parsed.paths, original.paths);
         assert_eq!(parsed.activation_token, None);
@@ -266,14 +266,14 @@ mod tests {
         let payload = serialize_request(&original);
         assert!(payload.is_ok(), "serialize request failed: {payload:?}");
         let Ok(payload) = payload else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         // A token bumps the envelope version so the reader knows to parse it.
         assert_eq!(&payload[4..6], &REQUEST_VERSION_WITH_TOKEN.to_le_bytes());
         let parsed = parse_request(&payload);
         assert!(parsed.is_ok(), "parse request failed: {parsed:?}");
         let Ok(parsed) = parsed else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         assert_eq!(parsed.paths, original.paths);
         assert_eq!(
@@ -287,7 +287,7 @@ mod tests {
         let parsed = parse_request(b"/tmp/a.stl\n/tmp/b.obj\n");
         assert!(parsed.is_ok(), "parse legacy request failed: {parsed:?}");
         let Ok(parsed) = parsed else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         assert_eq!(
             parsed.paths,
@@ -301,11 +301,11 @@ mod tests {
         let payload = serialize_request(&request(&["/tmp/a.stl"], None));
         assert!(payload.is_ok(), "serialize failed: {payload:?}");
         let Ok(mut payload) = payload else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         assert!(!payload.is_empty(), "payload should not be empty");
         let Some(last) = payload.last_mut() else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         *last = b'\n';
 
@@ -315,7 +315,7 @@ mod tests {
             "control characters must be rejected: {parsed:?}"
         );
         let Err(error) = parsed else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         assert!(
             error.to_string().contains("control characters"),
@@ -328,18 +328,18 @@ mod tests {
         let payload = serialize_request(&request(&["/tmp/a.stl"], Some("token")));
         assert!(payload.is_ok(), "serialize failed: {payload:?}");
         let Ok(mut payload) = payload else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         // Corrupt the final token byte into a control character.
         let Some(last) = payload.last_mut() else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         *last = 0x07;
 
         let parsed = parse_request(&payload);
         assert!(parsed.is_err(), "token control chars must fail: {parsed:?}");
         let Err(error) = parsed else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         assert!(
             error.to_string().contains("control characters"),
@@ -352,14 +352,14 @@ mod tests {
         let payload = serialize_request(&request(&["/tmp/a.stl"], None));
         assert!(payload.is_ok(), "serialize failed: {payload:?}");
         let Ok(payload) = payload else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         let truncated = &payload[..payload.len() - 1];
 
         let parsed = parse_request(truncated);
         assert!(parsed.is_err(), "truncated envelope must fail: {parsed:?}");
         let Err(error) = parsed else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         assert!(
             error.to_string().contains("truncated") || error.to_string().contains("mismatch"),
@@ -372,7 +372,7 @@ mod tests {
         let payload = serialize_request(&request(&["/tmp/a.stl"], Some("token")));
         assert!(payload.is_ok(), "serialize failed: {payload:?}");
         let Ok(payload) = payload else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         // Drop the last token byte but keep the header's declared length,
         // producing a length mismatch the parser must reject.
@@ -395,7 +395,7 @@ mod tests {
         let result = serialize_request(&request);
         assert!(result.is_err(), "too many paths must fail: {result:?}");
         let Err(error) = result else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         assert!(
             error.to_string().contains("max is"),

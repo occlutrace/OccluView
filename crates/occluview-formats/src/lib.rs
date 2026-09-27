@@ -151,7 +151,7 @@ mod tests {
             "the README's supported-format list must carry an .hps/.dcm entry"
         );
         let Some(promise) = promise else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         assert!(
             promise.contains("medical DICOM is not supported"),
