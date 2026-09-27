@@ -373,6 +373,7 @@ fn draw_section_header(
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let (close_rect, close) =
                     ui.allocate_exact_size(egui::vec2(24.0, 20.0), egui::Sense::click());
+                crate::accessibility::button(&close, &locale.tr("cut-close-section"), true, None);
                 let close_hovered = close.hovered();
                 crate::icons::paint(
                     ui.painter(),

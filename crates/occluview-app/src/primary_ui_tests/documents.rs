@@ -7,8 +7,8 @@
 use super::*;
 
 #[test]
-fn the_changelog_only_names_versions_that_can_be_released() {
-    // Release notes come from the section matching the current version.
+fn changelog_draft_and_release_sections_are_consistent() {
+    // The prepared release takes its notes from the section matching the workspace version.
     let changelog = include_str!("../../../../CHANGELOG.md");
     let manifest = include_str!("../../../../Cargo.toml");
     let version = manifest
@@ -31,8 +31,7 @@ fn the_changelog_only_names_versions_that_can_be_released() {
          of it would publish empty notes"
     );
 
-    // Unreleased is the pending section; the version sections below it are
-    // release history, newest first.
+    // Unreleased carries pending notes; version sections follow newest first.
     let sections: Vec<&str> = changelog
         .lines()
         .filter(|line| line.starts_with("## "))
@@ -44,17 +43,19 @@ fn the_changelog_only_names_versions_that_can_be_released() {
         "the pending section should lead the changelog, got {:?}",
         sections.first()
     );
+    let release_sections = &sections[1..];
     assert!(
-        sections
-            .get(1)
-            .is_some_and(|section| section.starts_with(&heading)),
-        "the workspace version {version} needs a changelog section after Unreleased"
+        release_sections
+            .first()
+            .is_some_and(|first| first.starts_with(&heading)),
+        "the newest section should be the version about to ship, got {:?}",
+        release_sections.first()
     );
     // Version history goes one way. A repeat or an older section above a
     // newer one means a local bump grew its own section instead of folding
     // into the release being prepared.
     let mut seen: Vec<[u64; 3]> = Vec::new();
-    for line in sections.iter().skip(1) {
+    for line in release_sections {
         let Some(number) = line.split_whitespace().nth(1) else {
             panic!("changelog section without a version: {line:?}");
         };
@@ -97,7 +98,7 @@ fn the_changelog_only_names_versions_that_can_be_released() {
     let Some(first_tagged) = tags.iter().filter_map(|tag| parse_version(tag)).min() else {
         return;
     };
-    for line in sections.iter().skip(2) {
+    for line in release_sections.iter().skip(1) {
         let Some(number) = line.split_whitespace().nth(1) else {
             continue;
         };

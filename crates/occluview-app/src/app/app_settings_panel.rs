@@ -463,6 +463,7 @@ fn slider_f32_row_inner(
                     .step_by(0.05)
                     .trailing_fill(true),
             );
+            crate::accessibility::slider(&slider_response, label, true, f64::from(edit));
             let changed = slider_response.changed();
             let pointer_down = slider_response.is_pointer_button_down_on();
             let drag_stopped = slider_response.drag_stopped();

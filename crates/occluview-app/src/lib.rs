@@ -34,6 +34,7 @@ use anyhow::{Context, Result};
 use occluview_formats::read_files_with_memory_budget;
 use std::path::PathBuf;
 
+mod accessibility;
 mod align_brush;
 mod align_drag;
 mod align_geometry;

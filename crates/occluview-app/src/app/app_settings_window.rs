@@ -258,6 +258,7 @@ fn about_link(ui: &mut egui::Ui, width: f32, icon: AppIcon, label: &str) -> bool
             egui::StrokeKind::Inside,
         );
     }
+    crate::accessibility::link(&response, label, true);
     let ink = ui_theme::text();
     let font = egui::FontId::proportional(12.0);
     let galley = ui.painter().layout_no_wrap(label.to_owned(), font, ink);
