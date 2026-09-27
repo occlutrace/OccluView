@@ -80,10 +80,10 @@ if [[ $status -ne 0 ]]; then
   exit "$status"
 fi
 
-# Only the six root-corpus tests share this filter. The other ignored tests
+# Only the seven root-corpus tests share this filter. The other ignored tests
 # need separately acquired prepared or partial-overlap pairs.
-if ! grep -Eq 'test result: ok\. 6 passed; 0 failed' "$log"; then
-  echo "validate-release-private: expected six alignment tests to pass" >&2
+if ! grep -Eq 'test result: ok\. 7 passed; 0 failed' "$log"; then
+  echo "validate-release-private: expected seven alignment tests to pass" >&2
   tail -n 40 "$log" >&2
   exit 1
 fi
