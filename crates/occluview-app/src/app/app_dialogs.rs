@@ -125,6 +125,15 @@ impl OccluViewApp {
                                 ui_theme::text_weak()
                             },
                         );
+                        crate::accessibility::button(
+                            &response,
+                            &self.ui.locale.tr("toolbar-recent-hint"),
+                            !self.persistence.recent_files.is_empty(),
+                            Some(egui::Popup::is_id_open(
+                                ui.ctx(),
+                                super::app_recent_popup::recent_files_popup_id(),
+                            )),
+                        );
                         let response =
                             response.on_hover_text(self.ui.locale.tr("toolbar-recent-hint"));
                         if let Some(action) = show_recent_files_popup(
@@ -647,11 +656,16 @@ impl OccluViewApp {
                 });
                 ui.add_space(8.0);
                 let mut details = error.details.clone();
-                ui.add(
+                let details_response = ui.add(
                     egui::TextEdit::multiline(&mut details)
                         .desired_rows(8)
                         .desired_width(f32::INFINITY)
                         .interactive(false),
+                );
+                crate::accessibility::read_only_text(
+                    &details_response,
+                    &self.ui.locale.tr("error-details"),
+                    &details,
                 );
                 ui.add_space(4.0);
                 let mut retry_clicked = false;

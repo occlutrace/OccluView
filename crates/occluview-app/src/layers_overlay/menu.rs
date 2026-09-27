@@ -126,7 +126,8 @@ fn show_material_actions(
             colors_key,
             target.has_color_data,
             LayerContextAction::ToggleShowVertexColors,
-        ),
+        )
+        .selected(target.show_vertex_colors),
         context_request,
         locale,
     );
@@ -153,7 +154,8 @@ fn show_material_actions(
                 texture_key,
                 true,
                 LayerContextAction::ToggleShowTexture,
-            ),
+            )
+            .selected(target.show_texture),
             context_request,
             locale,
         );
@@ -252,7 +254,8 @@ fn show_contact_actions(
                 "layer-menu-hide-contacts",
                 true,
                 LayerContextAction::HideContacts,
-            ),
+            )
+            .selected(true),
             context_request,
             locale,
         );
@@ -306,7 +309,8 @@ fn show_layer_actions(
             wireframe_key,
             true,
             LayerContextAction::ToggleWireframe,
-        ),
+        )
+        .selected(target.wireframe),
         context_request,
         locale,
     );
@@ -335,6 +339,7 @@ struct LayerMenuButton<'a> {
     key: &'static str,
     enabled: bool,
     action: LayerContextAction,
+    selected: Option<bool>,
 }
 
 impl<'a> LayerMenuButton<'a> {
@@ -351,7 +356,13 @@ impl<'a> LayerMenuButton<'a> {
             key,
             enabled,
             action,
+            selected: None,
         }
+    }
+
+    fn selected(mut self, selected: bool) -> Self {
+        self.selected = Some(selected);
+        self
     }
 }
 
@@ -362,7 +373,13 @@ fn layer_menu_button(
     context_request: &mut Option<LayerContextRequest>,
     locale: &crate::i18n::LocaleManager,
 ) -> egui::Response {
-    let response = menu_item(ui, button.icon, &locale.tr(button.key), button.enabled);
+    let response = menu_item_state(
+        ui,
+        button.icon,
+        &locale.tr(button.key),
+        button.enabled,
+        button.selected,
+    );
     if response.clicked() {
         *context_request = Some(LayerContextRequest {
             index: target.index,
@@ -383,6 +400,16 @@ pub(super) fn menu_item(
     icon: AppIcon,
     label: &str,
     enabled: bool,
+) -> egui::Response {
+    menu_item_state(ui, icon, label, enabled, None)
+}
+
+fn menu_item_state(
+    ui: &mut egui::Ui,
+    icon: AppIcon,
+    label: &str,
+    enabled: bool,
+    selected: Option<bool>,
 ) -> egui::Response {
     const ROW_H: f32 = 22.0;
     const PAD_L: f32 = 6.0;
@@ -421,6 +448,7 @@ pub(super) fn menu_item(
         egui::FontId::proportional(12.5),
         fg,
     );
+    crate::accessibility::button(&response, label, enabled, selected);
     response
 }
 

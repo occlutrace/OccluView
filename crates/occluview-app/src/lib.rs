@@ -34,6 +34,7 @@ use anyhow::{Context, Result};
 use occluview_formats::{hps::RuntimeHpsKeyProvider, read_files_with_key_provider};
 use std::path::PathBuf;
 
+mod accessibility;
 mod align_brush;
 mod align_drag;
 mod align_geometry;

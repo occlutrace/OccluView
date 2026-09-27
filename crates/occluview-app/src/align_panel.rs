@@ -656,14 +656,7 @@ fn chip_with_accessibility(
             painter.text(rect.center(), egui::Align2::CENTER_CENTER, label, font, ink);
         }
     }
-    response.widget_info(|| {
-        egui::WidgetInfo::selected(
-            egui::WidgetType::Button,
-            enabled,
-            active,
-            accessibility_label,
-        )
-    });
+    crate::accessibility::button(&response, accessibility_label, enabled, Some(active));
     response
 }
 
@@ -730,9 +723,7 @@ fn fit_button(
         egui::FontId::proportional(if primary { 13.0 } else { 12.0 }),
         ink,
     );
-    response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, primary, label)
-    });
+    crate::accessibility::button(&response, label, enabled, None);
     response
 }
 
