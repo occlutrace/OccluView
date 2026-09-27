@@ -143,7 +143,7 @@ wgpu = "=30.0.1"             # pinned; bumps need tests and a changelog entry
 
 # Windowing / GUI.
 egui    = "=0.36.1"
-eframe  = { version = "=0.36.1", default-features = false, features = ["wgpu", "default_fonts", "links"] }
+eframe  = { version = "=0.36.1", default-features = false, features = ["accesskit", "wgpu", "default_fonts", "links"] }
 
 # Localization (OccluView i18n foundation). Pure-Rust Fluent stack:
 # named variables, per-locale plural/select, build-time validatable catalogs.

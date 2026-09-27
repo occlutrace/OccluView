@@ -482,6 +482,7 @@ pub(crate) fn toolbar_toggle(ui: &mut egui::Ui, control: ToolbarToggle<'_>) -> e
         );
         crate::icons::paint(painter, close_rect, AppIcon::Close, ink);
     }
+    crate::accessibility::button(&response, label, enabled, Some(active));
     response
         .on_hover_text(tooltip)
         .on_disabled_hover_text(tooltip)

@@ -391,6 +391,7 @@ meshedit-slider-size = size
 meshedit-slider-size-hint = Brush size (Shift + mouse wheel)
 meshedit-slider-force = force
 meshedit-slider-force-hint = Brush intensity (Ctrl + mouse wheel)
+meshedit-limit-value = Maximum perimeter
 meshedit-limit-label = limit
 meshedit-limit-checkbox-hint = Restrict repair to rims no larger than this perimeter
 meshedit-limit-drag-hint = Off closes every safe hole inside the selected area; the scan border stays open
@@ -574,6 +575,7 @@ guard-cancel = Cancel
 error-retry-graphics = Try again
 error-close = Close
 error-copy-details = Copy Details
+error-details = Error details
 
 about-website = Website
 about-source = Source
@@ -822,6 +824,26 @@ render-failed-summary = The file opened, but the viewport could not be rendered.
 render-failed-status = Render failed
 
 tint-choose = Choose tint
+tint-group-model = Model
+tint-group-overlays = Contrasting overlays
+tint-color-stone-iv = Stone IV
+tint-color-baked = Baked
+tint-color-plaster = Plaster
+tint-color-sage = Sage
+tint-color-wax = Wax
+tint-color-glacier = Glacier
+tint-color-coral = Coral
+tint-color-mint = Mint
+tint-color-lilac = Lilac
+tint-color-amber = Amber
+tint-color-cobalt = Cobalt
+tint-color-tangerine = Tangerine
+tint-color-violet = Violet
+tint-color-lime = Lime
+tint-color-teal = Teal
+tint-color-magenta = Magenta
+tint-color-crimson = Crimson
+tint-color-slate = Slate
 
 ## Status tail: brush, lasso, loading, GPU, align jobs.
 brush-no-mesh = Click a point on each mesh first, then paint on either

@@ -385,6 +385,7 @@ meshedit-slider-size = misura
 meshedit-slider-size-hint = Misura del pennello (Shift + rotella)
 meshedit-slider-force = forza
 meshedit-slider-force-hint = Forza del pennello (Ctrl + rotella)
+meshedit-limit-value = Perimetro massimo
 meshedit-limit-label = limite
 meshedit-limit-checkbox-hint = Limita la riparazione ai bordi sotto questo perimetro
 meshedit-limit-drag-hint = Off chiude ogni buco sicuro nella zona; il bordo resta aperto
@@ -568,6 +569,7 @@ guard-cancel = Annulla
 error-retry-graphics = Riprova
 error-close = Chiudi
 error-copy-details = Copia dettagli
+error-details = Dettagli dell’errore
 
 about-website = Sito web
 about-source = Sorgenti
@@ -817,6 +819,26 @@ render-failed-summary = Il file si apre, ma il viewport non renderizza.
 render-failed-status = Render fallito
 
 tint-choose = Scegli tinta
+tint-group-model = Modello
+tint-group-overlays = Sovrapposizioni contrastanti
+tint-color-stone-iv = Pietra IV
+tint-color-baked = Cotto
+tint-color-plaster = Intonaco
+tint-color-sage = Salvia
+tint-color-wax = Cera
+tint-color-glacier = Ghiacciaio
+tint-color-coral = Corallo
+tint-color-mint = Menta
+tint-color-lilac = Lilla
+tint-color-amber = Ambra
+tint-color-cobalt = Cobalto
+tint-color-tangerine = Mandarino
+tint-color-violet = Viola
+tint-color-lime = Lime
+tint-color-teal = Verde petrolio
+tint-color-magenta = Magenta
+tint-color-crimson = Cremisi
+tint-color-slate = Ardesia
 
 ## Status tail: brush, lasso, loading, GPU, align jobs — DRAFT.
 

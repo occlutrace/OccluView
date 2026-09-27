@@ -385,6 +385,7 @@ meshedit-slider-size = taille
 meshedit-slider-size-hint = Taille du pinceau (Shift + molette)
 meshedit-slider-force = force
 meshedit-slider-force-hint = Force du pinceau (Ctrl + molette)
+meshedit-limit-value = Périmètre maximal
 meshedit-limit-label = limite
 meshedit-limit-checkbox-hint = Limiter la réparation aux bords sous ce périmètre
 meshedit-limit-drag-hint = Off rebouche tout trou sûr de la zone ; le bord reste ouvert
@@ -568,6 +569,7 @@ guard-cancel = Annuler
 error-retry-graphics = Réessayer
 error-close = Fermer
 error-copy-details = Copier les détails
+error-details = Détails de l’erreur
 
 about-website = Site web
 about-source = Sources
@@ -817,6 +819,26 @@ render-failed-summary = Fichier ouvert, mais viewport non rendable.
 render-failed-status = Rendu raté
 
 tint-choose = Choisir la teinte
+tint-group-model = Modèle
+tint-group-overlays = Superpositions contrastées
+tint-color-stone-iv = Pierre IV
+tint-color-baked = Cuit
+tint-color-plaster = Plâtre
+tint-color-sage = Sauge
+tint-color-wax = Cire
+tint-color-glacier = Glacier
+tint-color-coral = Corail
+tint-color-mint = Menthe
+tint-color-lilac = Lilas
+tint-color-amber = Ambre
+tint-color-cobalt = Cobalt
+tint-color-tangerine = Mandarine
+tint-color-violet = Violet
+tint-color-lime = Citron vert
+tint-color-teal = Sarcelle
+tint-color-magenta = Magenta
+tint-color-crimson = Cramoisi
+tint-color-slate = Ardoise
 
 ## Status tail: brush, lasso, loading, GPU, align jobs — DRAFT.
 

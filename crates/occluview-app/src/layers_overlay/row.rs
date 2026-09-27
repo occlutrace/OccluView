@@ -120,6 +120,8 @@ pub(super) fn show_layer_row(
         ui.id().with(("layer-row-background", view.index)),
         egui::Sense::click(),
     );
+    let row_actions_label = format!("{}: {}", locale.tr("layers-title"), view.label);
+    crate::accessibility::button(&row_hit, &row_actions_label, true, None);
 
     ui.allocate_ui_with_layout(
         row_size,
@@ -154,6 +156,8 @@ pub(super) fn show_layer_row(
             } else {
                 locale.tr("layers-row-show")
             };
+            let eye_label = format!("{eye_hint}: {}", view.label);
+            crate::accessibility::button(&eye_response, &eye_label, true, Some(visible));
             let eye_response = eye_response.on_hover_text(eye_hint);
             if eye_response.clicked() {
                 visible = !visible;
@@ -173,6 +177,7 @@ pub(super) fn show_layer_row(
             .truncate()
             .sense(egui::Sense::click());
             let label_response = ui.add_sized([label_width, LAYER_ROW_CONTROL_HEIGHT_PX], label);
+            crate::accessibility::button(&label_response, view.label, true, Some(view.active));
             let label_response = if let Some(hover) = view.hover {
                 label_response.on_hover_text(hover)
             } else {
@@ -198,6 +203,13 @@ pub(super) fn show_layer_row(
                 })
                 .inner
                 .on_hover_text(locale.tr("layers-row-opacity"));
+            let opacity_label = format!("{}: {}", locale.tr("layers-row-opacity"), view.label);
+            crate::accessibility::slider(
+                &slider_response,
+                &opacity_label,
+                state.visible,
+                f64::from(opacity),
+            );
             changed |= slider_response.changed();
             attach_layer_context_menu(slider_response, &target(visible), context_request, locale);
 
@@ -231,6 +243,8 @@ pub(super) fn show_layer_row(
                     ui_theme::text_muted()
                 },
             );
+            let remove_label = format!("{}: {}", locale.tr("layers-row-remove"), view.label);
+            crate::accessibility::button(&remove_response, &remove_label, true, None);
             let remove_response = remove_response.on_hover_text(locale.tr("layers-row-remove"));
             if remove_response.clicked() {
                 *context_request = Some(LayerContextRequest {
@@ -280,8 +294,10 @@ fn tint_swatch(
                 swatch,
             )
         })
-        .inner
-        .on_hover_text(locale.tr("tint-choose"));
+        .inner;
+    let tint_label = format!("{}: {}", locale.tr("tint-choose"), view.label);
+    crate::accessibility::button(&response, &tint_label, enabled, None);
+    let response = response.on_hover_text(locale.tr("tint-choose"));
 
     let popup_id = ui.make_persistent_id(("layer_tint_palette", view.layer_id));
     egui::Popup::from_toggle_button_response(&response)
@@ -303,20 +319,18 @@ fn tint_swatch(
                     // are neighbours on one warm band, so two scans wearing any two of
                     // them are still hard to tell apart where they overlap, which is
                     // where an alignment needs them told apart.
-                    for (heading, presets) in [
-                        ("Model", LAYER_TINT_PRESETS.as_slice()),
-                        (
-                            "Overlay — two scans at once",
-                            LAYER_OVERLAY_TINT_PRESETS.as_slice(),
-                        ),
+                    for (heading_key, presets) in [
+                        ("tint-group-model", LAYER_TINT_PRESETS.as_slice()),
+                        ("tint-group-overlays", LAYER_OVERLAY_TINT_PRESETS.as_slice()),
                     ] {
                         ui.label(
-                            egui::RichText::new(heading)
+                            egui::RichText::new(locale.tr(heading_key))
                                 .color(ui_theme::text_weak())
                                 .size(10.5),
                         );
-                        for &(color, name) in presets {
+                        for &(color, label_key) in presets {
                             let is_current = tint_matches(color, *tint);
+                            let label = locale.tr(label_key);
                             let entry = ui
                                 .horizontal(|ui| {
                                     let (swatch_rect, _) = ui.allocate_exact_size(
@@ -334,7 +348,7 @@ fn tint_swatch(
                                         egui::Stroke::new(1.0_f32, ui_theme::hairline()),
                                         egui::StrokeKind::Middle,
                                     );
-                                    ui.selectable_label(is_current, name)
+                                    ui.selectable_label(is_current, label)
                                 })
                                 .inner;
                             if entry.clicked() {
