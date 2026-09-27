@@ -1,9 +1,7 @@
 //! The operator-facing controls catalogue.
 //!
-//! This is data, not another input router. The handlers in the
-//! app remain the authority for behavior; this catalogue gives the Help
-//! surface and the viewport reminder one spelling for the controls they
-//! already expose.
+//! This is display data, not another input router. The viewport and tool
+//! handlers remain the authority for behavior.
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct HintRow {
@@ -40,6 +38,7 @@ const NAVIGATION: &[HintRow] = &[
         gesture: "MMB drag",
         key: "help-hint-navigation-pan-the-camera",
     },
+    #[cfg(target_os = "macos")]
     HintRow {
         gesture: "Two-finger scroll",
         key: "help-hint-navigation-pan-the-camera",
@@ -322,7 +321,14 @@ pub(crate) const ALL_SECTIONS: &[HintSection] = &[
 
 pub(crate) const fn contextual_line(context: HintContext) -> &'static str {
     match context {
-        HintContext::Navigation => "RMB drag orbit · MMB drag pan · Trackpad scroll pan · Wheel/pinch zoom · MMB click focus",
+        #[cfg(target_os = "macos")]
+        HintContext::Navigation => {
+            "RMB drag orbit · MMB drag pan · Trackpad scroll pan · Wheel/pinch zoom · MMB click focus"
+        }
+        #[cfg(not(target_os = "macos"))]
+        HintContext::Navigation => {
+            "RMB drag orbit · MMB drag pan · Wheel/pinch zoom · MMB click focus"
+        }
         HintContext::MeshEditing => {
             "LMB select · Shift+click unmark · Drag rectangle · Ctrl+Z undo"
         }
@@ -343,6 +349,9 @@ pub(crate) const fn contextual_line(context: HintContext) -> &'static str {
 /// Catalog key rendering the localized contextual line for each context.
 pub(crate) const fn contextual_line_key(context: HintContext) -> &'static str {
     match context {
+        #[cfg(target_os = "macos")]
+        HintContext::Navigation => "help-hintline-navigation-macos",
+        #[cfg(not(target_os = "macos"))]
         HintContext::Navigation => "help-hintline-navigation",
         HintContext::MeshEditing => "help-hintline-mesh-editing",
         HintContext::Sculpt => "help-hintline-sculpt",
@@ -398,5 +407,32 @@ mod tests {
         for context in ALL_CONTEXTS {
             assert!(!contextual_line(*context).is_empty());
         }
+    }
+
+    #[test]
+    fn navigation_help_matches_pixel_scroll_pan_support() {
+        #![allow(clippy::expect_used)]
+        let macos = cfg!(target_os = "macos");
+        let navigation = ALL_SECTIONS
+            .iter()
+            .find(|section| section.key == "help-section-navigation")
+            .expect("navigation section exists");
+        assert_eq!(
+            navigation
+                .rows
+                .iter()
+                .any(|row| row.gesture == "Two-finger scroll"),
+            macos
+        );
+
+        let catalog = crate::i18n::catalog::Catalog::build("en").expect("en builds");
+        let line = catalog
+            .text(contextual_line_key(HintContext::Navigation))
+            .expect("navigation hint line exists");
+        assert_eq!(line.contains("Trackpad scroll pan"), macos);
+        assert_eq!(
+            contextual_line(HintContext::Navigation).contains("Trackpad scroll pan"),
+            macos
+        );
     }
 }

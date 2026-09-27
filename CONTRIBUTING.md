@@ -64,9 +64,10 @@ comments and commit bodies factual: explain an invariant, boundary, or user
 visible contract, and omit process narration, filler, and claims not backed by
 the implementation or its checks.
 
-For visible changes, add a note to `CHANGELOG.md` under the version being
-prepared. Do not open a new version section: the release job publishes the
-section matching the tag, and an untagged section publishes nothing.
+For visible changes, add a short note to `CHANGELOG.md` under `## Unreleased`,
+creating that section above the newest version when it is missing. A release
+publishes only the section matching its version tag; draft notes stay out of
+the published release until they move into a versioned section.
 
 ## Releases
 
