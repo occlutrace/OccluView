@@ -146,7 +146,7 @@ fn install_now() {
         return;
     };
 
-    let delegate_object: &AnyObject = delegate.as_ref().as_ref();
+    let delegate_object: &AnyObject = (&*delegate).as_ref();
     match add_open_methods(delegate_object.class()) {
         Ok(()) => tracing::info!("installed Finder document-open callbacks on winit delegate"),
         Err(reason) => {
