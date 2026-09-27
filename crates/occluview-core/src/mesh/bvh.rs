@@ -57,6 +57,17 @@ impl TriangleBvh {
         u64::try_from(node_bytes.saturating_add(order_bytes)).unwrap_or(u64::MAX)
     }
 
+    pub(crate) fn estimated_peak_memory_bytes_for_triangle_count(triangle_count: usize) -> u64 {
+        let node_capacity = triangle_count.max(1).saturating_mul(2);
+        let node_bytes = node_capacity.saturating_mul(size_of::<Node>());
+        let order_bytes = triangle_count.saturating_mul(size_of::<u32>());
+        let bounds_bytes = triangle_count.saturating_mul(size_of::<TriBounds>());
+        u64::try_from(node_bytes)
+            .unwrap_or(u64::MAX)
+            .saturating_add(u64::try_from(order_bytes).unwrap_or(u64::MAX))
+            .saturating_add(u64::try_from(bounds_bytes).unwrap_or(u64::MAX))
+    }
+
     /// Build over `indices` (triangle list) and `vertices` (local positions).
     pub(crate) fn build(vertices: &[Vertex], indices: &[u32]) -> Self {
         let triangle_count = indices.len() / 3;

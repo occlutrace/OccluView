@@ -64,7 +64,7 @@ impl GpuMesh {
         let indices = mesh.indices();
 
         let vertex_bytes: &[u8] = bytemuck::cast_slice(vertices);
-        let vertex_capacity_bytes = capacity_bytes(vertex_bytes.len());
+        let vertex_capacity_bytes = Mesh::gpu_buffer_capacity_bytes(vertex_bytes.len());
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("occluview vertex buffer"),
             size: vertex_capacity_bytes,
@@ -78,7 +78,7 @@ impl GpuMesh {
         }
 
         let index_bytes: &[u8] = bytemuck::cast_slice(indices);
-        let index_capacity_bytes = capacity_bytes(index_bytes.len());
+        let index_capacity_bytes = Mesh::gpu_buffer_capacity_bytes(index_bytes.len());
         let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("occluview index buffer"),
             size: index_capacity_bytes,
@@ -95,7 +95,7 @@ impl GpuMesh {
             if include_wireframe && !mesh.is_point_cloud() && !indices.is_empty() {
                 let wireframe_indices = wireframe_indices_for_triangle_mesh(indices);
                 let wireframe_index_bytes: &[u8] = bytemuck::cast_slice(&wireframe_indices);
-                let capacity = capacity_bytes(wireframe_index_bytes.len());
+                let capacity = Mesh::gpu_buffer_capacity_bytes(wireframe_index_bytes.len());
                 let wireframe_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("occluview wireframe index buffer"),
                     size: capacity,
@@ -521,13 +521,6 @@ impl GpuMesh {
     pub(crate) fn has_wireframe_indices(&self) -> bool {
         self.wireframe_index_buffer.is_some() && self.wireframe_index_count > 0
     }
-}
-
-fn capacity_bytes(required: usize) -> u64 {
-    u64::try_from(required.max(4))
-        .unwrap_or(u64::MAX)
-        .checked_next_power_of_two()
-        .unwrap_or(u64::MAX)
 }
 
 #[allow(clippy::too_many_arguments)]

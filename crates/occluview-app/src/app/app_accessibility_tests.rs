@@ -3,10 +3,12 @@
 use super::*;
 use crate::app::app_settings_panel::settings_popup_id;
 use crate::app::information_dialog::InformationDialog;
+use crate::contact::ContactMode;
 use crate::i18n::preference::UiLanguagePreference;
 use crate::measure_tool::MeasureMode;
 use crate::mesh_editor_overlay::EditorTab;
 use eframe::egui;
+use std::collections::{HashMap, HashSet};
 
 fn viewport() -> egui::Rect {
     egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1200.0))
@@ -20,41 +22,105 @@ struct AccessibleControl {
     toggled: Option<bool>,
 }
 
+const INTERACTIVE_ROLES: &[&str] = &[
+    "Button",
+    "DefaultButton",
+    "CheckBox",
+    "RadioButton",
+    "RadioGroup",
+    "ComboBox",
+    "EditableComboBox",
+    "DisclosureTriangle",
+    "Slider",
+    "SpinButton",
+    "TextInput",
+    "MultilineTextInput",
+    "SearchInput",
+    "DateInput",
+    "DateTimeInput",
+    "WeekInput",
+    "MonthInput",
+    "TimeInput",
+    "EmailInput",
+    "NumberInput",
+    "PasswordInput",
+    "PhoneNumberInput",
+    "UrlInput",
+    "Link",
+    "ColorWell",
+    "Switch",
+    "MenuItem",
+    "MenuItemCheckBox",
+    "MenuItemRadio",
+    "MenuListOption",
+    "ListBoxOption",
+    "TreeItem",
+    "ScrollBar",
+    "Tab",
+    "Splitter",
+];
+const INTERACTIVE_ACTIONS: &[egui::accesskit::Action] = &[
+    egui::accesskit::Action::Click,
+    egui::accesskit::Action::Focus,
+    egui::accesskit::Action::Blur,
+    egui::accesskit::Action::Collapse,
+    egui::accesskit::Action::Expand,
+    egui::accesskit::Action::CustomAction,
+    egui::accesskit::Action::Decrement,
+    egui::accesskit::Action::Increment,
+    egui::accesskit::Action::ReplaceSelectedText,
+    egui::accesskit::Action::SetTextSelection,
+    egui::accesskit::Action::SetValue,
+    egui::accesskit::Action::ShowContextMenu,
+];
+
 fn controls(output: &egui::FullOutput, surface: &str) -> Vec<AccessibleControl> {
-    const INTERACTIVE_ROLES: &[&str] = &[
-        "Button",
-        "CheckBox",
-        "RadioButton",
-        "RadioGroup",
-        "ComboBox",
-        "Slider",
-        "SpinButton",
-        "TextInput",
-        "Link",
-        "ColorWell",
-    ];
     let update = output
         .platform_output
         .accesskit_update
         .as_ref()
         .unwrap_or_else(|| panic!("{surface}: egui did not build an AccessKit tree"));
-    let controls: Vec<_> = update
+    let nodes: HashMap<_, _> = update
         .nodes
         .iter()
-        .filter_map(|(_, node)| {
-            let role = format!("{:?}", node.role());
-            INTERACTIVE_ROLES
-                .contains(&role.as_str())
-                .then(|| AccessibleControl {
-                    name: accessible_name(node, &update.nodes),
-                    role,
-                    disabled: node.is_disabled(),
-                    toggled: node
-                        .toggled()
-                        .map(|toggled| format!("{toggled:?}") == "True"),
-                })
-        })
+        .map(|(node_id, node)| (*node_id, node))
         .collect();
+    let root = update
+        .tree
+        .as_ref()
+        .unwrap_or_else(|| panic!("{surface}: the AccessKit tree has no root"))
+        .root;
+    let mut pending = vec![root];
+    let mut visited = HashSet::new();
+    let mut controls = Vec::new();
+    while let Some(node_id) = pending.pop() {
+        assert!(
+            visited.insert(node_id),
+            "{surface}: the AccessKit tree repeats node {node_id:?}"
+        );
+        let node = nodes
+            .get(&node_id)
+            .copied()
+            .unwrap_or_else(|| panic!("{surface}: the AccessKit tree omits node {node_id:?}"));
+        pending.extend(node.children().iter().copied());
+        let role = format!("{:?}", node.role());
+        // A fitting scroll area publishes a disabled scrollbar with no action.
+        if is_interactive(node, &role) {
+            controls.push(AccessibleControl {
+                name: accessible_name(node, &nodes),
+                role,
+                disabled: node.is_disabled(),
+                toggled: node
+                    .toggled()
+                    .map(|toggled| format!("{toggled:?}") == "True"),
+            });
+        }
+    }
+    assert_eq!(
+        visited.len(),
+        nodes.len(),
+        "{surface}: every node in the AccessKit update must be reachable from its root"
+    );
     let unnamed: Vec<_> = controls
         .iter()
         .filter(|control| control.name.trim().is_empty())
@@ -70,21 +136,33 @@ fn controls(output: &egui::FullOutput, surface: &str) -> Vec<AccessibleControl> 
     controls
 }
 
+fn is_interactive(node: &egui::accesskit::Node, role: &str) -> bool {
+    let role_is_interactive =
+        INTERACTIVE_ROLES.contains(&role) && !(role == "ScrollBar" && node.is_disabled());
+    let action_is_interactive = !node.is_disabled()
+        && INTERACTIVE_ACTIONS
+            .iter()
+            .any(|action| node.supports_action(*action));
+    role_is_interactive || action_is_interactive
+}
+
 fn accessible_name(
     node: &egui::accesskit::Node,
-    nodes: &[(egui::accesskit::NodeId, egui::accesskit::Node)],
+    nodes: &HashMap<egui::accesskit::NodeId, &egui::accesskit::Node>,
 ) -> String {
     if let Some(label) = node.label().filter(|label| !label.trim().is_empty()) {
         return label.to_owned();
+    }
+    if let Some(value) = node.value().filter(|value| !value.trim().is_empty()) {
+        return value.to_owned();
     }
 
     node.labelled_by()
         .iter()
         .filter_map(|label_id| {
             nodes
-                .iter()
-                .find(|(node_id, _)| node_id == label_id)
-                .and_then(|(_, label_node)| label_node.value())
+                .get(label_id)
+                .and_then(|label_node| label_node.value())
         })
         .collect::<Vec<_>>()
         .join(" ")
@@ -102,7 +180,7 @@ fn assert_role(controls: &[AccessibleControl], name: &str, role: &str) {
 fn assert_toggled(controls: &[AccessibleControl], name: &str) {
     let control = controls
         .iter()
-        .find(|control| control.name == name)
+        .find(|control| control.name == name && control.toggled.is_some())
         .unwrap_or_else(|| panic!("missing toggle {name:?}; controls={controls:#?}"));
     assert_eq!(
         control.toggled,
@@ -245,6 +323,67 @@ fn unavailable_toolbar_commands_expose_disabled_state() {
     ] {
         assert_disabled(&controls, name);
     }
+}
+
+#[test]
+fn contact_strip_controls_publish_names_roles_and_selected_state() {
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    let mut app = app_with_scene(&ctx);
+    let layer_id = app
+        .document
+        .scene
+        .as_ref()
+        .and_then(|scene| scene.meshes().first())
+        .map(SceneMesh::id)
+        .expect("the contact strip has a scene layer");
+    app.tools.contacts.open(crate::contact::ContactPair {
+        subject: layer_id,
+        antagonist: layer_id,
+    });
+    let names = [
+        (ContactMode::Marks.label_key(), "contact mode", "Button"),
+        (ContactMode::Approach.label_key(), "contact mode", "Button"),
+        (
+            crate::i18n::message_id!("contact-load-label"),
+            "contact load",
+            "Slider",
+        ),
+        (
+            crate::i18n::message_id!("contact-load-label"),
+            "contact load value",
+            "SpinButton",
+        ),
+        (
+            crate::i18n::message_id!("contact-details"),
+            "contact details",
+            "Button",
+        ),
+        (
+            crate::i18n::message_id!("contact-close-hint"),
+            "contact close",
+            "Button",
+        ),
+    ];
+    let labels: Vec<_> = names
+        .iter()
+        .map(|(message, _, _)| app.ui.locale.tr(*message))
+        .collect();
+    let mut output = ctx.run_ui(input(), |ui| {
+        let render_ctx = ui.ctx().clone();
+        app.show_contact_bar(ui, viewport(), &render_ctx);
+    });
+    output.textures_delta.clear();
+    let controls = controls(&output, "contact strip");
+
+    for ((_, purpose, role), label) in names.iter().zip(&labels) {
+        assert_role(&controls, label, role);
+        assert!(
+            controls.iter().any(|control| control.name == *label),
+            "missing {purpose} control {label:?}; controls={controls:#?}"
+        );
+    }
+    assert_toggled(&controls, &labels[0]);
 }
 
 #[test]

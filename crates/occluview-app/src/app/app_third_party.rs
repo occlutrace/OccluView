@@ -27,10 +27,12 @@ impl OccluViewApp {
             return;
         }
         let mut close = false;
+        let close_label = self.ui.locale.tr(crate::i18n::message_id!("help-close"));
         let modal_response = show_information_modal(
             ctx,
             egui::Id::new("occluview-third-party-notices-v2"),
             egui::vec2(560.0, 420.0),
+            &close_label,
             |ui| {
                 ui.horizontal(|ui| {
                     ui.label(

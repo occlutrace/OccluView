@@ -26,10 +26,12 @@ impl OccluViewApp {
         }
 
         let mut close = false;
+        let close_label = self.ui.locale.tr(crate::i18n::message_id!("help-close"));
         let modal_response = show_information_modal(
             ctx,
             egui::Id::new("occluview-keyboard-mouse-dialog-v1"),
             egui::vec2(700.0, 570.0),
+            &close_label,
             |ui| {
                 ui.set_width(668.0_f32.min(ui.available_width()));
                 ui.label(

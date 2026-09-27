@@ -240,12 +240,14 @@ const REPAIR_MODAL_BODY_MAX_HEIGHT: f32 = 230.0;
 /// viewport edge.
 fn show_repair_modal<T>(
     ctx: &egui::Context,
+    close_label: &str,
     add_contents: impl FnOnce(&mut egui::Ui) -> T,
 ) -> egui::ModalResponse<T> {
     show_information_modal(
         ctx,
         egui::Id::new(REPAIR_MODAL_ID),
         REPAIR_MODAL_DEFAULT_SIZE,
+        close_label,
         add_contents,
     )
 }
@@ -326,7 +328,8 @@ impl RepairReportDialog {
         let mut close_clicked = false;
         let mut copy_clicked = false;
 
-        let modal_response = show_repair_modal(ctx, |ui| {
+        let close_label = locale.tr(crate::i18n::message_id!("help-close"));
+        let modal_response = show_repair_modal(ctx, &close_label, |ui| {
             ui.set_width(REPAIR_MODAL_CONTENT_WIDTH.min(ui.available_width()));
 
             ui.horizontal(|ui| {
