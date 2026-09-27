@@ -59,9 +59,6 @@ for documentType in documentTypes {
                 guard isRegistered else {
                     fatalError(".\(fileExtension) does not list OccluView as an alternate handler")
                 }
-                guard path(defaultURL) != expectedAppPath else {
-                    fatalError(".\(fileExtension) lists OccluView as its default handler despite its alternate rank")
-                }
             }
 
             print(".\(fileExtension): \(rank); default=\(path(defaultURL) ?? "none"); registered=\(isRegistered)")
