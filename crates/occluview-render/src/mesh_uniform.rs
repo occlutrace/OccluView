@@ -405,7 +405,7 @@ mod tests {
 
     #[test]
     fn sculpt_feedback_reads_the_same_uniform_prefix() {
-        let shader = parse_shader(include_str!("../shaders/sculpt_feedback.wgsl"));
+        let shader = parse_shader(crate::sculpt_cursor::SCULPT_FEEDBACK_SHADER_SRC);
         let fields = struct_fields(&shader, "MeshUniform");
         let host_model_offset = offset_of!(GpuMeshUniform, model);
         let host_tint_offset = offset_of!(GpuMeshUniform, tint);

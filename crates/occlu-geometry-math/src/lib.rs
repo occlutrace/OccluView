@@ -10,6 +10,83 @@
 
 use glam::{DVec3, Vec2, Vec3};
 
+mod sculpt_field;
+pub use sculpt_field::{
+    ball_weight, cylinder_weight, knife_weight, stamp_weight, TipStamp, CYLINDER_PLATEAU,
+    KNIFE_AXIS_MIN_LENGTH, KNIFE_CROSS_RADIUS_SHARE,
+};
+
+/// Average a coincident-position normal run. A zero output means that member
+/// keeps its source direction. Large runs use bounded directional clusters.
+pub fn average_duplicate_normal_group(
+    member_count: usize,
+    source_normal: impl Fn(usize) -> Vec3 + Copy,
+    out: &mut [Vec3],
+) {
+    if member_count > MAX_PAIRWISE_DUPLICATE_GROUP {
+        average_duplicate_normal_clusters(member_count, source_normal, out);
+        return;
+    }
+
+    for (slot, output) in out.iter_mut().take(member_count).enumerate() {
+        let current = source_normal(slot);
+        if current.length_squared() <= f32::EPSILON {
+            continue;
+        }
+        let mut normal = Vec3::ZERO;
+        for neighbor in 0..member_count {
+            let candidate = source_normal(neighbor);
+            if candidate.length_squared() > f32::EPSILON
+                && candidate.dot(current) >= DUPLICATE_NORMAL_DOT
+            {
+                normal += candidate;
+            }
+        }
+        if normal.length_squared() > f32::EPSILON {
+            *output = normal.normalize();
+        }
+    }
+}
+
+fn average_duplicate_normal_clusters(
+    member_count: usize,
+    source_normal: impl Fn(usize) -> Vec3 + Copy,
+    out: &mut [Vec3],
+) {
+    let mut sums: Vec<Vec3> = Vec::new();
+    let mut assigned: Vec<Option<usize>> = vec![None; member_count];
+
+    for (slot, assignment) in assigned.iter_mut().enumerate() {
+        let current = source_normal(slot);
+        if current.length_squared() <= f32::EPSILON {
+            continue;
+        }
+        let existing = sums
+            .iter()
+            .position(|sum| sum.normalize_or_zero().dot(current) >= DUPLICATE_NORMAL_DOT);
+        if let Some(cluster) = existing {
+            sums[cluster] += current;
+            *assignment = Some(cluster);
+        } else {
+            if sums.len() == MAX_DUPLICATE_CLUSTERS {
+                return;
+            }
+            sums.push(current);
+            *assignment = Some(sums.len() - 1);
+        }
+    }
+
+    for (slot, cluster) in assigned.iter().enumerate() {
+        let Some(cluster) = *cluster else { continue };
+        let mean = sums[cluster].normalize_or_zero();
+        if mean.length_squared() > f32::EPSILON {
+            if let Some(output) = out.get_mut(slot) {
+                *output = mean;
+            }
+        }
+    }
+}
+
 /// Squared sine of the smallest angle a facet may have and still contribute a
 /// normal. Scale-free: the test compares twice the facet's area against its own
 /// longest edge squared, so it means the same thing on a 10 mm arch and on a

@@ -332,7 +332,7 @@ impl SculptSession {
         ));
         self.verts
             .extend_from_slice(&[mid.x as f32, mid.y as f32, mid.z as f32]);
-        self.normals.extend_from_slice(&[0.0, 0.0, 0.0]);
+        self.brush_normals.extend_from_slice(&[0.0, 0.0, 0.0]);
         self.stroke_mark.push(0);
         self.material_mark.push(0);
         self.dirty_marks.push(0);
@@ -631,9 +631,9 @@ impl SculptSession {
             }
             let vertex = self.topology.representative(group) as usize * 3;
             if normal.length() > 1e-12 {
-                self.normals[vertex] = normal.x as f32;
-                self.normals[vertex + 1] = normal.y as f32;
-                self.normals[vertex + 2] = normal.z as f32;
+                self.brush_normals[vertex] = normal.x as f32;
+                self.brush_normals[vertex + 1] = normal.y as f32;
+                self.brush_normals[vertex + 2] = normal.z as f32;
             }
             // Subdivision changes sampling, not the physical dose the surface
             // may accept. Inherit the parent field and only ratchet upward if
@@ -649,9 +649,9 @@ impl SculptSession {
             snap.entry(position_bits(position)).or_insert(group);
             if let Some(entry) = journal.added_verts.get_mut(record as usize) {
                 entry.nrm = [
-                    self.normals[vertex],
-                    self.normals[vertex + 1],
-                    self.normals[vertex + 2],
+                    self.brush_normals[vertex],
+                    self.brush_normals[vertex + 1],
+                    self.brush_normals[vertex + 2],
                 ];
                 entry.ref_nrm = [
                     self.reference_normals[vertex],

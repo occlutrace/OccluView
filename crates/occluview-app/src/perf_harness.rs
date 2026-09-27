@@ -14,7 +14,7 @@
 //! | sculpt small dab | 2-triangle quad, ball Add brush | executable below |
 //! | sculpt large dab | 150x150 grid (~22k verts), ball Add brush | executable below |
 //! | sculpt knife dab | same grid, knife Add brush on a bearing | executable below |
-//! | sculpt full-arch remesh | local scan near 1M vertices, default brush size | `OCCLUVIEW_SCULPT_PERF_SCAN` |
+//! | sculpt full-arch remesh | local scan near 1M vertices, 8 mm stress brush | `OCCLUVIEW_SCULPT_PERF_SCAN` |
 //! | session prepare | same grid through the sculpt session's prepare | executable below |
 //! | repair | duplicate-face tetrahedron | executable below |
 //! | alignment | representative scan pair + index build | inventory: no
@@ -212,13 +212,13 @@ fn perf_sculpt_private_scan_remesh() {
         contact: None,
     };
     let mut prepared = offscreen.prepare_scene(&[source]);
-    let brush_radius_mm =
-        crate::sculpt_tool::size_to_radius_mm(crate::sculpt_tool::SCULPT_SIZE_DEFAULT);
+    let brush_radius_mm = 8.0;
     let mut stroke = dab(center, brush_radius_mm);
     stroke.view_dir = view;
     let full_layer_bytes = mesh_payload_bytes(&mesh);
     let mut topology_changes = 0;
     let mut steady_remesh_dabs = Vec::new();
+    let mut steady_full_dabs = Vec::new();
     for index in 0..8 {
         let started = Instant::now();
         let outcome = session.apply_dab(stroke, BrushMode::Smooth);
@@ -247,9 +247,19 @@ fn perf_sculpt_private_scan_remesh() {
             }
         }
         let buffer_update = update_started.elapsed();
+        let completion_started = Instant::now();
+        offscreen
+            .renderer()
+            .wait_for_queue_idle()
+            .expect("the upload submission completes");
+        let gpu_completion = completion_started.elapsed();
+        let full_dab = started.elapsed();
+        if index > 0 && outcome.topology_delta.is_some() {
+            steady_full_dabs.push(full_dab);
+        }
         if let (Some(delta), Some(stats)) = (outcome.topology_delta.as_ref(), stats) {
             println!(
-                "UPPER remesh dab {index}: kernel+CPU={kernel_cpu_delta:?}, CPU buffer update + GPU upload enqueue={buffer_update:?}, bytes written={}, bytes copied={}, buffers grown={}, updated vertices={}, appended vertices={}, changed faces={}",
+                "UPPER remesh dab {index}: kernel+CPU={kernel_cpu_delta:?}, CPU buffer update + GPU upload enqueue={buffer_update:?}, GPU completion wait={gpu_completion:?}, full dab={full_dab:?}, bytes written={}, bytes copied={}, buffers grown={}, updated vertices={}, appended vertices={}, changed faces={}",
                 stats.bytes_written,
                 stats.bytes_copied,
                 stats.buffers_grown,
@@ -260,7 +270,7 @@ fn perf_sculpt_private_scan_remesh() {
             assert_local_delta_budget(full_layer_bytes, delta, stats, 5);
         } else {
             println!(
-                "UPPER dab {index}: kernel+CPU={kernel_cpu_delta:?}, sparse CPU buffer update + GPU upload enqueue={buffer_update:?}, touched vertices={}",
+                "UPPER dab {index}: kernel+CPU={kernel_cpu_delta:?}, sparse CPU buffer update + GPU upload enqueue={buffer_update:?}, GPU completion wait={gpu_completion:?}, full dab={full_dab:?}, touched vertices={}",
                 outcome.touched.len()
             );
         }
@@ -275,16 +285,20 @@ fn perf_sculpt_private_scan_remesh() {
         !steady_remesh_dabs.is_empty(),
         "the scan stroke must contain a warmed remeshing dab"
     );
+    assert_eq!(steady_remesh_dabs.len(), steady_full_dabs.len());
     steady_remesh_dabs.sort_unstable();
     let median = steady_remesh_dabs[steady_remesh_dabs.len() / 2];
     let maximum = steady_remesh_dabs[steady_remesh_dabs.len() - 1];
     let budget = std::time::Duration::from_millis(16);
+    steady_full_dabs.sort_unstable();
+    let full_median = steady_full_dabs[steady_full_dabs.len() / 2];
+    let full_maximum = steady_full_dabs[steady_full_dabs.len() - 1];
     println!(
-        "UPPER default-size smooth dabs at radius {brush_radius_mm:.2} mm: median={median:?}, maximum={maximum:?}, median budget={budget:?}"
+        "UPPER 8 mm smooth remesh dabs: kernel median={median:?}, kernel maximum={maximum:?}, end-to-end median={full_median:?}, end-to-end maximum={full_maximum:?}, per-dab budget={budget:?}"
     );
     assert!(
-        median < budget,
-        "typical warmed remeshing dab took {median:?}, above {budget:?}"
+        full_maximum < budget,
+        "a warmed 8 mm remesh dab took {full_maximum:?} end to end, above {budget:?}"
     );
 }
 
@@ -359,8 +373,15 @@ fn perf_sculpt_near_million_remesh_stays_within_local_upload_budget() {
             .write_entry_sculpt_delta(offscreen.renderer(), &session.topology, delta)
             .expect("the prepared entry accepts the local topology delta");
         let buffer_update = update_started.elapsed();
+        let completion_started = Instant::now();
+        offscreen
+            .renderer()
+            .wait_for_queue_idle()
+            .expect("the upload submission completes");
+        let gpu_completion = completion_started.elapsed();
+        let full_dab = started.elapsed();
         println!(
-            "near-1M remesh dab {dab_index}: kernel+CPU={kernel_cpu_delta:?}, CPU buffer update + GPU upload enqueue={buffer_update:?}, bytes written={}, bytes copied={}, buffers grown={}, changed faces={}",
+            "near-1M remesh dab {dab_index}: kernel+CPU={kernel_cpu_delta:?}, CPU buffer update + GPU upload enqueue={buffer_update:?}, GPU completion wait={gpu_completion:?}, full dab={full_dab:?}, bytes written={}, bytes copied={}, buffers grown={}, changed faces={}",
             stats.bytes_written,
             stats.bytes_copied,
             stats.buffers_grown,
