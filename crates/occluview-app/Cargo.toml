@@ -77,7 +77,17 @@ wayland-protocols = { workspace = true }
 # Finder document-open callbacks extend the existing winit AppKit delegate
 # without replacing the delegate that owns the event loop.
 [target.'cfg(target_os = "macos")'.dependencies]
-objc = "=0.2.7"
+objc2 = "=0.6.4"
+objc2-app-kit = {
+    version = "=0.3.2",
+    default-features = false,
+    features = ["NSApplication", "NSResponder"],
+}
+objc2-foundation = {
+    version = "=0.3.2",
+    default-features = false,
+    features = ["NSArray", "NSNotification", "NSObject", "NSString", "NSURL", "NSPathUtilities"],
+}
 
 # Windows shell and windowing integration.
 [target.'cfg(windows)'.dependencies]

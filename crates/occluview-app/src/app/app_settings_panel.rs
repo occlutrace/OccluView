@@ -1,5 +1,7 @@
 //! Settings controls and their UI actions.
 
+#[cfg(target_os = "macos")]
+use crate::app_settings::ScrollBehavior;
 use crate::app_settings::{
     RulerLineAngle, Settings, ThemePreference, UnitDisplay, ViewportBackground,
 };
@@ -49,6 +51,8 @@ pub(super) enum SettingsAction {
     SetDoubleClickFocus(bool),
     SetOrbitSensitivity(f32),
     SetZoomSensitivity(f32),
+    #[cfg(target_os = "macos")]
+    SetScrollBehavior(ScrollBehavior),
     SetViewportBackground(ViewportBackground),
     SetShowCutGhost(bool),
     SetUnitDisplay(UnitDisplay),
@@ -289,6 +293,17 @@ pub(super) fn show_settings_popup(
                         &locale.tr(crate::i18n::message_id!("settings-zoom-hint")),
                         &mut action,
                         SettingsAction::SetZoomSensitivity,
+                    );
+                    #[cfg(target_os = "macos")]
+                    segmented_row(
+                        ui,
+                        locale,
+                        &locale.tr("settings-scroll"),
+                        settings.scroll_behavior,
+                        &ScrollBehavior::OPTIONS,
+                        |option, locale| locale.tr(scroll_behavior_key(option)),
+                        &mut action,
+                        SettingsAction::SetScrollBehavior,
                     );
 
                     section_break(ui);
@@ -551,6 +566,14 @@ fn theme_key(option: ThemePreference) -> crate::i18n::MessageId {
     match option {
         ThemePreference::Light => crate::i18n::message_id!("settings-theme-light"),
         ThemePreference::Dark => crate::i18n::message_id!("settings-theme-dark"),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn scroll_behavior_key(option: ScrollBehavior) -> &'static str {
+    match option {
+        ScrollBehavior::Pan => "settings-scroll-pan",
+        ScrollBehavior::Zoom => "settings-scroll-zoom",
     }
 }
 

@@ -1,3 +1,4 @@
+use crate::app_settings::ScrollBehavior;
 use eframe::egui;
 
 /// Reconstruct the discrete wheel delta that egui 0.29 exposed on `InputState`.
@@ -78,6 +79,19 @@ pub(super) fn take_raw_point_wheel_delta(ctx: &egui::Context) -> egui::Vec2 {
         input.smooth_scroll_delta = egui::Vec2::ZERO;
         delta
     })
+}
+
+/// Consume pixel-unit scroll only when the selected action pans the viewport.
+/// Zoom input stays in the raw event list for `raw_wheel_delta`.
+pub(super) fn take_raw_point_wheel_delta_for_pan(
+    ctx: &egui::Context,
+    behavior: ScrollBehavior,
+) -> egui::Vec2 {
+    if behavior == ScrollBehavior::Pan {
+        take_raw_point_wheel_delta(ctx)
+    } else {
+        egui::Vec2::ZERO
+    }
 }
 
 /// Read this pass's unsmoothed wheel events without consuming them.
