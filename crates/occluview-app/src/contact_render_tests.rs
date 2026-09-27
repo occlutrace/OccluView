@@ -18,7 +18,7 @@
 
 #![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
 
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 use occluview_align::Soup;
 use occluview_contact::{
     compute_contact_field, ContactReading, ContactReadingKind, ContactScale, ContactSettings,

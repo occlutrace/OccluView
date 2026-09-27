@@ -4,7 +4,7 @@
 
 mod common;
 
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 use occluview_core::{Mesh, MeshBuilder, Vertex};
 use occluview_render::{
     GpuCamera, GpuMeshUniform, GpuTexture, Offscreen, PreparedScene, PreparedSceneSource,
