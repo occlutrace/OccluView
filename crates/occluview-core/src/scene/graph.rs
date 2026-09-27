@@ -65,6 +65,22 @@ impl Scene {
         &mut self.meshes
     }
 
+    /// Estimate the CPU bytes retained by this scene's layers.
+    ///
+    /// A shared mesh referenced by multiple layers is counted for every layer,
+    /// making the result a safe upper estimate for scene admission.
+    #[must_use]
+    pub fn estimated_memory_bytes(&self) -> u64 {
+        let entries = self
+            .meshes
+            .capacity()
+            .saturating_mul(size_of::<SceneMesh>());
+        let entry_bytes = u64::try_from(entries).unwrap_or(u64::MAX);
+        self.meshes.iter().fold(entry_bytes, |total, mesh| {
+            total.saturating_add(mesh.estimated_memory_bytes())
+        })
+    }
+
     /// Number of visible meshes.
     #[inline]
     #[must_use]

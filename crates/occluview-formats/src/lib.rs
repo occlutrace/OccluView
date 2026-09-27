@@ -45,6 +45,7 @@ pub mod gltf;
 pub mod hps;
 #[cfg(test)]
 mod load_perf_tests;
+mod memory;
 pub mod obj;
 pub mod off;
 pub mod ply;
@@ -117,10 +118,11 @@ impl MeshShading {
 
 pub use dispatch::{
     dispatch_by_extension, read_file, read_file_loaded_with_key_provider, read_files,
-    read_files_with_key_provider, LoadedMesh,
+    read_files_with_key_provider, read_files_with_memory_budget, LoadedMesh,
 };
 pub use error::FormatError;
 pub use glb_writer::write_textured_glb;
+pub use memory::SCENE_IMPORT_MEMORY_BUDGET_BYTES;
 pub use probe::{probe, FormatKind};
 pub use write::{
     resolve_overwrite_destination, write_mesh, write_mesh_overwrite, write_mesh_to_new_file,

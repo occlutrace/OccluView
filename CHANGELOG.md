@@ -3,6 +3,13 @@
 This file records user-visible changes. Internal refactors and test-only work
 remain in the Git history.
 
+## Unreleased
+
+### Viewer
+
+- Imports estimate mesh, image, and current-scene memory before decoding and
+  refuse a scene that exceeds the viewer's 2 GiB import budget.
+
 ## 1.2.1 - 2026-09-21
 
 ### Viewer

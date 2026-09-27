@@ -38,6 +38,14 @@ pub fn read(bytes: &[u8]) -> Result<Mesh, FormatError> {
 /// # Errors
 /// See [`read`].
 pub fn read_shaded(bytes: &[u8], shading: crate::MeshShading) -> Result<Mesh, FormatError> {
+    crate::memory::check_estimate(estimate_peak_bytes(bytes)?)?;
+    read_admitted(bytes, shading)
+}
+
+pub(crate) fn read_admitted(
+    bytes: &[u8],
+    shading: crate::MeshShading,
+) -> Result<Mesh, FormatError> {
     if bytes.len() < FIRST_TRIANGLE_OFFSET {
         return Err(FormatError::Truncated {
             format: "STL (binary)",
@@ -54,6 +62,8 @@ pub fn read_shaded(bytes: &[u8], shading: crate::MeshShading) -> Result<Mesh, Fo
             reason: "count field is not 4 bytes".to_string(),
         })?;
     let triangle_count = u32::from_le_bytes(count_bytes) as usize;
+
+    check_triangle_memory(triangle_count, bytes.len())?;
 
     // Upper bound on data we expect. If the file is short, we read what we can
     // (dental scanners sometimes write a wrong count); if it's short *inside* a
@@ -127,8 +137,15 @@ fn read_triangles(
     count: usize,
     shading: crate::MeshShading,
 ) -> Result<Mesh, FormatError> {
-    let mut vertices = vec![Vertex::default(); count * 3];
-    let mut indices = vec![0u32; count * 3];
+    check_triangle_memory(count, bytes.len())?;
+    let vertex_count = count
+        .checked_mul(3)
+        .ok_or(FormatError::MemoryBudgetExceeded {
+            estimated_bytes: u64::MAX,
+            limit: crate::memory::SCENE_IMPORT_MEMORY_BUDGET_BYTES,
+        })?;
+    let mut vertices = vec![Vertex::default(); vertex_count];
+    let mut indices = vec![0u32; vertex_count];
 
     vertices
         .par_chunks_mut(3)
@@ -166,6 +183,29 @@ fn read_triangles(
     .map_err(FormatError::Core)
 }
 
+fn check_triangle_memory(count: usize, source_bytes: usize) -> Result<(), FormatError> {
+    let geometry_bytes = u64::try_from(count).unwrap_or(u64::MAX).saturating_mul(240);
+    let source_bytes = u64::try_from(source_bytes).unwrap_or(u64::MAX);
+    crate::memory::check_estimate(source_bytes.saturating_add(geometry_bytes))
+}
+
+pub(crate) fn estimate_peak_bytes(bytes: &[u8]) -> Result<u64, FormatError> {
+    if bytes.len() < FIRST_TRIANGLE_OFFSET {
+        return Ok(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
+    }
+    let count_bytes: [u8; 4] = bytes[HEADER_SIZE..FIRST_TRIANGLE_OFFSET]
+        .try_into()
+        .map_err(|_| FormatError::Malformed {
+            format: "STL (binary)",
+            offset: HEADER_SIZE,
+            reason: "count field is not 4 bytes".to_string(),
+        })?;
+    let count = u64::from(u32::from_le_bytes(count_bytes));
+    Ok(u64::try_from(bytes.len())
+        .unwrap_or(u64::MAX)
+        .saturating_add(count.saturating_mul(240)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,6 +239,35 @@ mod tests {
     fn rejects_short_header() {
         let err = read(&[0u8; 10]).unwrap_err();
         assert!(matches!(err, FormatError::Truncated { got: 10, .. }));
+    }
+
+    #[test]
+    fn rejects_a_declared_triangle_count_over_budget_before_checking_payload() {
+        let mut bytes = vec![0_u8; FIRST_TRIANGLE_OFFSET];
+        bytes[HEADER_SIZE..FIRST_TRIANGLE_OFFSET].copy_from_slice(&u32::MAX.to_le_bytes());
+
+        let error = read(&bytes).expect_err("an inflated count must be refused before allocation");
+
+        assert!(matches!(
+            error,
+            FormatError::MemoryBudgetExceeded {
+                estimated_bytes,
+                limit: crate::memory::SCENE_IMPORT_MEMORY_BUDGET_BYTES,
+            } if estimated_bytes > crate::memory::SCENE_IMPORT_MEMORY_BUDGET_BYTES
+        ));
+    }
+
+    #[test]
+    fn decodes_a_large_valid_triangle_soup_within_the_memory_budget() {
+        let count = 100_000_u32;
+        let mut bytes = vec![0_u8; FIRST_TRIANGLE_OFFSET + count as usize * TRIANGLE_SIZE];
+        bytes[HEADER_SIZE..FIRST_TRIANGLE_OFFSET].copy_from_slice(&count.to_le_bytes());
+
+        let mesh = read_shaded(&bytes, crate::MeshShading::AsWritten)
+            .expect("a large but bounded STL should read");
+
+        assert_eq!(mesh.triangle_count(), count as usize);
+        assert_eq!(mesh.vertices().len(), count as usize * 3);
     }
 
     #[test]

@@ -162,6 +162,17 @@ impl SceneMesh {
         self.overlay.as_ref().map(|overlay| &overlay.colors)
     }
 
+    /// Estimate the CPU bytes retained by this layer, including display paint.
+    #[must_use]
+    pub fn estimated_memory_bytes(&self) -> u64 {
+        let overlay_bytes = self
+            .overlay_colors()
+            .map_or(0, |colors| colors.capacity().saturating_mul(4));
+        self.mesh
+            .estimated_memory_bytes()
+            .saturating_add(u64::try_from(overlay_bytes).unwrap_or(u64::MAX))
+    }
+
     /// What the overlay colours mean, or nothing when there is no overlay.
     #[inline]
     #[must_use]

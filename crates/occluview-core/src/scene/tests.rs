@@ -79,6 +79,25 @@ fn scene_public_surface_stays_reexported_from_core_root_and_scene_module() {
 }
 
 #[test]
+fn scene_memory_estimate_includes_each_layers_mesh_texture_and_overlay() {
+    let first_mesh = textured_tri();
+    let first_mesh_bytes = first_mesh.estimated_memory_bytes();
+    let second_mesh = tri();
+    let second_mesh_bytes = second_mesh.estimated_memory_bytes();
+    let mut scene = Scene::new();
+    scene.add(SceneMesh::new(first_mesh).with_overlay(
+        OverlayKind::Paint,
+        Some(Arc::new(vec![[255, 0, 0, 128]; 3])),
+    ));
+    scene.add(SceneMesh::new(second_mesh));
+
+    assert!(
+        scene.estimated_memory_bytes() >= first_mesh_bytes + second_mesh_bytes + 12,
+        "textures, layer overlays, and every retained layer are included"
+    );
+}
+
+#[test]
 fn empty_scene_has_no_meshes() {
     let s = Scene::new();
     assert_eq!(s.meshes().len(), 0);

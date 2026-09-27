@@ -18,6 +18,20 @@
 pub mod ascii;
 pub mod binary;
 
+pub(crate) fn estimate_peak_bytes(bytes: &[u8]) -> Result<u64, FormatError> {
+    let stripped = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
+    if binary_layout_matches(bytes) {
+        return binary::estimate_peak_bytes(bytes);
+    }
+    if stripped.len() != bytes.len() && binary_layout_matches(stripped) {
+        return binary::estimate_peak_bytes(stripped);
+    }
+    if ascii::looks_like_ascii(stripped) {
+        return ascii::estimate_peak_bytes(stripped);
+    }
+    binary::estimate_peak_bytes(bytes)
+}
+
 use crate::error::FormatError;
 use occluview_core::Mesh;
 
@@ -37,6 +51,14 @@ pub fn read(bytes: &[u8]) -> Result<Mesh, FormatError> {
 /// # Errors
 /// See [`read`].
 pub fn read_shaded(bytes: &[u8], shading: crate::MeshShading) -> Result<Mesh, FormatError> {
+    crate::memory::check_estimate(estimate_peak_bytes(bytes)?)?;
+    read_admitted(bytes, shading)
+}
+
+pub(crate) fn read_admitted(
+    bytes: &[u8],
+    shading: crate::MeshShading,
+) -> Result<Mesh, FormatError> {
     // Binary first, judged on the raw bytes by the exact size formula
     // (`len == 84 + 50 * count`). The 80-byte header of a binary STL is
     // free-form by contract, so it may itself begin with the three BOM bytes —
@@ -45,7 +67,7 @@ pub fn read_shaded(bytes: &[u8], shading: crate::MeshShading) -> Result<Mesh, Fo
     // error. The formula is what distinguishes the two, not the text prefix:
     // an ASCII file essentially never satisfies it.
     if binary_layout_matches(bytes) {
-        return binary::read_shaded(bytes, shading);
+        return binary::read_admitted(bytes, shading);
     }
     // A UTF-8 BOM in front of `solid` is metadata a Windows tool added. Without
     // this the ASCII reader sees no `solid` and the bytes fall through to the
@@ -59,16 +81,16 @@ pub fn read_shaded(bytes: &[u8], shading: crate::MeshShading) -> Result<Mesh, Fo
     // three bytes late. Raw first, then stripped: a header that merely begins
     // with those bytes still wins on its own layout and is never shifted.
     if stripped.len() != bytes.len() && binary_layout_matches(stripped) {
-        return binary::read_shaded(stripped, shading);
+        return binary::read_admitted(stripped, shading);
     }
     if ascii::looks_like_ascii(stripped) {
-        ascii::read_shaded(stripped, shading)
+        ascii::read_admitted(stripped, shading)
     } else {
         // Neither the formula nor the text prefix decided it. Hand it to the
         // binary reader on the raw bytes so its own truncation reporting is the
         // one the operator sees, and so a binary file whose header merely fails
         // the formula is still read from offset 80.
-        binary::read_shaded(bytes, shading)
+        binary::read_admitted(bytes, shading)
     }
 }
 
@@ -89,5 +111,8 @@ fn binary_layout_matches(bytes: &[u8]) -> bool {
         return false;
     };
     let count = u32::from_le_bytes(raw) as usize;
-    bytes.len() == HEADER + COUNT + count * TRIANGLE
+    count
+        .checked_mul(TRIANGLE)
+        .and_then(|payload| (HEADER + COUNT).checked_add(payload))
+        == Some(bytes.len())
 }

@@ -5,6 +5,10 @@
 
 use crate::error::FormatError;
 use crate::hps::HpsKeyProvider;
+use crate::memory::{
+    check_estimate, check_scene_estimate, estimate_file_peak_bytes,
+    SCENE_IMPORT_MEMORY_BUDGET_BYTES,
+};
 use crate::probe::FormatKind;
 use crate::units::{policy_for, UnitInterpretation};
 use occluview_core::{Mesh, Scene, SceneMesh};
@@ -37,6 +41,14 @@ pub const IMPORT_BATCH_BUDGET_BYTES: u64 = 512 << 20;
 /// is doing, and parsing is memory-hungry rather than CPU-hungry, so two is the
 /// point where a second file is worth it and more are not.
 pub const IMPORT_PARALLELISM: usize = 2;
+
+type PathResult<T> = Result<T, (PathBuf, FormatError)>;
+
+struct AdmittedInput {
+    path: PathBuf,
+    bytes: FileBytes,
+    kind: FormatKind,
+}
 
 /// Owned file bytes. Parsing must not depend on a file that another process
 /// may replace or truncate while the import is in progress.
@@ -144,10 +156,20 @@ pub fn dispatch_by_kind_loaded(
     key_provider: &dyn HpsKeyProvider,
     shading: crate::MeshShading,
 ) -> Result<LoadedMesh, FormatError> {
+    check_estimate(estimate_file_peak_bytes(kind, bytes, 0)?)?;
+    dispatch_by_kind_loaded_admitted(kind, bytes, key_provider, shading)
+}
+
+fn dispatch_by_kind_loaded_admitted(
+    kind: FormatKind,
+    bytes: &[u8],
+    key_provider: &dyn HpsKeyProvider,
+    shading: crate::MeshShading,
+) -> Result<LoadedMesh, FormatError> {
     let mesh = match kind {
-        FormatKind::Stl => crate::stl::read_shaded(bytes, shading),
-        FormatKind::Ply => crate::ply::read_shaded(bytes, shading),
-        FormatKind::Obj => crate::obj::read_shaded(bytes, shading),
+        FormatKind::Stl => crate::stl::read_admitted(bytes, shading),
+        FormatKind::Ply => crate::ply::read_admitted(bytes, shading),
+        FormatKind::Obj => crate::obj::read_admitted(bytes, shading),
         // `.gltf` is JSON, and `probe` maps both extensions to this kind, but
         // the GLB reader only accepts the binary container and would answer
         // "not a glTF file: bad signature" for a file that is a glTF. Defer
@@ -157,8 +179,8 @@ pub fn dispatch_by_kind_loaded(
             format: "glTF",
             reason: ".gltf (JSON) is not read; export .glb".to_string(),
         }),
-        FormatKind::Gltf => crate::gltf::read(bytes),
-        FormatKind::Off => crate::off::read(bytes),
+        FormatKind::Gltf => crate::gltf::read_admitted(bytes),
+        FormatKind::Off => crate::off::read_admitted(bytes),
         // 3MF is recognized but has no reader.
         FormatKind::Threemf => Err(FormatError::Malformed {
             format: "occluview-formats",
@@ -232,6 +254,25 @@ pub fn dispatch_by_extension_loaded(
     key_provider: &dyn HpsKeyProvider,
     shading: crate::MeshShading,
 ) -> Result<LoadedMesh, FormatError> {
+    dispatch_by_extension_loaded_inner(extension, bytes, key_provider, shading, false)
+}
+
+fn dispatch_by_extension_loaded_with_companion_budget(
+    extension: &str,
+    bytes: &[u8],
+    key_provider: &dyn HpsKeyProvider,
+    shading: crate::MeshShading,
+) -> Result<LoadedMesh, FormatError> {
+    dispatch_by_extension_loaded_inner(extension, bytes, key_provider, shading, true)
+}
+
+fn dispatch_by_extension_loaded_inner(
+    extension: &str,
+    bytes: &[u8],
+    key_provider: &dyn HpsKeyProvider,
+    shading: crate::MeshShading,
+    includes_companions: bool,
+) -> Result<LoadedMesh, FormatError> {
     // The BOM is stripped by `probe` (for signature matching) and by each text
     // reader (PLY, ASCII STL), not here. Stripping it in front of the whole
     // format layer would remove three bytes from every container, including a
@@ -241,21 +282,25 @@ pub fn dispatch_by_extension_loaded(
     // Magic-first: if the bytes declare a format, honor it over the extension.
     // `probe` falls back to the extension when the magic is ambiguous (e.g.
     // binary STL with a zero header), so this is safe.
-    let kind = match crate::probe::probe(Some(extension), bytes) {
-        Ok(kind) => kind,
-        // probe only fails when neither magic nor extension match; surface that.
-        Err(e) => match e {
-            FormatError::Unsupported { .. } => {
-                // probe rejected the extension too — preserve the original
-                // "unsupported extension" error.
-                return Err(FormatError::Unsupported {
-                    extension: extension.to_string(),
-                });
-            }
-            other => return Err(other),
-        },
+    let kind = probe_kind(extension, bytes)?;
+    let file_estimate = estimate_file_peak_bytes(kind, bytes, 0)?;
+    let companion_estimate = if includes_companions {
+        crate::memory::estimate_companion_peak_bytes(kind, bytes)
+    } else {
+        0
     };
-    dispatch_by_kind_loaded(kind, bytes, key_provider, shading)
+    check_estimate(file_estimate.saturating_add(companion_estimate))?;
+    dispatch_by_kind_loaded_admitted(kind, bytes, key_provider, shading)
+}
+
+fn probe_kind(extension: &str, bytes: &[u8]) -> Result<FormatKind, FormatError> {
+    match crate::probe::probe(Some(extension), bytes) {
+        Ok(kind) => Ok(kind),
+        Err(FormatError::Unsupported { .. }) => Err(FormatError::Unsupported {
+            extension: extension.to_string(),
+        }),
+        Err(error) => Err(error),
+    }
 }
 
 fn normalized_extension(path: &Path) -> Result<String, FormatError> {
@@ -373,7 +418,7 @@ pub fn read_file_loaded_with_key_provider(
     key_provider: &dyn HpsKeyProvider,
 ) -> Result<LoadedMesh, FormatError> {
     let bytes = read_file_bytes(path)?;
-    let mut loaded = dispatch_by_extension_loaded(
+    let mut loaded = dispatch_by_extension_loaded_with_companion_budget(
         bytes.extension(),
         bytes.as_slice(),
         key_provider,
@@ -401,19 +446,19 @@ pub fn read_file_shaded(
     shading: crate::MeshShading,
 ) -> Result<Mesh, FormatError> {
     let bytes = read_file_bytes(path)?;
-    // The probed format decides the companion lookup, exactly as it decides
-    // which reader runs.
-    let kind =
-        crate::probe::probe(Some(bytes.extension()), bytes.as_slice()).unwrap_or(FormatKind::Ply);
-    let mut mesh =
-        dispatch_by_extension_shaded(bytes.extension(), bytes.as_slice(), key_provider, shading)?;
+    let mut loaded = dispatch_by_extension_loaded_with_companion_budget(
+        bytes.extension(),
+        bytes.as_slice(),
+        key_provider,
+        shading,
+    )?;
     crate::companions::attach(
-        &mut mesh,
+        &mut loaded.mesh,
         path,
-        crate::companions::LocateKind::for_kind(kind),
+        crate::companions::LocateKind::for_kind(loaded.kind),
         bytes.as_slice(),
     );
-    Ok(mesh)
+    Ok(loaded.mesh)
 }
 
 /// Read multiple files into a [`Scene`], wrapping each [`Mesh`] in a
@@ -447,41 +492,186 @@ pub fn read_files_with_key_provider(
     paths: &[PathBuf],
     key_provider: &dyn HpsKeyProvider,
 ) -> Result<Scene, (PathBuf, FormatError)> {
-    let mut scene = Scene::new();
-    if let [path] = paths {
-        let loaded = read_file_loaded_with_key_provider(path, key_provider)
-            .map_err(|e| (path.clone(), e))?;
-        scene.add(SceneMesh::new(loaded.mesh).with_import_units(loaded.units));
-        return Ok(scene);
-    }
+    read_files_with_memory_budget(paths, key_provider, 0)
+}
 
-    // Sizes first, so the batch plan knows what it is about to hold. A file
-    // whose metadata cannot be read gets size zero and its own real error from
-    // the read below.
-    let sizes = paths
+/// Read files into a scene while reserving memory for layers already retained
+/// by the caller.
+///
+/// Each parse batch is admitted from per-format peak estimates before readers
+/// allocate geometry. The caller supplies the current scene estimate so Add
+/// and Open account for the layers kept alive during decoding.
+///
+/// # Errors
+/// The `Err` variant carries the path that failed and its [`FormatError`].
+pub fn read_files_with_memory_budget(
+    paths: &[PathBuf],
+    key_provider: &dyn HpsKeyProvider,
+    retained_scene_bytes: u64,
+) -> Result<Scene, (PathBuf, FormatError)> {
+    let mut scene = Scene::new();
+    let Some(first_path) = paths.first() else {
+        return Ok(scene);
+    };
+    check_scene_estimate(retained_scene_bytes).map_err(|error| (first_path.clone(), error))?;
+
+    let batches = import_batches(
+        &file_sizes(paths),
+        IMPORT_BATCH_BUDGET_BYTES,
+        IMPORT_PARALLELISM,
+    );
+    for batch in batches {
+        let current_scene_bytes =
+            retained_scene_bytes.saturating_add(scene.estimated_memory_bytes());
+        if current_scene_bytes > SCENE_IMPORT_MEMORY_BUDGET_BYTES {
+            return Err((
+                paths[batch.start].clone(),
+                FormatError::MemoryBudgetExceeded {
+                    estimated_bytes: current_scene_bytes,
+                    limit: SCENE_IMPORT_MEMORY_BUDGET_BYTES,
+                },
+            ));
+        }
+        let batch_paths = &paths[batch.clone()];
+        let inputs = read_batch_inputs(batch_paths, current_scene_bytes)?;
+        let admitted = admit_batch(inputs, current_scene_bytes, &batch_paths[0])?;
+        let meshes = parse_batch(admitted, key_provider);
+        for result in meshes {
+            let loaded = result?;
+            scene.add(SceneMesh::new(loaded.mesh).with_import_units(loaded.units));
+        }
+    }
+    let final_estimate = retained_scene_bytes.saturating_add(scene.estimated_memory_bytes());
+    check_scene_estimate(final_estimate).map_err(|error| (first_path.clone(), error))?;
+    Ok(scene)
+}
+
+fn file_sizes(paths: &[PathBuf]) -> Vec<u64> {
+    paths
         .iter()
         .map(|path| {
             std::fs::metadata(path)
                 .map_or(0, |metadata| metadata.len())
                 .min(MAX_IMPORT_BYTES)
         })
-        .collect::<Vec<_>>();
+        .collect()
+}
 
-    for batch in import_batches(&sizes, IMPORT_BATCH_BUDGET_BYTES, IMPORT_PARALLELISM) {
-        let meshes = paths[batch]
-            .par_iter()
-            .map(|path| {
-                read_file_loaded_with_key_provider(path, key_provider)
-                    .map_err(|e| (path.clone(), e))
-            })
-            .collect::<Vec<_>>();
-
-        for result in meshes {
-            let loaded = result?;
-            scene.add(SceneMesh::new(loaded.mesh).with_import_units(loaded.units));
+fn read_batch_inputs(
+    paths: &[PathBuf],
+    current_scene_bytes: u64,
+) -> PathResult<Vec<(PathBuf, FileBytes)>> {
+    let mut inputs = Vec::with_capacity(paths.len());
+    let mut raw_bytes = 0_u64;
+    for path in paths {
+        let file_size = std::fs::metadata(path)
+            .map_err(FormatError::Io)
+            .map(|metadata| metadata.len())
+            .map_err(|error| (path.clone(), error))?;
+        if file_size > MAX_IMPORT_BYTES {
+            return Err((
+                path.clone(),
+                FormatError::TooLarge {
+                    bytes: file_size,
+                    limit: MAX_IMPORT_BYTES,
+                },
+            ));
         }
+        let raw_limit = SCENE_IMPORT_MEMORY_BUDGET_BYTES
+            .saturating_sub(current_scene_bytes)
+            .saturating_sub(raw_bytes)
+            .min(MAX_IMPORT_BYTES);
+        if file_size > raw_limit {
+            return Err((
+                path.clone(),
+                memory_budget_error(
+                    current_scene_bytes
+                        .saturating_add(raw_bytes)
+                        .saturating_add(file_size),
+                ),
+            ));
+        }
+        let file_bytes = read_file_bytes_with_limit(path, raw_limit).map_err(|error| {
+            if matches!(error, FormatError::TooLarge { limit, .. } if limit < MAX_IMPORT_BYTES) {
+                let estimated_bytes = current_scene_bytes
+                    .saturating_add(raw_bytes)
+                    .saturating_add(raw_limit.saturating_add(1));
+                (path.clone(), memory_budget_error(estimated_bytes))
+            } else {
+                (path.clone(), error)
+            }
+        })?;
+        raw_bytes = raw_bytes
+            .saturating_add(u64::try_from(file_bytes.as_slice().len()).unwrap_or(u64::MAX));
+        inputs.push((path.clone(), file_bytes));
     }
-    Ok(scene)
+    Ok(inputs)
+}
+
+fn admit_batch(
+    inputs: Vec<(PathBuf, FileBytes)>,
+    current_scene_bytes: u64,
+    fallback_path: &Path,
+) -> PathResult<Vec<AdmittedInput>> {
+    let raw_batch_bytes = inputs.iter().fold(0_u64, |total, (_, bytes)| {
+        total.saturating_add(u64::try_from(bytes.as_slice().len()).unwrap_or(u64::MAX))
+    });
+    let first_path = inputs
+        .first()
+        .map_or_else(|| fallback_path.to_path_buf(), |(path, _)| path.clone());
+    let mut admitted = Vec::with_capacity(inputs.len());
+    let mut estimated_batch_bytes = 0_u64;
+    for (path, bytes) in inputs {
+        let kind = probe_kind(bytes.extension(), bytes.as_slice())
+            .map_err(|error| (path.clone(), error))?;
+        let input_bytes = u64::try_from(bytes.as_slice().len()).unwrap_or(u64::MAX);
+        let reserved_bytes =
+            current_scene_bytes.saturating_add(raw_batch_bytes.saturating_sub(input_bytes));
+        let estimate = estimate_file_peak_bytes(kind, bytes.as_slice(), reserved_bytes)
+            .map_err(|error| (path.clone(), error))?
+            .saturating_add(crate::memory::estimate_companion_peak_bytes(
+                kind,
+                bytes.as_slice(),
+            ));
+        estimated_batch_bytes = estimated_batch_bytes.saturating_add(estimate);
+        admitted.push(AdmittedInput { path, bytes, kind });
+    }
+    let total_estimate = current_scene_bytes.saturating_add(estimated_batch_bytes);
+    check_scene_estimate(total_estimate).map_err(|error| (first_path, error))?;
+    Ok(admitted)
+}
+
+fn parse_batch(
+    admitted: Vec<AdmittedInput>,
+    key_provider: &dyn HpsKeyProvider,
+) -> Vec<PathResult<LoadedMesh>> {
+    admitted
+        .into_par_iter()
+        .map(|input| {
+            let loaded = dispatch_by_kind_loaded_admitted(
+                input.kind,
+                input.bytes.as_slice(),
+                key_provider,
+                crate::MeshShading::Reconstructed,
+            )
+            .map_err(|error| (input.path.clone(), error))?;
+            let mut loaded = loaded;
+            crate::companions::attach(
+                &mut loaded.mesh,
+                &input.path,
+                crate::companions::LocateKind::for_kind(input.kind),
+                input.bytes.as_slice(),
+            );
+            Ok(loaded)
+        })
+        .collect()
+}
+
+fn memory_budget_error(estimated_bytes: u64) -> FormatError {
+    FormatError::MemoryBudgetExceeded {
+        estimated_bytes,
+        limit: SCENE_IMPORT_MEMORY_BUDGET_BYTES,
+    }
 }
 
 /// True when `bytes` starts an object, which is how a `.gltf` (JSON) file
@@ -747,6 +937,32 @@ mod tests {
     fn unknown_extension_is_unsupported() {
         let res = dispatch_by_extension("xyz", &[0u8; 4]);
         assert!(matches!(res, Err(FormatError::Unsupported { .. })));
+    }
+
+    #[test]
+    fn refuses_a_ply_header_that_claims_more_vertices_than_the_scene_budget() {
+        let bytes = b"ply\nformat ascii 1.0\nelement vertex 1000000000\nproperty float x\nproperty float y\nproperty float z\nelement face 0\nproperty list uchar int vertex_indices\nend_header\n";
+
+        let error = dispatch_by_extension("ply", bytes)
+            .expect_err("the count must be checked before a vertex buffer is built");
+
+        assert!(matches!(error, FormatError::MemoryBudgetExceeded { .. }));
+    }
+
+    #[test]
+    fn scene_admission_includes_memory_retained_by_existing_layers() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("tri.stl");
+        std::fs::write(&path, one_triangle_binary_stl()).expect("write STL");
+
+        let error = read_files_with_memory_budget(
+            std::slice::from_ref(&path),
+            &crate::hps::NoHpsKeyProvider,
+            SCENE_IMPORT_MEMORY_BUDGET_BYTES - 1,
+        )
+        .expect_err("the existing scene and source buffer exceed the budget");
+
+        assert!(matches!(error.1, FormatError::MemoryBudgetExceeded { .. }));
     }
 
     #[test]

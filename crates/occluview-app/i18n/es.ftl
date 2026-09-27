@@ -153,6 +153,7 @@ load-add-failed-start = Falló la adición: no arranca el cargador
 load-open-failed-stopped = Falló la apertura: el cargador se detuvo
 load-loader-failed-summary = No se pudo iniciar el cargador de escena en segundo plano.
 load-file-too-large = El archivo ocupa { $size } GB, por encima de los { $limit } GB que se leen de una vez
+load-memory-budget-exceeded = La escena actual y estos archivos necesitan unos { $size } GB; el límite de importación es { $limit } GB. Cierra capas o carga menos archivos.
 load-action-failed-open = Falló la apertura: { $detail }
 load-action-failed-add = Falló la adición: { $detail }
 

@@ -54,11 +54,11 @@ pub(crate) fn attach(mesh: &mut Mesh, path: &Path, kind: LocateKind, bytes: &[u8
     // metadata check and the read is refused rather than pulled into memory.
     let Ok(image_bytes) =
         crate::dispatch::read_file_bytes_with_limit(&image, MAX_COMPANION_IMAGE_BYTES)
-            .map(|bytes| bytes.as_slice().to_vec())
     else {
         return;
     };
-    let Ok(texture) = decode_embedded_raster(&image_bytes, "texture beside the mesh") else {
+    let Ok(texture) = decode_embedded_raster(image_bytes.as_slice(), "texture beside the mesh")
+    else {
         return;
     };
     mesh.set_texture(texture);

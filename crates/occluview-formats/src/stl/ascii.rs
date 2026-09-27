@@ -65,6 +65,14 @@ pub fn read(bytes: &[u8]) -> Result<Mesh, FormatError> {
 /// # Errors
 /// See [`read`].
 pub fn read_shaded(bytes: &[u8], shading: crate::MeshShading) -> Result<Mesh, FormatError> {
+    crate::memory::check_estimate(estimate_peak_bytes(bytes)?)?;
+    read_admitted(bytes, shading)
+}
+
+pub(crate) fn read_admitted(
+    bytes: &[u8],
+    shading: crate::MeshShading,
+) -> Result<Mesh, FormatError> {
     let text = std::str::from_utf8(bytes).map_err(|_| FormatError::Malformed {
         format: "STL (ascii)",
         offset: 0,
@@ -145,6 +153,29 @@ pub fn read_shaded(bytes: &[u8], shading: crate::MeshShading) -> Result<Mesh, Fo
     }
 
     shading.build(builder).map_err(FormatError::Core)
+}
+
+pub(crate) fn estimate_peak_bytes(bytes: &[u8]) -> Result<u64, FormatError> {
+    let text = std::str::from_utf8(bytes).map_err(|_| FormatError::Malformed {
+        format: "STL (ascii)",
+        offset: 0,
+        reason: "file is not valid UTF-8".to_string(),
+    })?;
+    let facets = text
+        .lines()
+        .filter(|line| {
+            line.split_ascii_whitespace()
+                .next()
+                .is_some_and(|tag| tag.eq_ignore_ascii_case("facet"))
+        })
+        .count();
+    Ok(u64::try_from(bytes.len())
+        .unwrap_or(u64::MAX)
+        .saturating_add(
+            u64::try_from(facets)
+                .unwrap_or(u64::MAX)
+                .saturating_mul(240),
+        ))
 }
 
 fn expect_keyword<'a, I>(
