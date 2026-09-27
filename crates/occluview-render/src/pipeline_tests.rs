@@ -202,8 +202,8 @@ fn a_recorded_gpu_fault_fails_the_readback_instead_of_returning_a_blank_frame() 
     builder.push_triangle(a, b, c);
     let mesh = builder.build().expect("a triangle is a mesh");
     let camera = GpuCamera::new(
-        Mat4::look_at_rh(Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO, Vec3::Y),
-        Mat4::orthographic_rh(-1.0, 1.0, -1.0, 1.0, 0.1, 10.0),
+        glam::camera::rh::view::look_at_mat4(Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO, Vec3::Y),
+        glam::camera::rh::proj::directx::orthographic(-1.0, 1.0, -1.0, 1.0, 0.1, 10.0),
         Vec3::new(0.0, 0.0, 1.0),
         Vec3::new(0.0, 0.0, 3.0),
     );
