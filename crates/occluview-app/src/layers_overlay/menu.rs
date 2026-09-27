@@ -96,7 +96,6 @@ fn show_material_actions(
         target,
         LayerMenuButton::new(
             AppIcon::Palette,
-            "Next tint",
             "layer-menu-next-tint",
             true,
             LayerContextAction::NextTint,
@@ -104,25 +103,16 @@ fn show_material_actions(
         context_request,
         locale,
     );
-    let (colors_label, colors_key, colors_icon) = if target.show_vertex_colors {
-        (
-            "Hide scan colors",
-            "layer-menu-hide-colors",
-            AppIcon::ScanColors,
-        )
+    let (colors_key, colors_icon) = if target.show_vertex_colors {
+        ("layer-menu-hide-colors", AppIcon::ScanColors)
     } else {
-        (
-            "Show scan colors",
-            "layer-menu-show-colors",
-            AppIcon::ScanColorsOff,
-        )
+        ("layer-menu-show-colors", AppIcon::ScanColorsOff)
     };
     layer_menu_button(
         ui,
         target,
         LayerMenuButton::new(
             colors_icon,
-            colors_label,
             colors_key,
             target.has_color_data,
             LayerContextAction::ToggleShowVertexColors,
@@ -131,25 +121,16 @@ fn show_material_actions(
         locale,
     );
     if target.has_texture {
-        let (texture_label, texture_key, texture_icon) = if target.show_texture {
-            (
-                "Disable texture",
-                "layer-menu-disable-texture",
-                AppIcon::Texture,
-            )
+        let (texture_key, texture_icon) = if target.show_texture {
+            ("layer-menu-disable-texture", AppIcon::Texture)
         } else {
-            (
-                "Show texture",
-                "layer-menu-show-texture",
-                AppIcon::TextureOff,
-            )
+            ("layer-menu-show-texture", AppIcon::TextureOff)
         };
         layer_menu_button(
             ui,
             target,
             LayerMenuButton::new(
                 texture_icon,
-                texture_label,
                 texture_key,
                 true,
                 LayerContextAction::ToggleShowTexture,
@@ -171,7 +152,6 @@ fn show_mesh_edit_actions(
         target,
         LayerMenuButton::new(
             AppIcon::EditMesh,
-            "Mesh Editing",
             "layer-menu-mesh-editing",
             target.face_editable,
             LayerContextAction::EditMesh,
@@ -184,7 +164,6 @@ fn show_mesh_edit_actions(
         target,
         LayerMenuButton::new(
             AppIcon::BridgeSplit,
-            "Split bridge...",
             "layer-menu-split-bridge",
             target.visible && target.face_editable,
             LayerContextAction::BridgeSplit,
@@ -197,7 +176,6 @@ fn show_mesh_edit_actions(
         target,
         LayerMenuButton::new(
             AppIcon::Repair,
-            "Mesh Repair",
             "layer-menu-repair",
             target.face_editable,
             LayerContextAction::RepairMesh,
@@ -210,7 +188,6 @@ fn show_mesh_edit_actions(
         target,
         LayerMenuButton::new(
             AppIcon::FlipNormals,
-            "Flip normals",
             "layer-menu-flip-normals",
             target.face_editable,
             LayerContextAction::InvertNormals,
@@ -223,7 +200,6 @@ fn show_mesh_edit_actions(
         target,
         LayerMenuButton::new(
             AppIcon::Export,
-            "Export layer...",
             "layer-menu-export",
             target.can_export,
             LayerContextAction::ExportLayer,
@@ -248,7 +224,6 @@ fn show_contact_actions(
             target,
             LayerMenuButton::new(
                 AppIcon::Contacts,
-                "Hide contacts",
                 "layer-menu-hide-contacts",
                 true,
                 LayerContextAction::HideContacts,
@@ -268,7 +243,6 @@ fn show_contact_actions(
         target,
         LayerMenuButton::new(
             AppIcon::Contacts,
-            "Show contacts",
             "layer-menu-contacts",
             target.can_read_contacts,
             LayerContextAction::Contacts,
@@ -287,11 +261,6 @@ fn show_layer_actions(
     context_request: &mut Option<LayerContextRequest>,
     locale: &crate::i18n::LocaleManager,
 ) {
-    let wireframe_label = if target.wireframe {
-        "Hide wireframe"
-    } else {
-        "Wireframe overlay"
-    };
     let wireframe_key = if target.wireframe {
         "layer-menu-hide-wireframe"
     } else {
@@ -302,7 +271,6 @@ fn show_layer_actions(
         target,
         LayerMenuButton::new(
             AppIcon::Wireframe,
-            wireframe_label,
             wireframe_key,
             true,
             LayerContextAction::ToggleWireframe,
@@ -315,7 +283,6 @@ fn show_layer_actions(
         target,
         LayerMenuButton::new(
             AppIcon::Trash,
-            "Remove layer",
             "layer-menu-remove",
             true,
             LayerContextAction::Remove,
@@ -325,29 +292,23 @@ fn show_layer_actions(
     );
 }
 
-struct LayerMenuButton<'a> {
+struct LayerMenuButton {
     icon: AppIcon,
-    /// English wording of the entry, kept beside its catalog key as the
-    /// reference text. Rendering uses `key`.
-    #[allow(dead_code)]
-    label: &'a str,
     /// Catalog key rendering the localized label.
     key: &'static str,
     enabled: bool,
     action: LayerContextAction,
 }
 
-impl<'a> LayerMenuButton<'a> {
+impl LayerMenuButton {
     const fn new(
         icon: AppIcon,
-        label: &'a str,
         key: &'static str,
         enabled: bool,
         action: LayerContextAction,
     ) -> Self {
         Self {
             icon,
-            label,
             key,
             enabled,
             action,
@@ -358,7 +319,7 @@ impl<'a> LayerMenuButton<'a> {
 fn layer_menu_button(
     ui: &mut egui::Ui,
     target: &LayerContextMenuTarget,
-    button: LayerMenuButton<'_>,
+    button: LayerMenuButton,
     context_request: &mut Option<LayerContextRequest>,
     locale: &crate::i18n::LocaleManager,
 ) -> egui::Response {
