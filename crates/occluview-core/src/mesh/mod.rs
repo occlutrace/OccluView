@@ -354,6 +354,36 @@ impl Mesh {
         self.texture.as_ref()
     }
 
+    /// Estimate the CPU bytes retained by this mesh's owned geometry and image.
+    ///
+    /// Vec capacities are used because their unused slots are still allocated.
+    /// A built ray-pick tree is included; callers that count a mesh in several
+    /// scene layers may count its shared storage more than once.
+    #[must_use]
+    pub fn estimated_memory_bytes(&self) -> u64 {
+        let vertex_bytes = self
+            .vertices
+            .capacity()
+            .saturating_mul(std::mem::size_of::<Vertex>());
+        let index_bytes = self
+            .indices
+            .capacity()
+            .saturating_mul(std::mem::size_of::<u32>());
+        let texture_bytes = self
+            .texture
+            .as_ref()
+            .map_or(0, |texture| texture.rgba.capacity());
+        let bvh_bytes = self
+            .bvh
+            .get()
+            .map_or(0, TriangleBvh::estimated_memory_bytes);
+        u64::try_from(vertex_bytes)
+            .unwrap_or(u64::MAX)
+            .saturating_add(u64::try_from(index_bytes).unwrap_or(u64::MAX))
+            .saturating_add(u64::try_from(texture_bytes).unwrap_or(u64::MAX))
+            .saturating_add(bvh_bytes)
+    }
+
     /// Attach a decoded texture image (e.g. from a glTF `image`). Used by
     /// loaders after constructing the mesh.
     #[inline]

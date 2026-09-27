@@ -20,6 +20,21 @@ fn valid_mesh_constructs() {
 }
 
 #[test]
+fn mesh_memory_estimate_includes_a_built_ray_pick_tree() {
+    let mesh = Mesh::new(
+        Some("tri".into()),
+        vec![v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0), v(0.0, 1.0, 0.0)],
+        vec![0, 1, 2],
+    )
+    .expect("valid mesh");
+    let without_bvh = mesh.estimated_memory_bytes();
+
+    mesh.warm_bvh();
+
+    assert!(mesh.estimated_memory_bytes() > without_bvh);
+}
+
+#[test]
 fn sculpted_mesh_refits_a_warm_bvh_for_the_next_pick() {
     let mesh = Mesh::new(
         Some("tri".into()),

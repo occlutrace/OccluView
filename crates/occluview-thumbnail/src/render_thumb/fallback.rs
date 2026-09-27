@@ -39,6 +39,7 @@ pub(super) fn placeholder_kind_for_error(error: &ThumbnailError) -> PlaceholderK
             | FormatError::UnsafePath { .. }
             // Too large is a policy refusal: the file itself is intact.
             | FormatError::TooLarge { .. }
+            | FormatError::MemoryBudgetExceeded { .. }
             | FormatError::Io(_) => PlaceholderKind::Plain,
         },
         ThumbnailError::Render(_) => PlaceholderKind::Plain,

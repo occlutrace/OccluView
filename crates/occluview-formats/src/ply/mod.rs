@@ -127,6 +127,18 @@ pub fn read(bytes: &[u8]) -> Result<Mesh, FormatError> {
 /// # Errors
 /// See [`read`].
 pub fn read_shaded(bytes: &[u8], shading: crate::MeshShading) -> Result<Mesh, FormatError> {
+    crate::memory::check_estimate(crate::memory::estimate_file_peak_bytes(
+        crate::probe::FormatKind::Ply,
+        bytes,
+        0,
+    )?)?;
+    read_admitted(bytes, shading)
+}
+
+pub(crate) fn read_admitted(
+    bytes: &[u8],
+    shading: crate::MeshShading,
+) -> Result<Mesh, FormatError> {
     // A UTF-8 BOM in front of `ply` is metadata a Windows tool added; without
     // this the signature check fails on an otherwise valid file.
     let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
@@ -144,6 +156,47 @@ pub fn read_shaded(bytes: &[u8], shading: crate::MeshShading) -> Result<Mesh, Fo
         }
     }
     Ok(mesh)
+}
+
+pub(crate) fn estimate_declared_bytes(bytes: &[u8]) -> Result<u64, FormatError> {
+    let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
+    Ok(declared_memory_bytes(&header::parse(bytes)?))
+}
+
+pub(crate) fn may_have_uvs(bytes: &[u8]) -> bool {
+    let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
+    let Ok(parsed) = header::parse(bytes) else {
+        return false;
+    };
+    parsed.elements.iter().any(|element| {
+        element.name == "vertex" && element.properties.iter().any(|property| {
+            matches!(
+                property,
+                header::Property::Scalar { name, .. }
+                    if matches!(name.as_str(), "s" | "t" | "texture_u" | "texture_v" | "tu" | "tv")
+            )
+        }) || element.name == "face"
+            && element.properties.iter().any(|property| {
+                matches!(
+                    property,
+                    header::Property::List { name, .. } if name == "texcoord"
+                )
+            })
+    })
+}
+
+fn declared_memory_bytes(parsed: &header::ParsedHeader<'_>) -> u64 {
+    parsed.elements.iter().fold(0_u64, |total, element| {
+        let count = u64::try_from(element.count).unwrap_or(u64::MAX);
+        let bytes_per_item = match element.name.as_str() {
+            "vertex" => std::mem::size_of::<occluview_core::Vertex>()
+                .saturating_add(std::mem::size_of::<Option<[f32; 2]>>()),
+            "face" => std::mem::size_of::<u32>().saturating_mul(3),
+            _ => 0,
+        };
+        total
+            .saturating_add(count.saturating_mul(u64::try_from(bytes_per_item).unwrap_or(u64::MAX)))
+    })
 }
 
 /// The most base64 this reader will decode from a header comment.
