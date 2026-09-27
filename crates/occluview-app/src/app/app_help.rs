@@ -83,8 +83,12 @@ impl OccluViewApp {
                                         ui.add_space(12.0);
                                         ui.add(
                                             egui::Label::new(
-                                                egui::RichText::new(self.ui.locale.text(row.key))
-                                                    .color(ui_theme::text_weak()),
+                                                egui::RichText::new(self.ui.locale.text(
+                                                    row.action_key(
+                                                        self.persistence.settings.scroll_behavior,
+                                                    ),
+                                                ))
+                                                .color(ui_theme::text_weak()),
                                             )
                                             .truncate(),
                                         );
@@ -141,9 +145,10 @@ pub(super) fn render_contextual_hint(
     context: HintContext,
     ink: egui::Color32,
     locale: &LocaleManager,
+    scroll_behavior: crate::app_settings::ScrollBehavior,
 ) {
-    let line = crate::i18n::platform_shortcut_text(contextual_line(context));
-    let localized = locale.text(contextual_line_key(context));
+    let line = crate::i18n::platform_shortcut_text(contextual_line(context, scroll_behavior));
+    let localized = locale.text(contextual_line_key(context, scroll_behavior));
     let response =
         ui.add(egui::Label::new(egui::RichText::new(localized).color(ink).size(11.5)).truncate());
     response.on_hover_text(line);

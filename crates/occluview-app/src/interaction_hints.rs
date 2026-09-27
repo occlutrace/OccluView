@@ -3,12 +3,23 @@
 //! This is display data, not another input router. The viewport and tool
 //! handlers remain the authority for behavior.
 
+use crate::app_settings::ScrollBehavior;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct HintRow {
     pub(crate) gesture: &'static str,
-    /// Catalog key rendering the localized action. Gestures stay invariant
-    /// input vocabulary (physical keys and buttons, like shortcuts).
+    /// Base catalog key for the localized action.
     pub(crate) key: &'static str,
+}
+
+impl HintRow {
+    pub(crate) fn action_key(self, scroll_behavior: ScrollBehavior) -> &'static str {
+        if self.gesture == TRACKPAD_SCROLL_GESTURE {
+            trackpad_scroll_action_key(scroll_behavior)
+        } else {
+            self.key
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -29,6 +40,8 @@ pub(crate) enum HintContext {
     Contacts,
 }
 
+const TRACKPAD_SCROLL_GESTURE: &str = "Two-finger scroll";
+
 const NAVIGATION: &[HintRow] = &[
     HintRow {
         gesture: "RMB drag",
@@ -40,7 +53,7 @@ const NAVIGATION: &[HintRow] = &[
     },
     #[cfg(target_os = "macos")]
     HintRow {
-        gesture: "Two-finger scroll",
+        gesture: TRACKPAD_SCROLL_GESTURE,
         key: "help-hint-navigation-pan-the-camera",
     },
     HintRow {
@@ -319,12 +332,13 @@ pub(crate) const ALL_SECTIONS: &[HintSection] = &[
     },
 ];
 
-pub(crate) const fn contextual_line(context: HintContext) -> &'static str {
+pub(crate) const fn contextual_line(
+    context: HintContext,
+    _scroll_behavior: ScrollBehavior,
+) -> &'static str {
     match context {
         #[cfg(target_os = "macos")]
-        HintContext::Navigation => {
-            "RMB drag orbit · MMB drag pan · Trackpad scroll pan · Wheel/pinch zoom · MMB click focus"
-        }
+        HintContext::Navigation => macos_navigation_line(_scroll_behavior),
         #[cfg(not(target_os = "macos"))]
         HintContext::Navigation => {
             "RMB drag orbit · MMB drag pan · Wheel/pinch zoom · MMB click focus"
@@ -347,10 +361,13 @@ pub(crate) const fn contextual_line(context: HintContext) -> &'static str {
 }
 
 /// Catalog key rendering the localized contextual line for each context.
-pub(crate) const fn contextual_line_key(context: HintContext) -> &'static str {
+pub(crate) const fn contextual_line_key(
+    context: HintContext,
+    _scroll_behavior: ScrollBehavior,
+) -> &'static str {
     match context {
         #[cfg(target_os = "macos")]
-        HintContext::Navigation => "help-hintline-navigation-macos",
+        HintContext::Navigation => macos_navigation_line_key(_scroll_behavior),
         #[cfg(not(target_os = "macos"))]
         HintContext::Navigation => "help-hintline-navigation",
         HintContext::MeshEditing => "help-hintline-mesh-editing",
@@ -362,15 +379,42 @@ pub(crate) const fn contextual_line_key(context: HintContext) -> &'static str {
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
+const fn macos_navigation_line(scroll_behavior: ScrollBehavior) -> &'static str {
+    match scroll_behavior {
+        ScrollBehavior::Pan => {
+            "RMB drag orbit · MMB drag pan · Trackpad scroll pan · Wheel/pinch zoom · MMB click focus"
+        }
+        ScrollBehavior::Zoom => {
+            "RMB drag orbit · MMB drag pan · Trackpad scroll zoom · Wheel/pinch zoom · MMB click focus"
+        }
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+const fn macos_navigation_line_key(scroll_behavior: ScrollBehavior) -> &'static str {
+    match scroll_behavior {
+        ScrollBehavior::Pan => "help-hintline-navigation-macos-pan",
+        ScrollBehavior::Zoom => "help-hintline-navigation-macos-zoom",
+    }
+}
+
+const fn trackpad_scroll_action_key(scroll_behavior: ScrollBehavior) -> &'static str {
+    match scroll_behavior {
+        ScrollBehavior::Pan => "help-hint-navigation-pan-the-camera",
+        ScrollBehavior::Zoom => "help-hint-navigation-zoom-toward-the-pointer",
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{contextual_line, contextual_line_key, HintContext, ALL_SECTIONS};
+    use super::{
+        contextual_line, contextual_line_key, macos_navigation_line, macos_navigation_line_key,
+        trackpad_scroll_action_key, HintContext, HintRow, ALL_SECTIONS, TRACKPAD_SCROLL_GESTURE,
+    };
+    use crate::app_settings::ScrollBehavior;
 
-    /// Every context, listed once for the tests that must cover all of them.
-    ///
-    /// A new variant is forced into `contextual_line_key` by its exhaustive
-    /// `match`, and into this list by the two tests below failing without it.
-    const ALL_CONTEXTS: &[HintContext] = &[
+    const CONTEXTS_UNDER_TEST: &[HintContext] = &[
         HintContext::Navigation,
         HintContext::MeshEditing,
         HintContext::Sculpt,
@@ -386,26 +430,31 @@ mod tests {
         assert!(ALL_SECTIONS.iter().all(|section| !section.rows.is_empty()));
     }
 
-    /// Every context's line must be the English catalog's own text: the
-    /// catalogue is what renders, so a source literal that drifts from it is a
-    /// second, invisible copy of the wording.
+    /// Contextual lines included here must match the English catalogue, which
+    /// supplies the text the viewer renders.
     #[test]
-    fn every_contextual_line_is_pinned_to_its_catalog_entry() {
+    fn registered_contextual_lines_are_pinned_to_the_catalog() {
         #![allow(clippy::expect_used)]
         let catalog = crate::i18n::catalog::Catalog::build("en").expect("en builds");
-        for context in ALL_CONTEXTS {
-            assert_eq!(
-                catalog.text(contextual_line_key(*context)).as_deref(),
-                Some(contextual_line(*context)),
-                "{context:?} hint line drifted from its catalog entry"
-            );
+        for behavior in [ScrollBehavior::Pan, ScrollBehavior::Zoom] {
+            for context in CONTEXTS_UNDER_TEST {
+                assert_eq!(
+                    catalog
+                        .text(contextual_line_key(*context, behavior))
+                        .as_deref(),
+                    Some(contextual_line(*context, behavior)),
+                    "{context:?} hint line drifted from its catalog entry"
+                );
+            }
         }
     }
 
     #[test]
-    fn every_context_has_a_contextual_line() {
-        for context in ALL_CONTEXTS {
-            assert!(!contextual_line(*context).is_empty());
+    fn registered_contexts_have_a_contextual_line() {
+        for behavior in [ScrollBehavior::Pan, ScrollBehavior::Zoom] {
+            for context in CONTEXTS_UNDER_TEST {
+                assert!(!contextual_line(*context, behavior).is_empty());
+            }
         }
     }
 
@@ -421,18 +470,63 @@ mod tests {
             navigation
                 .rows
                 .iter()
-                .any(|row| row.gesture == "Two-finger scroll"),
+                .any(|row| row.gesture == TRACKPAD_SCROLL_GESTURE),
             macos
         );
 
         let catalog = crate::i18n::catalog::Catalog::build("en").expect("en builds");
+        let behavior = ScrollBehavior::Pan;
         let line = catalog
-            .text(contextual_line_key(HintContext::Navigation))
+            .text(contextual_line_key(HintContext::Navigation, behavior))
             .expect("navigation hint line exists");
         assert_eq!(line.contains("Trackpad scroll pan"), macos);
         assert_eq!(
-            contextual_line(HintContext::Navigation).contains("Trackpad scroll pan"),
+            contextual_line(HintContext::Navigation, behavior).contains("Trackpad scroll pan"),
             macos
         );
+    }
+
+    #[test]
+    fn macos_trackpad_hints_follow_the_selected_scroll_action() {
+        #![allow(clippy::expect_used)]
+        let catalog = crate::i18n::catalog::Catalog::build("en").expect("en builds");
+        for (behavior, action_key, line_key, line) in [
+            (
+                ScrollBehavior::Pan,
+                "help-hint-navigation-pan-the-camera",
+                "help-hintline-navigation-macos-pan",
+                macos_navigation_line(ScrollBehavior::Pan),
+            ),
+            (
+                ScrollBehavior::Zoom,
+                "help-hint-navigation-zoom-toward-the-pointer",
+                "help-hintline-navigation-macos-zoom",
+                macos_navigation_line(ScrollBehavior::Zoom),
+            ),
+        ] {
+            let navigation = ALL_SECTIONS
+                .iter()
+                .find(|section| section.key == "help-section-navigation")
+                .expect("navigation section exists");
+            let trackpad = HintRow {
+                gesture: TRACKPAD_SCROLL_GESTURE,
+                key: "help-hint-navigation-pan-the-camera",
+            };
+            assert_eq!(trackpad.action_key(behavior), action_key);
+            assert_eq!(macos_navigation_line_key(behavior), line_key);
+            assert_eq!(catalog.text(line_key).as_deref(), Some(line));
+            assert!(
+                catalog.text(action_key).is_some(),
+                "trackpad action key is present in the English catalogue"
+            );
+            assert!(
+                navigation
+                    .rows
+                    .iter()
+                    .any(|row| row.gesture == TRACKPAD_SCROLL_GESTURE)
+                    || !cfg!(target_os = "macos"),
+                "the macOS help section documents trackpad scrolling"
+            );
+        }
     }
 }
