@@ -7,8 +7,8 @@
 use super::*;
 
 #[test]
-fn the_changelog_only_names_versions_that_can_be_released() {
-    // Release notes come from the section matching the current version.
+fn changelog_draft_and_release_sections_are_consistent() {
+    // The prepared release takes its notes from the section matching the workspace version.
     let changelog = include_str!("../../../../CHANGELOG.md");
     let manifest = include_str!("../../../../Cargo.toml");
     let version = manifest
@@ -31,24 +31,28 @@ fn the_changelog_only_names_versions_that_can_be_released() {
          of it would publish empty notes"
     );
 
-    // Every other section must be a version that was actually tagged. The
-    // newest one is the release being prepared; the rest are history.
     let sections: Vec<&str> = changelog
         .lines()
         .filter(|line| line.starts_with("## "))
         .collect();
+    // Draft notes sit above the prepared release and carry no version number.
+    let release_sections = if sections.first() == Some(&"## Unreleased") {
+        &sections[1..]
+    } else {
+        &sections[..]
+    };
     assert!(
-        sections
+        release_sections
             .first()
             .is_some_and(|first| first.starts_with(&heading)),
         "the newest section should be the version about to ship, got {:?}",
-        sections.first()
+        release_sections.first()
     );
     // The rest are history, and history goes one way. A repeat, or an older
     // section above a newer one, means a local bump grew its own section
     // instead of folding into the release being prepared.
     let mut seen: Vec<[u64; 3]> = Vec::new();
-    for line in &sections {
+    for line in release_sections {
         let Some(number) = line.split_whitespace().nth(1) else {
             panic!("changelog section without a version: {line:?}");
         };
@@ -91,7 +95,7 @@ fn the_changelog_only_names_versions_that_can_be_released() {
     let Some(first_tagged) = tags.iter().filter_map(|tag| parse_version(tag)).min() else {
         return;
     };
-    for line in sections.iter().skip(1) {
+    for line in release_sections.iter().skip(1) {
         let Some(number) = line.split_whitespace().nth(1) else {
             continue;
         };

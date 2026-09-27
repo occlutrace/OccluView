@@ -456,6 +456,7 @@ meshedit-slider-size = размер
 meshedit-slider-size-hint = Размер кисти (Shift + колесо мыши)
 meshedit-slider-force = сила
 meshedit-slider-force-hint = Сила кисти (Ctrl + колесо мыши)
+meshedit-limit-value = Максимальный периметр
 meshedit-limit-label = лимит
 meshedit-limit-checkbox-hint = Ограничить исправление кромками не больше этого периметра
 meshedit-limit-drag-hint = Выкл закрывает все безопасные отверстия в выбранной области; граница скана остаётся открытой

@@ -25,18 +25,29 @@ pub(crate) fn matching(
     .on_hover_text(locale.tr("align-matching-parts-hint"));
     ui.scope(|ui| {
         ui.spacing_mut().slider_width = slider_width;
-        let slider = ui.add_enabled(
-            enabled,
-            egui::Slider::new(&mut settings.matching_ratio, 0.1..=1.0)
-                .custom_formatter(|value, _| format!("{:.0}%", value * 100.0)),
-        );
-        crate::accessibility::slider(
-            &slider,
-            &locale.tr("align-matching-parts"),
-            enabled,
-            settings.matching_ratio,
-        );
-        slider.on_hover_text(locale.tr("align-matching-parts-hint"));
+        ui.horizontal(|ui| {
+            let range = 0.1..=1.0;
+            let slider = ui.add_enabled(
+                enabled,
+                egui::Slider::new(&mut settings.matching_ratio, range.clone()).show_value(false),
+            );
+            crate::accessibility::slider(
+                &slider,
+                &locale.tr("align-matching-parts"),
+                enabled,
+                settings.matching_ratio,
+            );
+            slider.on_hover_text(locale.tr("align-matching-parts-hint"));
+            let value = ui.add_enabled(
+                enabled,
+                egui::DragValue::new(&mut settings.matching_ratio)
+                    .range(range)
+                    .speed(0.01)
+                    .custom_formatter(|value, _| format!("{:.0}%", value * 100.0)),
+            );
+            crate::accessibility::spin_button(&value, &locale.tr("align-matching-parts"), enabled);
+            value.on_hover_text(locale.tr("align-matching-parts-hint"));
+        });
     });
     ui.label(
         egui::RichText::new(locale.tr("align-max-influence"))
@@ -46,17 +57,30 @@ pub(crate) fn matching(
     .on_hover_text(locale.tr("align-max-influence-hint"));
     ui.scope(|ui| {
         ui.spacing_mut().slider_width = slider_width;
-        let slider = ui.add_enabled(
-            enabled,
-            egui::Slider::new(&mut settings.influence_radius_mm, 0.2..=10.0).suffix(" mm"),
-        );
-        crate::accessibility::slider(
-            &slider,
-            &locale.tr("align-max-influence"),
-            enabled,
-            settings.influence_radius_mm,
-        );
-        slider.on_hover_text(locale.tr("align-max-influence-hint"));
+        ui.horizontal(|ui| {
+            let range = 0.2..=10.0;
+            let slider = ui.add_enabled(
+                enabled,
+                egui::Slider::new(&mut settings.influence_radius_mm, range.clone())
+                    .show_value(false),
+            );
+            crate::accessibility::slider(
+                &slider,
+                &locale.tr("align-max-influence"),
+                enabled,
+                settings.influence_radius_mm,
+            );
+            slider.on_hover_text(locale.tr("align-max-influence-hint"));
+            let value = ui.add_enabled(
+                enabled,
+                egui::DragValue::new(&mut settings.influence_radius_mm)
+                    .range(range)
+                    .speed(0.1)
+                    .suffix(" mm"),
+            );
+            crate::accessibility::spin_button(&value, &locale.tr("align-max-influence"), enabled);
+            value.on_hover_text(locale.tr("align-max-influence-hint"));
+        });
     });
     ui.collapsing(locale.tr("align-orientation-title"), |ui| {
         facing(ui, &mut settings.orientation, enabled, locale);
