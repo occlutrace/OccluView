@@ -112,8 +112,14 @@ impl OccluViewApp {
                 // stop.
                 if terminal {
                     self.ui.app_error = Some(AppErrorDialog {
-                        title: self.ui.locale.tr("render-failed-title"),
-                        summary: self.ui.locale.tr("render-failed-summary"),
+                        title: self
+                            .ui
+                            .locale
+                            .tr(crate::i18n::message_id!("render-failed-title")),
+                        summary: self
+                            .ui
+                            .locale
+                            .tr(crate::i18n::message_id!("render-failed-summary")),
                         details: format!("Render failed\n\n{e:#}"),
                         // Retryable here: on a machine where the offscreen path
                         // is the viewport, this dialog is the only surface the
@@ -125,7 +131,11 @@ impl OccluViewApp {
                         action: AppErrorAction::RetryGraphics,
                     });
                 }
-                self.ui.status_message = Some(self.ui.locale.tr("render-failed-status"));
+                self.ui.status_message = Some(
+                    self.ui
+                        .locale
+                        .tr(crate::i18n::message_id!("render-failed-status")),
+                );
                 return;
             }
         };

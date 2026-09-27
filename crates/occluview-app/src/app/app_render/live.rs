@@ -135,7 +135,11 @@ impl OccluViewApp {
             }
         }
         tracing::info!("operator asked to resume drawing after a graphics fault");
-        self.ui.status_message = Some(self.ui.locale.tr("gpu-retry-status"));
+        self.ui.status_message = Some(
+            self.ui
+                .locale
+                .tr(crate::i18n::message_id!("gpu-retry-status")),
+        );
         self.render.invalidation.request_redraw();
         ctx.request_repaint();
     }
@@ -160,11 +164,21 @@ impl OccluViewApp {
             return false;
         };
         tracing::error!(gpu_error = %error, "surfacing GPU error to the operator");
-        self.ui.status_message = Some(self.ui.locale.tr("gpu-failed-status"));
+        self.ui.status_message = Some(
+            self.ui
+                .locale
+                .tr(crate::i18n::message_id!("gpu-failed-status")),
+        );
         if self.ui.app_error.is_none() {
             self.ui.app_error = Some(AppErrorDialog {
-                title: self.ui.locale.tr("gpu-failed-title"),
-                summary: self.ui.locale.tr("gpu-failed-summary"),
+                title: self
+                    .ui
+                    .locale
+                    .tr(crate::i18n::message_id!("gpu-failed-title")),
+                summary: self
+                    .ui
+                    .locale
+                    .tr(crate::i18n::message_id!("gpu-failed-summary")),
                 details: format!("wgpu uncaptured error\n\n{error}"),
                 action: AppErrorAction::RetryGraphics,
             });

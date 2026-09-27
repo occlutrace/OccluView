@@ -255,7 +255,7 @@ impl OccluViewApp {
             frame_context.scene,
             self.tools.bridge_split_section.section_plane(),
         );
-        let color_for = super::app_cut_measure::contour_tint(frame_context.scene);
+        let color_for = super::app_cut::contour_tint(frame_context.scene);
         if let Some(section) = section.as_deref() {
             crate::cut_overlay::paint_section_contour(
                 ui.painter(),
@@ -406,7 +406,7 @@ impl OccluViewApp {
         // Same question, same answer: see `OccluViewApp::viewport_pointer`.
         // Not a second copy: the gizmo's avoid-rect has to come from the call
         // that painted the gizmo, as the cut tool's own comment warns.
-        let super::app_cut_measure::ViewportPointer {
+        let super::app_cut::ViewportPointer {
             pointer,
             over_section_panel,
             over_viewport,
@@ -588,11 +588,11 @@ fn bridge_surface_sample(
     let (origin, direction) = viewport_ray(camera, viewport_rect, pointer)?;
     let hit = scene.pick_layer_ray_hit(origin, direction, layer_id)?;
     let entry = scene.meshes().get(hit.layer_index)?;
-    let normal = super::app_cut_measure::triangle_world_normal(entry, hit.triangle_index)?;
+    let normal = super::app_cut::triangle_world_normal(entry, hit.triangle_index)?;
     Some(SurfaceSample {
         point: hit.point,
         normal,
-        arch_frame: super::app_cut_measure::world_arch_frame(entry),
+        arch_frame: super::app_cut::world_arch_frame(entry),
     })
 }
 

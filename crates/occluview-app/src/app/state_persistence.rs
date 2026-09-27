@@ -16,7 +16,7 @@
 //! resolved paths and preferences consumed by document, render, and UI.
 
 use crate::app_files::{load_recent_files, save_recent_files};
-use crate::app_settings::{Settings, SettingsPersistence};
+use crate::app_settings::{Settings, SettingsPersistence, RECENT_FILES_LIMIT};
 use crate::recent_files::RecentFiles;
 use crate::update_notice::UpdateNotice;
 use eframe::egui;
@@ -54,13 +54,8 @@ impl PersistenceState {
             None
         };
         let update_check_on_start = settings.update_check_on_start;
-        // The stored limit is the preference; the constant is only its default.
-        let recent_files_limit = settings.recent_files_limit.clamp(
-            crate::app_settings::RECENT_FILES_LIMIT_MIN,
-            crate::app_settings::RECENT_FILES_LIMIT_MAX,
-        );
         Self {
-            recent_files: load_recent_files(recent_files_limit),
+            recent_files: load_recent_files(RECENT_FILES_LIMIT),
             settings,
             settings_persistence: SettingsPersistence::default(),
             language_persistence: SettingsPersistence::default(),

@@ -602,7 +602,7 @@ mod tests {
     fn pseudo_locale_covers_every_embedded_key() {
         // Adding a key must update this number and its pseudo coverage
         // in the same change.
-        const EXPECTED_EN_KEYS: usize = 727;
+        const EXPECTED_EN_KEYS: usize = 729;
         let (_, source) = SOURCES
             .iter()
             .find(|(tag, _)| *tag == FALLBACK_TAG)

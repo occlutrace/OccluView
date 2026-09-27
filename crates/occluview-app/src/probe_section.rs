@@ -167,24 +167,13 @@ pub(crate) fn wall_thickness_2d(click: Vec2, segments: &[(Vec2, Vec2)]) -> Optio
 fn nearest_segment_point(click: Vec2, segments: &[(Vec2, Vec2)]) -> Option<(usize, Vec2)> {
     let mut best: Option<(f32, usize, Vec2)> = None;
     for (index, &(a, b)) in segments.iter().enumerate() {
-        let point = closest_point_on_segment(click, a, b);
-        let dist_sq = click.distance_squared(point);
+        let (t, dist_sq) = occlu_geometry_math::closest_param_on_segment_2d(click, a, b);
+        let point = a + (b - a) * t;
         if best.is_none_or(|(best_dist, _, _)| dist_sq < best_dist) {
             best = Some((dist_sq, index, point));
         }
     }
     best.map(|(_, index, point)| (index, point))
-}
-
-/// Closest point to `p` on segment `a -> b` (clamped to the endpoints).
-fn closest_point_on_segment(p: Vec2, a: Vec2, b: Vec2) -> Vec2 {
-    let ab = b - a;
-    let len_sq = ab.length_squared();
-    if len_sq <= f32::EPSILON {
-        return a;
-    }
-    let t = ((p - a).dot(ab) / len_sq).clamp(0.0, 1.0);
-    a + ab * t
 }
 
 /// Nearest ray parameter `t > eps` where the ray `origin + t*dir` crosses a

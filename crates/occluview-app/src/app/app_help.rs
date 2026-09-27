@@ -6,7 +6,9 @@
 
 use super::information_dialog::InformationDialog;
 use super::OccluViewApp;
-use crate::interaction_hints::{contextual_line, contextual_line_key, HintContext, ALL_SECTIONS};
+use crate::interaction_hints::{
+    contextual_line, contextual_line_key, ContextualHint, HintContext, ALL_SECTIONS,
+};
 
 use crate::modal_surface::show_information_modal;
 use crate::ui_theme;
@@ -89,8 +91,12 @@ impl OccluViewApp {
                                         ui.add_space(12.0);
                                         ui.add(
                                             egui::Label::new(
-                                                egui::RichText::new(self.ui.locale.text(row.key))
-                                                    .color(ui_theme::text_weak()),
+                                                egui::RichText::new(self.ui.locale.text(
+                                                    row.action_key(
+                                                        self.persistence.settings.scroll_behavior,
+                                                    ),
+                                                ))
+                                                .color(ui_theme::text_weak()),
                                             )
                                             .truncate(),
                                         );
@@ -147,12 +153,13 @@ impl OccluViewApp {
 pub(super) fn render_contextual_hint(
     ui: &mut egui::Ui,
     _rect: egui::Rect,
-    context: HintContext,
+    hint: ContextualHint,
     ink: egui::Color32,
     locale: &LocaleManager,
 ) {
-    let line = crate::i18n::platform_shortcut_text(contextual_line(context));
-    let localized = locale.text(contextual_line_key(context));
+    let line =
+        crate::i18n::platform_shortcut_text(contextual_line(hint.context, hint.scroll_behavior));
+    let localized = locale.text(contextual_line_key(hint.context, hint.scroll_behavior));
     let response =
         ui.add(egui::Label::new(egui::RichText::new(localized).color(ink).size(11.5)).truncate());
     response.on_hover_text(line);
