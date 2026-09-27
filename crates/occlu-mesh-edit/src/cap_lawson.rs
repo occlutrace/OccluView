@@ -2,12 +2,8 @@
 //! persistent edge→owner map, a deterministic suspect-edge worklist, and the
 //! conforming 2:4 edge bisection.
 //!
-//! After a split or a flip only the edges of the rewritten quads can newly
-//! violate the Delaunay criterion, so a worklist seeded by those edges does
-//! the repair in near-linear time. A full sweep that re-tests every cap edge
-//! up to 64 times after every bisection pass, rebuilding the edge map each
-//! sweep, costs ~5 s of the total fill on a ~1000-edge rim (a routine lasso
-//! cut).
+//! After a split or a flip, the repair worklist tracks edges of rewritten
+//! quads that can newly violate the Delaunay criterion.
 //! The worklist is a `BTreeSet` and candidate edges are visited in sorted
 //! order, so the output stays bit-deterministic run to run.
 
