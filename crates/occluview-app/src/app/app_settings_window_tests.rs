@@ -340,7 +340,19 @@ fn macos_settings_offer_a_selectable_smooth_scroll_action() -> anyhow::Result<()
         pointer_button(trigger, false),
     ])?;
     let visible = run(Vec::new())?;
-    assert!(direct_control_center(&visible.output, "Scroll").is_ok());
+    let rendered_text = visible
+        .output
+        .shapes
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::epaint::Shape::Text(text) => Some(text.galley.text().to_owned()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        direct_control_center(&visible.output, "Scroll").is_ok(),
+        "Settings did not render the scroll label; visible text: {rendered_text:?}"
+    );
     assert!(direct_control_center(&visible.output, "Pan").is_ok());
     let zoom = direct_control_center(&visible.output, "Zoom")?;
 
