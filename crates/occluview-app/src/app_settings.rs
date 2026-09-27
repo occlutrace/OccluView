@@ -128,6 +128,7 @@ pub(crate) enum ScrollBehavior {
 }
 
 impl ScrollBehavior {
+    #[cfg(target_os = "macos")]
     pub(crate) const OPTIONS: [Self; 2] = [Self::Pan, Self::Zoom];
 }
 

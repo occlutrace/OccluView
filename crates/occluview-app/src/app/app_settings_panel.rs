@@ -1,7 +1,9 @@
 //! Settings controls and their UI actions.
 
+#[cfg(target_os = "macos")]
+use crate::app_settings::ScrollBehavior;
 use crate::app_settings::{
-    RulerLineAngle, ScrollBehavior, Settings, ThemePreference, UnitDisplay, ViewportBackground,
+    RulerLineAngle, Settings, ThemePreference, UnitDisplay, ViewportBackground,
 };
 use crate::i18n::catalog::EMBEDDED_TAGS;
 use crate::i18n::preference::UiLanguagePreference;
@@ -49,6 +51,7 @@ pub(super) enum SettingsAction {
     SetDoubleClickFocus(bool),
     SetOrbitSensitivity(f32),
     SetZoomSensitivity(f32),
+    #[cfg(target_os = "macos")]
     SetScrollBehavior(ScrollBehavior),
     SetViewportBackground(ViewportBackground),
     SetShowCutGhost(bool),
