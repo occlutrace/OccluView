@@ -3,13 +3,12 @@
 #
 # The alignment and contact acceptance tests need real scans, and real scans
 # are patient data: they live outside the repository and CI never has them.
-# The tests report a skip without the corpus, so this gate makes missing data a
-# failure rather than claiming clinical coverage without running the checks.
+# The fixture-backed Rust tests are ignored in ordinary runs. This gate opts in
+# to those tests and fails when their scan corpus or required GPU is missing.
 #
-# This script is that gate. It fails when the corpus is absent instead of
-# skipping, runs the acceptance tests with the corpus required, and writes a
-# receipt that says which corpus was used and what it proved. The receipt names
-# no scan: the corpus is identified by a fingerprint over hashed file names, so
+# This script is that gate. It fails when the corpus is absent, runs the ignored
+# acceptance tests, and writes a receipt that records the corpus fingerprint
+# and what the tests proved. It does not name a scan, so
 # it can be kept next to a release without carrying patient data.
 #
 # Usage:
@@ -71,8 +70,8 @@ trap 'rm -f "$log"' EXIT
 
 status=0
 OCCLUVIEW_ALIGN_FIXTURES="$corpus" \
-OCCLUVIEW_ALIGN_FIXTURES_REQUIRED=1 \
-  cargo test --locked -p occluview-align --test real_scans -- --nocapture --test-threads=1 \
+  cargo test --locked -p occluview-align --test real_scans fixtures_are_present \
+    -- --ignored --nocapture --test-threads=1 \
   >"$log" 2>&1 || status=$?
 
 if [[ $status -ne 0 ]]; then
@@ -81,37 +80,32 @@ if [[ $status -ne 0 ]]; then
   exit "$status"
 fi
 
-# Only the corpus tests are this gate's business: the same binary holds two
-# tests that skip on pair fixtures (OCCLUVIEW_ALIGN_PREP_PAIR, ..._OWNER_PAIR)
-# which this script does not own, and their "skipped:" lines must not turn a
-# passing acceptance run into a failure.
-if grep -q "set OCCLUVIEW_ALIGN_FIXTURES" "$log"; then
-  echo "validate-release-private: a corpus test skipped even though the corpus is present:" >&2
-  grep -n "set OCCLUVIEW_ALIGN_FIXTURES" "$log" >&2
-  exit 1
-fi
-
-if ! grep -q "test result: ok" "$log"; then
-  echo "validate-release-private: no test result line; the run did not complete" >&2
+# Only the six root-corpus tests share this filter. The other ignored tests
+# need separately acquired prepared or partial-overlap pairs.
+if ! grep -Eq 'test result: ok\. 6 passed; 0 failed' "$log"; then
+  echo "validate-release-private: expected six alignment tests to pass" >&2
   tail -n 40 "$log" >&2
   exit 1
 fi
 
 # The contact reading is the other set of numbers the panel publishes as a
-# clinical measurement, and its acceptance harness skipped on every machine
-# without a corpus — including CI and this gate, which exported only the align
-# variable. Forced here, in gate mode, so "contact renders" is something the
-# release actually checked rather than something it hoped.
+# clinical measurement. The ignored contact tests use the same corpus and
+# require a GPU to write both acceptance frames.
 OCCLUVIEW_CONTACT_FIXTURES="$corpus" \
-OCCLUVIEW_ALIGN_FIXTURES_REQUIRED=1 \
 OCCLUVIEW_REQUIRE_GPU_TESTS=1 \
-  cargo test --locked -p occluview-app contact_render_tests -- --nocapture --test-threads=1 \
+  cargo test --locked -p occluview-app contact_render_tests -- --ignored --nocapture --test-threads=1 \
   >>"$log" 2>&1 || status=$?
 
 if [[ $status -ne 0 ]]; then
   echo "validate-release-private: the contact acceptance tests failed" >&2
   tail -n 40 "$log" >&2
   exit "$status"
+fi
+
+if ! grep -Eq 'test result: ok\. 2 passed; 0 failed' "$log"; then
+  echo "validate-release-private: expected both contact tests to pass" >&2
+  tail -n 40 "$log" >&2
+  exit 1
 fi
 
 revision="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
