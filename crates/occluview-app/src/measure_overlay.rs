@@ -35,10 +35,10 @@ const RULER_LINE_SNAP_PX: f32 = 6.0;
 const SQUARE_TOLERANCE_DEG: f64 = 0.05;
 
 /// Catalog key naming a [`RulerLineAngle`] choice.
-pub(crate) const fn ruler_line_angle_key(angle: RulerLineAngle) -> &'static str {
+pub(crate) const fn ruler_line_angle_key(angle: RulerLineAngle) -> crate::i18n::MessageId {
     match angle {
-        RulerLineAngle::Free => "measure-line-angle-free",
-        RulerLineAngle::Perpendicular => "measure-line-angle-right",
+        RulerLineAngle::Free => crate::i18n::message_id!("measure-line-angle-free"),
+        RulerLineAngle::Perpendicular => crate::i18n::message_id!("measure-line-angle-right"),
     }
 }
 

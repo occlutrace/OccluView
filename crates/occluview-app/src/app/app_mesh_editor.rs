@@ -30,7 +30,7 @@ impl OccluViewApp {
             self.render.invalidation.selection_changed();
             self.ui.status_message = self.document.scene.as_ref().map(|scene| {
                 self.ui.locale.tr_plural(
-                    "edit-selected-faces",
+                    crate::i18n::message_id!("edit-selected-faces"),
                     &[],
                     &[(
                         "faces",
@@ -137,7 +137,11 @@ impl OccluViewApp {
         ctx: &egui::Context,
     ) {
         if self.tools.sculpt.is_busy() {
-            self.ui.status_message = Some(self.ui.locale.tr("sculpt-finishing"));
+            self.ui.status_message = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("sculpt-finishing")),
+            );
             ctx.request_repaint();
             return;
         }
@@ -153,7 +157,11 @@ impl OccluViewApp {
             .collect::<Vec<_>>();
         let target_layers = selected_layers;
         if target_layers.is_empty() {
-            self.ui.status_message = Some(self.ui.locale.tr("edit-select-faces-first"));
+            self.ui.status_message = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("edit-select-faces-first")),
+            );
             return;
         }
         let ids_before = scene
@@ -183,7 +191,7 @@ impl OccluViewApp {
                     self.document.mark_mesh_edits_unsaved(*layer_id);
                 }
                 self.ui.status_message = Some(self.ui.locale.tr_plural(
-                    "batchedit-status",
+                    crate::i18n::message_id!("batchedit-status"),
                     &[(
                         "label",
                         &super::app_layer_edits::whole_mesh::batch_action_label(
@@ -195,17 +203,24 @@ impl OccluViewApp {
                 ));
             }
             Ok(_) => {
-                self.ui.status_message = Some(self.ui.locale.tr("edit-no-changes-hidden"));
+                self.ui.status_message = Some(
+                    self.ui
+                        .locale
+                        .tr(crate::i18n::message_id!("edit-no-changes-hidden")),
+                );
                 ctx.request_repaint();
             }
             Err(error) => {
                 let summary = self.ui.locale.tr_with(
-                    "edit-apply-failed-summary",
+                    crate::i18n::message_id!("edit-apply-failed-summary"),
                     &[("detail", &error.to_string())],
                 );
                 self.ui.status_message = Some(summary.clone());
                 self.ui.app_error = Some(AppErrorDialog {
-                    title: self.ui.locale.tr("edit-apply-failed-title"),
+                    title: self
+                        .ui
+                        .locale
+                        .tr(crate::i18n::message_id!("edit-apply-failed-title")),
                     summary,
                     details: format!("Multi-layer selection edit failed\n\nError:\n{error:#}"),
                     action: AppErrorAction::None,
@@ -230,9 +245,13 @@ impl OccluViewApp {
         self.document.mesh_selection_drag = None;
         self.render.invalidation.overlay_tools_changed();
         self.ui.status_message = Some(if self.document.edit_mode.lasso_armed() {
-            self.ui.locale.tr("sculpt-lasso-armed")
+            self.ui
+                .locale
+                .tr(crate::i18n::message_id!("sculpt-lasso-armed"))
         } else {
-            self.ui.locale.tr("sculpt-lasso-off")
+            self.ui
+                .locale
+                .tr(crate::i18n::message_id!("sculpt-lasso-off"))
         });
         ctx.request_repaint();
     }
@@ -253,9 +272,13 @@ impl OccluViewApp {
         self.document.mesh_selection_drag = None;
         self.render.invalidation.overlay_tools_changed();
         self.ui.status_message = Some(if self.document.edit_mode.object_mode() {
-            self.ui.locale.tr("sculpt-object-on")
+            self.ui
+                .locale
+                .tr(crate::i18n::message_id!("sculpt-object-on"))
         } else {
-            self.ui.locale.tr("sculpt-object-off")
+            self.ui
+                .locale
+                .tr(crate::i18n::message_id!("sculpt-object-off"))
         });
         ctx.request_repaint();
     }
@@ -301,7 +324,11 @@ impl OccluViewApp {
                     .is_some_and(|scene| self.document.edit_mode.clear_visible_selections(scene))
                 {
                     self.render.invalidation.selection_changed();
-                    self.ui.status_message = Some(self.ui.locale.tr("sculpt-selection-cleared"));
+                    self.ui.status_message = Some(
+                        self.ui
+                            .locale
+                            .tr(crate::i18n::message_id!("sculpt-selection-cleared")),
+                    );
                     ctx.request_repaint();
                 }
                 true
@@ -326,9 +353,13 @@ impl OccluViewApp {
                 {
                     self.render.invalidation.overlay_tools_changed();
                     self.ui.status_message = Some(if self.document.edit_mode.through_mesh() {
-                        self.ui.locale.tr("sculpt-through-on")
+                        self.ui
+                            .locale
+                            .tr(crate::i18n::message_id!("sculpt-through-on"))
                     } else {
-                        self.ui.locale.tr("sculpt-through-off")
+                        self.ui
+                            .locale
+                            .tr(crate::i18n::message_id!("sculpt-through-off"))
                     });
                     ctx.request_repaint();
                 }
@@ -364,14 +395,16 @@ impl OccluViewApp {
             let layers = self.document.edit_mode.visible_selected_layer_count(scene);
             if layers > 1 {
                 self.ui.locale.tr_plural(
-                    "edit-selected-faces-across",
+                    crate::i18n::message_id!("edit-selected-faces-across"),
                     &[],
                     &[("faces", faces), ("layers", layers)],
                 )
             } else {
-                self.ui
-                    .locale
-                    .tr_plural("edit-selected-faces", &[], &[("faces", faces)])
+                self.ui.locale.tr_plural(
+                    crate::i18n::message_id!("edit-selected-faces"),
+                    &[],
+                    &[("faces", faces)],
+                )
             }
         });
     }
@@ -388,7 +421,11 @@ impl OccluViewApp {
         }
         if self.tools.sculpt.worker_has_pending_work() {
             self.tools.sculpt.finish_requested = true;
-            self.ui.status_message = Some(self.ui.locale.tr("sculpt-finishing"));
+            self.ui.status_message = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("sculpt-finishing")),
+            );
             ctx.request_repaint();
             return;
         }
@@ -400,7 +437,11 @@ impl OccluViewApp {
         self.document.edit_mode.finish_edit_session();
         self.document.mesh_selection_drag = None;
         self.render.invalidation.selection_changed();
-        self.ui.status_message = Some(self.ui.locale.tr("session-applied"));
+        self.ui.status_message = Some(
+            self.ui
+                .locale
+                .tr(crate::i18n::message_id!("session-applied")),
+        );
         ctx.request_repaint();
     }
 
@@ -417,7 +458,11 @@ impl OccluViewApp {
             return;
         };
         self.commit_scene_draft(current_scene.as_deref(), baseline, ctx);
-        self.ui.status_message = Some(self.ui.locale.tr("session-reverted"));
+        self.ui.status_message = Some(
+            self.ui
+                .locale
+                .tr(crate::i18n::message_id!("session-reverted")),
+        );
     }
 
     /// Undo (`redo == false`) or redo (`redo == true`) the last mesh edit and
@@ -435,7 +480,11 @@ impl OccluViewApp {
         }
         if self.tools.sculpt.worker_has_pending_work() {
             self.tools.sculpt.pending_history = Some(redo);
-            self.ui.status_message = Some(self.ui.locale.tr("sculpt-finishing-history"));
+            self.ui.status_message = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("sculpt-finishing-history")),
+            );
             ctx.request_repaint();
             return;
         }
@@ -473,7 +522,12 @@ impl OccluViewApp {
         // Here rather than at the call sites, so Ctrl+Z gets it too: history
         // can revert the pose an align overlay describes, and the shortcut is
         // live the whole time Align Scans is open.
-        self.forget_align_fit(&self.ui.locale.tr("align-status-stepped"));
+        self.forget_align_fit(
+            &self
+                .ui
+                .locale
+                .tr(crate::i18n::message_id!("align-status-stepped")),
+        );
     }
 
     /// Swap the draft scene in as the live scene (or clear it, if the draft
@@ -720,7 +774,8 @@ impl OccluViewApp {
             }
             LassoEvent::Drop => {
                 self.document.mesh_selection_drag = None;
-                self.ui.status_message = Some(self.ui.locale.tr("lasso-dropped"));
+                self.ui.status_message =
+                    Some(self.ui.locale.tr(crate::i18n::message_id!("lasso-dropped")));
                 ctx.request_repaint();
                 true
             }
@@ -731,7 +786,11 @@ impl OccluViewApp {
                     && (enter || double_clicked)
                     && point_count < lasso_capture::MIN_LASSO_POINTS
                 {
-                    self.ui.status_message = Some(self.ui.locale.tr("lasso-needs-points"));
+                    self.ui.status_message = Some(
+                        self.ui
+                            .locale
+                            .tr(crate::i18n::message_id!("lasso-needs-points")),
+                    );
                 }
                 if outline_active {
                     // Keep the rubber-band segment tracking the live cursor.

@@ -39,7 +39,7 @@ pub(super) fn show_recent_files_popup(
             }
             ui.separator();
             // Canonical label "Clear recent".
-            ui.button(locale.tr("recent-clear"))
+            ui.button(locale.tr(crate::i18n::message_id!("recent-clear")))
                 .clicked()
                 .then_some(RecentFilesAction::Clear)
         })

@@ -49,56 +49,56 @@ pub(crate) struct ReportLine {
 pub(crate) fn report_lines(report: &RepairReport, locale: &LocaleManager) -> Vec<ReportLine> {
     // (icon, count, catalog key) in pipeline order. Zero counts are filtered
     // out; digits over 999 are grouped for readability ("1 240").
-    let passes: [(LineIcon, usize, &str); 10] = [
+    let passes: [(LineIcon, usize, crate::i18n::MessageId); 10] = [
         (
             LineIcon::Fixed,
             report.welded_vertices,
-            "repair-line-welded",
+            crate::i18n::message_id!("repair-line-welded"),
         ),
         (
             LineIcon::Removed,
             report.removed_degenerate_triangles,
-            "repair-line-slivers",
+            crate::i18n::message_id!("repair-line-slivers"),
         ),
         (
             LineIcon::Removed,
             report.removed_duplicate_triangles,
-            "repair-line-duplicate-faces",
+            crate::i18n::message_id!("repair-line-duplicate-faces"),
         ),
         (
             LineIcon::Fixed,
             report.split_nonmanifold_edges,
-            "repair-line-nonmanifold",
+            crate::i18n::message_id!("repair-line-nonmanifold"),
         ),
         (
             LineIcon::Fixed,
             report.split_bowtie_vertices,
-            "repair-line-bowtie",
+            crate::i18n::message_id!("repair-line-bowtie"),
         ),
         (
             LineIcon::Fixed,
             report.reoriented_triangles,
-            "repair-line-reoriented",
+            crate::i18n::message_id!("repair-line-reoriented"),
         ),
         (
             LineIcon::Fixed,
             report.flipped_components,
-            "repair-line-flipped",
+            crate::i18n::message_id!("repair-line-flipped"),
         ),
         (
             LineIcon::Removed,
             report.removed_debris_components,
-            "repair-line-debris",
+            crate::i18n::message_id!("repair-line-debris"),
         ),
         (
             LineIcon::Closed,
             report.filled_holes,
-            "repair-line-pinholes",
+            crate::i18n::message_id!("repair-line-pinholes"),
         ),
         (
             LineIcon::Removed,
             report.removed_unreferenced_vertices,
-            "repair-line-unused",
+            crate::i18n::message_id!("repair-line-unused"),
         ),
     ];
     passes
@@ -122,7 +122,7 @@ pub(crate) fn open_rims_line(report: &RepairReport, locale: &LocaleManager) -> O
     let rims = report.open_rims_left;
     (rims > 0).then(|| {
         locale.tr_plural(
-            "repair-open-rims",
+            crate::i18n::message_id!("repair-open-rims"),
             &[("grouped", &group_thousands(rims))],
             &[("count", rims)],
         )
@@ -136,7 +136,7 @@ pub(crate) fn skipped_rims_line(report: &RepairReport, locale: &LocaleManager) -
     let count = report.warnings.len();
     (count > 0).then(|| {
         locale.tr_plural(
-            "repair-skipped-rims",
+            crate::i18n::message_id!("repair-skipped-rims"),
             &[("grouped", &group_thousands(count))],
             &[("count", count)],
         )
@@ -333,7 +333,7 @@ impl RepairReportDialog {
                 gutter_icon(ui, LineIcon::Fixed);
                 ui.vertical(|ui| {
                     ui.label(
-                        egui::RichText::new(locale.tr("repair-title"))
+                        egui::RichText::new(locale.tr(crate::i18n::message_id!("repair-title")))
                             .size(14.0)
                             .strong()
                             .color(ui_theme::text()),
@@ -377,8 +377,12 @@ impl RepairReportDialog {
                                 ui.horizontal(|ui| {
                                     gutter_icon(ui, LineIcon::Fixed);
                                     ui.label(
-                                        egui::RichText::new(locale.tr("repair-clean-headline"))
-                                            .color(ui_theme::text()),
+                                        egui::RichText::new(
+                                            locale.tr(crate::i18n::message_id!(
+                                                "repair-clean-headline"
+                                            )),
+                                        )
+                                        .color(ui_theme::text()),
                                     );
                                 });
                             }
@@ -403,12 +407,15 @@ impl RepairReportDialog {
             ui.separator();
             ui.add_space(6.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button(locale.tr("help-close")).clicked() {
+                if ui
+                    .button(locale.tr(crate::i18n::message_id!("help-close")))
+                    .clicked()
+                {
                     close_clicked = true;
                 }
                 if ui
-                    .button(locale.tr("repair-copy-details"))
-                    .on_hover_text(locale.tr("repair-copy-tooltip"))
+                    .button(locale.tr(crate::i18n::message_id!("repair-copy-details")))
+                    .on_hover_text(locale.tr(crate::i18n::message_id!("repair-copy-tooltip")))
                     .clicked()
                 {
                     copy_clicked = true;

@@ -6,13 +6,16 @@
 
 #![allow(clippy::print_stdout)]
 
+use fluent_syntax::ast::Entry;
 use std::collections::BTreeSet;
 use std::env;
+use std::error::Error;
 use std::fs;
+use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo:rerun-if-changed=assets/windows/occluview.ico");
     println!("cargo:rerun-if-changed=i18n");
 
@@ -22,6 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // names and plurals; this fails the BUILD on drift so a broken or
     // half-added catalog never ships in any binary.
     check_i18n_key_parity(&manifest_dir)?;
+    generate_message_id_macro(&manifest_dir)?;
 
     let target_is_windows = env::var_os("CARGO_CFG_WINDOWS").is_some();
     if !target_is_windows {
@@ -50,11 +54,62 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn generate_message_id_macro(manifest_dir: &Path) -> Result<(), Box<dyn Error>> {
+    let catalog_path = manifest_dir.join("i18n/en.ftl");
+    let source = fs::read_to_string(&catalog_path)?;
+    let resource = fluent_syntax::parser::parse(source.as_str()).map_err(|(_, errors)| {
+        let details = errors
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("; ");
+        io::Error::new(
+            ErrorKind::InvalidData,
+            format!("English Fluent catalog does not parse: {details}"),
+        )
+    })?;
+    let ids = message_ids(resource.body);
+    let output_dir = PathBuf::from(env::var("OUT_DIR")?);
+    fs::write(output_dir.join("message_ids.rs"), render_macro(&ids))?;
+    println!("cargo:rerun-if-changed={}", catalog_path.display());
+    Ok(())
+}
+
+fn message_ids(entries: Vec<Entry<&str>>) -> BTreeSet<String> {
+    let mut ids = BTreeSet::new();
+    for entry in entries {
+        if let Entry::Message(message) = entry {
+            if message.value.is_some() {
+                ids.insert(message.id.name.to_owned());
+            }
+            for attribute in message.attributes {
+                ids.insert(format!("{}.{}", message.id.name, attribute.id.name));
+            }
+        }
+    }
+    ids
+}
+
+fn render_macro(ids: &BTreeSet<String>) -> String {
+    let mut arms = ids
+        .iter()
+        .map(|id| format!("    ({id:?}) => {{ $crate::i18n::MessageId::new({id:?}) }};"))
+        .collect::<Vec<_>>();
+    arms.push(
+        "    ($unknown:literal) => { compile_error!(concat!(\"unknown English Fluent message id: \", $unknown)); };"
+            .to_owned(),
+    );
+    format!(
+        "macro_rules! message_id {{\n{}\n}}\npub(crate) use message_id;\n",
+        arms.join("\n")
+    )
+}
+
 /// Fail the build when any `i18n/*.ftl` catalog drifts from the `en` key
 /// set (missing/extra keys). Only top-level `key =` lines count:
 /// comments, indented continuations and select syntax never start at
 /// column zero with a key-shaped head.
-fn check_i18n_key_parity(manifest_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+fn check_i18n_key_parity(manifest_dir: &Path) -> Result<(), Box<dyn Error>> {
     let dir = manifest_dir.join("i18n");
     let mut catalogs: Vec<(String, BTreeSet<String>)> = Vec::new();
     let mut entries = fs::read_dir(&dir)
@@ -124,7 +179,7 @@ fn ftl_top_level_keys(source: &str) -> BTreeSet<String> {
         .collect()
 }
 
-fn find_resource_compiler() -> Result<PathBuf, Box<dyn std::error::Error>> {
+fn find_resource_compiler() -> Result<PathBuf, Box<dyn Error>> {
     if let Some(rc) = env::var_os("RC") {
         return Ok(PathBuf::from(rc));
     }
@@ -169,7 +224,7 @@ fn windows_kits_roots() -> Vec<PathBuf> {
         .collect()
 }
 
-fn windows_resource_script(icon_path: &Path) -> Result<String, Box<dyn std::error::Error>> {
+fn windows_resource_script(icon_path: &Path) -> Result<String, Box<dyn Error>> {
     let version = env::var("CARGO_PKG_VERSION")?;
     let version_parts = version_tuple(&version);
     let icon = icon_path.display().to_string().replace('\\', "\\\\");

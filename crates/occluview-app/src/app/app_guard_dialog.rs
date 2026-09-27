@@ -63,7 +63,9 @@ pub(super) fn show_guard_dialog(
                 egui::Layout::right_to_left(egui::Align::Center),
                 |ui| {
                     if ui
-                        .add(dialog_primary_button(&locale.tr("guard-save")))
+                        .add(dialog_primary_button(
+                            &locale.tr(crate::i18n::message_id!("guard-save")),
+                        ))
                         .clicked()
                     {
                         action = Some(GuardDialogAction::Save);
@@ -71,7 +73,10 @@ pub(super) fn show_guard_dialog(
                     if ui.button(spec.destructive_label).clicked() {
                         action = Some(GuardDialogAction::Destructive);
                     }
-                    if ui.button(locale.tr("guard-cancel")).clicked() {
+                    if ui
+                        .button(locale.tr(crate::i18n::message_id!("guard-cancel")))
+                        .clicked()
+                    {
                         action = Some(GuardDialogAction::Cancel);
                     }
                 },

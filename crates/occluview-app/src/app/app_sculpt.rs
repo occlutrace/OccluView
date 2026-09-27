@@ -179,14 +179,19 @@ impl OccluViewApp {
             self.tools.sculpt.disarm();
         }
         self.ui.status_message = Some(match self.tools.sculpt.armed {
-            Some(SculptToolKind::AddRemove) if self.tools.sculpt.worker.is_some() => {
-                self.ui.locale.tr("sculpt-armed-addremove")
-            }
-            Some(SculptToolKind::Smooth) if self.tools.sculpt.worker.is_some() => {
-                self.ui.locale.tr("sculpt-armed-smooth")
-            }
-            Some(_) => self.ui.locale.tr("sculpt-preparing"),
-            None => self.ui.locale.tr("sculpt-off"),
+            Some(SculptToolKind::AddRemove) if self.tools.sculpt.worker.is_some() => self
+                .ui
+                .locale
+                .tr(crate::i18n::message_id!("sculpt-armed-addremove")),
+            Some(SculptToolKind::Smooth) if self.tools.sculpt.worker.is_some() => self
+                .ui
+                .locale
+                .tr(crate::i18n::message_id!("sculpt-armed-smooth")),
+            Some(_) => self
+                .ui
+                .locale
+                .tr(crate::i18n::message_id!("sculpt-preparing")),
+            None => self.ui.locale.tr(crate::i18n::message_id!("sculpt-off")),
         });
         // Rebuild selection display data when Sculpt changes the visible mesh.
         self.render.invalidation.selection_changed();
@@ -321,7 +326,11 @@ impl OccluViewApp {
             && !self.ensure_sculpt_session_for_target()
             && self.tools.sculpt.worker.is_none()
         {
-            self.ui.status_message = Some(self.ui.locale.tr("sculpt-preparing"));
+            self.ui.status_message = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("sculpt-preparing")),
+            );
             ctx.request_repaint();
         }
         let Some(hit) = self.sculpt_surface_hit(response.rect, pointer) else {
@@ -417,7 +426,11 @@ impl OccluViewApp {
             dt: input.dt,
         };
         let Some(worker) = self.tools.sculpt.worker.as_ref() else {
-            self.ui.status_message = Some(self.ui.locale.tr("sculpt-preparing"));
+            self.ui.status_message = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("sculpt-preparing")),
+            );
             return;
         };
         let queued = {
@@ -473,7 +486,11 @@ impl OccluViewApp {
             return false;
         }
         if uniform_scene_scale(&entry.transform).is_none() {
-            self.ui.status_message = Some(self.ui.locale.tr("sculpt-nonuniform-scale"));
+            self.ui.status_message = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("sculpt-nonuniform-scale")),
+            );
             return false;
         }
         if self
@@ -524,9 +541,17 @@ impl OccluViewApp {
                 .get(index)
                 .is_some_and(|entry| uniform_scene_scale(&entry.transform).is_none())
             {
-                self.ui.status_message = Some(self.ui.locale.tr("sculpt-nonuniform-scale"));
+                self.ui.status_message = Some(
+                    self.ui
+                        .locale
+                        .tr(crate::i18n::message_id!("sculpt-nonuniform-scale")),
+                );
             } else {
-                self.ui.status_message = Some(self.ui.locale.tr("sculpt-preparing"));
+                self.ui.status_message = Some(
+                    self.ui
+                        .locale
+                        .tr(crate::i18n::message_id!("sculpt-preparing")),
+                );
             }
         }
     }
@@ -553,11 +578,10 @@ impl OccluViewApp {
                 }
             }
             Err(error) => {
-                self.ui.status_message = Some(
-                    self.ui
-                        .locale
-                        .tr_with("sculpt-failed", &[("detail", error.as_str())]),
-                );
+                self.ui.status_message = Some(self.ui.locale.tr_with(
+                    crate::i18n::message_id!("sculpt-failed"),
+                    &[("detail", error.as_str())],
+                ));
                 ctx.request_repaint();
             }
         }

@@ -45,20 +45,23 @@ pub(crate) fn show(ctx: &egui::Context, view: BrushPanelView<'_>) -> Option<Brus
     // land on top of each other the first time the checkbox is ticked.
     let default_pos = view.viewport_rect.right_top() + egui::vec2(-WINDOW_WIDTH - 300.0, 16.0);
     let mut action = None;
-    egui::Window::new(view.locale.tr("align-brush-title"))
-        .id(egui::Id::new("occluview_align_brush_window"))
-        .default_pos(default_pos)
-        .constrain_to(view.viewport_rect)
-        .resizable(false)
-        .collapsible(false)
-        .title_bar(false)
-        .show(ctx, |ui| {
-            ui.set_min_width(WINDOW_WIDTH - 24.0);
-            ui.set_width(WINDOW_WIDTH - 24.0);
-            ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
-            ui.style_mut().animation_time = 0.05;
-            action = body(ui, view.brush, view.roles, view.enabled, view.locale);
-        });
+    egui::Window::new(
+        view.locale
+            .tr(crate::i18n::message_id!("align-brush-title")),
+    )
+    .id(egui::Id::new("occluview_align_brush_window"))
+    .default_pos(default_pos)
+    .constrain_to(view.viewport_rect)
+    .resizable(false)
+    .collapsible(false)
+    .title_bar(false)
+    .show(ctx, |ui| {
+        ui.set_min_width(WINDOW_WIDTH - 24.0);
+        ui.set_width(WINDOW_WIDTH - 24.0);
+        ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
+        ui.style_mut().animation_time = 0.05;
+        action = body(ui, view.brush, view.roles, view.enabled, view.locale);
+    });
     action
 }
 
@@ -103,24 +106,24 @@ fn mesh_selection(
     locale: &crate::i18n::LocaleManager,
 ) {
     ui.label(
-        egui::RichText::new(locale.tr("align-brush-mesh-selection"))
+        egui::RichText::new(locale.tr(crate::i18n::message_id!("align-brush-mesh-selection")))
             .size(11.0)
             .color(ui_theme::text_muted()),
     );
     for target in BrushTarget::ALL {
         let label = match target {
-            BrushTarget::Both => locale.tr("align-brush-both"),
+            BrushTarget::Both => locale.tr(crate::i18n::message_id!("align-brush-both")),
             BrushTarget::Moving => {
                 format!(
                     "{} · {}",
-                    locale.tr("align-brush-moving"),
+                    locale.tr(crate::i18n::message_id!("align-brush-moving")),
                     roles.side_name(AlignSide::Moving)
                 )
             }
             BrushTarget::Fixed => {
                 format!(
                     "{} · {}",
-                    locale.tr("align-brush-fixed"),
+                    locale.tr(crate::i18n::message_id!("align-brush-fixed")),
                     roles.side_name(AlignSide::Fixed)
                 )
             }
@@ -134,7 +137,7 @@ fn mesh_selection(
             brush.target() == target,
         )
         .on_hover_text(if target == BrushTarget::Both {
-            locale.tr("align-brush-both-hint")
+            locale.tr(crate::i18n::message_id!("align-brush-both-hint"))
         } else {
             String::new()
         })
@@ -155,7 +158,7 @@ fn header(ui: &mut egui::Ui, locale: &crate::i18n::LocaleManager) -> Option<Brus
             .0;
         crate::icons::paint(ui.painter(), glyph, AppIcon::MaskBrush, ui_theme::accent());
         ui.label(
-            egui::RichText::new(locale.tr("align-brush-title"))
+            egui::RichText::new(locale.tr(crate::i18n::message_id!("align-brush-title")))
                 .size(13.0)
                 .color(ui_theme::text()),
         );
@@ -182,12 +185,12 @@ fn header(ui: &mut egui::Ui, locale: &crate::i18n::LocaleManager) -> Option<Brus
             }
             crate::accessibility::button(
                 &close_response,
-                &locale.tr("align-brush-close-hint"),
+                &locale.tr(crate::i18n::message_id!("align-brush-close-hint")),
                 true,
                 None,
             );
             if close_response
-                .on_hover_text(locale.tr("align-brush-close-hint"))
+                .on_hover_text(locale.tr(crate::i18n::message_id!("align-brush-close-hint")))
                 .clicked()
             {
                 action = Some(BrushPanelAction::Close);
@@ -245,7 +248,11 @@ fn size(
             enabled,
             egui::Slider::new(&mut radius, 0.1..=20.0)
                 .suffix(" mm")
-                .text(locale.tr("align-brush-size").as_str()),
+                .text(
+                    locale
+                        .tr(crate::i18n::message_id!("align-brush-size"))
+                        .as_str(),
+                ),
         )
         .changed()
     {
@@ -255,9 +262,14 @@ fn size(
     if ui
         .add_enabled(
             enabled,
-            egui::Checkbox::new(&mut inverse, locale.tr("align-brush-inverse").as_str()),
+            egui::Checkbox::new(
+                &mut inverse,
+                locale
+                    .tr(crate::i18n::message_id!("align-brush-inverse"))
+                    .as_str(),
+            ),
         )
-        .on_hover_text(locale.tr("align-brush-inverse-hint"))
+        .on_hover_text(locale.tr(crate::i18n::message_id!("align-brush-inverse-hint")))
         .changed()
     {
         brush.set_inverse(inverse);
@@ -278,9 +290,13 @@ fn automatic(
             enabled,
             egui::Slider::new(&mut radius, 0.1..=20.0)
                 .suffix(" mm")
-                .text(locale.tr("align-brush-auto-radius").as_str()),
+                .text(
+                    locale
+                        .tr(crate::i18n::message_id!("align-brush-auto-radius"))
+                        .as_str(),
+                ),
         )
-        .on_hover_text(locale.tr("align-brush-auto-radius-hint"))
+        .on_hover_text(locale.tr(crate::i18n::message_id!("align-brush-auto-radius-hint")))
         .changed()
     {
         brush.set_auto_radius_mm(radius);
