@@ -71,18 +71,25 @@ impl OccluViewApp {
         let mesh = match merged_scene_mesh(scene.as_ref()) {
             Ok(Some(mesh)) => mesh,
             Ok(None) => {
-                self.ui.status_message = Some(self.ui.locale.tr("export-nothing-visible"));
+                self.ui.status_message = Some(
+                    self.ui
+                        .locale
+                        .tr(crate::i18n::message_id!("export-nothing-visible")),
+                );
                 return;
             }
             Err(error) => {
                 let detail = error.to_string();
                 let summary = self.ui.locale.tr_with(
-                    "export-scene-failed-summary",
+                    crate::i18n::message_id!("export-scene-failed-summary"),
                     &[("detail", detail.as_str())],
                 );
                 self.ui.status_message = Some(summary.clone());
                 self.ui.app_error = Some(AppErrorDialog {
-                    title: self.ui.locale.tr("export-scene-failed-title"),
+                    title: self
+                        .ui
+                        .locale
+                        .tr(crate::i18n::message_id!("export-scene-failed-title")),
                     summary,
                     details: format!("Scene export failed\n\nError:\n{detail}"),
                     action: AppErrorAction::None,
@@ -122,7 +129,11 @@ impl OccluViewApp {
         };
         let path = normalize_layer_export_path(selected, default_format);
         let Ok(format) = mesh_export_format_from_path(&path) else {
-            self.ui.status_message = Some(self.ui.locale.tr("export-unsupported-format"));
+            self.ui.status_message = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("export-unsupported-format")),
+            );
             return;
         };
 
@@ -141,12 +152,12 @@ impl OccluViewApp {
             Ok(report) => {
                 let saved = if dropped_texture {
                     self.ui.locale.tr_with(
-                        "export-scene-saved-unmerged",
+                        crate::i18n::message_id!("export-scene-saved-unmerged"),
                         &[("path", &path.display().to_string())],
                     )
                 } else {
                     self.ui.locale.tr_with(
-                        "export-scene-saved",
+                        crate::i18n::message_id!("export-scene-saved"),
                         &[("path", &path.display().to_string())],
                     )
                 };
@@ -161,12 +172,15 @@ impl OccluViewApp {
             }
             Err(error) => {
                 let summary = self.ui.locale.tr_with(
-                    "export-scene-failed-summary",
+                    crate::i18n::message_id!("export-scene-failed-summary"),
                     &[("detail", &error.to_string())],
                 );
                 self.ui.status_message = Some(summary.clone());
                 self.ui.app_error = Some(AppErrorDialog {
-                    title: self.ui.locale.tr("export-scene-failed-title"),
+                    title: self
+                        .ui
+                        .locale
+                        .tr(crate::i18n::message_id!("export-scene-failed-title")),
                     summary,
                     details: format!(
                         "Scene export failed\n\nPath:\n{}\n\nError:\n{error:#}",
@@ -192,7 +206,11 @@ impl OccluViewApp {
             return;
         };
         if !scene.meshes().iter().any(|entry| entry.visible) {
-            self.ui.status_message = Some(self.ui.locale.tr("export-nothing-visible"));
+            self.ui.status_message = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("export-nothing-visible")),
+            );
             return;
         }
         let mut dialog = rfd::FileDialog::new();
@@ -283,22 +301,22 @@ impl OccluViewApp {
         let dir_text = directory.display().to_string();
         let status = match (failed == 0, renamed == 0) {
             (true, true) => self.ui.locale.tr_plural(
-                "export-layers-saved",
+                crate::i18n::message_id!("export-layers-saved"),
                 &[("dir", &dir_text)],
                 &[("written", written)],
             ),
             (false, true) => self.ui.locale.tr_plural(
-                "export-layers-saved-failed",
+                crate::i18n::message_id!("export-layers-saved-failed"),
                 &[("dir", &dir_text)],
                 &[("written", written), ("failed", failed)],
             ),
             (true, false) => self.ui.locale.tr_plural(
-                "export-layers-saved-renamed",
+                crate::i18n::message_id!("export-layers-saved-renamed"),
                 &[("dir", &dir_text)],
                 &[("written", written), ("renamed", renamed)],
             ),
             (false, false) => self.ui.locale.tr_plural(
-                "export-layers-saved-failed-renamed",
+                crate::i18n::message_id!("export-layers-saved-failed-renamed"),
                 &[("dir", &dir_text)],
                 &[
                     ("written", written),
@@ -315,9 +333,12 @@ impl OccluViewApp {
         ));
         if !failures.is_empty() {
             self.ui.app_error = Some(AppErrorDialog {
-                title: self.ui.locale.tr("mesh-export-failed-title"),
+                title: self
+                    .ui
+                    .locale
+                    .tr(crate::i18n::message_id!("mesh-export-failed-title")),
                 summary: self.ui.locale.tr_with(
-                    "mesh-export-failed-summary",
+                    crate::i18n::message_id!("mesh-export-failed-summary"),
                     &[("detail", &format!("{failed} layer export(s) failed"))],
                 ),
                 details: format!("Batch layer export failed\n\n{}", failures.join("\n")),

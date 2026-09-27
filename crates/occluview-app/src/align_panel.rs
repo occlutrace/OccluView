@@ -36,10 +36,10 @@ pub(crate) enum AlignTab {
 
 impl AlignTab {
     /// Catalog key rendering the localized tab label.
-    fn label_key(self) -> &'static str {
+    fn label_key(self) -> crate::i18n::MessageId {
         match self {
-            Self::Automatically => "align-tab-auto",
-            Self::Manually => "align-tab-manual",
+            Self::Automatically => crate::i18n::message_id!("align-tab-auto"),
+            Self::Manually => crate::i18n::message_id!("align-tab-manual"),
         }
     }
 }
@@ -120,7 +120,7 @@ pub(crate) fn show(
     let mut action = None;
     let id = egui::Id::new("occluview_align_window");
     let previous_rect = ctx.memory(|memory| memory.area_rect(id));
-    let mut window = egui::Window::new(locale.text("align-panel-title"))
+    let mut window = egui::Window::new(locale.text(crate::i18n::message_id!("align-panel-title")))
         .id(id)
         .default_pos(default_pos)
         .constrain_to(viewport_rect)
@@ -180,7 +180,7 @@ fn body(
         let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
         crate::icons::paint(ui.painter(), rect, AppIcon::Align, ui_theme::accent());
         ui.label(
-            egui::RichText::new(locale.tr("align-title"))
+            egui::RichText::new(locale.tr(crate::i18n::message_id!("align-title")))
                 .strong()
                 .size(15.0)
                 .color(ui_theme::text()),
@@ -339,7 +339,10 @@ fn manually(
     // the roles are fixed and named; here the scan under the cursor is the one
     // that moves, the fixed scan included — and without this line an operator
     // who grabs the wrong arch has nothing on screen to say so.
-    hint(ui, &locale.tr("align-manual-drag-hint"));
+    hint(
+        ui,
+        &locale.tr(crate::i18n::message_id!("align-manual-drag-hint")),
+    );
     ui.add_space(4.0);
 
     let mut action = None;
@@ -349,11 +352,11 @@ fn manually(
             ui,
             width,
             Some(AppIcon::Undo),
-            &locale.tr("align-undo"),
+            &locale.tr(crate::i18n::message_id!("align-undo")),
             enabled && can_undo,
             false,
         )
-        .on_hover_text(locale.tr("align-undo-hint"))
+        .on_hover_text(locale.tr(crate::i18n::message_id!("align-undo-hint")))
         .clicked()
         {
             action = Some(AlignPanelAction::Undo);
@@ -362,11 +365,11 @@ fn manually(
             ui,
             width,
             Some(AppIcon::Redo),
-            &locale.tr("align-redo"),
+            &locale.tr(crate::i18n::message_id!("align-redo")),
             enabled && can_redo,
             false,
         )
-        .on_hover_text(locale.tr("align-redo-hint"))
+        .on_hover_text(locale.tr(crate::i18n::message_id!("align-redo-hint")))
         .clicked()
         {
             action = Some(AlignPanelAction::Redo);
@@ -379,13 +382,17 @@ fn manually(
 fn prompt(ui: &mut egui::Ui, tool: &AlignTool, locale: &crate::i18n::LocaleManager) {
     let placed = tool.pairs().len();
     let text = if tool.moving_layer().is_none() {
-        locale.tr("align-prompt-moving")
+        locale.tr(crate::i18n::message_id!("align-prompt-moving"))
     } else if tool.pending().is_some() {
-        locale.tr("align-prompt-other")
+        locale.tr(crate::i18n::message_id!("align-prompt-other"))
     } else if placed == 0 {
-        locale.tr("align-prompt-alternate")
+        locale.tr(crate::i18n::message_id!("align-prompt-alternate"))
     } else {
-        locale.tr_plural("align-prompt-placed", &[], &[("count", placed)])
+        locale.tr_plural(
+            crate::i18n::message_id!("align-prompt-placed"),
+            &[],
+            &[("count", placed)],
+        )
     };
     ui.label(egui::RichText::new(text).size(12.0).color(ui_theme::text()));
     ui.add_space(2.0);
@@ -407,11 +414,11 @@ fn back(
             ui,
             width,
             Some(AppIcon::Undo),
-            &locale.tr("align-back"),
+            &locale.tr(crate::i18n::message_id!("align-back")),
             enabled && placed,
             false,
         )
-        .on_hover_text(locale.tr("align-back-hint"))
+        .on_hover_text(locale.tr(crate::i18n::message_id!("align-back-hint")))
         .clicked()
         {
             action = Some(AlignPanelAction::Back);
@@ -420,11 +427,15 @@ fn back(
             ui,
             width,
             None,
-            &locale.tr("align-clear"),
+            &locale.tr(crate::i18n::message_id!("align-clear")),
             enabled && paired,
             false,
         )
-        .on_hover_text(locale.tr("align-clear-hint").as_str())
+        .on_hover_text(
+            locale
+                .tr(crate::i18n::message_id!("align-clear-hint"))
+                .as_str(),
+        )
         .clicked()
         {
             action = Some(AlignPanelAction::Clear);
@@ -447,11 +458,14 @@ fn fits(
         ui,
         width,
         AppIcon::AlignFit,
-        &format!("1. {}", locale.tr("align-fit-perform")),
+        &format!(
+            "1. {}",
+            locale.tr(crate::i18n::message_id!("align-fit-perform"))
+        ),
         tool.can_align() && enabled,
         true,
     )
-    .on_hover_text(locale.tr("align-fit-perform-hint"))
+    .on_hover_text(locale.tr(crate::i18n::message_id!("align-fit-perform-hint")))
     .clicked()
     {
         action = Some(AlignPanelAction::Align);
@@ -460,11 +474,14 @@ fn fits(
         ui,
         width,
         AppIcon::AlignRefine,
-        &format!("2. {}", locale.tr("align-fit-refine")),
+        &format!(
+            "2. {}",
+            locale.tr(crate::i18n::message_id!("align-fit-refine"))
+        ),
         tool.can_measure() && enabled,
         false,
     )
-    .on_hover_text(locale.tr("align-fit-refine-hint"))
+    .on_hover_text(locale.tr(crate::i18n::message_id!("align-fit-refine-hint")))
     .clicked()
     {
         action = Some(AlignPanelAction::Refine);
@@ -504,12 +521,12 @@ fn commit(
     locale: &crate::i18n::LocaleManager,
 ) -> Option<AlignPanelAction> {
     let mut action = None;
-    let cancel_hint_moved = locale.tr("align-commit-cancel-hint-moved");
-    let cancel_hint_clean = locale.tr("align-commit-cancel-hint-clean");
+    let cancel_hint_moved = locale.tr(crate::i18n::message_id!("align-commit-cancel-hint-moved"));
+    let cancel_hint_clean = locale.tr(crate::i18n::message_id!("align-commit-cancel-hint-clean"));
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         let width = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
-        if tall_button(ui, width, &locale.tr("align-commit-cancel"), false)
+        if tall_button(ui, width, &locale.tr(crate::i18n::message_id!("align-commit-cancel")), false)
             // Spelt out when there is something to lose: an operator who reads
             // Cancel as "close the window" loses every move made in the
             // session. Ctrl+Z brings it back — the restore is one history
@@ -523,8 +540,8 @@ fn commit(
         {
             action = Some(AlignPanelAction::Cancel);
         }
-        if tall_button(ui, width, &locale.tr("align-commit-done"), true)
-            .on_hover_text(locale.tr("align-commit-done-hint").as_str())
+        if tall_button(ui, width, &locale.tr(crate::i18n::message_id!("align-commit-done")), true)
+            .on_hover_text(locale.tr(crate::i18n::message_id!("align-commit-done-hint")).as_str())
             .clicked()
         {
             action = Some(AlignPanelAction::Done);

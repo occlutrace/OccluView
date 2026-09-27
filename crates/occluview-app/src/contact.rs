@@ -33,18 +33,18 @@ impl ContactMode {
     }
 
     /// Catalog key for the label on the mode button.
-    pub(crate) fn label_key(self) -> &'static str {
+    pub(crate) fn label_key(self) -> crate::i18n::MessageId {
         match self {
-            Self::Marks => "contact-mode-marks",
-            Self::Approach => "contact-mode-approach",
+            Self::Marks => crate::i18n::message_id!("contact-mode-marks"),
+            Self::Approach => crate::i18n::message_id!("contact-mode-approach"),
         }
     }
 
     /// Catalog key for the one line explaining what the mode is for.
-    pub(crate) fn hint_key(self) -> &'static str {
+    pub(crate) fn hint_key(self) -> crate::i18n::MessageId {
         match self {
-            Self::Marks => "contact-mode-marks-hint",
-            Self::Approach => "contact-mode-approach-hint",
+            Self::Marks => crate::i18n::message_id!("contact-mode-marks-hint"),
+            Self::Approach => crate::i18n::message_id!("contact-mode-approach-hint"),
         }
     }
 
@@ -93,16 +93,22 @@ pub(crate) enum ContactStatus {
 
 impl ContactStatus {
     /// Catalog key for this status.
-    pub(crate) fn key(self) -> &'static str {
+    pub(crate) fn key(self) -> crate::i18n::MessageId {
         match self {
-            Self::Measuring => "contact-status-measuring",
-            Self::Remeasuring => "contact-status-remeasuring",
-            Self::NeedsSecond => "contact-status-needs-second",
-            Self::SubjectUnusable => "contact-status-subject-unusable",
-            Self::AntagonistUnusable => "contact-status-antagonist-unusable",
-            Self::NoOverlap => "contact-status-no-overlap",
-            Self::Failed(ContactFailure::NoSurface) => "contact-status-no-surface",
-            Self::Failed(ContactFailure::Worker) => "contact-status-worker-failed",
+            Self::Measuring => crate::i18n::message_id!("contact-status-measuring"),
+            Self::Remeasuring => crate::i18n::message_id!("contact-status-remeasuring"),
+            Self::NeedsSecond => crate::i18n::message_id!("contact-status-needs-second"),
+            Self::SubjectUnusable => crate::i18n::message_id!("contact-status-subject-unusable"),
+            Self::AntagonistUnusable => {
+                crate::i18n::message_id!("contact-status-antagonist-unusable")
+            }
+            Self::NoOverlap => crate::i18n::message_id!("contact-status-no-overlap"),
+            Self::Failed(ContactFailure::NoSurface) => {
+                crate::i18n::message_id!("contact-status-no-surface")
+            }
+            Self::Failed(ContactFailure::Worker) => {
+                crate::i18n::message_id!("contact-status-worker-failed")
+            }
         }
     }
 }

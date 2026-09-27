@@ -352,7 +352,11 @@ fn a_save_does_not_call_a_live_stroke_nothing_to_save() {
     );
     assert_eq!(
         app.ui.status_message,
-        Some(app.ui.locale.tr("edit-session-busy")),
+        Some(
+            app.ui
+                .locale
+                .tr(crate::i18n::message_id!("edit-session-busy"))
+        ),
         "and the guard says why the save could not finish yet"
     );
 }
@@ -424,7 +428,12 @@ fn every_export_path_refuses_while_a_stroke_is_in_flight() {
     );
     assert_eq!(
         app.ui.status_message.as_deref(),
-        Some(app.ui.locale.text("edit-session-busy").as_str()),
+        Some(
+            app.ui
+                .locale
+                .text(crate::i18n::message_id!("edit-session-busy"))
+                .as_str()
+        ),
         "and the operator must be told why"
     );
 
@@ -437,7 +446,12 @@ fn every_export_path_refuses_while_a_stroke_is_in_flight() {
     );
     assert_eq!(
         app.ui.status_message.as_deref(),
-        Some(app.ui.locale.text("edit-session-busy").as_str())
+        Some(
+            app.ui
+                .locale
+                .text(crate::i18n::message_id!("edit-session-busy"))
+                .as_str()
+        )
     );
 
     // With no stroke in flight the guard is silent, so it cannot block the
@@ -622,7 +636,12 @@ fn a_rejected_finish_keeps_the_stroke_for_a_later_retry() {
     assert!(app.tools.sculpt.finish_retry, "and arm that retry");
     assert_eq!(
         app.ui.status_message.as_deref(),
-        Some(app.ui.locale.text("sculpt-worker-unavailable").as_str())
+        Some(
+            app.ui
+                .locale
+                .text(crate::i18n::message_id!("sculpt-worker-unavailable"))
+                .as_str()
+        )
     );
 
     // Once the pressure clears, the worker poll retries the finish.
@@ -674,7 +693,12 @@ fn worker_loss_invalidates_an_active_sculpt_stroke() {
     assert_eq!(app.document.edit_mode.undo_len(), 0);
     assert_eq!(
         app.ui.status_message.as_deref(),
-        Some(app.ui.locale.text("sculpt-worker-unavailable").as_str()),
+        Some(
+            app.ui
+                .locale
+                .text(crate::i18n::message_id!("sculpt-worker-unavailable"))
+                .as_str()
+        ),
         "the operator is told why the stroke could not finish"
     );
     assert!(

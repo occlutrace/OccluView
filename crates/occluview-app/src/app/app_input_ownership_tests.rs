@@ -308,7 +308,11 @@ fn sculpt_cursor_waits_for_a_warm_pick_before_sampling() {
     );
     assert_eq!(
         app.ui.status_message,
-        Some(app.ui.locale.tr("sculpt-preparing")),
+        Some(
+            app.ui
+                .locale
+                .tr(crate::i18n::message_id!("sculpt-preparing"))
+        ),
         "the operator is told the brush is still preparing rather than getting a dead press"
     );
 }

@@ -96,18 +96,19 @@ impl OccluViewApp {
                             .iter()
                             .position(|entry| entry.id() == request.layer_id)
                             .map_or(1, |index| index + 1);
-                        self.ui
-                            .locale
-                            .tr_with("layer-unnamed", &[("n", &position.to_string())])
+                        self.ui.locale.tr_with(
+                            crate::i18n::message_id!("layer-unnamed"),
+                            &[("n", &position.to_string())],
+                        )
                     });
                 let aligned = moved_from_source(scene, request);
                 let format_label = mesh_export_format_label(report.format).to_owned();
                 let path_text = path.display().to_string();
                 let status_key = match (aligned, warnings.is_some()) {
-                    (true, false) => "mesh-exported-aligned",
-                    (true, true) => "mesh-exported-aligned-warnings",
-                    (false, false) => "mesh-exported-unmoved",
-                    (false, true) => "mesh-exported-unmoved-warnings",
+                    (true, false) => crate::i18n::message_id!("mesh-exported-aligned"),
+                    (true, true) => crate::i18n::message_id!("mesh-exported-aligned-warnings"),
+                    (false, false) => crate::i18n::message_id!("mesh-exported-unmoved"),
+                    (false, true) => crate::i18n::message_id!("mesh-exported-unmoved-warnings"),
                 };
                 self.ui.status_message = Some(self.ui.locale.tr_with(
                     status_key,
@@ -122,12 +123,15 @@ impl OccluViewApp {
             }
             Err(error) => {
                 let summary = self.ui.locale.tr_with(
-                    "mesh-export-failed-summary",
+                    crate::i18n::message_id!("mesh-export-failed-summary"),
                     &[("detail", &error.to_string())],
                 );
                 self.ui.status_message = Some(summary.clone());
                 self.ui.app_error = Some(AppErrorDialog {
-                    title: self.ui.locale.tr("mesh-export-failed-title"),
+                    title: self
+                        .ui
+                        .locale
+                        .tr(crate::i18n::message_id!("mesh-export-failed-title")),
                     summary,
                     details: format!(
                         "Layer export failed\n\nPath:\n{}\n\nError:\n{error:#}",
@@ -170,7 +174,11 @@ impl OccluViewApp {
         // Ask the worker to finish, as Save does, so the next attempt
         // writes the stroke instead of nothing.
         let _ = self.commit_sculpt_stroke(ctx);
-        self.ui.status_message = Some(self.ui.locale.tr("edit-session-busy"));
+        self.ui.status_message = Some(
+            self.ui
+                .locale
+                .tr(crate::i18n::message_id!("edit-session-busy")),
+        );
         true
     }
 
@@ -186,7 +194,11 @@ impl OccluViewApp {
         if self.document.unsaved_sculpt_stroke {
             let ctx = self.ui.repaint_ctx.clone();
             let _ = self.commit_sculpt_stroke(&ctx);
-            self.ui.status_message = Some(self.ui.locale.tr("edit-session-busy"));
+            self.ui.status_message = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("edit-session-busy")),
+            );
             return PendingLayerExports::StrokeInFlight;
         }
         let scene = self.document.scene.clone().unwrap_or(scene);
@@ -624,7 +636,10 @@ pub(super) fn append_mesh_export_warnings(
     let Some(warnings) = warnings else {
         return status;
     };
-    let suffix = locale.tr_with("mesh-export-warnings", &[("warnings", warnings)]);
+    let suffix = locale.tr_with(
+        crate::i18n::message_id!("mesh-export-warnings"),
+        &[("warnings", warnings)],
+    );
     status.push_str(" · ");
     status.push_str(&suffix);
     status
@@ -637,10 +652,18 @@ pub(super) fn mesh_export_warning_summary(
     let labels: Vec<String> = warnings
         .iter()
         .map(|warning| match warning {
-            MeshWriteWarning::VertexColorsNotWritten => locale.tr("mesh-warning-vertex-colors"),
-            MeshWriteWarning::UvsNotWritten => locale.tr("mesh-warning-uvs"),
-            MeshWriteWarning::TextureImageNotWritten => locale.tr("mesh-warning-texture-image"),
-            MeshWriteWarning::VertexAlphaNotWritten => locale.tr("mesh-warning-vertex-alpha"),
+            MeshWriteWarning::VertexColorsNotWritten => {
+                locale.tr(crate::i18n::message_id!("mesh-warning-vertex-colors"))
+            }
+            MeshWriteWarning::UvsNotWritten => {
+                locale.tr(crate::i18n::message_id!("mesh-warning-uvs"))
+            }
+            MeshWriteWarning::TextureImageNotWritten => {
+                locale.tr(crate::i18n::message_id!("mesh-warning-texture-image"))
+            }
+            MeshWriteWarning::VertexAlphaNotWritten => {
+                locale.tr(crate::i18n::message_id!("mesh-warning-vertex-alpha"))
+            }
         })
         .collect();
     (!labels.is_empty()).then(|| labels.join(", "))
