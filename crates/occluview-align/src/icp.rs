@@ -10,8 +10,8 @@ use rayon::prelude::*;
 
 use crate::pairs::FitRejection;
 use crate::sample::{bounds_of, sample_vertices, vertex_at, vertex_normals};
-use crate::surface::SurfaceSample;
 use crate::{CancelFlag, Rigid, Soup, SurfaceIndex};
+use occluview_surface_query::SurfaceSample;
 
 #[path = "feature_seed.rs"]
 mod feature_seed;
