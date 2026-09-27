@@ -97,7 +97,7 @@ fn workflow_step<'a>(workflow: &'a Value, job: &str, name: &str) -> Option<&'a V
         .find(|step| step["name"].as_str() == Some(name))
 }
 
-const CI_MACOS_PACKAGE_SMOKE: &str = r###"bash install/macos/build-app.sh --no-build
+const CI_MACOS_PACKAGE_SMOKE: &str = r#"bash install/macos/build-app.sh --no-build
 bash install/macos/build-dmg.sh --no-build
 bash install/macos/build-pkg.sh --no-build
 dmg="$(find target/macos -maxdepth 1 -type f -name 'OccluView-*-aarch64.dmg' -print -quit)"
@@ -114,9 +114,9 @@ version="$(sed -n '/^\[workspace\.package\]/,/^\[/p' Cargo.toml \
 test -n "$version"
 target/macos/OccluView.app/Contents/MacOS/occluview --version | grep -F "$version"
 target/macos/OccluView.app/Contents/Helpers/occluview-cli --version | grep -F "$version"
-"###;
+"#;
 
-const PORTABLE_ZIP_BUILD: &str = r###"$cargoText = Get-Content ./Cargo.toml -Raw
+const PORTABLE_ZIP_BUILD: &str = r#"$cargoText = Get-Content ./Cargo.toml -Raw
 $match = [regex]::Match($cargoText, '(?s)\[workspace\.package\].*?version\s*=\s*"([^"]+)"')
 if (-not $match.Success) { throw "Could not find workspace package version." }
 $version = $match.Groups[1].Value
@@ -134,26 +134,26 @@ Copy-Item ./THIRD-PARTY-NOTICES.md $portableDir
 Copy-Item ./THIRD-PARTY-NOTICES-NATIVE.md $portableDir
 Copy-Item ./README.md $portableDir
 Compress-Archive -Path $portableDir -DestinationPath "./dist/OccluView-$version-$target-portable.zip" -CompressionLevel Optimal -Force
-"###;
+"#;
 
-const WINDOWS_LIFECYCLE_SMOKE: &str = r###"$releaseMsi = Get-ChildItem ./dist -Filter *.msi | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+const WINDOWS_LIFECYCLE_SMOKE: &str = r#"$releaseMsi = Get-ChildItem ./dist -Filter *.msi | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 $upgradeMsi = Get-ChildItem (Join-Path $env:RUNNER_TEMP "occluview-msi-upgrade") -Filter *.msi | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if (-not [string]::IsNullOrWhiteSpace($env:OCCLUVIEW_LEGACY_MSI_PATH)) {
   ./install/test-msi-lifecycle.ps1 -MsiPath $releaseMsi.FullName -LegacyUpgradeMsiPath $env:OCCLUVIEW_LEGACY_MSI_PATH -UpgradeMsiPath $upgradeMsi.FullName -DowngradeMsiPath $releaseMsi.FullName
 } else {
   ./install/test-msi-lifecycle.ps1 -MsiPath $releaseMsi.FullName -UpgradeMsiPath $upgradeMsi.FullName -DowngradeMsiPath $releaseMsi.FullName
 }
-"###;
+"#;
 
-const DEBIAN_PACKAGE_VALIDATION: &str = r###"desktop-file-validate install/linux/ai.occlutrace.OccluView.desktop
+const DEBIAN_PACKAGE_VALIDATION: &str = r#"desktop-file-validate install/linux/ai.occlutrace.OccluView.desktop
 appstreamcli validate --no-net install/linux/ai.occlutrace.OccluView.metainfo.xml
 xmllint --noout install/linux/occluview-mime.xml install/linux/ai.occlutrace.OccluView.metainfo.xml
 dpkg-deb --info "$DEB"
 dpkg-deb --contents "$DEB"
 install/linux/check-deb.sh "$DEB"
-"###;
+"#;
 
-const MACOS_PACKAGE_VERIFY: &str = r###"version="$(sed -n '/^\[workspace\.package\]/,/^\[/p' Cargo.toml \
+const MACOS_PACKAGE_VERIFY: &str = r#"version="$(sed -n '/^\[workspace\.package\]/,/^\[/p' Cargo.toml \
   | sed -n 's/^version *= *"\(.*\)"/\1/p' | head -n1)"
 dmg="target/macos/OccluView-$version-aarch64.dmg"
 pkg="target/macos/OccluView-$version-aarch64.pkg"
@@ -166,9 +166,9 @@ done
 target/macos/OccluView.app/Contents/MacOS/occluview --version | grep -F "$version"
 target/macos/OccluView.app/Contents/Helpers/occluview-cli --version | grep -F "$version"
 (cd target/macos && for file in *.dmg *.pkg; do shasum -a 256 "$file" > "$file.sha256"; done)
-"###;
+"#;
 
-const PACKAGE_MACOS_BUILD_SELECTION: &str = r###"if [[ "${{ steps.signing.outputs.configured }}" == true ]]; then
+const PACKAGE_MACOS_BUILD_SELECTION: &str = r#"if [[ "${{ steps.signing.outputs.configured }}" == true ]]; then
   OCCLUVIEW_NOTARY_KEY_PATH="$RUNNER_TEMP/notary.p8" bash install/macos/sign-and-notarize.sh
   echo "notarized=true" >> "$GITHUB_OUTPUT"
 else
@@ -176,7 +176,7 @@ else
   bash install/macos/build-pkg.sh --no-build
   echo "notarized=false" >> "$GITHUB_OUTPUT"
 fi
-"###;
+"#;
 
 const RELEASE_NOTES_SCRIPT: &str = r###"version="${RELEASE_TAG#v}"
 changelog_section="$(mktemp)"
@@ -209,7 +209,7 @@ fi
 rm -f "$changelog_section"
 "###;
 
-const RELEASE_VERIFICATION_BUNDLE: &str = r###"version="${RELEASE_TAG#v}"
+const RELEASE_VERIFICATION_BUNDLE: &str = r#"version="${RELEASE_TAG#v}"
 cp ./occluview.pub ./dist/occluview.pub
 (
   cd ./dist
@@ -221,9 +221,9 @@ cp ./occluview.pub ./dist/occluview.pub
   fi
   zip -q "OccluView-${version}-verification.zip" "${material[@]}"
 )
-"###;
+"#;
 
-const SIGNATURE_VERIFICATION_SCRIPT: &str = r###"# Verify with the public key compiled into installed copies.
+const SIGNATURE_VERIFICATION_SCRIPT: &str = r#"# Verify with the public key compiled into installed copies.
 pubkey=$(sed -n 's/^pub const UPDATE_PUBKEY: &str = "\(.*\)";$/\1/p' \
   crates/occluview-update/src/lib.rs)
 if [[ -z "$pubkey" ]]; then
@@ -234,9 +234,9 @@ for file in dist/latest.json $(find ./dist -type f -name '*.minisig' -not -name 
   minisign -V -P "$pubkey" -m "$file"
   echo "Verified against the shipped public key: $file"
 done
-"###;
+"#;
 
-const WINDOWS_SBOM_GENERATION: &str = r###"cargo install cargo-cyclonedx --version 0.5.8 --locked
+const WINDOWS_SBOM_GENERATION: &str = r#"cargo install cargo-cyclonedx --version 0.5.8 --locked
 # The virtual workspace emits one SBOM beside each member manifest.
 cargo metadata --locked --format-version 1
 cargo cyclonedx --format json --override-filename sbom-windows
@@ -250,9 +250,9 @@ if ($described -ne "occluview-app") {
 }
 git diff --exit-code -- Cargo.lock
 Move-Item $sbom ./dist/sbom-windows.json -Force
-"###;
+"#;
 
-const LINUX_SBOM_GENERATION: &str = r###"cargo install cargo-cyclonedx --version 0.5.8 --locked
+const LINUX_SBOM_GENERATION: &str = r#"cargo install cargo-cyclonedx --version 0.5.8 --locked
 cargo metadata --locked --format-version 1
 cargo cyclonedx --format json --override-filename sbom-linux
 sbom=crates/occluview-app/sbom-linux.json
@@ -268,7 +268,7 @@ if described != "occluview-app":
 PY
 git diff --exit-code -- Cargo.lock
 cp "$sbom" target/deb/sbom-linux.json
-"###;
+"#;
 
 fn step_runs(workflow: &Value, job: &str, name: &str, command: &str) -> bool {
     workflow_step(workflow, job, name)
@@ -336,8 +336,6 @@ fn assert_windows_package_modes_and_legacy_migration(package: &Value) {
         "Build portable ZIP",
         "Build upgrade smoke MSIs",
         "Validate optional legacy MSI migration inputs",
-        "Download optional legacy MSI migration artifact",
-        "Verify optional legacy MSI migration artifact",
         "Smoke install and uninstall",
     ] {
         let step = workflow_step(package, "windows-package", name)
@@ -354,6 +352,9 @@ fn assert_windows_package_modes_and_legacy_migration(package: &Value) {
         "Download optional legacy MSI migration artifact",
     )
     .expect("legacy migration downloads a pinned run artifact");
+    let legacy_artifact_condition =
+        "inputs.windows_configuration != 'diagnostic' && inputs.legacy_msi_run_id != '' && inputs.legacy_msi_sha256 != ''";
+    assert_eq!(download["if"].as_str(), Some(legacy_artifact_condition));
     assert_eq!(
         download["uses"].as_str(),
         Some("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c")
@@ -372,6 +373,7 @@ fn assert_windows_package_modes_and_legacy_migration(package: &Value) {
         "Verify optional legacy MSI migration artifact",
     )
     .expect("the downloaded legacy MSI is verified before installation");
+    assert_eq!(verify["if"].as_str(), Some(legacy_artifact_condition));
     assert_eq!(
         verify["env"]["OCCLUVIEW_LEGACY_MSI_RUN_ID"].as_str(),
         Some("${{ inputs.legacy_msi_run_id }}")

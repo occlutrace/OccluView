@@ -668,7 +668,7 @@ mod tests {
     #[test]
     fn every_command_can_report_one_named_scan() {
         for command in MaskCommand::ALL {
-            assert!(!command.report_one_key().is_empty());
+            assert!(!command.report_one_key().as_str().is_empty());
             assert_ne!(command.report_one_key(), command.report_key());
         }
     }

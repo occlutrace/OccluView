@@ -38,10 +38,6 @@ impl MessageId {
     pub(crate) const fn as_str(self) -> &'static str {
         self.0
     }
-
-    pub(crate) const fn is_empty(self) -> bool {
-        self.0.is_empty()
-    }
 }
 
 /// Render the command modifier with the platform's actual key name.
