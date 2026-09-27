@@ -42,10 +42,9 @@ fn the_changelog_starts_with_the_current_version_and_descends_without_repeats() 
     let tags =
         repository_tags().unwrap_or_else(|error| panic!("cannot verify release tags: {error}"));
     for heading in version_sections.iter().skip(1) {
-        let number = heading
-            .split_whitespace()
-            .nth(1)
-            .expect("version heading has a number");
+        let Some(number) = heading.split_whitespace().nth(1) else {
+            panic!("version heading has no number: {heading:?}");
+        };
         assert!(
             tags.contains(&format!("v{number}")),
             "historical changelog section {number} has no matching Git tag"
@@ -122,9 +121,13 @@ fn keys_the_viewer_binds() -> std::collections::BTreeSet<String> {
 
     let mut keys = std::collections::BTreeSet::new();
     for path in sources {
-        if path
-            .strip_prefix(&root)
-            .expect("collected source belongs under the app source root")
+        let Ok(relative) = path.strip_prefix(&root) else {
+            panic!(
+                "collected source is outside the app source root: {}",
+                path.display()
+            );
+        };
+        if relative
             .components()
             .any(|part| part.as_os_str().to_string_lossy().contains("tests"))
         {
