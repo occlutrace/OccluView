@@ -242,7 +242,7 @@ mod tests {
 
     #[test]
     fn finder_open_methods_keep_the_appkit_callback_encoding() {
-        let mut builder = ClassBuilder::new(c"OccluViewFinderOpenTestDelegate", NSObject::class())
+        let builder = ClassBuilder::new(c"OccluViewFinderOpenTestDelegate", NSObject::class())
             .expect("the Finder callback test class name is unique");
         let class = builder.register();
         add_open_methods(class).expect("both Finder callbacks install");

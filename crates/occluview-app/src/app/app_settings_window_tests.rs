@@ -346,6 +346,7 @@ fn macos_settings_offer_a_selectable_smooth_scroll_action() -> anyhow::Result<()
         egui::Event::MouseWheel {
             unit: egui::MouseWheelUnit::Point,
             delta: egui::vec2(0.0, -1_000.0),
+            phase: egui::TouchPhase::Move,
             modifiers: egui::Modifiers::NONE,
         },
     ])?;
