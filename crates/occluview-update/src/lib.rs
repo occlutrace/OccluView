@@ -17,6 +17,7 @@
 )]
 
 use std::collections::BTreeMap;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -286,16 +287,18 @@ pub fn download_with(
 /// written temp file in place on success; the caller renames it and is
 /// responsible for removing it on any error.
 fn stream_and_verify(
-    response: ureq::Response,
+    response: ureq::http::Response<ureq::Body>,
     temp_path: &Path,
     artifact: &PlatformArtifact,
     pubkeys: &[&str],
     progress: &mut dyn FnMut(u64, Option<u64>),
 ) -> Result<(), UpdateError> {
     let total = response
-        .header("Content-Length")
+        .headers()
+        .get("Content-Length")
+        .and_then(|value| value.to_str().ok())
         .and_then(|value| value.parse::<u64>().ok());
-    let mut reader = response.into_reader().take(MAX_ARTIFACT_BYTES);
+    let mut reader = response.into_body().into_reader().take(MAX_ARTIFACT_BYTES);
     let mut file = std::fs::File::create(temp_path)?;
     let mut hasher = Sha256::new();
     let mut buffer = vec![0u8; 64 * 1024];
@@ -509,7 +512,10 @@ fn agent() -> ureq::Agent {
     ureq::Agent::new_with_config(config)
 }
 
-fn call_get(agent: &ureq::Agent, url: &str) -> Result<ureq::Response, UpdateError> {
+fn call_get(
+    agent: &ureq::Agent,
+    url: &str,
+) -> Result<ureq::http::Response<ureq::Body>, UpdateError> {
     let response = match agent.get(url).call() {
         Err(error) if connection_closed(&error) => agent.get(url).call(),
         result => result,
