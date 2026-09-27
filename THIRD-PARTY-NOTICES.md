@@ -1625,8 +1625,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 Used by:
 
-- tiny-skia-path 0.12.0 (https://github.com/linebender/tiny-skia/tree/master/path)
 - tiny-skia 0.12.0 (https://github.com/linebender/tiny-skia)
+- tiny-skia-path 0.12.0 (https://github.com/linebender/tiny-skia/tree/master/path)
 
 ```
 Copyright (c) 2011 Google Inc. All rights reserved.
@@ -1981,8 +1981,8 @@ Used by:
 Used by:
 
 - lazy_static 1.5.0 (https://github.com/rust-lang-nursery/lazy-static.rs)
-- rayon-core 1.13.0 (https://github.com/rayon-rs/rayon)
 - rayon 1.12.0 (https://github.com/rayon-rs/rayon)
+- rayon-core 1.13.0 (https://github.com/rayon-rs/rayon)
 
 ```
 Copyright (c) 2010 The Rust Project Developers
@@ -2405,11 +2405,11 @@ Used by:
 - wayland-backend 0.3.15 (https://github.com/smithay/wayland-rs)
 - wayland-client 0.31.15 (https://github.com/smithay/wayland-rs)
 - wayland-cursor 0.31.14 (https://github.com/smithay/wayland-rs)
+- wayland-protocols 0.32.13 (https://github.com/smithay/wayland-rs)
 - wayland-protocols-experimental 20250721.0.1 (https://github.com/smithay/wayland-rs)
 - wayland-protocols-misc 0.3.12 (https://github.com/smithay/wayland-rs)
 - wayland-protocols-plasma 0.3.12 (https://github.com/smithay/wayland-rs)
 - wayland-protocols-wlr 0.3.12 (https://github.com/smithay/wayland-rs)
-- wayland-protocols 0.32.13 (https://github.com/smithay/wayland-rs)
 - wayland-scanner 0.31.11 (https://github.com/smithay/wayland-rs)
 - wayland-sys 0.31.11 (https://github.com/smithay/wayland-rs)
 
@@ -3912,11 +3912,11 @@ DEALINGS IN THE SOFTWARE.
 
 Used by:
 
+- tracing 0.1.44 (https://github.com/tokio-rs/tracing)
 - tracing-attributes 0.1.31 (https://github.com/tokio-rs/tracing)
 - tracing-core 0.1.36 (https://github.com/tokio-rs/tracing)
 - tracing-log 0.2.0 (https://github.com/tokio-rs/tracing)
 - tracing-subscriber 0.3.23 (https://github.com/tokio-rs/tracing)
-- tracing 0.1.44 (https://github.com/tokio-rs/tracing)
 
 ```
 Copyright (c) 2019 Tokio Contributors
@@ -4308,9 +4308,9 @@ DEALINGS IN THE SOFTWARE.
 
 Used by:
 
+- atspi 0.29.0 (https://github.com/odilia-app/atspi)
 - atspi-common 0.13.0 (https://github.com/odilia-app/atspi)
 - atspi-proxies 0.13.0 (https://github.com/odilia-app/atspi)
-- atspi 0.29.0 (https://github.com/odilia-app/atspi)
 
 ```
 Copyright (c) 2022 Tait Hoyem <tait@tait.tech>
@@ -4990,8 +4990,8 @@ DEALINGS IN THE SOFTWARE.
 
 Used by:
 
-- x11rb-protocol 0.13.2 (https://github.com/psychon/x11rb)
 - x11rb 0.13.2 (https://github.com/psychon/x11rb)
+- x11rb-protocol 0.13.2 (https://github.com/psychon/x11rb)
 
 ```
 Copyright 2019 x11rb Contributers
@@ -5079,8 +5079,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 Used by:
 
-- zerocopy-derive 0.8.53 (https://github.com/google/zerocopy)
 - zerocopy 0.8.53 (https://github.com/google/zerocopy)
+- zerocopy-derive 0.8.53 (https://github.com/google/zerocopy)
 
 ```
 Copyright 2023 The Fuchsia Authors
@@ -5573,14 +5573,14 @@ SOFTWARE.
 
 Used by:
 
-- naga-types 30.0.1 (https://github.com/gfx-rs/wgpu)
 - naga 30.0.1 (https://github.com/gfx-rs/wgpu)
-- wgpu-core-deps-windows-linux-android 30.0.1 (https://github.com/gfx-rs/wgpu)
+- naga-types 30.0.1 (https://github.com/gfx-rs/wgpu)
+- wgpu 30.0.1 (https://github.com/gfx-rs/wgpu)
 - wgpu-core 30.0.1 (https://github.com/gfx-rs/wgpu)
+- wgpu-core-deps-windows-linux-android 30.0.1 (https://github.com/gfx-rs/wgpu)
 - wgpu-hal 30.0.1 (https://github.com/gfx-rs/wgpu)
 - wgpu-naga-bridge 30.0.1 (https://github.com/gfx-rs/wgpu)
 - wgpu-types 30.0.1 (https://github.com/gfx-rs/wgpu)
-- wgpu 30.0.1 (https://github.com/gfx-rs/wgpu)
 
 ```
 MIT License
@@ -5620,9 +5620,9 @@ Used by:
 - dpi 0.1.2 (https://github.com/rust-windowing/winit)
 - ecolor 0.36.1 (https://github.com/emilk/egui)
 - eframe 0.36.1 (https://github.com/emilk/egui/tree/main/crates/eframe)
+- egui 0.36.1 (https://github.com/emilk/egui)
 - egui-wgpu 0.36.1 (https://github.com/emilk/egui/tree/main/crates/egui-wgpu)
 - egui-winit 0.36.1 (https://github.com/emilk/egui/tree/main/crates/egui-winit)
-- egui 0.36.1 (https://github.com/emilk/egui)
 - emath 0.36.1 (https://github.com/emilk/egui/tree/main/crates/emath)
 - epaint 0.36.1 (https://github.com/emilk/egui/tree/main/crates/epaint)
 - fluent-langneg 0.13.1 (https://github.com/projectfluent/fluent-langneg-rs)
@@ -5632,6 +5632,7 @@ Used by:
 - profiling 1.0.18 (https://github.com/aclysma/profiling)
 - siphasher 1.0.3 (https://github.com/jedisct1/rust-siphash)
 - type-map 0.5.1 (https://github.com/kardeiz/type-map)
+- windows 0.62.2 (https://github.com/microsoft/windows-rs)
 - windows-collections 0.3.2 (https://github.com/microsoft/windows-rs)
 - windows-core 0.62.2 (https://github.com/microsoft/windows-rs)
 - windows-future 0.3.2 (https://github.com/microsoft/windows-rs)
@@ -5648,7 +5649,6 @@ Used by:
 - windows-targets 0.52.6 (https://github.com/microsoft/windows-rs)
 - windows-targets 0.53.5 (https://github.com/microsoft/windows-rs)
 - windows-threading 0.2.1 (https://github.com/microsoft/windows-rs)
-- windows 0.62.2 (https://github.com/microsoft/windows-rs)
 - windows_x86_64_gnu 0.52.6 (https://github.com/microsoft/windows-rs)
 - windows_x86_64_gnu 0.53.1 (https://github.com/microsoft/windows-rs)
 - windows_x86_64_msvc 0.52.6 (https://github.com/microsoft/windows-rs)
@@ -5816,8 +5816,8 @@ Used by:
 - color 0.3.3 (https://github.com/linebender/color)
 - half 2.7.1 (https://github.com/VoidStarKat/half-rs)
 - linebender_resource_handle 0.1.1 (https://github.com/linebender/raw_resource_handle)
-- manifold-csg-sys 3.5.105 (https://github.com/zmerlynn/manifold-csg)
 - manifold-csg 0.4.1 (https://github.com/zmerlynn/manifold-csg)
+- manifold-csg-sys 3.5.105 (https://github.com/zmerlynn/manifold-csg)
 
 ```
 MIT License
@@ -5894,8 +5894,8 @@ Used by:
 - concurrent-queue 2.5.0 (https://github.com/smol-rs/concurrent-queue)
 - displaydoc 0.2.6 (https://github.com/yaahc/displaydoc)
 - endi 1.1.1 (https://github.com/zeenix/endi)
-- event-listener-strategy 0.5.4 (https://github.com/smol-rs/event-listener-strategy)
 - event-listener 5.4.1 (https://github.com/smol-rs/event-listener)
+- event-listener-strategy 0.5.4 (https://github.com/smol-rs/event-listener-strategy)
 - fastrand 2.4.1 (https://github.com/smol-rs/fastrand)
 - futures-lite 2.6.1 (https://github.com/smol-rs/futures-lite)
 - glam 0.33.11 (https://github.com/bitshifter/glam-rs)
@@ -5924,18 +5924,18 @@ Used by:
 - smol_str 0.2.2 (https://github.com/rust-analyzer/smol_str)
 - syn 2.0.118 (https://github.com/dtolnay/syn)
 - syn 3.0.6 (https://github.com/dtolnay/syn)
-- thiserror-impl 1.0.69 (https://github.com/dtolnay/thiserror)
-- thiserror-impl 2.0.21 (https://github.com/dtolnay/thiserror)
 - thiserror 1.0.69 (https://github.com/dtolnay/thiserror)
 - thiserror 2.0.21 (https://github.com/dtolnay/thiserror)
+- thiserror-impl 1.0.69 (https://github.com/dtolnay/thiserror)
+- thiserror-impl 2.0.21 (https://github.com/dtolnay/thiserror)
 - typed-path 0.12.3 (https://github.com/chipsenkbeil/typed-path)
-- unic-langid-impl 0.9.6 (https://github.com/zbraniecki/unic-locale)
 - unic-langid 0.9.6 (https://github.com/zbraniecki/unic-locale)
+- unic-langid-impl 0.9.6 (https://github.com/zbraniecki/unic-locale)
 - unicode-ident 1.0.24 (https://github.com/dtolnay/unicode-ident)
 - utf8-zero 0.8.1 (https://github.com/algesten/utf8-zero)
 - x11-dl 2.21.0 (https://github.com/AltF02/x11-rs.git)
-- zbus-lockstep-macros 0.5.2 (https://github.com/luukvanderduim/zbus-lockstep)
 - zbus-lockstep 0.5.2 (https://github.com/luukvanderduim/zbus-lockstep)
+- zbus-lockstep-macros 0.5.2 (https://github.com/luukvanderduim/zbus-lockstep)
 - zmij 1.0.21 (https://github.com/dtolnay/zmij)
 - zvariant_utils 4.2.0 (https://github.com/z-galaxy/zbus/)
 
@@ -6158,8 +6158,8 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 Used by:
 
-- byteorder-lite 0.1.0 (https://github.com/image-rs/byteorder-lite)
 - byteorder 1.5.0 (https://github.com/BurntSushi/byteorder)
+- byteorder-lite 0.1.0 (https://github.com/image-rs/byteorder-lite)
 - memchr 2.8.2 (https://github.com/BurntSushi/memchr)
 
 ```
@@ -6856,13 +6856,13 @@ Used by:
 - potential_utf 0.1.5 (https://github.com/unicode-org/icu4x)
 - tinystr 0.8.3 (https://github.com/unicode-org/icu4x)
 - writeable 0.6.3 (https://github.com/unicode-org/icu4x)
-- yoke-derive 0.8.2 (https://github.com/unicode-org/icu4x)
 - yoke 0.8.3 (https://github.com/unicode-org/icu4x)
-- zerofrom-derive 0.1.7 (https://github.com/unicode-org/icu4x)
+- yoke-derive 0.8.2 (https://github.com/unicode-org/icu4x)
 - zerofrom 0.1.8 (https://github.com/unicode-org/icu4x)
+- zerofrom-derive 0.1.7 (https://github.com/unicode-org/icu4x)
 - zerotrie 0.2.4 (https://github.com/unicode-org/icu4x)
-- zerovec-derive 0.11.3 (https://github.com/unicode-org/icu4x)
 - zerovec 0.11.6 (https://github.com/unicode-org/icu4x)
+- zerovec-derive 0.11.3 (https://github.com/unicode-org/icu4x)
 
 ```
 UNICODE LICENSE V3

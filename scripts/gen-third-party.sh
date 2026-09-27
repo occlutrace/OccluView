@@ -27,6 +27,32 @@ awk '
 mv "$normalized_file" THIRD-PARTY-NOTICES.md
 trap - EXIT
 
+# Sort the crate list for each license so generation stays stable across hosts.
+python3 - <<'PY'
+from pathlib import Path
+
+notice_path = Path("THIRD-PARTY-NOTICES.md")
+lines = notice_path.read_text(encoding="utf-8").splitlines()
+ordered = []
+index = 0
+while index < len(lines):
+    if lines[index] != "Used by:":
+        ordered.append(lines[index])
+        index += 1
+        continue
+    ordered.append(lines[index])
+    index += 1
+    while index < len(lines) and not lines[index]:
+        ordered.append(lines[index])
+        index += 1
+    start = index
+    while index < len(lines) and lines[index].startswith("- "):
+        index += 1
+    ordered.extend(sorted(lines[start:index]))
+
+notice_path.write_text("\n".join(ordered) + "\n", encoding="utf-8")
+PY
+
 # The generation is only correct when the bundled fonts' notice-retention
 # licenses made it in and no first-party crate attributed itself.
 grep -q "SIL OPEN FONT LICENSE" THIRD-PARTY-NOTICES.md || {
