@@ -20,6 +20,10 @@ remain in the Git history.
 - Explorer preview menu labels follow the Windows UI language in English,
   German, Spanish, French, Italian, Brazilian Portuguese, and Russian.
 
+### macOS
+
+- Smooth scrolling can pan or zoom the viewport, according to the Settings choice.
+
 ## 1.2.1 - 2026-09-21
 
 ### Viewer
