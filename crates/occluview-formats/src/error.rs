@@ -63,6 +63,17 @@ pub enum FormatError {
         limit: u64,
     },
 
+    /// The estimated scene and active import exceed the memory budget.
+    #[error(
+        "import needs an estimated {estimated_bytes} bytes, above the {limit} byte memory limit"
+    )]
+    MemoryBudgetExceeded {
+        /// Estimated bytes held by the scene and active import.
+        estimated_bytes: u64,
+        /// Maximum bytes allowed for the scene and active import.
+        limit: u64,
+    },
+
     /// The extension/magic did not match any known format.
     #[error("unsupported format (extension={extension:?})")]
     Unsupported {
