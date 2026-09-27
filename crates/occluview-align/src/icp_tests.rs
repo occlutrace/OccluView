@@ -313,6 +313,7 @@ fn the_p95_limit_separates_correct_and_wrong_cases_in_the_labelled_corpus() {
         ..trustworthy_report()
     };
     let wrong = IcpReport {
+        median_abs: 0.01633,
         p95_abs: 0.04463,
         ..trustworthy_report()
     };
@@ -331,6 +332,38 @@ fn the_p95_limit_separates_correct_and_wrong_cases_in_the_labelled_corpus() {
             "the lowest p95 among wrong accepted selected cases fails at {radius} mm"
         );
     }
+}
+
+#[test]
+fn scanner_noise_with_a_bounded_residual_tail_is_authorized() {
+    let noisy_rescan = IcpReport {
+        inlier_ratio: 0.573_511_7,
+        coverage: 0.716_889_6,
+        rms: 0.039_109_2,
+        geometric_rms: 0.039_308,
+        median_abs: 0.030_810_1,
+        p95_abs: 0.069_800_8,
+        verified_coverage: 0.716_311_3,
+        verified_median_mm: 0.039_964_3,
+        verified_stability: 0.074_424_8,
+        ..trustworthy_report()
+    };
+    assert!(
+        noisy_rescan.is_trustworthy_refinement_for(&settings()),
+        "a noisy correct seating whose residual tail stays within the measured \
+         p95-to-median ratio must pass: {noisy_rescan:?}"
+    );
+
+    let wrong_crop = IcpReport {
+        median_abs: 0.018_87,
+        p95_abs: 0.044_02,
+        ..trustworthy_report()
+    };
+    assert!(
+        !wrong_crop.is_trustworthy_refinement_for(&settings()),
+        "the lowest-p95 wrong crop in the selected corpus must remain refused: \
+         {wrong_crop:?}"
+    );
 }
 
 #[test]

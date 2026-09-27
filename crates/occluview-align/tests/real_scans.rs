@@ -35,6 +35,7 @@
     clippy::cast_possible_truncation
 )]
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -785,6 +786,63 @@ impl Noise {
     }
 }
 
+/// Apply one scanner displacement to every copy of a shared STL vertex.
+fn noisy_rescan_positions(
+    positions: &[f32],
+    truth: Rigid,
+    sigma_mm: f64,
+    noise: &mut Noise,
+) -> Vec<f32> {
+    let mut offsets = HashMap::<[u32; 3], DVec3>::new();
+    let mut moved = Vec::with_capacity(positions.len());
+    for point in positions.as_chunks::<3>().0 {
+        let key = point.map(|coordinate| {
+            if coordinate == 0.0 {
+                0
+            } else {
+                coordinate.to_bits()
+            }
+        });
+        let offset = *offsets.entry(key).or_insert_with(|| {
+            if sigma_mm == 0.0 {
+                DVec3::ZERO
+            } else {
+                DVec3::new(
+                    noise.next_normal(),
+                    noise.next_normal(),
+                    noise.next_normal(),
+                ) * sigma_mm
+            }
+        });
+        let local = DVec3::new(
+            f64::from(point[0]),
+            f64::from(point[1]),
+            f64::from(point[2]),
+        );
+        let world = truth.apply(local) + offset;
+        moved.extend([world.x as f32, world.y as f32, world.z as f32]);
+    }
+    moved
+}
+
+#[test]
+fn scanner_noise_is_shared_by_repeated_triangle_corners() {
+    let positions = [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0];
+    let mut noise = Noise::new(0x5eed_1234);
+    let moved = noisy_rescan_positions(&positions, Rigid::IDENTITY, 0.06, &mut noise);
+
+    assert_eq!(
+        &moved[0..3],
+        &moved[9..12],
+        "triangle soup copies of one vertex describe one scanner measurement"
+    );
+    assert_ne!(
+        &moved[0..3],
+        &positions[0..3],
+        "the synthetic scanner error must displace the vertex"
+    );
+}
+
 /// A rescan of the same jaw, from a hand placement, must be accepted.
 ///
 /// This is the operator's own workflow, and the one the seating gate can get
@@ -828,25 +886,7 @@ fn a_rescan_with_scanner_error_is_accepted_where_fixtures_are_present() {
                 DVec3::new(shift_mm * 0.6, -shift_mm * 0.5, shift_mm * 0.3),
             );
             let mut noise = Noise::new(0x5eed_1234_u64 ^ sigma_mm.to_bits() ^ shift_mm.to_bits());
-            let mut moved = Vec::with_capacity(positions.len());
-            for point in positions.as_chunks::<3>().0 {
-                let local = DVec3::new(
-                    f64::from(point[0]),
-                    f64::from(point[1]),
-                    f64::from(point[2]),
-                );
-                let mut world = truth.apply(local);
-                if sigma_mm > 0.0 {
-                    world += DVec3::new(
-                        noise.next_normal(),
-                        noise.next_normal(),
-                        noise.next_normal(),
-                    ) * sigma_mm;
-                }
-                moved.push(world.x as f32);
-                moved.push(world.y as f32);
-                moved.push(world.z as f32);
-            }
+            let moved = noisy_rescan_positions(&positions, truth, sigma_mm, &mut noise);
             let moving = Soup {
                 positions: &moved,
                 indices: &indices,
