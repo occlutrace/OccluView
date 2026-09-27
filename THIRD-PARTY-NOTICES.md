@@ -7,9 +7,9 @@ edit about.toml or about.hbs and run scripts/gen-third-party.sh to update it.
 
 ## Licenses used
 
-- MIT License (314)
+- MIT License (340)
 - Unicode License v3 (19)
-- Apache License 2.0 (12)
+- Apache License 2.0 (13)
 - ISC License (5)
 - BSD 3-Clause "New" or "Revised" License (3)
 - Boost Software License 1.0 (2)
@@ -1505,6 +1505,7 @@ Apache License
 
 Used by:
 
+- accesskit_winit 0.32.2 (https://github.com/AccessKit/accesskit)
 - spirv 0.4.0+sdk-1.4.341.0 (https://github.com/gfx-rs/rspirv)
 
 ```
@@ -3178,6 +3179,41 @@ DEALINGS IN THE SOFTWARE.
 
 Used by:
 
+- signal-hook-registry 1.4.8 (https://github.com/vorner/signal-hook)
+
+```
+Copyright (c) 2017 tokio-jsonrpc developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+```
+
+### MIT License
+
+Used by:
+
 - enumflags2 0.7.12 (https://github.com/meithecatte/enumflags2)
 
 ```
@@ -4352,6 +4388,37 @@ DEALINGS IN THE SOFTWARE.
 
 Used by:
 
+- atspi-common 0.13.0 (https://github.com/odilia-app/atspi)
+- atspi-proxies 0.13.0 (https://github.com/odilia-app/atspi)
+- atspi 0.29.0 (https://github.com/odilia-app/atspi)
+
+```
+Copyright (c) 2022 Tait Hoyem <tait@tait.tech>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+```
+
+### MIT License
+
+Used by:
+
 - strict-num 0.1.1 (https://github.com/RazrFalcon/strict-num)
 
 ```
@@ -4611,9 +4678,15 @@ DEALINGS IN THE SOFTWARE.
 Used by:
 
 - zbus 4.4.0 (https://github.com/dbus2/zbus/)
+- zbus 5.19.0 (https://github.com/z-galaxy/zbus/)
 - zbus_macros 4.4.0 (https://github.com/dbus2/zbus/)
+- zbus_macros 5.19.0 (https://github.com/z-galaxy/zbus/)
+- zbus_names 4.3.4 (https://github.com/z-galaxy/zbus/)
+- zbus_xml 5.2.1 (https://github.com/z-galaxy/zbus/)
 - zvariant 4.2.0 (https://github.com/dbus2/zbus/)
+- zvariant 5.15.0 (https://github.com/z-galaxy/zbus/)
 - zvariant_derive 4.2.0 (https://github.com/dbus2/zbus/)
+- zvariant_derive 5.15.0 (https://github.com/z-galaxy/zbus/)
 
 ```
 Copyright (c) 2024 Zeeshan Ali Khan & zbus contributors
@@ -4652,6 +4725,41 @@ Used by:
 
 ```
 Copyright (c) 2026 The Rust Project Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+```
+
+### MIT License
+
+Used by:
+
+- zcheapstr 1.1.0 (https://github.com/z-galaxy/zcheapstr/)
+
+```
+Copyright (c) 2026 Zeeshan Ali Khan & zcheapstr contributors
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -5640,6 +5748,11 @@ SOFTWARE.
 Used by:
 
 - accesskit 0.24.1 (https://github.com/AccessKit/accesskit)
+- accesskit_atspi_common 0.18.1 (https://github.com/AccessKit/accesskit)
+- accesskit_consumer 0.35.0 (https://github.com/AccessKit/accesskit)
+- accesskit_consumer 0.36.0 (https://github.com/AccessKit/accesskit)
+- accesskit_unix 0.21.1 (https://github.com/AccessKit/accesskit)
+- accesskit_windows 0.32.1 (https://github.com/AccessKit/accesskit)
 - dpi 0.1.2 (https://github.com/rust-windowing/winit)
 - ecolor 0.36.1 (https://github.com/emilk/egui)
 - eframe 0.36.1 (https://github.com/emilk/egui/tree/main/crates/eframe)
@@ -5914,6 +6027,8 @@ Used by:
 - async-io 2.6.0 (https://github.com/smol-rs/async-io)
 - async-lock 3.4.2 (https://github.com/smol-rs/async-lock)
 - async-net 2.0.0 (https://github.com/smol-rs/async-net)
+- async-process 2.5.0 (https://github.com/smol-rs/async-process)
+- async-signal 0.2.14 (https://github.com/smol-rs/async-signal)
 - async-task 4.7.1 (https://github.com/smol-rs/async-task)
 - async-trait 0.1.89 (https://github.com/dtolnay/async-trait)
 - atomic-waker 1.1.2 (https://github.com/smol-rs/atomic-waker)
@@ -5950,6 +6065,7 @@ Used by:
 - serde_repr 0.1.20 (https://github.com/dtolnay/serde-repr)
 - smol_str 0.2.2 (https://github.com/rust-analyzer/smol_str)
 - syn 2.0.118 (https://github.com/dtolnay/syn)
+- syn 3.0.6 (https://github.com/dtolnay/syn)
 - thiserror-impl 1.0.69 (https://github.com/dtolnay/thiserror)
 - thiserror-impl 2.0.18 (https://github.com/dtolnay/thiserror)
 - thiserror 1.0.69 (https://github.com/dtolnay/thiserror)
@@ -5959,9 +6075,12 @@ Used by:
 - unicode-ident 1.0.24 (https://github.com/dtolnay/unicode-ident)
 - x11-dl 2.21.0 (https://github.com/AltF02/x11-rs.git)
 - xdg-home 1.3.0 (https://github.com/zeenix/xdg-home)
+- zbus-lockstep-macros 0.5.2 (https://github.com/luukvanderduim/zbus-lockstep)
+- zbus-lockstep 0.5.2 (https://github.com/luukvanderduim/zbus-lockstep)
 - zbus_names 3.0.0 (https://github.com/dbus2/zbus/)
 - zmij 1.0.21 (https://github.com/dtolnay/zmij)
 - zvariant_utils 2.1.0 (https://github.com/dbus2/zbus/)
+- zvariant_utils 4.2.0 (https://github.com/z-galaxy/zbus/)
 
 ```
 Permission is hereby granted, free of charge, to any
@@ -6144,6 +6263,39 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+```
+
+### MIT License
+
+Used by:
+
+- phf 0.13.1 (https://github.com/rust-phf/rust-phf)
+- phf_generator 0.13.1 (https://github.com/rust-phf/rust-phf)
+- phf_macros 0.13.1 (https://github.com/rust-phf/rust-phf)
+- phf_shared 0.13.1 (https://github.com/rust-phf/rust-phf)
+
+```
+The MIT License (MIT)
+
+Copyright (c) 2014-2022 Steven Fackler, Yuki Okushi
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ```
 

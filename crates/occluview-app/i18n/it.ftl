@@ -384,6 +384,7 @@ meshedit-slider-size = misura
 meshedit-slider-size-hint = Misura del pennello (Shift + rotella)
 meshedit-slider-force = forza
 meshedit-slider-force-hint = Forza del pennello (Ctrl + rotella)
+meshedit-limit-value = Perimetro massimo
 meshedit-limit-label = limite
 meshedit-limit-checkbox-hint = Limita la riparazione ai bordi sotto questo perimetro
 meshedit-limit-drag-hint = Off chiude ogni buco sicuro nella zona; il bordo resta aperto

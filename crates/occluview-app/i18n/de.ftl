@@ -384,6 +384,7 @@ meshedit-slider-size = Größe
 meshedit-slider-size-hint = Pinselgröße (Shift + Mausrad)
 meshedit-slider-force = Stärke
 meshedit-slider-force-hint = Pinselstärke (Strg + Mausrad)
+meshedit-limit-value = Maximaler Umfang
 meshedit-limit-label = Limit
 meshedit-limit-checkbox-hint = Reparatur auf Ränder bis zu diesem Umfang beschränken
 meshedit-limit-drag-hint = Aus schließt alle sicheren Löcher im Bereich; Scangrenze bleibt offen

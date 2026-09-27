@@ -390,6 +390,7 @@ meshedit-slider-size = size
 meshedit-slider-size-hint = Brush size (Shift + mouse wheel)
 meshedit-slider-force = force
 meshedit-slider-force-hint = Brush intensity (Ctrl + mouse wheel)
+meshedit-limit-value = Maximum perimeter
 meshedit-limit-label = limit
 meshedit-limit-checkbox-hint = Restrict repair to rims no larger than this perimeter
 meshedit-limit-drag-hint = Off closes every safe hole inside the selected area; the scan border stays open

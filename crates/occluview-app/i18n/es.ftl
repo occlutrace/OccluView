@@ -384,6 +384,7 @@ meshedit-slider-size = tamaño
 meshedit-slider-size-hint = Tamaño del pincel (Shift + rueda)
 meshedit-slider-force = fuerza
 meshedit-slider-force-hint = Fuerza del pincel (Ctrl + rueda)
+meshedit-limit-value = Perímetro máximo
 meshedit-limit-label = límite
 meshedit-limit-checkbox-hint = Limitar la reparación a bordes menores que este perímetro
 meshedit-limit-drag-hint = Off cierra todo agujero seguro del área; el borde queda abierto

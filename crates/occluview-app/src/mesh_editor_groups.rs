@@ -552,7 +552,7 @@ fn close_holes_limit_control(
         egui::WidgetInfo::labeled(
             egui::WidgetType::DragValue,
             enabled && armed,
-            locale.tr("meshedit-limit-label"),
+            locale.tr("meshedit-limit-value"),
         )
     });
     drag_value.on_hover_text(locale.tr("meshedit-limit-drag-hint"));
