@@ -4,6 +4,8 @@
 //! the keys the viewer binds. The compiler checks neither: nothing fails to
 //! compile when an operator instruction describes a shortcut the build lacks.
 
+#![allow(clippy::expect_used)]
+
 use super::*;
 
 #[test]

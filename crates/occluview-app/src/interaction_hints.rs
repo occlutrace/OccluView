@@ -40,6 +40,12 @@ pub(crate) enum HintContext {
     Contacts,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ContextualHint {
+    pub(crate) context: HintContext,
+    pub(crate) scroll_behavior: ScrollBehavior,
+}
+
 const TRACKPAD_SCROLL_GESTURE: &str = "Two-finger scroll";
 
 const NAVIGATION: &[HintRow] = &[
@@ -410,7 +416,7 @@ const fn trackpad_scroll_action_key(scroll_behavior: ScrollBehavior) -> &'static
 mod tests {
     use super::{
         contextual_line, contextual_line_key, macos_navigation_line, macos_navigation_line_key,
-        trackpad_scroll_action_key, HintContext, HintRow, ALL_SECTIONS, TRACKPAD_SCROLL_GESTURE,
+        HintContext, HintRow, ALL_SECTIONS, TRACKPAD_SCROLL_GESTURE,
     };
     use crate::app_settings::ScrollBehavior;
 

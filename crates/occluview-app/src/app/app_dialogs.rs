@@ -6,6 +6,7 @@ use super::information_dialog::InformationDialog;
 use super::{load_app_logo_color_image, status_overlay_rect, PathBuf, OPEN_DIALOG_EXTENSIONS};
 use super::{AppErrorAction, OccluViewApp};
 use crate::icons::AppIcon;
+use crate::interaction_hints::ContextualHint;
 use crate::measure_overlay::{toolbar_toggle, ToolbarToggle};
 use crate::measure_tool::{self, MeasureMode};
 use crate::ui_theme;
@@ -442,10 +443,12 @@ impl OccluViewApp {
                     render_contextual_hint(
                         ui,
                         rect,
-                        self.interaction_hint_context(),
+                        ContextualHint {
+                            context: self.interaction_hint_context(),
+                            scroll_behavior: self.persistence.settings.scroll_behavior,
+                        },
                         ink,
                         &self.ui.locale,
-                        self.persistence.settings.scroll_behavior,
                     );
                 }
             });
