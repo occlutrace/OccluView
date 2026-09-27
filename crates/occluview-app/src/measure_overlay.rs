@@ -189,23 +189,14 @@ fn ruler_line_under(
         if depth_a <= 0.0 || depth_b <= 0.0 {
             continue;
         }
-        let distance = distance_to_segment(pointer, a, b);
+        let distance = crate::cut_geometry::closest_param_on_segment(pointer, a, b)
+            .1
+            .sqrt();
         if distance <= RULER_LINE_SNAP_PX && closest.is_none_or(|(best, _)| distance < best) {
             closest = Some((distance, index));
         }
     }
     closest.map(|(_, index)| index)
-}
-
-fn distance_to_segment(point: egui::Pos2, a: egui::Pos2, b: egui::Pos2) -> f32 {
-    let along = b - a;
-    let length_sq = along.length_sq();
-    let t = if length_sq > f32::EPSILON {
-        ((point - a).dot(along) / length_sq).clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
-    point.distance(a + along * t)
 }
 
 /// A ruler ending on a line, projected: its two ends and its base's two ends.

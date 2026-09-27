@@ -8,7 +8,7 @@
 
 #![forbid(unsafe_code)]
 
-use glam::Vec3;
+use glam::{Vec2, Vec3};
 
 /// Squared sine of the smallest angle a facet may have and still contribute a
 /// normal. Scale-free: the test compares twice the facet's area against its own
@@ -28,6 +28,20 @@ pub const DEGENERATE_AREA_SIN: f32 = 1e-10;
 #[must_use]
 pub fn facet_contributes_normal(longest_edge_sq: f32, face_normal_length_sq: f32) -> bool {
     face_normal_length_sq > longest_edge_sq * longest_edge_sq * DEGENERATE_AREA_SIN
+}
+
+/// Closest parameter on segment `a -> b` to `point`, and squared distance to
+/// that point. A degenerate segment yields parameter zero.
+#[must_use]
+pub fn closest_param_on_segment_2d(point: Vec2, a: Vec2, b: Vec2) -> (f32, f32) {
+    let along = b - a;
+    let length_sq = along.length_squared();
+    let t = if length_sq <= f32::EPSILON {
+        0.0
+    } else {
+        ((point - a).dot(along) / length_sq).clamp(0.0, 1.0)
+    };
+    (t, point.distance_squared(a + along * t))
 }
 
 /// Above this many vertices sharing one position, normal agreement is judged
@@ -186,6 +200,30 @@ mod tests {
             !facet_contributes_normal(2.0, 1e-12),
             "a sliver far below the gate must not contribute"
         );
+    }
+
+    #[test]
+    fn closest_segment_parameter_clamps_and_handles_degenerate_segments() {
+        let (middle_t, middle_distance_sq) = closest_param_on_segment_2d(
+            Vec2::new(3.0, 4.0),
+            Vec2::new(0.0, 0.0),
+            Vec2::new(10.0, 0.0),
+        );
+        assert!((middle_t - 0.3).abs() < f32::EPSILON);
+        assert!((middle_distance_sq - 16.0).abs() < f32::EPSILON);
+
+        let (end_t, end_distance_sq) =
+            closest_param_on_segment_2d(Vec2::new(-2.0, 0.0), Vec2::ZERO, Vec2::X);
+        assert!(end_t.abs() < f32::EPSILON);
+        assert!((end_distance_sq - 4.0).abs() < f32::EPSILON);
+
+        let (point_t, point_distance_sq) = closest_param_on_segment_2d(
+            Vec2::new(4.0, 6.0),
+            Vec2::new(1.0, 2.0),
+            Vec2::new(1.0, 2.0),
+        );
+        assert!(point_t.abs() < f32::EPSILON);
+        assert!((point_distance_sq - 25.0).abs() < f32::EPSILON);
     }
 
     #[test]
