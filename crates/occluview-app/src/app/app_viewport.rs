@@ -3,6 +3,7 @@ use super::{
     render_extent_change_requires_rerender, viewport_orbit_drag_active, viewport_pan_drag_active,
     zoom_factor_from_scroll, MeshSelectionDrag, OccluViewApp,
 };
+use crate::app_settings::{ScrollBehavior, Settings};
 use glam::Vec2;
 
 #[derive(Clone, Copy)]
@@ -28,8 +29,9 @@ fn pan_camera_from_point_scroll(
     camera: &mut occluview_core::Camera,
     ctx: &egui::Context,
     viewport_rect: egui::Rect,
+    behavior: ScrollBehavior,
 ) -> bool {
-    let scroll = super::app_input::take_raw_point_wheel_delta(ctx);
+    let scroll = super::app_input::take_raw_point_wheel_delta_for_pan(ctx, behavior);
     if scroll == egui::Vec2::ZERO {
         return false;
     }
@@ -39,6 +41,30 @@ fn pan_camera_from_point_scroll(
         Vec2::new(viewport_size.x.max(1.0), viewport_size.y.max(1.0)),
     );
     true
+}
+
+pub(super) fn update_camera_from_scroll(
+    camera: &mut occluview_core::Camera,
+    ctx: &egui::Context,
+    viewport_rect: egui::Rect,
+    settings: &Settings,
+) -> bool {
+    let scroll_behavior = if cfg!(target_os = "macos") {
+        settings.scroll_behavior
+    } else {
+        ScrollBehavior::Zoom
+    };
+    let mut changed = pan_camera_from_point_scroll(camera, ctx, viewport_rect, scroll_behavior);
+    if let Some(pointer) = ctx.input(|input| input.pointer.hover_pos()) {
+        changed |= zoom_camera_from_wheel(
+            camera,
+            ctx,
+            settings.zoom_sensitivity(),
+            viewport_rect,
+            pointer,
+        );
+    }
+    changed
 }
 
 pub(super) fn zoom_camera_from_wheel(
@@ -359,26 +385,9 @@ impl OccluViewApp {
             }
         }
 
-        // On macOS, pixel-unit scroll (a trackpad's two fingers) pans like a
-        // dragged canvas and the pinch below zooms, the platform's convention.
-        // Elsewhere pixel-unit scroll keeps zooming: winit reports a Wayland
-        // touchpad in pixels and has no pinch there, so panning would leave
-        // that touchpad with no way to zoom. A wheel the sculpt brush took
-        // this frame does not also move the camera.
-        if response.hovered() && cfg!(target_os = "macos") && !sculpt_wheel_used {
-            changed |= pan_camera_from_point_scroll(camera, ctx, viewport_rect);
-        }
-
         if response.hovered() && !sculpt_wheel_used {
-            if let Some(pointer) = ctx.input(|input| input.pointer.hover_pos()) {
-                changed |= zoom_camera_from_wheel(
-                    camera,
-                    ctx,
-                    self.persistence.settings.zoom_sensitivity(),
-                    viewport_rect,
-                    pointer,
-                );
-            }
+            changed |=
+                update_camera_from_scroll(camera, ctx, viewport_rect, &self.persistence.settings);
         }
 
         if changed {
@@ -420,7 +429,7 @@ impl OccluViewApp {
 mod tests {
     #![allow(clippy::float_cmp)]
 
-    use super::zoom_camera_from_wheel;
+    use super::{pan_camera_from_point_scroll, zoom_camera_from_wheel, ScrollBehavior};
     use eframe::egui;
     use occluview_core::Camera;
 
@@ -463,6 +472,50 @@ mod tests {
         })
         .drop_without_applying_deltas();
         (changed, camera.orthographic_height)
+    }
+
+    fn camera_after_point_scroll(behavior: ScrollBehavior) -> (bool, Camera) {
+        let ctx = egui::Context::default();
+        let viewport_rect =
+            egui::Rect::from_min_size(egui::pos2(100.0, 80.0), egui::vec2(800.0, 600.0));
+        let input = egui::RawInput {
+            screen_rect: Some(viewport_rect),
+            events: vec![egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, 40.0),
+                phase: egui::TouchPhase::Move,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            ..Default::default()
+        };
+        let mut camera = Camera::default();
+        let mut changed = false;
+        ctx.run_ui(input, |ui| {
+            changed = pan_camera_from_point_scroll(&mut camera, ui.ctx(), viewport_rect, behavior);
+            changed |= zoom_camera_from_wheel(
+                &mut camera,
+                ui.ctx(),
+                1.0,
+                viewport_rect,
+                viewport_rect.center(),
+            );
+        })
+        .drop_without_applying_deltas();
+        (changed, camera)
+    }
+
+    #[test]
+    fn pixel_scroll_setting_routes_viewport_input_to_pan_or_zoom() {
+        let initial = Camera::default();
+        let (pan_changed, panned) = camera_after_point_scroll(ScrollBehavior::Pan);
+        assert!(pan_changed);
+        assert_ne!(panned.target, initial.target);
+        assert_eq!(panned.orthographic_height, initial.orthographic_height);
+
+        let (zoom_changed, zoomed) = camera_after_point_scroll(ScrollBehavior::Zoom);
+        assert!(zoom_changed);
+        assert_eq!(zoomed.target, initial.target);
+        assert!(zoomed.orthographic_height < initial.orthographic_height);
     }
 
     fn camera_after_pinch(gesture_factor: f32) -> (bool, f32) {
