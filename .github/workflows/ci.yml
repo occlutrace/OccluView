@@ -99,6 +99,34 @@ jobs:
       - name: cargo check (shell + app)
         run: cargo check -p occluview-shell -p occluview-app --locked
 
+  windows-preview-package:
+    name: test (Windows preview package)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: "1.98.0"
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - name: Install WiX Toolset
+        shell: pwsh
+        run: choco install wixtoolset --version 3.14.1 --allow-downgrade --yes --no-progress
+      - name: Enable long Git paths for native dependency sources
+        shell: pwsh
+        run: git config --global core.longpaths true
+      - name: Build diagnostic MSI from the current shell source
+        shell: pwsh
+        run: ./install/build-msi.ps1 -Configuration diagnostic -SignMode none
+      - name: Install package and verify its Preview Handler in Prevhost
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem ./dist -Filter "*-diagnostic.msi" -File | Select-Object -First 1
+          if ($null -eq $msi) { throw "Diagnostic MSI was not built." }
+          ./install/test-msi-lifecycle.ps1 -MsiPath $msi.FullName -Diagnostic
+
   macos-arm:
     name: build and test (macOS Apple Silicon)
     runs-on: macos-15
@@ -122,6 +150,7 @@ jobs:
       - name: Test the viewer and updater suites on Apple Silicon
         env:
           MACOSX_DEPLOYMENT_TARGET: "14.0"
+          OCCLUVIEW_TEST_STATE_DIR: ${{ runner.temp }}/occluview-app-test-state
         # The whole app suite, not a macOS-only subset, because the Metal
         # backed offscreen tests (contact rendering, adapter policy) are the
         # hardware acceptance that this lane exists to provide, and the
@@ -141,6 +170,14 @@ jobs:
       - name: Package and verify unsigned Apple Silicon app, DMG, and PKG
         run: |
           bash install/macos/build-app.sh --no-build
+          app="target/macos/OccluView.app"
+          log="$RUNNER_TEMP/occluview-scene-load.log"
+          plist="$app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Add :LSEnvironment dict' "$plist"
+          /usr/libexec/PlistBuddy -c "Add :LSEnvironment:OCCLUVIEW_SCENE_LOAD_LOG string $log" "$plist"
+          plutil -lint "$plist"
+          codesign --force --sign - "$app"
+          codesign --verify --deep --strict "$app"
           bash install/macos/build-dmg.sh --no-build
           bash install/macos/build-pkg.sh --no-build
           dmg="$(find target/macos -maxdepth 1 -type f -name 'OccluView-*-aarch64.dmg' -print -quit)"
@@ -157,6 +194,28 @@ jobs:
           test -n "$version"
           target/macos/OccluView.app/Contents/MacOS/occluview --version | grep -F "$version"
           target/macos/OccluView.app/Contents/Helpers/occluview-cli --version | grep -F "$version"
+      - name: Install package and open a mesh through LaunchServices
+        run: |
+          pkg="$(find target/macos -maxdepth 1 -type f -name 'OccluView-*-aarch64.pkg' -print -quit)"
+          sample="fuzz/seeds/dispatch/one_triangle_binary.stl"
+          log="$RUNNER_TEMP/occluview-scene-load.log"
+          state_dir="$HOME/Library/Application Support/OccluView"
+          test -n "$pkg"
+          test -s "$sample"
+          rm -rf "$state_dir"
+          test ! -e "$state_dir"
+          sudo installer -pkg "$pkg" -target /
+          test ! -e "$log"
+          open -a /Applications/OccluView.app "$sample"
+          for attempt in $(seq 1 60); do
+            if grep -Fq 'scene load completed' "$log" 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          grep -F 'scene load completed' "$log"
+          grep -Eq 'path_count=1([[:space:]]|$)' "$log"
+          osascript -e 'tell application "OccluView" to quit' >/dev/null 2>&1 || true
 
   linux-renderer-tests:
     name: test (linux renderer)
@@ -207,11 +266,11 @@ jobs:
         with:
           toolchain: "1.98.0"
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-      - name: cargo test --workspace (without WARP pixel suites)
-        run: >
-          cargo test --workspace --all-targets --locked --no-fail-fast --
-          --skip render_thumb::tests
-          --skip preview_scene::
+      - name: cargo test --workspace (WARP render suites)
+        # Thumbnail tests share one renderer. Keep tests sequential so unrelated
+        # renders do not consume each other's request deadlines; burst tests
+        # still spawn concurrent request threads within each test.
+        run: cargo test --workspace --all-targets --locked --no-fail-fast -- --test-threads=1
 
   docs:
     name: cargo doc

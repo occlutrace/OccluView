@@ -958,3 +958,13 @@ load-units-unclear = the size does not settle it; check a known measurement
 contact-stats-balance-hover = Contact area split by the mid-line: before-line / after-line
 mesh-warning-vertex-alpha = vertex alpha was not written
 load-superseded-parked-open = A newer open is waiting: answer its prompt first
+
+shell-preview-open = Open in OccluView
+shell-preview-edit = Edit in OccluView
+shell-preview-front = Front
+shell-preview-top = Top
+shell-preview-side = Side
+shell-preview-isometric = Isometric
+shell-preview-fit-view = Fit view
+shell-preview-wireframe = Wireframe
+shell-preview-copy-image = Copy image

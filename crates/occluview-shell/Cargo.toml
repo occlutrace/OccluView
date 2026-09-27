@@ -30,6 +30,7 @@ diagnostic-logs = []
 occluview-core    = { workspace = true }
 occluview-render  = { workspace = true }
 occluview-formats = { workspace = true }
+occluview-i18n    = { workspace = true }
 occluview-thumbnail = { workspace = true }
 tracing           = { workspace = true }
 thiserror         = { workspace = true }
