@@ -153,8 +153,12 @@ fn accessible_name(
     if let Some(label) = node.label().filter(|label| !label.trim().is_empty()) {
         return label.to_owned();
     }
-    if let Some(value) = node.value().filter(|value| !value.trim().is_empty()) {
-        return value.to_owned();
+    if node.role() == egui::accesskit::Role::Label {
+        return node
+            .value()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_default()
+            .to_owned();
     }
 
     node.labelled_by()
@@ -162,10 +166,20 @@ fn accessible_name(
         .filter_map(|label_id| {
             nodes
                 .get(label_id)
+                .filter(|label_node| label_node.role() == egui::accesskit::Role::Label)
                 .and_then(|label_node| label_node.value())
+                .filter(|label| !label.trim().is_empty())
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+#[test]
+fn a_control_value_does_not_substitute_for_its_accessible_name() {
+    let mut slider = egui::accesskit::Node::new(egui::accesskit::Role::Slider);
+    slider.set_value("50");
+
+    assert!(accessible_name(&slider, &HashMap::new()).trim().is_empty());
 }
 
 fn assert_role(controls: &[AccessibleControl], name: &str, role: &str) {
