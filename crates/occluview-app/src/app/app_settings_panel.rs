@@ -570,10 +570,10 @@ fn theme_key(option: ThemePreference) -> crate::i18n::MessageId {
 }
 
 #[cfg(target_os = "macos")]
-fn scroll_behavior_key(option: ScrollBehavior) -> &'static str {
+fn scroll_behavior_key(option: ScrollBehavior) -> crate::i18n::MessageId {
     match option {
-        ScrollBehavior::Pan => "settings-scroll-pan",
-        ScrollBehavior::Zoom => "settings-scroll-zoom",
+        ScrollBehavior::Pan => crate::i18n::message_id!("settings-scroll-pan"),
+        ScrollBehavior::Zoom => crate::i18n::message_id!("settings-scroll-zoom"),
     }
 }
 
