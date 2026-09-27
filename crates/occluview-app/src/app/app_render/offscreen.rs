@@ -257,7 +257,24 @@ impl OccluViewApp {
             }
             self.render.invalidation.consume_offscreen_scene();
         }
-        if scene_rebuilt && self.push_sculpt_shadow_offscreen() != Some(true) {
+        let sculpt_shadow_pushed = match self.tools.sculpt.worker.as_ref() {
+            None => None,
+            Some(worker) if !worker.has_uncommitted_geometry() => Some(true),
+            Some(worker) => match worker.live_geometry() {
+                None => None,
+                Some((vertices, indices)) => self.render.prepared_scene.as_mut().map(|prepared| {
+                    prepared
+                        .write_entry_sculpt_geometry(
+                            offscreen.renderer(),
+                            &worker.topology,
+                            &vertices,
+                            &indices,
+                        )
+                        .is_some()
+                }),
+            },
+        };
+        if scene_rebuilt && sculpt_shadow_pushed != Some(true) {
             if let Some(worker) = self.tools.sculpt.worker.as_ref() {
                 worker.request_full_sync();
             }
@@ -425,7 +442,24 @@ impl OccluViewApp {
             }
             self.render.invalidation.consume_offscreen_scene();
         }
-        if scene_rebuilt && self.push_sculpt_shadow_offscreen() != Some(true) {
+        let sculpt_shadow_pushed = match self.tools.sculpt.worker.as_ref() {
+            None => None,
+            Some(worker) if !worker.has_uncommitted_geometry() => Some(true),
+            Some(worker) => match worker.live_geometry() {
+                None => None,
+                Some((vertices, indices)) => self.render.prepared_scene.as_mut().map(|prepared| {
+                    prepared
+                        .write_entry_sculpt_geometry(
+                            offscreen.renderer(),
+                            &worker.topology,
+                            &vertices,
+                            &indices,
+                        )
+                        .is_some()
+                }),
+            },
+        };
+        if scene_rebuilt && sculpt_shadow_pushed != Some(true) {
             if let Some(worker) = self.tools.sculpt.worker.as_ref() {
                 worker.request_full_sync();
             }
@@ -435,10 +469,12 @@ impl OccluViewApp {
         }
         if self.render.invalidation.offscreen_overlay_stale() {
             let overlay = selection_overlay_for_scene(&scene, &self.document.edit_mode);
-            self.render.prepared_selection_overlay = overlay.as_ref().map(|overlay| {
+            let prepared_overlay = overlay.as_ref().and_then(|overlay| {
                 let sources = overlay.prepared_sources();
-                offscreen.prepare_scene(&sources)
+                let offscreen = self.render.offscreen.as_ref()?;
+                Some(offscreen.prepare_scene(&sources))
             });
+            self.render.prepared_selection_overlay = prepared_overlay;
             self.render.invalidation.consume_offscreen_overlay();
         }
         let prepared = self

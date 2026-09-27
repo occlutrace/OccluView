@@ -314,27 +314,32 @@ fn rms_displacement(positions: &[f32], pose: Rigid) -> f64 {
 
 /// Whether this run explicitly requires the private scan corpus.
 fn fixtures_are_required() -> bool {
-    std::env::var_os("OCCLUVIEW_ALIGN_FIXTURES_REQUIRED")
-        .is_some_and(|value| value != "0")
+    std::env::var_os("OCCLUVIEW_ALIGN_FIXTURES_REQUIRED").is_some_and(|value| value != "0")
 }
 
 /// Every `.stl` in the fixture directory, sorted so a failure names the same
 /// file on every machine. An ignored real-scan check never passes without data.
 fn fixtures() -> Vec<PathBuf> {
     let directory = std::env::var("OCCLUVIEW_ALIGN_FIXTURES").unwrap_or_else(|_| {
-        if fixtures_are_required() {
-            panic!("release gate: OCCLUVIEW_ALIGN_FIXTURES is not set");
-        }
+        assert!(
+            !fixtures_are_required(),
+            "release gate: OCCLUVIEW_ALIGN_FIXTURES is not set"
+        );
         panic!("set OCCLUVIEW_ALIGN_FIXTURES before running ignored real-scan tests");
     });
     let entries = std::fs::read_dir(&directory).unwrap_or_else(|_| {
-        if fixtures_are_required() {
-            panic!("release gate: OCCLUVIEW_ALIGN_FIXTURES must name a readable directory");
-        }
+        assert!(
+            !fixtures_are_required(),
+            "release gate: OCCLUVIEW_ALIGN_FIXTURES must name a readable directory"
+        );
         panic!("OCCLUVIEW_ALIGN_FIXTURES must name a readable directory");
     });
     let mut files: Vec<PathBuf> = entries
-        .map(|entry| entry.expect("fixture directory entries must be readable").path())
+        .map(|entry| {
+            entry
+                .expect("fixture directory entries must be readable")
+                .path()
+        })
         .filter(|path| {
             path.extension()
                 .and_then(|extension| extension.to_str())

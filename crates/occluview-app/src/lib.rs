@@ -92,6 +92,7 @@ mod recent_files;
 mod repair_report;
 mod scale_bar;
 mod scene_loading;
+mod sculpt_kernel;
 mod sculpt_tool;
 mod sculpt_worker;
 mod section_view;

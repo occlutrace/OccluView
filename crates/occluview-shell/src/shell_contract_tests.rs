@@ -98,6 +98,14 @@ fn workflow_step<'a>(workflow: &'a Value, job: &str, name: &str) -> Option<&'a V
 }
 
 const CI_MACOS_PACKAGE_SMOKE: &str = r#"bash install/macos/build-app.sh --no-build
+app="target/macos/OccluView.app"
+log="$RUNNER_TEMP/occluview-scene-load.log"
+plist="$app/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c 'Add :LSEnvironment dict' "$plist"
+/usr/libexec/PlistBuddy -c "Add :LSEnvironment:OCCLUVIEW_SCENE_LOAD_LOG string $log" "$plist"
+plutil -lint "$plist"
+codesign --force --sign - "$app"
+codesign --verify --deep --strict "$app"
 bash install/macos/build-dmg.sh --no-build
 bash install/macos/build-pkg.sh --no-build
 dmg="$(find target/macos -maxdepth 1 -type f -name 'OccluView-*-aarch64.dmg' -print -quit)"

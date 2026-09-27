@@ -383,6 +383,14 @@ meshedit-sculpt-addremove = Añadir / Quitar  [1]
 meshedit-sculpt-addremove-hint = Aportar material arrastrando; Shift excava. Shift+rueda redimensiona, Ctrl+rueda cambia fuerza. Tecla: 1.
 meshedit-sculpt-smooth = Suavizar  [2]
 meshedit-sculpt-smooth-hint = Relajar la superficie arrastrando; Shift fuerza el máximo. Shift+rueda redimensiona, Ctrl+rueda cambia fuerza. Tecla: 2.
+meshedit-section-sculpt-tip = Punta
+meshedit-sculpt-tip-ball = Bola
+meshedit-sculpt-tip-ball-hint = Huella redonda: máxima en el centro y se desvanece hacia el borde.
+meshedit-sculpt-tip-knife = Cuchilla
+meshedit-sculpt-tip-knife-hint = Filo estrecho que se ensancha en dirección transversal al trazo.
+meshedit-sculpt-tip-cylinder = Cilindro
+meshedit-sculpt-tip-cylinder-hint = Huella plana con borde suave para nivelar una cara.
+
 meshedit-slider-size = tamaño
 meshedit-slider-size-hint = Tamaño del pincel (Shift + rueda)
 meshedit-slider-force = fuerza

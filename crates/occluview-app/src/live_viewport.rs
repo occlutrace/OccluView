@@ -3,8 +3,8 @@
 use eframe::{egui, egui_wgpu, wgpu};
 use occluview_render::{
     ClipPlane, GpuCamera, GpuTexture, PreparedScene, PreparedSceneSource, PreparedSceneTopology,
-    PreparedSceneUpdate, RenderError, Renderer, SculptBrushUniform, SculptSurfaceFeedbackRequest,
-    SculptToolUniform,
+    PreparedSceneUpdate, RenderError, Renderer, SculptBrushUniform, SculptBufferUpdateStats,
+    SculptSurfaceFeedbackRequest, SculptToolUniform, SculptTopologyDelta,
 };
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -172,6 +172,36 @@ impl LiveViewport {
                 .prepared_scene
                 .as_ref()
                 .is_some_and(|scene| scene.write_entry_vertices(&self.renderer, topology, vertices))
+    }
+
+    pub(super) fn write_scene_sculpt_delta(
+        &mut self,
+        topology: &PreparedSceneTopology,
+        delta: &SculptTopologyDelta,
+    ) -> Option<SculptBufferUpdateStats> {
+        if self.renderer.is_gpu_faulted() {
+            return None;
+        }
+        self.prepared_scene
+            .as_mut()?
+            .write_entry_sculpt_delta(&self.renderer, topology, delta)
+    }
+
+    pub(super) fn write_scene_sculpt_geometry(
+        &mut self,
+        topology: &PreparedSceneTopology,
+        vertices: &[occluview_core::Vertex],
+        indices: &[u32],
+    ) -> Option<SculptBufferUpdateStats> {
+        if self.renderer.is_gpu_faulted() {
+            return None;
+        }
+        self.prepared_scene.as_mut()?.write_entry_sculpt_geometry(
+            &self.renderer,
+            topology,
+            vertices,
+            indices,
+        )
     }
 
     pub(super) fn has_prepared_scene(&self) -> bool {
