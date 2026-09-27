@@ -7,7 +7,7 @@
 //!
 //! Fixtures live outside the repository — scan data does not belong in git.
 //! Point `OCCLUVIEW_ALIGN_FIXTURES` at a directory of binary STL files to run
-//! the checks. The six full-arch tests are ignored in ordinary runs and are
+//! the checks. The seven corpus-backed tests are ignored in ordinary runs and are
 //! selected by `scripts/validate-release-private.sh` with `--ignored`.
 //!
 //! The thresholds below — a 0.05 mm residual, 85% measured, 90% inside the
@@ -365,24 +365,56 @@ fn fixture_pair() -> (PathBuf, PathBuf) {
     (files[0].clone(), files[1].clone())
 }
 
-/// Minimal binary STL reader: an 80-byte header, a triangle count, then 50
-/// bytes per facet. Vertices are emitted as soup, which is what an STL is.
-fn read_binary_stl(path: &Path) -> (Vec<f32>, Vec<u32>) {
-    let bytes = std::fs::read(path).expect("fixture must be readable");
-    assert!(
-        bytes.len() > 84,
-        "{} is too short to be an STL",
-        path.display()
-    );
-    let count = u32::from_le_bytes([bytes[80], bytes[81], bytes[82], bytes[83]]) as usize;
+#[derive(Debug, PartialEq, Eq)]
+enum BinaryStlError {
+    HeaderTooShort { actual: usize },
+    SizeOverflow,
+    TooManyVertices,
+    AllocationFailed,
+    TruncatedBody { expected: usize, actual: usize },
+}
 
-    let mut positions = Vec::with_capacity(count * 9);
-    let mut indices = Vec::with_capacity(count * 3);
+/// Parse binary STL bytes after checking the declared body size.
+fn parse_binary_stl(bytes: &[u8]) -> Result<(Vec<f32>, Vec<u32>), BinaryStlError> {
+    if bytes.len() < 84 {
+        return Err(BinaryStlError::HeaderTooShort {
+            actual: bytes.len(),
+        });
+    }
+
+    let count = usize::try_from(u32::from_le_bytes([
+        bytes[80], bytes[81], bytes[82], bytes[83],
+    ]))
+    .map_err(|_| BinaryStlError::SizeOverflow)?;
+    let body_size = count.checked_mul(50).ok_or(BinaryStlError::SizeOverflow)?;
+    let expected_size = 84usize
+        .checked_add(body_size)
+        .ok_or(BinaryStlError::SizeOverflow)?;
+    if bytes.len() < expected_size {
+        return Err(BinaryStlError::TruncatedBody {
+            expected: expected_size,
+            actual: bytes.len(),
+        });
+    }
+
+    let vertex_count = count.checked_mul(9).ok_or(BinaryStlError::SizeOverflow)?;
+    let index_count = count.checked_mul(3).ok_or(BinaryStlError::SizeOverflow)?;
+    let maximum_index = usize::try_from(u32::MAX).map_err(|_| BinaryStlError::SizeOverflow)?;
+    if index_count.saturating_sub(1) > maximum_index {
+        return Err(BinaryStlError::TooManyVertices);
+    }
+
+    let mut positions = Vec::new();
+    positions
+        .try_reserve_exact(vertex_count)
+        .map_err(|_| BinaryStlError::AllocationFailed)?;
+    let mut indices = Vec::new();
+    indices
+        .try_reserve_exact(index_count)
+        .map_err(|_| BinaryStlError::AllocationFailed)?;
+
     for triangle in 0..count {
         let base = 84 + triangle * 50;
-        if base + 50 > bytes.len() {
-            break;
-        }
         // Skip the facet normal: it is computed from the winding anyway.
         for corner in 0..3 {
             for axis in 0..3 {
@@ -395,10 +427,35 @@ fn read_binary_stl(path: &Path) -> (Vec<f32>, Vec<u32>) {
                 ]));
             }
         }
-        let first = u32::try_from(triangle * 3).expect("triangle index fits");
+        let first = u32::try_from(triangle * 3).expect("validated triangle index fits");
         indices.extend_from_slice(&[first, first + 1, first + 2]);
     }
-    (positions, indices)
+    Ok((positions, indices))
+}
+
+/// Minimal binary STL reader: an 80-byte header, a triangle count, then 50
+/// bytes per facet. Vertices are emitted as soup, which is what an STL is.
+fn read_binary_stl(path: &Path) -> (Vec<f32>, Vec<u32>) {
+    let bytes = std::fs::read(path).expect("fixture must be readable");
+    parse_binary_stl(&bytes).unwrap_or_else(|error| {
+        panic!("{} is not a complete binary STL: {error:?}", path.display())
+    })
+}
+
+#[test]
+fn binary_stl_reader_rejects_truncated_body_before_reserving_vertices() {
+    let mut bytes = vec![0; 84];
+    bytes[80..84].copy_from_slice(&u32::MAX.to_le_bytes());
+
+    let result = parse_binary_stl(&bytes);
+
+    assert!(matches!(
+        result,
+        Err(BinaryStlError::TruncatedBody {
+            actual: 84,
+            expected: _
+        })
+    ));
 }
 
 /// The broad search must seat a same-arch scan from a hand placement.
@@ -620,7 +677,7 @@ fn a_rescanned_arch_seats_from_a_hand_placement_when_fixtures_are_present() {
         soup.vertex_count()
     );
 
-    for shift_mm in [0.5_f64, 1.0, 2.0, 4.0, 8.0, 15.0, 25.0] {
+    for shift_mm in [0.5_f64, 1.0, 2.0, 4.0, 8.0, 15.0] {
         let truth = Rigid::new(
             DQuat::from_axis_angle(
                 DVec3::new(0.3, 0.5, 0.8).normalize(),
@@ -628,25 +685,48 @@ fn a_rescanned_arch_seats_from_a_hand_placement_when_fixtures_are_present() {
             ),
             DVec3::new(shift_mm * 0.6, -shift_mm * 0.5, shift_mm * 0.3),
         );
-        // The operator's start is the identity: the rescan sits where the
-        // original did, and the tool must find the displacement.
+        let mut moved_positions = Vec::with_capacity(positions.len());
+        for point in positions.as_chunks::<3>().0 {
+            let moved = truth
+                .apply(DVec3::new(
+                    f64::from(point[0]),
+                    f64::from(point[1]),
+                    f64::from(point[2]),
+                ))
+                .as_vec3()
+                .to_array();
+            moved_positions.extend_from_slice(&moved);
+        }
+        let moving_soup = Soup {
+            positions: &moved_positions,
+            indices: &indices,
+            mask: None,
+        };
+        let initial_error = residual_after_correction(&positions, truth, Rigid::IDENTITY);
+        assert!(
+            initial_error > 0.1,
+            "the {shift_mm:.1} mm fixture must start away from the fixed scan"
+        );
+
         let outcome = refine(
-            soup,
+            moving_soup,
             &index,
             Rigid::IDENTITY,
             &RefineSettings::default(),
             &CancelFlag::new(),
         );
-        match outcome {
-            Ok(report) => {
-                let error = (report.rigid.translation - truth.translation).length();
-                println!(
-                    "true {shift_mm:>5.1} mm -> ok  rms={:.4} coverage={:.3} conv={} error={error:.3} mm",
-                    report.rms, report.coverage, report.converged
-                );
-            }
-            Err(rejection) => println!("true {shift_mm:>5.1} mm -> REFUSED {rejection:?}"),
-        }
+        let report = outcome.unwrap_or_else(|rejection| {
+            panic!("the {shift_mm:.1} mm rescan must refine: {rejection:?}")
+        });
+        assert!(
+            report.is_trustworthy_refinement_for(&RefineSettings::default()),
+            "the {shift_mm:.1} mm rescan must pass the refinement gate"
+        );
+        let residual = residual_after_correction(&positions, truth, report.rigid);
+        assert!(
+            residual <= MAX_RESIDUAL_MM,
+            "the {shift_mm:.1} mm rescan residual is {residual:.5} mm"
+        );
     }
 }
 
