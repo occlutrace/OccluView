@@ -1,7 +1,7 @@
 //! Checks the release notes and operator documentation shipped with the app.
 
 use super::*;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[test]
 fn the_changelog_starts_with_the_current_version_and_descends_without_repeats() {
@@ -26,7 +26,7 @@ fn the_changelog_starts_with_the_current_version_and_descends_without_repeats() 
     );
 
     let mut previous = None;
-    for heading in version_sections {
+    for heading in &version_sections {
         let Some(version) = heading.split_whitespace().nth(1).and_then(parse_version) else {
             panic!("changelog section has no three-part version: {heading:?}");
         };
@@ -37,6 +37,19 @@ fn the_changelog_starts_with_the_current_version_and_descends_without_repeats() 
             );
         }
         previous = Some(version);
+    }
+
+    let tags =
+        repository_tags().unwrap_or_else(|error| panic!("cannot verify release tags: {error}"));
+    for heading in version_sections.iter().skip(1) {
+        let number = heading
+            .split_whitespace()
+            .nth(1)
+            .expect("version heading has a number");
+        assert!(
+            tags.contains(&format!("v{number}")),
+            "historical changelog section {number} has no matching Git tag"
+        );
     }
 }
 
@@ -49,6 +62,32 @@ fn parse_version(raw: &str) -> Option<[u64; 3]> {
         .collect::<Result<_, _>>()
         .ok()?;
     (parts.len() == 3).then(|| [parts[0], parts[1], parts[2]])
+}
+
+fn repository_tags() -> Result<std::collections::BTreeSet<String>, String> {
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| "the app manifest is outside the workspace".to_owned())?;
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(workspace_root)
+        .args(["tag", "--list", "v*"])
+        .output()
+        .map_err(|error| format!("git tag failed to start: {error}"))?;
+    if !output.status.success() {
+        return Err("git tag returned a failure status".to_owned());
+    }
+    let tags: std::collections::BTreeSet<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|tag| !tag.is_empty())
+        .map(str::to_owned)
+        .collect();
+    if tags.is_empty() {
+        return Err("the checkout contains no fetched version tags".to_owned());
+    }
+    Ok(tags)
 }
 
 /// Every key the viewer consumes, written the way the README writes it.
@@ -84,6 +123,8 @@ fn keys_the_viewer_binds() -> std::collections::BTreeSet<String> {
     let mut keys = std::collections::BTreeSet::new();
     for path in sources {
         if path
+            .strip_prefix(&root)
+            .expect("collected source belongs under the app source root")
             .components()
             .any(|part| part.as_os_str().to_string_lossy().contains("tests"))
         {
