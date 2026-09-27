@@ -22,7 +22,6 @@ use super::{
 use crate::scale_bar::ScaleBar;
 use anyhow::Error;
 use eframe::egui;
-use glam::Mat4;
 use occluview_core::{Camera, Scene, SceneMesh};
 use occluview_render::{
     GpuCamera, GpuMeshUniform, Offscreen, PreparedSceneSource, ThumbnailSpec, ViewportSpec,

@@ -15,7 +15,7 @@
 
 mod common;
 
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 use occluview_core::{Mesh, MeshBuilder, MeshTexture, Vertex};
 use occluview_render::{
     ClipPlane, ClippedMeshRequest, CutMeshRequest, GpuCamera, GpuMeshUniform, GpuTexture,
