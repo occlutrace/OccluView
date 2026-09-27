@@ -815,7 +815,7 @@ mod tests {
         let mut scene = named_scene("lower", 0.0);
         push_named_layer(&mut scene, "upper", 5.0);
         app.document.scene = Some(Arc::new(scene));
-        let ctx = eframe::egui::Context::default();
+        let ctx = egui::Context::default();
         app.arm_align_tool(&ctx);
 
         let mut next = app

@@ -40,6 +40,7 @@
 )]
 
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use glam::{DQuat, DVec3};
 use occluview_align::{
@@ -494,21 +495,17 @@ fn a_real_scan_recovers_from_a_ballpark_placement_when_fixtures_are_present() {
 /// refusal.
 #[test]
 fn two_different_arches_are_refused_rather_than_guessed_when_fixtures_are_present() {
-    let Some(dir) = std::env::var_os("OCCLUVIEW_ALIGN_FIXTURES").map(PathBuf::from) else {
+    let Some(files) = fixtures() else {
         eprintln!("skipped: set OCCLUVIEW_ALIGN_FIXTURES");
         return;
     };
-    let mut files: Vec<_> = std::fs::read_dir(&dir)
-        .expect("fixture dir")
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("stl"))
-        })
-        .collect();
-    files.sort();
     if files.len() < 2 {
+        assert!(
+            !fixtures_are_required(),
+            "OCCLUVIEW_ALIGN_FIXTURES_REQUIRED is set but the corpus has only {} STL file; \
+             the two-arch release check requires at least two",
+            files.len()
+        );
         eprintln!("skipped: need two STL files, found {}", files.len());
         return;
     }
@@ -576,6 +573,75 @@ fn two_different_arches_are_refused_rather_than_guessed_when_fixtures_are_presen
             Err(other) => println!("apart {shift_mm:>5.1} mm -> refused {other:?}"),
         }
     }
+}
+
+/// A required release corpus cannot turn a missing private fixture into a skip.
+#[test]
+fn a_required_missing_fixture_directory_fails_the_real_scan_gate() {
+    let missing = std::env::temp_dir()
+        .join(format!("occluview-align-missing-{}", std::process::id()))
+        .join("corpus");
+    let output = Command::new(std::env::current_exe().expect("integration test binary path"))
+        .args([
+            "--exact",
+            "a_real_scan_returns_to_a_known_pose_and_measures_clean_when_fixtures_are_present",
+            "--nocapture",
+        ])
+        .env("OCCLUVIEW_ALIGN_FIXTURES", missing)
+        .env("OCCLUVIEW_ALIGN_FIXTURES_REQUIRED", "1")
+        .output()
+        .expect("run the fixture-gated test in a child process");
+    let transcript = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(
+        !output.status.success(),
+        "a missing required fixture directory must fail, transcript: {transcript}"
+    );
+    assert!(
+        transcript.contains("release gate"),
+        "the failure identifies the missing release corpus: {transcript}"
+    );
+}
+
+#[test]
+fn a_required_single_arch_corpus_fails_the_two_arch_gate() {
+    let directory = std::env::temp_dir().join(format!(
+        "occluview-align-one-fixture-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir(&directory).expect("create a unique temporary fixture directory");
+    let fixture = directory.join("one.stl");
+    std::fs::write(&fixture, []).expect("create one named STL fixture");
+    let output = Command::new(std::env::current_exe().expect("integration test binary path"))
+        .args([
+            "--exact",
+            "two_different_arches_are_refused_rather_than_guessed_when_fixtures_are_present",
+            "--nocapture",
+        ])
+        .env("OCCLUVIEW_ALIGN_FIXTURES", &directory)
+        .env("OCCLUVIEW_ALIGN_FIXTURES_REQUIRED", "1")
+        .output()
+        .expect("run the two-arch test in a child process");
+    std::fs::remove_file(fixture).expect("remove the temporary fixture");
+    std::fs::remove_dir(directory).expect("remove the temporary fixture directory");
+    let transcript = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(
+        !output.status.success(),
+        "a required one-arch corpus must fail the two-arch gate: {transcript}"
+    );
+    assert!(
+        transcript.contains("corpus has only 1 STL file"),
+        "the failure explains the second required scan: {transcript}"
+    );
 }
 
 /// The pairing the tool is actually for: a scan against the same scan.
@@ -910,7 +976,7 @@ fn a_changed_arch_uses_its_small_unchanged_region_when_fixtures_are_present() {
     assert!(error < 0.5, "pose must follow the unchanged region");
     assert!(
         report.is_trustworthy_refinement_for(&settings),
-        "only an adequately supported fit can publish a heatmap"
+        "only an adequately supported fit can publish a heatmap: {report:?}"
     );
 }
 
