@@ -50,6 +50,7 @@ pub mod obj;
 pub mod off;
 pub mod ply;
 pub mod probe;
+mod read;
 pub mod stl;
 mod texture_decode;
 pub mod units;
