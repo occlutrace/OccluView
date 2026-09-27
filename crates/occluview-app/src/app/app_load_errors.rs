@@ -18,7 +18,7 @@ fn too_large_summary(locale: &crate::i18n::LocaleManager, error: &Error) -> Opti
     // not its byte count, and the limit itself is a whole number of gigabytes.
     let gib = (1_u64 << 30) as f64;
     Some(locale.tr_with(
-        "load-file-too-large",
+        crate::i18n::message_id!("load-file-too-large"),
         &[
             ("size", &format!("{:.1}", *bytes as f64 / gib)),
             ("limit", &format!("{}", *limit >> 30)),
@@ -33,9 +33,9 @@ pub(super) fn load_error_dialog(
     paths: &[PathBuf],
 ) -> AppErrorDialog {
     let title = if action == "Add" {
-        locale.text("error-add-title")
+        locale.text(crate::i18n::message_id!("error-add-title"))
     } else {
-        locale.text("error-open-title")
+        locale.text(crate::i18n::message_id!("error-open-title"))
     };
     let summary = load_failure_summary(locale, action, error);
     if is_special_load_error(error) {
@@ -80,12 +80,12 @@ pub(super) fn load_failure_summary(
     }
     if action == "Add" {
         locale.tr_with(
-            "load-action-failed-add",
+            crate::i18n::message_id!("load-action-failed-add"),
             &[("detail", &format!("{error:#}"))],
         )
     } else {
         locale.tr_with(
-            "load-action-failed-open",
+            crate::i18n::message_id!("load-action-failed-open"),
             &[("detail", &format!("{error:#}"))],
         )
     }
@@ -115,7 +115,7 @@ fn memory_budget_summary(locale: &crate::i18n::LocaleManager, error: &Error) -> 
     let gib = (1_u64 << 30) as f64;
     let size_gib = (*estimated_bytes as f64 / gib * 10.0).ceil() / 10.0;
     Some(locale.tr_with(
-        "load-memory-budget-exceeded",
+        crate::i18n::message_id!("load-memory-budget-exceeded"),
         &[
             ("size", &format!("{size_gib:.1}")),
             ("limit", &format!("{:.1}", *limit as f64 / gib)),

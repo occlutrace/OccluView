@@ -362,7 +362,7 @@ fn every_shipped_key_is_usable_and_the_release_key_is_among_them() {
         .lines()
         .find(|line| !line.starts_with("untrusted comment:") && !line.trim().is_empty())
         .map(str::trim)
-        .unwrap_or_default();
+        .expect("the published key file contains a public-key line");
     assert_eq!(
         UPDATE_PUBKEY, published,
         "the compiled-in key and occluview.pub have drifted; whichever is \

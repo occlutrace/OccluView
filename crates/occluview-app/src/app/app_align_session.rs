@@ -16,9 +16,13 @@ impl OccluViewApp {
         let restored = self.restore_session_poses();
         self.disarm_align_tool(ctx);
         self.ui.status_message = Some(if restored {
-            self.ui.locale.tr("align-session-canceled")
+            self.ui
+                .locale
+                .tr(crate::i18n::message_id!("align-session-canceled"))
         } else {
-            self.ui.locale.tr("align-session-closed")
+            self.ui
+                .locale
+                .tr(crate::i18n::message_id!("align-session-closed"))
         });
     }
 
@@ -35,9 +39,18 @@ impl OccluViewApp {
             .is_some_and(crate::align_worker::AlignWorker::is_busy);
         self.disarm_align_tool(ctx);
         self.ui.status_message = Some(match (running, moved) {
-            (true, _) => self.ui.locale.tr("align-session-closed-running"),
-            (false, true) => self.ui.locale.tr("align-session-kept"),
-            (false, false) => self.ui.locale.tr("align-session-closed"),
+            (true, _) => self
+                .ui
+                .locale
+                .tr(crate::i18n::message_id!("align-session-closed-running")),
+            (false, true) => self
+                .ui
+                .locale
+                .tr(crate::i18n::message_id!("align-session-kept")),
+            (false, false) => self
+                .ui
+                .locale
+                .tr(crate::i18n::message_id!("align-session-closed")),
         });
     }
 

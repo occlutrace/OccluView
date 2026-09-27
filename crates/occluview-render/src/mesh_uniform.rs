@@ -242,102 +242,185 @@ mod tests {
     #![allow(clippy::expect_used, clippy::float_cmp)]
 
     use super::*;
+    use std::mem::offset_of;
 
-    /// The WGSL struct and this one are two hand-written copies of the same
-    /// memory layout. Nothing but this test stops them drifting: a mismatch is
-    /// silent corruption of every flag past the divergence, not a compile
-    /// error.
-    #[test]
-    fn the_shader_struct_matches_this_one_field_for_field() {
-        let shader = include_str!("../shaders/mesh.wgsl");
-        let start = shader
-            .find("struct MeshUniform {")
-            .expect("mesh.wgsl must declare MeshUniform");
-        let body = &shader[start..];
-        let end = body.find('}').expect("MeshUniform must be closed");
-        let fields: Vec<&str> = body[..end]
-            .lines()
-            .skip(1)
-            .map(str::trim)
-            .filter(|line| !line.is_empty() && !line.starts_with("//"))
-            .filter_map(|line| line.split(':').next())
-            .collect();
-
-        assert_eq!(
-            fields,
-            vec![
-                "model",
-                "tint",
-                "opacity",
-                "has_texture",
-                "show_orientation",
-                "show_vertex_colors",
-                "show_texture",
-                "measured_map",
-                "contact_map",
-                "contact_field_width",
-                "contact_gap",
-                "contact_stops",
-                "contact_stop_count",
-                "overlay_paint",
-                "contact_padding_0",
-                "contact_padding_1",
-            ],
-            "mesh.wgsl's MeshUniform drifted from GpuMeshUniform"
-        );
+    fn parse_shader(source: &str) -> naga::Module {
+        let module = naga::front::wgsl::parse_str(source).expect("renderer WGSL parses");
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .expect("renderer WGSL validates");
+        module
     }
 
-    /// Every shader that declares its own `MeshUniform` must match the same
-    /// layout, or the drift is silent corruption rather than a compile error.
-    ///
-    /// `sculpt_feedback.wgsl` hand-declares a third copy (it names the contact
-    /// slots `_padding_0/_padding_1`, which is correct for a pass that does not
-    /// read them, and reads only `model`, which sits at offset 0). Nothing
-    /// pinned it: the test above parses `mesh.wgsl` alone, so reordering
-    /// `GpuMeshUniform::model` would have shifted every field this shader reads
-    /// with no failure anywhere.
-    #[test]
-    fn every_shader_that_declares_mesh_uniform_matches_this_one() {
-        for shader in [
-            include_str!("../shaders/mesh.wgsl"),
-            include_str!("../shaders/sculpt_feedback.wgsl"),
-        ] {
-            let start = shader
-                .find("struct MeshUniform {")
-                .expect("every render shader must declare MeshUniform");
-            let body = &shader[start..];
-            let end = body.find('}').expect("MeshUniform must be closed");
-            let fields: Vec<&str> = body[..end]
-                .lines()
-                .skip(1)
-                .map(str::trim)
-                .filter(|line| !line.is_empty() && !line.starts_with("//"))
-                .filter_map(|line| line.split(':').next())
-                .collect();
-            // `model` must be first in every copy: it is the only field the
-            // feedback pass reads, and a reorder breaks it without any other
-            // check failing.
-            assert_eq!(
-                fields.first().copied(),
-                Some("model"),
-                "a shader's MeshUniform does not start with `model`"
-            );
-            assert!(
-                fields.contains(&"tint") && fields.contains(&"opacity"),
-                "a shader's MeshUniform does not match GpuMeshUniform's prefix"
-            );
+    fn scalar_name(scalar: naga::Scalar) -> &'static str {
+        match (scalar.kind, scalar.width) {
+            (naga::ScalarKind::Float, 4) => "f32",
+            (naga::ScalarKind::Uint, 4) => "u32",
+            (naga::ScalarKind::Sint, 4) => "i32",
+            _ => "unsupported scalar",
         }
     }
 
-    /// The WGSL array length and this constant are one fact in two languages.
+    fn shader_type_name(module: &naga::Module, ty: naga::Handle<naga::Type>) -> String {
+        match &module.types[ty].inner {
+            naga::TypeInner::Scalar(scalar) => scalar_name(*scalar).to_owned(),
+            naga::TypeInner::Vector { size, scalar } => {
+                format!("vec{}<{}>", u8::from(*size), scalar_name(*scalar))
+            }
+            naga::TypeInner::Matrix {
+                columns,
+                rows,
+                scalar,
+            } => format!(
+                "mat{}x{}<{}>",
+                u8::from(*columns),
+                u8::from(*rows),
+                scalar_name(*scalar)
+            ),
+            naga::TypeInner::Array { base, size, .. } => {
+                let count = match *size {
+                    naga::ArraySize::Constant(count) => count.get().to_string(),
+                    naga::ArraySize::Pending(_) => "override".to_owned(),
+                    naga::ArraySize::Dynamic => "dynamic".to_owned(),
+                };
+                format!("array<{}, {count}>", shader_type_name(module, *base))
+            }
+            _ => "unsupported WGSL type".to_owned(),
+        }
+    }
+
+    #[allow(clippy::panic)]
+    fn struct_fields(module: &naga::Module, name: &str) -> Vec<(String, usize, String)> {
+        let (_, ty) = module
+            .types
+            .iter()
+            .find(|(_, ty)| ty.name.as_deref() == Some(name))
+            .expect("shader declares the requested uniform struct");
+        let naga::TypeInner::Struct { members, .. } = &ty.inner else {
+            panic!("the uniform type is a WGSL struct");
+        };
+        members
+            .iter()
+            .map(|member| {
+                (
+                    member
+                        .name
+                        .clone()
+                        .expect("uniform struct members are named"),
+                    usize::try_from(member.offset).expect("WGSL struct offset fits usize"),
+                    shader_type_name(module, member.ty),
+                )
+            })
+            .collect()
+    }
+
     #[test]
-    fn the_shader_stop_array_holds_every_stop_the_ramp_can_carry() {
-        let shader = include_str!("../shaders/mesh.wgsl");
-        assert!(
-            shader.contains("array<vec4<f32>, 16>"),
-            "mesh.wgsl's stop table must hold CONTACT_STOP_CAPACITY entries"
-        );
-        assert_eq!(CONTACT_STOP_CAPACITY, 16);
+    fn mesh_uniform_shader_layout_matches_the_host_buffer() {
+        let shader = parse_shader(include_str!("../shaders/mesh.wgsl"));
+        let actual = struct_fields(&shader, "MeshUniform");
+        let expected = [
+            ("model", offset_of!(GpuMeshUniform, model), "mat4x4<f32>"),
+            ("tint", offset_of!(GpuMeshUniform, tint), "vec4<f32>"),
+            ("opacity", offset_of!(GpuMeshUniform, opacity), "f32"),
+            (
+                "has_texture",
+                offset_of!(GpuMeshUniform, has_texture),
+                "u32",
+            ),
+            (
+                "show_orientation",
+                offset_of!(GpuMeshUniform, show_orientation),
+                "u32",
+            ),
+            (
+                "show_vertex_colors",
+                offset_of!(GpuMeshUniform, show_vertex_colors),
+                "u32",
+            ),
+            (
+                "show_texture",
+                offset_of!(GpuMeshUniform, show_texture),
+                "u32",
+            ),
+            (
+                "measured_map",
+                offset_of!(GpuMeshUniform, measured_map),
+                "u32",
+            ),
+            (
+                "contact_map",
+                offset_of!(GpuMeshUniform, contact_map),
+                "u32",
+            ),
+            (
+                "contact_field_width",
+                offset_of!(GpuMeshUniform, contact_field_width),
+                "f32",
+            ),
+            (
+                "contact_gap",
+                offset_of!(GpuMeshUniform, contact_gap),
+                "vec4<f32>",
+            ),
+            (
+                "contact_stops",
+                offset_of!(GpuMeshUniform, contact_stops),
+                "array<vec4<f32>, 16>",
+            ),
+            (
+                "contact_stop_count",
+                offset_of!(GpuMeshUniform, contact_stop_count),
+                "u32",
+            ),
+            (
+                "overlay_paint",
+                offset_of!(GpuMeshUniform, overlay_paint),
+                "u32",
+            ),
+            (
+                "contact_padding_0",
+                offset_of!(GpuMeshUniform, contact_padding),
+                "u32",
+            ),
+            (
+                "contact_padding_1",
+                offset_of!(GpuMeshUniform, contact_padding) + size_of::<u32>(),
+                "u32",
+            ),
+        ];
+
+        assert_eq!(actual.len(), expected.len());
+        for ((name, offset, ty), (expected_name, expected_offset, expected_ty)) in
+            actual.iter().zip(expected)
+        {
+            assert_eq!(name, expected_name);
+            assert_eq!(*offset, expected_offset);
+            assert_eq!(ty, expected_ty);
+        }
+        assert_eq!(size_of::<GpuMeshUniform>(), 400);
+    }
+
+    #[test]
+    fn sculpt_feedback_reads_the_same_uniform_prefix() {
+        let shader = parse_shader(include_str!("../shaders/sculpt_feedback.wgsl"));
+        let fields = struct_fields(&shader, "MeshUniform");
+        let host_model_offset = offset_of!(GpuMeshUniform, model);
+        let host_tint_offset = offset_of!(GpuMeshUniform, tint);
+        let host_opacity_offset = offset_of!(GpuMeshUniform, opacity);
+
+        assert_eq!(fields.first().map(|field| field.0.as_str()), Some("model"));
+        for (name, offset, ty) in [
+            ("model", host_model_offset, "mat4x4<f32>"),
+            ("tint", host_tint_offset, "vec4<f32>"),
+            ("opacity", host_opacity_offset, "f32"),
+        ] {
+            assert!(fields
+                .iter()
+                .any(|field| { field.0 == name && field.1 == offset && field.2 == ty }));
+        }
     }
 
     #[test]

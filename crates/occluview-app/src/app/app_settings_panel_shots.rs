@@ -118,7 +118,7 @@ fn language_selector_wireframes_for_visual_review() -> anyhow::Result<()> {
         let (visible, _) = settings_frame(&ctx, &manager, Vec::new())?;
         let header = format!(
             "{} · {}",
-            manager.text("settings-language-label"),
+            manager.text(crate::i18n::message_id!("settings-language-label")),
             selected_language_summary(&manager)
         );
         let open = click(&ctx, &manager, text_center(&visible, &header)?)?;

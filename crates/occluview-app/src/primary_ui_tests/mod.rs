@@ -1,5 +1,4 @@
-// A contract test that cannot find its subject must say so. See
-// `repo_source_file` below for why that needs a panic rather than a default.
+// A product document that cannot be read must fail its contract check.
 #![allow(clippy::panic)]
 
 pub(super) use super::*;
@@ -8,8 +7,6 @@ use std::path::Path;
 mod chrome;
 mod documents;
 mod platform;
-mod presentation_sinks;
-mod source_tree;
 mod viewport;
 
 /// Every `.rs` file under `directory`, skipping symlinks and any `target`
@@ -39,49 +36,11 @@ pub(super) fn collect_rust_source_files(
     Ok(())
 }
 
-/// Read a source file this crate makes assertions about.
-///
-/// The sibling mechanism, `include_str!`, is checked by the compiler: rename
-/// the file and the build breaks. This one is not, so it has to break itself.
-/// Returning `""` on a missing file would turn every assertion about that file
-/// into an assertion about the empty string while CI stays green: negative
-/// assertions pass first, and a line count passes too, since
-/// `"".lines().count()` is zero.
-pub(super) fn repo_source_file(relative_path: &str) -> String {
+/// Read a product document or platform descriptor from the repository root.
+pub(super) fn repo_file(relative_path: &str) -> String {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.push(relative_path);
     std::fs::read_to_string(&path).unwrap_or_else(|error| {
-        panic!(
-            "contract test source {} is missing: {error}",
-            path.display()
-        )
+        panic!("contract test input {} is missing: {error}", path.display())
     })
-}
-
-pub(super) fn ci_workflow_source() -> &'static str {
-    include_str!("../../../../.github/workflows/ci.yml")
-}
-
-pub(super) fn package_workflow_source() -> &'static str {
-    include_str!("../../../../.github/workflows/package-msi.yml")
-}
-
-pub(super) fn msi_wxs_source() -> &'static str {
-    include_str!("../../../../install/occluview.wxs")
-}
-
-pub(super) fn linux_build_deb_source() -> &'static str {
-    include_str!("../../../../install/linux/build-deb.sh")
-}
-
-pub(super) fn linux_check_deb_source() -> &'static str {
-    include_str!("../../../../install/linux/check-deb.sh")
-}
-
-pub(super) fn macos_build_app_source() -> &'static str {
-    include_str!("../../../../install/macos/build-app.sh")
-}
-
-pub(super) fn macos_info_plist_source() -> &'static str {
-    include_str!("../../../../install/macos/Info.plist.in")
 }

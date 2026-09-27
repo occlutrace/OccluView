@@ -124,6 +124,11 @@ earcutr = "0.5.0"           # constrained planar triangulation for caps with inn
 serde      = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
+# Read-only validation for product-owned platform configuration in tests.
+roxmltree = "0.21.1"
+serde_yaml_ng = "0.10.0"
+naga = { version = "=30.0.1", features = ["wgsl-in"] }
+
 # Async runtime for offscreen render in the GUI app.
 pollster   = "1.0.1"
 

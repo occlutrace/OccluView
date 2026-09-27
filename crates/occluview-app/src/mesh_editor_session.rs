@@ -28,22 +28,22 @@ pub(super) fn status(
                 ui.allocate_exact_size(egui::vec2(13.0, 13.0), egui::Sense::hover());
             crate::icons::paint(ui.painter(), icon_rect, AppIcon::Warn, ui_theme::warning());
             ui.label(
-                egui::RichText::new(locale.tr("meshedit-status-unsaved"))
+                egui::RichText::new(locale.tr(crate::i18n::message_id!("meshedit-status-unsaved")))
                     .color(ui_theme::warning())
                     .size(11.0),
             );
         })
         .response
-        .on_hover_text(locale.tr("meshedit-status-unsaved-hint"));
+        .on_hover_text(locale.tr(crate::i18n::message_id!("meshedit-status-unsaved-hint")));
     }
     let hint = if state.sculpt_armed.is_some() {
-        locale.tr("meshedit-status-hint-sculpt")
+        locale.tr(crate::i18n::message_id!("meshedit-status-hint-sculpt"))
     } else if state.object_mode {
-        locale.tr("meshedit-status-hint-object")
+        locale.tr(crate::i18n::message_id!("meshedit-status-hint-object"))
     } else if state.lasso_armed {
-        locale.tr("meshedit-status-hint-lasso")
+        locale.tr(crate::i18n::message_id!("meshedit-status-hint-lasso"))
     } else {
-        locale.tr("meshedit-status-hint-default")
+        locale.tr(crate::i18n::message_id!("meshedit-status-hint-default"))
     };
     ui.label(egui::RichText::new(hint).weak().size(10.0));
 }
@@ -68,8 +68,8 @@ pub(super) fn session(
             ui,
             history_w,
             AppIcon::Undo,
-            &locale.tr("meshedit-session-undo"),
-            &locale.tr("meshedit-session-undo-hint"),
+            &locale.tr(crate::i18n::message_id!("meshedit-session-undo")),
+            &locale.tr(crate::i18n::message_id!("meshedit-session-undo-hint")),
             state.can_undo && enabled && !state.sculpt_pending,
             false,
         )
@@ -81,8 +81,8 @@ pub(super) fn session(
             ui,
             history_w,
             AppIcon::Redo,
-            &locale.tr("meshedit-session-redo"),
-            &locale.tr("meshedit-session-redo-hint"),
+            &locale.tr(crate::i18n::message_id!("meshedit-session-redo")),
+            &locale.tr(crate::i18n::message_id!("meshedit-session-redo-hint")),
             state.can_redo && enabled && !state.sculpt_pending,
             false,
         )
@@ -96,11 +96,11 @@ pub(super) fn session(
         if tall_text_button(
             ui,
             commit_w,
-            &locale.tr("meshedit-session-cancel"),
+            &locale.tr(crate::i18n::message_id!("meshedit-session-cancel")),
             enabled,
             false,
         )
-        .on_hover_text(locale.tr("meshedit-session-cancel-hint"))
+        .on_hover_text(locale.tr(crate::i18n::message_id!("meshedit-session-cancel-hint")))
         .clicked()
         {
             action = Some(MeshEditorAction::Cancel);
@@ -108,11 +108,11 @@ pub(super) fn session(
         if tall_text_button(
             ui,
             commit_w,
-            &locale.tr("meshedit-session-done"),
+            &locale.tr(crate::i18n::message_id!("meshedit-session-done")),
             enabled,
             true,
         )
-        .on_hover_text(locale.tr("meshedit-session-done-hint"))
+        .on_hover_text(locale.tr(crate::i18n::message_id!("meshedit-session-done-hint")))
         .clicked()
         {
             action = Some(MeshEditorAction::Done);
