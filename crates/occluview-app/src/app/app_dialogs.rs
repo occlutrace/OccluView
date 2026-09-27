@@ -737,7 +737,7 @@ impl OccluViewApp {
                 );
                 crate::accessibility::read_only_text(
                     &details_response,
-                    &self.ui.locale.tr("error-details"),
+                    &self.ui.locale.tr(crate::i18n::message_id!("error-details")),
                     &details,
                 );
                 ui.add_space(4.0);

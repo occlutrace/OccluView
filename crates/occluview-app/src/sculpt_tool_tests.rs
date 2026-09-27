@@ -95,6 +95,7 @@ fn persistent_session_accepts_a_second_stroke_after_first_commit() {
         world_to_local: Affine3A::IDENTITY,
         local_per_world: 1.0,
         dirty_stroke: false,
+        topology_dirty_stroke: false,
         stroke_start_mesh: None,
     };
     let stroke = BrushStroke {
@@ -103,9 +104,17 @@ fn persistent_session_accepts_a_second_stroke_after_first_commit() {
         strength: 1.0,
         view_dir: [0.0, 0.0, -1.0],
     };
-    assert!(!session.apply_dab(stroke, BrushMode::Add).touched.is_empty());
+    let first = session.apply_dab(stroke, BrushMode::Add);
+    assert!(
+        !first.touched.is_empty() || first.topology_delta.is_some(),
+        "the first dab must reach the surface"
+    );
     session.dirty_stroke = false;
-    assert!(!session.apply_dab(stroke, BrushMode::Add).touched.is_empty());
+    let second = session.apply_dab(stroke, BrushMode::Add);
+    assert!(
+        !second.touched.is_empty() || second.topology_delta.is_some(),
+        "the persistent session must accept a second stroke"
+    );
 }
 
 #[test]
@@ -141,6 +150,7 @@ fn poisoned_shadow_is_a_terminal_dab_failure() {
         world_to_local: Affine3A::IDENTITY,
         local_per_world: 1.0,
         dirty_stroke: false,
+        topology_dirty_stroke: false,
         stroke_start_mesh: None,
     };
     let stroke = BrushStroke {
@@ -183,11 +193,12 @@ fn invalid_shadow_mapping_fails_before_partial_publish() {
         world_to_local: Affine3A::IDENTITY,
         local_per_world: 1.0,
         dirty_stroke: false,
+        topology_dirty_stroke: false,
         stroke_start_mesh: None,
     };
 
     let failure = session
-        .patch_shadow(&[0, original.len()], &[])
+        .patch_shadow(&[0, original.len()], &[], None)
         .expect_err("an out-of-range kernel id must be terminal");
     assert_eq!(
         failure,
@@ -267,6 +278,7 @@ fn the_stroke_baseline_is_snapshotted_cold() {
         world_to_local: Affine3A::IDENTITY,
         local_per_world: 1.0,
         dirty_stroke: false,
+        topology_dirty_stroke: false,
         stroke_start_mesh: None,
     };
 
@@ -280,8 +292,8 @@ fn the_stroke_baseline_is_snapshotted_cold() {
         BrushMode::Add,
     );
     assert!(
-        !outcome.touched.is_empty(),
-        "the dab has to move geometry, or there is no baseline to snapshot"
+        !outcome.touched.is_empty() || outcome.topology_delta.is_some(),
+        "the dab has to change geometry, or there is no baseline to snapshot"
     );
 
     let baseline = session
@@ -345,11 +357,12 @@ fn shadow_shape_mismatch_is_not_treated_as_an_empty_dab() {
         world_to_local: Affine3A::IDENTITY,
         local_per_world: 1.0,
         dirty_stroke: false,
+        topology_dirty_stroke: false,
         stroke_start_mesh: None,
     };
 
     let failure = session
-        .patch_shadow(&[0], &[])
+        .patch_shadow(&[0], &[], None)
         .expect_err("a shadow with the wrong shape must be terminal");
     assert_eq!(
         failure,
@@ -399,5 +412,101 @@ fn an_abandoned_preparation_never_installs_its_session() {
     assert!(
         tool.worker.is_none(),
         "so no worker is installed for a brush the operator has put down"
+    );
+}
+
+/// A regular 1 mm grid over the given extent, in the test mesh's own layout.
+// A fixture: the grid indices and coordinates are far below any precision limit.
+#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+fn flat_grid(side: usize) -> Mesh {
+    let mut vertices = Vec::with_capacity(side * side);
+    for j in 0..side {
+        for i in 0..side {
+            vertices.push(Vertex::at(Vec3::new(i as f32, j as f32, 0.0)));
+        }
+    }
+    let mut indices = Vec::new();
+    let idx = |i: usize, j: usize| (j * side + i) as u32;
+    for j in 0..side - 1 {
+        for i in 0..side - 1 {
+            indices.extend_from_slice(&[idx(i, j), idx(i + 1, j), idx(i + 1, j + 1)]);
+            indices.extend_from_slice(&[idx(i, j), idx(i + 1, j + 1), idx(i, j + 1)]);
+        }
+    }
+    Mesh::new(Some("flat-grid".to_string()), vertices, indices).expect("grid mesh")
+}
+
+fn session_over(mesh: &Mesh) -> (SculptSession, Arc<RwLock<Vec<Vertex>>>) {
+    let layer_id = SceneMesh::new(mesh.clone()).id();
+    let brush = BrushSession::prepare(&mesh_edit_buffers_from_mesh(mesh)).expect("prepare");
+    let shadow = Arc::new(RwLock::new(mesh.vertices().to_vec()));
+    let session = SculptSession {
+        layer_id,
+        topology_id: mesh.topology_id(),
+        session: brush,
+        base_mesh: Arc::new(mesh.clone()),
+        shadow: Arc::clone(&shadow),
+        topology: PreparedSceneTopology::from_mesh(mesh),
+        world_to_local: Affine3A::IDENTITY,
+        local_per_world: 1.0,
+        dirty_stroke: false,
+        topology_dirty_stroke: false,
+        stroke_start_mesh: None,
+    };
+    (session, shadow)
+}
+
+/// How far the vertices the dab actually moved spread along x and along y
+/// from the dab centre. Read from the live shadow rather than the touched list,
+/// because a dab that also retessellated the patch reports a topology delta.
+fn moved_spread(shadow: &Arc<RwLock<Vec<Vertex>>>, original: &[Vertex]) -> (f32, f32) {
+    let shadow = shadow.read().expect("shadow lock");
+    let mut x: f32 = 0.0;
+    let mut y: f32 = 0.0;
+    for (live, before) in shadow.iter().zip(original) {
+        if live.position == before.position {
+            continue;
+        }
+        x = x.max((live.position[0] - 4.0).abs());
+        y = y.max((live.position[1] - 4.0).abs());
+    }
+    (x, y)
+}
+
+/// The tip and the stroke bearing reach the kernel: a knife dab cuts further
+/// along its bearing than across it, while a ball dab spreads evenly.
+#[test]
+fn the_knife_tip_cuts_along_its_bearing() {
+    let mesh = flat_grid(9);
+    let stroke = BrushStroke {
+        center: [4.0, 4.0, 0.0],
+        radius_mm: 3.0,
+        strength: 1.0,
+        view_dir: [0.0, 0.0, -1.0],
+    };
+    let original = mesh.vertices().to_vec();
+    let (mut ball_session, ball_shadow) = session_over(&mesh);
+    let _ = ball_session.apply_dab(stroke, BrushMode::Add);
+    let (mut knife_session, knife_shadow) = session_over(&mesh);
+    let _ = knife_session.apply_dab_tipped(
+        stroke,
+        BrushMode::Add,
+        SculptTip::Knife,
+        Some([1.0, 0.0, 0.0]),
+    );
+
+    let (ball_x, ball_y) = moved_spread(&ball_shadow, &original);
+    let (knife_x, knife_y) = moved_spread(&knife_shadow, &original);
+    assert!(
+        ball_x > 0.0 && knife_x > 0.0,
+        "both dabs must move something"
+    );
+    assert!(
+        knife_x > knife_y * 1.5,
+        "the knife must reach along its bearing: x={knife_x} y={knife_y}"
+    );
+    assert!(
+        (ball_x - ball_y).abs() <= 1.0,
+        "the ball must spread evenly: x={ball_x} y={ball_y}"
     );
 }

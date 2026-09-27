@@ -52,59 +52,11 @@ impl OccluViewApp {
                 );
                 ui.add_space(8.0);
 
-                egui::ScrollArea::vertical()
-                    .id_salt("occluview-keyboard-mouse-sections")
-                    .max_height(438.0)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        for section in ALL_SECTIONS {
-                            ui.add_space(6.0);
-                            ui.label(
-                                egui::RichText::new(self.ui.locale.text(section.key))
-                                    .size(12.5)
-                                    .strong()
-                                    .color(ui_theme::text()),
-                            );
-                            ui.separator();
-                            for row in section.rows {
-                                let row_width = ui.available_width();
-                                ui.allocate_ui_with_layout(
-                                    egui::vec2(row_width, HELP_ROW_HEIGHT),
-                                    egui::Layout::left_to_right(egui::Align::Center),
-                                    |ui| {
-                                        let gesture_width =
-                                            HELP_GESTURE_WIDTH.min(row_width.max(0.0));
-                                        ui.add_sized(
-                                            egui::vec2(gesture_width, HELP_ROW_HEIGHT),
-                                            egui::Label::new(
-                                                egui::RichText::new(
-                                                    crate::i18n::platform_shortcut_text(
-                                                        row.gesture,
-                                                    ),
-                                                )
-                                                .strong()
-                                                .color(ui_theme::text()),
-                                            )
-                                            .truncate(),
-                                        );
-                                        ui.add_space(12.0);
-                                        ui.add(
-                                            egui::Label::new(
-                                                egui::RichText::new(self.ui.locale.text(
-                                                    row.action_key(
-                                                        self.persistence.settings.scroll_behavior,
-                                                    ),
-                                                ))
-                                                .color(ui_theme::text_weak()),
-                                            )
-                                            .truncate(),
-                                        );
-                                    },
-                                );
-                            }
-                        }
-                    });
+                draw_help_sections(
+                    ui,
+                    &self.ui.locale,
+                    self.persistence.settings.scroll_behavior,
+                );
 
                 ui.add_space(8.0);
                 ui.separator();
@@ -148,6 +100,61 @@ impl OccluViewApp {
             HintContext::Navigation
         }
     }
+}
+
+fn draw_help_sections(
+    ui: &mut egui::Ui,
+    locale: &LocaleManager,
+    scroll_behavior: crate::app_settings::ScrollBehavior,
+) {
+    egui::ScrollArea::vertical()
+        .id_salt("occluview-keyboard-mouse-sections")
+        .max_height(438.0)
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            for section in ALL_SECTIONS {
+                ui.add_space(6.0);
+                ui.label(
+                    egui::RichText::new(locale.text(section.key))
+                        .size(12.5)
+                        .strong()
+                        .color(ui_theme::text()),
+                );
+                ui.separator();
+                for row in section.rows {
+                    let row_width = ui.available_width();
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(row_width, HELP_ROW_HEIGHT),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            let gesture_width = HELP_GESTURE_WIDTH.min(row_width.max(0.0));
+                            ui.add_sized(
+                                egui::vec2(gesture_width, HELP_ROW_HEIGHT),
+                                egui::Label::new(
+                                    egui::RichText::new(crate::i18n::platform_shortcut_text(
+                                        row.gesture,
+                                    ))
+                                    .strong()
+                                    .color(ui_theme::text()),
+                                )
+                                .truncate(),
+                            );
+                            ui.add_space(12.0);
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(
+                                        locale.text(row.action_key(scroll_behavior)),
+                                    )
+                                    .color(ui_theme::text_weak()),
+                                )
+                                .truncate(),
+                            );
+                        },
+                    );
+                }
+            }
+        });
 }
 
 pub(super) fn render_contextual_hint(

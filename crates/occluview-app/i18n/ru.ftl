@@ -455,6 +455,14 @@ meshedit-sculpt-addremove = Добавить / Удалить  [1]
 meshedit-sculpt-addremove-hint = Наращивать материал перетаскиванием по скану; Shift убирает. Shift+колесо меняет размер, Ctrl+колесо — силу. Клавиша: 1.
 meshedit-sculpt-smooth = Сгладить  [2]
 meshedit-sculpt-smooth-hint = Расслаблять поверхность перетаскиванием; Shift форсирует максимум сглаживания. Shift+колесо меняет размер, Ctrl+колесо — силу. Клавиша: 2.
+meshedit-section-sculpt-tip = Наконечник
+meshedit-sculpt-tip-ball = Шар
+meshedit-sculpt-tip-ball-hint = Круглый отпечаток: сильнее всего в центре, затухает к краю.
+meshedit-sculpt-tip-knife = Нож
+meshedit-sculpt-tip-knife-hint = Узкое лезвие, расширяющееся поперёк направления штриха.
+meshedit-sculpt-tip-cylinder = Цилиндр
+meshedit-sculpt-tip-cylinder-hint = Плоский отпечаток с мягким краем для выравнивания грани.
+
 meshedit-slider-size = размер
 meshedit-slider-size-hint = Размер кисти (Shift + колесо мыши)
 meshedit-slider-force = сила

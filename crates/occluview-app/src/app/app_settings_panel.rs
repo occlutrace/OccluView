@@ -298,7 +298,7 @@ pub(super) fn show_settings_popup(
                     segmented_row(
                         ui,
                         locale,
-                        &locale.tr("settings-scroll"),
+                        &locale.tr(crate::i18n::message_id!("settings-scroll")),
                         settings.scroll_behavior,
                         &ScrollBehavior::OPTIONS,
                         |option, locale| locale.tr(scroll_behavior_key(option)),

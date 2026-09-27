@@ -191,7 +191,11 @@ impl OccluViewApp {
             }
             let cleared_anything = self.tools.measure.clear_measurements();
             if cleared_anything {
-                self.ui.status_message = Some(self.ui.locale.tr(crate::i18n::message_id!("measure-cleared")));
+                self.ui.status_message = Some(
+                    self.ui
+                        .locale
+                        .tr(crate::i18n::message_id!("measure-cleared")),
+                );
             }
             // Clearing the measurement also closes the cut view it drove — the
             // section reflects the current probe or nothing at all.
@@ -327,10 +331,10 @@ impl OccluViewApp {
             self.persistence.settings.unit_display,
         );
         let message = match ruler.foot {
-            Some(foot) if foot.perpendicular => self
-                .ui
-                .locale
-                .tr_with(crate::i18n::message_id!("measure-perpendicular"), &[("len", length.as_str())]),
+            Some(foot) if foot.perpendicular => self.ui.locale.tr_with(
+                crate::i18n::message_id!("measure-perpendicular"),
+                &[("len", length.as_str())],
+            ),
             Some(foot) if foot.angle_deg.is_some() => {
                 let angle = foot
                     .angle_deg
@@ -340,10 +344,10 @@ impl OccluViewApp {
                     &[("len", length.as_str()), ("angle", angle.as_str())],
                 )
             }
-            _ => self
-                .ui
-                .locale
-                .tr_with(crate::i18n::message_id!("measure-distance"), &[("len", length.as_str())]),
+            _ => self.ui.locale.tr_with(
+                crate::i18n::message_id!("measure-distance"),
+                &[("len", length.as_str())],
+            ),
         };
         self.ui.status_message = Some(message);
     }
@@ -370,7 +374,10 @@ impl OccluViewApp {
                             .as_str(),
                         )],
                     ),
-                    ThicknessReading::Open => self.ui.locale.tr(crate::i18n::message_id!("measure-open-wall")),
+                    ThicknessReading::Open => self
+                        .ui
+                        .locale
+                        .tr(crate::i18n::message_id!("measure-open-wall")),
                 });
                 self.tools.measure.set_probe(probe);
                 // The same click also opens the Cut View at this cross-section
@@ -378,7 +385,11 @@ impl OccluViewApp {
                 self.drive_probe_cut_view(scene, &probe);
             }
             None => {
-                self.ui.status_message = Some(self.ui.locale.tr(crate::i18n::message_id!("measure-cannot-probe")));
+                self.ui.status_message = Some(
+                    self.ui
+                        .locale
+                        .tr(crate::i18n::message_id!("measure-cannot-probe")),
+                );
             }
         }
     }

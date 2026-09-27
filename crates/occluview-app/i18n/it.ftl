@@ -383,6 +383,14 @@ meshedit-sculpt-addremove = Aggiungi / Rimuovi  [1]
 meshedit-sculpt-addremove-hint = Costruisci trascinando; Shift scava. Shift+rotella ridimensiona, Ctrl+rotella cambia forza. Tasto: 1.
 meshedit-sculpt-smooth = Leviga  [2]
 meshedit-sculpt-smooth-hint = Rilassa trascinando; Shift forza il massimo. Shift+rotella ridimensiona, Ctrl+rotella cambia forza. Tasto: 2.
+meshedit-section-sculpt-tip = Punta
+meshedit-sculpt-tip-ball = Sfera
+meshedit-sculpt-tip-ball-hint = Impronta rotonda: massima al centro e sfumata verso il bordo.
+meshedit-sculpt-tip-knife = Lama
+meshedit-sculpt-tip-knife-hint = Lama stretta che si allarga trasversalmente al tratto.
+meshedit-sculpt-tip-cylinder = Cilindro
+meshedit-sculpt-tip-cylinder-hint = Impronta piatta con bordo morbido, per livellare una faccia.
+
 meshedit-slider-size = misura
 meshedit-slider-size-hint = Misura del pennello (Shift + rotella)
 meshedit-slider-force = forza

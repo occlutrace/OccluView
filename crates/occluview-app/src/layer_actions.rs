@@ -3,20 +3,47 @@ use occluview_core::{Scene, SceneMesh, SceneMeshId};
 /// Model tints: the shades a single scan is read in. Muted on purpose — a
 /// surface is judged by its shading, and a saturated one hides the detail the
 /// shading is carrying.
-pub(crate) const LAYER_TINT_PRESETS: [([f32; 4], &str); 10] = [
+pub(crate) const LAYER_TINT_PRESETS: [([f32; 4], crate::i18n::MessageId); 10] = [
     (
         occluview_core::DEFAULT_UNTEXTURED_MESH_TINT,
-        "tint-color-stone-iv",
+        crate::i18n::message_id!("tint-color-stone-iv"),
     ),
-    ([0.74, 0.58, 0.32, 1.0], "tint-color-baked"),
-    ([0.92, 0.80, 0.56, 1.0], "tint-color-plaster"),
-    ([0.72, 0.75, 0.68, 1.0], "tint-color-sage"),
-    ([0.82, 0.74, 0.64, 1.0], "tint-color-wax"),
-    ([0.55, 0.65, 0.85, 1.0], "tint-color-glacier"),
-    ([0.85, 0.45, 0.45, 1.0], "tint-color-coral"),
-    ([0.45, 0.75, 0.55, 1.0], "tint-color-mint"),
-    ([0.80, 0.65, 0.85, 1.0], "tint-color-lilac"),
-    ([0.85, 0.75, 0.35, 1.0], "tint-color-amber"),
+    (
+        [0.74, 0.58, 0.32, 1.0],
+        crate::i18n::message_id!("tint-color-baked"),
+    ),
+    (
+        [0.92, 0.80, 0.56, 1.0],
+        crate::i18n::message_id!("tint-color-plaster"),
+    ),
+    (
+        [0.72, 0.75, 0.68, 1.0],
+        crate::i18n::message_id!("tint-color-sage"),
+    ),
+    (
+        [0.82, 0.74, 0.64, 1.0],
+        crate::i18n::message_id!("tint-color-wax"),
+    ),
+    (
+        [0.55, 0.65, 0.85, 1.0],
+        crate::i18n::message_id!("tint-color-glacier"),
+    ),
+    (
+        [0.85, 0.45, 0.45, 1.0],
+        crate::i18n::message_id!("tint-color-coral"),
+    ),
+    (
+        [0.45, 0.75, 0.55, 1.0],
+        crate::i18n::message_id!("tint-color-mint"),
+    ),
+    (
+        [0.80, 0.65, 0.85, 1.0],
+        crate::i18n::message_id!("tint-color-lilac"),
+    ),
+    (
+        [0.85, 0.75, 0.35, 1.0],
+        crate::i18n::message_id!("tint-color-amber"),
+    ),
 ];
 
 /// Overlay tints: for telling two scans apart while they sit on top of each
@@ -35,15 +62,39 @@ pub(crate) const LAYER_TINT_PRESETS: [([f32; 4], &str); 10] = [
 /// cool near-neutral for the scan meant to recede behind a coloured one —
 /// blue-leaning enough that even multiplied into the warm neutral material
 /// it still reads cool.
-pub(crate) const LAYER_OVERLAY_TINT_PRESETS: [([f32; 4], &str); 8] = [
-    ([0.03, 0.15, 0.79, 1.0], "tint-color-cobalt"),
-    ([0.89, 0.24, 0.00, 1.0], "tint-color-tangerine"),
-    ([0.25, 0.11, 0.87, 1.0], "tint-color-violet"),
-    ([0.39, 0.64, 0.01, 1.0], "tint-color-lime"),
-    ([0.01, 0.39, 0.35, 1.0], "tint-color-teal"),
-    ([0.75, 0.05, 0.39, 1.0], "tint-color-magenta"),
-    ([0.72, 0.02, 0.06, 1.0], "tint-color-crimson"),
-    ([0.10, 0.18, 0.28, 1.0], "tint-color-slate"),
+pub(crate) const LAYER_OVERLAY_TINT_PRESETS: [([f32; 4], crate::i18n::MessageId); 8] = [
+    (
+        [0.03, 0.15, 0.79, 1.0],
+        crate::i18n::message_id!("tint-color-cobalt"),
+    ),
+    (
+        [0.89, 0.24, 0.00, 1.0],
+        crate::i18n::message_id!("tint-color-tangerine"),
+    ),
+    (
+        [0.25, 0.11, 0.87, 1.0],
+        crate::i18n::message_id!("tint-color-violet"),
+    ),
+    (
+        [0.39, 0.64, 0.01, 1.0],
+        crate::i18n::message_id!("tint-color-lime"),
+    ),
+    (
+        [0.01, 0.39, 0.35, 1.0],
+        crate::i18n::message_id!("tint-color-teal"),
+    ),
+    (
+        [0.75, 0.05, 0.39, 1.0],
+        crate::i18n::message_id!("tint-color-magenta"),
+    ),
+    (
+        [0.72, 0.02, 0.06, 1.0],
+        crate::i18n::message_id!("tint-color-crimson"),
+    ),
+    (
+        [0.10, 0.18, 0.28, 1.0],
+        crate::i18n::message_id!("tint-color-slate"),
+    ),
 ];
 
 /// Every action the layer context menu can raise.
@@ -192,7 +243,7 @@ fn toggle_show_texture(scene: &mut Scene, index: usize) -> LayerContextApply {
 
 /// Every tint the palette offers, model shades first then overlay colours —
 /// the order the popup lists them in, and the order cycling walks.
-pub(crate) fn all_layer_tints() -> impl Iterator<Item = ([f32; 4], &'static str)> {
+pub(crate) fn all_layer_tints() -> impl Iterator<Item = ([f32; 4], crate::i18n::MessageId)> {
     LAYER_TINT_PRESETS
         .into_iter()
         .chain(LAYER_OVERLAY_TINT_PRESETS)
@@ -204,7 +255,7 @@ pub(crate) fn all_layer_tints() -> impl Iterator<Item = ([f32; 4], &'static str)
 /// overlay colour continues through the palette instead of dropping back to
 /// Stone IV.
 pub(crate) fn next_layer_tint(current: [f32; 4]) -> [f32; 4] {
-    let tints: Vec<([f32; 4], &str)> = all_layer_tints().collect();
+    let tints: Vec<([f32; 4], crate::i18n::MessageId)> = all_layer_tints().collect();
     let current_index = tints
         .iter()
         .position(|(color, _)| tint_matches(*color, current))
