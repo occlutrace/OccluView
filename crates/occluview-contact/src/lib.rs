@@ -33,7 +33,7 @@
 //!
 //! # Geometry contract
 //!
-//! Inputs are [`occluview_align::Soup`]: indexed triangles in world space. The
+//! Inputs are [`occluview_surface_query::Soup`]: indexed triangles in world space. The
 //! caller bakes layer poses in before calling, as the align job does,
 //! and the search index derives triangle normals from winding rather than from
 //! imported vertex normals — so the sign uses the geometry that is on screen
