@@ -5,7 +5,10 @@
 
 use crate::error::FormatError;
 use crate::hps::HpsKeyProvider;
-use crate::memory::{check_estimate, estimate_file_peak_bytes, SCENE_IMPORT_MEMORY_BUDGET_BYTES};
+use crate::memory::{
+    check_estimate, check_scene_estimate, estimate_file_peak_bytes,
+    SCENE_IMPORT_MEMORY_BUDGET_BYTES,
+};
 use crate::probe::FormatKind;
 use crate::units::{policy_for, UnitInterpretation};
 use occluview_core::{Mesh, Scene, SceneMesh};

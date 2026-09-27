@@ -91,7 +91,7 @@ fn may_decode_texture(kind: FormatKind, bytes: &[u8]) -> bool {
             let Ok((json, _)) = crate::gltf::glb::split(bytes) else {
                 return false;
             };
-            contains_any(json, &[b"\"images\"", b"\"textures\""])
+            contains_any(&json, &[b"\"images\"", b"\"textures\""])
         }
         FormatKind::Hps => bytes.starts_with(b"PK") || contains(bytes, b"Texture"),
     }
