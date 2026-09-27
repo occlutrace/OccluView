@@ -14,10 +14,12 @@ use tracing_subscriber::EnvFilter;
 mod graphics;
 #[cfg(test)]
 use eframe::egui_wgpu::wgpu;
+#[cfg(all(test, target_os = "linux"))]
+use graphics::root_viewport_builder;
 #[cfg(test)]
 use graphics::{
     adapter_device_score, device_limits_for_backend, format_supports_live_render,
-    live_msaa_override, live_sample_count_for, root_viewport_builder, select_live_sample_count,
+    live_msaa_override, live_sample_count_for, select_live_sample_count,
     validate_graphics_environment_values, AdapterIdentity, GraphicsPreflight, LIVE_DEPTH_FORMAT,
     LIVE_SAFE_SAMPLE_COUNT,
 };
