@@ -130,6 +130,21 @@ fn check_announces_release_without_platform_artifact() {
     ));
 }
 
+#[test]
+fn manifest_fetch_accepts_the_limit_and_rejects_larger_bodies() {
+    let at_limit = serve_once(b"abc".to_vec(), "/at-limit");
+    assert_eq!(
+        fetch_bytes(&agent(), &at_limit, 3).expect("body at limit"),
+        b"abc"
+    );
+
+    let over_limit = serve_once(b"abcd".to_vec(), "/over-limit");
+    assert!(matches!(
+        fetch_bytes(&agent(), &over_limit, 3),
+        Err(UpdateError::Http(_))
+    ));
+}
+
 /// Serve `body` once over a throwaway local HTTP listener; returns the URL.
 fn serve_once(body: Vec<u8>, path: &str) -> String {
     use std::io::{Read as _, Write};
