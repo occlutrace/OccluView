@@ -9,6 +9,8 @@ remain in the Git history.
 
 - Best fit refuses equally plausible surface matches and tells you to mark the
   matching area or move the scans closer before trying again.
+- Point-pair placement remains provisional until surface refinement passes;
+  deviation maps require a verified pose.
 
 ## 1.2.1 - 2026-09-21
 

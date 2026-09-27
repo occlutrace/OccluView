@@ -488,8 +488,8 @@ fn a_cancelled_run_marks_everything_unmeasured() {
 }
 
 /// A struct of zeroes here would read, in `within_tolerance` — the one field a
-/// clinician looks at first — as a perfect fit, when in truth nothing was ever
-/// measured. `summary` must be absent instead of quietly all-zero.
+/// clinician looks at first — as a perfect fit even though nothing is measured.
+/// `summary` must be absent instead of quietly all-zero.
 #[test]
 fn a_map_where_nothing_was_measured_reports_no_summary() {
     let map = DeviationMap {
@@ -624,8 +624,8 @@ fn map_against(fixed: (&[f32], &[u32], Option<&[u8]>), moving: (&[f32], &[u32]))
 
 /// Two coincident sheets, the moving one running 2 mm past the fixed border.
 /// Everywhere they overlap the true deviation is zero; past the border there is
-/// nothing to compare against. The rim distance there (up to the 2 mm radius)
-/// used to be reported as deviation and dragged p95 to 1.5 mm.
+/// nothing to compare against. Counting the rim distance as deviation would
+/// make p95 1.5 mm.
 #[test]
 fn a_scan_running_past_the_other_border_is_not_measured_there() {
     let (fixed_p, fixed_i) = grid(0.0, 0.0, 40, 40, 0.25);
@@ -668,7 +668,7 @@ fn a_vertex_over_the_rim_is_still_measured() {
 }
 
 /// A region painted out of the fixed scan leaves a hole; the moving surface
-/// over it has no counterpart and used to read its distance to the hole's rim.
+/// over it has no counterpart and carries no measurement there.
 #[test]
 fn a_hole_painted_out_of_the_fixed_scan_is_not_measured_as_rim_distance() {
     let (fixed_p, fixed_i) = grid(0.0, 0.0, 40, 40, 0.25);

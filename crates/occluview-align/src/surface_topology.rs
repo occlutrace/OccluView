@@ -41,9 +41,10 @@ impl Topology {
     /// that feature lies on the open border. Falls back to `face` wherever a
     /// pseudonormal is missing or collapsed (a vertex whose faces cancel).
     pub(super) fn at(&self, slot: usize, feature: Feature, face: DVec3) -> (DVec3, bool) {
+        // The builder stores each pseudonormal as either a unit vector or zero.
         let usable = |normal: Vec3| {
             let normal = normal.as_dvec3();
-            if normal.is_finite() && normal.length_squared() > 0.25 {
+            if normal.is_finite() && normal.length_squared() > 0.0 {
                 normal
             } else {
                 face
