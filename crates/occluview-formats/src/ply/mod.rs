@@ -160,7 +160,21 @@ pub(crate) fn read_admitted(
 
 pub(crate) fn estimate_declared_bytes(bytes: &[u8]) -> Result<u64, FormatError> {
     let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
-    Ok(declared_memory_bytes(&header::parse(bytes)?))
+    let parsed = header::parse(bytes)?;
+    let empty_vertex_rows = parsed.elements.iter().any(|element| {
+        element.name == "vertex"
+            && element.count > 0
+            && !element
+                .properties
+                .iter()
+                .any(|property| matches!(property, header::Property::Scalar { .. }))
+    });
+    if empty_vertex_rows {
+        // The reader rejects a row with no scalar input before it iterates or
+        // allocates from the declared count, so that count adds no peak memory.
+        return Ok(0);
+    }
+    Ok(declared_memory_bytes(&parsed))
 }
 
 pub(crate) fn may_have_uvs(bytes: &[u8]) -> bool {
