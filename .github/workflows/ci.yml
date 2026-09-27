@@ -199,9 +199,11 @@ jobs:
           pkg="$(find target/macos -maxdepth 1 -type f -name 'OccluView-*-aarch64.pkg' -print -quit)"
           sample="fuzz/seeds/dispatch/one_triangle_binary.stl"
           log="$RUNNER_TEMP/occluview-scene-load.log"
+          state_dir="$HOME/Library/Application Support/OccluView"
           test -n "$pkg"
           test -s "$sample"
-          test ! -e "$HOME/Library/Application Support/OccluView"
+          rm -rf "$state_dir"
+          test ! -e "$state_dir"
           sudo installer -pkg "$pkg" -target /
           test ! -e "$log"
           open -a /Applications/OccluView.app "$sample"
