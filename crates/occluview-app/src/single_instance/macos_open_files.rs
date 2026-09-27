@@ -251,7 +251,13 @@ mod tests {
             let method = class
                 .instance_method(selector)
                 .expect("the test delegate owns the Finder callback");
-            assert_eq!(method.type_encoding().to_bytes(), b"v@:@@");
+            assert_eq!(method.return_type().to_str().unwrap(), "v");
+            for (index, expected) in ["@", ":", "@", "@"].into_iter().enumerate() {
+                assert_eq!(
+                    method.argument_type(index).unwrap().to_str().unwrap(),
+                    expected
+                );
+            }
         }
     }
 }
