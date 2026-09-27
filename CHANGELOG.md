@@ -7,8 +7,8 @@ remain in the Git history.
 
 ### Viewer
 
-- Keyboard and mouse help lists two-finger scroll pan only on macOS, where pixel
-  scroll pans the view.
+- macOS Settings choose whether trackpad scrolling pans or zooms the viewport;
+  the keyboard and mouse help follows that choice.
 
 ## 1.2.1 - 2026-09-21
 

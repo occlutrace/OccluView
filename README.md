@@ -147,8 +147,8 @@ Press **F1** — or open **Settings → Keyboard shortcuts** — for the complet
 - Toolbar tools: **C** Cut View, **M** Ruler, **T** Thickness, **A** Align, and
   **E** Mesh Editing.
 - Orbit with right-drag; pan with middle-drag or LMB+RMB drag. A mouse wheel
-  zooms toward the pointer. On a Mac trackpad, two-finger scroll pans and
-  pinch zooms.
+  zooms toward the pointer. On macOS, smooth scroll pans by default; choose
+  **Settings → Scroll** to make it zoom. Pinch zooms.
   Recenter on a surface with middle-click or double-click.
 - In Mesh Editing, **Ctrl+A** (**⌘+A** on macOS) selects all; **Delete** or **Backspace**
   removes; **Ctrl+Z**, **Ctrl+Y**, or **Ctrl+Shift+Z** (the ⌘ equivalents on macOS)

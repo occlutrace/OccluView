@@ -277,7 +277,7 @@ fn the_clamp_holds_on_soup_duplicates_of_a_tiny_edged_corner() {
     // isolated-vertex budget and overrun the representative's tight clamp. The
     // step must stay bounded by the real 0.1mm edge (budget 0.1 * 0.5 =
     // 0.05mm), not the loose 0.5mm fallback, even under a dab whose raw
-    // amplitude (radius 1.0 * gain 0.045 = 0.045mm) exceeds the correct budget.
+    // amplitude (radius 1.0 * gain 0.045 = 0.045mm) stays within the correct budget.
     let s = 0.1_f32;
     let vertices = vec![
         v([0.0, 0.0, 0.0]),
