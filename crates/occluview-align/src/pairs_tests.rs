@@ -79,6 +79,18 @@ fn three_pairs_are_enough() {
 }
 
 #[test]
+fn a_pair_fit_keeps_large_residuals_as_diagnostics_for_surface_refinement() {
+    let moving = spread()[..3].to_vec();
+    let mut fixed = posed(&moving);
+    fixed[2] += DVec3::new(0.0, 0.0, 10.0);
+
+    let fit = fit(&moving, &fixed, None, 40.0).unwrap();
+
+    assert!(fit.max_pair_err > 1.0, "the diagnostic was {fit:?}");
+    assert!(fit.pair_rms.is_finite());
+}
+
+#[test]
 fn fewer_than_two_pairs_is_refused() {
     let outcome = fit(&[DVec3::ZERO], &[DVec3::ONE], None, 40.0);
     assert!(
@@ -290,6 +302,36 @@ fn two_pairs_with_normals_produce_a_defined_frame() {
     for point in &moving {
         let error = (fit.rigid.apply(*point) - pose().apply(*point)).length();
         assert!(error < 1e-6, "two-pair frame is off by {error}");
+    }
+}
+
+#[test]
+fn two_pair_roll_estimates_are_averaged_without_an_unmeasured_angle_cutoff() {
+    let moving = vec![DVec3::ZERO, DVec3::new(6.0, 0.0, 0.0)];
+    let moving_normals = vec![DVec3::Z, DVec3::Z];
+    let fixed = posed(&moving);
+    let second_turn = DQuat::from_axis_angle(DVec3::X, 100.0_f64.to_radians());
+    let fixed_normals = vec![
+        pose().apply_normal(DVec3::Z),
+        pose().apply_normal(second_turn * DVec3::Z),
+    ];
+
+    let fit = fit(
+        &moving,
+        &fixed,
+        Some((&moving_normals, &fixed_normals)),
+        40.0,
+    )
+    .unwrap();
+
+    for (moving_normal, fixed_normal) in moving_normals.iter().zip(&fixed_normals) {
+        assert!(
+            fit.rigid
+                .apply_normal(*moving_normal)
+                .dot(fixed_normal.normalize())
+                > 0.0,
+            "the averaged roll must keep both normals in the same hemisphere"
+        );
     }
 }
 

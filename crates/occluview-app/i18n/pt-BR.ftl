@@ -873,6 +873,7 @@ align-reject-unpaired = Complete os dois lados de cada seta
 align-reject-degenerate-plain = Distribua os pontos pela superfície
 align-reject-unit = Os escaneamentos usam unidades diferentes
 align-reject-apart = Revise as setas e aproxime os escaneamentos
+align-reject-inconsistent = As setas não concordam — verifique se cada uma liga o mesmo ponto nos dois escaneamentos
 align-reject-runaway = Aproxime os escaneamentos e tente Best fit matching novamente
 align-reject-no-improvement = Nenhuma melhora confirmada — aproxime os escaneamentos e tente novamente
 align-reject-ambiguous = O ajuste encontrou várias superfícies igualmente prováveis — marque a área correspondente ou aproxime os escaneamentos
