@@ -49,6 +49,11 @@ impl OccluViewApp {
                 self.persistence.settings.zoom_sensitivity = value;
                 self.persistence.settings_persistence.mark_dirty();
             }
+            #[cfg(target_os = "macos")]
+            SettingsAction::SetScrollBehavior(behavior) => {
+                self.persistence.settings.scroll_behavior = behavior;
+                self.persistence.settings_persistence.mark_dirty();
+            }
             SettingsAction::SetViewportBackground(background) => {
                 self.persistence.settings.viewport_background = background;
                 // Prepared scenes cache the clear color on both paths.

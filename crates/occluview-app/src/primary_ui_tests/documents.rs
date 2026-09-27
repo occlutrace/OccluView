@@ -15,14 +15,8 @@ fn the_changelog_keeps_unreleased_notes_above_tagged_versions() {
         .split("[workspace.package]")
         .nth(1)
         .and_then(|section| section.split("version = \"").nth(1))
-        .and_then(|rest| rest.split('"').next());
-    assert!(
-        version.is_some(),
-        "the workspace version should be readable"
-    );
-    let Some(version) = version else {
-        return;
-    };
+        .and_then(|rest| rest.split('"').next())
+        .expect("the workspace version is declared in Cargo.toml");
 
     let heading = format!("## {version} ");
     assert!(
@@ -70,16 +64,8 @@ fn the_changelog_keeps_unreleased_notes_above_tagged_versions() {
         let Some(number) = line.split_whitespace().nth(1) else {
             panic!("changelog section without a version: {line:?}");
         };
-        let parts: Vec<u64> = number
-            .split('.')
-            .filter_map(|part| part.parse::<u64>().ok())
-            .collect();
-        assert_eq!(
-            parts.len(),
-            3,
-            "changelog sections are headed by a three-part version, got {number:?}"
-        );
-        let parsed = [parts[0], parts[1], parts[2]];
+        let parsed = parse_version(number)
+            .unwrap_or_else(|| panic!("changelog section has an invalid version: {number:?}"));
         if let Some(previous) = seen.last() {
             assert!(
                 parsed < *previous,
@@ -92,35 +78,27 @@ fn the_changelog_keeps_unreleased_notes_above_tagged_versions() {
 
     // Ordering alone is not the rule the test name promises. A section below
     // the newest claims something was released, so a tag has to exist for it.
-    // Tags come from git; a source tarball has none, and there the ordering
-    // above is all there is.
-    let Some(tags) = repository_tags() else {
-        // The CI checkout that runs this test fetches tags, so "no tags" means
-        // a source tarball or a checkout that lost them. The skip is logged so
-        // the unchecked rule below is visible.
-        tracing::info!(
-            "changelog ordering: this checkout carries no tags, so only the ordering \
-             assertion above is checked"
-        );
-        return;
-    };
+    // The changelog check runs in CI from a full Git checkout with release tags.
+    let tags = repository_tags();
     // Only from the first tagged version onward: sections older than the day
     // tagging started describe releases this repository has no record of.
-    let Some(first_tagged) = tags.iter().filter_map(|tag| parse_version(tag)).min() else {
-        return;
-    };
+    let first_tagged = tags
+        .iter()
+        .filter_map(|tag| parse_version(tag))
+        .min()
+        .expect("the checkout contains at least one version tag");
     for line in versioned_sections.iter().skip(1) {
-        let Some(number) = line.split_whitespace().nth(1) else {
-            continue;
-        };
-        let Some(parsed) = parse_version(number) else {
-            continue;
-        };
+        let number = line
+            .split_whitespace()
+            .nth(1)
+            .expect("versioned changelog section has a version");
+        let parsed = parse_version(number)
+            .unwrap_or_else(|| panic!("changelog section has an invalid version: {number:?}"));
         if parsed < first_tagged {
             continue;
         }
         assert!(
-            tags.iter().any(|tag| tag == &format!("v{number}")),
+            tags.iter().any(|tag| parse_version(tag) == Some(parsed)),
             "the changelog has a section for {number}, which was never tagged; \
              an untagged section publishes nothing and advertises a version \
              that cannot be downloaded"
@@ -138,26 +116,32 @@ fn parse_version(raw: &str) -> Option<[u64; 3]> {
     (parts.len() == 3).then(|| [parts[0], parts[1], parts[2]])
 }
 
-/// The tags of this repository, or `None` outside a git checkout.
-fn repository_tags() -> Option<Vec<String>> {
+/// The release tags available to the changelog test.
+fn repository_tags() -> Vec<String> {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let workspace_root = manifest_dir.parent().and_then(Path::parent)?;
+    let workspace_root = manifest_dir
+        .parent()
+        .and_then(Path::parent)
+        .expect("the application manifest is inside the workspace");
     let output = std::process::Command::new("git")
         .arg("-C")
         .arg(workspace_root)
         .arg("tag")
         .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
+        .expect("git must be available to read the release tags");
+    assert!(
+        output.status.success(),
+        "git tag exited unsuccessfully: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let tags: Vec<String> = String::from_utf8_lossy(&output.stdout)
         .lines()
         .map(str::trim)
         .filter(|tag| !tag.is_empty())
         .map(str::to_owned)
         .collect();
-    (!tags.is_empty()).then_some(tags)
+    assert!(!tags.is_empty(), "the checkout contains release tags");
+    tags
 }
 
 #[test]

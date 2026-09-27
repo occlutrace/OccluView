@@ -445,6 +445,7 @@ impl OccluViewApp {
                         self.interaction_hint_context(),
                         ink,
                         &self.ui.locale,
+                        self.persistence.settings.scroll_behavior,
                     );
                 }
             });

@@ -323,10 +323,8 @@ fn dist_point_segment(px: f32, py: f32, ax: f32, ay: f32, bx: f32, by: f32) -> f
     let point = Vec2::new(px, py);
     let a = Vec2::new(ax, ay);
     let b = Vec2::new(bx, by);
-    let (t, _) = occlu_geometry_math::closest_param_on_segment_2d(point, a, b);
-    let (dx, dy) = (bx - ax, by - ay);
-    let (cx, cy) = (ax + t * dx, ay + t * dy);
-    (px - cx).hypot(py - cy)
+    let (_, dist_sq) = occlu_geometry_math::closest_param_on_segment_2d(point, a, b);
+    dist_sq.sqrt()
 }
 
 /// Signed distance from `(px, py)` to the edge `a..b`, positive on the side
