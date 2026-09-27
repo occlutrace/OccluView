@@ -7,8 +7,8 @@
 //!
 //! Fixtures live outside the repository — scan data does not belong in git.
 //! Point `OCCLUVIEW_ALIGN_FIXTURES` at a directory of binary STL files to run
-//! the checks. Ordinary test runs report a visible skip without the corpus;
-//! setting `OCCLUVIEW_ALIGN_FIXTURES_REQUIRED=1` makes missing data fail.
+//! the checks. The six full-arch tests are ignored in ordinary runs and are
+//! selected by `scripts/validate-release-private.sh` with `--ignored`.
 //!
 //! The thresholds below — a 0.05 mm residual, 85% measured, 90% inside the
 //! clinical band — are product acceptance criteria. A synthetic mesh is not
@@ -19,7 +19,6 @@
 //! give this leaf crate a dev-dependency on half the workspace for forty lines
 //! of parsing.
 
-// Report skipped fixtures explicitly so CI cannot imply clinical coverage.
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,
@@ -54,10 +53,9 @@ const MIN_WITHIN_TOLERANCE: f64 = 0.90;
 const TOLERANCE_MM: f64 = 0.2;
 
 #[test]
+#[ignore = "requires private full-arch STL scans; run scripts/validate-release-private.sh with OCCLUVIEW_ALIGN_FIXTURES=/path/to/corpus"]
 fn a_real_scan_returns_to_a_known_pose_and_measures_clean_when_fixtures_are_present() {
-    let Some(files) = fixtures() else {
-        return;
-    };
+    let files = fixtures();
 
     for path in files {
         let (positions, indices) = read_binary_stl(&path);
@@ -150,6 +148,7 @@ fn a_real_scan_returns_to_a_known_pose_and_measures_clean_when_fixtures_are_pres
 /// mean track the truth fails them, because a nearest-point map cannot do that
 /// and a mean that does is measuring something else.
 #[test]
+#[ignore = "requires private full-arch STL scans; run scripts/validate-release-private.sh with OCCLUVIEW_ALIGN_FIXTURES=/path/to/corpus"]
 fn a_known_rigid_offset_is_corrected_when_fixtures_are_present() {
     /// Displacement applied, in millimetres.
     const OFFSET_MM: f64 = 0.30;
@@ -159,9 +158,7 @@ fn a_known_rigid_offset_is_corrected_when_fixtures_are_present() {
     /// because it corrects by the worst sensitivity.
     const ESTIMATE_HIGH: f64 = 1.35;
 
-    let Some(files) = fixtures() else {
-        return;
-    };
+    let files = fixtures();
 
     for path in files {
         let (positions, indices) = read_binary_stl(&path);
@@ -324,29 +321,12 @@ fn rms_displacement(positions: &[f32], pose: Rigid) -> f64 {
     (squares / count.max(1) as f64).sqrt()
 }
 
-/// Whether this run requires all private scan fixtures.
-///
-/// The release gate uses this opt-in for both alignment and contact fixtures.
-fn fixtures_are_required() -> bool {
-    std::env::var_os("OCCLUVIEW_ALIGN_FIXTURES_REQUIRED").is_some_and(|value| value != "0")
-}
-
 /// Every `.stl` in the fixture directory, sorted so a failure names the same
 /// file on every machine.
-///
-/// Returns `None` when the corpus is absent in an ordinary test run. The same
-/// absence is a failure when the private-fixture gate is enabled.
-fn fixtures() -> Option<Vec<PathBuf>> {
-    let Some(directory) = std::env::var("OCCLUVIEW_ALIGN_FIXTURES").ok() else {
-        assert!(
-            !fixtures_are_required(),
-            "OCCLUVIEW_ALIGN_FIXTURES_REQUIRED is set but OCCLUVIEW_ALIGN_FIXTURES is not: \
-             the private scan corpus is what makes this a release gate, and without it the \
-             acceptance thresholds below are unverified"
-        );
-        eprintln!("skipped: set OCCLUVIEW_ALIGN_FIXTURES to run real-scan acceptance tests");
-        return None;
-    };
+/// Invoking a test without its corpus fails with the required directory named.
+fn fixtures() -> Vec<PathBuf> {
+    let directory = std::env::var("OCCLUVIEW_ALIGN_FIXTURES")
+        .expect("set OCCLUVIEW_ALIGN_FIXTURES before running ignored real-scan tests");
     let mut files: Vec<PathBuf> = std::fs::read_dir(&directory)
         .expect("OCCLUVIEW_ALIGN_FIXTURES must name a readable directory")
         .map(|entry| {
@@ -361,31 +341,21 @@ fn fixtures() -> Option<Vec<PathBuf>> {
         })
         .collect();
     files.sort();
-    if files.is_empty() {
-        assert!(
-            !fixtures_are_required(),
-            "OCCLUVIEW_ALIGN_FIXTURES is set to a directory with no .stl files, and this run is a \
-             release gate: point it at the corpus before cutting a release"
-        );
-        eprintln!("skipped: OCCLUVIEW_ALIGN_FIXTURES contains no STL files");
-        return None;
-    }
-    Some(files)
+    assert!(
+        !files.is_empty(),
+        "OCCLUVIEW_ALIGN_FIXTURES must contain at least one STL file"
+    );
+    files
 }
 
 /// The real-pair check needs two distinct scans from the private corpus.
-fn fixture_pair() -> Option<(PathBuf, PathBuf)> {
-    let files = fixtures()?;
-    if files.len() < 2 {
-        assert!(
-            !fixtures_are_required(),
-            "the real-pair acceptance check requires at least two STL files in \
-             OCCLUVIEW_ALIGN_FIXTURES"
-        );
-        eprintln!("skipped: the real-pair acceptance check requires two STL files");
-        return None;
-    }
-    Some((files[0].clone(), files[1].clone()))
+fn fixture_pair() -> (PathBuf, PathBuf) {
+    let files = fixtures();
+    assert!(
+        files.len() >= 2,
+        "OCCLUVIEW_ALIGN_FIXTURES must contain at least two STL files"
+    );
+    (files[0].clone(), files[1].clone())
 }
 
 /// Minimal binary STL reader: an 80-byte header, a triangle count, then 50
@@ -426,19 +396,12 @@ fn read_binary_stl(path: &Path) -> (Vec<f32>, Vec<u32>) {
 
 /// The broad search must seat a same-arch scan from a hand placement.
 ///
-/// The private scans and the alignment harness measured accepted full-arch
-/// starts through 14.466 mm of initial TRE with residual RMS at or below
-/// 0.033 mm; starts from 18.347 mm were refused with residual RMS above
-/// 0.65 mm. Each tested start below is at most 12.6 mm of translation, within
-/// that measured acceptance range. Keep the 0.05 mm limit aligned with the
-/// real-scan acceptance threshold above. The two local scans measured
-/// 0.0000 mm RMS at their known poses; this placement sweep measured 0.0000 mm
-/// RMS and 0.995 coverage from 0.5 through 15 mm starts on its fixture.
+/// Each placement in the 0.5–15 mm sweep must pass the refinement gate and the
+/// 0.05 mm residual criterion used by the real-scan acceptance check above.
 #[test]
+#[ignore = "requires private full-arch STL scans; run scripts/validate-release-private.sh with OCCLUVIEW_ALIGN_FIXTURES=/path/to/corpus"]
 fn a_real_scan_recovers_from_a_ballpark_placement_when_fixtures_are_present() {
-    let Some(files) = fixtures() else {
-        return;
-    };
+    let files = fixtures();
     let path = files
         .first()
         .expect("fixture helper returns a non-empty corpus");
@@ -490,10 +453,9 @@ fn a_real_scan_recovers_from_a_ballpark_placement_when_fixtures_are_present() {
 /// painting a heatmap that would look authoritative. This test covers that
 /// refusal.
 #[test]
+#[ignore = "requires private upper/lower STL scans; run scripts/validate-release-private.sh with OCCLUVIEW_ALIGN_FIXTURES=/path/to/corpus"]
 fn two_different_arches_are_refused_rather_than_guessed_when_fixtures_are_present() {
-    let Some((fixed_path, moving_path)) = fixture_pair() else {
-        return;
-    };
+    let (fixed_path, moving_path) = fixture_pair();
     let (fixed_positions, fixed_indices) = read_binary_stl(&fixed_path);
     let fixed_soup = Soup {
         positions: &fixed_positions,
@@ -616,13 +578,14 @@ impl Noise {
 /// this stands in for one: it moves a real arch by a known rigid transform and
 /// perturbs every vertex with the scanner error a second capture would carry.
 /// The full search must both find the pose and satisfy
-/// `is_trustworthy_refinement_for`. A build that only refines locally converges
-/// on an unseated pose here and the gate refuses it; this test catches that.
+/// `is_trustworthy_refinement_for`. At 0.06 mm noise and 1–8 mm starts, the
+/// private full-arch run measured 0.0024–0.0069 mm pose-only residual RMS. The
+/// assertion uses the established 0.05 mm real-scan residual criterion, with
+/// more than seven times that observed maximum as headroom.
 #[test]
+#[ignore = "requires private full-arch STL scans; run scripts/validate-release-private.sh with OCCLUVIEW_ALIGN_FIXTURES=/path/to/corpus"]
 fn a_rescan_with_scanner_error_is_accepted_where_fixtures_are_present() {
-    let Some(files) = fixtures() else {
-        return;
-    };
+    let files = fixtures();
     let path = files
         .first()
         .expect("fixture helper returns a non-empty corpus");
@@ -703,9 +666,9 @@ fn a_rescan_with_scanner_error_is_accepted_where_fixtures_are_present() {
                 report.median_abs
             );
             assert!(
-                error < 0.5,
+                error < MAX_RESIDUAL_MM,
                 "sigma={sigma_mm} shift={shift_mm}: the accepted pose leaves {error:.4} mm of \
-                 residual displacement; the rescan was not brought home"
+                 residual displacement, over the {MAX_RESIDUAL_MM} mm acceptance limit"
             );
         }
     }
@@ -713,13 +676,14 @@ fn a_rescan_with_scanner_error_is_accepted_where_fixtures_are_present() {
 
 /// A prepared model can retain only a small unchanged region of the original.
 /// This derives a controlled counterexample from a real scan so the true rigid
-/// pose is known. It is not a substitute for two independently acquired scans.
+/// pose is known. The private full-arch run measured less than 0.001 mm pose
+/// error; the assertion uses the same 0.05 mm acceptance limit as the scan
+/// residual checks. It is not a substitute for two independently acquired scans.
 #[test]
 #[allow(clippy::too_many_lines, clippy::cast_possible_truncation)]
+#[ignore = "requires private full-arch STL scans; run scripts/validate-release-private.sh with OCCLUVIEW_ALIGN_FIXTURES=/path/to/corpus"]
 fn a_changed_arch_uses_its_small_unchanged_region_when_fixtures_are_present() {
-    let Some(files) = fixtures() else {
-        return;
-    };
+    let files = fixtures();
     let path = files
         .first()
         .expect("fixture helper returns a non-empty corpus");
@@ -828,7 +792,10 @@ fn a_changed_arch_uses_its_small_unchanged_region_when_fixtures_are_present() {
         report.is_trustworthy_refinement_for(&settings),
         started.elapsed().as_secs_f64()
     );
-    assert!(error < 0.5, "pose must follow the unchanged region");
+    assert!(
+        error < MAX_RESIDUAL_MM,
+        "pose error {error:.4} mm exceeds {MAX_RESIDUAL_MM} mm"
+    );
     assert!(
         report.is_trustworthy_refinement_for(&settings),
         "only an adequately supported fit can publish a heatmap"
@@ -899,7 +866,7 @@ fn a_distinct_prep_pair_has_one_accepted_pose_from_near_and_distant_starts() {
 /// the whole scene for a different answer.
 #[test]
 #[ignore = "needs a partial-overlap scan pair; run with OCCLUVIEW_ALIGN_PARTIAL_PAIR=<directory> cargo test -p occluview-align --test real_scans a_partial_pair -- --ignored"]
-fn a_partial_pair_refines_locally_from_nearby_starts_when_fixtures_are_present() {
+fn a_partial_pair_refines_locally_from_nearby_starts() {
     let directory = std::env::var_os("OCCLUVIEW_ALIGN_PARTIAL_PAIR")
         .map(PathBuf::from)
         .expect("OCCLUVIEW_ALIGN_PARTIAL_PAIR names the private pair directory");

@@ -125,6 +125,7 @@ jobs:
       - name: Test the viewer and updater suites on Apple Silicon
         env:
           MACOSX_DEPLOYMENT_TARGET: "14.0"
+          OCCLUVIEW_REQUIRE_GPU_TESTS: "1"
         # The whole app suite, not a macOS-only subset, because the Metal
         # backed offscreen tests (contact rendering, adapter policy) are the
         # hardware acceptance that this lane exists to provide, and the
