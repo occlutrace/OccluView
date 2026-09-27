@@ -1,15 +1,16 @@
 //! Viewport input and rendering integration for the sculpt brushes.
 
 use super::{egui, live_viewport, mesh_editor_overlay, OccluViewApp};
+use crate::sculpt_kernel::{BrushMode, BrushStroke};
 use crate::sculpt_tool::{
-    uniform_scene_scale, SculptToolKind, StrokeState, DAB_SPACING_FRACTION, HOLD_DAB_INTERVAL_SEC,
-    MAX_DABS_PER_FRAME, SCULPT_INTENSITY_MAX, SCULPT_INTENSITY_MIN, SCULPT_SIZE_MAX,
-    SCULPT_SIZE_MIN, SCULPT_WHEEL_STEP,
+    uniform_scene_scale, SculptTip, SculptToolKind, StrokeState, DAB_SPACING_FRACTION,
+    HOLD_DAB_INTERVAL_SEC, MAX_DABS_PER_FRAME, SCULPT_INTENSITY_MAX, SCULPT_INTENSITY_MIN,
+    SCULPT_SIZE_MAX, SCULPT_SIZE_MIN, SCULPT_WHEEL_STEP,
 };
 use crate::sculpt_worker::SculptWorker;
 use crate::viewer::viewport_ray;
 use glam::{Mat4, Quat, Vec3};
-use occluview_core::{BrushMode, BrushStroke, SceneMeshId, ScenePickHit};
+use occluview_core::{SceneMeshId, ScenePickHit};
 use occluview_render::{
     sculpt_surface_light_intensity, sculpt_tool_length, PreparedSceneTopology, SculptBrushUniform,
     SculptToolShape, SculptToolUniform,
@@ -38,7 +39,16 @@ struct DabParams {
     radius_world: f32,
     strength: f32,
     mode: BrushMode,
+    tip: SculptTip,
     dt: f32,
+}
+
+/// The stroke bearing a knife dab cuts along: the travel between two dab
+/// centres with its component along the view removed, so the blade stays on
+/// the surface the operator sees.
+fn stroke_bearing(travel: Vec3, view: Vec3) -> Option<Vec3> {
+    let on_surface = travel - view * travel.dot(view);
+    (on_surface.length() > 1e-4).then(|| on_surface.normalize_or_zero())
 }
 
 pub(super) fn apply_sculpt_wheel_settings(ctx: &egui::Context) -> bool {
@@ -90,12 +100,19 @@ fn schedule_dabs(worker: &SculptWorker, stroke: &mut StrokeState, params: &DabPa
         stroke.hold_seconds,
         params.dt,
     );
+    let mut previous = stroke.last_dab_local;
     stroke.last_dab_local = last_dab;
     stroke.hold_seconds = hold_seconds;
 
     let mut queued = 0;
     for at in centers {
-        queued += usize::from(worker.try_apply(
+        // A press with no travel yet keeps the previous bearing, so a knife
+        // dab at the start of a stroke still cuts along the last gesture
+        // instead of leaving a round dimple.
+        if let Some(axis) = previous.and_then(|last| stroke_bearing(at - last, view_local)) {
+            stroke.last_axis = Some(axis);
+        }
+        queued += usize::from(worker.try_apply_tipped(
             BrushStroke {
                 center: at.to_array(),
                 radius_mm: radius_local,
@@ -103,7 +120,10 @@ fn schedule_dabs(worker: &SculptWorker, stroke: &mut StrokeState, params: &DabPa
                 view_dir: view_local.to_array(),
             },
             params.mode,
+            params.tip,
+            stroke.last_axis.map(|axis| axis.to_array()),
         ));
+        previous = Some(at);
     }
     queued
 }
@@ -395,6 +415,7 @@ impl OccluViewApp {
                     layer_id: hit.layer_id,
                     last_dab_local: None,
                     hold_seconds: 0.0,
+                    last_axis: None,
                 });
                 self.document.unsaved_sculpt_stroke = true;
             }
@@ -414,6 +435,7 @@ impl OccluViewApp {
                 .kind
                 .dab_strength(mesh_editor_overlay::sculpt_intensity01(ctx), input.shift),
             mode: input.kind.brush_mode(input.shift),
+            tip: mesh_editor_overlay::sculpt_tip(ctx),
             dt: input.dt,
         };
         let Some(worker) = self.tools.sculpt.worker.as_ref() else {
@@ -773,13 +795,27 @@ impl OccluViewApp {
             SculptToolKind::AddRemove => SculptToolShape::Cone,
             SculptToolKind::Smooth => SculptToolShape::Cylinder,
         };
+        let tip = mesh_editor_overlay::sculpt_tip(ui.ctx());
+        let axis = self
+            .tools
+            .sculpt
+            .stroke
+            .as_ref()
+            .and_then(|stroke| stroke.last_axis);
         let color_rgba = color.to_array().map(|channel| f32::from(channel) / 255.0);
         let tool_length = sculpt_tool_length(strength);
-        let tool_rotation = Quat::from_rotation_arc(Vec3::Z, normal);
+        // Remove builds in the opposite direction: the body points into the
+        // surface it is carving instead of hovering over it.
+        let direction = if kind.brush_mode(shift) == BrushMode::Remove {
+            -normal
+        } else {
+            normal
+        };
+        let tool_rotation = Quat::from_rotation_arc(Vec3::Z, direction);
         let tool_model = Mat4::from_scale_rotation_translation(
             Vec3::new(radius_world, radius_world, tool_length),
             tool_rotation,
-            hit.point + normal * 0.02,
+            hit.point + direction * 0.02,
         );
         self.publish_sculpt_cursor(Some(live_viewport::SculptCursor {
             target_index: hit.layer_index,
@@ -789,10 +825,11 @@ impl OccluViewApp {
                 radius: radius_world,
                 normal: normal.to_array(),
                 intensity: sculpt_surface_light_intensity(strength),
+                axis: axis.map_or([0.0; 3], |axis| axis.to_array()),
+                tip: tip.kernel_stamp(),
                 color: color_rgba,
-                tip: shape as u32,
                 visible: 1,
-                padding: [0; 2],
+                padding: [0; 3],
             },
             tool: SculptToolUniform {
                 model: tool_model.to_cols_array(),

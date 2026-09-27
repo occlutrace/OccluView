@@ -13,7 +13,8 @@ use super::{EditorTab, MeshEditorAction, MeshEditorPanelState};
 use crate::icons::AppIcon;
 use crate::mesh_editor_icons::{self, CELL_ROUNDING};
 use crate::sculpt_tool::{
-    SculptToolKind, SCULPT_INTENSITY_MAX, SCULPT_INTENSITY_MIN, SCULPT_SIZE_MAX, SCULPT_SIZE_MIN,
+    SculptTip, SculptToolKind, SCULPT_INTENSITY_MAX, SCULPT_INTENSITY_MIN, SCULPT_SIZE_MAX,
+    SCULPT_SIZE_MIN,
 };
 use crate::ui_theme;
 
@@ -410,8 +411,42 @@ pub(super) fn sculpt(
             action = Some(MeshEditorAction::ToggleSculpt(SculptToolKind::Smooth));
         }
     });
+    sculpt_tip_row(ui, enabled, locale);
     sculpt_settings_row(ui, enabled, locale);
     action
+}
+
+/// One cell per tip stamp. The tip changes the dab's shape, so the row sits
+/// between the brush selector and the size sliders it is used with.
+fn sculpt_tip_row(ui: &mut egui::Ui, enabled: bool, locale: &crate::i18n::LocaleManager) {
+    let ctx = ui.ctx().clone();
+    let selected = super::sculpt_tip(&ctx);
+    section(ui, locale, "meshedit-section-sculpt-tip");
+    row(ui, SculptTip::ALL.len(), |ui, width| {
+        for tip in SculptTip::ALL {
+            if icon(
+                ui,
+                width,
+                tip_icon(tip),
+                &locale.tr(tip.label_key()),
+                &locale.tr(tip.hint_key()),
+                enabled,
+                selected == tip,
+            )
+            .clicked()
+            {
+                super::set_sculpt_tip(&ctx, tip);
+            }
+        }
+    });
+}
+
+fn tip_icon(tip: SculptTip) -> AppIcon {
+    match tip {
+        SculptTip::Ball => AppIcon::TipBall,
+        SculptTip::Knife => AppIcon::TipKnife,
+        SculptTip::Cylinder => AppIcon::TipCylinder,
+    }
 }
 
 /// Size/intensity sliders for the sculpt tools. Both live in egui memory (like

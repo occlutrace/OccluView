@@ -14,9 +14,10 @@
 use super::*;
 use crate::app::app_align_display::AlignOverlay;
 use crate::app::app_test_support::test_app;
+use crate::sculpt_kernel::BrushSession;
 use crate::sculpt_tool::SculptSession;
 use glam::{Affine3A, Vec3};
-use occluview_core::{mesh_edit_buffers_from_mesh, BrushSession, Mesh, Scene, SceneMesh, Vertex};
+use occluview_core::{mesh_edit_buffers_from_mesh, Mesh, Scene, SceneMesh, Vertex};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 

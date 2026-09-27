@@ -108,8 +108,14 @@ Mesh Editing keeps the common dental CAD operations in one palette:
 </p>
 
 Sculpting uses the same editor session. Add/Remove and Smooth are separate
-brush modes, while the size and force controls stay compact and readable in the
-panel instead of consuming the whole viewport.
+brush modes, and each works through a ball, knife, or cylinder tip: the ball
+stamps a round footprint, the knife a narrow blade along the stroke direction,
+and the cylinder a flat footprint for levelling one face. The size, force and
+tip controls stay compact and readable in the panel instead of consuming the
+whole viewport.
+
+The surface repaints itself under the brush: the emissive footprint follows the
+tip you chose, so the mark on the scan is the shape the next dab will stamp.
 
 ## Mesh Repair
 

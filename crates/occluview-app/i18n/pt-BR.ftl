@@ -382,6 +382,14 @@ meshedit-sculpt-addremove = Adicionar / Remover  [1]
 meshedit-sculpt-addremove-hint = Depositar arrastando; Shift escava. Shift+roda redimensiona, Ctrl+roda muda a força. Tecla: 1.
 meshedit-sculpt-smooth = Suavizar  [2]
 meshedit-sculpt-smooth-hint = Relaxar arrastando; Shift força o máximo. Shift+roda redimensiona, Ctrl+roda muda a força. Tecla: 2.
+meshedit-section-sculpt-tip = Ponta
+meshedit-sculpt-tip-ball = Esfera
+meshedit-sculpt-tip-ball-hint = Pegada redonda: máxima no centro e esmaecendo até a borda.
+meshedit-sculpt-tip-knife = Lâmina
+meshedit-sculpt-tip-knife-hint = Lâmina estreita que se alarga no sentido transversal ao traço.
+meshedit-sculpt-tip-cylinder = Cilindro
+meshedit-sculpt-tip-cylinder-hint = Pegada plana com borda suave, para nivelar uma face.
+
 meshedit-slider-size = tamanho
 meshedit-slider-size-hint = Tamanho do pincel (Shift + roda)
 meshedit-slider-force = força

@@ -3,6 +3,7 @@
 # Workspace layering:
 #   geometry-math ← (nothing; shared constants + trivial pure math)
 #   mesh-edit     → geometry-math
+#   sculpt        → (nothing; its own f64 millimetre geometry)
 #   hps           → geometry-math (no other OccluView crates)
 #   align         ← (nothing OccluView; plain slices in, plain values out)
 #   core          → mesh-edit + geometry-math (+ optional robust-csg bridge fallback)
@@ -22,6 +23,7 @@ resolver = "2"
 members = [
     "crates/occlu-geometry-math",
     "crates/occlu-mesh-edit",
+    "crates/occlu-sculpt",
     "crates/occluview-robust-csg",
     "crates/occluview-align",
     "crates/occluview-contact",
@@ -42,6 +44,7 @@ exclude = ["fuzz"]
 # opt-in unless the full workspace is requested.
 default-members = [
     "crates/occlu-mesh-edit",
+    "crates/occlu-sculpt",
     "crates/occluview-align",
     "crates/occluview-contact",
     "crates/occluview-core",
@@ -71,6 +74,7 @@ publish = false              # we are not on crates.io yet
 # Internal crates.
 occlu-geometry-math = { path = "crates/occlu-geometry-math" }
 occlu-mesh-edit  = { path = "crates/occlu-mesh-edit" }
+occlu-sculpt     = { path = "crates/occlu-sculpt" }
 occluview-robust-csg = { path = "crates/occluview-robust-csg" }
 occluview-align   = { path = "crates/occluview-align" }
 occluview-contact = { path = "crates/occluview-contact" }

@@ -57,11 +57,11 @@ pub use mesh::{
     normalize_bridge_split_input, prepare_bridge_split_source, repair_mesh_in_mesh,
     selected_connected_components_in_mesh, CoreBridgeSplitError, CoreBridgeSplitResult,
     CoreMeshEditResult, CoreMeshRepairResult, LiveRayPick, Mesh, MeshBuilder, MeshKind,
-    MeshTexture, PreparedBridgeSplitSource, PrincipalFrame, Vertex,
+    MeshTexture, PreparedBridgeSplitSource, PrincipalFrame, SculptSessionBuffers, Vertex,
 };
 pub use occlu_mesh_edit::{
-    BridgeSplitError, BridgeSplitReport, BridgeSplitRequest, BrushMode, BrushSession, BrushStroke,
-    BrushStrokeOutcome, FaceSelection, MeshEditOptions, MeshEditReport, MeshEditWarning,
+    BridgeSplitError, BridgeSplitReport, BridgeSplitRequest, EditVertex, FaceSelection,
+    MeshEditBuffers, MeshEditError, MeshEditOptions, MeshEditReport, MeshEditWarning, MeshTopology,
     RepairOptions, RepairReport, CLOSE_HOLES_EDGE_CEILING,
 };
 pub use scene::{

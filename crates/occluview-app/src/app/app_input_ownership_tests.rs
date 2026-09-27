@@ -202,6 +202,7 @@ fn an_active_stroke_stops_sampling_when_pointer_leaves_viewport() {
         layer_id,
         last_dab_local: None,
         hold_seconds: 0.0,
+        last_axis: None,
     });
     app.document.unsaved_sculpt_stroke = true;
 
