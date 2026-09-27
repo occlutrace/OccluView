@@ -28,6 +28,7 @@ occluview-align = { workspace = true }
 occluview-contact = { workspace = true }
 occluview-core    = { workspace = true, features = ["robust-csg"] }
 occluview-formats = { workspace = true }
+occluview-i18n    = { workspace = true }
 occluview-render  = { workspace = true }
 occluview-update  = { workspace = true }
 anyhow            = { workspace = true }

@@ -926,3 +926,13 @@ load-units-unclear = die Größe entscheidet es nicht; prüfen Sie mit einem bek
 contact-stats-balance-hover = Kontaktfläche geteilt an der Mittellinie: vor / hinter der Linie
 mesh-warning-vertex-alpha = Vertex-Alpha wurde nicht geschrieben
 load-superseded-parked-open = Eine neuere Datei wartet: beantworten Sie zuerst deren Abfrage
+
+shell-preview-open = In OccluView öffnen
+shell-preview-edit = In OccluView bearbeiten
+shell-preview-front = Vorne
+shell-preview-top = Oben
+shell-preview-side = Seite
+shell-preview-isometric = Isometrisch
+shell-preview-fit-view = Ansicht einpassen
+shell-preview-wireframe = Drahtgitter
+shell-preview-copy-image = Bild kopieren
