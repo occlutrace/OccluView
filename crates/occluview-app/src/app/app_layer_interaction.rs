@@ -342,7 +342,8 @@ impl OccluViewApp {
         if response.secondary_clicked()
             && discard_lasso_outline(&mut self.document.mesh_selection_drag)
         {
-            self.ui.status_message = Some(self.ui.locale.tr("lasso-dropped"));
+            self.ui.status_message =
+                Some(self.ui.locale.tr(crate::i18n::message_id!("lasso-dropped")));
             ctx.request_repaint();
         }
         let menu_id = Self::viewport_menu_target_id();
@@ -456,7 +457,10 @@ impl OccluViewApp {
             hit.layer_index,
             &self.ui.locale,
         );
-        self.ui.status_message = Some(self.ui.locale.tr_with("layer-hidden", &[("label", &label)]));
+        self.ui.status_message = Some(self.ui.locale.tr_with(
+            crate::i18n::message_id!("layer-hidden"),
+            &[("label", &label)],
+        ));
         self.remember_visibility_changes(&scene, &draft);
         self.update_scene_materials(draft);
         self.invalidate_alignment_for_visibility_changes(&[hit.layer_id]);
@@ -503,21 +507,19 @@ impl OccluViewApp {
             .remove(&hit.layer_id)
         {
             entry.opacity = previous;
-            self.ui.status_message = Some(
-                self.ui
-                    .locale
-                    .tr_with("layer-opaque-again", &[("label", &label)]),
-            );
+            self.ui.status_message = Some(self.ui.locale.tr_with(
+                crate::i18n::message_id!("layer-opaque-again"),
+                &[("label", &label)],
+            ));
         } else {
             self.document
                 .translucent_layer_restore
                 .insert(hit.layer_id, entry.opacity);
             entry.opacity = TRANSLUCENT_OPACITY;
-            self.ui.status_message = Some(
-                self.ui
-                    .locale
-                    .tr_with("layer-translucent", &[("label", &label)]),
-            );
+            self.ui.status_message = Some(self.ui.locale.tr_with(
+                crate::i18n::message_id!("layer-translucent"),
+                &[("label", &label)],
+            ));
         }
         self.update_scene_materials(draft);
         ctx.request_repaint();
@@ -560,17 +562,20 @@ impl OccluViewApp {
                 position - 1,
                 &self.ui.locale,
             );
-            self.ui.status_message = Some(
-                self.ui
-                    .locale
-                    .tr_with("layer-restored", &[("label", &label)]),
-            );
+            self.ui.status_message = Some(self.ui.locale.tr_with(
+                crate::i18n::message_id!("layer-restored"),
+                &[("label", &label)],
+            ));
             self.update_scene_materials(draft);
             self.invalidate_alignment_for_visibility_changes(&[layer_id]);
             ctx.request_repaint();
             return;
         }
-        self.ui.status_message = Some(self.ui.locale.tr("layers-none-hidden"));
+        self.ui.status_message = Some(
+            self.ui
+                .locale
+                .tr(crate::i18n::message_id!("layers-none-hidden")),
+        );
         ctx.request_repaint();
     }
 }

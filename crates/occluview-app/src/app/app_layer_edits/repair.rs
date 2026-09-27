@@ -128,10 +128,14 @@ pub(super) fn repaired_status(
     let mut parts = repair_parts(report, locale);
     let skipped = report.warnings.len();
     if skipped > 0 {
-        parts.push(locale.tr_plural("repair-toast-skipped", &[], &[("count", skipped)]));
+        parts.push(locale.tr_plural(
+            crate::i18n::message_id!("repair-toast-skipped"),
+            &[],
+            &[("count", skipped)],
+        ));
     }
     locale.tr_with(
-        "repair-toast-done",
+        crate::i18n::message_id!("repair-toast-done"),
         &[("layer", layer_label), ("parts", &parts.join(", "))],
     )
 }
@@ -147,12 +151,15 @@ pub(super) fn clean_status(
     let rims = report.open_rims_left;
     if rims > 0 {
         locale.tr_plural(
-            "repair-toast-clean-rims",
+            crate::i18n::message_id!("repair-toast-clean-rims"),
             &[("layer", layer_label)],
             &[("count", rims)],
         )
     } else {
-        locale.tr_with("repair-toast-clean", &[("layer", layer_label)])
+        locale.tr_with(
+            crate::i18n::message_id!("repair-toast-clean"),
+            &[("layer", layer_label)],
+        )
     }
 }
 
@@ -160,20 +167,47 @@ pub(super) fn clean_status(
 /// can set `changed_content` is covered (debris triangles ride along with
 /// their components), so a repaired status never comes out empty.
 fn repair_parts(report: &RepairReport, locale: &crate::i18n::LocaleManager) -> Vec<String> {
-    let entries: [(usize, &str); 10] = [
-        (report.welded_vertices, "repair-toast-welded"),
-        (report.removed_degenerate_triangles, "repair-toast-slivers"),
+    let entries: [(usize, crate::i18n::MessageId); 10] = [
+        (
+            report.welded_vertices,
+            crate::i18n::message_id!("repair-toast-welded"),
+        ),
+        (
+            report.removed_degenerate_triangles,
+            crate::i18n::message_id!("repair-toast-slivers"),
+        ),
         (
             report.removed_duplicate_triangles,
-            "repair-toast-duplicate-faces",
+            crate::i18n::message_id!("repair-toast-duplicate-faces"),
         ),
-        (report.split_nonmanifold_edges, "repair-toast-nonmanifold"),
-        (report.split_bowtie_vertices, "repair-toast-bowtie"),
-        (report.reoriented_triangles, "repair-toast-reoriented"),
-        (report.flipped_components, "repair-toast-flipped"),
-        (report.removed_debris_components, "repair-toast-debris"),
-        (report.filled_holes, "repair-toast-pinholes"),
-        (report.removed_unreferenced_vertices, "repair-toast-unused"),
+        (
+            report.split_nonmanifold_edges,
+            crate::i18n::message_id!("repair-toast-nonmanifold"),
+        ),
+        (
+            report.split_bowtie_vertices,
+            crate::i18n::message_id!("repair-toast-bowtie"),
+        ),
+        (
+            report.reoriented_triangles,
+            crate::i18n::message_id!("repair-toast-reoriented"),
+        ),
+        (
+            report.flipped_components,
+            crate::i18n::message_id!("repair-toast-flipped"),
+        ),
+        (
+            report.removed_debris_components,
+            crate::i18n::message_id!("repair-toast-debris"),
+        ),
+        (
+            report.filled_holes,
+            crate::i18n::message_id!("repair-toast-pinholes"),
+        ),
+        (
+            report.removed_unreferenced_vertices,
+            crate::i18n::message_id!("repair-toast-unused"),
+        ),
     ];
     entries
         .iter()

@@ -33,10 +33,10 @@ pub(super) fn show_settings_toolbar_toggle(
         ui,
         crate::measure_overlay::ToolbarToggle::new(
             AppIcon::Settings,
-            &locale.tr("toolbar-settings-label"),
+            &locale.tr(crate::i18n::message_id!("toolbar-settings-label")),
             enabled,
             egui::Popup::is_id_open(ui.ctx(), settings_popup_id()),
-            &locale.tr("toolbar-settings-hint"),
+            &locale.tr(crate::i18n::message_id!("toolbar-settings-hint")),
         ),
     )
 }
@@ -113,11 +113,14 @@ pub(super) fn show_settings_popup(
                 .show(ui, |ui| {
                     ui.set_width(286.0);
 
-                    section_label(ui, &locale.tr("settings-section-appearance"));
+                    section_label(
+                        ui,
+                        &locale.tr(crate::i18n::message_id!("settings-section-appearance")),
+                    );
                     segmented_row(
                         ui,
                         locale,
-                        &locale.tr("settings-theme"),
+                        &locale.tr(crate::i18n::message_id!("settings-theme")),
                         settings.theme,
                         &ThemePreference::OPTIONS,
                         |option, locale| locale.tr(theme_key(option)),
@@ -126,32 +129,45 @@ pub(super) fn show_settings_popup(
                     );
                     slider_f32_row_until_release(
                         ui,
-                        &locale.tr("settings-scale"),
+                        &locale.tr(crate::i18n::message_id!("settings-scale")),
                         settings.ui_scale,
                         0.85..=1.5,
                         "×",
-                        &locale.tr("settings-scale-hint"),
+                        &locale.tr(crate::i18n::message_id!("settings-scale-hint")),
                         &mut action,
                     );
                     language_section(ui, locale, &mut action);
                     if language_save_error.is_some() {
                         ui.label(
-                            egui::RichText::new(locale.text("settings-language-save-error"))
-                                .size(10.5)
-                                .color(ui_theme::danger()),
+                            egui::RichText::new(
+                                locale
+                                    .text(crate::i18n::message_id!("settings-language-save-error")),
+                            )
+                            .size(10.5)
+                            .color(ui_theme::danger()),
                         );
                     }
 
                     section_break(ui);
-                    section_label(ui, &locale.tr("settings-section-files"));
+                    section_label(
+                        ui,
+                        &locale.tr(crate::i18n::message_id!("settings-section-files")),
+                    );
                     let mut remember = settings.remember_export_dir;
                     ui.allocate_ui_with_layout(
                         egui::vec2(ui.available_width(), ROW_HEIGHT),
                         egui::Layout::left_to_right(egui::Align::Center),
                         |ui| {
                             if ui
-                                .checkbox(&mut remember, locale.tr("settings-remember-export"))
-                                .on_hover_text(locale.tr("settings-remember-export-hint"))
+                                .checkbox(
+                                    &mut remember,
+                                    locale.tr(crate::i18n::message_id!("settings-remember-export")),
+                                )
+                                .on_hover_text(
+                                    locale.tr(crate::i18n::message_id!(
+                                        "settings-remember-export-hint"
+                                    )),
+                                )
                                 .changed()
                             {
                                 action = Some(SettingsAction::SetRememberExportDir(remember));
@@ -159,11 +175,14 @@ pub(super) fn show_settings_popup(
                         },
                     );
                     section_break(ui);
-                    section_label(ui, &locale.tr("settings-section-scene"));
+                    section_label(
+                        ui,
+                        &locale.tr(crate::i18n::message_id!("settings-section-scene")),
+                    );
                     segmented_row(
                         ui,
                         locale,
-                        &locale.tr("settings-background"),
+                        &locale.tr(crate::i18n::message_id!("settings-background")),
                         settings.viewport_background,
                         &ViewportBackground::OPTIONS,
                         |option, locale| locale.tr(background_key(option)),
@@ -176,8 +195,13 @@ pub(super) fn show_settings_popup(
                         egui::Layout::left_to_right(egui::Align::Center),
                         |ui| {
                             if ui
-                                .checkbox(&mut ghost, locale.tr("settings-ghost"))
-                                .on_hover_text(locale.tr("settings-ghost-hint"))
+                                .checkbox(
+                                    &mut ghost,
+                                    locale.tr(crate::i18n::message_id!("settings-ghost")),
+                                )
+                                .on_hover_text(
+                                    locale.tr(crate::i18n::message_id!("settings-ghost-hint")),
+                                )
                                 .changed()
                             {
                                 action = Some(SettingsAction::SetShowCutGhost(ghost));
@@ -187,7 +211,7 @@ pub(super) fn show_settings_popup(
                     segmented_row(
                         ui,
                         locale,
-                        &locale.tr("settings-measurements"),
+                        &locale.tr(crate::i18n::message_id!("settings-measurements")),
                         settings.unit_display,
                         &UnitDisplay::OPTIONS,
                         |option, _locale| option.label().to_owned(),
@@ -197,7 +221,7 @@ pub(super) fn show_settings_popup(
                     segmented_row(
                         ui,
                         locale,
-                        &locale.tr("measure-line-angle"),
+                        &locale.tr(crate::i18n::message_id!("measure-line-angle")),
                         settings.ruler_line_angle,
                         &RulerLineAngle::OPTIONS,
                         |option, locale| locale.tr(ruler_line_angle_key(option)),
@@ -210,8 +234,15 @@ pub(super) fn show_settings_popup(
                         egui::Layout::left_to_right(egui::Align::Center),
                         |ui| {
                             if ui
-                                .checkbox(&mut frame_on_open, locale.tr("settings-frame-on-open"))
-                                .on_hover_text(locale.tr("settings-frame-on-open-hint"))
+                                .checkbox(
+                                    &mut frame_on_open,
+                                    locale.tr(crate::i18n::message_id!("settings-frame-on-open")),
+                                )
+                                .on_hover_text(
+                                    locale.tr(crate::i18n::message_id!(
+                                        "settings-frame-on-open-hint"
+                                    )),
+                                )
                                 .changed()
                             {
                                 action = Some(SettingsAction::SetFrameSceneOnOpen(frame_on_open));
@@ -226,9 +257,12 @@ pub(super) fn show_settings_popup(
                             if ui
                                 .checkbox(
                                     &mut double_click_focus,
-                                    locale.tr("settings-double-click"),
+                                    locale.tr(crate::i18n::message_id!("settings-double-click")),
                                 )
-                                .on_hover_text(locale.tr("settings-double-click-hint"))
+                                .on_hover_text(
+                                    locale
+                                        .tr(crate::i18n::message_id!("settings-double-click-hint")),
+                                )
                                 .changed()
                             {
                                 action =
@@ -238,35 +272,45 @@ pub(super) fn show_settings_popup(
                     );
                     slider_f32_row(
                         ui,
-                        &locale.tr("settings-orbit"),
+                        &locale.tr(crate::i18n::message_id!("settings-orbit")),
                         settings.orbit_sensitivity,
                         0.25..=4.0,
                         "×",
-                        &locale.tr("settings-orbit-hint"),
+                        &locale.tr(crate::i18n::message_id!("settings-orbit-hint")),
                         &mut action,
                         SettingsAction::SetOrbitSensitivity,
                     );
                     slider_f32_row(
                         ui,
-                        &locale.tr("settings-zoom"),
+                        &locale.tr(crate::i18n::message_id!("settings-zoom")),
                         settings.zoom_sensitivity,
                         0.25..=4.0,
                         "×",
-                        &locale.tr("settings-zoom-hint"),
+                        &locale.tr(crate::i18n::message_id!("settings-zoom-hint")),
                         &mut action,
                         SettingsAction::SetZoomSensitivity,
                     );
 
                     section_break(ui);
-                    section_label(ui, &locale.tr("settings-section-mesh"));
+                    section_label(
+                        ui,
+                        &locale.tr(crate::i18n::message_id!("settings-section-mesh")),
+                    );
                     let mut remember_brush = settings.remember_sculpt_brush;
                     ui.allocate_ui_with_layout(
                         egui::vec2(ui.available_width(), ROW_HEIGHT),
                         egui::Layout::left_to_right(egui::Align::Center),
                         |ui| {
                             if ui
-                                .checkbox(&mut remember_brush, locale.tr("settings-remember-brush"))
-                                .on_hover_text(locale.tr("settings-remember-brush-hint"))
+                                .checkbox(
+                                    &mut remember_brush,
+                                    locale.tr(crate::i18n::message_id!("settings-remember-brush")),
+                                )
+                                .on_hover_text(
+                                    locale.tr(crate::i18n::message_id!(
+                                        "settings-remember-brush-hint"
+                                    )),
+                                )
                                 .changed()
                             {
                                 action =
@@ -276,14 +320,20 @@ pub(super) fn show_settings_popup(
                     );
 
                     section_break(ui);
-                    section_label(ui, &locale.tr("settings-section-updates"));
+                    section_label(
+                        ui,
+                        &locale.tr(crate::i18n::message_id!("settings-section-updates")),
+                    );
                     let mut check_on_start = settings.update_check_on_start;
                     ui.allocate_ui_with_layout(
                         egui::vec2(ui.available_width(), ROW_HEIGHT),
                         egui::Layout::left_to_right(egui::Align::Center),
                         |ui| {
                             if ui
-                                .checkbox(&mut check_on_start, locale.tr("settings-check-auto"))
+                                .checkbox(
+                                    &mut check_on_start,
+                                    locale.tr(crate::i18n::message_id!("settings-check-auto")),
+                                )
                                 .changed()
                             {
                                 action =
@@ -296,11 +346,11 @@ pub(super) fn show_settings_popup(
 
             if save_error.is_some() {
                 ui.label(
-                    egui::RichText::new(locale.tr("settings-save-error"))
+                    egui::RichText::new(locale.tr(crate::i18n::message_id!("settings-save-error")))
                         .size(10.5)
                         .color(ui_theme::danger()),
                 )
-                .on_hover_text(locale.tr("settings-save-error-hint"));
+                .on_hover_text(locale.tr(crate::i18n::message_id!("settings-save-error-hint")));
             }
 
             ui.add_space(2.0);
@@ -316,9 +366,11 @@ pub(super) fn show_settings_popup(
                 if ui
                     .add_sized(
                         [button_width, FOOTER_BUTTON_HEIGHT],
-                        egui::Button::new(locale.tr("settings-shortcuts")),
+                        egui::Button::new(
+                            locale.tr(crate::i18n::message_id!("settings-shortcuts")),
+                        ),
                     )
-                    .on_hover_text(locale.tr("settings-shortcuts-hint"))
+                    .on_hover_text(locale.tr(crate::i18n::message_id!("settings-shortcuts-hint")))
                     .clicked()
                 {
                     action = Some(SettingsAction::OpenShortcuts);
@@ -326,7 +378,7 @@ pub(super) fn show_settings_popup(
                 if ui
                     .add_sized(
                         [button_width, FOOTER_BUTTON_HEIGHT],
-                        egui::Button::new(locale.tr("settings-about")),
+                        egui::Button::new(locale.tr(crate::i18n::message_id!("settings-about"))),
                     )
                     .clicked()
                 {
@@ -348,7 +400,7 @@ fn panel_header(ui: &mut egui::Ui, locale: &LocaleManager) {
             crate::icons::paint(ui.painter(), icon_rect, AppIcon::Settings, ui_theme::text());
             ui.add_space(4.0);
             ui.label(
-                egui::RichText::new(locale.tr("settings-header"))
+                egui::RichText::new(locale.tr(crate::i18n::message_id!("settings-header")))
                     .size(14.0)
                     .strong()
                     .color(ui_theme::text()),
@@ -486,18 +538,18 @@ fn slider_f32_row_inner(
     );
 }
 
-fn background_key(option: ViewportBackground) -> &'static str {
+fn background_key(option: ViewportBackground) -> crate::i18n::MessageId {
     match option {
-        ViewportBackground::Gray => "settings-bg-gray",
-        ViewportBackground::White => "settings-bg-white",
-        ViewportBackground::Dark => "settings-bg-dark",
+        ViewportBackground::Gray => crate::i18n::message_id!("settings-bg-gray"),
+        ViewportBackground::White => crate::i18n::message_id!("settings-bg-white"),
+        ViewportBackground::Dark => crate::i18n::message_id!("settings-bg-dark"),
     }
 }
 
-fn theme_key(option: ThemePreference) -> &'static str {
+fn theme_key(option: ThemePreference) -> crate::i18n::MessageId {
     match option {
-        ThemePreference::Light => "settings-theme-light",
-        ThemePreference::Dark => "settings-theme-dark",
+        ThemePreference::Light => crate::i18n::message_id!("settings-theme-light"),
+        ThemePreference::Dark => crate::i18n::message_id!("settings-theme-dark"),
     }
 }
 
@@ -545,7 +597,7 @@ fn language_section(
 ) {
     let header = format!(
         "{} · {}",
-        locale.text("settings-language-label"),
+        locale.text(crate::i18n::message_id!("settings-language-label")),
         selected_language_summary(locale)
     );
     ui.scope(|ui| {
@@ -580,9 +632,10 @@ fn language_section(
                 if let Some(tag) = active_language_fallback_tag(locale) {
                     ui.add_space(2.0);
                     ui.label(
-                        egui::RichText::new(
-                            locale.tr_with("settings-language-catalog-fallback", &[("tag", tag)]),
-                        )
+                        egui::RichText::new(locale.tr_with(
+                            crate::i18n::message_id!("settings-language-catalog-fallback"),
+                            &[("tag", tag)],
+                        ))
                         .size(10.5)
                         .color(ui_theme::text_muted()),
                     );
@@ -593,7 +646,9 @@ fn language_section(
 
 fn selected_language_summary(locale: &LocaleManager) -> String {
     match &locale.snapshot().preference {
-        UiLanguagePreference::Auto => locale.text("settings-language-auto"),
+        UiLanguagePreference::Auto => {
+            locale.text(crate::i18n::message_id!("settings-language-auto"))
+        }
         UiLanguagePreference::Explicit(tag) if *tag == locale.snapshot().render_tag => {
             endonym(tag).to_owned()
         }
@@ -603,7 +658,7 @@ fn selected_language_summary(locale: &LocaleManager) -> String {
 
 fn system_language_choice_label(locale: &LocaleManager) -> String {
     locale.tr_with(
-        "settings-language-auto-current",
+        crate::i18n::message_id!("settings-language-auto-current"),
         &[("language", endonym(locale.system_render_tag()))],
     )
 }
@@ -628,10 +683,15 @@ fn update_row(
                 UpdateCheckStatus::Disabled | UpdateCheckStatus::Checking
             );
             if ui
-                .add_enabled(enabled, egui::Button::new(locale.tr("settings-check-now")))
+                .add_enabled(
+                    enabled,
+                    egui::Button::new(locale.tr(crate::i18n::message_id!("settings-check-now"))),
+                )
                 .on_disabled_hover_text(match status {
-                    UpdateCheckStatus::Disabled => locale.tr("settings-check-disabled-hint"),
-                    _ => locale.tr("settings-check-busy-hint"),
+                    UpdateCheckStatus::Disabled => {
+                        locale.tr(crate::i18n::message_id!("settings-check-disabled-hint"))
+                    }
+                    _ => locale.tr(crate::i18n::message_id!("settings-check-busy-hint")),
                 })
                 .clicked()
             {
@@ -656,32 +716,32 @@ fn update_status_text<'a>(
     match status {
         UpdateCheckStatus::Idle => (String::new(), ui_theme::text_weak(), None),
         UpdateCheckStatus::Disabled => (
-            locale.tr("settings-update-disabled"),
+            locale.tr(crate::i18n::message_id!("settings-update-disabled")),
             ui_theme::text_muted(),
             None,
         ),
         UpdateCheckStatus::Checking => (
-            locale.tr("settings-update-checking"),
+            locale.tr(crate::i18n::message_id!("settings-update-checking")),
             ui_theme::text_weak(),
             None,
         ),
         UpdateCheckStatus::Current => (
-            locale.tr("settings-update-current"),
+            locale.tr(crate::i18n::message_id!("settings-update-current")),
             ui_theme::text_weak(),
             None,
         ),
         UpdateCheckStatus::Available(version) => (
-            locale.tr("update-available-title"),
+            locale.tr(crate::i18n::message_id!("update-available-title")),
             ui_theme::text(),
             Some(version.as_str()),
         ),
         UpdateCheckStatus::Skipped(version) => (
-            locale.tr("settings-update-skipped"),
+            locale.tr(crate::i18n::message_id!("settings-update-skipped")),
             ui_theme::text_muted(),
             Some(version.as_str()),
         ),
         UpdateCheckStatus::Failed(error) => (
-            locale.tr("settings-update-failed"),
+            locale.tr(crate::i18n::message_id!("settings-update-failed")),
             ui_theme::danger(),
             Some(error.as_str()),
         ),

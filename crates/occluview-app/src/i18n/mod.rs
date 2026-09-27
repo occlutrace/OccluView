@@ -12,6 +12,8 @@ pub(crate) mod preference;
 pub(crate) mod shots;
 pub(crate) mod tags;
 
+include!(concat!(env!("OUT_DIR"), "/message_ids.rs"));
+
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -23,6 +25,23 @@ use tags::FALLBACK_TAG;
 /// Diagnostic marker for a missing English key.
 fn missing_marker(id: &str) -> String {
     format!("⟦{id}⟧")
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) struct MessageId(&'static str);
+
+impl MessageId {
+    pub(crate) const fn new(id: &'static str) -> Self {
+        Self(id)
+    }
+
+    pub(crate) const fn as_str(self) -> &'static str {
+        self.0
+    }
+
+    pub(crate) const fn is_empty(self) -> bool {
+        self.0.is_empty()
+    }
 }
 
 /// Render the command modifier with the platform's actual key name.
@@ -53,7 +72,7 @@ pub(crate) fn platform_shortcut_text(text: &str) -> String {
 }
 
 /// Catalog key for the native window title.
-pub(crate) const NATIVE_TITLE_KEY: &str = "app-window-title";
+pub(crate) const NATIVE_TITLE_KEY: MessageId = message_id!("app-window-title");
 
 /// Native language names for the selector.
 pub(crate) fn endonym(tag: &'static str) -> &'static str {
@@ -208,24 +227,24 @@ impl LocaleManager {
     }
 
     /// Resolves a message with per-message English fallback.
-    pub(crate) fn text(&self, id: &str) -> String {
+    pub(crate) fn text(&self, id: MessageId) -> String {
         self.text_with(id, None)
     }
 
     /// Short alias for [`Self::text`].
-    pub(crate) fn tr(&self, id: &str) -> String {
+    pub(crate) fn tr(&self, id: MessageId) -> String {
         self.text(id)
     }
 
     /// Resolves text with inline string arguments.
-    pub(crate) fn tr_with(&self, id: &str, pairs: &[(&str, &str)]) -> String {
+    pub(crate) fn tr_with(&self, id: MessageId, pairs: &[(&str, &str)]) -> String {
         self.text_with(id, Some(&catalog::args(pairs)))
     }
 
     /// Resolves a plural message with arguments.
     pub(crate) fn tr_plural(
         &self,
-        id: &str,
+        id: MessageId,
         strings: &[(&str, &str)],
         numbers: &[(&str, usize)],
     ) -> String {
@@ -233,7 +252,8 @@ impl LocaleManager {
     }
 
     /// Localized text with Fluent arguments.
-    pub(crate) fn text_with(&self, id: &str, args: Option<&FluentArgs<'_>>) -> String {
+    pub(crate) fn text_with(&self, id: MessageId, args: Option<&FluentArgs<'_>>) -> String {
+        let id = id.as_str();
         if let Some(rendered) = self.active_catalog().format(id, args) {
             return platform_shortcut_text(&rendered);
         }
@@ -241,6 +261,14 @@ impl LocaleManager {
             return platform_shortcut_text(&rendered);
         }
         missing_marker(id)
+    }
+
+    #[cfg(test)]
+    fn text_unchecked(&self, id: &str) -> String {
+        self.active_catalog()
+            .format(id, None)
+            .or_else(|| self.fallback.format(id, None))
+            .unwrap_or_else(|| missing_marker(id))
     }
 }
 
@@ -265,7 +293,7 @@ mod tests {
         let (mut manager, _) = LocaleManager::startup(None, &Fixed(vec!["en"]));
         for tag in ["en", "de", "es", "fr", "it", "pt-BR", "ru"] {
             manager.set_preference(UiLanguagePreference::Explicit(tag));
-            let hint = manager.text("help-hintline-align");
+            let hint = manager.text(crate::i18n::message_id!("help-hintline-align"));
             if cfg!(target_os = "macos") {
                 assert!(
                     hint.contains('⌘'),
@@ -291,7 +319,10 @@ mod tests {
         assert_eq!(snapshot.auto_resolved, "de");
         assert_eq!(snapshot.active_tag, "de");
         assert_eq!(snapshot.render_tag, "de");
-        assert_eq!(manager.text("settings-language-label"), "Sprache");
+        assert_eq!(
+            manager.text(crate::i18n::message_id!("settings-language-label")),
+            "Sprache"
+        );
     }
 
     #[test]
@@ -301,7 +332,10 @@ mod tests {
         let (manager, snapshot) = LocaleManager::startup(None, &source);
         assert_eq!(snapshot.active_tag, "ja");
         assert_eq!(snapshot.render_tag, "en");
-        assert_eq!(manager.text("settings-language-label"), "Language");
+        assert_eq!(
+            manager.text(crate::i18n::message_id!("settings-language-label")),
+            "Language"
+        );
     }
 
     #[test]
@@ -310,7 +344,10 @@ mod tests {
         let (mut manager, _) = LocaleManager::startup(None, &source);
         manager.set_preference(UiLanguagePreference::Explicit("ru"));
         assert_eq!(manager.snapshot().active_tag, "ru");
-        assert_eq!(manager.text("settings-language-label"), "Язык");
+        assert_eq!(
+            manager.text(crate::i18n::message_id!("settings-language-label")),
+            "Язык"
+        );
         // OS list is snapshotted: later OS changes do not leak in.
         assert_eq!(manager.snapshot().auto_resolved, "de");
     }
@@ -357,7 +394,10 @@ mod tests {
         let (manager, snapshot) = LocaleManager::startup(Some(&dir), &source);
         // Manual beats Auto even though the OS now says German.
         assert_eq!(snapshot.active_tag, "ru");
-        assert_eq!(manager.text("settings-language-label"), "Язык");
+        assert_eq!(
+            manager.text(crate::i18n::message_id!("settings-language-label")),
+            "Язык"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -365,7 +405,7 @@ mod tests {
     fn missing_message_never_blanks_or_leaks_key() {
         let source = Fixed(vec!["ru"]);
         let (manager, _) = LocaleManager::startup(None, &source);
-        let rendered = manager.text("no-such-key");
+        let rendered = manager.text_unchecked("no-such-key");
         assert_eq!(rendered, "⟦no-such-key⟧");
     }
 
@@ -373,7 +413,10 @@ mod tests {
     fn variables_flow_to_the_active_catalog() {
         let source = Fixed(vec!["ru"]);
         let (manager, _) = LocaleManager::startup(None, &source);
-        let rendered = manager.text_with("about-version", Some(&args(&[("version", "2.0")])));
+        let rendered = manager.text_with(
+            crate::i18n::message_id!("about-version"),
+            Some(&args(&[("version", "2.0")])),
+        );
         // Bidi isolation marks around the variable are Fluent default.
         assert_eq!(rendered, "Версия \u{2068}2.0\u{2069}");
     }
@@ -398,7 +441,10 @@ mod tests {
         ] {
             let (manager, snapshot) = LocaleManager::startup(None, &Fixed(vec![tag]));
             assert_eq!(snapshot.render_tag, tag);
-            assert_eq!(manager.text("settings-language-label"), expected);
+            assert_eq!(
+                manager.text(crate::i18n::message_id!("settings-language-label")),
+                expected
+            );
         }
     }
 

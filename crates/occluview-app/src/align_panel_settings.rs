@@ -18,11 +18,11 @@ pub(crate) fn matching(
 ) {
     let slider_width = (ui.available_width() - 68.0).max(80.0);
     ui.label(
-        egui::RichText::new(locale.tr("align-matching-parts"))
+        egui::RichText::new(locale.tr(crate::i18n::message_id!("align-matching-parts")))
             .size(11.0)
             .color(ui_theme::text_muted()),
     )
-    .on_hover_text(locale.tr("align-matching-parts-hint"));
+    .on_hover_text(locale.tr(crate::i18n::message_id!("align-matching-parts-hint")));
     ui.scope(|ui| {
         ui.spacing_mut().slider_width = slider_width;
         ui.add_enabled(
@@ -30,25 +30,28 @@ pub(crate) fn matching(
             egui::Slider::new(&mut settings.matching_ratio, 0.1..=1.0)
                 .custom_formatter(|value, _| format!("{:.0}%", value * 100.0)),
         )
-        .on_hover_text(locale.tr("align-matching-parts-hint"));
+        .on_hover_text(locale.tr(crate::i18n::message_id!("align-matching-parts-hint")));
     });
     ui.label(
-        egui::RichText::new(locale.tr("align-max-influence"))
+        egui::RichText::new(locale.tr(crate::i18n::message_id!("align-max-influence")))
             .size(11.0)
             .color(ui_theme::text_muted()),
     )
-    .on_hover_text(locale.tr("align-max-influence-hint"));
+    .on_hover_text(locale.tr(crate::i18n::message_id!("align-max-influence-hint")));
     ui.scope(|ui| {
         ui.spacing_mut().slider_width = slider_width;
         ui.add_enabled(
             enabled,
             egui::Slider::new(&mut settings.influence_radius_mm, 0.2..=10.0).suffix(" mm"),
         )
-        .on_hover_text(locale.tr("align-max-influence-hint"));
+        .on_hover_text(locale.tr(crate::i18n::message_id!("align-max-influence-hint")));
     });
-    ui.collapsing(locale.tr("align-orientation-title"), |ui| {
-        facing(ui, &mut settings.orientation, enabled, locale);
-    });
+    ui.collapsing(
+        locale.tr(crate::i18n::message_id!("align-orientation-title")),
+        |ui| {
+            facing(ui, &mut settings.orientation, enabled, locale);
+        },
+    );
 }
 
 /// The surface-orientation rule. An inverted mesh flips the whole signed map,
@@ -63,21 +66,27 @@ pub(crate) fn facing(
     enabled: bool,
     locale: &crate::i18n::LocaleManager,
 ) {
-    let either_hint = locale.tr("align-orientation-either-hint");
-    let facing_hint = locale.tr("align-orientation-facing-hint");
+    let either_hint = locale.tr(crate::i18n::message_id!("align-orientation-either-hint"));
+    let facing_hint = locale.tr(crate::i18n::message_id!("align-orientation-facing-hint"));
     ui.add_enabled_ui(enabled, |ui| {
         for (value, label) in [
             (
                 Orientation::Match,
-                locale.tr("align-orientation-match").as_str(),
+                locale
+                    .tr(crate::i18n::message_id!("align-orientation-match"))
+                    .as_str(),
             ),
             (
                 Orientation::Inverted,
-                locale.tr("align-orientation-inverted").as_str(),
+                locale
+                    .tr(crate::i18n::message_id!("align-orientation-inverted"))
+                    .as_str(),
             ),
             (
                 Orientation::Ignored,
-                locale.tr("align-orientation-ignored").as_str(),
+                locale
+                    .tr(crate::i18n::message_id!("align-orientation-ignored"))
+                    .as_str(),
             ),
         ] {
             if ui
@@ -103,7 +112,12 @@ pub(crate) fn exclude(
     locale: &crate::i18n::LocaleManager,
 ) {
     ui.add_enabled_ui(enabled, |ui| {
-        ui.checkbox(excluding, locale.tr("align-exclude").as_str())
-            .on_hover_text(locale.tr("align-exclude-hint"));
+        ui.checkbox(
+            excluding,
+            locale
+                .tr(crate::i18n::message_id!("align-exclude"))
+                .as_str(),
+        )
+        .on_hover_text(locale.tr(crate::i18n::message_id!("align-exclude-hint")));
     });
 }

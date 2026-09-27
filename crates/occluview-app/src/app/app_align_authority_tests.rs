@@ -101,13 +101,19 @@ fn a_geometry_change_forgets_the_whole_fit() {
         "the colours describe the old surface"
     );
     assert!(!app.align_overlay_is_up());
-    let reason = app.ui.locale.tr("align-status-scan-changed");
+    let reason = app
+        .ui
+        .locale
+        .tr(crate::i18n::message_id!("align-status-scan-changed"));
     assert_eq!(
         app.tools.align.status.as_deref(),
         Some(
             app.ui
                 .locale
-                .tr_with("align-status-remeasure", &[("reason", &reason)])
+                .tr_with(
+                    crate::i18n::message_id!("align-status-remeasure"),
+                    &[("reason", &reason)]
+                )
                 .as_str()
         ),
         "the operator is told to measure again, and why"
@@ -211,7 +217,12 @@ fn late_measurement_cannot_reopen_hidden_or_unrefined_map() {
     assert_eq!(app.tools.align.overlay, AlignOverlay::Map);
     assert_eq!(
         app.tools.align.status.as_deref(),
-        Some(app.ui.locale.text("align-status-measured").as_str())
+        Some(
+            app.ui
+                .locale
+                .text(crate::i18n::message_id!("align-status-measured"))
+                .as_str()
+        )
     );
 }
 
@@ -253,7 +264,12 @@ fn a_measurement_with_no_summary_is_not_painted_on_the_scan() {
     );
     assert_eq!(
         app.tools.align.status.as_deref(),
-        Some(app.ui.locale.text("align-status-no-summary").as_str())
+        Some(
+            app.ui
+                .locale
+                .text(crate::i18n::message_id!("align-status-no-summary"))
+                .as_str()
+        )
     );
 }
 
@@ -281,7 +297,12 @@ fn dropping_a_stale_map_also_drops_the_work_behind_it() {
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
 
-    app.invalidate_deviation_map(app.ui.locale.tr("align-status-scan-changed").as_str());
+    app.invalidate_deviation_map(
+        app.ui
+            .locale
+            .tr(crate::i18n::message_id!("align-status-scan-changed"))
+            .as_str(),
+    );
 
     let worker = app.tools.align.worker.as_ref().expect("worker");
     assert!(
@@ -343,7 +364,12 @@ fn measurement_requires_a_landed_refined_match() {
     app.run_align_measure();
     assert_eq!(
         app.tools.align.status.as_deref(),
-        Some(app.ui.locale.text("align-job-measure").as_str()),
+        Some(
+            app.ui
+                .locale
+                .text(crate::i18n::message_id!("align-job-measure"))
+                .as_str()
+        ),
         "the same call does submit once the refined match has landed"
     );
 }
@@ -359,7 +385,11 @@ fn a_click_that_turns_the_pair_around_invalidates_the_fit() {
     app.tools.align.rejected = vec![0];
     assert_eq!(app.tools.align.overlay, AlignOverlay::Map);
 
-    app.adopt_swapped_roles(app.ui.locale.tr("align-status-turned"));
+    app.adopt_swapped_roles(
+        app.ui
+            .locale
+            .tr(crate::i18n::message_id!("align-status-turned")),
+    );
 
     assert!(
         !app.tools.align.refined_match_ready,
@@ -386,7 +416,11 @@ fn optimizer_setting_changes_drop_the_refined_authority() {
     let colors = map_colors(&app, moving_id);
     assert!(app.apply_deviation_colors(colors), "the map is up");
 
-    app.forget_align_fit(&app.ui.locale.tr("align-status-scan-changed"));
+    app.forget_align_fit(
+        &app.ui
+            .locale
+            .tr(crate::i18n::message_id!("align-status-scan-changed")),
+    );
 
     assert!(
         !app.tools.align.refined_match_ready,
@@ -451,7 +485,12 @@ fn returning_to_automatic_does_not_measure_implicitly() {
     assert!(!app.tools.align.settings.show_deviation);
     assert_ne!(
         app.tools.align.status.as_deref(),
-        Some(app.ui.locale.text("align-job-measure").as_str()),
+        Some(
+            app.ui
+                .locale
+                .text(crate::i18n::message_id!("align-job-measure"))
+                .as_str()
+        ),
         "returning to the tab must not submit a measurement"
     );
     assert!(

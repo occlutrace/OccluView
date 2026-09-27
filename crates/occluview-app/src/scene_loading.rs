@@ -98,8 +98,8 @@ pub(crate) fn load_status_message(
     locale: &crate::i18n::LocaleManager,
 ) -> String {
     let key = match mode {
-        SceneLoadMode::Replace => "load-opening",
-        SceneLoadMode::Append => "load-adding",
+        SceneLoadMode::Replace => crate::i18n::message_id!("load-opening"),
+        SceneLoadMode::Append => crate::i18n::message_id!("load-adding"),
     };
     locale.tr_plural(key, &[], &[("count", path_count)])
 }

@@ -54,7 +54,11 @@ impl OccluViewApp {
             .iter()
             .all(|entry| entry.transform == Affine3A::IDENTITY)
         {
-            self.ui.status_message = Some(self.ui.locale.tr("scene-already-origin"));
+            self.ui.status_message = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("scene-already-origin")),
+            );
             return;
         }
 
@@ -80,7 +84,11 @@ impl OccluViewApp {
         for layer in moved {
             self.document.mark_mesh_edits_unsaved(layer);
         }
-        self.ui.status_message = Some(self.ui.locale.tr("scene-positions-reset"));
+        self.ui.status_message = Some(
+            self.ui
+                .locale
+                .tr(crate::i18n::message_id!("scene-positions-reset")),
+        );
         ctx.request_repaint();
     }
 }

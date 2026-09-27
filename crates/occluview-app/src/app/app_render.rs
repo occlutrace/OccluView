@@ -124,8 +124,14 @@ impl OccluViewApp {
                 // stop.
                 if terminal {
                     self.ui.app_error = Some(AppErrorDialog {
-                        title: self.ui.locale.tr("render-failed-title"),
-                        summary: self.ui.locale.tr("render-failed-summary"),
+                        title: self
+                            .ui
+                            .locale
+                            .tr(crate::i18n::message_id!("render-failed-title")),
+                        summary: self
+                            .ui
+                            .locale
+                            .tr(crate::i18n::message_id!("render-failed-summary")),
                         details: format!("Render failed\n\n{e:#}"),
                         // Retryable here: on a machine where the offscreen path
                         // is the viewport, this dialog is the only surface the
@@ -137,7 +143,11 @@ impl OccluViewApp {
                         action: AppErrorAction::RetryGraphics,
                     });
                 }
-                self.ui.status_message = Some(self.ui.locale.tr("render-failed-status"));
+                self.ui.status_message = Some(
+                    self.ui
+                        .locale
+                        .tr(crate::i18n::message_id!("render-failed-status")),
+                );
                 return;
             }
         };
@@ -713,7 +723,11 @@ impl OccluViewApp {
             }
         }
         tracing::info!("operator asked to resume drawing after a graphics fault");
-        self.ui.status_message = Some(self.ui.locale.tr("gpu-retry-status"));
+        self.ui.status_message = Some(
+            self.ui
+                .locale
+                .tr(crate::i18n::message_id!("gpu-retry-status")),
+        );
         self.render.invalidation.request_redraw();
         ctx.request_repaint();
     }
@@ -738,11 +752,21 @@ impl OccluViewApp {
             return false;
         };
         tracing::error!(gpu_error = %error, "surfacing GPU error to the operator");
-        self.ui.status_message = Some(self.ui.locale.tr("gpu-failed-status"));
+        self.ui.status_message = Some(
+            self.ui
+                .locale
+                .tr(crate::i18n::message_id!("gpu-failed-status")),
+        );
         if self.ui.app_error.is_none() {
             self.ui.app_error = Some(AppErrorDialog {
-                title: self.ui.locale.tr("gpu-failed-title"),
-                summary: self.ui.locale.tr("gpu-failed-summary"),
+                title: self
+                    .ui
+                    .locale
+                    .tr(crate::i18n::message_id!("gpu-failed-title")),
+                summary: self
+                    .ui
+                    .locale
+                    .tr(crate::i18n::message_id!("gpu-failed-summary")),
                 details: format!("wgpu uncaptured error\n\n{error}"),
                 action: AppErrorAction::RetryGraphics,
             });
@@ -800,7 +824,12 @@ impl OccluViewApp {
         // session) passes through here. Left up, the map would keep describing
         // the former surface, take the scan's tint, and the panel would report
         // a percentage for a surface that no longer exists.
-        self.forget_align_fit(&self.ui.locale.tr("align-status-scan-changed"));
+        self.forget_align_fit(
+            &self
+                .ui
+                .locale
+                .tr(crate::i18n::message_id!("align-status-scan-changed")),
+        );
         // Structural scene change: world anchors may now dangle over deleted or
         // replaced geometry, so measurements are cleared (the tool stays armed
         // while something remains to measure). Material-only updates keep them

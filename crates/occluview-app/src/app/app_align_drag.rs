@@ -189,16 +189,20 @@ impl OccluViewApp {
             // the whole hand-drag the colours would stay on the surface at
             // distances that are no longer true, reading as a heatmap that
             // agrees with wherever the operator drags it.
-            self.forget_align_fit(&self.ui.locale.tr("align-status-moving-hand"));
+            self.forget_align_fit(
+                &self
+                    .ui
+                    .locale
+                    .tr(crate::i18n::message_id!("align-status-moving-hand")),
+            );
             // Said at the start as well as the end, because this is the moment
             // the operator can still let go and try again if they grabbed the
             // arch they did not mean to.
             if let Some(name) = self.layer_display_name(hit.layer_id) {
-                self.tools.align.status = Some(
-                    self.ui
-                        .locale
-                        .tr_with("align-drag-moving", &[("name", &name)]),
-                );
+                self.tools.align.status = Some(self.ui.locale.tr_with(
+                    crate::i18n::message_id!("align-drag-moving"),
+                    &[("name", &name)],
+                ));
             }
         }
 
@@ -366,7 +370,11 @@ impl OccluViewApp {
             drag.layer,
             EditModeCommand::MoveLayer,
         ) else {
-            self.tools.align.status = Some(self.ui.locale.tr("align-drag-unrecorded"));
+            self.tools.align.status = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("align-drag-unrecorded")),
+            );
             return false;
         };
         let mut after = before;
@@ -385,13 +393,20 @@ impl OccluViewApp {
         // scan the operator grabbed, the fixed one included, so the status is
         // where an operator who grabbed the wrong arch by accident finds out.
         let moved_mm = f64::from((current.translation - drag.start.translation).length());
-        let name = self
-            .layer_display_name(drag.layer)
-            .unwrap_or_else(|| self.ui.locale.tr("align-status-one-scan"));
+        let name = self.layer_display_name(drag.layer).unwrap_or_else(|| {
+            self.ui
+                .locale
+                .tr(crate::i18n::message_id!("align-status-one-scan"))
+        });
         // Teardown first so its status cannot overwrite the movement result.
-        self.forget_align_fit(&self.ui.locale.tr("align-status-moved-hand"));
+        self.forget_align_fit(
+            &self
+                .ui
+                .locale
+                .tr(crate::i18n::message_id!("align-status-moved-hand")),
+        );
         self.tools.align.status = Some(self.ui.locale.tr_with(
-            "align-drag-moved",
+            crate::i18n::message_id!("align-drag-moved"),
             &[("name", &name), ("moved", &format!("{moved_mm:.2}"))],
         ));
         true

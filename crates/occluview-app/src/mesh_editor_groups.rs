@@ -41,7 +41,7 @@ pub(super) fn tab_strip(
         ui.spacing_mut().item_spacing.x = gap;
         if tab_pill(
             ui,
-            &locale.tr("meshedit-tab-edit"),
+            &locale.tr(crate::i18n::message_id!("meshedit-tab-edit")),
             tab_w,
             state.active_tab == EditorTab::EditMesh,
         )
@@ -51,7 +51,7 @@ pub(super) fn tab_strip(
         }
         if tab_pill(
             ui,
-            &locale.tr("meshedit-tab-sculpt"),
+            &locale.tr(crate::i18n::message_id!("meshedit-tab-sculpt")),
             tab_w,
             state.active_tab == EditorTab::Sculpt,
         )
@@ -129,7 +129,7 @@ fn close_cross(
             egui::StrokeKind::Inside,
         );
     }
-    let label = locale.tr("meshedit-cancel-session");
+    let label = locale.tr(crate::i18n::message_id!("meshedit-cancel-session"));
     response
         .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label.clone()));
     response.on_hover_text(label)
@@ -144,7 +144,11 @@ pub(super) fn selection(
     locale: &crate::i18n::LocaleManager,
 ) -> Option<MeshEditorAction> {
     let mut action = None;
-    section(ui, locale, "meshedit-section-selection");
+    section(
+        ui,
+        locale,
+        crate::i18n::message_id!("meshedit-section-selection"),
+    );
     // Surface / Through refine Lasso and Marquee, but not Object (a whole
     // connected component is picked regardless of facing), so they grey out
     // while Object pick is armed.
@@ -154,8 +158,8 @@ pub(super) fn selection(
             ui,
             width,
             AppIcon::Lasso,
-            &locale.tr("meshedit-cell-lasso"),
-            &locale.tr("meshedit-cell-lasso-hint"),
+            &locale.tr(crate::i18n::message_id!("meshedit-cell-lasso")),
+            &locale.tr(crate::i18n::message_id!("meshedit-cell-lasso-hint")),
             enabled,
             state.lasso_armed,
         )
@@ -169,8 +173,8 @@ pub(super) fn selection(
             ui,
             width,
             AppIcon::Object,
-            &locale.tr("meshedit-cell-object"),
-            &locale.tr("meshedit-cell-object-hint"),
+            &locale.tr(crate::i18n::message_id!("meshedit-cell-object")),
+            &locale.tr(crate::i18n::message_id!("meshedit-cell-object-hint")),
             enabled,
             state.object_mode,
         )
@@ -184,8 +188,8 @@ pub(super) fn selection(
             ui,
             width,
             AppIcon::SurfaceMode,
-            &locale.tr("meshedit-cell-surface"),
-            &locale.tr("meshedit-cell-surface-hint"),
+            &locale.tr(crate::i18n::message_id!("meshedit-cell-surface")),
+            &locale.tr(crate::i18n::message_id!("meshedit-cell-surface-hint")),
             depth_enabled,
             !state.through_mesh,
         )
@@ -198,8 +202,8 @@ pub(super) fn selection(
             ui,
             width,
             AppIcon::ThroughMode,
-            &locale.tr("meshedit-cell-through"),
-            &locale.tr("meshedit-cell-through-hint"),
+            &locale.tr(crate::i18n::message_id!("meshedit-cell-through")),
+            &locale.tr(crate::i18n::message_id!("meshedit-cell-through-hint")),
             depth_enabled,
             state.through_mesh,
         )
@@ -224,8 +228,8 @@ fn selection_bulk(
             ui,
             width,
             AppIcon::SelectAll,
-            &locale.tr("meshedit-cell-all"),
-            &locale.tr("meshedit-cell-all-hint"),
+            &locale.tr(crate::i18n::message_id!("meshedit-cell-all")),
+            &locale.tr(crate::i18n::message_id!("meshedit-cell-all-hint")),
             enabled,
             false,
         )
@@ -237,8 +241,8 @@ fn selection_bulk(
             ui,
             width,
             AppIcon::SelectNone,
-            &locale.tr("meshedit-cell-none"),
-            &locale.tr("meshedit-cell-none-hint"),
+            &locale.tr(crate::i18n::message_id!("meshedit-cell-none")),
+            &locale.tr(crate::i18n::message_id!("meshedit-cell-none-hint")),
             enabled,
             false,
         )
@@ -250,8 +254,8 @@ fn selection_bulk(
             ui,
             width,
             AppIcon::SelectInvert,
-            &locale.tr("meshedit-cell-invert"),
-            &locale.tr("meshedit-cell-invert-hint"),
+            &locale.tr(crate::i18n::message_id!("meshedit-cell-invert")),
+            &locale.tr(crate::i18n::message_id!("meshedit-cell-invert-hint")),
             enabled,
             false,
         )
@@ -274,14 +278,18 @@ pub(super) fn edit_selection(
 ) -> Option<MeshEditorAction> {
     let mut action = None;
     let selection_enabled = enabled && state.selected_face_count > 0;
-    section(ui, locale, "meshedit-section-edit-selection");
+    section(
+        ui,
+        locale,
+        crate::i18n::message_id!("meshedit-section-edit-selection"),
+    );
     row(ui, 4, |ui, width| {
         if icon(
             ui,
             width,
             AppIcon::Delete,
-            &locale.tr("meshedit-cell-delete"),
-            &locale.tr("meshedit-cell-delete-hint"),
+            &locale.tr(crate::i18n::message_id!("meshedit-cell-delete")),
+            &locale.tr(crate::i18n::message_id!("meshedit-cell-delete-hint")),
             selection_enabled,
             false,
         )
@@ -293,8 +301,8 @@ pub(super) fn edit_selection(
             ui,
             width,
             AppIcon::Keep,
-            &locale.tr("meshedit-cell-crop"),
-            &locale.tr("meshedit-cell-crop-hint"),
+            &locale.tr(crate::i18n::message_id!("meshedit-cell-crop")),
+            &locale.tr(crate::i18n::message_id!("meshedit-cell-crop-hint")),
             selection_enabled,
             false,
         )
@@ -306,8 +314,8 @@ pub(super) fn edit_selection(
             ui,
             width,
             AppIcon::Cut,
-            &locale.tr("meshedit-cell-cut"),
-            &locale.tr("meshedit-cell-cut-hint"),
+            &locale.tr(crate::i18n::message_id!("meshedit-cell-cut")),
+            &locale.tr(crate::i18n::message_id!("meshedit-cell-cut-hint")),
             selection_enabled,
             false,
         )
@@ -319,8 +327,8 @@ pub(super) fn edit_selection(
             ui,
             width,
             AppIcon::Separate,
-            &locale.tr("meshedit-cell-separate"),
-            &locale.tr("meshedit-cell-separate-hint"),
+            &locale.tr(crate::i18n::message_id!("meshedit-cell-separate")),
+            &locale.tr(crate::i18n::message_id!("meshedit-cell-separate-hint")),
             selection_enabled,
             false,
         )
@@ -342,7 +350,11 @@ pub(super) fn close_holes(
     locale: &crate::i18n::LocaleManager,
 ) -> Option<MeshEditorAction> {
     let mut action = None;
-    section(ui, locale, "meshedit-section-close-holes");
+    section(
+        ui,
+        locale,
+        crate::i18n::message_id!("meshedit-section-close-holes"),
+    );
     ui.horizontal(|ui| {
         let spacing = ui.spacing().item_spacing.x;
         let cell_width = 92.0_f32.min((ui.available_width() - spacing).max(56.0));
@@ -350,8 +362,8 @@ pub(super) fn close_holes(
             ui,
             cell_width,
             AppIcon::CloseHoles,
-            &locale.tr("meshedit-cell-close-holes"),
-            &locale.tr("meshedit-cell-close-holes-hint"),
+            &locale.tr(crate::i18n::message_id!("meshedit-cell-close-holes")),
+            &locale.tr(crate::i18n::message_id!("meshedit-cell-close-holes-hint")),
             enabled,
             false,
         )
@@ -381,14 +393,18 @@ pub(super) fn sculpt(
     locale: &crate::i18n::LocaleManager,
 ) -> Option<MeshEditorAction> {
     let mut action = None;
-    section(ui, locale, "meshedit-section-sculpt");
+    section(
+        ui,
+        locale,
+        crate::i18n::message_id!("meshedit-section-sculpt"),
+    );
     row(ui, 2, |ui, width| {
         if icon(
             ui,
             width,
             AppIcon::SculptAdd,
-            &locale.tr("meshedit-sculpt-addremove"),
-            &locale.tr("meshedit-sculpt-addremove-hint"),
+            &locale.tr(crate::i18n::message_id!("meshedit-sculpt-addremove")),
+            &locale.tr(crate::i18n::message_id!("meshedit-sculpt-addremove-hint")),
             enabled,
             state.sculpt_armed == Some(SculptToolKind::AddRemove),
         )
@@ -400,8 +416,8 @@ pub(super) fn sculpt(
             ui,
             width,
             AppIcon::Smooth,
-            &locale.tr("meshedit-sculpt-smooth"),
-            &locale.tr("meshedit-sculpt-smooth-hint"),
+            &locale.tr(crate::i18n::message_id!("meshedit-sculpt-smooth")),
+            &locale.tr(crate::i18n::message_id!("meshedit-sculpt-smooth-hint")),
             enabled,
             state.sculpt_armed == Some(SculptToolKind::Smooth),
         )
@@ -425,10 +441,10 @@ fn sculpt_settings_row(ui: &mut egui::Ui, enabled: bool, locale: &crate::i18n::L
         ui,
         enabled,
         SculptSliderControl {
-            label: &locale.tr("meshedit-slider-size"),
+            label: &locale.tr(crate::i18n::message_id!("meshedit-slider-size")),
             value: &mut size,
             range: SCULPT_SIZE_MIN..=SCULPT_SIZE_MAX,
-            tooltip: &locale.tr("meshedit-slider-size-hint"),
+            tooltip: &locale.tr(crate::i18n::message_id!("meshedit-slider-size-hint")),
         },
     );
     ui.add_space(2.0);
@@ -436,10 +452,10 @@ fn sculpt_settings_row(ui: &mut egui::Ui, enabled: bool, locale: &crate::i18n::L
         ui,
         enabled,
         SculptSliderControl {
-            label: &locale.tr("meshedit-slider-force"),
+            label: &locale.tr(crate::i18n::message_id!("meshedit-slider-force")),
             value: &mut intensity,
             range: SCULPT_INTENSITY_MIN..=SCULPT_INTENSITY_MAX,
-            tooltip: &locale.tr("meshedit-slider-force-hint"),
+            tooltip: &locale.tr(crate::i18n::message_id!("meshedit-slider-force-hint")),
         },
     );
     super::set_sculpt_size(&ctx, size);
@@ -534,12 +550,12 @@ fn close_holes_limit_control(
             egui::WidgetType::Checkbox,
             enabled,
             armed,
-            locale.tr("meshedit-limit-label"),
+            locale.tr(crate::i18n::message_id!("meshedit-limit-label")),
         )
     });
-    checkbox.on_hover_text(locale.tr("meshedit-limit-checkbox-hint"));
+    checkbox.on_hover_text(locale.tr(crate::i18n::message_id!("meshedit-limit-checkbox-hint")));
     ui.label(
-        egui::RichText::new(locale.tr("meshedit-limit-label"))
+        egui::RichText::new(locale.tr(crate::i18n::message_id!("meshedit-limit-label")))
             .size(11.0)
             .weak(),
     );
@@ -554,10 +570,10 @@ fn close_holes_limit_control(
         egui::WidgetInfo::labeled(
             egui::WidgetType::DragValue,
             enabled && armed,
-            locale.tr("meshedit-limit-label"),
+            locale.tr(crate::i18n::message_id!("meshedit-limit-label")),
         )
     });
-    drag_value.on_hover_text(locale.tr("meshedit-limit-drag-hint"));
+    drag_value.on_hover_text(locale.tr(crate::i18n::message_id!("meshedit-limit-drag-hint")));
     super::set_close_holes_limit_enabled(ui.ctx(), armed);
     ui.ctx().data_mut(|data| data.insert_temp(id, limit));
 }
@@ -577,7 +593,11 @@ pub(super) fn header(ui: &mut egui::Ui, title: &str, icon: AppIcon) {
     ui.add_space(2.0);
 }
 
-fn section(ui: &mut egui::Ui, locale: &crate::i18n::LocaleManager, title_key: &str) {
+fn section(
+    ui: &mut egui::Ui,
+    locale: &crate::i18n::LocaleManager,
+    title_key: crate::i18n::MessageId,
+) {
     ui.add_space(4.0);
     ui.horizontal(|ui| {
         let label_color = ui.visuals().weak_text_color();

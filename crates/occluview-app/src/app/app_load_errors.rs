@@ -18,7 +18,7 @@ fn too_large_summary(locale: &crate::i18n::LocaleManager, error: &Error) -> Opti
     // not its byte count, and the limit itself is a whole number of gigabytes.
     let gib = (1_u64 << 30) as f64;
     Some(locale.tr_with(
-        "load-file-too-large",
+        crate::i18n::message_id!("load-file-too-large"),
         &[
             ("size", &format!("{:.1}", *bytes as f64 / gib)),
             ("limit", &format!("{}", *limit >> 30)),
@@ -33,9 +33,9 @@ pub(super) fn load_error_dialog(
     paths: &[PathBuf],
 ) -> AppErrorDialog {
     let title = if action == "Add" {
-        locale.text("error-add-title")
+        locale.text(crate::i18n::message_id!("error-add-title"))
     } else {
-        locale.text("error-open-title")
+        locale.text(crate::i18n::message_id!("error-open-title"))
     };
     if let Some(summary) = too_large_summary(locale, error) {
         return AppErrorDialog {
@@ -54,12 +54,12 @@ pub(super) fn load_error_dialog(
     }
     let summary = if action == "Add" {
         locale.tr_with(
-            "load-action-failed-add",
+            crate::i18n::message_id!("load-action-failed-add"),
             &[("detail", &format!("{error:#}"))],
         )
     } else {
         locale.tr_with(
-            "load-action-failed-open",
+            crate::i18n::message_id!("load-action-failed-open"),
             &[("detail", &format!("{error:#}"))],
         )
     };
