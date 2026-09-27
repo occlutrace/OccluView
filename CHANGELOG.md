@@ -3,7 +3,7 @@
 This file records user-visible changes. Internal refactors and test-only work
 remain in the Git history.
 
-## Unreleased
+## 1.3.0 - 2026-09-27
 
 ### Accessibility
 
@@ -22,20 +22,6 @@ remain in the Git history.
   stays visible while hovering, and Ball, Knife and Cylinder use matching tip
   glyphs and cursor shapes.
 - Default-size Smooth strokes remain responsive on full-arch scans.
-
-### Windows
-
-- Explorer preview menu labels follow the Windows UI language in English,
-  German, Spanish, French, Italian, Brazilian Portuguese, and Russian.
-
-### macOS
-
-- Settings choose whether trackpad scrolling pans or zooms the viewport;
-  keyboard and mouse help follows that choice.
-
-## 1.2.1 - 2026-09-21
-
-### Viewer
 
 - Best fit matching accepts a scan of part of a jaw against a scan of the whole
   jaw again. Two different jaws are still refused.
@@ -85,7 +71,15 @@ remain in the Git history.
   half a gigabyte of file data in memory. A file larger than 1 GB is refused
   with a message that gives both sizes.
 
+### Windows
+
+- Explorer preview menu labels follow the Windows UI language in English,
+  German, Spanish, French, Italian, Brazilian Portuguese, and Russian.
+
 ### macOS
+
+- Settings choose whether trackpad scrolling pans or zooms the viewport;
+  keyboard and mouse help follows that choice.
 
 - OccluView runs natively on Apple Silicon Macs with macOS 14 or later, as a
   `.dmg` with the app and a `.pkg` installer. Downloads are offered once the
