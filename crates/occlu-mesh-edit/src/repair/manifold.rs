@@ -1,6 +1,6 @@
 //! Passes 4+5: split non-manifold edges and bowtie vertices.
 //!
-//! Both passes only DUPLICATE vertices (exact payload copies, zero
+//! Both passes only duplicate vertices (exact payload copies, zero
 //! displacement) and re-point indices — no position ever moves and no
 //! triangle is dropped.
 
@@ -49,7 +49,7 @@ pub(super) fn split_nonmanifold_edges(
     detach.dedup();
 
     // Match against a snapshot: once a slot is re-pointed to a duplicate, its
-    // original value is gone from the live buffer.
+    // original value is overwritten in the live buffer.
     let snapshot = mesh.indices.clone();
     for &(triangle, vertex) in &detach {
         let duplicate = push_duplicate_vertex(mesh, vertex)?;
@@ -66,7 +66,7 @@ pub(super) fn split_nonmanifold_edges(
     Ok(())
 }
 
-/// Pass 5: cluster each vertex's incident faces by edge-connectivity THROUGH
+/// Pass 5: cluster each vertex's incident faces by edge-connectivity through
 /// that vertex; the cluster containing the lowest triangle index keeps the
 /// original vertex, every other cluster gets a duplicated copy.
 pub(super) fn split_bowtie_vertices(

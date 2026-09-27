@@ -1,8 +1,6 @@
 //! Mesh editor status line and session commit bar.
 //!
-//! Split from the tool palette (`mesh_editor_groups`) so both files stay
-//! within the per-file line budget. Presentation only — actions flow back
-//! as [`MeshEditorAction`].
+//! Presentation only — actions flow back as [`MeshEditorAction`].
 
 use eframe::egui;
 
@@ -14,8 +12,8 @@ use super::groups::{icon, tall_text_button};
 
 /// One dim line of operator context: the pending-edits marker (only when it has
 /// something to say) and the interaction hint for the active selection mode. The
-/// raw selected-face count is intentionally NOT shown — it is noise that just ate
-/// an info line.
+/// raw selected-face count is not shown; the line carries only context the
+/// operator acts on.
 pub(super) fn status(
     ui: &mut egui::Ui,
     state: &MeshEditorPanelState,

@@ -2,7 +2,7 @@
 //!
 //! Everything else about the contact reading is asserted on fixtures small
 //! enough to reason about — two plates, a quad, a stop table. This module is the
-//! opposite end: it takes an actual articulated jaw pair off this machine,
+//! opposite end: it takes an actual articulated jaw pair from the local corpus,
 //! measures it with the real compute, packs the field, prepares a real GPU scene
 //! through the same path the viewport uses, and writes the frame to a PNG a
 //! human can look at.
@@ -12,9 +12,9 @@
 //! therefore loose clinical sanity checks rather than exact values, and the
 //! render is written to `target/contact-verify/` for inspection.
 //!
-//! The fixture paths are this machine's scan corpus. A checkout without them
-//! skips the test with a log line instead of failing: an absent corpus is not a
-//! defect in the viewer.
+//! The fixtures are the local scan corpus. A checkout without them skips the
+//! test with a log line instead of failing: an absent corpus is not a defect in
+//! the viewer.
 
 #![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
 
@@ -42,10 +42,10 @@ const OUTPUT_DIR: &str = "contact-verify";
 
 /// Environment variable naming the directory the acceptance corpus lives in.
 ///
-/// The corpus is a machine's scans, not a repository asset: a checkout has no
+/// The corpus is local scans, not a repository asset: a checkout has no
 /// articulated pair in it, and shipping one would be shipping a patient's case.
-/// So the directory is chosen at run time and the test skips, loudly, when it is
-/// unset — which is what a developer without a scan corpus sees.
+/// So the directory is chosen at run time and the test skips with a warning when
+/// it is unset.
 ///
 /// The directory holds either a single pair (`upper.*` and `lower.*`) or
 /// subdirectories each holding one, named after the case.
@@ -53,14 +53,11 @@ const FIXTURE_DIR_ENV: &str = "OCCLUVIEW_CONTACT_FIXTURES";
 
 /// Whether this run is a release gate rather than an ordinary test run.
 ///
-/// The align acceptance harness has had this mode all along; the contact one
-/// did not, and it is the ONLY end-to-end check of a real reading — the numbers
-/// the panel shows as a clinical measurement. Without it a wrong value could
-/// ship with a fully green suite, because the tests that assert
+/// This module is the only end-to-end check of a real reading — the numbers the
+/// panel shows as a clinical measurement. The tests that assert
 /// `subject_measured > 0`, `contact_area_mm2 > 0` and "only measured vertices
-/// may be painted" all returned early on a machine with no corpus, including
-/// CI, and `validate-release-private.sh` exported only the align variable, so
-/// even the private gate could not force them.
+/// may be painted" return early without a corpus, including on CI, so a release
+/// gate sets this to turn an absent corpus into a failure.
 fn fixtures_are_required() -> bool {
     std::env::var_os("OCCLUVIEW_CONTACT_FIXTURES_REQUIRED").is_some_and(|value| value != "0")
 }
@@ -159,7 +156,7 @@ fn mesh_from(positions: &[f32], indices: &[u32]) -> Option<Mesh> {
 ///
 /// An occlusal view of the bite, from the side the marks are on.
 ///
-/// Contacts live on the occlusal surface of the upper arch, which faces DOWN:
+/// Contacts live on the occlusal surface of the upper arch, which faces down:
 /// from above, the same case shows the palate and the crowns from behind and not
 /// one contact. Slightly off-axis so the cusps still read as geometry rather
 /// than as a flat field of colour.
@@ -170,9 +167,9 @@ fn occlusal_camera(center: Vec3, radius: f32) -> GpuCamera {
     GpuCamera::new(view, proj, Vec3::new(0.25, -0.5, -0.83), eye)
 }
 
-/// The frame the harness writes, or `None` when this machine gives no adapter.
+/// The frame the harness writes, or `None` when no GPU adapter is available.
 ///
-/// BOTH ARCHES ARE DRAWN, each wearing its own reading, because that is what the
+/// Both arches are drawn, each wearing its own reading, because that is what the
 /// viewer shows: the field is measured in both directions and the operator reads
 /// the bite from whichever side faces them. A render of one arch alone would
 /// hide half the feature.
@@ -202,13 +199,11 @@ fn render_frame(
             table.ramp[3],
             &table.stops[..usize::try_from(table.count).unwrap_or(0)],
         );
-        // The measured-map treatment is NOT used for a contact reading, and
-        // setting it here was a bug: that branch skips the tint and the studio
-        // light and returns early, so the whole layer rendered as a flat white
-        // shell and the marks were never reached. The app has painted the ramp
-        // into the base colour and let the light act on it since commit
-        // ec6b585; this fixture had been left behind on the old shape. The
-        // render below is therefore the one the operator actually sees.
+        // The measured-map treatment is not used for a contact reading: that
+        // branch skips the tint and the studio light and returns early, so the
+        // layer would render as a flat white shell with no marks. The app
+        // paints the ramp into the base colour and lets the light act on it,
+        // and so does this fixture, so the render below matches the viewer.
         uniform
     };
 
@@ -232,7 +227,7 @@ fn render_frame(
         ],
     );
 
-    // Frame the pair as one scene, exactly as the viewer frames a case.
+    // Frame the pair as one scene, the same way the viewer frames a case.
     let bbox = subject.bbox().enclose_box(antagonist.bbox());
     let camera = occlusal_camera(bbox.center(), (bbox.max - bbox.min).length() * 0.5);
     pollster::block_on(offscreen.render_prepared_viewport_with_deadline(
@@ -270,13 +265,13 @@ fn run_case(id: &str, upper: PathBuf, lower: PathBuf) {
         "{id}: both scans must carry triangles"
     );
 
-    // MEASURED TWICE, ON PURPOSE. A multi-hue ramp on the raw field makes every
+    // Measured twice on purpose. A multi-hue ramp on the raw field makes every
     // mark wear a rim of the intermediate depths the surface passes through on
     // its way in — the geometry guarantees it, because a tooth curves away from
     // a contact within half a millimetre. That is the reading an operator gets
     // with the panel's patch toggle off, and it is also the picture that says
     // why the toggle exists. Both are measured and both are rendered, so the
-    // trade is on the record rather than in a comment.
+    // trade-off is visible in the output.
     let cancel = occluview_align::CancelFlag::new();
     let measure = |flatten: bool| {
         compute_contact_field(
@@ -401,15 +396,15 @@ fn output_dir() -> PathBuf {
 /// A pair that cannot meet, rendered so the empty state is visible.
 ///
 /// The reading is legitimate — two casts several millimetres apart simply do
-/// not touch — and the question this answers is what the operator SEES when
-/// that happens: a bare tooth surface with no marks on it, which is the honest
+/// not touch — and the question this answers is what the operator sees when
+/// that happens: a bare tooth surface with no marks on it, which is the correct
 /// answer, rather than noise or a false contact.
 #[test]
 fn a_pair_that_cannot_meet_paints_nothing() {
     let Some((id, upper, lower)) = available_fixtures().into_iter().next() else {
-        // A skip is honest in a developer run and a lie in a release gate: the
-        // gate exists to prove the reading is right, and "no corpus" would make
-        // it report success for having checked nothing.
+        // A skip is acceptable in a developer run but not in a release gate:
+        // the gate proves the reading is right, and "no corpus" would make it
+        // report success for having checked nothing.
         assert!(
             !fixtures_are_required(),
             "{} is set, so the corpus is required, but no pair was found in {}",
@@ -460,7 +455,7 @@ fn a_pair_that_cannot_meet_paints_nothing() {
     );
     assert_eq!(
         field.diagnostics.subject_measured, 0,
-        "{id}: a pair twenty millimetres apart has nothing in reach"
+        "{id}: a pair shifted past its own extent has nothing in reach"
     );
     assert_eq!(field.stats.contacts, 0, "{id}: and nothing touching");
     assert!(
@@ -489,7 +484,7 @@ fn a_pair_that_cannot_meet_paints_nothing() {
     );
 }
 
-/// The acceptance run. Every corpus pair on this machine, measured and painted.
+/// The acceptance run. Every pair in the local corpus, measured and painted.
 #[test]
 fn real_scan_pairs_measure_and_render_a_readable_contact_map() {
     let fixtures = available_fixtures();
@@ -555,7 +550,7 @@ fn check_clinical_sanity(
         "contact field measured on a real pair"
     );
 
-    // The two rules the whole feature rests on: only measured vertices are
+    // The two rules the feature rests on: only measured vertices are
     // painted, and the deepest reading on the surface is the deepest reading the
     // panel reports.
     let scale = ContactScale::new(&TIGHTNESS, TIGHTNESS.load_mm);

@@ -49,7 +49,7 @@ mod poison_recovery_tests {
         let renderers = default_thumbnail_renderer_pool_size();
         assert!(
             (1..=2).contains(&renderers),
-            "one wgpu device per surrogate process is the point; {renderers} is \
+            "expected one wgpu device per surrogate process; {renderers} is \
              a different design"
         );
         let lanes = default_thumbnail_job_capacity();
@@ -177,8 +177,8 @@ mod renderer_pool_recovery_tests {
         panic!("a driver reset during device creation");
     }
 
-    /// A create that fails gives its slot back -- the case that was already
-    /// handled, kept here so the panicking case beside it has a control.
+    /// A create that fails gives its slot back -- the control for the
+    /// panicking case beside it.
     #[test]
     fn a_refused_create_leaves_the_pool_able_to_try_again() {
         let pool = ThumbnailRendererPool::with_create(1, refuses);
@@ -193,10 +193,10 @@ mod renderer_pool_recovery_tests {
 
     /// A create that panics must give its slot back as well.
     ///
-    /// It claims the slot before the device exists. Unwinding past the
-    /// bookkeeping left the pool believing its one renderer was in use, and
-    /// every later request then waited for a renderer that was never coming --
-    /// each holding a decode lane, so twelve of them were the whole folder.
+    /// It claims the slot before the device exists. An unwind past the
+    /// bookkeeping would leave the pool believing its one renderer is in use,
+    /// and every later request would wait for a renderer that is never coming
+    /// -- each holding a decode lane, so twelve of them are the whole folder.
     #[test]
     #[allow(clippy::expect_used)]
     fn a_panicking_create_leaves_the_pool_able_to_try_again() {
@@ -277,8 +277,8 @@ mod one_budget_tests {
 
     /// Waiting for a slot and then rendering must spend one budget, not two.
     ///
-    /// Each used to take the caller's full timeout of its own, so a request
-    /// could take twice what was asked -- and under Explorer's Apartment
+    /// If each took the caller's full timeout, a request could take twice
+    /// what was asked -- and under Explorer's Apartment
     /// hosting every extraction serialises through one thread, so those
     /// seconds are the whole folder's.
     #[test]

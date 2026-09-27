@@ -1,6 +1,6 @@
 //! Headless wireframes for the high-risk operator panels.
 //!
-//! These are deliberately real production panels rendered through egui rather
+//! These are the real production panels rendered through egui rather
 //! than hand-built mock layouts. The PNGs land in `target/i18n-shots/` for a
 //! human to inspect; this keeps screenshot review out of the runtime and out
 //! of tracked binary assets.

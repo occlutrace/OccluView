@@ -76,10 +76,9 @@ pub fn format_contact_value(magnitude_mm: f64) -> String {
 
 /// The same reading in the operator's chosen length unit.
 ///
-/// The contact panel was the one measurement family that ignored
-/// `UnitDisplay::Inches`: the ruler, the thickness probe and the scale bar all
-/// follow it, so an operator working in inches read one readout in millimetres.
-/// The numbers were never mis-scaled — only the unit they were shown in.
+/// The contact readout follows `UnitDisplay::Inches` like the ruler, the
+/// thickness probe and the scale bar, so an operator working in inches reads
+/// every measurement in the same unit.
 #[must_use]
 pub fn format_contact_value_in(magnitude_mm: f64, unit: ContactLengthUnit) -> String {
     match unit {
@@ -113,9 +112,9 @@ pub enum ContactLengthUnit {
 /// order as the triangle's indices. A corner with no measurement enters the
 /// blend as the finite far sentinel rather than as infinity, so one unmeasured
 /// corner cannot poison the whole triangle with a NaN: near the edge of a
-/// contact the honest answer is a value between "measured here" and "nothing
+/// contact the accurate answer is a value between "measured here" and "nothing
 /// found nearby", and that is what the paint shows too. A triangle whose
-/// corners were ALL unmeasured has no reading at all and says so, rather than
+/// corners were all unmeasured has no reading at all and says so, rather than
 /// reporting the sentinel as if it were a distance.
 pub fn interpolate_field_at_triangle(
     values: &[f32],

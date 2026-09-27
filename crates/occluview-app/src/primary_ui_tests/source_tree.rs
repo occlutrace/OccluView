@@ -66,7 +66,7 @@ fn declares_module(candidate: &Path, module_name: &str) -> bool {
 }
 
 /// `#[path = "sibling.rs"]` lets any file in the same directory adopt another,
-/// which is how the oversized modules in this crate park their tests.
+/// which is how modules in this crate keep their tests in a sibling file.
 fn adopted_by_a_sibling(path: &Path, source_files: &[PathBuf]) -> bool {
     let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
         return false;
@@ -137,7 +137,7 @@ fn the_orphan_guard_recognises_both_module_layouts() {
     orphans.sort();
     let _ = std::fs::remove_dir_all(&root);
 
-    // `host.rs` is itself undeclared in this fixture, which is the point: the
-    // guard reports it while still crediting the `#[path]` child it adopts.
+    // `host.rs` is itself undeclared in this fixture: the guard reports it
+    // while still crediting the `#[path]` child it adopts.
     assert_eq!(orphans, vec!["host.rs", "unnamed.rs"]);
 }

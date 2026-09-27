@@ -62,9 +62,8 @@ fn dab_at(center: DVec3, radius_mm: f64, erase: bool) -> MaskEdit {
 
 #[test]
 fn both_scans_can_be_marked_and_neither_has_to_be_chosen_first() {
-    // The reported defect: "on one surface it marks, on the other it does not."
-    // There was one mask for the pair, so whichever scan was not the moving one
-    // could never hold a marking.
+    // Each scan holds its own mask, so the fixed scan takes a marking as
+    // readily as the moving one.
     let positions = grid(16);
     let mut markings = AlignMarkings::default();
 
@@ -104,16 +103,16 @@ fn marking_one_scan_leaves_the_other_untouched() {
 #[test]
 fn the_marked_count_matches_a_full_recount_after_every_kind_of_change() {
     // The count is maintained incrementally so the panel never walks the mask.
-    // If it ever drifts from the truth the panel reports a confident wrong
-    // number, which is worse than reporting none.
+    // A count that drifts from the mask makes the panel report a wrong number,
+    // which is worse than reporting none.
     let positions = grid(24);
     let handle = mesh(&positions);
     let vertices = handle.vertex_count;
     let mut markings = AlignMarkings::default();
 
     // Compared as fractions, not converted back to counts: a float round-trip
-    // through a count would hide a one-vertex drift behind rounding, which is
-    // exactly the drift this test exists to catch.
+    // through a count would hide a one-vertex drift behind rounding, and that
+    // drift is what this test catches.
     #[allow(clippy::cast_precision_loss)]
     let truth = |markings: &AlignMarkings| -> f32 {
         let counted = (0..vertices)
@@ -227,7 +226,7 @@ fn fit_everywhere_leaves_nothing_marked_and_fit_nowhere_leaves_everything() {
 #[test]
 fn mark_automatic_refuses_without_a_single_arrow() {
     // Marking everything and clearing nothing would leave the match with no
-    // surface at all, from a button the operator read as helpful.
+    // surface at all.
     let positions = grid(8);
     let handle = mesh(&positions);
     let mut markings = AlignMarkings::default();
@@ -280,7 +279,7 @@ fn mark_automatic_keeps_the_discs_and_marks_out_the_rest() {
 #[test]
 fn a_dab_that_changes_nothing_does_not_bump_the_revision() {
     // Every downstream cache keys on the revision. A dab in empty space that
-    // still bumped it threw away a measurement of a full arch for nothing.
+    // bumped it would discard a full-arch measurement for no change.
     let positions = grid(8);
     let handle = mesh(&positions);
     let mut markings = AlignMarkings::default();
@@ -364,10 +363,9 @@ fn a_mask_taken_on_other_geometry_is_not_a_reading_about_this_mesh() {
         "a mask from other geometry was counted into the coverage"
     );
 
-    // The nastier half, and the one a vertex count cannot catch: a repair or a
-    // sculpt can hand back a DIFFERENT mesh with the SAME number of vertices.
-    // Checked by length alone, the old marks passed and then excluded an
-    // arbitrary region of a surface nobody had painted.
+    // The case a vertex count cannot catch: a repair or a sculpt can hand back
+    // a different mesh with the same number of vertices. Checked by length
+    // alone, stale marks would pass and exclude an arbitrary unpainted region.
     let same_size_other_mesh = MarkedOn {
         geometry: SUBJECT + 1,
         vertex_count: handle.vertex_count,
@@ -380,7 +378,7 @@ fn a_mask_taken_on_other_geometry_is_not_a_reading_about_this_mesh() {
     );
     assert!(
         markings.stale_for(AlignSide::Moving, same_size_other_mesh),
-        "the operator has to be told their markings no longer apply"
+        "the operator has to be told their markings do not apply to this mesh"
     );
     assert!(
         !markings.stale_for(AlignSide::Moving, handle.identity()),
@@ -395,7 +393,7 @@ fn a_mask_taken_on_other_geometry_is_not_a_reading_about_this_mesh() {
 #[test]
 fn a_stroke_closes_exactly_once() {
     // The measurement runs when the stroke closes. Reporting a close twice
-    // re-measured a full arch for a button that was already up.
+    // would re-measure a full arch for a button that is already up.
     let positions = grid(8);
     let handle = mesh(&positions);
     let mut markings = AlignMarkings::default();
@@ -418,7 +416,7 @@ fn a_stroke_closes_exactly_once() {
 #[test]
 fn clearing_drops_the_markings_on_both_scans_together() {
     // Half-cleared markings mean the fit ignores a region of one scan that the
-    // operator can no longer see marked anywhere.
+    // operator cannot see marked anywhere.
     let positions = grid(8);
     let handle = mesh(&positions);
     let mut markings = AlignMarkings::default();
@@ -459,9 +457,9 @@ fn an_erase_reports_the_vertices_it_cleared() {
 #[test]
 fn each_side_keeps_its_own_touched_list() {
     // The Brush window's default Both target dabs both scans in one frame, and
-    // the preview re-colours per side from this list. One shared list was
-    // overwritten by the second dab, so the first arch never received its
-    // re-colour and half of every stroke stayed invisible.
+    // the preview re-colours per side from this list. A shared list would be
+    // overwritten by the second dab, leaving the first arch without its
+    // re-colour and half of every stroke invisible.
     let positions = grid(16);
     let handle = mesh(&positions);
     let mut markings = AlignMarkings::default();
@@ -559,8 +557,8 @@ fn swapping_the_roles_takes_the_marking_and_its_touched_list_with_it() {
 
 #[test]
 fn every_command_is_reachable_from_the_brush_window() {
-    // The window builds its buttons from `ALL`. A command added to the enum and
-    // forgotten there is a feature nobody can press.
+    // The window builds its buttons from `ALL`. A command added to the enum but
+    // missing there would have no button.
     assert_eq!(MaskCommand::ALL.len(), 4);
     for command in MaskCommand::ALL {
         assert!(!command.label_key().is_empty());

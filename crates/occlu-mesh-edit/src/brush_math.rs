@@ -1,6 +1,5 @@
-//! Pure, stateless helpers for the sculpt brush kernel, split out of `brush.rs`
-//! to hold the workspace's 800-line file budget: the Smooth pass count, the
-//! open-boundary mask, the per-vertex anti-inversion step budget, the
+//! Pure, stateless helpers for the sculpt brush kernel: the Smooth pass count,
+//! the open-boundary mask, the per-vertex anti-inversion step budget, the
 //! shortest-incident-edge probe, and the radial falloff.
 
 use glam::Vec3;
@@ -12,7 +11,7 @@ use super::brush_csr::Csr;
 
 const COLLAPSE_FRACTION_SQUARED: f32 = 1e-4;
 
-/// Area-weighted vertex normal for every id in `scope`, computed in PARALLEL
+/// Area-weighted vertex normal for every id in `scope`, computed in parallel
 /// and conflict-free — each entry reads only its own incident faces, so no
 /// per-face dedup is needed. Returns one un-normalized normal per `scope`
 /// entry; the caller normalizes and writes back. This is the strategy
@@ -64,7 +63,7 @@ fn is_cancelled(cancel: Option<&AtomicBool>) -> bool {
 }
 
 /// Most Laplacian passes a single forced (Shift) dab runs. High so Shift
-/// smooths CARDINALLY — enough to iron a rough scan patch nearly flat in one
+/// smooths cardinally — enough to iron a rough scan patch nearly flat in one
 /// held stroke.
 pub(crate) const MAX_SMOOTH_PASSES: usize = 16;
 
@@ -130,12 +129,13 @@ pub(crate) fn boundary_mask(
 
 /// Per-vertex anti-inversion step budget: shortest incident welded edge,
 /// reduced to the minimum across each soup cluster. A non-representative
-/// duplicate has an EMPTY welded ring, so [`shortest_incident_edge`] would
+/// duplicate has an empty welded ring, so [`shortest_incident_edge`] would
 /// give it the generous isolated-vertex fallback instead of the
 /// representative's tight budget. Without this propagation, a duplicate —
 /// captured by the same spatial query since all copies share a position —
-/// re-applies a dab at the loose fallback and overwrites the representative's
-/// clamped move, silently defeating the anti-inversion guard on STL soup.
+/// would re-apply a dab at the loose fallback and overwrite the
+/// representative's clamped move, defeating the anti-inversion guard on STL
+/// soup.
 pub(crate) fn compute_step_budget(
     positions: &[Vec3],
     adjacency: &Csr,
@@ -159,7 +159,7 @@ pub(crate) fn compute_step_budget(
 
 /// Shortest edge from `here` to any of `neighbors`' positions, capped (not
 /// floored) at 1mm so a single dab cannot jump too far on a sparse/low-poly
-/// mesh. A genuinely SMALL edge is returned unfloored: a fine occlusal groove
+/// mesh. A genuinely small edge is returned unfloored: a fine occlusal groove
 /// or margin line can have real spacing well under a coarse floor, and
 /// flooring would inflate `clamp_step`'s budget past what the local topology
 /// tolerates. An isolated vertex (no finite neighbor distance) falls back to
@@ -181,7 +181,7 @@ pub(crate) fn shortest_incident_edge(positions: &[Vec3], neighbors: &[u32], here
     shortest.min(1.0)
 }
 
-/// Whether the mesh is a SINGLE connected surface (welded rings + soup sibling
+/// Whether the mesh is a single connected surface (welded rings + soup sibling
 /// links). A dab on a single-component scan — the common case — can skip the
 /// per-dab flood fill entirely, since there is nothing else to drag along.
 /// Computed once at prepare.

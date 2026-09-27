@@ -2,11 +2,11 @@ use super::{AppErrorAction, AppErrorDialog, Error, PathBuf};
 
 /// The sentence for a file above the import limit, in the operator's language.
 ///
-/// The format error's own text is English and prints raw byte counts, and it is
-/// interpolated verbatim into a localized sentence, so a Russian operator reads
-/// `file is 2147483648 bytes, larger than the 1073741824 byte limit`. The
-/// numbers also belong in gigabytes: the operator's next step depends on how far
-/// over the file is, not on its byte count.
+/// The format error's own text is English and prints raw byte counts
+/// (`file is 2147483648 bytes, larger than the 1073741824 byte limit`), so it
+/// cannot be interpolated into a localized sentence. The numbers are stated in
+/// gigabytes: the operator's next step depends on how far over the file is, not
+/// on its byte count.
 #[allow(clippy::cast_precision_loss)]
 fn too_large_summary(locale: &crate::i18n::LocaleManager, error: &Error) -> Option<String> {
     let occluview_formats::FormatError::TooLarge { bytes, limit } =

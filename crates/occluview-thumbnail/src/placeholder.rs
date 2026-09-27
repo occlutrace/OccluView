@@ -7,8 +7,8 @@
 //! failing exit code makes the freedesktop thumbnailer show a broken-image
 //! glyph. Both read to the user as "the thumbnails are broken".
 //!
-//! Instead we draw a small, neutral, studio-shaded 3D cube: a quiet, obviously
-//! deliberate placeholder that composites into Explorer's tile exactly like a
+//! Instead we draw a small, neutral, studio-shaded 3D cube: a quiet placeholder
+//! that reads as intentional and composites into Explorer's tile exactly like a
 //! real thumbnail (transparent background, opaque shaded body). Two variants:
 //!
 //! * [`PlaceholderKind::Plain`] — a clean cube. Used for content we chose not

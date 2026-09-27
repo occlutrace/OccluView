@@ -2,8 +2,8 @@
 //!
 //! One `SHChangeNotify` call, kept here rather than imported from
 //! `occluview-shell`. That crate is the COM surface -- thumbnail provider,
-//! preview handler, registration -- and the viewer needed exactly this one
-//! line from it, which linked all of it into the GUI binary.
+//! preview handler, registration -- and the viewer needs only this one call;
+//! importing it would link all of it into the GUI binary.
 
 /// Tell Explorer that file associations and shell handlers changed.
 #[cfg(windows)]

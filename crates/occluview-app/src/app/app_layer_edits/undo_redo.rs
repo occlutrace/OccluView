@@ -116,9 +116,9 @@ pub(super) fn apply_layer_mesh_undo_action_with_status(
     let Some((_, layer_label)) = resolve_layer(scene, paths, &request, &app.ui.locale) else {
         return LayerContextApply::default();
     };
-    // Structural (whole-scene) undo first, with an honest refusal when the
-    // scene changed since the snapshot was recorded — a blind restore would
-    // silently drop a layer appended (or resurrect one removed) since.
+    // Structural (whole-scene) undo first. It refuses when the scene changed
+    // since the snapshot was recorded: a blind restore would drop a layer
+    // appended (or resurrect one removed) since.
     match app
         .document
         .edit_mode
@@ -181,8 +181,8 @@ pub(super) fn apply_layer_mesh_undo_action(
             *scene = restored_scene;
             return structural_scene_apply();
         }
-        // The caller (the `_with_status` wrapper) surfaces the honest status;
-        // here we only refuse to touch the scene.
+        // The caller (the `_with_status` wrapper) reports the refusal; this
+        // path only leaves the scene untouched.
         StructuralHistoryStep::SceneChanged => return LayerContextApply::default(),
         StructuralHistoryStep::NotAvailable => {}
     }

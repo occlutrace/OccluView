@@ -1,12 +1,11 @@
 //! Post-repair report card.
 //!
 //! One-click Repair already drops a one-line status toast (the executor in
-//! `app/app_layer_edits/repair.rs`). This module adds the calm, persistent
-//! *card* the operator reads to SEE what the pass actually did: one human line
-//! per non-zero pass with a small painted icon, the informational open-rim
-//! tail, and a positive "nothing to repair" confirmation when the mesh was
-//! already clean (matching the dental CAD convention — a clean scan still
-//! gets an answer).
+//! `app/app_layer_edits/repair.rs`). This module adds the persistent *card*
+//! the operator reads to see what the pass did: one human line per non-zero
+//! pass with a small painted icon, the informational open-rim tail, and a
+//! positive "nothing to repair" confirmation when the mesh was already clean
+//! (matching the dental CAD convention — a clean scan still gets an answer).
 //!
 //! The kernel [`RepairReport`] is consumed read-only; every number shown here
 //! is one of its existing fields. Presentation only — no mesh logic lives here.
@@ -237,8 +236,8 @@ const REPAIR_MODAL_BODY_MIN_HEIGHT: f32 = 42.0;
 const REPAIR_MODAL_BODY_MAX_HEIGHT: f32 = 230.0;
 
 /// Use the same bounded, centered modal surface as About and the license
-/// viewer. The old free-positioned Window could grow from its report rows and
-/// drift toward the viewport edge, which made the repair result look broken.
+/// viewer, so the card cannot grow from its report rows and drift toward the
+/// viewport edge.
 fn show_repair_modal<T>(
     ctx: &egui::Context,
     add_contents: impl FnOnce(&mut egui::Ui) -> T,
@@ -281,14 +280,13 @@ impl RepairReportDialog {
         self.card = None;
     }
 
-    /// Whether a card is on screen. Test probe: production code draws the card
     /// Whether the card is in front of the operator.
     ///
     /// The tool hotkeys and every tool's Escape handler ask
     /// [`OccluviewApp::modal_dialog_open`], so this card has to be one of its
-    /// terms: without it Escape closed the tool BEHIND the card — and for Align
-    /// that is `cancel_align_session`, which puts every scan back where the
-    /// session found it.
+    /// terms: without it Escape would close the tool behind the card — and for
+    /// Align that is `cancel_align_session`, which puts every scan back where
+    /// the session found it.
     #[must_use]
     pub(crate) const fn is_open(&self) -> bool {
         self.card.is_some()
@@ -729,7 +727,7 @@ mod tests {
             |ui| dialog.ui(ui.ctx(), &english()),
         )
         .drop_without_applying_deltas();
-        // egui deliberately uses the first frame as a sizing pass for areas;
+        // egui uses the first frame as a sizing pass for areas;
         // the visible frame must be checked after that pass has positioned the
         // measured card around the center anchor.
         ctx.run_ui(

@@ -254,10 +254,9 @@ impl PreviewHandler {
             tracing::warn!("could not resolve occluview.exe next to the shell DLL");
             return;
         };
-        // occluview-app has no `--edit` verb yet (its argument parser treats any
-        // unknown argument as a file path), so BOTH intents currently open the
-        // viewer with just the file. When the app gains `--edit`, prepend it in
-        // the Edit arm below — the only change needed here.
+        // occluview-app has no `--edit` verb (its argument parser treats any
+        // unknown argument as a file path), so both intents open the viewer
+        // with just the file.
         let params = match intent {
             LaunchIntent::Open | LaunchIntent::Edit => {
                 HSTRING::from(format!("\"{}\"", path.display()))
@@ -289,11 +288,10 @@ impl PreviewHandler {
         // is the renderer's texture ceiling (`using_resolution(adapter.limits())`
         // hands the device the adapter's limit, and the code's own floor case is
         // 2048). Asking the shared renderer for a full-pane texture on a wide
-        // pane was a wgpu validation error: the fault latched, the shared
-        // renderer was retired, and this menu command discarded the error, so the
-        // operator got no image and no message. The clamp also bounds the
-        // oversize-placeholder branch, which allocated width*height*4 from a rect
-        // otherwise clamped only at 65535.
+        // pane is a wgpu validation error: the fault latches, the shared
+        // renderer is retired, and the operator gets no image and no message.
+        // The clamp also bounds the oversize-placeholder branch, which
+        // allocates width*height*4 from a rect otherwise clamped only at 65535.
         let size = self.preview_size_u16();
         let render_width = u32::from(size[0]).min(MAX_OFFSCREEN_EDGE);
         let render_height = u32::from(size[1]).min(MAX_OFFSCREEN_EDGE);
@@ -365,10 +363,10 @@ fn copy_rgba_to_clipboard(
         return Err(e_fail());
     };
     // Open the clipboard before the block exists. Opening it last and
-    // returning with `?` leaked the block whenever another process held the
-    // clipboard open: the error path ran before either `GlobalFree` below, and
-    // the leak lands in prevhost.exe, which serves every later preview in the
-    // session.
+    // returning with `?` would leak the block whenever another process holds
+    // the clipboard open: the error path runs before either `GlobalFree` below,
+    // and the leak lands in prevhost.exe, which serves every later preview in
+    // the session.
     // SAFETY: take ownership of the clipboard tied to our window.
     let opened = unsafe { OpenClipboard(Some(hwnd)) };
     if opened.is_err() {

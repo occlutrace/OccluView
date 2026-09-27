@@ -1,6 +1,5 @@
 //! Fill gating: loop collection (with pinch-merge splitting), the scan-border
-//! guard, size caps, and selection-majority qualification. Split out of
-//! `holes.rs` (file-size budget).
+//! guard, size caps, and selection-majority qualification.
 
 use std::collections::HashSet;
 
@@ -13,7 +12,7 @@ use super::holes_walk::{
 use super::{FaceSelection, MeshEditBuffers, MeshEditError, MeshEditOptions};
 use crate::holes::{FillLoopStats, CLOSE_HOLES_EDGE_CEILING};
 
-/// Border guard: a rim must reach this fraction of the LARGEST rim's
+/// Border guard: a rim must reach this fraction of the largest rim's
 /// perimeter to count as scan border.
 const BORDER_RIM_RATIO: f64 = 0.5;
 
@@ -27,8 +26,8 @@ const BORDER_BBOX_FRACTION: f64 = 0.5;
 /// entirely on the absolute anchor — and half the diagonal is far too eager
 /// there. A scan border is the outline of an open sheet and runs close to the
 /// model's full extent; a molar socket on a closed model is 25-35 mm perimeter
-/// on a 65-75 mm arch, which the old rule declared "border" and refused to
-/// fill. Requiring the full diagonal keeps a genuine open-sheet border out
+/// on a 65-75 mm arch, which a half-diagonal anchor declares "border" and
+/// refuses to fill. Requiring the full diagonal keeps a genuine open-sheet border out
 /// while letting a socket close.
 const SOLE_RIM_BBOX_FRACTION: f64 = 1.0;
 
@@ -75,10 +74,10 @@ pub(super) fn collect_boundary_loops(
 }
 
 /// The perimeter at or above which a rim counts as the scan's natural outer
-/// boundary: at least [`BORDER_RIM_RATIO`] of the largest rim's perimeter AND
+/// boundary: at least [`BORDER_RIM_RATIO`] of the largest rim's perimeter and
 /// at least [`BORDER_BBOX_FRACTION`] of the referenced bounding-box diagonal.
 /// The absolute anchor keeps a closed-but-pinholed mesh fillable: without it,
-/// the largest PINHOLE would masquerade as "the border" and stay open.
+/// the largest pinhole would masquerade as "the border" and stay open.
 ///
 /// With a single rim the ratio half of that rule is vacuous — a rim is always
 /// at least half of itself — so the anchor alone decides, and it tightens to
@@ -98,7 +97,7 @@ pub(super) fn border_perimeter_threshold(
     (largest * BORDER_RIM_RATIO).max(diagonal * BORDER_BBOX_FRACTION)
 }
 
-/// Diagonal of the bounding box of REFERENCED vertices (unreferenced debris
+/// Diagonal of the bounding box of referenced vertices (unreferenced debris
 /// must not inflate the border guard's absolute anchor).
 fn referenced_bbox_diagonal(mesh: &MeshEditBuffers) -> f32 {
     let mut referenced = vec![false; mesh.vertices.len()];
@@ -201,21 +200,20 @@ fn rim_perimeter_mm(mesh: &MeshEditBuffers, boundary_loop: &[usize]) -> Result<f
 /// runs scans all triangles. That is quadratic, and it does not finish -- a
 /// 500k-triangle soup was still running after ten minutes.
 ///
-/// The test is whether the INDICES SHARE VERTICES, and it is asked of the
-/// post-weld mesh. Two earlier versions were wrong in ways this one is not:
+/// The test is whether the indices share vertices, and it is asked of the
+/// post-weld mesh. Two simpler keys give the wrong answer:
 ///
-/// * Keying on the `heal_boundary_rims` flag assumed healing welds first, but
-///   healing welds by full payload (position AND colour/UV bits), so a soup
-///   whose coincident corners carry different payloads merges nothing -- and the
-///   healing pass then classified all three edges of every triangle as an
-///   isolated nick and deleted the whole mesh, publishing a zero-face result as
-///   a successful cap. Every OBJ is such a soup: the reader pushes one vertex per
-///   face corner and never dedups.
-/// * Keying on the vertex/index LENGTHS cannot see the weld at all:
+/// * The `heal_boundary_rims` flag: healing welds by full payload (position
+///   and colour/UV bits), so a soup whose coincident corners carry different
+///   payloads merges nothing, and the healing pass would classify all three
+///   edges of every triangle as an isolated nick and delete the whole mesh.
+///   Every OBJ is such a soup: the reader pushes one vertex per face corner and
+///   never dedups.
+/// * The vertex/index lengths cannot see the weld at all:
 ///   `weld_soup_topology` clones the vertex array and remaps only the indices, so
-///   a soup has `vertices.len() == indices.len()` before AND after a successful
-///   weld. That version refused every large soup, including the perfectly
-///   weldable binary-STL arch Close Holes exists to heal.
+///   a soup has `vertices.len() == indices.len()` before and after a successful
+///   weld. Keying on lengths refuses every large soup, including the weldable
+///   binary-STL arch Close Holes exists to heal.
 ///
 /// A welded surface points many corners at the same vertex; a soup gives every
 /// corner its own. Counting distinct referenced vertices separates the two at
@@ -233,7 +231,7 @@ pub(super) fn refuse_unweldable_soup(
     }
     // Distinct referenced vertices. A closed triangle surface references about
     // half as many vertices as it has triangles; a tangled patch references
-    // about one per triangle; a soup references one per CORNER, i.e. three per
+    // about one per triangle; a soup references one per corner, i.e. three per
     // triangle. Comparing against the corner count is what tells them apart.
     let mut seen = vec![false; mesh.vertices.len()];
     let mut distinct = 0usize;

@@ -1,6 +1,6 @@
 //! The operator-facing controls catalogue.
 //!
-//! This is deliberately data, not another input router. The handlers in the
+//! This is data, not another input router. The handlers in the
 //! app remain the authority for behavior; this catalogue gives the Help
 //! surface and the viewport reminder one spelling for the controls they
 //! already expose.
@@ -41,11 +41,19 @@ const NAVIGATION: &[HintRow] = &[
         key: "help-hint-navigation-pan-the-camera",
     },
     HintRow {
+        gesture: "Two-finger scroll",
+        key: "help-hint-navigation-pan-the-camera",
+    },
+    HintRow {
         gesture: "LMB + RMB drag",
         key: "help-hint-navigation-pan-the-camera-2",
     },
     HintRow {
         gesture: "Wheel",
+        key: "help-hint-navigation-zoom-toward-the-pointer",
+    },
+    HintRow {
+        gesture: "Pinch",
         key: "help-hint-navigation-zoom-toward-the-pointer",
     },
     HintRow {
@@ -166,7 +174,11 @@ const ALIGN_AND_MEASURE: &[HintRow] = &[
     },
     HintRow {
         gesture: "LMB click on a ruler line",
-        key: "help-hint-align-measure-drop-a-perpendicular-onto-a-ruler-line",
+        key: "help-hint-align-measure-end-a-ruler-on-a-ruler-line",
+    },
+    HintRow {
+        gesture: "Shift in Ruler",
+        key: "help-hint-align-measure-switch-between-any-angle-and-90",
     },
     HintRow {
         gesture: "Ctrl/Command + LMB drag",
@@ -310,7 +322,7 @@ pub(crate) const ALL_SECTIONS: &[HintSection] = &[
 
 pub(crate) const fn contextual_line(context: HintContext) -> &'static str {
     match context {
-        HintContext::Navigation => "RMB drag orbit · MMB drag pan · Wheel zoom · MMB click focus",
+        HintContext::Navigation => "RMB drag orbit · MMB drag pan · Trackpad scroll pan · Wheel/pinch zoom · MMB click focus",
         HintContext::MeshEditing => {
             "LMB select · Shift+click unmark · Drag rectangle · Ctrl+Z undo"
         }

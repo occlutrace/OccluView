@@ -50,11 +50,10 @@ pub fn infer_thumbnail_format(
         // probe below get a say -- which is the case it exists for: a stream
         // carries bytes and no name, and OBJ has no magic of its own.
         //
-        // It used to get the first word instead, and a binary STL's 80-byte
-        // header is free-form text: an exporter that wrote "g 1 arch upper"
-        // there had its scan read as an OBJ, fail, and wear a corrupt-file
-        // badge the shell caches, while the viewer opened the same file
-        // without complaint.
+        // The shared probe goes first because a binary STL's 80-byte header is
+        // free-form text: a header such as "g 1 arch upper" must not make the
+        // thumbnail read the scan as an OBJ, fail, and cache a corrupt-file
+        // badge for a file the viewer opens.
         Err(error) => {
             if looks_like_obj_text(bytes) {
                 return Ok(FormatKind::Obj);
@@ -148,12 +147,12 @@ fn is_obj_record(line: &str) -> bool {
 mod tests {
     /// The OBJ probe must look at the first line, not at the file.
     ///
-    /// Decoding the whole input cost 660 ms on a 100 MB binary STL, measured
-    /// on the machine this was written on, against 12 us for the line-wise
-    /// form. This runs on Explorer's thread before a render lane is taken.
+    /// Decoding the whole input costs 660 ms on a 100 MB binary STL, against
+    /// 12 us for the line-wise form. This runs on Explorer's thread before a
+    /// render lane is taken.
     #[test]
     fn the_obj_probe_does_not_read_the_whole_file() {
-        // 32 MB of binary STL: the old form takes about 210 ms on it.
+        // 32 MB of binary STL: decoding all of it takes about 210 ms.
         let mut bytes = vec![0u8; 80];
         bytes.extend_from_slice(&600_000_u32.to_le_bytes());
         bytes.resize(32 * 1024 * 1024, 0x7f);
@@ -299,11 +298,10 @@ mod agreement_tests {
     use occluview_formats::{probe, FormatKind};
 
     /// A binary STL's 80-byte header is free-form text, and exporters put
-    /// words in it. If those words happen to read like an OBJ record, the
-    /// thumbnail inference used to call the file an OBJ -- while the viewer,
-    /// which asks the shared probe, called it what it is. The thumbnail then
-    /// wore a corrupt-file badge that the shell caches against the file's
-    /// timestamp, on a scan that opens perfectly.
+    /// words in it. Words that read like an OBJ record must not make the
+    /// thumbnail inference disagree with the viewer, which asks the shared
+    /// probe; a misread would cache a corrupt-file badge against the file's
+    /// timestamp on a scan that opens.
     #[test]
     fn a_binary_stl_whose_header_reads_like_obj_is_still_an_stl() {
         let mut bytes = b"g 1 arch upper".to_vec();

@@ -39,9 +39,8 @@ pub(super) fn write_mesh<W: Write>(
     }
 
     // OBJ carries RGB per vertex and nothing for alpha. PLY and the app's mesh
-    // keep RGBA, and the writer module's header promises every writer reports a
-    // lossy conversion, so a PLY with alpha < 255 exported to OBJ used to lose
-    // it without a word.
+    // keep RGBA, and every writer reports a lossy conversion, so alpha < 255
+    // exported to OBJ raises a warning.
     let alpha_present =
         write_colors
             && mesh.vertices().iter().enumerate().any(|(index, vertex)| {
@@ -109,9 +108,8 @@ pub(super) fn write_mesh<W: Write>(
         }
     } else if !mesh.vertices().is_empty() {
         // OBJ's point element is the lossless counterpart of our point-cloud
-        // mesh. Omitting it used to produce a file that looked successful but
-        // loaded back with zero vertices because the reader only materialized
-        // vertices while parsing faces.
+        // mesh. Without it a vertex-only file loads back with zero vertices in
+        // readers that only materialize vertices referenced by an element.
         write!(writer, "p")?;
         for index in 1..=mesh.vertices().len() {
             write!(writer, " {index}")?;

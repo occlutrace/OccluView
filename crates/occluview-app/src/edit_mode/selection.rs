@@ -5,14 +5,13 @@ use occluview_core::{Camera, Scene, SceneMesh, SceneMeshId, ScenePickHit};
 
 /// Region selection request (freehand lasso or the marquee rectangle as a
 /// 4-point polygon). The dental CAD "Mark triangles" semantics: a triangle
-/// is taken iff its projected footprint INTERSECTS the outline in screen
+/// is taken iff its projected footprint intersects the outline in screen
 /// space (any triangle vertex inside the outline, any outline vertex inside
 /// the triangle, or any edges crossing) — so a lasso smaller than a big flat
-/// triangle, or one whose
-/// edge merely clips it, still marks it. When `through_mesh` is false the
-/// triangle must ALSO face the camera (surface mode). Completed outlines
-/// ACCUMULATE into the existing highlight; with `unmark` (SHIFT) the outline
-/// un-marks instead.
+/// triangle, or one whose edge merely clips it, still marks it. When
+/// `through_mesh` is false the triangle must also face the camera (surface
+/// mode). Completed outlines accumulate into the existing highlight; with
+/// `unmark` (Shift) the outline un-marks instead.
 #[derive(Clone, Debug)]
 pub(crate) struct ScreenPolygonSelectionRequest<'a> {
     pub(crate) viewport_rect: egui::Rect,
@@ -28,9 +27,8 @@ pub(crate) struct FaceSelectionState {
     /// How many entries of `selected_faces` are set.
     ///
     /// Maintained, not counted. The count is read two or three times a frame
-    /// while the editor is open, and on a multi-layer case that was a linear
-    /// scan of every triangle of every layer, several times a frame, to answer
-    /// a question a single integer already knows.
+    /// while the editor is open, and counting would scan every triangle of
+    /// every layer each time on a multi-layer case.
     selected_count: usize,
 }
 
@@ -46,8 +44,8 @@ impl FaceSelectionState {
         })
     }
 
-    /// Click selection, dental CAD convention: a click MARKS the face
-    /// (accumulates into the highlight); with `unmark` (SHIFT) it un-marks
+    /// Click selection, dental CAD convention: a click marks the face
+    /// (accumulates into the highlight); with `unmark` (Shift) it un-marks
     /// instead.
     pub(super) fn select_scene_hit(
         &mut self,
@@ -69,7 +67,7 @@ impl FaceSelectionState {
         self.set_face(hit.triangle_index, !unmark)
     }
 
-    /// Object-mode click: MARK (or, with `unmark`/SHIFT, un-mark) every triangle
+    /// Object-mode click: mark (or, with `unmark`/Shift, un-mark) every triangle
     /// of the connected component under the cursor. Same layer-guard contract as
     /// [`Self::select_scene_hit`]: `None` when the hit is off this selection's
     /// layer, hidden, a point cloud, or stale against the live triangle count.
@@ -102,8 +100,8 @@ impl FaceSelectionState {
         self.selected_count
     }
 
-    /// Set one face and keep the running count honest. Every write goes
-    /// through here; that is what makes the count trustworthy.
+    /// Set one face and keep the running count in step. Every write goes
+    /// through here, so the count stays accurate.
     fn write_face(&mut self, triangle_index: usize, selected: bool) -> bool {
         let Some(slot) = self.selected_faces.get_mut(triangle_index) else {
             return false;
@@ -150,13 +148,13 @@ impl FaceSelectionState {
     }
 
     /// Region selection (lasso outline or the marquee as a 4-point polygon). A
-    /// triangle is taken iff its screen projection INTERSECTS the outline —
-    /// the dental CAD "Mark triangles" semantics — so a lasso smaller than a big flat
-    /// triangle, or one whose edge merely crosses it, still marks it (the old
-    /// "all three vertices inside" rule silently dropped sparse flat regions,
-    /// whose triangles are much larger than a dense curved surface's). In
-    /// surface mode the triangle must also face the camera. Outlines
-    /// accumulate; `unmark` clears instead.
+    /// triangle is taken iff its screen projection intersects the outline —
+    /// the dental CAD "Mark triangles" semantics — so a lasso smaller than a big
+    /// flat triangle, or one whose edge merely crosses it, still marks it.
+    /// Sparse flat regions have triangles much larger than a dense curved
+    /// surface's, so full containment would miss them. In surface mode the
+    /// triangle must also face the camera. Outlines accumulate; `unmark` clears
+    /// instead.
     pub(super) fn select_screen_polygon(
         &mut self,
         scene: &Scene,
@@ -191,16 +189,16 @@ impl FaceSelectionState {
         // instead of re-converting per triangle.
         let polygon_pts: Vec<ScreenPt> = polygon.iter().copied().map(ScreenPt::new).collect();
 
-        // Precompute the orthographic projection basis ONCE (see `OrthoProjector`
+        // Precompute the orthographic projection basis once (see `OrthoProjector`
         // — `camera.eye()`/`view_direction()`/`view_up()` each resolve the
         // orientation quaternion, so routing every vertex through the shared
         // per-point projector would recompute this basis millions of times on a
         // large mesh). `toward_viewer` is the single constant view direction the
         // ortho render selects through; a triangle is front-facing iff its
         // geometric face normal has a positive component along it. Using this
-        // constant direction (NOT a per-face `eye - centroid`, a perspective-
-        // style vector that swings with lateral offset and wrongly culls whole
-        // front-facing FLAT patches off the view axis) keeps surface mode
+        // constant direction (not a per-face `eye - centroid`, a perspective-
+        // style vector that swings with lateral offset and would cull whole
+        // front-facing flat patches off the view axis) keeps surface mode
         // consistent with the projection, and recomputing the normal from
         // positions never trusts stored vertex normals (flat meshes leave unset).
         let projector = OrthoProjector::new(camera, request.viewport_rect)?;
@@ -239,7 +237,7 @@ impl FaceSelectionState {
             }
 
             // True polygon/triangle intersection (the dental CAD "Mark
-            // triangles" semantics): mark on ANY screen-space overlap, not
+            // triangles" semantics): mark on any screen-space overlap, not
             // only full containment. This is what makes a small lasso catch a
             // large flat triangle.
             if !triangle_intersects_polygon(
@@ -253,8 +251,8 @@ impl FaceSelectionState {
 
             // Surface mode: skip triangles that face away from the camera (no
             // through-mesh pick). Through-mesh mode takes every enclosed face.
-            // Degeneracy must be RELATIVE to the triangle's own scale: an
-            // absolute epsilon in mm^4 silently culled real micro-triangles
+            // Degeneracy must be relative to the triangle's own scale: an
+            // absolute epsilon in mm^4 would cull real micro-triangles
             // (hi-res scanner facets have ~15 um edges). A triangle is
             // degenerate only when its area is vanishing relative to its edge
             // lengths, at any absolute scale.
@@ -296,8 +294,8 @@ impl FaceSelectionState {
 /// Triangle indices of the object (connected component) that owns
 /// `triangle_index` on `entry`'s mesh. Delegates to the welded-topology kernel
 /// so a soup STL resolves to whole objects, not per-facet confetti. `None` on a
-/// point cloud / faceless mesh or an out-of-range index — an honest no-op, never
-/// a panic.
+/// point cloud / faceless mesh or an out-of-range index — a no-op, never a
+/// panic.
 fn component_triangles(entry: &SceneMesh, triangle_index: usize) -> Option<Vec<usize>> {
     occluview_core::component_at_triangle_in_mesh(&entry.mesh, triangle_index)
         .ok()
@@ -435,12 +433,11 @@ fn orient(a: ScreenPt, b: ScreenPt, c: ScreenPt) -> f64 {
 }
 
 /// Whether the projected triangle intersects the outline in screen space
-/// (the dental CAD "Mark triangles" semantics): true if ANY of — a triangle
+/// (the dental CAD "Mark triangles" semantics): true if any of — a triangle
 /// vertex is inside the outline, an outline vertex is inside the triangle, or
 /// an outline edge crosses a triangle edge. The two vertex-inside tests catch
-/// the common
-/// fully-inside / fully-containing cases cheaply; the edge test only settles
-/// the straddling boundary triangles neither vertex test resolved.
+/// the common fully-inside / fully-containing cases cheaply; the edge test only
+/// settles the straddling boundary triangles neither vertex test resolved.
 fn triangle_intersects_polygon(
     a: ScreenPt,
     b: ScreenPt,

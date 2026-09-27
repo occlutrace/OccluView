@@ -62,7 +62,7 @@ fn parse_texture_coordinates(
     indices: &[u32],
 ) -> Result<Option<Vec<Option<[f32; 2]>>>, HpsError> {
     // `find_optional_element` stops at the first match; `find_elements`
-    // materialized every match in the document to keep one.
+    // would materialize every match in the document to keep one.
     let Some(element) = xml::find_optional_element(text, "PerVertexTextureCoord") else {
         return Ok(None);
     };
@@ -109,7 +109,7 @@ fn correct_channel_order_for_dental(texture: DecodedTexture) -> Result<DecodedTe
             pixel.swap(0, 2);
         }
     }
-    // Dimensions and byte length are unchanged (only individual channel BYTES
+    // Dimensions and byte length are unchanged (only individual channel bytes
     // moved within each already-present pixel), so this can never fail — the
     // original texture's own construction already proved them sound. Routed
     // through the fallible constructor anyway (propagated with `?` by the
@@ -312,7 +312,7 @@ fn parse_raw_texture_image(
     // Deterministic decode (no pixel-content guessing): honor an explicit,
     // unambiguous pixel-format declaration when present; otherwise fall back to
     // the HPS/DirectX default. HPS raw textures are DirectX surfaces
-    // (D3DFMT_A8R8G8B8 / D3DFMT_R8G8B8), whose little-endian MEMORY byte order
+    // (D3DFMT_A8R8G8B8 / D3DFMT_R8G8B8), whose little-endian memory byte order
     // is B,G,R(,A) — so the correct default is BGRA / BGR (swap R<->B).
     let layout =
         raw_texture_layout(open_tag)?.unwrap_or_else(|| default_raw_layout(bytes_per_pixel));
@@ -326,10 +326,10 @@ fn parse_raw_texture_image(
 ///
 /// HPS emits DirectX surfaces (`D3DFMT_A8R8G8B8` for 32-bit, `D3DFMT_R8G8B8`
 /// for 24-bit). A D3DFMT name lists channels from the high byte of a 32-bit pixel
-/// to the low byte, so the little-endian MEMORY byte order is the reverse:
+/// to the low byte, so the little-endian memory byte order is the reverse:
 /// `B,G,R,A` for `A8R8G8B8` and `B,G,R` for `R8G8B8`. Decoding as BGRA/BGR (swap
-/// R<->B) is the verified-correct behavior; treating the bytes as RGBA turns warm
-/// dental whites (R>=G>B) into cool blue (B>R).
+/// R<->B) keeps warm dental whites (R>=G>B) warm; treating the bytes as RGBA
+/// turns them cool blue (B>R).
 fn default_raw_layout(bytes_per_pixel: u32) -> RawTextureLayout {
     match bytes_per_pixel {
         3 => RawTextureLayout::Bgr,
@@ -366,7 +366,7 @@ fn raw_texture_layout(open_tag: &str) -> Result<Option<RawTextureLayout>, HpsErr
         if normalized.contains("a8b8g8r8") || normalized.contains("x8b8g8r8") {
             return Ok(Some(RawTextureLayout::Rgba)); // 0xAABBGGRR -> [R,G,B,A]
         }
-        // DXGI-style names (digit forms) already list MEMORY byte order.
+        // DXGI-style names (digit forms) already list memory byte order.
         if normalized.contains("b8g8r8a8") {
             return Ok(Some(RawTextureLayout::Bgra));
         }
@@ -379,7 +379,7 @@ fn raw_texture_layout(open_tag: &str) -> Result<Option<RawTextureLayout>, HpsErr
         if normalized.contains("r8g8b8") {
             return Ok(Some(RawTextureLayout::Rgb));
         }
-        // Bare tokens state the MEMORY byte order literally.
+        // Bare tokens state the memory byte order literally.
         if normalized.contains("abgr") {
             return Ok(Some(RawTextureLayout::Abgr));
         }
@@ -566,10 +566,10 @@ mod zero_pixel_tests {
     /// A texture declaring no bytes per pixel is refused, not divided by.
     ///
     /// The length gate cannot catch it on its own: width times height times
-    /// zero is zero, and an empty body is exactly that length, so the decode
-    /// was reached and divided the body length by zero. That panics in release
-    /// as well, and the viewer and the command-line tool abort rather than
-    /// unwind -- a 400-byte file ended the process.
+    /// zero is zero, and an empty body is exactly that length, so without the
+    /// explicit refusal the decode divides the body length by zero. That panics
+    /// in release as well, and the viewer and the command-line tool abort
+    /// rather than unwind.
     #[test]
     fn a_texture_of_zero_byte_pixels_is_refused() {
         let decoded = parse_raw_texture_image(
