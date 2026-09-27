@@ -2295,6 +2295,7 @@ dependencies = [
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
+ "occlu-geometry-math",
  "occluview-align",
  "occluview-contact",
  "occluview-core",
@@ -2432,6 +2433,7 @@ name = "occluview-shell"
 version = "1.2.1"
 dependencies = [
  "glam",
+ "occlu-geometry-math",
  "occluview-core",
  "occluview-formats",
  "occluview-i18n",

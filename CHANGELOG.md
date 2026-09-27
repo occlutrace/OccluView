@@ -22,7 +22,8 @@ remain in the Git history.
 
 ### macOS
 
-- Smooth scrolling can pan or zoom the viewport, according to the Settings choice.
+- Settings choose whether trackpad scrolling pans or zooms the viewport;
+  keyboard and mouse help follows that choice.
 
 ## 1.2.1 - 2026-09-21
 

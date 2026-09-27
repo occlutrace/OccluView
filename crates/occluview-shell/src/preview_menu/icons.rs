@@ -24,6 +24,8 @@
     clippy::too_many_arguments
 )]
 
+use glam::Vec2;
+
 /// One preview-menu glyph. Maps 1:1 onto an actionable menu command.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PreviewMenuIcon {
@@ -318,14 +320,11 @@ impl Raster {
 
 /// Distance from a point to a line segment.
 fn dist_point_segment(px: f32, py: f32, ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
-    let (dx, dy) = (bx - ax, by - ay);
-    let len_sq = dx * dx + dy * dy;
-    if len_sq <= f32::EPSILON {
-        return (px - ax).hypot(py - ay);
-    }
-    let t = (((px - ax) * dx + (py - ay) * dy) / len_sq).clamp(0.0, 1.0);
-    let (cx, cy) = (ax + t * dx, ay + t * dy);
-    (px - cx).hypot(py - cy)
+    let point = Vec2::new(px, py);
+    let a = Vec2::new(ax, ay);
+    let b = Vec2::new(bx, by);
+    let (_, dist_sq) = occlu_geometry_math::closest_param_on_segment_2d(point, a, b);
+    dist_sq.sqrt()
 }
 
 /// Signed distance from `(px, py)` to the edge `a..b`, positive on the side
