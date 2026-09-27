@@ -165,9 +165,7 @@ mod renderer_pool_recovery_tests {
         _deadline: RenderDeadline,
         _adapter_policy: AdapterPolicy,
     ) -> Result<occluview_render::Offscreen, ThumbnailError> {
-        Err(ThumbnailError::Render(
-            occluview_render::RenderError::NoAdapter,
-        ))
+        Err(ThumbnailError::Render(RenderError::NoAdapter))
     }
 
     fn panics(
@@ -240,6 +238,7 @@ mod renderer_pool_recovery_tests {
     /// hands exactly that device to the next file in the folder.
     #[test]
     #[allow(clippy::expect_used)]
+    #[allow(clippy::print_stderr)]
     fn a_panicking_render_retires_its_device_instead_of_reusing_it() {
         let _guard = crate::acquire_render_test_guard();
         let pool = ThumbnailRendererPool::new(1);

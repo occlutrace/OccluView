@@ -485,13 +485,10 @@ fn circular_lasso(point_count: u32, radius: f32) -> Vec<egui::Pos2> {
 #[allow(clippy::print_stderr)]
 #[test]
 fn perf_dense_lasso_over_large_mesh_stays_bounded() {
-    // Perf smoke: a 200-point lasso over a 180k-triangle grid, measured for
-    // two lasso sizes — a representative regional selection (target < 150 ms)
-    // and a near-worst-case one covering ~half the mesh. Prints both wall
-    // times and asserts only a loose bound (wall times vary under concurrent
-    // load; this is a smoke guard against an O(N*P) blow-up, not a precise
-    // benchmark). The bbox prune makes the effective cost scale with
-    // the triangles under the outline, not the whole mesh.
+    // Perf smoke: a 200-point lasso over a 180k-triangle grid, measured for a
+    // regional selection and a near-worst-case selection covering half the
+    // mesh. Five alternating samples reduce scheduler noise; the median ratio
+    // guards the bbox prune without treating this as a precise benchmark.
     let cells: u32 = 300; // 2 * 300 * 300 = 180_000 triangles.
     let stride = cells + 1;
     let extent = 40.0_f32;
@@ -522,61 +519,60 @@ fn perf_dense_lasso_over_large_mesh_stays_bounded() {
     let camera = ortho_camera_above();
     let viewport = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(400.0, 400.0));
 
-    // (label, radius): a regional dense lasso then a wide near-worst-case one.
-    let mut measured: Vec<(&str, std::time::Duration)> = Vec::new();
-    for &(label, radius) in &[("regional", 55.0_f32), ("wide", 120.0_f32)] {
-        let lasso = circular_lasso(200, radius);
-        let Some(mut selection) = FaceSelectionState::empty_for_layer(layer_id, triangle_count)
-        else {
-            panic!("required test setup or expected result was missing");
+    // Alternate case order across samples, then compare medians so scheduler
+    // noise does not decide the pruning assertion.
+    let mut regional_samples = [std::time::Duration::ZERO; 5];
+    let mut wide_samples = [std::time::Duration::ZERO; 5];
+    for sample in 0..5 {
+        let cases = if sample % 2 == 0 {
+            [("regional", 55.0_f32), ("wide", 120.0_f32)]
+        } else {
+            [("wide", 120.0_f32), ("regional", 55.0_f32)]
         };
-        let started = std::time::Instant::now();
-        let changed = selection.select_screen_polygon(
-            &scene,
-            &camera,
-            ScreenPolygonSelectionRequest {
-                viewport_rect: viewport,
-                polygon_px: &lasso,
-                unmark: false,
-                through_mesh: true,
-            },
-        );
-        let elapsed = started.elapsed();
-        eprintln!(
-                "perf[{label}]: {}-point lasso over {triangle_count} triangles selected {} in {elapsed:?}",
-                lasso.len(),
-                selection.selected_count(),
+        for &(label, radius) in &cases {
+            let lasso = circular_lasso(200, radius);
+            let Some(mut selection) = FaceSelectionState::empty_for_layer(layer_id, triangle_count)
+            else {
+                panic!("required test setup or expected result was missing");
+            };
+            let started = std::time::Instant::now();
+            let changed = selection.select_screen_polygon(
+                &scene,
+                &camera,
+                ScreenPolygonSelectionRequest {
+                    viewport_rect: viewport,
+                    polygon_px: &lasso,
+                    unmark: false,
+                    through_mesh: true,
+                },
             );
+            let elapsed = started.elapsed();
 
-        assert_eq!(changed, Some(true));
-        assert!(
-            selection.selected_count() > 0,
-            "the {label} lasso must select the disk it covers"
-        );
-        measured.push((label, elapsed));
+            assert_eq!(changed, Some(true));
+            assert!(
+                selection.selected_count() > 0,
+                "the {label} lasso must select the disk it covers"
+            );
+            if label == "regional" {
+                regional_samples[sample] = elapsed;
+            } else {
+                wide_samples[sample] = elapsed;
+            }
+        }
     }
 
-    // The prune is what this test is for, and its signature is the ratio: with
-    // it, cost follows the triangles under the outline, so a regional lasso is
-    // several times cheaper than one covering half the mesh. Without it both
-    // scan everything and the two times converge. An absolute ceiling cannot
-    // see that: a ten-second ceiling passes with the prune disabled and the
-    // regional case a hundred times slower.
-    let regional = measured
-        .iter()
-        .find(|(label, _)| *label == "regional")
-        .map(|(_, elapsed)| *elapsed);
-    let wide = measured
-        .iter()
-        .find(|(label, _)| *label == "wide")
-        .map(|(_, elapsed)| *elapsed);
-    let (Some(regional), Some(wide)) = (regional, wide) else {
-        panic!("both lassos should have been measured");
-    };
+    // The prune is what this test is for, and its signature is the ratio: cost
+    // follows the triangles under the outline, so a regional lasso is at least
+    // twice as fast as one covering half the mesh. An absolute ceiling cannot
+    // detect a disabled prune when both cases scan the full mesh.
+    regional_samples.sort_unstable();
+    wide_samples.sort_unstable();
+    let regional = regional_samples[2];
+    let wide = wide_samples[2];
     assert!(
         wide > regional * 2,
-        "a regional lasso took {regional:?} against {wide:?} for one covering \
-         half the mesh; the outline bbox is not pruning"
+        "the regional median {regional:?} is not less than half the wide median \
+         {wide:?}; the outline bbox is not pruning"
     );
 }
 
