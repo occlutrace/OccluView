@@ -296,6 +296,11 @@ jobs:
       - name: cargo test --workspace (WARP required)
         env:
           OCCLUVIEW_REQUIRE_GPU_TESTS: "1"
+          # Thumbnail tests serialize access to one WARP device while each
+          # request keeps its caller's response deadline. Serializing the
+          # harness prevents unrelated tests from spending that budget while
+          # waiting for the shared renderer.
+          RUST_TEST_THREADS: "1"
         run: cargo test --workspace --all-targets --locked --no-fail-fast
 
   docs:
