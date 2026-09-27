@@ -62,7 +62,14 @@ fn windows_process_and_start_menu_shortcut_share_the_app_identity() {
 #[test]
 fn macos_document_types_are_well_formed_and_match_the_open_formats() {
     let source = repo_file("../../install/macos/Info.plist.in");
-    let plist = Document::parse(&source).expect("Info.plist is well-formed XML");
+    let plist = Document::parse_with_options(
+        &source,
+        roxmltree::ParsingOptions {
+            allow_dtd: true,
+            ..roxmltree::ParsingOptions::default()
+        },
+    )
+    .expect("Info.plist is well-formed XML");
     let root = plist_dictionary(&plist);
 
     assert_eq!(
