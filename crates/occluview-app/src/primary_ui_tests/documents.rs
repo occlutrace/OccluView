@@ -21,7 +21,7 @@ fn the_changelog_only_names_versions_that_can_be_released() {
         "the workspace version should be readable"
     );
     let Some(version) = version else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
 
     let heading = format!("## {version} ");
@@ -74,29 +74,21 @@ fn the_changelog_only_names_versions_that_can_be_released() {
 
     // Ordering alone is not the rule the test name promises. A section below
     // the newest claims something was released, so a tag has to exist for it.
-    // Tags come from git; a source tarball has none, and there the ordering
-    // above is all there is.
+    // CI checks out the Git history and tags required for this rule.
     let Some(tags) = repository_tags() else {
-        // The CI checkout that runs this test fetches tags, so "no tags" means
-        // a source tarball or a checkout that lost them. The skip is logged so
-        // the unchecked rule below is visible.
-        tracing::info!(
-            "changelog ordering: this checkout carries no tags, so only the ordering \
-             assertion above is checked"
-        );
-        return;
+        panic!("release-note validation requires a tagged git checkout");
     };
     // Only from the first tagged version onward: sections older than the day
     // tagging started describe releases this repository has no record of.
     let Some(first_tagged) = tags.iter().filter_map(|tag| parse_version(tag)).min() else {
-        return;
+        panic!("the checkout must contain at least one version tag");
     };
     for line in sections.iter().skip(1) {
         let Some(number) = line.split_whitespace().nth(1) else {
-            continue;
+            panic!("changelog section has no version: {line:?}");
         };
         let Some(parsed) = parse_version(number) else {
-            continue;
+            panic!("changelog section has an invalid version: {line:?}");
         };
         if parsed < first_tagged {
             continue;

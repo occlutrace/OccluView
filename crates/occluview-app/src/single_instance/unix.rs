@@ -199,7 +199,7 @@ mod tests {
         let parent = path.parent().map(Path::to_path_buf);
         assert!(parent.is_some(), "lock path should have parent");
         let Some(parent) = parent else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         assert!(std::fs::create_dir_all(&parent).is_ok());
         assert!(std::fs::write(&path, u32::MAX.to_string()).is_ok());
@@ -207,7 +207,7 @@ mod tests {
         let instance = acquire_lock_file(path.clone());
         assert!(instance.is_ok(), "stale lock should be replaced");
         let Ok(instance) = instance else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
 
         assert!(!instance.is_secondary());
@@ -226,7 +226,7 @@ mod tests {
         let parent = path.parent().map(Path::to_path_buf);
         assert!(parent.is_some(), "lock path should have parent");
         let Some(parent) = parent else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         assert!(std::fs::create_dir_all(&parent).is_ok());
         assert!(std::fs::write(&path, std::process::id().to_string()).is_ok());
@@ -234,7 +234,7 @@ mod tests {
         let instance = acquire_lock_file(path.clone());
         assert!(instance.is_ok(), "live lock should be secondary");
         let Ok(instance) = instance else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
 
         assert!(instance.is_secondary());

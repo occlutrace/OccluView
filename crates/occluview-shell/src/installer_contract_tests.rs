@@ -391,11 +391,8 @@ fn candidate_package_builds_are_lockfile_strict() {
 
     let deb_command = deb_build
         .lines()
-        .find(|line| line.trim_start().starts_with("cargo build "));
-    assert!(deb_command.is_some(), "Debian release Cargo build command");
-    let Some(deb_command) = deb_command else {
-        return;
-    };
+        .find(|line| line.trim_start().starts_with("cargo build "))
+        .expect("Debian release Cargo build command");
     assert!(shell_command_tokens(deb_command).contains(&"--locked"));
 
     for args_name in ["$cargoArgs", "$shellCargoArgs"] {
@@ -403,9 +400,10 @@ fn candidate_package_builds_are_lockfile_strict() {
         let args = msi_build
             .split_once(&array_start)
             .and_then(|(_, remaining)| remaining.split_once("\n    )"))
-            .map(|(args, _)| args);
-        assert!(args.is_some(), "{args_name} Cargo command arguments");
-        let Some(args) = args else { return };
+            .map_or_else(
+                || panic!("{args_name} Cargo command arguments"),
+                |(args, _)| args,
+            );
         assert!(
             args.lines()
                 .any(|line| matches!(line.trim(), "\"--locked\"," | "\"--locked\"")),
@@ -528,12 +526,13 @@ fn release_msi_builds_the_preview_dll_from_the_pinned_working_shell_source() {
 }
 
 /// Locate the shell-pin script, or `None` when this checkout has no repo root.
-fn shell_pin_script() -> Option<std::path::PathBuf> {
+fn shell_pin_script() -> std::path::PathBuf {
     let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")
         .join("scripts/report-shell-pin.sh");
-    script.is_file().then_some(script)
+    assert!(script.is_file(), "scripts/report-shell-pin.sh is present");
+    script
 }
 
 /// The shell-pin report must frame its fields so a Windows line ending cannot
@@ -548,10 +547,7 @@ fn shell_pin_script() -> Option<std::path::PathBuf> {
 /// behavioural half cannot build a POSIX shim on Windows.
 #[test]
 fn the_shell_pin_report_frames_its_fields_nul_delimited() {
-    let Some(script) = shell_pin_script() else {
-        eprintln!("skipped: scripts/report-shell-pin.sh is not present in this checkout");
-        return;
-    };
+    let script = shell_pin_script();
     let source = std::fs::read_to_string(&script).expect("the script must be readable");
     for required in [
         "mapfile -d '' -t pin_fields",
@@ -590,42 +586,33 @@ fn commits_behind_in(file: &std::path::Path) -> Option<u64> {
 fn the_shell_pin_report_survives_a_windows_crlf_python() {
     use std::process::Command;
 
-    let Some(script) = shell_pin_script() else {
-        eprintln!("skipped: scripts/report-shell-pin.sh is not present in this checkout");
-        return;
-    };
+    let script = shell_pin_script();
     let root = script.parent().and_then(|p| p.parent()).expect("repo root");
 
-    // A test that shells out is only meaningful when the host can spawn a
-    // child. Under a parallel run with a low process limit the fork fails and
-    // the script aborts for a reason unrelated to the contract, so the test
-    // reports a skip instead.
-    let forked = Command::new("sh").arg("-c").arg("exit 0").output();
-    if !forked.is_ok_and(|out| out.status.success()) {
-        eprintln!("skipped: this host cannot fork a child process right now");
-        return;
-    }
+    let forked = Command::new("sh")
+        .arg("-c")
+        .arg("exit 0")
+        .output()
+        .expect("the test host can spawn a shell");
+    assert!(
+        forked.status.success(),
+        "the test host can run a child process"
+    );
 
     // Resolve python3 to an absolute path. The shim below is itself named
     // `python3` and sits first on PATH, so a shim that invoked `python3` by name
     // would re-enter itself until the process table gave out.
-    let version = Command::new("python3").arg("--version").output();
-    if !version.is_ok_and(|out| out.status.success()) {
-        eprintln!("skipped: python3 is not available");
-        return;
-    }
+    let version = Command::new("python3")
+        .arg("--version")
+        .output()
+        .expect("python3 is available on Unix CI hosts");
+    assert!(version.status.success(), "python3 --version succeeds");
     let resolved = Command::new("sh")
         .arg("-c")
         .arg("command -v python3")
-        .output();
-    let Ok(resolved) = resolved else {
-        eprintln!("skipped: python3 cannot be resolved to a path");
-        return;
-    };
-    if !resolved.status.success() {
-        eprintln!("skipped: python3 cannot be resolved to a path");
-        return;
-    }
+        .output()
+        .expect("the test host can resolve python3");
+    assert!(resolved.status.success(), "python3 resolves on PATH");
     let python = String::from_utf8_lossy(&resolved.stdout).trim().to_string();
 
     // A stand-in `python3` that CRLF-terminates every line, exactly as Python
@@ -690,13 +677,15 @@ fn the_shell_pin_report_survives_a_windows_crlf_python() {
         .current_dir(root)
         .output()
         .expect("the shell-pin script must run without the shim");
-    if clean.status.success() {
-        assert_eq!(
-            commits_behind_in(&out),
-            commits_behind_in(&clean_file),
-            "a CRLF-emitting Python changed the recorded delta"
-        );
-    }
+    assert!(
+        clean.status.success(),
+        "the shell-pin report runs without the shim"
+    );
+    assert_eq!(
+        commits_behind_in(&out).expect("the CRLF report contains a commit count"),
+        commits_behind_in(&clean_file).expect("the clean report contains a commit count"),
+        "a CRLF-emitting Python changed the recorded delta"
+    );
 
     let _ = std::fs::remove_dir_all(&shim_dir);
 }

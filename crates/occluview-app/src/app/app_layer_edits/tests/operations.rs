@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn mesh_edit_layer_action_replaces_geometry_and_preserves_layer_material() {
     let Some(mut scene) = scene_with_islands() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let before_transform = scene.meshes()[0].transform;
     let before_tint = scene.meshes()[0].tint;
@@ -15,7 +15,7 @@ fn mesh_edit_layer_action_replaces_geometry_and_preserves_layer_material() {
     let apply = apply_layer_mesh_edit_action(&mut scene, action, None);
     assert!(apply.is_ok(), "invert-normals action should succeed");
     let Ok((apply, _report)) = apply else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
 
     assert!(apply.scene_changed);
@@ -45,7 +45,7 @@ fn mesh_edit_layer_action_rejects_point_cloud_without_mutating_scene() {
     let err = apply_layer_mesh_edit_action(&mut scene, action, None);
     assert!(err.is_err(), "point cloud edit should be rejected");
     let Err(err) = err else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
 
     assert!(err.to_string().contains("point cloud"));
@@ -55,7 +55,7 @@ fn mesh_edit_layer_action_rejects_point_cloud_without_mutating_scene() {
 #[test]
 fn mesh_edit_layer_action_ignores_stale_layer_identity_without_mutating_scene() {
     let Some(mut scene) = scene_with_islands() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let stale_layer_id = SceneMesh::new(Mesh::empty()).id();
     let before_triangle_count = scene.meshes()[0].mesh.triangle_count();
@@ -72,7 +72,7 @@ fn mesh_edit_layer_action_ignores_stale_layer_identity_without_mutating_scene() 
 
     assert!(apply.is_ok());
     let Ok((apply, _report)) = apply else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert!(!apply.scene_changed);
     assert_eq!(
@@ -89,7 +89,7 @@ fn undo_leaves_the_restored_layer_with_a_cached_bounding_box() {
     // -- 2.1 ms a call on a million-vertex layer, for as long as that layer
     // lives. Undo is a click, so the walk is paid there instead.
     let Some(mut scene) = scene_with_islands() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
 
     // Make the layer cold before the edit, so the snapshot the history keeps
@@ -99,7 +99,7 @@ fn undo_leaves_the_restored_layer_with_a_cached_bounding_box() {
         .mesh
         .with_sculpted_vertices_uncached(vertices)
     else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert!(!cold.bbox_is_cached(), "the fixture should start cold");
     scene.meshes_mut()[0].mesh = std::sync::Arc::new(cold);
@@ -109,7 +109,7 @@ fn undo_leaves_the_restored_layer_with_a_cached_bounding_box() {
     let Some(token) =
         edit_mode.begin_layer_edit(&scene.meshes()[0], EditModeCommand::InvertNormals)
     else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let apply = apply_layer_mesh_edit_action(&mut scene, request, None);
     assert!(apply.is_ok(), "mesh edit should succeed");
@@ -134,7 +134,7 @@ fn undo_leaves_the_restored_layer_with_a_cached_bounding_box() {
 #[test]
 fn undo_layer_mesh_edit_restores_geometry_and_keeps_current_display_state() {
     let Some(mut scene) = scene_with_islands() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let request = request(&scene, 0, LayerContextAction::InvertNormals);
     let before_indices = scene.meshes()[0].mesh.indices().to_vec();
@@ -142,13 +142,13 @@ fn undo_layer_mesh_edit_restores_geometry_and_keeps_current_display_state() {
     let Some(token) =
         edit_mode.begin_layer_edit(&scene.meshes()[0], EditModeCommand::InvertNormals)
     else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
 
     let apply = apply_layer_mesh_edit_action(&mut scene, request, None);
     assert!(apply.is_ok(), "mesh edit should succeed");
     let Ok((apply, _report)) = apply else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert!(apply.scene_changed);
     assert_eq!(
@@ -187,13 +187,13 @@ fn undo_layer_mesh_edit_restores_geometry_and_keeps_current_display_state() {
 #[test]
 fn undo_layer_mesh_edit_ignores_stale_layer_identity_without_popping_history() {
     let Some(mut scene) = scene_with_islands() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut edit_mode = EditModeController::new(4, 1_000_000);
     let Some(token) =
         edit_mode.begin_layer_edit(&scene.meshes()[0], EditModeCommand::InvertNormals)
     else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(
         edit_mode.finish_layer_edit_success(token),
@@ -223,7 +223,7 @@ fn undo_layer_mesh_edit_ignores_stale_layer_identity_without_popping_history() {
 #[test]
 fn selected_face_mesh_edit_deletes_selection_and_records_undo() {
     let Some(mut scene) = scene_with_two_triangles() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut edit_mode = EditModeController::new(4, 1_000_000);
     let layer_id = scene.meshes()[0].id();
@@ -247,7 +247,7 @@ fn selected_face_mesh_edit_deletes_selection_and_records_undo() {
 
     assert!(apply.is_ok(), "delete selected faces should succeed");
     let Ok(apply) = apply else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert!(apply.scene_changed);
     assert!(apply.structural_scene_change);
@@ -270,7 +270,7 @@ fn selected_face_mesh_edit_deletes_selection_and_records_undo() {
 #[test]
 fn selected_face_mesh_edit_refuses_whole_mesh_selection() {
     let Some(mut scene) = scene_with_two_triangles() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut edit_mode = EditModeController::new(4, 1_000_000);
     let layer = scene.meshes()[0].clone();
@@ -287,7 +287,7 @@ fn selected_face_mesh_edit_refuses_whole_mesh_selection() {
         let apply = apply_selected_face_mesh_edit_action(&mut scene, request, &mut edit_mode);
         assert!(apply.is_ok(), "whole-mesh refusal must not error");
         let Ok(apply) = apply else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         // Refused: nothing changed, no undo step, not dirty.
         assert!(!apply.scene_changed);
@@ -302,7 +302,7 @@ fn selected_face_mesh_edit_refuses_whole_mesh_selection() {
 fn whole_mesh_layer_noop_discards_snapshot_and_stays_clean() {
     // Watertight tetrahedron: with no open rims, Close holes is a content no-op.
     let Some(mesh) = clean_tetrahedron() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
     scene.add(SceneMesh::new(mesh));
@@ -311,7 +311,7 @@ fn whole_mesh_layer_noop_discards_snapshot_and_stays_clean() {
 
     let request = request(&scene, 0, LayerContextAction::CloseHoles);
     let Some(token) = edit_mode.begin_layer_edit(&layer, EditModeCommand::CloseHoles) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let apply = apply_layer_mesh_edit_action(&mut scene, request, None);
     assert!(
@@ -319,7 +319,7 @@ fn whole_mesh_layer_noop_discards_snapshot_and_stays_clean() {
         "closing holes on a watertight mesh must not error"
     );
     let Ok((apply, _report)) = apply else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
 
     // Content no-op: the mesh is untouched and the caller finishes the op
@@ -334,7 +334,7 @@ fn whole_mesh_layer_noop_discards_snapshot_and_stays_clean() {
 #[test]
 fn selected_face_mesh_edit_crops_to_selection_and_ignores_stale_layer() {
     let Some(mut scene) = scene_with_two_triangles() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut edit_mode = EditModeController::new(4, 1_000_000);
     let layer_id = scene.meshes()[0].id();
@@ -361,7 +361,7 @@ fn selected_face_mesh_edit_crops_to_selection_and_ignores_stale_layer() {
     );
     assert!(stale.is_ok(), "stale layer should be ignored without error");
     let Ok(stale) = stale else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert!(!stale.scene_changed);
     assert_eq!(scene.meshes()[0].mesh.triangle_count(), 2);
@@ -372,7 +372,7 @@ fn selected_face_mesh_edit_crops_to_selection_and_ignores_stale_layer() {
 
     assert!(apply.is_ok(), "crop selected faces should succeed");
     let Ok(apply) = apply else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert!(apply.scene_changed);
     assert_eq!(scene.meshes()[0].mesh.triangle_count(), 1);
@@ -387,7 +387,7 @@ fn selected_face_mesh_edit_crops_to_selection_and_ignores_stale_layer() {
 #[test]
 fn selected_face_mesh_cut_creates_new_layer_and_scene_undo_restores_structure() {
     let Some(mut scene) = scene_with_two_triangles() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut edit_mode = EditModeController::new(4, 1_000_000);
     let layer_id = scene.meshes()[0].id();
@@ -412,7 +412,7 @@ fn selected_face_mesh_cut_creates_new_layer_and_scene_undo_restores_structure() 
 
     assert!(apply.is_ok(), "cut selected faces should succeed");
     let Ok(apply) = apply else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert!(apply.scene_changed);
     assert!(apply.structural_scene_change);
@@ -465,7 +465,7 @@ fn structural_undo_is_refused_when_a_layer_is_appended_after_the_cut() {
     // the scene is left untouched (the wrapper reports the "scene changed
     // since" status).
     let Some(mut scene) = scene_with_two_triangles() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut edit_mode = EditModeController::new(4, 1_000_000);
     let layer_id = scene.meshes()[0].id();
@@ -484,7 +484,7 @@ fn structural_undo_is_refused_when_a_layer_is_appended_after_the_cut() {
     let apply = apply_selected_face_mesh_edit_action(&mut scene, request, &mut edit_mode);
     assert!(apply.is_ok(), "cut should succeed");
     let Ok(apply) = apply else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert!(apply.structural_scene_change);
     assert_eq!(scene.meshes().len(), 2);
@@ -498,7 +498,7 @@ fn structural_undo_is_refused_when_a_layer_is_appended_after_the_cut() {
     );
     assert!(appended.is_ok(), "appended mesh should build");
     let Ok(appended) = appended else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     scene.add(SceneMesh::new(appended));
     edit_mode.sync_to_scene(&scene);
@@ -525,7 +525,7 @@ fn structural_undo_is_refused_when_a_layer_is_appended_after_the_cut() {
 #[test]
 fn selected_face_mesh_separate_splits_components_into_multiple_layers_and_undo_restores() {
     let Some(mut scene) = scene_with_islands() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut edit_mode = EditModeController::new(4, 1_000_000);
     let layer_id = scene.meshes()[0].id();
@@ -560,7 +560,7 @@ fn selected_face_mesh_separate_splits_components_into_multiple_layers_and_undo_r
 
     assert!(apply.is_ok(), "separate selected components should succeed");
     let Ok(apply) = apply else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert!(apply.scene_changed);
     assert!(apply.structural_scene_change);

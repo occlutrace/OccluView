@@ -187,6 +187,8 @@ jobs:
           echo "WGPU_BACKEND=vulkan" >> "$GITHUB_ENV"
           vulkaninfo --summary
       - name: cargo test --workspace
+        env:
+          OCCLUVIEW_REQUIRE_GPU_TESTS: "1"
         run: cargo test --workspace --all-targets --locked --no-fail-fast
       - name: cargo test (shipped feature set)
         # Compile the feature set used by release artifacts without a private key.
@@ -208,6 +210,8 @@ jobs:
           toolchain: "1.98.0"
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: cargo test --workspace (without WARP pixel suites)
+        env:
+          OCCLUVIEW_REQUIRE_GPU_TESTS: "1"
         run: >
           cargo test --workspace --all-targets --locked --no-fail-fast --
           --skip render_thumb::tests

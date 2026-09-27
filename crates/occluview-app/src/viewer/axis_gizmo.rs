@@ -308,7 +308,7 @@ mod tests {
         // it stands and keeps the test deny-clean without expect/unwrap.
         assert!(gizmo.is_some(), "camera basis should be valid");
         let Some((center, markers)) = gizmo else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
 
         assert_eq!(markers.len(), 6);

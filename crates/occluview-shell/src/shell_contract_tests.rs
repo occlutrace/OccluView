@@ -607,7 +607,7 @@ fn release_version_is_kept_in_sync_across_workspace_lockfile_and_installer() {
     let version = workspace_package_version(cargo_toml);
     assert!(version.is_some(), "workspace package version is present");
     let Some(version) = version else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let wix_version = wix_product_version(wxs);
     assert!(
@@ -615,7 +615,7 @@ fn release_version_is_kept_in_sync_across_workspace_lockfile_and_installer() {
         "WiX fallback product version is present"
     );
     let Some(wix_version) = wix_version else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(
         wix_version, version,

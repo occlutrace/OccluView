@@ -259,9 +259,8 @@ fn a_colour_reaches_the_screen_the_same_way_through_a_texture_or_a_vertex() {
             textured.is_some() && vertex.is_some(),
             "both paths should render something for {value}"
         );
-        let (Some(textured), Some(vertex)) = (textured, vertex) else {
-            return;
-        };
+        let textured = textured.expect("the textured triangle produced a pixel");
+        let vertex = vertex.expect("the vertex-coloured triangle produced a pixel");
         for channel in 0..3 {
             let difference = i32::from(textured[channel]) - i32::from(vertex[channel]);
             assert!(
@@ -346,9 +345,7 @@ fn a_layer_tint_reaches_the_screen_as_the_value_it_holds() {
     ] {
         let rendered = brightest_lit_pixel(&render_tinted_white(tint));
         assert!(rendered.is_some(), "the tinted triangle should render");
-        let Some(rendered) = rendered else {
-            return;
-        };
+        let rendered = rendered.expect("the tinted triangle produced a pixel");
         for channel in 0..3 {
             let expected = (tint[channel] * 255.0).round();
             let difference = f32::from(rendered[channel]) - expected;
