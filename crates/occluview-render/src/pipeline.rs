@@ -157,6 +157,9 @@ pub struct Renderer {
     sculpt_tool_cylinder_buffer: wgpu::Buffer,
     sculpt_tool_cylinder_vertex_bytes: u64,
     sculpt_tool_cylinder_index_count: u32,
+    sculpt_tool_knife_buffer: wgpu::Buffer,
+    sculpt_tool_knife_vertex_bytes: u64,
+    sculpt_tool_knife_index_count: u32,
     point_splat_viewport_width_bits: AtomicU32,
     point_splat_viewport_height_bits: AtomicU32,
     /// Cached disabled clip-plane buffer + bind group. Bound at group 3 for
@@ -426,22 +429,23 @@ impl Renderer {
         rpass.set_bind_group(0, camera_bg, &[]);
         rpass.set_bind_group(1, &self.sculpt_tool_bind_group, &[]);
         rpass.set_bind_group(2, clip_bg, &[]);
-        // The shader treats an invalid shape as Cone. The CPU writes only the
-        // two enum tags, so this selection is fail-safe rather than a panic.
-        let (buffer, vertex_bytes, index_count) =
-            if self.sculpt_tool_shape() == SculptToolShape::Cylinder as u32 {
-                (
-                    &self.sculpt_tool_cylinder_buffer,
-                    self.sculpt_tool_cylinder_vertex_bytes,
-                    self.sculpt_tool_cylinder_index_count,
-                )
-            } else {
-                (
-                    &self.sculpt_tool_cone_buffer,
-                    self.sculpt_tool_cone_vertex_bytes,
-                    self.sculpt_tool_cone_index_count,
-                )
-            };
+        let (buffer, vertex_bytes, index_count) = match self.sculpt_tool_shape() {
+            shape if shape == SculptToolShape::Cylinder as u32 => (
+                &self.sculpt_tool_cylinder_buffer,
+                self.sculpt_tool_cylinder_vertex_bytes,
+                self.sculpt_tool_cylinder_index_count,
+            ),
+            shape if shape == SculptToolShape::Knife as u32 => (
+                &self.sculpt_tool_knife_buffer,
+                self.sculpt_tool_knife_vertex_bytes,
+                self.sculpt_tool_knife_index_count,
+            ),
+            _ => (
+                &self.sculpt_tool_cone_buffer,
+                self.sculpt_tool_cone_vertex_bytes,
+                self.sculpt_tool_cone_index_count,
+            ),
+        };
         if index_count == 0 {
             return;
         }

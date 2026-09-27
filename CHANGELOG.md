@@ -3,6 +3,14 @@
 This file records user-visible changes. Internal refactors and test-only work
 remain in the Git history.
 
+## Unreleased
+
+### Viewer
+
+- Sculpt remeshing updates the live surface locally during a stroke. The brush
+  stays visible while hovering, and Ball, Knife and Cylinder use matching tip
+  glyphs and cursor shapes.
+
 ## 1.2.1 - 2026-09-21
 
 ### Viewer

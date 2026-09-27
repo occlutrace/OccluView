@@ -11,7 +11,7 @@
 //! draw hides them.
 
 use super::*;
-use std::collections::{HashMap, HashSet};
+use crate::hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 /// Packed live dab evidence. Wire order is shared with the browser decoder.
 #[derive(Clone, Copy, Debug)]
@@ -160,7 +160,7 @@ impl SculptSession {
         }
 
         let audit = if self.live_trace_audit {
-            let mut groups: HashSet<u32> = HashSet::new();
+            let mut groups: HashSet<u32> = HashSet::default();
             for point in &self.region_points {
                 groups.insert(point.group);
             }
@@ -277,8 +277,8 @@ impl SculptSession {
         if groups.is_empty() {
             return out;
         }
-        let mut seen: HashSet<u32> = HashSet::new();
-        let mut edges: HashMap<(u32, u32), Vec<(u32, u32)>> = HashMap::new();
+        let mut seen: HashSet<u32> = HashSet::default();
+        let mut edges: HashMap<(u32, u32), Vec<(u32, u32)>> = HashMap::default();
         // Same draw floor live Smooth and Add refuse to create. A face four
         // orders below a millimetre square is a hole on a one-sided rasterizer.
         for &group in groups {

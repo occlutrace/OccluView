@@ -1,0 +1,16 @@
+<!-- OccluView sculpt tip: a short flat blade and its angled spine. -->
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="m4 20 3.2-6.1L18 3l3 3-10.9 10.8L4 20Z" />
+  <path d="m7.2 13.9 3.1 2.9" />
+  <path d="m18 3 3 3" />
+</svg>

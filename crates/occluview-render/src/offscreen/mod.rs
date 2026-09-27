@@ -7,7 +7,7 @@ use crate::gpu::GpuMesh;
 use crate::mesh_uniform::GpuMeshUniform;
 use crate::pipeline::Renderer;
 use crate::texture::GpuTexture;
-use occluview_core::{Mesh, MeshKind};
+use occluview_core::{Mesh, MeshKind, Vertex};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -273,6 +273,56 @@ pub struct PreparedSceneTopology {
     vertex_count: usize,
     index_count: usize,
     has_texture: bool,
+}
+
+/// One live face row changed by a sculpt remesh.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SculptFaceUpdate {
+    /// Dense triangle slot in the live index prefix.
+    pub triangle: u32,
+    /// The three vertex ids at that slot.
+    pub indices: [u32; 3],
+}
+
+/// One existing vertex row changed by a sculpt remesh.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SculptVertexUpdate {
+    /// Existing vertex id in the live mesh.
+    pub vertex: u32,
+    /// Updated position, normal and material attributes.
+    pub value: Vertex,
+}
+
+/// Local geometry changes for one sculpt topology publication.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SculptTopologyDelta {
+    /// Vertex count before this publication.
+    pub base_vertex_count: usize,
+    /// New vertex rows, in append order.
+    pub appended_vertices: Vec<Vertex>,
+    /// Changed rows below `base_vertex_count`, sorted by vertex id.
+    pub updated_vertices: Vec<SculptVertexUpdate>,
+    /// Index count before this publication, measured in `u32` elements.
+    pub base_index_count: usize,
+    /// Current live index prefix length, measured in `u32` elements.
+    pub live_index_count: usize,
+    /// Changed face rows, sorted by triangle id.
+    pub face_updates: Vec<SculptFaceUpdate>,
+    /// Face slots whose bounds no longer match the cached pick tree.
+    pub dirty_triangles: Vec<usize>,
+}
+
+/// Work performed while applying one sculpt delta to a prepared GPU entry.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SculptBufferUpdateStats {
+    /// Bytes staged through queue writes.
+    pub bytes_written: u64,
+    /// Existing GPU bytes copied when a buffer grows.
+    pub bytes_copied: u64,
+    /// Number of GPU buffers that grew.
+    pub buffers_grown: u8,
+    /// Number of changed face rows submitted.
+    pub faces_written: u32,
 }
 
 impl PreparedSceneTopology {

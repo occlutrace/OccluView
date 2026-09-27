@@ -315,6 +315,10 @@ impl OccluViewApp {
         }
 
         if !down {
+            let pointer_moved = ctx.input(|input| input.pointer.delta().length_sq() > f32::EPSILON);
+            if response.contains_pointer() && pointer_moved {
+                ctx.request_repaint();
+            }
             if self.tools.sculpt.stroke.is_some() {
                 if !self.commit_sculpt_stroke(ctx) {
                     return true;
@@ -404,6 +408,10 @@ impl OccluViewApp {
                 // Waiting for a fresh press covers every invalidation, not just
                 // the undo one.
                 if !input.fresh_press || self.tools.sculpt.pending_history.is_some() {
+                    ctx.request_repaint();
+                    return;
+                }
+                if self.tools.sculpt.worker_has_pending_work() {
                     ctx.request_repaint();
                     return;
                 }
@@ -601,50 +609,12 @@ impl OccluViewApp {
     }
 
     pub(super) fn invalidate_sculpt_session_silent(&mut self) {
-        self.restore_sculpt_preview_baseline();
         self.document.unsaved_sculpt_stroke = false;
         // Cancel any worker prepared from the pre-edit scene as well as the
         // live GPU shadow. Otherwise a stale background result could become
         // active after an undo, layer removal, or structural mesh edit.
         self.tools.sculpt.invalidate_session();
         self.render.invalidation.sculpt_topology_changed();
-    }
-
-    fn restore_sculpt_preview_baseline(&mut self) -> bool {
-        let Some(baseline) = self.tools.sculpt.preview_baseline().cloned() else {
-            return false;
-        };
-        self.tools.sculpt.clear_preview_baseline();
-        let Some(mut scene_arc) = self.document.scene.take() else {
-            return false;
-        };
-        let restored = {
-            let scene = super::state_document::taken_scene_mut(&mut scene_arc);
-            match scene
-                .meshes_mut()
-                .iter_mut()
-                .find(|entry| entry.id() == baseline.layer_id)
-            {
-                Some(entry) if entry.mesh.topology_id() == baseline.preview_topology_id => {
-                    entry.mesh = Arc::clone(&baseline.mesh);
-                    true
-                }
-                _ => false,
-            }
-        };
-        self.document.scene = Some(scene_arc);
-        if !restored {
-            return false;
-        }
-        if let Some(scene) = self.document.scene.as_ref() {
-            self.document.edit_mode.sync_to_scene(scene);
-        }
-        self.render.invalidation.scene_geometry_changed();
-        if self.can_render_cut_view() {
-            self.tools.cut_view.mark_dirty();
-        }
-        self.ui.repaint_ctx.request_repaint();
-        true
     }
 
     /// Shift/Ctrl + wheel resizes / re-intensifies the brush instead of zooming.
@@ -791,17 +761,22 @@ impl OccluViewApp {
         let intensity01 = mesh_editor_overlay::sculpt_intensity01(ui.ctx());
         let color = sculpt_cursor_color(kind, shift);
         let strength = kind.dab_strength(intensity01, shift);
-        let shape = match kind {
-            SculptToolKind::AddRemove => SculptToolShape::Cone,
-            SculptToolKind::Smooth => SculptToolShape::Cylinder,
-        };
         let tip = mesh_editor_overlay::sculpt_tip(ui.ctx());
+        let shape = match tip {
+            SculptTip::Ball => SculptToolShape::Cone,
+            SculptTip::Knife => SculptToolShape::Knife,
+            SculptTip::Cylinder => SculptToolShape::Cylinder,
+        };
         let axis = self
             .tools
             .sculpt
             .stroke
             .as_ref()
             .and_then(|stroke| stroke.last_axis);
+        let axis_world = axis
+            .map(|axis| entry.transform.transform_vector3(axis))
+            .filter(|axis| axis.is_finite() && axis.length_squared() > f32::EPSILON)
+            .map(Vec3::normalize);
         let color_rgba = color.to_array().map(|channel| f32::from(channel) / 255.0);
         let tool_length = sculpt_tool_length(strength);
         // Remove builds in the opposite direction: the body points into the
@@ -811,9 +786,27 @@ impl OccluViewApp {
         } else {
             normal
         };
-        let tool_rotation = Quat::from_rotation_arc(Vec3::Z, direction);
+        let base_rotation = Quat::from_rotation_arc(Vec3::Z, direction);
+        let tool_rotation = if tip == SculptTip::Knife {
+            let fallback_axis = camera
+                .view_direction()
+                .cross(camera.view_up())
+                .normalize_or_zero();
+            orient_tool_axis(
+                base_rotation,
+                direction,
+                axis_world.unwrap_or(fallback_axis),
+            )
+        } else {
+            base_rotation
+        };
+        let tool_width = if tip == SculptTip::Knife {
+            radius_world * 0.12
+        } else {
+            radius_world
+        };
         let tool_model = Mat4::from_scale_rotation_translation(
-            Vec3::new(radius_world, radius_world, tool_length),
+            Vec3::new(tool_width, radius_world, tool_length),
             tool_rotation,
             hit.point + direction * 0.02,
         );
@@ -825,7 +818,7 @@ impl OccluViewApp {
                 radius: radius_world,
                 normal: normal.to_array(),
                 intensity: sculpt_surface_light_intensity(strength),
-                axis: axis.map_or([0.0; 3], |axis| axis.to_array()),
+                axis: axis_world.map_or([0.0; 3], |axis| axis.to_array()),
                 tip: tip.kernel_stamp(),
                 color: color_rgba,
                 visible: 1,
@@ -874,6 +867,22 @@ impl OccluViewApp {
             viewport.set_sculpt_cursor(cursor);
         }
     }
+}
+
+fn orient_tool_axis(base: Quat, surface_normal: Vec3, requested_axis: Vec3) -> Quat {
+    let target =
+        (requested_axis - surface_normal * requested_axis.dot(surface_normal)).normalize_or_zero();
+    let current = (base * Vec3::Y).normalize_or_zero();
+    if !target.is_finite()
+        || target.length_squared() <= f32::EPSILON
+        || current.length_squared() <= f32::EPSILON
+    {
+        return base;
+    }
+    let angle = surface_normal
+        .dot(current.cross(target))
+        .atan2(current.dot(target));
+    Quat::from_axis_angle(surface_normal, angle) * base
 }
 
 fn sculpt_face_normal(

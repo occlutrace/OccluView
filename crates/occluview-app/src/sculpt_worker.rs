@@ -5,12 +5,12 @@
 //! submits the newest brush samples and drains sparse GPU updates/completions.
 
 use crate::sculpt_kernel::{BrushMode, BrushStroke};
-use crate::sculpt_tool::{DabFailure, SculptPickState, SculptRebuild, SculptSession, SculptTip};
+use crate::sculpt_tool::{DabFailure, SculptPickState, SculptSession, SculptTip};
 use glam::Affine3A;
 use occluview_core::{Mesh, SceneMeshId, Vertex};
-use occluview_render::PreparedSceneTopology;
+use occluview_render::{PreparedSceneTopology, SculptTopologyDelta};
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock, TryLockError};
 use std::thread::{self, JoinHandle};
 
@@ -40,9 +40,7 @@ enum SculptCommand {
         tip: SculptTip,
         axis: Option<[f32; 3]>,
     },
-    Finish {
-        stroke_id: u64,
-    },
+    Finish,
 }
 
 struct QueueState {
@@ -167,13 +165,11 @@ impl SculptCommandQueue {
         if !make_room_for_apply(&mut state) {
             return false;
         }
-        let stroke_id = state.open_stroke.take().unwrap_or_else(|| {
+        let _stroke_id = state.open_stroke.take().unwrap_or_else(|| {
             state.next_stroke_id = state.next_stroke_id.wrapping_add(1);
             state.next_stroke_id
         });
-        state
-            .commands
-            .push_back(SculptCommand::Finish { stroke_id });
+        state.commands.push_back(SculptCommand::Finish);
         self.wake.notify_one();
         true
     }
@@ -248,16 +244,17 @@ struct WorkerState {
     pick: Arc<RwLock<SculptPickState>>,
     pending_touched: Mutex<Vec<usize>>,
     full_sync: AtomicBool,
-    /// Ordered whole-layer rebuilds from densifying dabs. A later unread
-    /// rebuild from the same stroke may replace its predecessor because no
-    /// completion can refer to an intermediate topology within one stroke;
-    /// rebuilds from different strokes remain queued in order.
-    rebuild: Mutex<VecDeque<PendingRebuild>>,
+    /// Ordered local topology publications; each delta's base counts match
+    /// the preceding publication.
+    topology_deltas: Mutex<VecDeque<SculptTopologyDelta>>,
     completions: Mutex<VecDeque<SculptCompletion>>,
-    /// Serializes publication and batch-draining of rebuilds/completions. A
-    /// completion produced after a rebuild must never be observed without the
-    /// rebuild that establishes its topology contract.
+    /// Serializes publication and batch-draining of geometry updates and
+    /// completions.
     publish_boundary: Mutex<()>,
+    /// Odd while the worker mutates the shared display geometry.
+    geometry_revision: AtomicU64,
+    /// The scene still needs to be reconciled with live sculpt output.
+    geometry_dirty: AtomicBool,
     completion_wake: Condvar,
     stopping: AtomicBool,
     error: Arc<Mutex<Option<SculptFailure>>>,
@@ -269,15 +266,10 @@ struct WorkerState {
 }
 
 type SculptOutputSnapshot = (
-    VecDeque<SculptRebuild>,
+    VecDeque<SculptTopologyDelta>,
     VecDeque<SculptCompletion>,
     Option<SculptUpdate>,
 );
-
-struct PendingRebuild {
-    stroke_id: u64,
-    rebuild: SculptRebuild,
-}
 
 /// Why the sculpt worker produced nothing trustworthy. Domain data only: the
 /// worker never formats user-facing copy; the UI boundary renders it.
@@ -301,8 +293,7 @@ pub(crate) enum SculptFailure {
     WorkerStatePoisoned,
     /// The sculpt result changed the vertex count.
     VertexCountChanged,
-    /// A densifying dab changed the kernel topology but the app could not
-    /// construct the matching authoritative mesh for the renderer.
+    /// The final sculpted topology could not be built as a mesh.
     TopologyRebuild { detail: String },
 }
 
@@ -317,44 +308,94 @@ fn set_worker_error(error: &Mutex<Option<SculptFailure>>, failure: SculptFailure
 }
 
 impl WorkerState {
-    /// Park a topology change for the UI thread. Any vertex ids queued from
-    /// earlier dabs are dropped: they index the pre-rebuild array, and the
-    /// rebuild replaces it wholesale. Intermediate rebuilds in one unfinished
-    /// stroke coalesce, while stroke boundaries stay FIFO for completion
-    /// ordering.
-    fn record_rebuild(&self, stroke_id: u64, rebuild: SculptRebuild) {
+    fn begin_geometry_update(&self) {
+        self.geometry_revision.fetch_add(1, Ordering::AcqRel);
+    }
+
+    fn finish_geometry_update(&self) {
+        self.geometry_revision.fetch_add(1, Ordering::Release);
+    }
+
+    fn reset_pick_geometry(&self, mesh: Arc<Mesh>, indices: Vec<u32>) {
+        match self.pick.write() {
+            Ok(mut pick) => {
+                pick.mesh = mesh;
+                pick.indices = indices;
+                pick.dirty_triangles.clear();
+            }
+            Err(_) => self.set_error(SculptFailure::WorkerStatePoisoned),
+        }
+    }
+
+    /// Publish one local vertex and face patch to the UI thread.
+    fn record_topology(&self, delta: SculptTopologyDelta) {
         let Ok(_publish) = self.publish_boundary.lock() else {
             self.set_error(SculptFailure::WorkerStatePoisoned);
             return;
         };
-        let Ok(mut pending) = self.pending_touched.lock() else {
-            self.set_error(SculptFailure::WorkerStatePoisoned);
-            return;
-        };
-        pending.clear();
-        drop(pending);
-        self.full_sync.store(false, Ordering::Release);
         let Ok(mut pick) = self.pick.write() else {
             self.set_error(SculptFailure::WorkerStatePoisoned);
             return;
         };
-        pick.dirty_triangles.clear();
-        drop(pick);
-        let Ok(mut rebuilds) = self.rebuild.lock() else {
+        if pick.indices.len() != delta.base_index_count {
+            self.set_error(SculptFailure::ShadowShapeMismatch);
+            return;
+        }
+        pick.indices.resize(delta.live_index_count, 0);
+        for update in &delta.face_updates {
+            let start = update.triangle as usize * 3;
+            let Some(row) = pick.indices.get_mut(start..start + 3) else {
+                self.set_error(SculptFailure::ShadowShapeMismatch);
+                return;
+            };
+            row.copy_from_slice(&update.indices);
+        }
+        let Ok(shadow) = pick.shadow.read() else {
+            self.set_error(SculptFailure::ShadowPoisoned);
+            return;
+        };
+        let shadow_len = shadow.len();
+        drop(shadow);
+        if pick
+            .indices
+            .iter()
+            .any(|&index| index as usize >= shadow_len)
+        {
+            self.set_error(SculptFailure::InvalidVertexIndex);
+            return;
+        }
+        pick.dirty_triangles
+            .extend(delta.dirty_triangles.iter().copied());
+        pick.dirty_triangles.sort_unstable();
+        pick.dirty_triangles.dedup();
+        if pick.dirty_triangles.len() > MAX_DYNAMIC_PICK_TRIANGLES {
+            let shadow = if let Ok(shadow) = pick.shadow.read() {
+                shadow.clone()
+            } else {
+                self.set_error(SculptFailure::ShadowPoisoned);
+                return;
+            };
+            let Some(refreshed) = pick
+                .mesh
+                .with_sculpted_geometry(shadow, pick.indices.clone())
+            else {
+                self.set_error(SculptFailure::ShadowShapeMismatch);
+                return;
+            };
+            refreshed.warm_bvh();
+            pick.mesh = Arc::new(refreshed);
+            pick.dirty_triangles.clear();
+        }
+        let Ok(mut topology_deltas) = self.topology_deltas.lock() else {
             self.set_error(SculptFailure::WorkerStatePoisoned);
             return;
         };
-        if let Some(last) = rebuilds
-            .back_mut()
-            .filter(|last| last.stroke_id == stroke_id)
-        {
-            last.rebuild = rebuild;
-        } else {
-            rebuilds.push_back(PendingRebuild { stroke_id, rebuild });
-        }
+        topology_deltas.push_back(delta);
+        self.geometry_dirty.store(true, Ordering::Release);
     }
 
     fn record_touched(&self, touched: Vec<usize>, dirty_triangles: Vec<usize>) {
+        let has_touched = !touched.is_empty();
         let Ok(_publish) = self.publish_boundary.lock() else {
             self.set_error(SculptFailure::WorkerStatePoisoned);
             return;
@@ -370,22 +411,27 @@ impl WorkerState {
                 self.full_sync.store(true, Ordering::Release);
             }
         }
+        if has_touched {
+            self.geometry_dirty.store(true, Ordering::Release);
+        }
 
         let Ok(mut pick) = self.pick.write() else {
             self.set_error(SculptFailure::WorkerStatePoisoned);
             return;
         };
-        // During the one-frame window between a worker rebuild publication and
-        // UI installation the old pick mesh has the wrong vertex count. Keep
-        // the state explicitly cold rather than allowing a mismatched pick.
         let Ok(shadow) = pick.shadow.read() else {
             self.set_error(SculptFailure::ShadowPoisoned);
             return;
         };
         let shadow_len = shadow.len();
         drop(shadow);
-        if pick.mesh.vertices().len() != shadow_len {
-            pick.dirty_triangles.clear();
+        if shadow_len < pick.mesh.vertices().len()
+            || pick
+                .indices
+                .iter()
+                .any(|&index| index as usize >= shadow_len)
+        {
+            self.set_error(SculptFailure::ShadowShapeMismatch);
             return;
         }
         pick.dirty_triangles.extend(dirty_triangles);
@@ -397,7 +443,8 @@ impl WorkerState {
                     self.set_error(SculptFailure::ShadowPoisoned);
                     return;
                 };
-                pick.mesh.with_sculpted_vertices(shadow.clone())
+                pick.mesh
+                    .with_sculpted_geometry(shadow.clone(), pick.indices.clone())
             };
             let Some(refreshed) = refreshed else {
                 self.set_error(SculptFailure::ShadowShapeMismatch);
@@ -477,27 +524,6 @@ impl WorkerState {
         if update.touched.is_empty() {
             return;
         }
-        // A queued rebuild supersedes sparse ids: they index the pre-rebuild
-        // array, so escalate to a full sync of the latest shadow instead of
-        // resurrecting stale ids behind the rebuild. A contended rebuild
-        // lock means the worker is mid-publish; a full sync covers either
-        // outcome.
-        let slot = match self.rebuild.try_lock() {
-            Ok(slot) => slot,
-            Err(TryLockError::WouldBlock) => {
-                self.full_sync.store(true, Ordering::Release);
-                return;
-            }
-            Err(TryLockError::Poisoned(_)) => {
-                self.set_error(SculptFailure::WorkerStatePoisoned);
-                return;
-            }
-        };
-        if !slot.is_empty() {
-            self.full_sync.store(true, Ordering::Release);
-            return;
-        }
-        drop(slot);
         let mut pending = match self.pending_touched.try_lock() {
             Ok(pending) => pending,
             Err(TryLockError::WouldBlock) => {
@@ -522,11 +548,6 @@ impl WorkerState {
     }
 
     /// Atomically snapshot every worker output that has been published so far.
-    /// The worker holds `publish_boundary` while adding rebuilds, sparse
-    /// updates, and completions; the UI holds it while taking this snapshot.
-    /// Therefore a completion can never be observed without the topology
-    /// rebuild that makes its mesh valid, and a sparse update can never pass a
-    /// queued rebuild into the old GPU buffers.
     fn take_ordered_outputs(&self) -> Result<SculptOutputSnapshot, ()> {
         let _publish = match self.publish_boundary.try_lock() {
             Ok(publish) => publish,
@@ -536,8 +557,8 @@ impl WorkerState {
                 return Err(());
             }
         };
-        let mut rebuilds = match self.rebuild.try_lock() {
-            Ok(rebuilds) => rebuilds,
+        let mut topology_deltas = match self.topology_deltas.try_lock() {
+            Ok(deltas) => deltas,
             Err(TryLockError::WouldBlock) => return Err(()),
             Err(TryLockError::Poisoned(_)) => {
                 self.set_error(SculptFailure::WorkerStatePoisoned);
@@ -560,17 +581,14 @@ impl WorkerState {
                 return Err(());
             }
         };
-        let rebuilds = std::mem::take(&mut *rebuilds)
-            .into_iter()
-            .map(|pending| pending.rebuild)
-            .collect();
+        let topology_deltas = std::mem::take(&mut *topology_deltas);
         let completions = std::mem::take(&mut *completions);
         let full_sync = self.full_sync.swap(false, Ordering::AcqRel);
         let touched = std::mem::take(&mut *pending);
         self.completion_wake.notify_all();
         let update =
             (full_sync || !touched.is_empty()).then_some(SculptUpdate { touched, full_sync });
-        Ok((rebuilds, completions, update))
+        Ok((topology_deltas, completions, update))
     }
 }
 
@@ -579,7 +597,7 @@ pub(crate) struct SculptCompletion {
     /// Mesh state before this stroke, prepared off the UI thread for undo.
     pub(crate) before: Arc<Mesh>,
     /// Mesh state after this stroke, ready for scene commit.
-    pub(crate) mesh: Mesh,
+    pub(crate) mesh: Arc<Mesh>,
 }
 
 /// Sparse live update accumulated by the worker between UI frames.
@@ -591,9 +609,8 @@ pub(crate) struct SculptUpdate {
 /// Persistent worker for one prepared layer.
 pub(crate) struct SculptWorker {
     pub(crate) layer_id: SceneMeshId,
-    /// Identity of the layer geometry this worker is authoritative for. A
-    /// densifying dab replaces the layer, so the UI updates this (and
-    /// `topology`) when it installs the rebuild.
+    /// Identity of the committed layer geometry this worker is authoritative
+    /// for. The UI advances it when a stroke commits changed topology.
     pub(crate) topology_id: u64,
     pub(crate) topology: PreparedSceneTopology,
     pub(crate) world_to_local: Affine3A,
@@ -610,6 +627,7 @@ impl SculptWorker {
         let topology = session.topology;
         let world_to_local = session.world_to_local;
         let local_per_world = session.local_per_world;
+        let indices = session.session.indices().to_vec();
         let error = Arc::new(Mutex::new(None));
         let state = Arc::new(WorkerState {
             shadow: Arc::clone(&session.shadow),
@@ -617,12 +635,15 @@ impl SculptWorker {
                 mesh: Arc::clone(&session.base_mesh),
                 shadow: Arc::clone(&session.shadow),
                 dirty_triangles: Vec::new(),
+                indices,
             })),
             pending_touched: Mutex::new(Vec::new()),
             full_sync: AtomicBool::new(false),
-            rebuild: Mutex::new(VecDeque::new()),
+            topology_deltas: Mutex::new(VecDeque::new()),
             completions: Mutex::new(VecDeque::new()),
             publish_boundary: Mutex::new(()),
+            geometry_revision: AtomicU64::new(0),
+            geometry_dirty: AtomicBool::new(false),
             completion_wake: Condvar::new(),
             stopping: AtomicBool::new(false),
             error: Arc::clone(&error),
@@ -733,6 +754,31 @@ impl SculptWorker {
         Arc::clone(&self.state.shadow)
     }
 
+    pub(crate) fn has_uncommitted_geometry(&self) -> bool {
+        self.state.geometry_dirty.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn mark_geometry_committed(&self) {
+        self.state.geometry_dirty.store(false, Ordering::Release);
+    }
+
+    /// Copy the latest display arrays when a prepared scene is recreated.
+    /// A worker mutation in flight leaves this cold so the caller retries.
+    pub(crate) fn live_geometry(&self) -> Option<(Vec<Vertex>, Vec<u32>)> {
+        let before = self.state.geometry_revision.load(Ordering::Acquire);
+        if !before.is_multiple_of(2) {
+            return None;
+        }
+        let pick = self.state.pick.try_read().ok()?;
+        let shadow = pick.shadow.try_read().ok()?;
+        let vertices = shadow.clone();
+        let indices = pick.indices.clone();
+        drop(shadow);
+        drop(pick);
+        let after = self.state.geometry_revision.load(Ordering::Acquire);
+        (before == after).then_some((vertices, indices))
+    }
+
     /// Pick the current live Sculpt surface in mesh-local coordinates. A
     /// contended read means the worker is publishing a dab; returning `None`
     /// for that frame keeps the UI non-blocking and retries on repaint.
@@ -744,7 +790,8 @@ impl SculptWorker {
         let pick = self.state.pick.try_read().ok()?;
         let shadow = pick.shadow.try_read().ok()?;
         pick.mesh.pick_ray_local_with_vertices(
-            occluview_core::LiveRayPick::new(&shadow, &pick.dirty_triangles, origin, direction),
+            occluview_core::LiveRayPick::new(&shadow, &pick.dirty_triangles, origin, direction)
+                .with_indices(&pick.indices),
             |_| true,
         )
     }
@@ -753,18 +800,7 @@ impl SculptWorker {
         let pick = self.state.pick.try_read().ok()?;
         let shadow = pick.shadow.try_read().ok()?;
         pick.mesh
-            .triangle_normal_local_with_vertices(&shadow, triangle)
-    }
-
-    /// Install the freshly rebuilt topology into the dynamic picker after the
-    /// UI has accepted the same mesh into the scene.
-    pub(crate) fn replace_pick_mesh(&self, mesh: Arc<Mesh>) {
-        if let Ok(mut pick) = self.state.pick.write() {
-            pick.mesh = mesh;
-            pick.dirty_triangles.clear();
-        } else {
-            self.state.set_error(SculptFailure::WorkerStatePoisoned);
-        }
+            .triangle_normal_local_with_geometry(&shadow, &pick.indices, triangle)
     }
 
     /// Test-only: whether a sparse vertex update is queued and still undrained.
@@ -787,14 +823,18 @@ impl SculptWorker {
         self.state.record_touched(touched, Vec::new());
     }
 
-    /// Test-only: whether a whole-layer rebuild is queued and still undrained,
-    /// without consuming it.
+    /// Test-only: whether a topology delta is queued and still undrained.
     #[cfg(test)]
-    pub(crate) fn has_pending_rebuild(&self) -> bool {
+    pub(crate) fn has_pending_topology_delta(&self) -> bool {
         self.state
-            .rebuild
+            .topology_deltas
             .try_lock()
-            .is_ok_and(|rebuilds| !rebuilds.is_empty())
+            .is_ok_and(|deltas| !deltas.is_empty())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn queue_topology_delta_for_tests(&self, delta: SculptTopologyDelta) {
+        self.state.record_topology(delta);
     }
 
     #[cfg(test)]
@@ -804,16 +844,6 @@ impl SculptWorker {
         let Ok(_publish) = self.state.publish_boundary.try_lock() else {
             return None;
         };
-        // A rebuild published between two frame-path operations owns the
-        // vertex array. Keep sparse ids behind it until the UI has installed
-        // that whole-layer replacement.
-        let Ok(rebuilds) = self.state.rebuild.try_lock() else {
-            return None;
-        };
-        if !rebuilds.is_empty() {
-            return None;
-        }
-        drop(rebuilds);
         let Ok(mut pending) = self.state.pending_touched.try_lock() else {
             return None;
         };
@@ -822,16 +852,12 @@ impl SculptWorker {
         (full_sync || !touched.is_empty()).then_some(SculptUpdate { touched, full_sync })
     }
 
-    /// Take the pending whole-layer rebuild, if a dab densified the mesh.
-    /// Must be drained before `take_update`, so a sparse write never lands on
-    /// buffers the rebuild is about to replace. The `Err` result is a
-    /// contention signal: a completion can only be interpreted after the UI
-    /// has successfully observed every earlier rebuild.
+    /// Take one pending topology delta without blocking.
     #[cfg(test)]
-    pub(crate) fn try_take_rebuild(&self) -> Result<Option<SculptRebuild>, ()> {
+    pub(crate) fn try_take_topology_delta(&self) -> Result<Option<SculptTopologyDelta>, ()> {
         let _publish = self.state.publish_boundary.try_lock().map_err(|_| ())?;
-        let mut rebuilds = self.state.rebuild.try_lock().map_err(|_| ())?;
-        Ok(rebuilds.pop_front().map(|pending| pending.rebuild))
+        let mut deltas = self.state.topology_deltas.try_lock().map_err(|_| ())?;
+        Ok(deltas.pop_front())
     }
 
     #[cfg(test)]
@@ -917,9 +943,9 @@ impl SculptWorker {
             && !self.state.full_sync.load(Ordering::Acquire)
             && self
                 .state
-                .rebuild
+                .topology_deltas
                 .try_lock()
-                .is_ok_and(|rebuilds| rebuilds.is_empty())
+                .is_ok_and(|deltas| deltas.is_empty())
     }
 }
 
