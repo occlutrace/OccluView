@@ -55,7 +55,12 @@ impl OccluViewApp {
         // session) passes through here. Left up, the map would keep describing
         // the former surface, take the scan's tint, and the panel would report
         // a percentage for a surface that no longer exists.
-        self.forget_align_fit(&self.ui.locale.tr("align-status-scan-changed"));
+        self.forget_align_fit(
+            &self
+                .ui
+                .locale
+                .tr(crate::i18n::message_id!("align-status-scan-changed")),
+        );
         // Structural scene change: world anchors may now dangle over deleted or
         // replaced geometry, so measurements are cleared (the tool stays armed
         // while something remains to measure). Material-only updates keep them

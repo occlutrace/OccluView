@@ -49,7 +49,9 @@ help-section-align-measure = Сопоставление и измерения
 help-section-cut-view = Сечение
 help-section-layers-preview = Слои и предпросмотр в проводнике
 
-help-hintline-navigation = ПКМ вращение · СКМ панорама · прокрутка трекпада панорама · колесо/сведение масштаб · СКМ фокус
+help-hintline-navigation = ПКМ вращение · СКМ панорама · колесо/сведение масштаб · СКМ фокус
+help-hintline-navigation-macos-pan = ПКМ вращение · СКМ панорама · прокрутка трекпада перемещает · колесо/сведение масштаб · СКМ фокус
+help-hintline-navigation-macos-zoom = ПКМ вращение · СКМ панорама · прокрутка трекпада масштабирует · колесо/сведение масштаб · СКМ фокус
 help-hintline-mesh-editing = ЛКМ выбор · Shift+клик снять · рамка · Ctrl+Z отмена
 help-hintline-sculpt = ЛКМ скульптинг · Shift меняет режим · Shift+колесо размер · Ctrl+колесо сила
 help-hintline-align = ЛКМ точка · Ctrl/Command+перетаскивание поворот · Shift+перетаскивание стереть · ПКМ отмена

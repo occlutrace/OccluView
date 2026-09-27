@@ -49,7 +49,9 @@ help-section-align-measure = Ausrichtung und Messung
 help-section-cut-view = Schnittansicht
 help-section-layers-preview = Ebenen und Explorer-Vorschau
 
-help-hintline-navigation = RMB drehen · MMB schwenken · Trackpad-Scroll schwenkt · Rad/Pinch zoomt · MMB Fokus
+help-hintline-navigation = RMB drehen · MMB schwenken · Rad/Pinch zoomt · MMB Fokus
+help-hintline-navigation-macos-pan = RMB drehen · MMB schwenken · Trackpad-Scroll schwenkt · Rad/Pinch zoomt · MMB Fokus
+help-hintline-navigation-macos-zoom = RMB drehen · MMB schwenken · Trackpad-Scroll zoomt · Rad/Pinch zoomt · MMB Fokus
 help-hintline-mesh-editing = LMB Auswahl · Shift+Klick abwählen · Rechteck · Strg+Z rückgängig
 help-hintline-sculpt = LMB sculpten · Shift wechselt Modus · Shift+Rad Größe · Strg+Rad Stärke
 help-hintline-align = LMB Punkt · Strg/Cmd+Ziehen drehen · Shift+Ziehen löschen · RMB rückgängig

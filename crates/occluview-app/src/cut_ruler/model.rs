@@ -16,7 +16,7 @@
 use eframe::egui;
 use glam::Vec3;
 
-use crate::{measure_draw, probe_section::SliceProbe, ui_theme};
+use crate::{measure_draw, measure_tool, probe_section::SliceProbe, ui_theme};
 
 /// Two planes are "the same section" when their normals and offsets agree within
 /// these tolerances; a larger change is a different section and discards the
@@ -341,7 +341,7 @@ impl CutRuler {
                 painter,
                 entry,
                 exit,
-                &format!("{:.2} mm", mark.thickness_mm),
+                &measure_tool::format_mm(f64::from(mark.thickness_mm)),
             );
             return;
         }
@@ -367,7 +367,7 @@ impl CutRuler {
                     measure_draw::label_chip(
                         painter,
                         mid,
-                        &format!("{distance:.2} mm"),
+                        &measure_tool::format_mm(distance),
                         ui_theme::text(),
                     );
                 }
