@@ -12,9 +12,7 @@ use glam::DVec3;
 
 use crate::Soup;
 
-#[path = "surface_geometry.rs"]
-mod surface_geometry;
-pub(super) use surface_geometry::closest_point_on_triangle;
+pub(super) use occlu_geometry_math::closest_point_on_triangle;
 #[path = "surface_helpers.rs"]
 mod surface_helpers;
 use surface_helpers::{canonical_bits, cell_count, grid_dims, longest_edge, read_triangle};
