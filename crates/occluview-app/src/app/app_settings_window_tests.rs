@@ -1,6 +1,10 @@
 use super::*;
 use crate::app::app_dialogs::{recent_files_popup_id, show_recent_files_popup};
 use crate::app::app_settings_panel::show_settings_toolbar_toggle;
+#[cfg(target_os = "macos")]
+use crate::app::app_settings_panel::SettingsAction;
+#[cfg(target_os = "macos")]
+use crate::app_settings::ScrollBehavior;
 use crate::app_settings::Settings;
 use crate::i18n::os::OsLocaleSource;
 use crate::i18n::preference::UiLanguagePreference;
@@ -312,6 +316,57 @@ fn settings_show_no_text_about_the_save_format() -> anyhow::Result<()> {
         direct_control_center(&panel.output, "Remember export folder").is_ok(),
         "the folder-memory row must still render without the format text"
     );
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_settings_offer_a_selectable_smooth_scroll_action() -> anyhow::Result<()> {
+    let ctx = egui::Context::default();
+    let locale = crate::i18n::LocaleManager::for_tests();
+    let settings = Settings::default();
+    let run = |events| {
+        run_toolbar_frame_at_with_settings(&ctx, events, &locale, tall_test_screen(), &settings)
+    };
+
+    let initial = run(Vec::new())?;
+    let trigger = initial.settings_trigger.center();
+    let _ = run(vec![
+        egui::Event::PointerMoved(trigger),
+        pointer_button(trigger, true),
+    ])?;
+    let _ = run(vec![
+        egui::Event::PointerMoved(trigger),
+        pointer_button(trigger, false),
+    ])?;
+    let visible = run(Vec::new())?;
+    assert!(direct_control_center(&visible.output, "Scroll").is_ok());
+    assert!(direct_control_center(&visible.output, "Pan").is_ok());
+    let zoom = direct_control_center(&visible.output, "Zoom")?;
+
+    let _ = run(vec![
+        egui::Event::PointerMoved(zoom),
+        pointer_button(zoom, true),
+    ])?;
+    let selected = run(vec![
+        egui::Event::PointerMoved(zoom),
+        pointer_button(zoom, false),
+    ])?;
+    assert_eq!(
+        selected.action,
+        Some(SettingsAction::SetScrollBehavior(ScrollBehavior::Zoom))
+    );
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn non_macos_settings_hide_the_smooth_scroll_action() -> anyhow::Result<()> {
+    let ctx = egui::Context::default();
+    let initial = run_toolbar_frame(&ctx, Vec::new())?;
+    let _ = click(&ctx, initial.settings_trigger.center())?;
+    let visible = run_toolbar_frame(&ctx, Vec::new())?;
+    assert!(direct_control_center(&visible.output, "Scroll").is_err());
     Ok(())
 }
 

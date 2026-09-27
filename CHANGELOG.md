@@ -3,6 +3,10 @@
 This file records user-visible changes. Internal refactors and test-only work
 remain in the Git history.
 
+## Unreleased
+
+- macOS: choose whether smooth scrolling pans or zooms the viewport.
+
 ## 1.2.1 - 2026-09-21
 
 ### Viewer

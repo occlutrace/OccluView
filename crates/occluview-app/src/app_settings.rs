@@ -117,6 +117,20 @@ impl ThemePreference {
     pub(crate) const OPTIONS: [Self; 2] = [Self::Light, Self::Dark];
 }
 
+/// Action for pixel-unit scroll input in the 3D viewport.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum ScrollBehavior {
+    /// Move the view with smooth scroll input.
+    #[default]
+    Pan,
+    /// Change the view scale with smooth scroll input.
+    Zoom,
+}
+
+impl ScrollBehavior {
+    pub(crate) const OPTIONS: [Self; 2] = [Self::Pan, Self::Zoom];
+}
+
 /// Entries the Open menu's recent list keeps.
 ///
 /// Fixed rather than a preference: menu length has no clinical outcome, and the
@@ -148,6 +162,8 @@ pub(crate) struct Settings {
     pub(crate) orbit_sensitivity: f32,
     /// Exponent on the scroll zoom factor, clamped at use to 0.25..=4.
     pub(crate) zoom_sensitivity: f32,
+    /// How macOS pixel-unit scroll input moves the viewport.
+    pub(crate) scroll_behavior: ScrollBehavior,
     /// How many recent scenes the Open chevron keeps, clamped at use to 4..=20.
     pub(crate) recent_files_limit: usize,
     pub(crate) viewport_background: ViewportBackground,
@@ -179,6 +195,7 @@ impl Default for Settings {
             double_click_resets_camera: true,
             orbit_sensitivity: 1.0,
             zoom_sensitivity: 1.0,
+            scroll_behavior: ScrollBehavior::default(),
             recent_files_limit: RECENT_FILES_LIMIT,
             viewport_background: ViewportBackground::default(),
             show_cut_ghost: true,
@@ -426,6 +443,18 @@ mod tests {
                 "the rest of the document must read as its default: {legacy}"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn pixel_scroll_behavior_defaults_for_older_settings_and_round_trips() -> Result<()> {
+        let mut settings: Settings = serde_json::from_str(r#"{"zoom_sensitivity":1.0}"#)?;
+        assert_eq!(settings.scroll_behavior, ScrollBehavior::Pan);
+
+        settings.scroll_behavior = ScrollBehavior::Zoom;
+        let saved = serde_json::to_vec(&settings)?;
+        let loaded: Settings = serde_json::from_slice(&saved)?;
+        assert_eq!(loaded.scroll_behavior, ScrollBehavior::Zoom);
         Ok(())
     }
 
