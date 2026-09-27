@@ -34,7 +34,7 @@ pub(crate) fn matching(
             &slider,
             &locale.tr("align-matching-parts"),
             enabled,
-            f64::from(settings.matching_ratio),
+            settings.matching_ratio,
         );
         slider.on_hover_text(locale.tr("align-matching-parts-hint"));
     });
@@ -54,7 +54,7 @@ pub(crate) fn matching(
             &slider,
             &locale.tr("align-max-influence"),
             enabled,
-            f64::from(settings.influence_radius_mm),
+            settings.influence_radius_mm,
         );
         slider.on_hover_text(locale.tr("align-max-influence-hint"));
     });

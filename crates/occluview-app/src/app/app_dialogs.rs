@@ -11,7 +11,6 @@ use crate::measure_tool::{self, MeasureMode};
 use crate::ui_theme;
 use eframe::egui;
 
-#[cfg(test)]
 pub(super) use super::app_recent_popup::recent_files_popup_id;
 pub(super) use super::app_recent_popup::show_recent_files_popup;
 
@@ -129,10 +128,7 @@ impl OccluViewApp {
                             &response,
                             &self.ui.locale.tr("toolbar-recent-hint"),
                             !self.persistence.recent_files.is_empty(),
-                            Some(egui::Popup::is_id_open(
-                                ui.ctx(),
-                                super::app_recent_popup::recent_files_popup_id(),
-                            )),
+                            Some(egui::Popup::is_id_open(ui.ctx(), recent_files_popup_id())),
                         );
                         let response =
                             response.on_hover_text(self.ui.locale.tr("toolbar-recent-hint"));
