@@ -46,7 +46,7 @@ pub(super) fn rim_is_simple_3d(points: &[Vec3]) -> bool {
     if n < 4 {
         return true; // Triangles cannot self-cross.
     }
-    let points: Vec<DVec3> = points.iter().map(Vec3::as_dvec3).collect();
+    let points: Vec<DVec3> = points.iter().map(|point| point.as_dvec3()).collect();
     let edge_len: Vec<f64> = (0..n)
         .map(|index| (points[(index + 1) % n] - points[index]).length())
         .collect();
@@ -137,7 +137,7 @@ pub(super) fn min_area_triangulation(points: &[Vec3]) -> Option<Vec<[usize; 3]>>
     if !(3..=MIN_WEIGHT_MAX_RIM).contains(&n) {
         return None;
     }
-    let points: Vec<DVec3> = points.iter().map(Vec3::as_dvec3).collect();
+    let points: Vec<DVec3> = points.iter().map(|point| point.as_dvec3()).collect();
     let area = |i: usize, k: usize, j: usize| -> f64 {
         let ab = points[k] - points[i];
         let ac = points[j] - points[i];
@@ -209,7 +209,7 @@ pub(super) fn min_area_triangulation_any(points: &[Vec3]) -> Option<Vec<[usize; 
     if n <= MIN_WEIGHT_MAX_RIM {
         return min_area_triangulation(points);
     }
-    let dpoints: Vec<DVec3> = points.iter().map(Vec3::as_dvec3).collect();
+    let dpoints: Vec<DVec3> = points.iter().map(|point| point.as_dvec3()).collect();
 
     // Work items are arcs of the cyclic rim: contiguous runs of original
     // indices in ring order. The arc's two endpoints are joined by an implicit

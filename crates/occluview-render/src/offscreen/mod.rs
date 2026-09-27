@@ -572,8 +572,8 @@ impl Offscreen {
             return false;
         };
         let camera = crate::GpuCamera::new(
-            glam::Mat4::look_at_rh(Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO, Vec3::Y),
-            glam::Mat4::orthographic_rh(-1.0, 1.0, -1.0, 1.0, 0.1, 10.0),
+            glam::camera::rh::view::look_at_mat4(Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO, Vec3::Y),
+            glam::camera::rh::proj::directx::orthographic(-1.0, 1.0, -1.0, 1.0, 0.1, 10.0),
             Vec3::new(0.0, 0.0, 1.0),
             Vec3::new(0.0, 0.0, 3.0),
         );

@@ -53,7 +53,7 @@ impl GpuCamera {
 /// thumbnails) so their on-screen behavior can never drift apart.
 #[must_use]
 pub fn camera_view_matrix(camera: &occluview_core::Camera) -> Mat4 {
-    Mat4::look_at_rh(camera.eye(), camera.target, camera.view_up())
+    glam::camera::rh::view::look_at_mat4(camera.eye(), camera.target, camera.view_up())
 }
 
 /// Orthographic projection for the shared orbital camera at `aspect` (w/h).
@@ -61,7 +61,7 @@ pub fn camera_view_matrix(camera: &occluview_core::Camera) -> Mat4 {
 pub fn camera_ortho_proj_matrix(camera: &occluview_core::Camera, aspect: f32) -> Mat4 {
     let half_height = camera.orthographic_height * 0.5;
     let half_width = half_height * aspect.max(0.001);
-    Mat4::orthographic_rh(
+    glam::camera::rh::proj::directx::orthographic(
         -half_width,
         half_width,
         -half_height,

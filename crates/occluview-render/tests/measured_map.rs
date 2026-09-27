@@ -4,7 +4,7 @@
 
 mod common;
 
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 use occluview_core::{Mesh, MeshBuilder, Vertex};
 use occluview_render::{GpuCamera, GpuMeshUniform, Offscreen, RenderDeadline, ThumbnailSpec};
 use std::sync::{Mutex, MutexGuard, OnceLock};
@@ -33,8 +33,8 @@ fn dark_thumbnail_spec() -> ThumbnailSpec {
 }
 
 fn camera_looking_at_origin() -> GpuCamera {
-    let view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 2.0), Vec3::ZERO, Vec3::Y);
-    let proj = Mat4::perspective_rh(45.0_f32.to_radians(), 1.0, 0.1, 100.0);
+    let view = glam::camera::rh::view::look_at_mat4(Vec3::new(0.0, 0.0, 2.0), Vec3::ZERO, Vec3::Y);
+    let proj = glam::camera::rh::proj::directx::perspective(45.0_f32.to_radians(), 1.0, 0.1, 100.0);
     GpuCamera::new(
         view,
         proj,

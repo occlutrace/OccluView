@@ -1,7 +1,7 @@
 #![allow(clippy::panic)]
 
 use super::*;
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 use occluview_core::{Aabb, Camera, Mesh, DEFAULT_UNTEXTURED_MESH_TINT};
 
 #[test]
@@ -30,7 +30,7 @@ fn thumbnail_camera_keeps_occlusal_orientation_but_frames_projected_bounds_tight
     let projected_span = {
         let actual = rendering::thumbnail_projection_matrix(&thumbnail_camera);
         let half_height = thumbnail_camera.orthographic_height * 0.5;
-        let expected = Mat4::orthographic_rh(
+        let expected = glam::camera::rh::proj::directx::orthographic(
             -half_height,
             half_height,
             -half_height,
@@ -63,7 +63,7 @@ fn thumbnail_projection_uses_orthographic_when_camera_is_orthographic() {
     );
     let actual = rendering::thumbnail_projection_matrix(&camera);
     let half_height = camera.orthographic_height * 0.5;
-    let expected = Mat4::orthographic_rh(
+    let expected = glam::camera::rh::proj::directx::orthographic(
         -half_height,
         half_height,
         -half_height,
