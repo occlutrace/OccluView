@@ -78,10 +78,10 @@ fn the_changelog_only_names_versions_that_can_be_released() {
         seen.push(parsed);
     }
 
-    // Ordering alone is not the rule the test name promises. A section below
-    // the newest claims something was released, so a tag has to exist for it.
-    // Tags come from git; a source tarball has none, and there the ordering
-    // above is all there is.
+    // The workspace version is being prepared, so it may not have a tag yet.
+    // Older version sections claim releases and require matching tags. Tags
+    // come from git; a source tarball has none, and there the ordering above
+    // is all there is.
     let Some(tags) = repository_tags() else {
         // The CI checkout that runs this test fetches tags, so "no tags" means
         // a source tarball or a checkout that lost them. The skip is logged so
@@ -97,7 +97,7 @@ fn the_changelog_only_names_versions_that_can_be_released() {
     let Some(first_tagged) = tags.iter().filter_map(|tag| parse_version(tag)).min() else {
         return;
     };
-    for line in sections.iter().skip(1) {
+    for line in sections.iter().skip(2) {
         let Some(number) = line.split_whitespace().nth(1) else {
             continue;
         };
