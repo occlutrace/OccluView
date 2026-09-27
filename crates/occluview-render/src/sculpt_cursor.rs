@@ -9,7 +9,7 @@
 use bytemuck::{Pod, Zeroable};
 use std::f32::consts::TAU;
 
-/// The two tool-volume shapes used by the native Sculpt editor.
+/// The three tool-volume shapes used by the native Sculpt editor.
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SculptToolShape {
@@ -17,6 +17,8 @@ pub enum SculptToolShape {
     Cone = 0,
     /// Smooth uses a short cylindrical plateau.
     Cylinder = 1,
+    /// Knife uses a thin blade aligned with the current stroke bearing.
+    Knife = 2,
 }
 
 /// Surface-light input. The layout is shared by Rust and
@@ -268,6 +270,73 @@ pub(crate) fn cylinder_geometry() -> (Vec<SculptToolVertex>, Vec<u32>) {
         ]);
         indices.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
     }
+    (vertices, indices)
+}
+
+/// Build a flat tapered blade, with its long edge along local Y and its face
+/// extending from the contact edge at z=0 toward the handle at z=1.
+pub(crate) fn knife_geometry() -> (Vec<SculptToolVertex>, Vec<u32>) {
+    let mut vertices = Vec::with_capacity(24);
+    let mut indices = Vec::with_capacity(36);
+    let mut quad = |positions: [[f32; 3]; 4], normal: [f32; 3]| {
+        let start = u32::try_from(vertices.len()).unwrap_or(u32::MAX);
+        vertices.extend(positions.map(|position| SculptToolVertex { position, normal }));
+        indices.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
+    };
+    quad(
+        [
+            [-0.18, -1.0, 1.0],
+            [0.18, -1.0, 1.0],
+            [0.18, 1.0, 1.0],
+            [-0.18, 1.0, 1.0],
+        ],
+        [0.0, 0.0, 1.0],
+    );
+    quad(
+        [
+            [-0.055, -1.0, 0.0],
+            [0.055, -1.0, 0.0],
+            [0.055, 1.0, 0.0],
+            [-0.055, 1.0, 0.0],
+        ],
+        [0.0, 0.0, -1.0],
+    );
+    quad(
+        [
+            [0.18, -1.0, 1.0],
+            [0.18, 1.0, 1.0],
+            [0.055, 1.0, 0.0],
+            [0.055, -1.0, 0.0],
+        ],
+        [1.0, 0.0, 0.0],
+    );
+    quad(
+        [
+            [-0.18, 1.0, 1.0],
+            [-0.18, -1.0, 1.0],
+            [-0.055, -1.0, 0.0],
+            [-0.055, 1.0, 0.0],
+        ],
+        [-1.0, 0.0, 0.0],
+    );
+    quad(
+        [
+            [-0.18, 1.0, 1.0],
+            [0.18, 1.0, 1.0],
+            [0.055, 1.0, 0.0],
+            [-0.055, 1.0, 0.0],
+        ],
+        [0.0, 1.0, 0.0],
+    );
+    quad(
+        [
+            [0.18, -1.0, 1.0],
+            [-0.18, -1.0, 1.0],
+            [-0.055, -1.0, 0.0],
+            [0.055, -1.0, 0.0],
+        ],
+        [0.0, -1.0, 0.0],
+    );
     (vertices, indices)
 }
 

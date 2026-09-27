@@ -219,8 +219,8 @@ impl SculptSession {
         // the snapshot is already fixed, so zeroing all selected corners makes
         // a boundary face exact identity instead of leaving a kink against the
         // fixed corner. The one-eighth envelope carries that constraint into
-        // the moving footprint. Eight waves cover sixty-four edge rings while
-        // keeping rejection work bounded independently of brush vertex count.
+        // the moving footprint while keeping rejection work bounded
+        // independently of brush vertex count.
         for _ in 0..MAX_ROLLBACK_ITERS {
             if unsafe_triangles.is_empty() {
                 break;
@@ -242,9 +242,18 @@ impl SculptSession {
             apply(self);
             self.collect_unsafe_layer_triangles(&triangles, mode, &mut unsafe_triangles);
         }
+        if !unsafe_triangles.is_empty() {
+            // Restore the dab's moving controls together when the bounded
+            // active set cannot settle every rejecting face.
+            for &(group, _) in proposals {
+                self.rollback_factor[group as usize] = 0.0;
+            }
+            apply(self);
+            self.collect_unsafe_layer_triangles(&triangles, mode, &mut unsafe_triangles);
+        }
         debug_assert!(
             unsafe_triangles.is_empty(),
-            "local layer active set stopped before every rejecting face reached identity"
+            "restoring the dab controls clears every rejecting face"
         );
         self.layer_triangles = triangles;
         self.layer_origins = origins;

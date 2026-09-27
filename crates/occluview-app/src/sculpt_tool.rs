@@ -4,10 +4,8 @@ use crate::sculpt_kernel::BrushSession;
 use crate::sculpt_kernel::{BrushMode, BrushStroke};
 use crate::sculpt_worker::SculptWorker;
 use glam::{Affine3A, Vec3};
-use occluview_core::{
-    mesh_edit_buffers_from_mesh, mesh_from_sculpt_session_like, Mesh, Scene, SceneMeshId, Vertex,
-};
-use occluview_render::PreparedSceneTopology;
+use occluview_core::{mesh_edit_buffers_from_mesh, Mesh, Scene, SceneMeshId, Vertex};
+use occluview_render::{PreparedSceneTopology, SculptTopologyDelta};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, RwLock};
 use std::thread;
@@ -151,7 +149,6 @@ pub(crate) struct SculptTool {
     /// Undo/redo waits for an asynchronous sculpt completion before swapping
     /// an older scene over the worker's current shadow.
     pub(crate) pending_history: Option<bool>,
-    pub(crate) preview_baseline: Option<SculptPreviewBaseline>,
     /// The last surface hit acquired by the viewport input pass. The cursor
     /// painter runs after that pass and reuses it for held drags, avoiding a
     /// second BVH traversal on every repaint.
@@ -206,7 +203,6 @@ impl SculptTool {
         self.finish_requested = false;
         self.finish_retry = false;
         self.pending_history = None;
-        self.preview_baseline = None;
         self.cancel_pending_preparation();
     }
 
@@ -242,34 +238,6 @@ impl SculptTool {
         self.worker
             .as_ref()
             .is_some_and(|worker| !worker.is_quiescent())
-    }
-
-    pub(crate) fn preview_baseline(&self) -> Option<&SculptPreviewBaseline> {
-        self.preview_baseline.as_ref()
-    }
-
-    pub(crate) fn note_preview_install(
-        &mut self,
-        layer_id: SceneMeshId,
-        preview_topology_id: u64,
-        replaced: Arc<Mesh>,
-    ) {
-        match self.preview_baseline.as_mut() {
-            Some(baseline) if baseline.layer_id == layer_id => {
-                baseline.preview_topology_id = preview_topology_id;
-            }
-            _ => {
-                self.preview_baseline = Some(SculptPreviewBaseline {
-                    layer_id,
-                    preview_topology_id,
-                    mesh: replaced,
-                });
-            }
-        }
-    }
-
-    pub(crate) fn clear_preview_baseline(&mut self) {
-        self.preview_baseline = None;
     }
 
     /// Whether a mesh edit must wait for Sculpt to settle. `worker` can exist
@@ -353,6 +321,7 @@ impl SculptTool {
                         world_to_local: transform.inverse(),
                         local_per_world: 1.0 / scale,
                         dirty_stroke: false,
+                        topology_dirty_stroke: false,
                         stroke_start_mesh: None,
                     }
                 });
@@ -450,23 +419,10 @@ pub(crate) struct SculptSession {
     pub(crate) local_per_world: f32,
     /// Whether the current stroke changed geometry.
     pub(crate) dirty_stroke: bool,
+    /// Whether the current stroke changed connectivity.
+    pub(crate) topology_dirty_stroke: bool,
     /// The complete pre-stroke mesh used by Undo, including topology.
     pub(crate) stroke_start_mesh: Option<Arc<Mesh>>,
-}
-
-/// A replacement mesh produced when a stroke changes topology.
-pub(crate) struct SculptRebuild {
-    /// The layer's new geometry, ready to swap into the scene.
-    pub(crate) mesh: Mesh,
-    /// Its GPU topology token, which the worker adopts for later sparse writes.
-    pub(crate) topology: PreparedSceneTopology,
-}
-
-#[derive(Clone)]
-pub(crate) struct SculptPreviewBaseline {
-    pub(crate) layer_id: SceneMeshId,
-    pub(crate) preview_topology_id: u64,
-    pub(crate) mesh: Arc<Mesh>,
 }
 
 /// Read-mostly surface state used by the interactive Sculpt raycast. The
@@ -477,10 +433,11 @@ pub(crate) struct SculptPickState {
     pub(crate) mesh: Arc<Mesh>,
     pub(crate) shadow: Arc<RwLock<Vec<Vertex>>>,
     pub(crate) dirty_triangles: Vec<usize>,
+    /// Current live triangle rows, including appended and rewired faces.
+    pub(crate) indices: Vec<u32>,
 }
 
-/// What one dab produced: either a sparse vertex update, or a whole-layer
-/// rebuild when densification changed the topology.
+/// What one dab produced for the prepared GPU entry.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum DabFailure {
     /// The live display shadow could not be updated. The kernel result is no
@@ -498,39 +455,27 @@ pub(crate) enum DabFailure {
         vertex_id: usize,
         vertex_count: usize,
     },
-    /// A densifying dab changed the kernel topology, but its authoritative
-    /// scene mesh could not be rebuilt.
-    TopologyRebuild { detail: String },
 }
 
 #[derive(Default)]
 pub(crate) struct DabOutcome {
     /// Vertex ids whose position or normal changed, for a sparse GPU write.
-    /// Empty when `rebuild` is set — the rebuild supersedes it.
+    /// Empty when the dab made no displayable change.
     pub(crate) touched: Vec<usize>,
     /// Triangles that must be considered against the live shadow by the
     /// interactive raycast.
     pub(crate) dirty_triangles: Vec<usize>,
-    /// Set when this dab grew the mesh.
-    pub(crate) rebuild: Option<SculptRebuild>,
+    /// Vertex and face rows changed by this dab's remesh.
+    pub(crate) topology_delta: Option<SculptTopologyDelta>,
     /// Set when the kernel result cannot be published safely. This must abort
     /// the worker; treating it as an empty dab would leave the GPU or undo
     /// history on a stale state.
     pub(crate) failure: Option<DabFailure>,
 }
 
-/// Test-only: layer id whose densifying rebuild must fail, so a test can drive
-/// the terminal `DabFailure::TopologyRebuild` arm that a well-formed mesh can
-/// never reach. Layer ids are globally unique and never reused, so a stale id
-/// in this slot is inert for every other test.
-#[cfg(test)]
-pub(crate) static FORCE_REBUILD_FAILURE_LAYER: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
-
 impl SculptSession {
-    /// Apply one dab (already built in mesh-local space) and return either the
-    /// touched vertex ids — patched into the display shadow — or a whole-layer
-    /// rebuild when densification changed the topology. Marks the current
+    /// Apply one dab (already built in mesh-local space) and return touched
+    /// vertex ids plus any local topology delta. Marks the current
     /// stroke dirty so a stroke that actually changed geometry gets an undo
     /// entry (an empty dab does not).
     #[cfg(test)]
@@ -598,50 +543,35 @@ impl SculptSession {
                 .apply_stroke_cancellable(stroke, mode, tip, axis, cancel)?,
             None => self.session.apply_stroke(stroke, mode, tip, axis),
         };
-        if outcome.topology_changed() {
-            if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
-                return None;
-            }
-            // Vertex ids the caller already knows stay valid — densification
-            // only appends — but the array grew and the triangle list changed,
-            // so a sparse write into the old buffers would be a corruption.
-            // Hand back the rebuilt layer instead and drop this dab's ids.
-            return match self.rebuild_after_densify(cancel) {
-                Ok(Some(rebuild)) => Some(DabOutcome {
-                    touched: Vec::new(),
-                    dirty_triangles: Vec::new(),
-                    rebuild: Some(rebuild),
-                    failure: None,
-                }),
-                Ok(None) => None,
-                Err(failure) => Some(DabOutcome {
-                    touched: Vec::new(),
-                    dirty_triangles: Vec::new(),
-                    rebuild: None,
-                    failure: Some(failure),
-                }),
-            };
-        }
-        if outcome.touched_vertices.is_empty() {
+        let topology_changed = outcome.topology_changed();
+        if outcome.touched_vertices.is_empty() && !topology_changed {
             return Some(DabOutcome::default());
         }
         let dirty_triangles = outcome.dirty_triangles;
         // The kernel reports every vertex whose position or normal changed in
         // one list, so there is no separate normal-only scope to patch.
-        if self.patch_shadow(&outcome.touched_vertices, &[]).is_err() {
+        if self
+            .patch_shadow(
+                &outcome.touched_vertices,
+                &[],
+                outcome.topology_delta.as_ref(),
+            )
+            .is_err()
+        {
             return Some(DabOutcome {
                 touched: Vec::new(),
                 dirty_triangles: Vec::new(),
-                rebuild: None,
+                topology_delta: None,
                 failure: Some(DabFailure::ShadowPoisoned),
             });
         }
         self.dirty_stroke = true;
+        self.topology_dirty_stroke |= topology_changed;
         let touched = outcome.touched_vertices;
         Some(DabOutcome {
             touched,
             dirty_triangles,
-            rebuild: None,
+            topology_delta: outcome.topology_delta,
             failure: None,
         })
     }
@@ -668,60 +598,6 @@ impl SculptSession {
             })
     }
 
-    /// Adopt the densified geometry: rebuild the template mesh, resize the
-    /// display shadow to match, and take on the new GPU topology token so the
-    /// dabs that follow can stream sparsely again.
-    fn rebuild_after_densify(
-        &mut self,
-        cancel: Option<&AtomicBool>,
-    ) -> Result<Option<SculptRebuild>, DabFailure> {
-        if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
-            return Ok(None);
-        }
-        #[cfg(test)]
-        if FORCE_REBUILD_FAILURE_LAYER.load(Ordering::Relaxed) == self.layer_id.get() {
-            return Err(DabFailure::TopologyRebuild {
-                detail: "sculpt topology rebuild failed for the test".to_string(),
-            });
-        }
-        let mesh =
-            mesh_from_sculpt_session_like(&self.base_mesh, &self.session).map_err(|error| {
-                DabFailure::TopologyRebuild {
-                    detail: format!("sculpt topology rebuild failed: {error}"),
-                }
-            })?;
-        if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
-            return Ok(None);
-        }
-        // Rebuilt meshes must carry a warm picking tree because the session is
-        // reused after the topology change. The build is non-cancellable, so
-        // check the flag before and after it.
-        if !cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
-            mesh.warm_bvh();
-        }
-        if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
-            return Ok(None);
-        }
-        {
-            let mut shadow = self
-                .shadow
-                .write()
-                .map_err(|_| DabFailure::ShadowPoisoned)?;
-            *shadow = mesh.vertices().to_vec();
-        }
-        if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
-            return Ok(None);
-        }
-        let topology = PreparedSceneTopology::from_mesh(&mesh);
-        if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
-            return Ok(None);
-        }
-        self.base_mesh = Arc::new(mesh.clone());
-        self.topology = topology;
-        self.dirty_stroke = true;
-        Ok(Some(SculptRebuild { mesh, topology }))
-    }
-
     /// Copy the kernel's live position and normal for every touched vertex id
     /// into the display shadow. Color and UV are preserved untouched, so
     /// textured/colored scans keep their look while being sculpted.
@@ -729,6 +605,7 @@ impl SculptSession {
         &mut self,
         moved: &[usize],
         normal_vertices: &[usize],
+        topology_delta: Option<&SculptTopologyDelta>,
     ) -> Result<(), DabFailure> {
         let mut shadow = self
             .shadow
@@ -737,11 +614,28 @@ impl SculptSession {
         let live = self.session.vertices();
         let shadow_count = shadow.len();
         let live_count = live.len();
-        if shadow_count != live_count {
+        let append_count_matches = topology_delta.is_some_and(|delta| {
+            delta.base_vertex_count == shadow_count
+                && delta
+                    .base_vertex_count
+                    .checked_add(delta.appended_vertices.len())
+                    == Some(live_count)
+        });
+        if (topology_delta.is_some() && !append_count_matches)
+            || (topology_delta.is_none() && shadow_count != live_count)
+        {
             return Err(DabFailure::ShadowShapeMismatch {
                 shadow_count,
                 live_count,
             });
+        }
+        if topology_delta.is_some() {
+            shadow.extend(
+                live[shadow_count..]
+                    .iter()
+                    .copied()
+                    .map(crate::sculpt_kernel::vertex_from_edit_vertex),
+            );
         }
         if let Some(vertex_id) = moved
             .iter()

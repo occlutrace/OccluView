@@ -66,6 +66,7 @@ fn worker_for(mesh: &Mesh, layer_id: SceneMeshId) -> SculptWorker {
         world_to_local: Affine3A::IDENTITY,
         local_per_world: 1.0,
         dirty_stroke: false,
+        topology_dirty_stroke: false,
         stroke_start_mesh: None,
     })
 }

@@ -6,6 +6,7 @@
 //! kernel surface adapter and the Taubin relaxation pass.
 
 use super::*;
+use crate::hash::FxHashMap;
 
 /// Smooth the new material, not the shape that existed before this dab.
 /// The live buffer is private staging until the whole layer is accepted.
@@ -102,8 +103,8 @@ impl SculptSession {
         // magnitude alongside the key.
         let mut frontier: BinaryHeap<std::cmp::Reverse<SkirtFrontier>> =
             BinaryHeap::with_capacity(weighted.len() * 2);
-        let mut best: std::collections::HashMap<u32, (f64, f64)> =
-            std::collections::HashMap::with_capacity(weighted.len() * 2);
+        let mut best: FxHashMap<u32, (f64, f64)> = FxHashMap::default();
+        best.reserve(weighted.len() * 2);
         for &(group, weight) in weighted.iter() {
             // Every seed is settled at distance zero before the walk, finite
             // or not: a non-finite seed pushes nothing but still bars the

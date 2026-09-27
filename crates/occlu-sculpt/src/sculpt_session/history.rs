@@ -1,7 +1,7 @@
 //! Stroke records and exact reversible session state.
 
 use super::*;
-use std::collections::HashSet;
+use crate::hash::FxHashSet as HashSet;
 
 impl SculptSession {
     /// Open a stroke: arm remeshing and start a fresh undo record.

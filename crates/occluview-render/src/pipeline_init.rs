@@ -8,7 +8,7 @@ use crate::clipping::ClipPlane;
 use crate::error::RenderError;
 use crate::gpu::GpuMesh;
 use crate::sculpt_cursor::{
-    cone_geometry, cylinder_geometry, vertex_layout as sculpt_tool_vertex_layout,
+    cone_geometry, cylinder_geometry, knife_geometry, vertex_layout as sculpt_tool_vertex_layout,
     SculptBrushUniform, SculptToolUniform,
 };
 use std::{
@@ -794,6 +794,14 @@ impl Renderer {
                 &cylinder_vertices,
                 &cylinder_indices,
             );
+        let (knife_vertices, knife_indices) = knife_geometry();
+        let (sculpt_tool_knife_buffer, sculpt_tool_knife_vertex_bytes) = upload_sculpt_tool_buffer(
+            &device,
+            &queue,
+            "occluview sculpt knife buffer",
+            &knife_vertices,
+            &knife_indices,
+        );
 
         Ok(Self {
             device,
@@ -823,6 +831,9 @@ impl Renderer {
             sculpt_tool_cylinder_vertex_bytes,
             sculpt_tool_cylinder_index_count: u32::try_from(cylinder_indices.len())
                 .unwrap_or(u32::MAX),
+            sculpt_tool_knife_buffer,
+            sculpt_tool_knife_vertex_bytes,
+            sculpt_tool_knife_index_count: u32::try_from(knife_indices.len()).unwrap_or(u32::MAX),
             point_splat_viewport_width_bits: AtomicU32::new(
                 DEFAULT_POINT_SPLAT_VIEWPORT[0].to_bits(),
             ),

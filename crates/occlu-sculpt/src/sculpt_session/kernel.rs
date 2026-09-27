@@ -165,7 +165,9 @@ impl SculptSession {
     }
 
     pub(super) fn prepare_dab(&mut self, dab: &Dab) -> bool {
-        if !dab.radius.is_finite()
+        if !dab.center.is_finite()
+            || !dab.view.is_finite()
+            || !dab.radius.is_finite()
             || dab.radius <= 0.0
             || !dab.strength.is_finite()
             || dab.strength <= 0.0

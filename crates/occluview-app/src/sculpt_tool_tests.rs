@@ -95,6 +95,7 @@ fn persistent_session_accepts_a_second_stroke_after_first_commit() {
         world_to_local: Affine3A::IDENTITY,
         local_per_world: 1.0,
         dirty_stroke: false,
+        topology_dirty_stroke: false,
         stroke_start_mesh: None,
     };
     let stroke = BrushStroke {
@@ -105,13 +106,13 @@ fn persistent_session_accepts_a_second_stroke_after_first_commit() {
     };
     let first = session.apply_dab(stroke, BrushMode::Add);
     assert!(
-        !first.touched.is_empty() || first.rebuild.is_some(),
+        !first.touched.is_empty() || first.topology_delta.is_some(),
         "the first dab must reach the surface"
     );
     session.dirty_stroke = false;
     let second = session.apply_dab(stroke, BrushMode::Add);
     assert!(
-        !second.touched.is_empty() || second.rebuild.is_some(),
+        !second.touched.is_empty() || second.topology_delta.is_some(),
         "the persistent session must accept a second stroke"
     );
 }
@@ -149,6 +150,7 @@ fn poisoned_shadow_is_a_terminal_dab_failure() {
         world_to_local: Affine3A::IDENTITY,
         local_per_world: 1.0,
         dirty_stroke: false,
+        topology_dirty_stroke: false,
         stroke_start_mesh: None,
     };
     let stroke = BrushStroke {
@@ -191,11 +193,12 @@ fn invalid_shadow_mapping_fails_before_partial_publish() {
         world_to_local: Affine3A::IDENTITY,
         local_per_world: 1.0,
         dirty_stroke: false,
+        topology_dirty_stroke: false,
         stroke_start_mesh: None,
     };
 
     let failure = session
-        .patch_shadow(&[0, original.len()], &[])
+        .patch_shadow(&[0, original.len()], &[], None)
         .expect_err("an out-of-range kernel id must be terminal");
     assert_eq!(
         failure,
@@ -275,6 +278,7 @@ fn the_stroke_baseline_is_snapshotted_cold() {
         world_to_local: Affine3A::IDENTITY,
         local_per_world: 1.0,
         dirty_stroke: false,
+        topology_dirty_stroke: false,
         stroke_start_mesh: None,
     };
 
@@ -288,7 +292,7 @@ fn the_stroke_baseline_is_snapshotted_cold() {
         BrushMode::Add,
     );
     assert!(
-        !outcome.touched.is_empty() || outcome.rebuild.is_some(),
+        !outcome.touched.is_empty() || outcome.topology_delta.is_some(),
         "the dab has to change geometry, or there is no baseline to snapshot"
     );
 
@@ -353,11 +357,12 @@ fn shadow_shape_mismatch_is_not_treated_as_an_empty_dab() {
         world_to_local: Affine3A::IDENTITY,
         local_per_world: 1.0,
         dirty_stroke: false,
+        topology_dirty_stroke: false,
         stroke_start_mesh: None,
     };
 
     let failure = session
-        .patch_shadow(&[0], &[])
+        .patch_shadow(&[0], &[], None)
         .expect_err("a shadow with the wrong shape must be terminal");
     assert_eq!(
         failure,
@@ -445,6 +450,7 @@ fn session_over(mesh: &Mesh) -> (SculptSession, Arc<RwLock<Vec<Vertex>>>) {
         world_to_local: Affine3A::IDENTITY,
         local_per_world: 1.0,
         dirty_stroke: false,
+        topology_dirty_stroke: false,
         stroke_start_mesh: None,
     };
     (session, shadow)
@@ -452,7 +458,7 @@ fn session_over(mesh: &Mesh) -> (SculptSession, Arc<RwLock<Vec<Vertex>>>) {
 
 /// How far the vertices the dab actually moved spread along x and along y
 /// from the dab centre. Read from the live shadow rather than the touched list,
-/// because a dab that also retessellated the patch reports a rebuild instead.
+/// because a dab that also retessellated the patch reports a topology delta.
 fn moved_spread(shadow: &Arc<RwLock<Vec<Vertex>>>, original: &[Vertex]) -> (f32, f32) {
     let shadow = shadow.read().expect("shadow lock");
     let mut x: f32 = 0.0;
