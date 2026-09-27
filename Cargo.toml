@@ -83,24 +83,24 @@ occluview-shell   = { path = "crates/occluview-shell" }
 occluview-update  = { path = "crates/occluview-update" }
 
 # Math / numerics.
-glam    = "0.29"            # permissive (MIT OR Apache-2.0)
-bytemuck = { version = "1.18", features = ["derive"] }
+glam    = "0.33.11"         # permissive (MIT OR Apache-2.0)
+bytemuck = { version = "1.25.2", features = ["derive"] }
 
 # HPS package compatibility. Parser dependencies are
 # isolated to the product-neutral occluview-hps leaf crate.
 adler2   = "2.0.1"
 blowfish = { version = "0.10.0", features = ["zeroize"] }
 md-5     = "0.11.0"
-sha2     = "0.10"
+sha2     = "0.11.0"
 zeroize  = { version = "1.9.0", features = ["derive"] }
 
 # Parallelism / async.
-rayon   = "1.10"
+rayon   = "1.12.0"
 
 # Error handling.
-thiserror = "1.0"
+thiserror = "2.0.21"
 anyhow    = "1.0"           # binaries only
-manifold-csg = "0.3.3"      # robust native CSG fallback for pathological CAD meshes
+manifold-csg = "0.4.1"      # Native CSG fallback for meshes outside the primary boolean path.
 earcutr = "0.5.0"           # constrained planar triangulation for caps with inner rims
 
 # Serialization (glTF JSON parsing).
@@ -108,7 +108,7 @@ serde      = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
 # Async runtime for offscreen render in the GUI app.
-pollster   = "0.4"
+pollster   = "1.0.1"
 
 # Image encode/decode: PNG for golden tests + thumbnail output, JPEG for glTF
 # texture images (dental GLBs commonly embed JPEG textures). The <0.25.10 bound
@@ -118,7 +118,7 @@ image      = { version = ">=0.25.5, <0.25.10", default-features = false, feature
 
 # ZIP package container support for HPS archives. Keep features
 # narrow: ordinary scanner packages use stored/deflated entries.
-zip        = { version = "2.4.2", default-features = false, features = ["deflate"] }
+zip        = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 # Logging.
 tracing            = "0.1"
@@ -142,7 +142,7 @@ sys-locale     = "0.3"
 fluent-syntax        = "0.12"
 epaint_default_fonts = "0.36"
 skrifa               = "0.44"
-rfd     = { version = "0.14", default-features = false, features = ["xdg-portal", "async-std"] }
+rfd     = { version = "0.17.2", default-features = false, features = ["xdg-portal", "wayland"] }
 
 # Linux window activation. The app uses the system Wayland connection exposed
 # by winit to forward startup/handoff activation tokens to its existing surface.
@@ -154,7 +154,7 @@ wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 # `crates/occluview-app/Cargo.toml` and `crates/occluview-formats/Cargo.toml`.
 
 # Testing.
-proptest = "1.5"
+proptest = "1.11.0"
 
 # Workspace lints — applied to every crate via `lints.workspace = true`.
 [workspace.lints.rust]

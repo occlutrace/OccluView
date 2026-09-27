@@ -42,7 +42,7 @@ eframe            = { workspace = true, features = ["wgpu", "default_fonts", "x1
 rfd               = { workspace = true }
 image             = { workspace = true }
 # Lucide icon rasterization: SVG -> RGBA at draw size, see src/icons.rs.
-resvg             = { version = "0.48", default-features = false }
+resvg             = { version = "0.48.1", default-features = false }
 serde             = { workspace = true }
 serde_json        = { workspace = true }
 # Localization runtime: Fluent catalogs + OS locale detection.
@@ -53,7 +53,7 @@ sys-locale        = { workspace = true }
 # to raise the running window). The X11-specific raise lives behind a Linux
 # target dep (x11rb); this crate only provides the handle type, so it stays
 # cross-platform. See `src/single_instance/activation.rs`.
-raw-window-handle = "0.6"
+raw-window-handle = "0.6.2"
 
 # Test-only: catalog contract validation (AST walk) + font-coverage probing.
 [dev-dependencies]
@@ -64,7 +64,7 @@ skrifa               = { workspace = true }
 # Linux-only: send `_NET_ACTIVE_WINDOW` ourselves to raise the window past WM
 # focus-stealing prevention on the file handoff. See activation.rs.
 [target.'cfg(target_os = "linux")'.dependencies]
-x11rb             = "0.13"
+x11rb             = "0.13.2"
 wayland-client    = { workspace = true }
 wayland-protocols = { workspace = true }
 
@@ -75,7 +75,7 @@ objc = "=0.2.7"
 
 # Windows shell and windowing integration.
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.62", features = [
+windows = { version = "0.62.2", features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Security_Authorization",
