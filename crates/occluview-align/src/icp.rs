@@ -265,11 +265,12 @@ pub struct IcpReport {
     pub weak_rot_axes: [bool; 3],
     /// Per world axis, whether translation along it is undetermined.
     pub weak_trans_axes: [bool; 3],
-    /// The trim ratio the fit actually ran at.
+    /// The trim ratio used by the final refinement.
     ///
-    /// Not the operator's slider value: the global-seed branch replaces it with
-    /// `near_surface_fraction(seed) * 0.8` clamped to 0.1..0.8. Carried here so
-    /// the panel can state which algorithm ran.
+    /// Without a global feature seed, this is the operator's setting. A global
+    /// feature seed caps it at the smaller of the operator's setting and the
+    /// automatically measured near-surface fraction multiplied by 0.8 and
+    /// clamped to 0.1..0.8.
     pub effective_matching_ratio: f64,
     /// Fraction of the level's samples inside the seated band of the surface
     /// (see `SEATED_BAND_MM`).
