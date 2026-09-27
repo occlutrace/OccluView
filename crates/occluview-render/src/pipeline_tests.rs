@@ -1,3 +1,5 @@
+#![allow(clippy::print_stderr)]
+
 #[test]
 fn gpu_error_latch_records_and_drains_once() {
     // The device error handler records into this latch; the app drains it each
@@ -319,10 +321,16 @@ fn sculpt_tool_pipeline_is_compatible_with_a_multisampled_live_pass() {
     );
     let depth_probe = probe("live multisample depth probe", crate::live_depth_format());
     drop((color_probe, depth_probe));
-    if single.take_gpu_error().is_some() {
+    if let Some(error) = single.take_gpu_error() {
         // This adapter never selects the multisampled profile in the
         // application, so the single-sample pass is the configuration that has
-        // to be proven here - which the test above already does.
+        // to be proven here, which the test above already does. Adapter lanes
+        // that require GPU coverage fail instead of treating this as a pass.
+        assert!(
+            std::env::var_os("OCCLUVIEW_REQUIRE_GPU_TESTS").is_none_or(|value| value == "0"),
+            "OCCLUVIEW_REQUIRE_GPU_TESTS is set, but 4x live targets are unavailable: {error}"
+        );
+        eprintln!("skipped: the selected adapter cannot create the 4x live targets: {error}");
         return;
     }
 

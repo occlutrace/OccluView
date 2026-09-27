@@ -748,7 +748,7 @@ mod tests {
         let rect = ctx.memory(|memory| memory.area_rect(egui::Id::new(REPAIR_MODAL_ID)));
         assert!(rect.is_some(), "Repair Mesh report should render an area");
         let Some(rect) = rect else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         assert!(
             screen.contains_rect(rect),

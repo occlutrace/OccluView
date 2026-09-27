@@ -60,7 +60,7 @@ fn close_holes_button_requires_selection_and_scopes_to_selected_rim() {
     );
     assert!(no_selection.is_ok());
     let Ok((no_selection_apply, no_selection_report)) = no_selection else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert!(
         !no_selection_apply.scene_changed,
@@ -80,11 +80,11 @@ fn close_holes_button_requires_selection_and_scopes_to_selected_rim() {
     );
     assert!(selected.is_ok());
     let Ok((selected_apply, selected_report)) = selected else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert!(selected_apply.scene_changed);
     let Some(report) = selected_report else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(report.filled_holes, 1);
     assert_eq!(boundary_edge_count(scene.meshes()[0].mesh.indices()), 8);
@@ -101,7 +101,7 @@ fn close_holes_without_selection_is_a_noop() {
     let result = apply_layer_mesh_edit_action(&mut scene, request, None);
     assert!(result.is_ok());
     let Ok((apply, report)) = result else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert!(!apply.scene_changed);
     assert!(report.is_none());
@@ -187,7 +187,7 @@ fn non_face_edit_action_errors_instead_of_aborting() {
         vec![v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0), v(0.0, 1.0, 0.0)],
         vec![0, 1, 2],
     ) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let selection = FaceSelection::new(vec![true]);
 

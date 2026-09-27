@@ -152,10 +152,11 @@ fn a_named_pipe_is_refused_rather_than_opened() {
     let _ = fs::create_dir_all(&dir);
     let path = dir.join("pipe.stl");
     let _ = fs::remove_file(&path);
-    let made = std::process::Command::new("mkfifo").arg(&path).status();
-    if !made.is_ok_and(|status| status.success()) {
-        return;
-    }
+    let made = std::process::Command::new("mkfifo")
+        .arg(&path)
+        .status()
+        .expect("Unix test hosts provide mkfifo");
+    assert!(made.success(), "mkfifo creates the named pipe");
     assert!(fs::metadata(&path)
         .expect("the pipe exists")
         .file_type()

@@ -275,7 +275,7 @@ mod tests {
         );
         assert!(mesh_result.is_ok(), "valid mesh should construct");
         let Ok(mesh) = mesh_result else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         let mut scene = Scene::new();
         scene.add(SceneMesh::new(mesh));
@@ -316,7 +316,7 @@ mod tests {
         );
         assert!(mesh_result.is_ok(), "valid mesh should construct");
         let Ok(mesh) = mesh_result else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         let mut scene = Scene::new();
         let layer_index = scene.add(SceneMesh::new(mesh));
@@ -326,7 +326,7 @@ mod tests {
 
         assert!(picked.is_some(), "center ray should hit surface");
         let Some(picked) = picked else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         assert_eq!(picked.layer_index, layer_index);
         assert_eq!(picked.layer_id, layer_id);
@@ -356,10 +356,10 @@ mod tests {
         assert!(center.is_some(), "center ray should build");
         assert!(right.is_some(), "right ray should build");
         let Some((center_origin, center_dir)) = center else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         let Some((right_origin, right_dir)) = right else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         assert_eq!(center_dir, right_dir);
         assert_ne!(center_origin, right_origin);
@@ -386,7 +386,7 @@ mod tests {
 
         assert!(projected.is_some(), "target center should project");
         let Some((screen, depth)) = projected else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         assert!(
             (screen.x - viewport.center().x).abs() < 1e-3,

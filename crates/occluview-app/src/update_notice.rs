@@ -556,7 +556,7 @@ mod settings_status_tests {
             "repaint callback receives the worker wakeup: {delay:?}"
         );
         let Ok(delay) = delay else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         assert!(
             delay <= WORKER_POLL_INTERVAL,

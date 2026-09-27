@@ -167,7 +167,7 @@ mod tests {
         // The marker is small, the blob is large: this asymmetry is what makes the
         // parity observable. Lock the direction, not just presence.
         let (Some(marker_row), Some(blob_row)) = (marker_top, blob_bottom) else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         assert!(
             marker_row < blob_row,
@@ -214,13 +214,13 @@ mod tests {
         let state = PreviewSceneState::from_bytes(Some("stl"), &binary_stl_triangle());
         assert!(state.is_ok(), "preview state should load a simple STL");
         let Ok(state) = state else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
 
         let pixels = state.render_rgba([320, 180]);
         assert!(pixels.is_ok(), "preview render should succeed");
         let Ok(pixels) = pixels else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         assert_eq!(pixels.len(), 320 * 180 * 4);
     }
@@ -230,7 +230,7 @@ mod tests {
         let state = PreviewSceneState::from_bytes(Some("stl"), &binary_stl_preview_smoke_mesh());
         assert!(state.is_ok(), "preview state should load an asymmetric STL");
         let Ok(state) = state else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
 
         let pixels = state
@@ -278,7 +278,7 @@ mod tests {
         let state = PreviewSceneState::from_bytes(Some("stl"), &binary_stl_preview_smoke_mesh());
         assert!(state.is_ok(), "preview state should load an asymmetric STL");
         let Ok(state) = state else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
 
         let pixels = state
