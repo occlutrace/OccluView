@@ -2601,6 +2601,7 @@ version = "1.2.1"
 dependencies = [
  "glam",
  "kdtree",
+ "occlu-geometry-math",
  "rayon",
 ]
 
