@@ -134,11 +134,13 @@ const SEATED_BAND_RADIUS_FRACTION: f64 = 0.1;
 const MIN_SEATED_BAND_MM: f64 = 0.2;
 const MAX_SEATED_BAND_MM: f64 = 1.0;
 
-/// Maximum point-to-plane p95 residual, in millimetres. Correct cases in the
-/// selected real and crop corpus reach 0.03571 mm; the lowest wrong accepted
-/// case reaches 0.04463 mm. This scan-agreement limit is independent of search
-/// reach, which describes where to look rather than how closely surfaces fit.
+/// Point-to-plane p95 floor, in millimetres. Correct cases in the selected real
+/// and crop corpus reach 0.03571 mm; the lowest wrong case above this floor has
+/// a p95-to-median ratio of 2.3328. Higher measured noise may raise the limit
+/// only while the upper tail stays within that measured ratio.
 const MAX_REFINEMENT_P95_MM: f64 = 0.04;
+/// Maximum p95-to-median ratio for a measured residual distribution.
+const MAX_REFINEMENT_P95_TO_MEDIAN_RATIO: f64 = 2.3;
 
 /// Huber cut as a multiple of the median absolute residual — the usual 95%
 /// efficiency constant for a normal error model.
@@ -265,11 +267,12 @@ pub struct IcpReport {
     pub weak_rot_axes: [bool; 3],
     /// Per world axis, whether translation along it is undetermined.
     pub weak_trans_axes: [bool; 3],
-    /// The trim ratio the fit actually ran at.
+    /// The trim ratio used by the final refinement.
     ///
-    /// Not the operator's slider value: the global-seed branch replaces it with
-    /// `near_surface_fraction(seed) * 0.8` clamped to 0.1..0.8. Carried here so
-    /// the panel can state which algorithm ran.
+    /// Without a global feature seed, this is the operator's setting. A global
+    /// feature seed caps it at the smaller of the operator's setting and the
+    /// automatically measured near-surface fraction multiplied by 0.8 and
+    /// clamped to 0.1..0.8.
     pub effective_matching_ratio: f64,
     /// Fraction of the level's samples inside the seated band of the surface
     /// (see `SEATED_BAND_MM`).
@@ -349,7 +352,8 @@ impl IcpReport {
             && self.median_abs.is_finite()
             && self.p95_abs.is_finite()
             && self.p95_abs >= 0.0
-            && self.p95_abs <= MAX_REFINEMENT_P95_MM
+            && self.p95_abs
+                <= MAX_REFINEMENT_P95_MM.max(self.median_abs * MAX_REFINEMENT_P95_TO_MEDIAN_RATIO)
             && !self.weak_rot_axes.into_iter().any(|weak| weak)
             && !self.weak_trans_axes.into_iter().any(|weak| weak)
             && verification_holds(
