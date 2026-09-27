@@ -187,7 +187,7 @@ fn gpu_error_latch_poison_is_ignored_not_fatal() {
 #[allow(clippy::expect_used)]
 fn a_recorded_gpu_fault_fails_the_readback_instead_of_returning_a_blank_frame() {
     use crate::{GpuCamera, Offscreen, RenderDeadline, ThumbnailSpec};
-    use glam::{Mat4, Vec3};
+    use glam::Vec3;
     use occluview_core::{MeshBuilder, Vertex};
     use std::time::Duration;
 

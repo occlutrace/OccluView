@@ -12,7 +12,7 @@
 
 use crate::camera::GpuCamera;
 use crate::clipping::ClipPlane;
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 use occluview_core::Aabb;
 
 /// Build an orthographic cut-view camera looking along the clip plane's
