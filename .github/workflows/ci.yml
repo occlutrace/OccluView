@@ -190,7 +190,7 @@ jobs:
           pkg="$(find target/macos -maxdepth 1 -type f -name 'OccluView-*-aarch64.pkg' -print -quit)"
           test -n "$dmg" && test -n "$pkg"
           hdiutil verify "$dmg"
-          pkgutil --payload-files "$pkg" | grep -F 'Applications/OccluView.app/Contents/MacOS/occluview'
+          pkgutil --payload-files "$pkg" | grep -F 'OccluView.app/Contents/MacOS/occluview'
           lipo -archs target/macos/OccluView.app/Contents/MacOS/occluview | grep -Fx arm64
           for notice in LICENSE NOTICE THIRD-PARTY-NOTICES.md THIRD-PARTY-NOTICES-NATIVE.md; do
             test -s "target/macos/OccluView.app/Contents/Resources/Legal/$notice"
