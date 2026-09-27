@@ -26,17 +26,6 @@ const COLLINEAR_FRACTION: f64 = 1e-6;
 /// degrees on 0.05 mm of click noise while the fit reported 0.004 mm.
 const MIN_OFF_LINE_SPREAD_MM: f64 = 2.0;
 
-/// Largest pair residual an accepted fit may leave, in millimetres. Each arrow
-/// joins the same anatomical point on both scans, so after the fit its two
-/// ends agree to within the click error; an arrow that stays farther apart
-/// joins two different points, and no rigid pose can honour it.
-const MAX_PAIR_ERROR_MM: f64 = 1.0;
-
-/// With two pairs the turn about the segment comes from the clicked normals.
-/// Each normal gives its own estimate; beyond this disagreement (radians,
-/// 20 degrees) the clicked surfaces do not agree on how the scan is turned.
-const MAX_TWO_PAIR_ROLL_DISAGREEMENT: f64 = 0.35;
-
 /// Accepted ratio of median fixed pair distances to median moving pair
 /// distances. Values outside this band indicate inconsistent units.
 const UNIT_RATIO_LOW: f64 = 0.5;
@@ -62,10 +51,9 @@ const MIN_OVERLAP_MM: f64 = 1.0;
 /// vector always clears it on at least one axis.
 const WEAK_AXIS_SHARE: f64 = 0.5;
 
-/// Cyclic Jacobi sweeps used to diagonalize the 4x4 Horn matrix, and power
-/// iterations used to find the dominant spread direction. Both are fixed
-/// counts rather than convergence-timed, so a result cannot drift between
-/// runs.
+/// Fixed cyclic Jacobi sweeps diagonalize the 4x4 Horn matrix; fixed power
+/// iterations find the dominant spread direction. The counts do not depend on
+/// convergence, so a result cannot drift between runs.
 const JACOBI_SWEEPS: usize = 24;
 /// Power iterations for the dominant spread direction.
 const POWER_ITERATIONS: usize = 32;
@@ -86,7 +74,7 @@ pub struct PairFit {
     pub unit_ratio: f64,
 }
 
-/// Why a fit was refused. Each variant carries what the operator needs to act.
+/// Why a fit is refused. Each variant carries what the operator needs to act.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FitRejection {
     /// Fewer complete pairs than any fit can use.
@@ -134,14 +122,15 @@ pub enum FitRejection {
     /// The surface had enough correspondences, but no trustworthy improvement
     /// over the current placement could be accepted.
     NoImprovement,
-    /// More than one coarse surface candidate was equally plausible.
+    /// More than one coarse surface candidate is equally plausible.
     Ambiguous,
-    /// A supplied point or normal was not finite.
+    /// A supplied point or normal is not finite.
     NonFinite,
-    /// The matching arrows do not describe one rigid pose: after the best fit,
-    /// an arrow's two ends still lie this far apart, in millimetres.
+    /// Two clicked normals cannot both face the fixed surface after their roll
+    /// estimates are averaged. `error_mm` converts the worst angular mismatch
+    /// to the lateral displacement it implies over the pair spacing.
     Inconsistent {
-        /// Largest remaining pair residual.
+        /// Equivalent lateral displacement, in millimetres.
         error_mm: f64,
     },
 }
@@ -197,6 +186,10 @@ impl FitBounds {
 /// are used only in the two-pair case. `bounds` says where the two meshes are
 /// and how big they are; a fit that does not leave them overlapping is refused
 /// as [`FitRejection::Apart`].
+///
+/// A successful result is a placement candidate. Its pair residuals are
+/// diagnostics; surface refinement and its trust gate decide whether a pose
+/// may authorize a deviation map.
 ///
 /// # Errors
 ///
@@ -280,11 +273,6 @@ fn finish(
     let count = residuals.len().max(1) as f64;
     let sum_squares: f64 = residuals.iter().map(|value| value * value).sum();
     let max_pair_err = residuals.iter().copied().fold(0.0, f64::max);
-    if max_pair_err > MAX_PAIR_ERROR_MM {
-        return Err(FitRejection::Inconsistent {
-            error_mm: max_pair_err,
-        });
-    }
     Ok(PairFit {
         rigid,
         pair_rms: (sum_squares / count).sqrt(),
@@ -528,14 +516,7 @@ fn two_pair_frame(
         Some(DQuat::from_mat3(&(fixed_frame * moving_frame.transpose())).normalize())
     };
     let rotation = match (estimate(0), estimate(1)) {
-        (Some(first), Some(second)) => {
-            if first.angle_between(second) > MAX_TWO_PAIR_ROLL_DISAGREEMENT {
-                return Err(FitRejection::Inconsistent {
-                    error_mm: two_pair_disagreement_mm(moving, first, second),
-                });
-            }
-            first.slerp(second, 0.5)
-        }
+        (Some(first), Some(second)) => first.slerp(second, 0.5),
         (Some(only), None) | (None, Some(only)) => only,
         (None, None) => return Err(ALL_AXES_WEAK),
     };
@@ -543,22 +524,18 @@ fn two_pair_frame(
     let fixed_centroid = (fixed[0] + fixed[1]) * 0.5;
     let rigid = Rigid::new(rotation, fixed_centroid - rotation * moving_centroid);
     for index in 0..MIN_PAIRS {
-        if rigid
-            .apply_normal(moving_normals[index])
-            .dot(fixed_normals[index].normalize_or_zero())
-            < 0.0
-        {
-            return Err(ALL_AXES_WEAK);
+        let alignment = rigid
+            .apply_normal(moving_normals[index].normalize_or_zero())
+            .dot(fixed_normals[index].normalize_or_zero());
+        if alignment <= 0.0 {
+            let angular_error = alignment.clamp(-1.0, 1.0).acos();
+            let segment_length = moving[0].distance(moving[1]);
+            return Err(FitRejection::Inconsistent {
+                error_mm: 2.0 * segment_length * (angular_error * 0.5).sin(),
+            });
         }
     }
     Ok(rigid)
-}
-
-/// How far apart two turn estimates put a point one segment length off the
-/// segment — the disagreement in the operator's units.
-fn two_pair_disagreement_mm(moving: &[DVec3], first: DQuat, second: DQuat) -> f64 {
-    let length = moving[0].distance(moving[1]);
-    2.0 * length * (first.angle_between(second) * 0.5).sin()
 }
 
 /// A right-handed basis from a segment and a surface normal at its start.
@@ -614,7 +591,7 @@ fn residuals_of(rigid: &Rigid, moving: &[DVec3], fixed: &[DVec3], keep: &[usize]
 /// [`TRIM_MEDIAN_FACTOR`] times that set's own residual (and more than
 /// [`TRIM_FLOOR_MM`]). Judging the candidate by the fit that contains it
 /// cannot work with few pairs: one wrong arrow among four drags the fit until
-/// every residual looks alike, and it was never dropped at any size.
+/// every residual looks alike, so the candidate stays in the set.
 fn worst_outlier(moving: &[DVec3], fixed: &[DVec3], keep: &[usize]) -> Option<usize> {
     let mut best: Option<(usize, f64, f64)> = None;
     for position in 0..keep.len() {

@@ -30,7 +30,41 @@ use rayon::prelude::*;
 use crate::sample::{sample_vertices, vertex_at};
 use crate::{Rigid, Soup, SurfaceIndex};
 
-use super::{symmetric_eigendecomposition, Orientation, RefineSettings, DENSE_BUDGET};
+use super::icp_solve::symmetric_eigendecomposition;
+use super::{Orientation, RefineSettings, DENSE_BUDGET, MIN_REFINEMENT_COVERAGE_FRACTION};
+
+/// Median limit, in millimetres, for either the untrimmed verification or the
+/// solve's correspondences. Correct real crop fits measure 0.00337-0.03345 mm.
+/// A prepared lower arch seats its unchanged region at 0.00000028 mm while its
+/// changed surface measures 0.446 mm; an unrelated synthetic partial fit
+/// measures 0.07034 mm in the solve and 0.09132 mm over the surface. Requiring
+/// one of the two medians to meet this limit admits intentional changes while
+/// refusing that false partial fit. Rival comparison handles low-residual
+/// wrong basins whose two medians overlap the correct range.
+const MAX_VERIFIED_MEDIAN_MM: f64 = 0.05;
+
+/// Smallest stability the tightly seated part must reach. Correct real crop
+/// fits measure at least 0.002847, while a perfectly symmetric cylinder has
+/// zero stability along its axis; 0.0005 stays below the measured correct fits
+/// and rejects that unobservable pose. Wrong basins can also exceed this floor,
+/// so the rival check remains necessary.
+const MIN_VERIFIED_STABILITY: f64 = 0.0005;
+
+/// Whether verification has enough coverage and a stable seated region.
+///
+/// One of the independent whole-surface median and the solve's correspondence
+/// median must meet the 0.05 mm scan-agreement limit. This admits a changed
+/// arch when its unchanged region fits, but rejects a partial pair whose two
+/// medians both exceed scan agreement.
+pub(super) fn verification_holds(verification: &Verification, solve_median_mm: f64) -> bool {
+    verification.coverage.is_finite()
+        && verification.coverage >= MIN_REFINEMENT_COVERAGE_FRACTION
+        && verification.median_mm.is_finite()
+        && (verification.median_mm <= MAX_VERIFIED_MEDIAN_MM
+            || solve_median_mm.is_finite() && solve_median_mm <= MAX_VERIFIED_MEDIAN_MM)
+        && verification.stability.is_finite()
+        && verification.stability >= MIN_VERIFIED_STABILITY
+}
 
 /// A correspondence closer than this counts as tightly seated when judging
 /// whether the seated part alone determines the pose, in millimetres. Correct
@@ -68,7 +102,7 @@ pub(crate) struct VerificationInput<'a> {
 }
 
 impl Verification {
-    /// The verification of a pose nothing was measured at.
+    /// Verification result for a pose with no measurements.
     pub(crate) const NONE: Self = Self {
         coverage: 0.0,
         median_mm: f64::INFINITY,
