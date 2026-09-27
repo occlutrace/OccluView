@@ -339,6 +339,16 @@ fn macos_settings_offer_a_selectable_smooth_scroll_action() -> anyhow::Result<()
         egui::Event::PointerMoved(trigger),
         pointer_button(trigger, false),
     ])?;
+    let popup = popup_rect(&ctx, settings_popup_id())?;
+    let scroll_position = popup.center();
+    let _ = run(vec![
+        egui::Event::PointerMoved(scroll_position),
+        egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -1_000.0),
+            modifiers: egui::Modifiers::NONE,
+        },
+    ])?;
     let visible = run(Vec::new())?;
     let rendered_text = visible
         .output
