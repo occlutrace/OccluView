@@ -143,11 +143,18 @@ mod tests {
         let locale = crate::i18n::LocaleManager::for_tests();
 
         let summary = load_failure_summary(&locale, "Add", &error);
+        let summary_without_directional_marks: String = summary
+            .chars()
+            .filter(|character| !matches!(character, '\u{2068}' | '\u{2069}'))
+            .collect();
         assert!(
-            summary.contains("2.5 GB"),
+            summary_without_directional_marks.contains("2.5 GB"),
             "estimate missing from {summary}"
         );
-        assert!(summary.contains("2.0 GB"), "limit missing from {summary}");
+        assert!(
+            summary_without_directional_marks.contains("2.0 GB"),
+            "limit missing from {summary}"
+        );
         assert!(
             summary.contains("Close layers"),
             "recovery advice missing from {summary}"
@@ -157,8 +164,13 @@ mod tests {
             estimated_bytes: (2_u64 << 30) + 1,
             limit: occluview_formats::SCENE_IMPORT_MEMORY_BUDGET_BYTES,
         });
+        let just_over_limit_summary = load_failure_summary(&locale, "Open", &just_over_limit);
+        let just_over_limit_without_directional_marks: String = just_over_limit_summary
+            .chars()
+            .filter(|character| !matches!(character, '\u{2068}' | '\u{2069}'))
+            .collect();
         assert!(
-            load_failure_summary(&locale, "Open", &just_over_limit).contains("2.1 GB"),
+            just_over_limit_without_directional_marks.contains("2.1 GB"),
             "the rounded estimate must not read as the limit"
         );
     }
