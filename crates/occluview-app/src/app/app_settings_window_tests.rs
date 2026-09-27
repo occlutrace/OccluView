@@ -388,7 +388,10 @@ fn system_language_fallback_is_visible_for_an_unavailable_system_catalog() -> an
     let ctx = egui::Context::default();
     ctx.all_styles_mut(|style| style.animation_time = 0.0);
     let manager = locale_from_system_languages(&["ja-JP"]);
-    let expected_notice = manager.tr_with("settings-language-catalog-fallback", &[("tag", "ja")]);
+    let expected_notice = manager.tr_with(
+        crate::i18n::message_id!("settings-language-catalog-fallback"),
+        &[("tag", "ja")],
+    );
 
     let initial = run_tall_toolbar_frame_in(&ctx, Vec::new(), &manager)?;
     let _ = click_tall_in(&ctx, &manager, initial.settings_trigger.center())?;
@@ -408,7 +411,10 @@ fn explicit_language_hides_an_unrelated_system_fallback() -> anyhow::Result<()> 
     ctx.all_styles_mut(|style| style.animation_time = 0.0);
     let mut manager = locale_from_system_languages(&["ja-JP"]);
     manager.set_preference(UiLanguagePreference::Explicit("de"));
-    let unrelated_notice = manager.tr_with("settings-language-catalog-fallback", &[("tag", "ja")]);
+    let unrelated_notice = manager.tr_with(
+        crate::i18n::message_id!("settings-language-catalog-fallback"),
+        &[("tag", "ja")],
+    );
 
     let initial = run_tall_toolbar_frame_in(&ctx, Vec::new(), &manager)?;
     let _ = click_tall_in(&ctx, &manager, initial.settings_trigger.center())?;
@@ -427,7 +433,10 @@ fn explicit_language_fallback_is_visible_for_an_unavailable_catalog() -> anyhow:
     ctx.all_styles_mut(|style| style.animation_time = 0.0);
     let mut manager = locale_from_system_languages(&["de-DE"]);
     manager.set_preference(UiLanguagePreference::Explicit("ja"));
-    let expected_notice = manager.tr_with("settings-language-catalog-fallback", &[("tag", "ja")]);
+    let expected_notice = manager.tr_with(
+        crate::i18n::message_id!("settings-language-catalog-fallback"),
+        &[("tag", "ja")],
+    );
 
     let initial = run_tall_toolbar_frame_in(&ctx, Vec::new(), &manager)?;
     let _ = click_tall_in(&ctx, &manager, initial.settings_trigger.center())?;

@@ -26,7 +26,10 @@ pub(crate) fn layer_label(
     if let Some(name) = entry.mesh.name().filter(|name| !name.is_empty()) {
         return name.to_owned();
     }
-    locale.tr_with("layer-unnamed", &[("n", &(index + 1).to_string())])
+    locale.tr_with(
+        crate::i18n::message_id!("layer-unnamed"),
+        &[("n", &(index + 1).to_string())],
+    )
 }
 
 /// ASCII fallback stem for default export filenames. Not localized: a

@@ -198,7 +198,7 @@ pub(crate) fn show(
 ) -> Option<MeshEditorAction> {
     let width = window_width(viewport_rect);
     let mut action = None;
-    egui::Window::new(locale.text("meshedit-window-title"))
+    egui::Window::new(locale.text(crate::i18n::message_id!("meshedit-window-title")))
         .id(egui::Id::new("occluview_mesh_editor_window"))
         .default_pos(default_pos(viewport_rect))
         .constrain_to(viewport_rect)
@@ -229,7 +229,11 @@ fn window_action(
     // Done/Cancel can still resolve or abort the pending sculpt.
     let ops_enabled = !state.busy && !state.sculpt_pending;
 
-    groups::header(ui, &locale.tr("meshedit-header-edit"), AppIcon::EditMesh);
+    groups::header(
+        ui,
+        &locale.tr(crate::i18n::message_id!("meshedit-header-edit")),
+        AppIcon::EditMesh,
+    );
     let mut action = groups::tab_strip(ui, &state, locale);
     ui.add_space(4.0);
     match state.active_tab {

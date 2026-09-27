@@ -1,6 +1,8 @@
 #![allow(clippy::expect_used, clippy::panic)]
 
 use super::*;
+#[cfg(target_os = "linux")]
+use roxmltree::Document;
 
 #[test]
 fn native_options_use_the_low_latency_surface_contract() {
@@ -554,6 +556,29 @@ fn installed_shell_entry(name: &str) -> String {
     })
 }
 
+#[cfg(target_os = "linux")]
+fn desktop_entry_value<'a>(desktop: &'a str, key: &str) -> Option<&'a str> {
+    let mut in_desktop_entry = false;
+    for line in desktop.lines().map(str::trim) {
+        if let Some(section) = line
+            .strip_prefix('[')
+            .and_then(|line| line.strip_suffix(']'))
+        {
+            in_desktop_entry = section == "Desktop Entry";
+            continue;
+        }
+        if !in_desktop_entry || line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some((name, value)) = line.split_once('=') {
+            if name.trim() == key {
+                return Some(value.trim());
+            }
+        }
+    }
+    None
+}
+
 /// The identity the window is created with is the one the installed desktop
 /// entry is named after and declares back.
 ///
@@ -571,9 +596,7 @@ fn linux_window_identity_matches_desktop_metadata() {
         .expect("a Linux window must declare an app id, or nothing can match it to an entry");
 
     let entry = installed_shell_entry(&format!("{app_id}.desktop"));
-    let window_class = entry
-        .lines()
-        .find_map(|line| line.strip_prefix("StartupWMClass="));
+    let window_class = desktop_entry_value(&entry, "StartupWMClass");
 
     assert_eq!(
         window_class,
@@ -597,14 +620,24 @@ fn linux_window_identity_matches_the_installed_appstream_entry() {
         .expect("a Linux window must declare an app id, or nothing can match it to an entry");
 
     let metainfo = installed_shell_entry(&format!("{app_id}.metainfo.xml"));
-    let launchable = format!("<launchable type=\"desktop-id\">{app_id}.desktop</launchable>");
+    let xml = Document::parse(&metainfo).expect("AppStream metadata is well-formed XML");
 
     assert!(
-        metainfo.contains(&format!("<id>{app_id}</id>")),
+        xml.descendants().any(|node| {
+            node.is_element()
+                && node.tag_name().name() == "id"
+                && node.text() == Some(app_id.as_str())
+        }),
         "the catalogue id has to be the window's own app id"
     );
+    let expected_desktop = format!("{app_id}.desktop");
     assert!(
-        metainfo.contains(&launchable),
+        xml.descendants().any(|node| {
+            node.is_element()
+                && node.tag_name().name() == "launchable"
+                && node.attribute("type") == Some("desktop-id")
+                && node.text() == Some(expected_desktop.as_str())
+        }),
         "the entry has to launch the desktop file that carries that id"
     );
 }

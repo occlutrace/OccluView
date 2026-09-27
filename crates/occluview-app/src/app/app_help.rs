@@ -31,16 +31,22 @@ impl OccluViewApp {
             |ui| {
                 ui.set_width(668.0_f32.min(ui.available_width()));
                 ui.label(
-                    egui::RichText::new(self.ui.locale.text("help-title"))
-                        .size(18.0)
-                        .strong()
-                        .color(ui_theme::text()),
+                    egui::RichText::new(
+                        self.ui.locale.text(crate::i18n::message_id!("help-title")),
+                    )
+                    .size(18.0)
+                    .strong()
+                    .color(ui_theme::text()),
                 );
                 ui.add_space(2.0);
                 ui.label(
-                    egui::RichText::new(self.ui.locale.text("help-subtitle"))
-                        .size(11.5)
-                        .color(ui_theme::text_weak()),
+                    egui::RichText::new(
+                        self.ui
+                            .locale
+                            .text(crate::i18n::message_id!("help-subtitle")),
+                    )
+                    .size(11.5)
+                    .color(ui_theme::text_weak()),
                 );
                 ui.add_space(8.0);
 
@@ -100,7 +106,10 @@ impl OccluViewApp {
                     egui::vec2(ui.available_width(), 30.0),
                     egui::Layout::right_to_left(egui::Align::Center),
                     |ui| {
-                        if ui.button(self.ui.locale.text("help-close")).clicked() {
+                        if ui
+                            .button(self.ui.locale.text(crate::i18n::message_id!("help-close")))
+                            .clicked()
+                        {
                             close = true;
                         }
                     },

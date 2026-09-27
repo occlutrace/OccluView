@@ -97,7 +97,7 @@ fn show_material_actions(
         LayerMenuButton::new(
             AppIcon::Palette,
             "Next tint",
-            "layer-menu-next-tint",
+            crate::i18n::message_id!("layer-menu-next-tint"),
             true,
             LayerContextAction::NextTint,
         ),
@@ -107,13 +107,13 @@ fn show_material_actions(
     let (colors_label, colors_key, colors_icon) = if target.show_vertex_colors {
         (
             "Hide scan colors",
-            "layer-menu-hide-colors",
+            crate::i18n::message_id!("layer-menu-hide-colors"),
             AppIcon::ScanColors,
         )
     } else {
         (
             "Show scan colors",
-            "layer-menu-show-colors",
+            crate::i18n::message_id!("layer-menu-show-colors"),
             AppIcon::ScanColorsOff,
         )
     };
@@ -135,13 +135,13 @@ fn show_material_actions(
         let (texture_label, texture_key, texture_icon) = if target.show_texture {
             (
                 "Disable texture",
-                "layer-menu-disable-texture",
+                crate::i18n::message_id!("layer-menu-disable-texture"),
                 AppIcon::Texture,
             )
         } else {
             (
                 "Show texture",
-                "layer-menu-show-texture",
+                crate::i18n::message_id!("layer-menu-show-texture"),
                 AppIcon::TextureOff,
             )
         };
@@ -174,7 +174,7 @@ fn show_mesh_edit_actions(
         LayerMenuButton::new(
             AppIcon::EditMesh,
             "Mesh Editing",
-            "layer-menu-mesh-editing",
+            crate::i18n::message_id!("layer-menu-mesh-editing"),
             target.face_editable,
             LayerContextAction::EditMesh,
         ),
@@ -187,7 +187,7 @@ fn show_mesh_edit_actions(
         LayerMenuButton::new(
             AppIcon::BridgeSplit,
             "Split bridge...",
-            "layer-menu-split-bridge",
+            crate::i18n::message_id!("layer-menu-split-bridge"),
             target.visible && target.face_editable,
             LayerContextAction::BridgeSplit,
         ),
@@ -200,7 +200,7 @@ fn show_mesh_edit_actions(
         LayerMenuButton::new(
             AppIcon::Repair,
             "Mesh Repair",
-            "layer-menu-repair",
+            crate::i18n::message_id!("layer-menu-repair"),
             target.face_editable,
             LayerContextAction::RepairMesh,
         ),
@@ -213,7 +213,7 @@ fn show_mesh_edit_actions(
         LayerMenuButton::new(
             AppIcon::FlipNormals,
             "Flip normals",
-            "layer-menu-flip-normals",
+            crate::i18n::message_id!("layer-menu-flip-normals"),
             target.face_editable,
             LayerContextAction::InvertNormals,
         ),
@@ -226,7 +226,7 @@ fn show_mesh_edit_actions(
         LayerMenuButton::new(
             AppIcon::Export,
             "Export layer...",
-            "layer-menu-export",
+            crate::i18n::message_id!("layer-menu-export"),
             target.can_export,
             LayerContextAction::ExportLayer,
         ),
@@ -251,7 +251,7 @@ fn show_contact_actions(
             LayerMenuButton::new(
                 AppIcon::Contacts,
                 "Hide contacts",
-                "layer-menu-hide-contacts",
+                crate::i18n::message_id!("layer-menu-hide-contacts"),
                 true,
                 LayerContextAction::HideContacts,
             )
@@ -272,7 +272,7 @@ fn show_contact_actions(
         LayerMenuButton::new(
             AppIcon::Contacts,
             "Show contacts",
-            "layer-menu-contacts",
+            crate::i18n::message_id!("layer-menu-contacts"),
             target.can_read_contacts,
             LayerContextAction::Contacts,
         ),
@@ -280,7 +280,8 @@ fn show_contact_actions(
         locale,
     );
     if !target.can_read_contacts {
-        response.on_hover_text(locale.tr("layer-menu-contacts-unavailable"));
+        response
+            .on_hover_text(locale.tr(crate::i18n::message_id!("layer-menu-contacts-unavailable")));
     }
 }
 
@@ -296,9 +297,9 @@ fn show_layer_actions(
         "Wireframe overlay"
     };
     let wireframe_key = if target.wireframe {
-        "layer-menu-hide-wireframe"
+        crate::i18n::message_id!("layer-menu-hide-wireframe")
     } else {
-        "layer-menu-show-wireframe"
+        crate::i18n::message_id!("layer-menu-show-wireframe")
     };
     layer_menu_button(
         ui,
@@ -320,7 +321,7 @@ fn show_layer_actions(
         LayerMenuButton::new(
             AppIcon::Trash,
             "Remove layer",
-            "layer-menu-remove",
+            crate::i18n::message_id!("layer-menu-remove"),
             true,
             LayerContextAction::Remove,
         ),
@@ -336,7 +337,7 @@ struct LayerMenuButton<'a> {
     #[allow(dead_code)]
     label: &'a str,
     /// Catalog key rendering the localized label.
-    key: &'static str,
+    key: crate::i18n::MessageId,
     enabled: bool,
     action: LayerContextAction,
     selected: Option<bool>,
@@ -346,7 +347,7 @@ impl<'a> LayerMenuButton<'a> {
     const fn new(
         icon: AppIcon,
         label: &'a str,
-        key: &'static str,
+        key: crate::i18n::MessageId,
         enabled: bool,
         action: LayerContextAction,
     ) -> Self {

@@ -34,12 +34,19 @@ impl OccluViewApp {
             |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
-                        egui::RichText::new(self.ui.locale.tr("about-licenses"))
-                            .strong()
-                            .color(ui_theme::text()),
+                        egui::RichText::new(
+                            self.ui
+                                .locale
+                                .tr(crate::i18n::message_id!("about-licenses")),
+                        )
+                        .strong()
+                        .color(ui_theme::text()),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button(self.ui.locale.tr("help-close")).clicked() {
+                        if ui
+                            .button(self.ui.locale.tr(crate::i18n::message_id!("help-close")))
+                            .clicked()
+                        {
                             close = true;
                         }
                     });

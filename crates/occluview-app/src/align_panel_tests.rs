@@ -129,7 +129,7 @@ fn the_exclusion_brush_is_offered_on_the_automatic_tab_only() {
     let locale = crate::i18n::LocaleManager::for_tests();
     let ctx = egui::Context::default();
     ctx.enable_accesskit();
-    let brush = locale.tr("align-exclude");
+    let brush = locale.tr(crate::i18n::message_id!("align-exclude"));
 
     for (tab, expected) in [
         (super::AlignTab::Automatically, true),
@@ -161,7 +161,7 @@ fn the_orientation_rule_is_disabled_while_a_fit_runs() {
     use occluview_align::Orientation;
 
     let locale = crate::i18n::LocaleManager::for_tests();
-    let target = locale.tr("align-orientation-match");
+    let target = locale.tr(crate::i18n::message_id!("align-orientation-match"));
     let ctx = egui::Context::default();
     ctx.enable_accesskit();
 

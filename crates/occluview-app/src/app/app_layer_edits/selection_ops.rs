@@ -12,6 +12,7 @@ use super::structural::{
 };
 use super::whole_mesh::{edit_command_for_layer_action, layer_edit_status};
 use super::{resolve_layer, with_undoable_note, SelectedFaceEditContext};
+use crate::i18n::message_id;
 use occluview_core::{
     crop_mesh_to_selected_faces, delete_selected_faces_in_mesh,
     selected_connected_components_in_mesh, CoreError, MeshEditOptions, SceneMeshId,
@@ -26,9 +27,10 @@ pub(super) fn apply_selected_face_mesh_edit_action_with_status(
 ) -> LayerContextApply {
     let layer_label = resolve_layer(scene, paths, &request, &app.ui.locale).map_or_else(
         || {
-            app.ui
-                .locale
-                .tr_with("layer-unnamed", &[("n", &(request.index + 1).to_string())])
+            app.ui.locale.tr_with(
+                message_id!("layer-unnamed"),
+                &[("n", &(request.index + 1).to_string())],
+            )
         },
         |(_, label)| label,
     );
@@ -38,11 +40,11 @@ pub(super) fn apply_selected_face_mesh_edit_action_with_status(
             LayerContextAction::CropToSelectedFaces => app
                 .ui
                 .locale
-                .tr_with("select-covers-all", &[("layer", &layer_label)]),
-            _ => app
-                .ui
-                .locale
-                .tr_with("select-covers-remove", &[("layer", &layer_label)]),
+                .tr_with(message_id!("select-covers-all"), &[("layer", &layer_label)]),
+            _ => app.ui.locale.tr_with(
+                message_id!("select-covers-remove"),
+                &[("layer", &layer_label)],
+            ),
         });
         return LayerContextApply::default();
     }
@@ -52,7 +54,7 @@ pub(super) fn apply_selected_face_mesh_edit_action_with_status(
     if request.action == LayerContextAction::SeparateSelectedComponents {
         if let Some(parts) = separate_component_overflow(scene, &request, &app.document.edit_mode) {
             app.ui.status_message = Some(app.ui.locale.tr_with(
-                "select-splits",
+                message_id!("select-splits"),
                 &[("parts", &parts.to_string()), ("layer", &layer_label)],
             ));
             return LayerContextApply::default();
@@ -98,15 +100,15 @@ pub(super) fn apply_selected_face_mesh_edit_action_with_status(
                         separate_component_overflow(scene, &request, &app.document.edit_mode)
                     {
                         app.ui.locale.tr_with(
-                            "select-splits",
+                            message_id!("select-splits"),
                             &[("parts", &parts.to_string()), ("layer", &layer_label)],
                         )
                     } else if has_selection {
                         app.ui
                             .locale
-                            .tr_with("edit-no-changes", &[("layer", &layer_label)])
+                            .tr_with(message_id!("edit-no-changes"), &[("layer", &layer_label)])
                     } else {
-                        app.ui.locale.tr("edit-select-faces-first")
+                        app.ui.locale.tr(message_id!("edit-select-faces-first"))
                     },
                 );
             }
@@ -114,12 +116,12 @@ pub(super) fn apply_selected_face_mesh_edit_action_with_status(
         }
         Err(error) => {
             let summary = app.ui.locale.tr_with(
-                "edit-apply-failed-summary",
+                message_id!("edit-apply-failed-summary"),
                 &[("detail", &error.to_string())],
             );
             app.ui.status_message = Some(summary.clone());
             app.ui.app_error = Some(AppErrorDialog {
-                title: app.ui.locale.tr("edit-apply-failed-title"),
+                title: app.ui.locale.tr(message_id!("edit-apply-failed-title")),
                 summary,
                 details: format!(
                     "Selection edit failed\n\nLayer:\n{layer_label}\n\nError:\n{error:#}"
@@ -176,7 +178,7 @@ pub(super) fn apply_visible_selection_action_with_status(
                 app.document.mark_mesh_edits_unsaved(id);
             }
             app.ui.status_message = Some(app.ui.locale.tr_plural(
-                "batchedit-status",
+                message_id!("batchedit-status"),
                 &[(
                     "label",
                     &super::whole_mesh::batch_action_label(action, &app.ui.locale),
@@ -186,17 +188,17 @@ pub(super) fn apply_visible_selection_action_with_status(
             apply
         }
         Ok(_) => {
-            app.ui.status_message = Some(app.ui.locale.tr("edit-no-changes-hidden"));
+            app.ui.status_message = Some(app.ui.locale.tr(message_id!("edit-no-changes-hidden")));
             LayerContextApply::default()
         }
         Err(error) => {
             let summary = app.ui.locale.tr_with(
-                "edit-apply-failed-summary",
+                message_id!("edit-apply-failed-summary"),
                 &[("detail", &error.to_string())],
             );
             app.ui.status_message = Some(summary.clone());
             app.ui.app_error = Some(AppErrorDialog {
-                title: app.ui.locale.tr("edit-apply-failed-title"),
+                title: app.ui.locale.tr(message_id!("edit-apply-failed-title")),
                 summary,
                 details: format!("Multi-layer selection edit failed\n\nError:\n{error:#}"),
                 action: AppErrorAction::None,

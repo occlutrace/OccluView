@@ -67,12 +67,17 @@ fn toggle(
         if ui
             .add_enabled(
                 enabled,
-                egui::Checkbox::new(&mut shown, locale.tr("align-map-heatmap").as_str()),
+                egui::Checkbox::new(
+                    &mut shown,
+                    locale
+                        .tr(crate::i18n::message_id!("align-map-heatmap"))
+                        .as_str(),
+                ),
             )
             .on_hover_text(if enabled {
-                locale.tr("align-map-heatmap-hint")
+                locale.tr(crate::i18n::message_id!("align-map-heatmap-hint"))
             } else {
-                locale.tr("align-map-requires-refine")
+                locale.tr(crate::i18n::message_id!("align-map-requires-refine"))
             })
             .changed()
         {
@@ -101,7 +106,7 @@ fn range(
         .clamp(WORKING_SCALE_MIN_MM, settings.scale_mm - 0.001);
     let mut changed = false;
     ui.horizontal(|ui| {
-        ui.label(locale.tr("align-map-min"));
+        ui.label(locale.tr(crate::i18n::message_id!("align-map-min")));
         let minimum = ui.add_enabled(
             enabled,
             egui::DragValue::new(&mut settings.min_display_mm)
@@ -115,7 +120,7 @@ fn range(
     });
     align_overlay::paint_legend(ui, *settings, locale);
     ui.horizontal(|ui| {
-        ui.label(locale.tr("align-map-max"));
+        ui.label(locale.tr(crate::i18n::message_id!("align-map-max")));
         let maximum = ui.add_enabled(
             enabled,
             egui::DragValue::new(&mut settings.scale_mm)

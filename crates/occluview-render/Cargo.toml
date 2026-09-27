@@ -25,3 +25,4 @@ occluview-core = { workspace = true }
 [dev-dependencies]
 image     = { workspace = true }
 pollster  = { workspace = true }
+naga      = { workspace = true }

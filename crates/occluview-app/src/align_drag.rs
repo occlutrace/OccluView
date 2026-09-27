@@ -25,11 +25,11 @@ pub(crate) enum DragConstraint {
 
 impl DragConstraint {
     /// Catalog key rendering the localized constraint label.
-    pub(crate) fn label_key(self) -> &'static str {
+    pub(crate) fn label_key(self) -> crate::i18n::MessageId {
         match self {
-            Self::Free => "align-constraint-free",
-            Self::ZOnly => "align-constraint-z",
-            Self::XyPlane => "align-constraint-xy",
+            Self::Free => crate::i18n::message_id!("align-constraint-free"),
+            Self::ZOnly => crate::i18n::message_id!("align-constraint-z"),
+            Self::XyPlane => crate::i18n::message_id!("align-constraint-xy"),
         }
     }
 
@@ -44,11 +44,11 @@ impl DragConstraint {
     }
 
     /// Catalog key rendering the localized one-line hint.
-    pub(crate) fn hint_key(self) -> &'static str {
+    pub(crate) fn hint_key(self) -> crate::i18n::MessageId {
         match self {
-            Self::Free => "align-constraint-free-hint",
-            Self::ZOnly => "align-constraint-z-hint",
-            Self::XyPlane => "align-constraint-xy-hint",
+            Self::Free => crate::i18n::message_id!("align-constraint-free-hint"),
+            Self::ZOnly => crate::i18n::message_id!("align-constraint-z-hint"),
+            Self::XyPlane => crate::i18n::message_id!("align-constraint-xy-hint"),
         }
     }
 }

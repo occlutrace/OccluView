@@ -46,7 +46,7 @@ pub(super) fn apply_layer_context_action_with_status(
     request: LayerContextRequest,
 ) -> LayerContextApply {
     if app.tools.bridge_split_active() {
-        app.ui.status_message = Some(app.ui.locale.tr("bridge-busy"));
+        app.ui.status_message = Some(app.ui.locale.tr(crate::i18n::message_id!("bridge-busy")));
         return LayerContextApply::default();
     }
 
@@ -116,11 +116,10 @@ pub(super) fn apply_layer_context_action_with_status(
     };
     let apply = layer_actions::apply_layer_context_action(scene, request);
     if apply.scene_changed {
-        app.ui.status_message = Some(
-            app.ui
-                .locale
-                .tr_with("layer-removed", &[("label", &removed_label)]),
-        );
+        app.ui.status_message = Some(app.ui.locale.tr_with(
+            crate::i18n::message_id!("layer-removed"),
+            &[("label", &removed_label)],
+        ));
     }
     apply
 }
@@ -148,17 +147,15 @@ fn begin_face_selection_with_status(
         // mesh-editor action. This removes the one-time weld/adjacency wait
         // from the first sculpt stroke without blocking the editor UI.
         app.prepare_armed_sculpt_session();
-        app.ui.status_message = Some(
-            app.ui
-                .locale
-                .tr_with("layer-face-selection", &[("label", &layer_label)]),
-        );
+        app.ui.status_message = Some(app.ui.locale.tr_with(
+            crate::i18n::message_id!("layer-face-selection"),
+            &[("label", &layer_label)],
+        ));
     } else {
-        app.ui.status_message = Some(
-            app.ui
-                .locale
-                .tr_with("select-faces-cannot", &[("layer", &layer_label)]),
-        );
+        app.ui.status_message = Some(app.ui.locale.tr_with(
+            crate::i18n::message_id!("select-faces-cannot"),
+            &[("layer", &layer_label)],
+        ));
     }
 }
 
@@ -195,7 +192,10 @@ pub(super) fn with_undoable_note(
     if edit_mode.last_edit_undoable() {
         status
     } else {
-        locale.tr_with("edit-locked-status", &[("status", &status)])
+        locale.tr_with(
+            crate::i18n::message_id!("edit-locked-status"),
+            &[("status", &status)],
+        )
     }
 }
 
@@ -217,7 +217,7 @@ pub(super) enum LayerEditResolution {
 /// The busy-session refusal shared by every token-based executor: no
 /// snapshot is taken, so there is nothing to finish.
 pub(super) fn refuse_busy_layer_edit(ui: &mut UiState) -> LayerContextApply {
-    let busy = ui.locale.tr("repair-edit-busy");
+    let busy = ui.locale.tr(crate::i18n::message_id!("repair-edit-busy"));
     ui.status_message = Some(busy);
     LayerContextApply::default()
 }
@@ -253,14 +253,16 @@ pub(super) fn commit_layer_edit(
         }
         LayerEditResolution::Failed { error, layer_label } => {
             let summary = ui.locale.tr_with(
-                "repair-edit-failed-summary",
+                crate::i18n::message_id!("repair-edit-failed-summary"),
                 &[("detail", &error.to_string())],
             );
             let _ = document
                 .edit_mode
                 .finish_layer_edit_error(token, error.to_string());
             ui.status_message = Some(summary.clone());
-            let title = ui.locale.tr("repair-edit-failed-title");
+            let title = ui
+                .locale
+                .tr(crate::i18n::message_id!("repair-edit-failed-title"));
             ui.app_error = Some(AppErrorDialog {
                 title,
                 summary,

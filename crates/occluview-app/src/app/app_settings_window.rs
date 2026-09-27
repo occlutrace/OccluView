@@ -3,6 +3,7 @@
 use super::app_settings_panel::{settings_popup_id, show_settings_popup, SettingsAction};
 use super::information_dialog::InformationDialog;
 use super::OccluViewApp;
+use crate::i18n::message_id;
 use crate::icons::AppIcon;
 use crate::ui_theme;
 use eframe::egui;
@@ -136,20 +137,20 @@ impl OccluViewApp {
                         ui.add(egui::Image::new((logo.id(), egui::vec2(48.0, 48.0))));
                     }
                     ui.label(
-                        egui::RichText::new(self.ui.locale.text("about-title"))
+                        egui::RichText::new(self.ui.locale.text(message_id!("about-title")))
                             .size(19.0)
                             .strong()
                             .color(ui_theme::text()),
                     );
                     ui.label(
-                        egui::RichText::new(self.ui.locale.text("about-tagline"))
+                        egui::RichText::new(self.ui.locale.text(message_id!("about-tagline")))
                             .size(12.0)
                             .color(ui_theme::text_weak()),
                     );
                     ui.add_space(4.0);
                     ui.label(
                         egui::RichText::new(self.ui.locale.text_with(
-                            "about-version",
+                            message_id!("about-version"),
                             Some(&crate::i18n::catalog::args(&[(
                                 "version",
                                 env!("CARGO_PKG_VERSION"),
@@ -169,7 +170,7 @@ impl OccluViewApp {
                         ui,
                         ABOUT_ACTION_WIDTH,
                         AppIcon::Globe,
-                        &self.ui.locale.tr("about-website"),
+                        &self.ui.locale.tr(message_id!("about-website")),
                     ) {
                         open_url = Some("https://occlutrace.ai");
                     }
@@ -177,7 +178,7 @@ impl OccluViewApp {
                         ui,
                         ABOUT_ACTION_WIDTH,
                         AppIcon::Github,
-                        &self.ui.locale.tr("about-source"),
+                        &self.ui.locale.tr(message_id!("about-source")),
                     ) {
                         open_url = Some("https://github.com/occlutrace/OccluView");
                     }
@@ -188,7 +189,7 @@ impl OccluViewApp {
                         ui,
                         ABOUT_ACTION_WIDTH * 2.0 + ABOUT_ACTION_GAP,
                         AppIcon::Licenses,
-                        &self.ui.locale.tr("about-licenses"),
+                        &self.ui.locale.tr(message_id!("about-licenses")),
                     ) {
                         open_third_party = true;
                     }
@@ -196,12 +197,15 @@ impl OccluViewApp {
                 ui.add_space(2.0);
                 centered_about_row(ui, ABOUT_FOOTER_WIDTH, |ui| {
                     ui.label(
-                        egui::RichText::new(self.ui.locale.tr("about-license-kind"))
+                        egui::RichText::new(self.ui.locale.tr(message_id!("about-license-kind")))
                             .size(10.5)
                             .color(ui_theme::text_muted()),
                     );
                     ui.add_space(10.0);
-                    if ui.button(self.ui.locale.tr("help-close")).clicked() {
+                    if ui
+                        .button(self.ui.locale.tr(message_id!("help-close")))
+                        .clicked()
+                    {
                         close = true;
                     }
                 });

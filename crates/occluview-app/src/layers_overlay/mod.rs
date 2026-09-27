@@ -136,10 +136,14 @@ fn show_header(
     layer_count: usize,
     locale: &crate::i18n::LocaleManager,
 ) {
-    let count_text = locale.tr_plural("layers-count", &[], &[("count", layer_count)]);
+    let count_text = locale.tr_plural(
+        crate::i18n::message_id!("layers-count"),
+        &[],
+        &[("count", layer_count)],
+    );
     ui.horizontal(|ui| {
         ui.label(
-            egui::RichText::new(locale.tr("layers-title"))
+            egui::RichText::new(locale.tr(crate::i18n::message_id!("layers-title")))
                 .color(ui_theme::text())
                 .size(12.0)
                 .strong(),
