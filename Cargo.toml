@@ -1,19 +1,9 @@
 # OccluView — Cargo workspace root.
 #
-# Workspace layering:
-#   geometry-math ← (nothing; shared constants + trivial pure math)
-#   mesh-edit     → geometry-math
-#   hps           → geometry-math (no other OccluView crates)
-#   align         ← (nothing OccluView; plain slices in, plain values out)
-#   core          → mesh-edit + geometry-math (+ optional robust-csg bridge fallback)
-#   formats       → core + hps
-#   render        → core
-#   thumbnail     → core + render + formats
-#   shell         → core + render + formats + thumbnail
-#   app           → core + formats + render + align + update (+ shell on Windows for installer refresh)
-#   cli           → core + formats + render + thumbnail
-#   update        → (nothing)
-# Cycles are P0. Never add an upward dependency.
+# Workspace layering is declared in [workspace.metadata.layer-ranks], from
+# shared leaves upward. A crate may depend only on a lower-ranked crate; the
+# workspace test checks Cargo's dependency graph against these ranks.
+# Cycles are P0; never add an upward dependency.
 #
 # License: Apache-2.0 (NOTICE + LICENSE).
 
@@ -23,6 +13,7 @@ members = [
     "crates/occlu-geometry-math",
     "crates/occlu-mesh-edit",
     "crates/occluview-robust-csg",
+    "crates/occluview-surface-query",
     "crates/occluview-align",
     "crates/occluview-contact",
     "crates/occluview-core",
@@ -43,6 +34,7 @@ exclude = ["fuzz"]
 default-members = [
     "crates/occlu-mesh-edit",
     "crates/occluview-align",
+    "crates/occluview-surface-query",
     "crates/occluview-contact",
     "crates/occluview-core",
     "crates/occluview-hps",
@@ -53,6 +45,27 @@ default-members = [
     "crates/occluview-app",
     "crates/occluview-cli",
 ]
+
+[workspace.metadata.layer-ranks]
+# Shared leaf libraries.
+occlu-geometry-math = 0
+occluview-robust-csg = 0
+occluview-surface-query = 0
+occluview-update = 0
+# Geometry kernels and parsers.
+occlu-mesh-edit = 1
+occluview-align = 1
+occluview-contact = 1
+occluview-hps = 1
+# Scene and application services.
+occluview-core = 2
+occluview-formats = 3
+occluview-render = 3
+occluview-thumbnail = 4
+# User-facing entry points.
+occluview-shell = 5
+occluview-app = 5
+occluview-cli = 5
 
 # Workspace-wide package metadata. Crates override only what they need.
 [workspace.package]
@@ -72,6 +85,7 @@ publish = false              # we are not on crates.io yet
 occlu-geometry-math = { path = "crates/occlu-geometry-math" }
 occlu-mesh-edit  = { path = "crates/occlu-mesh-edit" }
 occluview-robust-csg = { path = "crates/occluview-robust-csg" }
+occluview-surface-query = { path = "crates/occluview-surface-query" }
 occluview-align   = { path = "crates/occluview-align" }
 occluview-contact = { path = "crates/occluview-contact" }
 occluview-core    = { path = "crates/occluview-core" }

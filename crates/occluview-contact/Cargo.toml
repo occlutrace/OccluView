@@ -12,7 +12,7 @@ description = "Occlusal contact metrology: signed surface fields and clinical co
 
 [dependencies]
 glam = { workspace = true }
-occluview-align = { workspace = true }
+occluview-surface-query = { workspace = true }
 rayon = { workspace = true }
 
 [dev-dependencies]
