@@ -9,8 +9,9 @@
 #   formats       → core + hps
 #   render        → core
 #   thumbnail     → core + render + formats
-#   shell         → core + render + formats + thumbnail
-#   app           → core + formats + render + align + update (+ shell on Windows for installer refresh)
+#   i18n          → (nothing; shared Fluent catalogs and locale resolution)
+#   shell         → core + render + formats + thumbnail + i18n
+#   app           → core + formats + render + align + update + i18n (+ shell on Windows for installer refresh)
 #   cli           → core + formats + render + thumbnail
 #   update        → (nothing)
 # Cycles are P0. Never add an upward dependency.
@@ -21,6 +22,7 @@
 resolver = "2"
 members = [
     "crates/occlu-geometry-math",
+    "crates/occluview-i18n",
     "crates/occlu-mesh-edit",
     "crates/occluview-robust-csg",
     "crates/occluview-align",
@@ -70,6 +72,7 @@ publish = false              # we are not on crates.io yet
 [workspace.dependencies]
 # Internal crates.
 occlu-geometry-math = { path = "crates/occlu-geometry-math" }
+occluview-i18n = { path = "crates/occluview-i18n" }
 occlu-mesh-edit  = { path = "crates/occlu-mesh-edit" }
 occluview-robust-csg = { path = "crates/occluview-robust-csg" }
 occluview-align   = { path = "crates/occluview-align" }

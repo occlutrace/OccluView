@@ -31,24 +31,33 @@ fn the_changelog_only_names_versions_that_can_be_released() {
          of it would publish empty notes"
     );
 
-    // Every other section must be a version that was actually tagged. The
-    // newest one is the release being prepared; the rest are history.
+    // An optional unreleased section may lead the changelog. The newest
+    // numbered section is the release being prepared; the rest are history.
     let sections: Vec<&str> = changelog
         .lines()
         .filter(|line| line.starts_with("## "))
         .collect();
+    let unreleased_sections = sections
+        .iter()
+        .filter(|line| **line == "## Unreleased")
+        .count();
+    assert!(
+        unreleased_sections <= 1,
+        "the changelog may contain at most one Unreleased section"
+    );
+    let version_section = usize::from(sections.first().copied() == Some("## Unreleased"));
     assert!(
         sections
-            .first()
+            .get(version_section)
             .is_some_and(|first| first.starts_with(&heading)),
-        "the newest section should be the version about to ship, got {:?}",
-        sections.first()
+        "the newest numbered section should be the version about to ship, got {:?}",
+        sections.get(version_section)
     );
     // The rest are history, and history goes one way. A repeat, or an older
     // section above a newer one, means a local bump grew its own section
     // instead of folding into the release being prepared.
     let mut seen: Vec<[u64; 3]> = Vec::new();
-    for line in &sections {
+    for line in sections.iter().skip(version_section) {
         let Some(number) = line.split_whitespace().nth(1) else {
             panic!("changelog section without a version: {line:?}");
         };
@@ -91,7 +100,7 @@ fn the_changelog_only_names_versions_that_can_be_released() {
     let Some(first_tagged) = tags.iter().filter_map(|tag| parse_version(tag)).min() else {
         return;
     };
-    for line in sections.iter().skip(1) {
+    for line in sections.iter().skip(version_section + 1) {
         let Some(number) = line.split_whitespace().nth(1) else {
             continue;
         };

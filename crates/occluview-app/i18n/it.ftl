@@ -928,3 +928,13 @@ load-units-unclear = la dimensione non basta; verifichi con una misura nota
 contact-stats-balance-hover = Area di contatto divisa dalla linea mediana: prima / dopo la linea
 mesh-warning-vertex-alpha = l'alfa dei vertici non è stato scritto
 load-superseded-parked-open = Un'apertura più recente è in attesa: risponda prima al suo avviso
+
+shell-preview-open = Apri in OccluView
+shell-preview-edit = Modifica in OccluView
+shell-preview-front = Fronte
+shell-preview-top = Dall’alto
+shell-preview-side = Laterale
+shell-preview-isometric = Isometrica
+shell-preview-fit-view = Adatta vista
+shell-preview-wireframe = Reticolo
+shell-preview-copy-image = Copia immagine

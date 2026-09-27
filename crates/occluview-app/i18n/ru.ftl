@@ -1018,3 +1018,13 @@ load-units-unclear = по размеру не определить; провер
 contact-stats-balance-hover = Площадь контакта по средней линии: до линии / после линии
 mesh-warning-vertex-alpha = альфа вершин не записана
 load-superseded-parked-open = Ожидает более новый запрос на открытие: сначала ответьте на него
+
+shell-preview-open = Открыть в OccluView
+shell-preview-edit = Редактировать в OccluView
+shell-preview-front = Спереди
+shell-preview-top = Сверху
+shell-preview-side = Сбоку
+shell-preview-isometric = Изометрический вид
+shell-preview-fit-view = Вписать в окно
+shell-preview-wireframe = Каркас
+shell-preview-copy-image = Копировать изображение
