@@ -1,12 +1,18 @@
 use super::{AppErrorAction, AppErrorDialog, Error, PathBuf};
 
+const BYTES_PER_GIBIBYTE: f64 = 1_073_741_824.0;
+
+#[allow(clippy::cast_precision_loss)]
+fn gibibytes(bytes: u64) -> f64 {
+    bytes as f64 / BYTES_PER_GIBIBYTE
+}
+
 /// The sentence for a file above the import limit, in the operator's language.
 ///
 /// The format error's own text is English and prints raw byte counts
 /// (`file is 2147483648 bytes, larger than the 1073741824 byte limit`), so it
 /// cannot be interpolated into a localized sentence. The numbers are stated in
-/// gigabytes: the operator's next step depends on how far over the file is, not
-/// on its byte count.
+/// gibibytes to match the binary file limit.
 #[allow(clippy::cast_precision_loss)]
 fn too_large_summary(locale: &crate::i18n::LocaleManager, error: &Error) -> Option<String> {
     let occluview_formats::FormatError::TooLarge { bytes, limit } =
@@ -14,13 +20,11 @@ fn too_large_summary(locale: &crate::i18n::LocaleManager, error: &Error) -> Opti
     else {
         return None;
     };
-    // Tenths of a gigabyte: the operator needs to know how far over the file is,
-    // not its byte count, and the limit itself is a whole number of gigabytes.
-    let gib = (1_u64 << 30) as f64;
+    // Tenths of a gibibyte show how far the file exceeds the binary limit.
     Some(locale.tr_with(
         crate::i18n::message_id!("load-file-too-large"),
         &[
-            ("size", &format!("{:.1}", *bytes as f64 / gib)),
+            ("size", &format!("{:.1}", gibibytes(*bytes))),
             ("limit", &format!("{}", *limit >> 30)),
         ],
     ))
@@ -112,13 +116,12 @@ fn memory_budget_summary(locale: &crate::i18n::LocaleManager, error: &Error) -> 
     else {
         return None;
     };
-    let gib = (1_u64 << 30) as f64;
-    let size_gib = (*estimated_bytes as f64 / gib * 10.0).ceil() / 10.0;
+    let size_gib = (gibibytes(*estimated_bytes) * 10.0).ceil() / 10.0;
     Some(locale.tr_with(
         crate::i18n::message_id!("load-memory-budget-exceeded"),
         &[
             ("size", &format!("{size_gib:.1}")),
-            ("limit", &format!("{:.1}", *limit as f64 / gib)),
+            ("limit", &format!("{:.1}", gibibytes(*limit))),
         ],
     ))
 }
@@ -148,11 +151,11 @@ mod tests {
             .filter(|character| !matches!(character, '\u{2068}' | '\u{2069}'))
             .collect();
         assert!(
-            summary_without_directional_marks.contains("2.5 GB"),
+            summary_without_directional_marks.contains("2.5 GiB"),
             "estimate missing from {summary}"
         );
         assert!(
-            summary_without_directional_marks.contains("2.0 GB"),
+            summary_without_directional_marks.contains("2.0 GiB"),
             "limit missing from {summary}"
         );
         assert!(
@@ -170,8 +173,31 @@ mod tests {
             .filter(|character| !matches!(character, '\u{2068}' | '\u{2069}'))
             .collect();
         assert!(
-            just_over_limit_without_directional_marks.contains("2.1 GB"),
+            just_over_limit_without_directional_marks.contains("2.1 GiB"),
             "the rounded estimate must not read as the limit"
+        );
+    }
+
+    #[test]
+    fn file_size_failure_labels_binary_bytes_as_gibibytes() {
+        let error = Error::new(occluview_formats::FormatError::TooLarge {
+            bytes: 3_u64 << 30,
+            limit: 1_u64 << 30,
+        });
+        let locale = crate::i18n::LocaleManager::for_tests();
+
+        let summary = load_failure_summary(&locale, "Open", &error);
+        let summary_without_directional_marks: String = summary
+            .chars()
+            .filter(|character| !matches!(character, '\u{2068}' | '\u{2069}'))
+            .collect();
+        assert!(
+            summary_without_directional_marks.contains("3.0 GiB"),
+            "the measured file size is expressed in GiB: {summary}"
+        );
+        assert!(
+            summary_without_directional_marks.contains("1 GiB"),
+            "the file limit is expressed in GiB: {summary}"
         );
     }
 }

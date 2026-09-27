@@ -1,9 +1,9 @@
 //! The mesh data model.
 //!
 //! A [`Mesh`] is the unit of geometry that flows from a format loader, through
-//! the scene graph, into the renderer. It is GPU- and I/O-agnostic on purpose:
-//! `occluview-render` owns the GPU buffers, `occluview-formats` owns the
-//! readers/writers.
+//! the scene graph, into the renderer. It is GPU-API- and I/O-agnostic: the
+//! renderer owns the GPU buffers, formats owns the readers and writers, and
+//! this model provides byte estimates for the storage layout shared with it.
 //!
 //! ## Layout
 //!
@@ -367,11 +367,11 @@ impl Mesh {
         self.texture.as_ref()
     }
 
-    /// Estimate the CPU bytes retained by this mesh's owned geometry and image.
+    /// Estimate CPU bytes for this mesh's owned geometry, image, and picking tree.
     ///
     /// Vec capacities are used because their unused slots are still allocated.
-    /// A built ray-pick tree is included; callers that count a mesh in several
-    /// scene layers may count its shared storage more than once.
+    /// The estimate reserves for the picking tree before its lazy build and
+    /// includes the tree builder's live bounds array.
     #[must_use]
     pub fn estimated_memory_bytes(&self) -> u64 {
         let vertex_bytes = self.vertices.capacity().saturating_mul(size_of::<Vertex>());
@@ -380,15 +380,51 @@ impl Mesh {
             .texture
             .as_ref()
             .map_or(0, |texture| texture.rgba.capacity());
-        let bvh_bytes = self
+        let estimated_bvh_bytes = if self.kind == MeshKind::TriangleMesh && !self.indices.is_empty()
+        {
+            TriangleBvh::estimated_peak_memory_bytes_for_triangle_count(self.triangle_count())
+        } else {
+            0
+        };
+        let actual_bvh_bytes = self
             .bvh
             .get()
             .map_or(0, TriangleBvh::estimated_memory_bytes);
+        let bvh_bytes = estimated_bvh_bytes.max(actual_bvh_bytes);
         u64::try_from(vertex_bytes)
             .unwrap_or(u64::MAX)
             .saturating_add(u64::try_from(index_bytes).unwrap_or(u64::MAX))
             .saturating_add(u64::try_from(texture_bytes).unwrap_or(u64::MAX))
             .saturating_add(bvh_bytes)
+    }
+
+    /// Estimate GPU-resident bytes for this mesh's geometry and image.
+    ///
+    /// The optional wireframe allocation is counted when requested. Render
+    /// buffers use the same power-of-two capacity rule as the uploader.
+    #[must_use]
+    pub fn estimated_gpu_memory_bytes(&self, include_wireframe: bool) -> u64 {
+        let vertex_bytes = self.vertices.len().saturating_mul(size_of::<Vertex>());
+        let index_bytes = self.indices.len().saturating_mul(size_of::<u32>());
+        let mut total = Self::gpu_buffer_capacity_bytes(vertex_bytes)
+            .saturating_add(Self::gpu_buffer_capacity_bytes(index_bytes));
+        if include_wireframe && self.kind == MeshKind::TriangleMesh && !self.indices.is_empty() {
+            let wireframe_bytes = index_bytes.saturating_mul(2);
+            total = total.saturating_add(Self::gpu_buffer_capacity_bytes(wireframe_bytes));
+        }
+        if let Some(texture) = &self.texture {
+            total = total.saturating_add(u64::try_from(texture.rgba.len()).unwrap_or(u64::MAX));
+        }
+        total
+    }
+
+    /// Return the capacity used for a renderer geometry buffer of this byte length.
+    #[must_use]
+    pub fn gpu_buffer_capacity_bytes(required: usize) -> u64 {
+        u64::try_from(required.max(4))
+            .unwrap_or(u64::MAX)
+            .checked_next_power_of_two()
+            .unwrap_or(u64::MAX)
     }
 
     /// Attach a decoded texture image (e.g. from a glTF `image`). Used by

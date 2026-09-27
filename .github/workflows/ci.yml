@@ -203,7 +203,8 @@ jobs:
       - name: Install package and open a mesh through LaunchServices
         run: |
           pkg="$(find target/macos -maxdepth 1 -type f -name 'OccluView-*-aarch64.pkg' -print -quit)"
-          sample="fuzz/seeds/dispatch/one_triangle_binary.stl"
+          sample="fuzz/seeds/dispatch/one_facet_cc.hps"
+          warm_sample="$RUNNER_TEMP/occluview-warm-open.hps"
           log="$RUNNER_TEMP/occluview-scene-load.log"
           state_dir="$HOME/Library/Application Support/OccluView"
           test -n "$pkg"
@@ -213,7 +214,10 @@ jobs:
           sudo installer -pkg "$pkg" -target /
           test -d /Applications/OccluView.app
           test ! -e "$log"
-          open -a /Applications/OccluView.app "$sample"
+          /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
+            -f -R /Applications/OccluView.app
+          swift install/macos/check-launch-services.swift /Applications/OccluView.app
+          open "$sample"
           for attempt in $(seq 1 60); do
             if grep -Fq 'scene load completed' "$log" 2>/dev/null; then
               break
@@ -222,6 +226,21 @@ jobs:
           done
           grep -F 'scene load completed' "$log"
           grep -Eq 'path_count=1([[:space:]]|$)' "$log"
+          app_pid="$(pgrep -x occluview)"
+          test -n "$app_pid"
+          test "$(printf '%s\n' "$app_pid" | wc -l | tr -d ' ')" -eq 1
+          cp "$sample" "$warm_sample"
+          completed_before="$(grep -Fc 'scene load completed path_count=1' "$log")"
+          open "$warm_sample"
+          for attempt in $(seq 1 60); do
+            completed_after="$(grep -Fc 'scene load completed path_count=1' "$log" || true)"
+            if [ "$completed_after" -gt "$completed_before" ]; then
+              break
+            fi
+            sleep 1
+          done
+          test "$completed_after" -eq "$((completed_before + 1))"
+          test "$(pgrep -x occluview)" = "$app_pid"
           osascript -e 'tell application "OccluView" to quit' >/dev/null 2>&1 || true
 
   linux-renderer-tests:
@@ -274,13 +293,15 @@ jobs:
         with:
           toolchain: "1.98.0"
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-      - name: cargo test --workspace (without WARP pixel suites)
+      - name: cargo test --workspace (WARP required)
         env:
           OCCLUVIEW_REQUIRE_GPU_TESTS: "1"
-        run: >
-          cargo test --workspace --all-targets --locked --no-fail-fast --
-          --skip render_thumb::tests
-          --skip preview_scene::
+          # Thumbnail tests serialize access to one WARP device while each
+          # request keeps its caller's response deadline. Serializing the
+          # harness prevents unrelated tests from spending that budget while
+          # waiting for the shared renderer.
+          RUST_TEST_THREADS: "1"
+        run: cargo test --workspace --all-targets --locked --no-fail-fast
 
   docs:
     name: cargo doc

@@ -284,6 +284,12 @@ fn step_runs(workflow: &Value, job: &str, name: &str, command: &str) -> bool {
         .is_some_and(|run| run.trim() == command.trim())
 }
 
+fn step_contains(workflow: &Value, job: &str, name: &str, command: &str) -> bool {
+    workflow_step(workflow, job, name)
+        .and_then(|step| step["run"].as_str())
+        .is_some_and(|run| run.contains(command))
+}
+
 fn any_step_runs(workflow: &Value, job: &str, command: &str) -> bool {
     workflow["jobs"][job]["steps"]
         .as_sequence()
@@ -724,6 +730,44 @@ fn assert_ci_artifact_smokes(ci: &Value) {
         "Package and verify unsigned Apple Silicon app, DMG, and PKG",
         CI_MACOS_PACKAGE_SMOKE
     ));
+    for command in [
+        "lsregister",
+        "swift install/macos/check-launch-services.swift /Applications/OccluView.app",
+        "open \"$sample\"",
+        "open \"$warm_sample\"",
+        "pgrep -x occluview",
+    ] {
+        assert!(
+            step_contains(
+                ci,
+                "macos-arm",
+                "Install package and open a mesh through LaunchServices",
+                command
+            ),
+            "macOS LaunchServices smoke must include {command:?}"
+        );
+    }
+    let macos_open = workflow_step(
+        ci,
+        "macos-arm",
+        "Install package and open a mesh through LaunchServices",
+    )
+    .and_then(|step| step["run"].as_str())
+    .expect("macOS package smoke opens the registered file handler");
+    assert!(
+        !macos_open.contains("open -a"),
+        "LaunchServices must select the registered handler"
+    );
+    let windows_test = workflow_step(ci, "test", "cargo test --workspace (WARP required)")
+        .expect("Windows CI runs the required WARP renderer suites");
+    assert_eq!(
+        windows_test["env"]["OCCLUVIEW_REQUIRE_GPU_TESTS"].as_str(),
+        Some("1")
+    );
+    assert_eq!(
+        windows_test["run"].as_str(),
+        Some("cargo test --workspace --all-targets --locked --no-fail-fast")
+    );
     assert!(step_runs(
         ci,
         "linux-package-smoke",

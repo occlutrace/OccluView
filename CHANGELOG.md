@@ -12,8 +12,8 @@ remain in the Git history.
 
 ### Viewer
 
-- Imports estimate mesh, image, and current-scene memory before decoding and
-  refuse a scene that exceeds the viewer's 2 GiB import budget.
+- Imports estimate scene, picking-tree, and renderer memory against the viewer's
+  2 GiB budget. Size messages identify binary amounts as GiB.
 - Best fit refuses equally plausible surface matches and tells you to mark the
   matching area or move the scans closer before trying again.
 - Point-pair placement remains provisional until surface refinement passes;
