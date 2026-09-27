@@ -21,29 +21,32 @@ use glam::{DQuat, DVec3};
 use crate::sample::{sample_vertices, vertex_at};
 use crate::{Rigid, Soup, SurfaceIndex};
 
-use super::icp_verify::{verify_with_budget, Verification};
+use super::icp_verify::{verify_with_budget, Verification, VerificationInput};
 use super::{run_level, Level, RefineSettings, SurfaceSample, COARSE_BUDGET};
 use crate::CancelFlag;
 
 /// A rival within this factor of the found pose's verified median counts as
-/// fitting about as well. Set from the verification corpus (see the constant's
-/// use in `rivalry`).
-pub(crate) const RIVAL_MARGIN: f64 = 1.25;
+/// fitting about as well. In the measured crop corpus, the worst wrong basin
+/// has a rival/base median ratio of 1.2617, while the closest distinct basin
+/// for a correct fit is 1.5065; 1.27 separates those observed ranges.
+pub(crate) const RIVAL_MARGIN: f64 = 1.27;
 
 /// Two poses closer than this (largest displacement of the sampled patch, mm)
-/// are the same basin.
+/// are the same basin. Wrong basins in the measured crop corpus are at least
+/// 3.075 mm apart, so this excludes near-identical refinements with room below
+/// the nearest observed wrong basin.
 const DISTINCT_MM: f64 = 0.5;
 
-/// Iterations for each rival's local refine: a basin is reached in a handful;
-/// this bounds the cost of the whole pass.
-const RIVAL_ITERATIONS: u32 = 15;
-
-/// Samples used to verify rivals and the pose they are compared with.
-const RIVAL_VERIFY_BUDGET: usize = 8_000;
+/// A rival's local refine uses the full solver budget. A 15-iteration refine
+/// leaves a lower-arch 60-degree crop at a wrong pose with 1.08 mm maximum
+/// error; a 40-iteration competitor reaches a distinct basin 3.079 mm away
+/// with a 1.2617 median ratio.
+const RIVAL_ITERATIONS: u32 = 40;
 
 /// A rival must cover at least this share of what the found pose covers: a
 /// pose that seats a sliver tightly is not an alternative to one that seats
-/// the patch.
+/// the patch. The lowest coverage share among the measured wrong rivals is
+/// 0.8653; 0.8 retains those alternatives while rejecting smaller fragments.
 const RIVAL_MIN_COVERAGE_SHARE: f64 = 0.8;
 
 /// What the comparison found.
@@ -81,12 +84,14 @@ pub(crate) fn rivalry(context: &RivalContext<'_>, pose: Rigid) -> Rivalry {
         return Rivalry::Unique;
     };
     let base = verify_with_budget(
-        context.moving,
-        context.normals,
-        context.fixed,
-        pose,
-        context.settings,
-        RIVAL_VERIFY_BUDGET,
+        VerificationInput {
+            moving: context.moving,
+            normals: context.normals,
+            fixed: context.fixed,
+            pose,
+            settings: context.settings,
+        },
+        COARSE_BUDGET,
     );
     if !base.median_mm.is_finite() {
         return Rivalry::Unique;
@@ -121,12 +126,14 @@ pub(crate) fn rivalry(context: &RivalContext<'_>, pose: Rigid) -> Rivalry {
             continue;
         }
         let checked = verify_with_budget(
-            context.moving,
-            context.normals,
-            context.fixed,
-            rival,
-            context.settings,
-            RIVAL_VERIFY_BUDGET,
+            VerificationInput {
+                moving: context.moving,
+                normals: context.normals,
+                fixed: context.fixed,
+                pose: rival,
+                settings: context.settings,
+            },
+            COARSE_BUDGET,
         );
         if !checked.median_mm.is_finite()
             || checked.coverage < base.coverage * RIVAL_MIN_COVERAGE_SHARE

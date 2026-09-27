@@ -184,15 +184,21 @@ const STALL_IMPROVEMENT: f64 = 0.999;
 /// degree of freedom is not determined by the geometry.
 const WEAK_AXIS_FRACTION: f64 = 1e-6;
 
-/// Largest verified median distance a trusted pose may leave, in millimetres
-/// (see `icp_verify`). The release acceptance bar for a real scan pair is a
-/// 0.05 mm residual; a correct seating of two acquisitions of the same arch
-/// measures 0.02-0.035 mm here, while every wrong pose the verification
-/// corpus produced — another patient's patch, the other jaw, a patch one tooth
-/// over, a trimmed fit at a low matching ratio — measured 0.06 mm or more.
+/// Median limit, in millimetres, for either the untrimmed verification or the
+/// solve's correspondences. Correct real crop fits measure 0.00337-0.03345 mm.
+/// A prepared lower arch seats its unchanged region at 0.00000028 mm while its
+/// changed surface measures 0.446 mm; an unrelated synthetic partial fit
+/// measures 0.07034 mm in the solve and 0.09132 mm over the surface. Requiring
+/// one of the two medians to meet this limit admits intentional changes while
+/// refusing that false partial fit. Rival comparison handles low-residual
+/// wrong basins whose two medians overlap the correct range.
 const MAX_VERIFIED_MEDIAN_MM: f64 = 0.05;
 
 /// Smallest stability the tightly seated part must reach (see `icp_verify`).
+/// Correct real crop fits measure at least 0.002847, while a perfectly
+/// symmetric cylinder has zero stability along its axis; 0.0005 leaves margin
+/// below measured correct scans and rejects that unobservable pose. Wrong
+/// basins can also exceed this floor, so the rival check remains necessary.
 const MIN_VERIFIED_STABILITY: f64 = 0.0005;
 
 /// Which way the two surfaces face each other.
@@ -284,7 +290,10 @@ pub struct IcpReport {
     /// fixed point is the fixed scan's open border left out.
     pub verified_coverage: f64,
     /// Median distance from those vertices to their counterpart, in
-    /// millimetres. Independent of the matching ratio the solve ran at.
+    /// millimetres. Independent of the solve's matching ratio; used to compare
+    /// rival poses and alongside the solve median for verification because
+    /// intentional edits can raise a correct fit's whole-surface median above
+    /// scanner noise.
     pub verified_median_mm: f64,
     /// Smallest eigenvalue of the tightly seated part's normalized
     /// point-to-plane information matrix: near zero when that part alone
@@ -356,20 +365,29 @@ impl IcpReport {
             && self.p95_abs.is_finite()
             && !self.weak_rot_axes.into_iter().any(|weak| weak)
             && !self.weak_trans_axes.into_iter().any(|weak| weak)
-            && verification_holds(&Verification {
-                coverage: self.verified_coverage,
-                median_mm: self.verified_median_mm,
-                stability: self.verified_stability,
-            })
+            && verification_holds(
+                &Verification {
+                    coverage: self.verified_coverage,
+                    median_mm: self.verified_median_mm,
+                    stability: self.verified_stability,
+                },
+                self.median_abs,
+            )
     }
 }
 
-/// Whether a verification clears the coverage, median and stability bars.
-fn verification_holds(verification: &Verification) -> bool {
+/// Whether verification has enough coverage and a stable seated region.
+///
+/// One of the independent whole-surface median and the solve's correspondence
+/// median must meet the 0.05 mm scan-agreement limit. This admits a changed
+/// arch when its unchanged region fits, but rejects a partial pair whose two
+/// medians both exceed scan agreement.
+fn verification_holds(verification: &Verification, solve_median_mm: f64) -> bool {
     verification.coverage.is_finite()
         && verification.coverage >= MIN_REFINEMENT_COVERAGE_FRACTION
         && verification.median_mm.is_finite()
-        && verification.median_mm <= MAX_VERIFIED_MEDIAN_MM
+        && (verification.median_mm <= MAX_VERIFIED_MEDIAN_MM
+            || solve_median_mm.is_finite() && solve_median_mm <= MAX_VERIFIED_MEDIAN_MM)
         && verification.stability.is_finite()
         && verification.stability >= MIN_VERIFIED_STABILITY
 }
@@ -439,73 +457,9 @@ pub fn refine(
     };
     let (initial_pose, adaptive_settings, feature_seed) =
         select_initial_pose(&initial_level, center)?;
-    let mut pose = initial_pose.rigid;
-    let mut iterations = 0u32;
-    let mut converged = false;
-    let mut summary: Option<Summary> = None;
-
-    for budget in [COARSE_BUDGET, DENSE_BUDGET] {
-        let samples = sample_vertices(moving, budget);
-        if !level_samples_are_usable(summary, &samples)? {
-            continue;
-        }
-        let outcome = run_level(&Level {
-            moving,
-            normals: &normals,
-            fixed,
-            moving_surface: moving_surface.as_ref(),
-            fixed_samples: &fixed_samples,
-            samples: &samples,
-            settings: &adaptive_settings,
-            cancel,
-            start: pose,
-        });
-        // A dense level is not optional evidence. Keeping the coarse summary
-        // after a dense refusal would let a sparse/accidental coarse sample
-        // authorize a refined pose and the heatmap that follows it.
-        // Cancellation is returned as an untrusted report by `run_level` when
-        // it has evidence; a structural/refinement refusal must remain a
-        // refusal all the way to the worker.
-        let level = outcome?;
-        iterations += level.iterations;
-        converged = level.converged;
-        pose = level.pose;
-        summary = Some(level.summary);
-    }
-
-    let Some(mut summary) = summary else {
-        return Err(FitRejection::TooFewPairs {
-            have: 0,
-            need: MIN_CORRESPONDENCES,
-        });
-    };
-    // Measure displacement at the mesh centre; the pose translation column can
-    // change during rotation even when the geometry moves little.
-    let moved_by = (pose.apply(center) - start.apply(center)).length();
-    if let Some(seed) = feature_seed {
-        if pose.apply(center).distance(seed.rigid.apply(center)) > 1.0
-            || turn_between(pose, seed.rigid) > 0.1
-        {
-            return Err(FitRejection::NoImprovement);
-        }
-    }
-    // Two bounded stages make up this total: the coarse hypothesis
-    // (`choose_start_pose` admits nothing beyond COARSE_MAX_SHIFT_FACTOR over
-    // the moving extent plus the influence radius) and the refinement, which is
-    // bounded by the moving mesh's own size plus the influence radius. Read
-    // against their sum, the guard refuses a refine that wandered off the patch
-    // it was seated on; it is not a second opinion on the coarse stage.
+    let state = refine_levels(&initial_level, &adaptive_settings, initial_pose.rigid)?;
     let allowed = extent.max(1.0) + initial_pose.coarse_shift + settings.influence_radius_mm.abs();
-    if moved_by > allowed {
-        return Err(FitRejection::Runaway { moved_by, allowed });
-    }
-
-    // Judged again with nothing trimmed; see `icp_verify`. A pose that clears
-    // that bar must also be the clear best of the basins around it; see
-    // `icp_unique`. One better basin is followed; a second change of mind, or
-    // a rival that fits as well, is ambiguity.
-    let mut verification = verify(moving, &normals, fixed, pose, settings);
-    let context = RivalContext {
+    let rivalry = RivalContext {
         moving,
         normals: &normals,
         fixed,
@@ -514,62 +468,196 @@ pub fn refine(
         settings: &adaptive_settings,
         cancel,
     };
-    if verification_holds(&verification) {
-        match rivalry(&context, pose) {
+    finalize_refinement(
+        FinalizeContext {
+            rivalry,
+            settings,
+            start,
+            center,
+            allowed,
+            feature_seed,
+            matching_ratio: adaptive_settings.matching_ratio,
+        },
+        state,
+    )
+}
+
+/// Run the coarse and dense levels with one selected starting pose.
+fn refine_levels(
+    base: &Level<'_>,
+    settings: &RefineSettings,
+    mut pose: Rigid,
+) -> Result<LevelOutcome, FitRejection> {
+    let mut iterations = 0u32;
+    let mut converged = false;
+    let mut summary = None;
+    for budget in [COARSE_BUDGET, DENSE_BUDGET] {
+        let samples = sample_vertices(base.moving, budget);
+        if !level_samples_are_usable(summary, &samples)? {
+            continue;
+        }
+        // A dense level is not optional evidence. Keeping the coarse summary
+        // after a dense refusal would let a sparse/accidental coarse sample
+        // authorize a refined pose and the heatmap that follows it.
+        // Cancellation is returned as an untrusted report when it has evidence;
+        // structural and refinement refusals remain refusals to the worker.
+        let level = run_level(&Level {
+            moving: base.moving,
+            normals: base.normals,
+            fixed: base.fixed,
+            moving_surface: base.moving_surface,
+            fixed_samples: base.fixed_samples,
+            samples: &samples,
+            settings,
+            cancel: base.cancel,
+            start: pose,
+        })?;
+        iterations += level.iterations;
+        converged = level.converged;
+        pose = level.pose;
+        summary = Some(level.summary);
+    }
+    let Some(summary) = summary else {
+        return Err(FitRejection::TooFewPairs {
+            have: 0,
+            need: MIN_CORRESPONDENCES,
+        });
+    };
+    Ok(LevelOutcome {
+        pose,
+        iterations,
+        converged,
+        summary,
+    })
+}
+
+/// Bounds and evidence used after the dense solve.
+struct FinalizeContext<'a> {
+    rivalry: RivalContext<'a>,
+    settings: &'a RefineSettings,
+    start: Rigid,
+    center: DVec3,
+    allowed: f64,
+    feature_seed: Option<feature_seed::FeatureSeed>,
+    matching_ratio: f64,
+}
+
+/// Verify the final pose, follow one better rival once, and assemble its report.
+fn finalize_refinement(
+    context: FinalizeContext<'_>,
+    mut state: LevelOutcome,
+) -> Result<IcpReport, FitRejection> {
+    if let Some(seed) = context.feature_seed {
+        if state
+            .pose
+            .apply(context.center)
+            .distance(seed.rigid.apply(context.center))
+            > 1.0
+            || turn_between(state.pose, seed.rigid) > 0.1
+        {
+            return Err(FitRejection::NoImprovement);
+        }
+    }
+    ensure_movement_bound(state.pose, context.center, context.start, context.allowed)?;
+    let mut verification = verify(
+        context.rivalry.moving,
+        context.rivalry.normals,
+        context.rivalry.fixed,
+        state.pose,
+        context.settings,
+    );
+    if verification_holds(&verification, state.summary.median_abs) {
+        match rivalry(&context.rivalry, state.pose) {
             Rivalry::Unique => {}
             Rivalry::Ambiguous => return Err(FitRejection::Ambiguous),
             Rivalry::Better(better) => {
-                let samples = sample_vertices(moving, DENSE_BUDGET);
-                let level = run_level(&Level {
-                    moving,
-                    normals: &normals,
-                    fixed,
-                    moving_surface: moving_surface.as_ref(),
-                    fixed_samples: &fixed_samples,
-                    samples: &samples,
-                    settings: &adaptive_settings,
-                    cancel,
-                    start: better,
-                })?;
-                iterations += level.iterations;
-                converged = level.converged;
-                pose = level.pose;
-                summary = level.summary;
-                let moved_by = (pose.apply(center) - start.apply(center)).length();
-                if moved_by > allowed {
-                    return Err(FitRejection::Runaway { moved_by, allowed });
-                }
-                verification = verify(moving, &normals, fixed, pose, settings);
-                if verification_holds(&verification)
-                    && !matches!(rivalry(&context, pose), Rivalry::Unique)
+                state = refine_better_rival(&context.rivalry, better, state.iterations)?;
+                ensure_movement_bound(state.pose, context.center, context.start, context.allowed)?;
+                verification = verify(
+                    context.rivalry.moving,
+                    context.rivalry.normals,
+                    context.rivalry.fixed,
+                    state.pose,
+                    context.settings,
+                );
+                if verification_holds(&verification, state.summary.median_abs)
+                    && !matches!(rivalry(&context.rivalry, state.pose), Rivalry::Unique)
                 {
                     return Err(FitRejection::Ambiguous);
                 }
             }
         }
     }
-    Ok(IcpReport {
-        rigid: pose,
-        iterations,
-        converged,
-        inliers: summary.inliers,
-        inlier_ratio: summary.inlier_ratio,
-        coverage: summary.coverage,
-        rms: summary.rms,
-        geometric_rms: summary.geometric_rms,
-        median_abs: summary.median_abs,
-        p95_abs: summary.p95_abs,
-        weak_rot_axes: summary.weak_rot_axes,
-        weak_trans_axes: summary.weak_trans_axes,
-        // The value that ran, not the operator's slider: the global-seed branch
-        // lowers it to `near_surface_fraction(seed) * 0.8` clamped to 0.1..0.8
-        // (`adaptive_settings`).
-        effective_matching_ratio: adaptive_settings.matching_ratio,
-        seated_fraction: summary.seated_fraction,
+    Ok(report_from_state(
+        state,
+        verification,
+        context.matching_ratio,
+    ))
+}
+
+/// Refine the one better basin discovered by the final competition pass.
+fn refine_better_rival(
+    context: &RivalContext<'_>,
+    better: Rigid,
+    previous_iterations: u32,
+) -> Result<LevelOutcome, FitRejection> {
+    let samples = sample_vertices(context.moving, DENSE_BUDGET);
+    let level = run_level(&Level {
+        moving: context.moving,
+        normals: context.normals,
+        fixed: context.fixed,
+        moving_surface: context.moving_surface,
+        fixed_samples: context.fixed_samples,
+        samples: &samples,
+        settings: context.settings,
+        cancel: context.cancel,
+        start: better,
+    })?;
+    Ok(LevelOutcome {
+        pose: level.pose,
+        iterations: previous_iterations + level.iterations,
+        converged: level.converged,
+        summary: level.summary,
+    })
+}
+
+fn ensure_movement_bound(
+    pose: Rigid,
+    center: DVec3,
+    start: Rigid,
+    allowed: f64,
+) -> Result<(), FitRejection> {
+    let moved_by = (pose.apply(center) - start.apply(center)).length();
+    if moved_by > allowed {
+        return Err(FitRejection::Runaway { moved_by, allowed });
+    }
+    Ok(())
+}
+
+fn report_from_state(
+    state: LevelOutcome,
+    verification: Verification,
+    matching_ratio: f64,
+) -> IcpReport {
+    IcpReport {
+        rigid: state.pose,
+        iterations: state.iterations,
+        converged: state.converged,
+        inliers: state.summary.inliers,
+        inlier_ratio: state.summary.inlier_ratio,
+        coverage: state.summary.coverage,
+        rms: state.summary.rms,
+        geometric_rms: state.summary.geometric_rms,
+        median_abs: state.summary.median_abs,
+        p95_abs: state.summary.p95_abs,
+        weak_rot_axes: state.summary.weak_rot_axes,
+        weak_trans_axes: state.summary.weak_trans_axes,
+        effective_matching_ratio: matching_ratio,
+        seated_fraction: state.summary.seated_fraction,
         verified_coverage: verification.coverage,
         verified_median_mm: verification.median_mm,
         verified_stability: verification.stability,
-    })
+    }
 }
 
 fn select_initial_pose(
