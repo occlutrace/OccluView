@@ -264,7 +264,10 @@ jobs:
           toolchain: "1.98.0"
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: cargo test --workspace (WARP render suites)
-        run: cargo test --workspace --all-targets --locked --no-fail-fast
+        # Thumbnail tests share one renderer. Keep tests sequential so unrelated
+        # renders do not consume each other's request deadlines; burst tests
+        # still spawn concurrent request threads within each test.
+        run: cargo test --workspace --all-targets --locked --no-fail-fast -- --test-threads=1
 
   docs:
     name: cargo doc
