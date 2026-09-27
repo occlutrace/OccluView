@@ -416,7 +416,7 @@ mod tests {
     fn pseudo_spot_checks_bracket_single_line_keys() {
         // A readable spot check with exact rendering; full coverage is
         // `pseudo_locale_covers_every_embedded_key` in catalog.rs.
-        let pseudo = Catalog::pseudo().expect("pseudo builds");
+        let pseudo = catalog::pseudo_catalog().expect("pseudo builds");
         // The window title key is `app-window-title` (`NATIVE_TITLE_KEY`).
         for key in ["app-window-title", "settings-shortcuts", "about-tagline"] {
             let rendered = pseudo.text(key).unwrap_or_else(|| key.to_owned());

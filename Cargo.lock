@@ -2297,6 +2297,7 @@ dependencies = [
  "occluview-contact",
  "occluview-core",
  "occluview-formats",
+ "occluview-i18n",
  "occluview-render",
  "occluview-update",
  "pollster 1.0.1",
@@ -2393,6 +2394,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "occluview-i18n"
+version = "1.2.1"
+dependencies = [
+ "fluent-bundle",
+ "sys-locale",
+ "unic-langid",
+]
+
+[[package]]
 name = "occluview-render"
 version = "1.2.1"
 dependencies = [
@@ -2422,6 +2432,7 @@ dependencies = [
  "glam",
  "occluview-core",
  "occluview-formats",
+ "occluview-i18n",
  "occluview-render",
  "occluview-thumbnail",
  "pollster 1.0.1",

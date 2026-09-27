@@ -14,6 +14,10 @@ mod framing;
 mod placeholder_ladder;
 mod robustness;
 
+// Large fidelity fixtures pin rendered output; caller timeout behaviour is
+// exercised separately at the shell boundary.
+const LARGE_FIXTURE_RENDER_TIMEOUT: Duration = Duration::from_secs(30);
+
 fn assert_tint_eq(actual: [f32; 4], expected: [f32; 4]) {
     assert!(
         actual

@@ -60,18 +60,18 @@ impl PreviewMenuCommand {
         MENU_COMMANDS.iter().copied().find(|cmd| cmd.id() == id)
     }
 
-    /// The menu item label.
-    pub(crate) const fn label(self) -> &'static str {
+    /// Fluent message id for the menu item label.
+    pub(crate) const fn label_key(self) -> &'static str {
         match self {
-            Self::Open => "Open in OccluView",
-            Self::Edit => "Edit in OccluView",
-            Self::ViewFront => "Front",
-            Self::ViewTop => "Top",
-            Self::ViewSide => "Side",
-            Self::ViewIsometric => "Isometric",
-            Self::FitView => "Fit view",
-            Self::ToggleWireframe => "Wireframe",
-            Self::CopyImage => "Copy image",
+            Self::Open => "shell-preview-open",
+            Self::Edit => "shell-preview-edit",
+            Self::ViewFront => "shell-preview-front",
+            Self::ViewTop => "shell-preview-top",
+            Self::ViewSide => "shell-preview-side",
+            Self::ViewIsometric => "shell-preview-isometric",
+            Self::FitView => "shell-preview-fit-view",
+            Self::ToggleWireframe => "shell-preview-wireframe",
+            Self::CopyImage => "shell-preview-copy-image",
         }
     }
 
@@ -154,6 +154,8 @@ pub(crate) const PREVIEW_MENU_LAYOUT: &[PreviewMenuEntry] = &[
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used)]
+
     use super::*;
 
     #[test]
@@ -248,7 +250,15 @@ mod tests {
 
     #[test]
     fn every_command_has_a_distinct_label_and_icon() {
-        let labels: Vec<&str> = MENU_COMMANDS.iter().map(|c| c.label()).collect();
+        let english = occluview_i18n::LocalizedCatalog::for_tag("en");
+        let labels: Vec<String> = MENU_COMMANDS
+            .iter()
+            .map(|command| {
+                english
+                    .text(command.label_key())
+                    .expect("English menu label exists")
+            })
+            .collect();
         for (i, a) in labels.iter().enumerate() {
             for b in &labels[i + 1..] {
                 assert_ne!(a, b, "labels must be distinct");
@@ -258,5 +268,20 @@ mod tests {
         // a family but are distinct enum values.
         let icons: Vec<PreviewMenuIcon> = MENU_COMMANDS.iter().map(|c| c.icon()).collect();
         assert_eq!(icons.len(), MENU_COMMANDS.len());
+    }
+
+    #[test]
+    fn every_menu_key_exists_in_every_shipped_language() {
+        for tag in occluview_i18n::EMBEDDED_TAGS {
+            let catalog =
+                occluview_i18n::Catalog::build(tag).expect("every shipped locale catalog parses");
+            for command in MENU_COMMANDS {
+                assert!(
+                    catalog.text(command.label_key()).is_some(),
+                    "{tag} catalog is missing {}",
+                    command.label_key()
+                );
+            }
+        }
     }
 }

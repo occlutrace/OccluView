@@ -1,8 +1,8 @@
 //! Embedded Fluent catalogs, per-message English fallback, contract
 //! validation, and pseudo-localization.
 //!
-//! Catalogs live in `crates/occluview-app/i18n/*.ftl`, are compiled into the
-//! binary via `include_str!`, and are validated against `en` at test time:
+//! Catalogs live in `crates/occluview-app/i18n/*.ftl`, are compiled by the
+//! shared i18n crate, and are validated against `en` at test time:
 //! parse errors, junk, duplicate keys, key/attribute/variable drift, and
 //! unused keys all fail. At runtime a missing message, attribute, variable,
 //! or whole catalog degrades atomically to English for that message —
@@ -13,136 +13,29 @@
 #[cfg(test)]
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+#[cfg(test)]
 use fluent_bundle::{FluentArgs, FluentBundle, FluentResource, FluentValue};
 #[cfg(test)]
 use fluent_syntax::ast;
+#[cfg(test)]
 use unic_langid::LanguageIdentifier;
 
+#[cfg(test)]
 use super::tags::FALLBACK_TAG;
+pub(crate) use occluview_i18n::{args, plural_args, Catalog, EMBEDDED_TAGS};
 
-/// Catalogs compiled into this binary. All use Latin or Cyrillic scripts,
-/// which the default fonts cover; CJK needs a bundled font (see `fonts.rs`).
-pub(crate) const EMBEDDED_TAGS: &[&str] = &["en", "ru", "de", "es", "fr", "it", "pt-BR"];
 /// Pseudo-locale tag for layout testing. Never user-selectable.
 #[cfg(test)]
 pub(crate) const PSEUDO_TAG: &str = "qps-ploc";
 
-const SOURCES: &[(&str, &str)] = &[
-    ("en", include_str!("../../i18n/en.ftl")),
-    ("ru", include_str!("../../i18n/ru.ftl")),
-    ("de", include_str!("../../i18n/de.ftl")),
-    ("es", include_str!("../../i18n/es.ftl")),
-    ("fr", include_str!("../../i18n/fr.ftl")),
-    ("it", include_str!("../../i18n/it.ftl")),
-    ("pt-BR", include_str!("../../i18n/pt-BR.ftl")),
-];
+#[cfg(test)]
+const SOURCES: &[(&str, &str)] = occluview_i18n::EMBEDDED_SOURCES;
 
-/// One compiled locale bundle.
-pub(crate) struct Catalog {
-    /// Diagnostic identity, read through [`Self::tag`] in tests.
-    #[allow(dead_code)]
-    tag: &'static str,
-    bundle: FluentBundle<FluentResource>,
-}
-
-impl Catalog {
-    /// The embedded tag this catalog was built for.
-    #[cfg(test)]
-    pub(crate) fn tag(&self) -> &'static str {
-        self.tag
-    }
-
-    /// Build a catalog for an embedded tag. `Err` carries human-readable
-    /// reasons (parse errors, bad language identifier, resource errors).
-    pub(crate) fn build(tag: &'static str) -> Result<Self, String> {
-        let (_, source) = SOURCES
-            .iter()
-            .find(|(known, _)| *known == tag)
-            .ok_or_else(|| format!("no embedded catalog for '{tag}'"))?;
-        Self::build_from_source(tag, source)
-    }
-
-    fn build_from_source(tag: &'static str, source: &str) -> Result<Self, String> {
-        let langid: LanguageIdentifier = tag.parse().map_err(|_| format!("bad tag '{tag}'"))?;
-        let resource = FluentResource::try_new(source.to_owned())
-            .map_err(|(_, errors)| join_errors(&errors))?;
-        let mut bundle = FluentBundle::new(vec![langid]);
-        bundle
-            .add_resource(resource)
-            .map_err(|errors| join_errors(&errors))?;
-        Ok(Self { tag, bundle })
-    }
-
-    /// Last-resort English catalog that renders markers for everything.
-    /// Only used when the embedded English source itself is broken — a
-    /// build/CI failure, never a shipped state.
-    pub(crate) fn empty_fallback() -> Self {
-        let langid: LanguageIdentifier = FALLBACK_TAG.parse().unwrap_or_default();
-        Self {
-            tag: FALLBACK_TAG,
-            bundle: FluentBundle::new(vec![langid]),
-        }
-    }
-
-    /// Pseudo-locale catalog generated from the English source: expanded,
-    /// accented, bracketed. Used by layout tests to prove surfaces adapt.
-    #[cfg(test)]
-    pub(crate) fn pseudo() -> Result<Self, String> {
-        let (_, source) = SOURCES
-            .iter()
-            .find(|(known, _)| *known == FALLBACK_TAG)
-            .ok_or("no embedded English source")?;
-        let expanded = pseudo_source(source);
-        let langid: LanguageIdentifier = FALLBACK_TAG
-            .parse()
-            .map_err(|_| "bad fallback tag".to_owned())?;
-        let resource =
-            FluentResource::try_new(expanded).map_err(|(_, errors)| join_errors(&errors))?;
-        let mut bundle = FluentBundle::new(vec![langid]);
-        bundle
-            .add_resource(resource)
-            .map_err(|errors| join_errors(&errors))?;
-        Ok(Self {
-            tag: PSEUDO_TAG,
-            bundle,
-        })
-    }
-
-    /// Format a message id (`key` or `key.attribute`). `None` on any
-    /// problem: missing message/attribute, missing variable, or formatter
-    /// errors. The caller falls back to English for that message.
-    pub(crate) fn format(&self, id: &str, args: Option<&FluentArgs<'_>>) -> Option<String> {
-        let (head, attribute) = match id.split_once('.') {
-            Some((head, attribute)) => (head, Some(attribute)),
-            None => (id, None),
-        };
-        let message = self.bundle.get_message(head)?;
-        let pattern = match attribute {
-            Some(name) => message.get_attribute(name)?.value(),
-            None => message.value()?,
-        };
-        let mut errors = Vec::new();
-        let value = self.bundle.format_pattern(pattern, args, &mut errors);
-        if errors.is_empty() {
-            Some(value.into_owned())
-        } else {
-            None
-        }
-    }
-
-    /// Plain-text lookup without arguments.
-    #[cfg(test)]
-    pub(crate) fn text(&self, id: &str) -> Option<String> {
-        self.format(id, None)
-    }
-}
-
-fn join_errors<T: std::fmt::Display>(errors: &[T]) -> String {
-    errors
-        .iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join("; ")
+#[cfg(test)]
+pub(super) fn pseudo_catalog() -> Result<Catalog, String> {
+    let source = occluview_i18n::embedded_source(FALLBACK_TAG)
+        .ok_or_else(|| "no embedded English source".to_owned())?;
+    Catalog::from_source(PSEUDO_TAG, &pseudo_source(source))
 }
 
 /// Pseudo-localize an FTL source: expand plain-text runs, keep syntax
@@ -529,36 +422,6 @@ pub(crate) fn validate_embedded() -> Vec<String> {
     problems
 }
 
-/// Build a `FluentArgs` map from string pairs (enough for the seed keys;
-/// clinical numbers use typed `FluentValue` at call sites).
-pub(crate) fn args<'a>(pairs: &[(&'a str, &'a str)]) -> FluentArgs<'a> {
-    let mut result = FluentArgs::new();
-    for (key, value) in pairs {
-        result.set(*key, FluentValue::from(*value));
-    }
-    result
-}
-
-/// A `usize` count as a plural operand. Saturates instead of wrapping;
-/// real counts never approach the bound, and saturation keeps the lint
-/// set (`cast_possible_wrap`) quiet without an `as` cast.
-pub(crate) fn count(value: usize) -> FluentValue<'static> {
-    FluentValue::from(i64::try_from(value).unwrap_or(i64::MAX))
-}
-
-/// Mixed string + count arguments for plural selects with data
-/// (`export-layers-saved` and friends).
-pub(crate) fn plural_args<'a>(
-    strings: &[(&'a str, &'a str)],
-    numbers: &[(&'a str, usize)],
-) -> FluentArgs<'a> {
-    let mut result = args(strings);
-    for (key, value) in numbers {
-        result.set(*key, count(*value));
-    }
-    result
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
@@ -716,7 +579,7 @@ mod tests {
 
     #[test]
     fn pseudo_locale_expands_and_brackets() {
-        let pseudo = Catalog::pseudo().expect("pseudo builds");
+        let pseudo = pseudo_catalog().expect("pseudo builds");
         let rendered = pseudo.text("settings-language-label").expect("renders");
         assert!(rendered.starts_with('⟦'));
         assert!(rendered.ends_with('⟧'));
@@ -739,13 +602,13 @@ mod tests {
     fn pseudo_locale_covers_every_embedded_key() {
         // Adding a key must update this number and its pseudo coverage
         // in the same change.
-        const EXPECTED_EN_KEYS: usize = 714;
+        const EXPECTED_EN_KEYS: usize = 724;
         let (_, source) = SOURCES
             .iter()
             .find(|(tag, _)| *tag == FALLBACK_TAG)
             .expect("en source");
         let contract = contract_of(source).expect("en parses");
-        let pseudo = Catalog::pseudo().expect("pseudo builds");
+        let pseudo = pseudo_catalog().expect("pseudo builds");
         assert_eq!(
             contract.entries.len(),
             EXPECTED_EN_KEYS,

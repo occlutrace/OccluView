@@ -11,6 +11,7 @@
 resolver = "2"
 members = [
     "crates/occlu-geometry-math",
+    "crates/occluview-i18n",
     "crates/occlu-mesh-edit",
     "crates/occluview-robust-csg",
     "crates/occluview-surface-query",
@@ -49,6 +50,7 @@ default-members = [
 [workspace.metadata.layer-ranks]
 # Shared leaf libraries.
 occlu-geometry-math = 0
+occluview-i18n = 0
 occluview-robust-csg = 0
 occluview-surface-query = 0
 occluview-update = 0
@@ -83,6 +85,7 @@ publish = false              # we are not on crates.io yet
 [workspace.dependencies]
 # Internal crates.
 occlu-geometry-math = { path = "crates/occlu-geometry-math" }
+occluview-i18n = { path = "crates/occluview-i18n" }
 occlu-mesh-edit  = { path = "crates/occlu-mesh-edit" }
 occluview-robust-csg = { path = "crates/occluview-robust-csg" }
 occluview-surface-query = { path = "crates/occluview-surface-query" }
