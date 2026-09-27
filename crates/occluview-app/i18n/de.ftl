@@ -380,6 +380,14 @@ meshedit-sculpt-addremove = Hinzufügen / Entfernen  [1]
 meshedit-sculpt-addremove-hint = Material per Ziehen aufbauen; Shift trägt ab. Shift+Rad skaliert, Strg+Rad ändert Stärke. Taste: 1.
 meshedit-sculpt-smooth = Glätten  [2]
 meshedit-sculpt-smooth-hint = Oberfläche per Ziehen entspannen; Shift erzwingt maximale Glättung. Shift+Rad skaliert, Strg+Rad ändert Stärke. Taste: 2.
+meshedit-section-sculpt-tip = Spitze
+meshedit-sculpt-tip-ball = Kugel
+meshedit-sculpt-tip-ball-hint = Runde Auflage: in der Mitte am stärksten, zum Rand hin abfallend.
+meshedit-sculpt-tip-knife = Messer
+meshedit-sculpt-tip-knife-hint = Schmale Klinge, die quer zur Strichrichtung breiter wird.
+meshedit-sculpt-tip-cylinder = Zylinder
+meshedit-sculpt-tip-cylinder-hint = Flache Auflage mit weichem Rand zum Einebnen einer Fläche.
+
 meshedit-slider-size = Größe
 meshedit-slider-size-hint = Pinselgröße (Shift + Mausrad)
 meshedit-slider-force = Stärke

@@ -10,9 +10,10 @@
 //!
 //! | area | fixture | status here |
 //! |---|---|---|
-//! | sculpt small dab | 2-triangle quad, Add brush | executable below |
-//! | sculpt large dab | 150x150 grid (~22k verts), Add brush | executable below |
-//! | session prepare | same grid through `BrushSession::prepare` | executable below |
+//! | sculpt small dab | 2-triangle quad, ball Add brush | executable below |
+//! | sculpt large dab | 150x150 grid (~22k verts), ball Add brush | executable below |
+//! | sculpt knife dab | same grid, knife Add brush on a bearing | executable below |
+//! | session prepare | same grid through the sculpt session's prepare | executable below |
 //! | repair | duplicate-face tetrahedron | executable below |
 //! | alignment | representative scan pair + index build | inventory: no
 //! redistributable fixtures in-repo; run against local scans when available |
@@ -28,11 +29,10 @@
     clippy::print_stdout
 )]
 
+use crate::sculpt_kernel::{BrushMode, BrushSession, BrushStroke};
 use crate::sculpt_tool::{mean_uniform_scale, SculptSession};
 use glam::Affine3A;
-use occluview_core::{
-    mesh_edit_buffers_from_mesh, BrushMode, BrushSession, BrushStroke, Mesh, SceneMesh, Vertex,
-};
+use occluview_core::{mesh_edit_buffers_from_mesh, Mesh, SceneMesh, Vertex};
 use occluview_render::PreparedSceneTopology;
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -87,6 +87,8 @@ fn grid_mesh(rows: usize, cols: usize, spacing_mm: f32) -> Mesh {
 
 fn session_for(mesh: &Mesh) -> SculptSession {
     let entry = SceneMesh::new(mesh.clone());
+    // The live-remesh kernel prepares its own welded topology, spatial grid,
+    // step budgets and area weights from the mesh's edit buffers.
     let brush = BrushSession::prepare(&mesh_edit_buffers_from_mesh(mesh)).expect("prepare");
     SculptSession {
         layer_id: entry.id(),
@@ -119,8 +121,8 @@ fn perf_sculpt_small_dab() {
     let stroke = dab([0.0, 0.0, 0.0], 2.0);
     let first = session.apply_dab(stroke, BrushMode::Add);
     assert!(
-        !first.touched.is_empty(),
-        "the small dab must touch vertices"
+        !first.touched.is_empty() || first.rebuild.is_some(),
+        "the small dab must change the surface"
     );
     let start = Instant::now();
     let iterations = 50;
@@ -143,8 +145,8 @@ fn perf_sculpt_large_dab() {
     let stroke = dab([75.0, 75.0, 0.0], 10.0);
     let first = session.apply_dab(stroke, BrushMode::Add);
     assert!(
-        !first.touched.is_empty(),
-        "the large dab must touch vertices"
+        !first.touched.is_empty() || first.rebuild.is_some(),
+        "the large dab must change the surface"
     );
     let start = Instant::now();
     let iterations = 5;
@@ -157,6 +159,36 @@ fn perf_sculpt_large_dab() {
         mesh.vertices().len()
     );
     assert_perf_ceiling(elapsed, "perf_sculpt_large_dab");
+}
+
+#[test]
+#[ignore = "perf harness: run with --ignored --nocapture"]
+fn perf_sculpt_knife_dab() {
+    let mesh = grid_mesh(150, 150, 1.0);
+    let mut session = session_for(&mesh);
+    let stroke = dab([75.0, 75.0, 0.0], 10.0);
+    let _ = session.apply_dab_tipped(
+        stroke,
+        BrushMode::Add,
+        crate::sculpt_tool::SculptTip::Knife,
+        Some([1.0, 0.0, 0.0]),
+    );
+    let start = Instant::now();
+    let iterations = 5;
+    for _ in 0..iterations {
+        session.apply_dab_tipped(
+            stroke,
+            BrushMode::Add,
+            crate::sculpt_tool::SculptTip::Knife,
+            Some([1.0, 0.0, 0.0]),
+        );
+    }
+    let elapsed = start.elapsed();
+    println!(
+        "perf sculpt-knife-dab: {iterations} dabs on {} verts took {elapsed:?}",
+        mesh.vertices().len()
+    );
+    assert_perf_ceiling(elapsed, "perf_sculpt_knife_dab");
 }
 
 #[test]

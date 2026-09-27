@@ -380,6 +380,14 @@ meshedit-sculpt-addremove = Ajouter / Enlever  [1]
 meshedit-sculpt-addremove-hint = Apporter de la matière en glissant ; Shift creuse. Shift+molette redimensionne, Ctrl+molette change la force. Touche : 1.
 meshedit-sculpt-smooth = Lisser  [2]
 meshedit-sculpt-smooth-hint = Détendre la surface en glissant ; Shift force le lissage max. Shift+molette redimensionne, Ctrl+molette change la force. Touche : 2.
+meshedit-section-sculpt-tip = Pointe
+meshedit-sculpt-tip-ball = Sphère
+meshedit-sculpt-tip-ball-hint = Empreinte ronde : maximale au centre, s'estompant vers le bord.
+meshedit-sculpt-tip-knife = Lame
+meshedit-sculpt-tip-knife-hint = Lame étroite qui s'élargit perpendiculairement au tracé.
+meshedit-sculpt-tip-cylinder = Cylindre
+meshedit-sculpt-tip-cylinder-hint = Empreinte plate à bord adouci, pour niveler une face.
+
 meshedit-slider-size = taille
 meshedit-slider-size-hint = Taille du pinceau (Shift + molette)
 meshedit-slider-force = force

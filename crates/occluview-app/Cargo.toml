@@ -26,6 +26,7 @@ path = "src/main.rs"
 [dependencies]
 occluview-align = { workspace = true }
 occluview-contact = { workspace = true }
+occlu-sculpt      = { workspace = true }
 occluview-core    = { workspace = true, features = ["robust-csg"] }
 occluview-formats = { workspace = true }
 occluview-render  = { workspace = true }

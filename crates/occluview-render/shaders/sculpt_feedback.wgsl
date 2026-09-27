@@ -38,11 +38,13 @@ struct SculptBrushUniform {
     radius: f32,
     normal: vec3<f32>,
     intensity: f32,
-    color: vec4<f32>,
+    axis: vec3<f32>,
     tip: u32,
+    color: vec4<f32>,
     visible: u32,
     _padding_0: u32,
     _padding_1: u32,
+    _padding_2: u32,
 }
 
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -87,14 +89,29 @@ fn fs_sculpt_feedback(in: VertexOut) -> @location(0) vec4<f32> {
     let radius = max(sculpt_brush.radius, 0.0001);
     let offset = in.world_pos - sculpt_brush.center;
     let rho = length(offset) / radius;
-    if rho >= 1.0 {
-        discard;
-    }
 
-    // Ball/knife-style soft field for Add/Remove; a wider plateau for Smooth.
-    var field = pow(max(0.0, 1.0 - rho), 2.0);
+    // One field law per tip stamp, mirroring `tip_stamp.rs`: the ball is a
+    // radial squared taper, the knife an elongated ellipse along the stroke
+    // bearing, the cylinder a flat plateau with a smoothstep rim.
+    var field: f32;
     if sculpt_brush.tip == 1u {
+        let axis_length = length(sculpt_brush.axis);
+        if axis_length > 0.5 {
+            let axis = sculpt_brush.axis / axis_length;
+            let along = dot(offset, axis);
+            let across = length(offset - axis * along);
+            let edge = length(vec2<f32>(along, across / 0.55)) / radius;
+            field = pow(max(0.0, 1.0 - edge), 2.0);
+        } else {
+            field = pow(max(0.0, 1.0 - rho / sqrt(0.55)), 2.0);
+        }
+    } else if sculpt_brush.tip == 2u {
         field = 1.0 - smoothstep(0.80, 1.0, rho);
+    } else {
+        field = pow(max(0.0, 1.0 - rho), 2.0);
+    }
+    if field <= 0.0 {
+        discard;
     }
 
     var n = in.normal;

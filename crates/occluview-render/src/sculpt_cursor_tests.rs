@@ -1,13 +1,93 @@
 use super::sculpt_cursor::{
-    cone_geometry, cylinder_geometry, sculpt_surface_light_intensity, sculpt_tool_length,
-    SculptBrushUniform, SculptToolShape, SculptToolUniform,
+    cone_geometry, cylinder_geometry, sculpt_footprint_field, sculpt_surface_light_intensity,
+    sculpt_tool_length, SculptBrushUniform, SculptTipStamp, SculptToolShape, SculptToolUniform,
+    SCULPT_CYLINDER_PLATEAU, SCULPT_KNIFE_CROSS_SHARE,
 };
 use std::mem::size_of;
 
 #[test]
 fn cursor_uniforms_have_the_wgsl_alignment_their_bindings_require() {
-    assert_eq!(size_of::<SculptBrushUniform>(), 64);
+    assert_eq!(size_of::<SculptBrushUniform>(), 80);
     assert_eq!(size_of::<SculptToolUniform>(), 96);
+}
+
+/// A ball dab is brightest at the centre, fades monotonically and stops at the
+/// radius, so the mark cannot read as a hard-edged disc.
+#[test]
+fn ball_footprint_fades_from_the_centre_to_the_rim() {
+    let field = |radius_share: f32| {
+        sculpt_footprint_field(
+            SculptTipStamp::Ball,
+            [radius_share, 0.0, 0.0],
+            1.0,
+            [0.0; 3],
+        )
+    };
+    assert_eq!(field(0.0), 1.0);
+    assert!(field(0.4) > field(0.7));
+    assert!(field(0.7) > field(0.99));
+    assert!(field(0.99) > 0.0);
+    assert_eq!(field(1.0), 0.0);
+    assert_eq!(field(1.5), 0.0);
+}
+
+/// A knife reaches further along its bearing than across it: at 0.6 of the
+/// radius it still cuts along the axis and has already ended across it.
+#[test]
+fn knife_footprint_is_longer_along_its_axis_than_across() {
+    let axis = [1.0, 0.0, 0.0];
+    let along = sculpt_footprint_field(SculptTipStamp::Knife, [0.6, 0.0, 0.0], 1.0, axis);
+    let across = sculpt_footprint_field(SculptTipStamp::Knife, [0.0, 0.6, 0.0], 1.0, axis);
+    assert!(along > 0.0, "the blade must still cut along its bearing");
+    assert_eq!(across, 0.0, "the blade is narrower than 0.6 r across");
+    assert!(across < along);
+    // The transverse reach is the documented share of the along reach.
+    assert!(sculpt_footprint_field(SculptTipStamp::Knife, [0.0, 0.5, 0.0], 1.0, axis) > 0.0);
+    assert_eq!(
+        sculpt_footprint_field(
+            SculptTipStamp::Knife,
+            [0.0, SCULPT_KNIFE_CROSS_SHARE + 0.01, 0.0],
+            1.0,
+            axis
+        ),
+        0.0
+    );
+    // A press with no bearing falls back to a narrow radial footprint: it
+    // reaches less far than the ball in every direction and ends before 0.8 r.
+    let no_axis = sculpt_footprint_field(SculptTipStamp::Knife, [0.0, 0.6, 0.0], 1.0, [0.0; 3]);
+    let ball = sculpt_footprint_field(SculptTipStamp::Ball, [0.0, 0.6, 0.0], 1.0, [0.0; 3]);
+    assert!(
+        no_axis > 0.0 && no_axis < ball,
+        "got {no_axis} against {ball}"
+    );
+    assert_eq!(
+        sculpt_footprint_field(SculptTipStamp::Knife, [0.8, 0.0, 0.0], 1.0, [0.0; 3]),
+        0.0
+    );
+    assert_eq!(
+        sculpt_footprint_field(SculptTipStamp::Knife, [0.0, 0.2, 0.0], 1.0, [0.0; 3]),
+        sculpt_footprint_field(SculptTipStamp::Knife, [0.2, 0.0, 0.0], 1.0, [0.0; 3])
+    );
+}
+
+/// A cylinder is flat inside its plateau and only softens over the rim band,
+/// which is what makes it level a face instead of raising a mound.
+#[test]
+fn cylinder_footprint_is_a_plateau_with_a_soft_rim() {
+    let field = |radius_share: f32| {
+        sculpt_footprint_field(
+            SculptTipStamp::Cylinder,
+            [radius_share, 0.0, 0.0],
+            1.0,
+            [0.0; 3],
+        )
+    };
+    assert_eq!(field(0.0), 1.0);
+    assert_eq!(field(SCULPT_CYLINDER_PLATEAU * 0.5), 1.0);
+    assert_eq!(field(SCULPT_CYLINDER_PLATEAU), 1.0);
+    let rim = field(SCULPT_CYLINDER_PLATEAU + (1.0 - SCULPT_CYLINDER_PLATEAU) * 0.5);
+    assert!(rim > 0.0 && rim < 1.0, "the rim must blend, got {rim}");
+    assert_eq!(field(1.0), 0.0);
 }
 
 #[test]

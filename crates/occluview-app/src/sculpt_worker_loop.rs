@@ -5,6 +5,8 @@ use super::{
     SculptSession, WorkerState,
 };
 
+// One command loop: each arm is a complete command and they read in order.
+#[allow(clippy::too_many_lines)]
 pub(super) fn run_worker(
     mut session: SculptSession,
     queue: Arc<SculptCommandQueue>,
@@ -22,10 +24,12 @@ pub(super) fn run_worker(
                 stroke_id,
                 stroke,
                 mode,
+                tip,
+                axis,
             } => {
-                let Some(outcome) =
-                    pool.install(|| session.apply_dab_cancellable(stroke, mode, &state.stopping))
-                else {
+                let Some(outcome) = pool.install(|| {
+                    session.apply_dab_cancellable(stroke, mode, &state.stopping, tip, axis)
+                }) else {
                     queue.mark_idle();
                     break;
                 };
@@ -79,6 +83,7 @@ pub(super) fn run_worker(
             SculptCommand::Finish {
                 stroke_id: _stroke_id,
             } => {
+                session.session.finish_stroke();
                 let dirty = session.dirty_stroke;
                 session.dirty_stroke = false;
                 let start_mesh = session.stroke_start_mesh.take();

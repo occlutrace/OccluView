@@ -3,8 +3,8 @@ use crate::error::CoreError;
 use occlu_mesh_edit::{
     component_at_triangle, crop_to_selected_faces, delete_selected_faces, fill_holes,
     fill_selected_holes, invert_orientation, repair_mesh, selected_connected_components,
-    BrushSession, EditVertex, FaceSelection, MeshEditBuffers, MeshEditError, MeshEditOptions,
-    MeshEditReport, MeshEditResult as RawMeshEditResult, MeshTopology, RepairOptions, RepairReport,
+    EditVertex, FaceSelection, MeshEditBuffers, MeshEditError, MeshEditOptions, MeshEditReport,
+    MeshEditResult as RawMeshEditResult, MeshTopology, RepairOptions, RepairReport,
 };
 
 /// Result of applying a mesh edit to a core [`Mesh`].
@@ -84,8 +84,21 @@ pub fn mesh_from_edit_buffers_like(
     mesh_from_edit_buffers_named_like(source, buffers, source.name().map(str::to_owned))
 }
 
+/// Live buffers a sculpt session exposes for a whole-layer rebuild.
+///
+/// A session owns its own geometry, so a caller that rebuilds a core mesh from
+/// one reads it through this trait rather than through a concrete type. Every
+/// sculpt kernel keeps its vertices in the source mesh's order and appends
+/// minted ones, which is what makes the rebuilt mesh addressable the same way.
+pub trait SculptSessionBuffers {
+    /// Live vertex attributes, in the session's own vertex order.
+    fn sculpt_vertices(&self) -> &[EditVertex];
+    /// Live triangle indices into those vertices.
+    fn sculpt_indices(&self) -> &[u32];
+}
+
 /// Rebuild a core mesh from a live sculpt session, for the one case where a dab
-/// changed the topology: Smooth densifies the surface under the brush, so the
+/// changed the topology: a dab may densify the surface under the brush, so the
 /// session's vertex array grows and its triangle list is rewritten, and
 /// [`Mesh::with_sculpted_vertices`] — which freezes `topology_id` because
 /// only positions move — does not apply. This mints a fresh `topology_id`,
@@ -93,15 +106,15 @@ pub fn mesh_from_edit_buffers_like(
 ///
 /// # Errors
 /// Returns [`CoreError`] if the session's buffers are not valid triangle data.
-pub fn mesh_from_sculpt_session_like(
+pub fn mesh_from_sculpt_session_like<S: SculptSessionBuffers + ?Sized>(
     source: &Mesh,
-    session: &BrushSession,
+    session: &S,
 ) -> Result<Mesh, CoreError> {
     mesh_from_edit_buffers_like(
         source,
         MeshEditBuffers {
-            vertices: session.vertices().to_vec(),
-            indices: session.indices().to_vec(),
+            vertices: session.sculpt_vertices().to_vec(),
+            indices: session.sculpt_indices().to_vec(),
             topology: MeshTopology::TriangleMesh,
         },
     )

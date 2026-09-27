@@ -2596,6 +2596,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "occlu-sculpt"
+version = "1.2.1"
+dependencies = [
+ "glam",
+ "occlu-geometry-math",
+ "rayon",
+]
+
+[[package]]
 name = "occluview-align"
 version = "1.2.1"
 dependencies = [
@@ -2619,6 +2628,7 @@ dependencies = [
  "glam",
  "image",
  "objc",
+ "occlu-sculpt",
  "occluview-align",
  "occluview-contact",
  "occluview-core",

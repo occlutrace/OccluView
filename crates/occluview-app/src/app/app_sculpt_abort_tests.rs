@@ -8,13 +8,11 @@
 
 use super::*;
 use crate::app::app_test_support::test_app;
+use crate::sculpt_kernel::{BrushMode, BrushSession, BrushStroke};
 use crate::sculpt_tool::{SculptSession, StrokeState};
 use crate::sculpt_worker::SculptWorker;
 use glam::{Affine3A, Vec3};
-use occluview_core::{
-    mesh_edit_buffers_from_mesh, BrushMode, BrushSession, BrushStroke, Mesh, Scene, SceneMesh,
-    SceneMeshId, Vertex,
-};
+use occluview_core::{mesh_edit_buffers_from_mesh, Mesh, Scene, SceneMesh, SceneMeshId, Vertex};
 use occluview_render::PreparedSceneTopology;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
@@ -135,6 +133,7 @@ fn start_stroke(app: &mut OccluViewApp, base: &Mesh) {
         layer_id,
         last_dab_local: None,
         hold_seconds: 0.0,
+        last_axis: None,
     });
 }
 

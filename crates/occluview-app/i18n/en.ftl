@@ -386,6 +386,14 @@ meshedit-sculpt-addremove = Add / Remove  [1]
 meshedit-sculpt-addremove-hint = Build material up by dragging on the scan; hold Shift to carve it away. Shift+wheel resizes, Ctrl+wheel changes intensity. Hotkey: 1.
 meshedit-sculpt-smooth = Smooth  [2]
 meshedit-sculpt-smooth-hint = Relax the surface by dragging on the scan; hold Shift to force maximum smoothing. Shift+wheel resizes, Ctrl+wheel changes intensity. Hotkey: 2.
+meshedit-section-sculpt-tip = Tip
+meshedit-sculpt-tip-ball = Ball
+meshedit-sculpt-tip-ball-hint = Round footprint: strongest at the centre and fading to the rim.
+meshedit-sculpt-tip-knife = Knife
+meshedit-sculpt-tip-knife-hint = Narrow blade that widens across the stroke direction.
+meshedit-sculpt-tip-cylinder = Cylinder
+meshedit-sculpt-tip-cylinder-hint = Flat footprint with a soft rim, for levelling one face.
+
 meshedit-slider-size = size
 meshedit-slider-size-hint = Brush size (Shift + mouse wheel)
 meshedit-slider-force = force
