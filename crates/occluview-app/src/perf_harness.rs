@@ -1,18 +1,20 @@
-//! Reproducible performance harness (synthetic inputs only, no new deps).
+//! Reproducible performance harness for synthetic and opt-in local scan inputs.
 //!
 //! Run: `cargo test -p occluview-app --lib perf_harness -- --ignored --nocapture`
 //!
-//! Cases print wall times, assert functional outcomes, and trip only on
-//! order-of-magnitude regressions (generous ceiling, same convention as the
-//! structural perf harness). Plain `cargo test` skips them.
+//! Cases print wall times and assert functional outcomes. Synthetic cases use
+//! generous ceilings; the full-arch case checks its measured dab budget. Plain
+//! `cargo test` skips these ignored cases.
 //!
-//! Fixtures are generated in code (no patient data, no downloads):
+//! Synthetic fixtures are generated in code. The optional full-arch case reads
+//! a caller-specified local scan and keeps it out of the repository.
 //!
 //! | area | fixture | status here |
 //! |---|---|---|
 //! | sculpt small dab | 2-triangle quad, ball Add brush | executable below |
 //! | sculpt large dab | 150x150 grid (~22k verts), ball Add brush | executable below |
 //! | sculpt knife dab | same grid, knife Add brush on a bearing | executable below |
+//! | sculpt full-arch remesh | local scan near 1M vertices, default brush size | `OCCLUVIEW_SCULPT_PERF_SCAN` |
 //! | session prepare | same grid through the sculpt session's prepare | executable below |
 //! | repair | duplicate-face tetrahedron | executable below |
 //! | alignment | representative scan pair + index build | inventory: no
@@ -210,14 +212,20 @@ fn perf_sculpt_private_scan_remesh() {
         contact: None,
     };
     let mut prepared = offscreen.prepare_scene(&[source]);
-    let mut stroke = dab(center, 8.0);
+    let brush_radius_mm =
+        crate::sculpt_tool::size_to_radius_mm(crate::sculpt_tool::SCULPT_SIZE_DEFAULT);
+    let mut stroke = dab(center, brush_radius_mm);
     stroke.view_dir = view;
     let full_layer_bytes = mesh_payload_bytes(&mesh);
     let mut topology_changes = 0;
+    let mut steady_remesh_dabs = Vec::new();
     for index in 0..8 {
         let started = Instant::now();
         let outcome = session.apply_dab(stroke, BrushMode::Smooth);
         let kernel_cpu_delta = started.elapsed();
+        if index > 0 && outcome.topology_delta.is_some() {
+            steady_remesh_dabs.push(kernel_cpu_delta);
+        }
         let mut stats = None;
         let update_started = Instant::now();
         if let Some(delta) = outcome.topology_delta.as_ref() {
@@ -263,6 +271,21 @@ fn perf_sculpt_private_scan_remesh() {
         );
     }
     assert!(topology_changes > 0, "the scan stroke must remesh");
+    assert!(
+        !steady_remesh_dabs.is_empty(),
+        "the scan stroke must contain a warmed remeshing dab"
+    );
+    steady_remesh_dabs.sort_unstable();
+    let median = steady_remesh_dabs[steady_remesh_dabs.len() / 2];
+    let maximum = steady_remesh_dabs[steady_remesh_dabs.len() - 1];
+    let budget = std::time::Duration::from_millis(16);
+    println!(
+        "UPPER default-size smooth dabs at radius {brush_radius_mm:.2} mm: median={median:?}, maximum={maximum:?}, median budget={budget:?}"
+    );
+    assert!(
+        median < budget,
+        "typical warmed remeshing dab took {median:?}, above {budget:?}"
+    );
 }
 
 #[test]

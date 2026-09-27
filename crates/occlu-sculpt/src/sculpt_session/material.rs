@@ -1,14 +1,10 @@
 //! Material coordinates: the point of the opening surface each live vertex
 //! stands for.
 //!
-//! The wall reserve and the session-baseline guards measure a vertex against
-//! this point. A remesh edit that slides a vertex along the surface without
-//! adding or removing material must slide the point with it. Otherwise the
-//! slide itself reads as removed material: on a surface the brush has already
-//! tilted, each tangential step has a component along the opening normal, the
-//! relaxation repeats that step on every dab, and the reserve runs out on
-//! material that was never carved. From then on the wall refuses every inward
-//! move, so later strokes stop levelling it.
+//! The wall reserve and session-baseline guards measure vertices against this
+//! point. When remeshing slides a vertex along the surface without adding or
+//! removing material, the material point follows it. Otherwise tangential
+//! movement consumes wall reserve and can block later inward strokes.
 
 use super::kernel::topology_journal::{MaterialEdit, TopoJournal};
 use super::*;

@@ -100,44 +100,18 @@ impl SculptSession {
         if a == b || !(target > 0.0) {
             return None;
         }
-        // There is no bend gate. A seam foot, a groove wall and a trench flank
-        // are all "sharp", so a gate that refused an edge whose one-ring crossed
-        // a sharp normal break would protect from coarsening every patch that
-        // needed it, on a test that only ever saw a normal cosine. The law that
-        // protects a real feature is the per-face Apply check below, which
-        // validates the geometry of every surviving face and refuses the merge
-        // that would
-        // genuinely kink it. A bend test is strictly coarser than that, so the
-        // only thing it could still refuse is a merge that was safe.
+        // Face-level guards validate the geometry of each surviving triangle;
+        // a normal break alone does not make a collapse unsafe.
         let length = (self.group_v(a) - self.group_v(b)).length();
-        // one target for both directions (isotropic remesh): split above
-        // `4/3 * target`, collapse below `4/5 * target`. The collapse side is
-        // deliberately not capped by the live local density or by the session
-        // median. Those caps were added once to stop a carved band being
-        // levelled, and they are what makes the operator's seam uncoarsenable:
-        // a dense patch measures itself as dense, so the threshold falls to the
-        // patch's own dense value, every edge in it reads as "already at
-        // target", and no number of strokes can ever even it out. Every
-        // reference loop uses one target for both directions for exactly this
-        // reason; see `RemeshPolicy::collapse_threshold`.
-        //
-        // The guard that protects a genuinely fine feature is not a density cap,
-        // it is the post-collapse over-stretch test below, which is the
-        // reference loop's own `collapse_ok`: never merge two vertices if the
-        // result leaves any neighbour farther than the SPLIT bound. That is a
-        // lower bound on the resulting spacing, so it protects a carved band by
-        // refusing the merge that would destroy it, rather than by refusing
-        // every merge in the band.
+        // One policy target drives both split and collapse decisions. The
+        // post-collapse stretch guard preserves fine features without letting
+        // local density raise the collapse threshold.
         if length >= policy.collapse_threshold(target) {
             return None;
         }
-        // Post-collapse length guard (the literature's `collapse_ok` loop):
-        // merging a and b onto their midpoint lengthens the survivor's OTHER
-        // incident edges. Without this test a short-edge collapse can mint the
-        // exact defect the remesh exists to remove — a long edge, and with it
-        // the "tiny triangle next to a huge one" density jump. Validate before
-        // mutating, against the f32-rounded midpoint that will actually be
-        // written, so the test sees the real geometry.
+        // A midpoint can lengthen the survivor's other incident edges. Check
+        // every resulting edge against the split bound using the f32-rounded
+        // midpoint that the commit writes.
         let mid = (self.group_v(a) + self.group_v(b)) * 0.5;
         let mid = DVec3::new(
             mid.x as f32 as f64,
@@ -154,14 +128,8 @@ impl SculptSession {
         // survivor's faces in one place and move them to another, inverting
         // them.
         //
-        // Blender's dyntopo rule: a vertex is never deleted if it is on a
-        // boundary, and a collapse keeps the MORE masked endpoint
-        // (`pbvh_bmesh_collapse_edge` deletes the less masked one). An open
-        // scan's rim is clinical geometry, and deleting its vertex hands the
-        // surface to the interior neighbour, which pulls the rim inward. The
-        // mask is the clinical field: the preparation margin and the bore wall
-        // are the vertices a collapse must not hand to a free neighbour. Lower
-        // id breaks the tie so the choice stays deterministic.
+        // Keep an open-boundary endpoint so the scan rim stays fixed. The
+        // lower group id breaks an unconstrained tie deterministically.
         let take_b = if self.group_is_boundary(b) && !self.group_is_boundary(a) {
             true
         } else if self.group_is_boundary(a) && !self.group_is_boundary(b) {
@@ -172,10 +140,8 @@ impl SculptSession {
         let (survivor, retired) = if take_b { (b, a) } else { (a, b) };
         let survivor_raw = self.topology.members(survivor)[0];
         let retired_raw = self.topology.members(retired)[0];
-        // A boundary survivor stays exactly where it is; every other survivor
-        // moves to the midpoint of the edge. Taking an open rim to a midpoint
-        // would shorten the scanned margin by half an edge on every collapse and
-        // walk it inward stroke after stroke.
+        // A boundary survivor stays fixed; every other survivor moves to the
+        // edge midpoint. This keeps the scanned margin on its boundary.
         //
         // Placement is validated where it commits: the survivor and its landing
         // point are chosen here, before the checks below, and every surviving
@@ -195,10 +161,9 @@ impl SculptSession {
             stored_position(self.group_v(survivor) + (mid - self.group_v(survivor)))
         };
         {
-            // Measured from where the survivor actually lands, not from the
-            // midpoint: a pinned survivor stays put, so its neighbours' resulting
-            // edges are the ones to bound. Tested before the surface checks
-            // below: it reads only positions, and most refused merges fail it.
+            // Bound edges from the survivor's actual landing point. A pinned
+            // survivor can differ from the midpoint. This position-only check
+            // runs before the surface checks.
             let limit = target * policy.split_hysteresis;
             for &group in &[a, b] {
                 for &neighbor in self.topology.neighbors(group) {
@@ -283,10 +248,8 @@ impl SculptSession {
         if a == c || a == d || b == c || b == d || c == d {
             return None;
         }
-        // Opposite corners are only required to be live: a collapse rewires the
-        // faces around them and moves no vertex but the survivor, so a frozen
-        // corner can take part without moving. Refusing on its mask was what
-        // stalled a dense band inside the protected core.
+        // Opposite corners need only be live: the collapse rewires their faces
+        // without moving them.
         if !self.group_is_live(c) || !self.group_is_live(d) {
             return None;
         }
@@ -391,16 +354,8 @@ impl SculptSession {
                 rewires.push((face, raw, after));
             }
         }
-        // A masked vertex keeps its position, and a collapse now holds it there
-        // rather than refusing the merge, so there is nothing left to veto here.
-        // This gate refused any collapse whose substituted faces merely touched a
-        // fully protected corner — and because a dense band in the protected
-        // core has every corner protected, it refused every merge that would
-        // have evened that band out. Measured on such a band: 424 of the 697
-        // short edges that survived three strokes had both endpoints masked and
-        // averaged 0.017 mm against a 0.081 mm target. The position is protected
-        // by `survivor_pinned` above and by `triangle_final_is_safe` on every
-        // substituted face below; neither is weakened by letting the merge run.
+        // Protected positions remain fixed at commit; every substituted face is
+        // still checked against the baseline safety rule below.
         // Duplicate faces: no substituted triple may already exist live.
         // Faces being rewired away are excluded: their old triples vanish.
         let rewired_ids: Vec<u32> = rewires.iter().map(|(face, _, _)| *face).collect();

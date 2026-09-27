@@ -1,47 +1,14 @@
-//! Tangential vertex-spacing relaxation — the spacing half of a Smooth dab.
+//! Tangential vertex-spacing relaxation used by the live remesh loop.
 //!
-//! The fairing solve decides shape; this pass decides SPACING. It slides each
-//! vertex toward its one-ring centroid with the surface-normal component
-//! removed, so it opens a bunched fan and evens crowded rows while leaving the
-//! form exactly where it was. This is the half a fairing operator can never
-//! supply: a Laplacian pull moves the vertices a bad triangulation already has
-//! and never redistributes them, so a seam of long slivers, a density step and
-//! a bunched row survive any number of smoothing strokes. `fairing.rs` owns the
-//! shape; this owns the tessellation the operator actually reads on screen.
-//!
-//! The function proposes, never writes: clamping to a step budget, the
-//! protection mask and the undo record stay in the owning session, which is the
-//! only place that knows them.
-//!
-//! This module owns the per-pass OPERATOR only. How many passes run, in what
-//! order relative to the topological operators, and where the reprojection goes
-//! is the isotropic loop's business and lives with the loop (`remesh.rs`),
-//! because those three are what make the passes converge: split and collapse
-//! change which edges exist, the passes move the vertices that make those edges
-//! long or short, and only the reprojection keeps a repeated pass on the surface
-//! the operator shaped. A pass is not the operator on its own — it is one
-//! iteration of a fixed-point solve, and a single iteration is not a solve.
+//! Fairing changes surface shape. This pass moves vertices toward their
+//! one-ring centroid after removing the normal component, so it evens spacing
+//! while preserving the local surface. It proposes targets; the session owns
+//! step limits, protection masks, surface checks, and undo records.
 
 use glam::DVec3;
 
 /// Per-pass share of the tangential centroid offset a full-weight vertex takes.
 pub const RESPACE_GAIN: f64 = 0.5;
-
-/// Sequential relaxation passes the isotropic loop runs per cycle. This is a
-/// ceiling, not a dose: the loop stops earlier when the flow settles. The
-/// reference remeshers relax several times between their topological passes —
-/// the Polygon Mesh Processing library's `uniform_remeshing` calls its
-/// `tangential_smoothing(5)` once per cycle — because one damped Jacobi step
-/// moves only the highest-frequency part of the spacing error and leaves every
-/// larger-scale unevenness exactly where it was.
-pub const RESPACE_PASSES: usize = 4;
-
-/// A vertex whose whole tangential pull is below this share of the cycle's
-/// target edge length is already evenly spaced and is left alone. This is the
-/// loop's flow-distance stopping scale: the reference remeshers terminate when
-/// the mean per-pass movement falls to roughly one percent of the target edge,
-/// and without such a scale a relaxation never reports that it has finished.
-pub const RESPACE_SETTLED_SHARE: f64 = 0.01;
 
 /// What the pass needs to know about the surface under a weighted selection.
 ///

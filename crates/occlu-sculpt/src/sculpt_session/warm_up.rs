@@ -1,15 +1,7 @@
-//! Warm-up for the brush step, run once before the operator's first press.
+//! Exercise each brush path on a private surface before the first stroke.
 //!
-//! A just-in-time engine compiles a function with a quick baseline tier and
-//! promotes it to the optimizing tier only after it has run for a while, so
-//! without this the first strokes of a session would run the slow tier while
-//! the operator was already painting. One short private stroke of every brush
-//! on a small sphere runs the hot paths (raycast, footprint, every solver,
-//! split, merge, flip and relaxation) before a case needs them.
-//!
-//! The sphere session is private and dropped at the end. The caller's session
-//! is never touched, and the stroke counters it may be collecting are put
-//! back as they were.
+//! The private sphere session is dropped at the end. The caller's session is
+//! untouched, and its diagnostic counters are restored to their input values.
 
 use super::*;
 use crate::hash::FxHashMap;

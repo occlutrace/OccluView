@@ -263,11 +263,12 @@ impl BrushSession {
                 dirty_triangles: dirty.clone(),
             }
         });
-        BrushStrokeOutcome {
+        let outcome = BrushStrokeOutcome {
             touched_vertices: touched.iter().map(|&vertex| vertex as usize).collect(),
             dirty_triangles: dirty,
             topology_delta,
-        }
+        };
+        outcome
     }
 
     /// Bring the attribute mirror back in line with the kernel: copy the moved

@@ -97,14 +97,8 @@ impl SculptSession {
                 }
             }
         }
-        // Reverse chronological replay: un-apply every event in the opposite
-        // order the stroke produced it. This is what makes a slot that a
-        // collapse freed and a later append reused unwind correctly — the
-        // append is removed first, and only then does the collapse restore
-        // the slot's base face. Replaying collapses and rewires as two
-        // separate streams could not tell those two apart: it restored a base
-        // face and then overwrote it with the discarded append's corners,
-        // which is the divergence the validation refuses.
+        // Reverse chronological replay removes appended faces before
+        // restoring slots freed by earlier collapses.
         for event in journal.events.iter().rev() {
             let applied = match *event {
                 TopoEvent::AddedVert(index) => {
@@ -297,13 +291,8 @@ impl SculptSession {
         {
             return false;
         }
-        // Chronological replay. The record vectors alone are not enough: a
-        // heal can collapse and then append (the fallback densify runs after
-        // the height-field fill), and the appended faces take the ids the
-        // collapse truncation freed. Replaying appends first put them at
-        // different slots, so redo produced a different mesh. One ordered
-        // event list is the contract; every record has exactly one event
-        // (enforced by `decode`).
+        // Apply each operation in journal order. A collapse can free face ids
+        // that later appends reuse, and every record must have one event.
         for event in &journal.events {
             let applied = match *event {
                 TopoEvent::AddedVert(index) => {

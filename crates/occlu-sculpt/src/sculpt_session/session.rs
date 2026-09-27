@@ -337,9 +337,8 @@ impl SculptSession {
         self.live_trace_audit = enabled;
     }
 
-    /// Record a vertex's pre-stroke position once per stroke — O(1) via the
-    /// stamp buffer, no hashing (the former per-move `HashMap` insert was a
-    /// measurable per-dab cost).
+    /// Record one before-image per vertex and stroke using the session stamp
+    /// buffer.
     pub(super) fn record_stroke_vertex(&mut self, vertex: u32) {
         let mark = &mut self.stroke_mark[vertex as usize];
         if *mark == self.stroke_epoch {
