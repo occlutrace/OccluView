@@ -1,16 +1,8 @@
 use super::*;
 
 impl TopoJournal {
-    /// Encoded size in 32-bit words, without building the buffers.
-    ///
-    /// The stroke/session byte budgets only need the LENGTH, and they are
-    /// checked on every heal call. Measuring it with `encode_u32().len() +
-    /// encode_f32().len()` allocated two full copies of the whole accumulated
-    /// stroke journal each time, so the cost of merely deciding whether to keep
-    /// going grew with the trail. The counts below mirror `encode_u32` and
-    /// `encode_f32` exactly; `encoded_size_matches_the_encoders` pins that, so
-    /// the two cannot drift into a budget that measures something other than
-    /// what it ships.
+    /// Encoded size in 32-bit words, counted without allocating wire buffers.
+    /// The result matches the two encoders and feeds the stroke and dab budgets.
     pub fn encoded_size_words(&self) -> usize {
         if self.is_empty() {
             return 0;
@@ -120,7 +112,7 @@ impl TopoJournal {
     /// Encode only the records past `mark` as a standalone journal whose base
     /// is `base`. The event list is filtered and re-indexed so the slice obeys
     /// the same "every record is reachable once, in order" contract the full
-    /// journal does. Empty when no record was added since the mark.
+    /// journal does. Empty when the mark equals the current record count.
     ///
     /// A slice is the display mirror's instruction: faces and vertices.
     pub fn encode_slice_u32(
@@ -265,8 +257,7 @@ impl TopoJournal {
                 after: [head[4], head[5], head[6]],
             });
         }
-        // Adjacency is derived from the faces; a journal that carries rows
-        // was written by an engine this session cannot replay.
+        // Adjacency is derived from faces, so row payloads are unsupported.
         if n_rows != 0 {
             return None;
         }

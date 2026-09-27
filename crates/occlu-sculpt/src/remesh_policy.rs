@@ -110,10 +110,8 @@ impl RemeshPolicy {
         target * self.collapse_hysteresis
     }
 
-    /// Groups still admitted. Every count is of live groups: the slots a
-    /// merge retired are not surface. Counting slots made each split-merge
-    /// cycle permanent, so a session that kept remeshing one seam ran out of
-    /// splits and the live remesh went quiet for good.
+    /// Groups still admitted. Count live groups so retired slots do not consume
+    /// the growth budget.
     pub fn remaining_group_growth(
         &self,
         groups: u32,

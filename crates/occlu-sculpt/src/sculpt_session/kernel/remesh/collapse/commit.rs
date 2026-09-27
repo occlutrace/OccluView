@@ -1,8 +1,8 @@
 use super::*;
 
 impl SculptSession {
-    /// Apply a validated collapse. Cannot fail: every condition was decided by
-    /// `plan_collapse_edge` against the geometry the plan was built from.
+    /// Apply a validated collapse. `plan_collapse_edge` checks every condition
+    /// against its input geometry.
     // the validated collapse plan commits in one order.
     #[allow(clippy::too_many_lines)]
     pub(super) fn commit_collapse_edge(

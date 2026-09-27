@@ -1,10 +1,8 @@
 //! Brush tip stamps — the shape of a dab, shared by every sculpt session.
 //!
 //! A tip is geometry, not a falloff curve: it decides which vertices a dab
-//! reaches and with what share of the stroke. The reference tool separates
-//! the two axes — a mode (add / smooth / flatten) driven through a tip
-//! (ball / knife / cylinder) — and this module is where that separation
-//! lives, so one tip means one footprint in every module.
+//! reaches and with what share of the stroke. A mode (add / smooth / flatten)
+//! uses one tip (ball / knife / cylinder), so each tip has one shared footprint.
 //!
 //! The knife follows the supplied stroke bearing; a press with no valid
 //! bearing uses a narrow radial footprint instead of producing an empty dab.
@@ -38,25 +36,14 @@ impl TipStamp {
     }
 }
 
-/// Cylinder plateau as a share of the brush radius: uniform inside, blended
-/// outside. Below ~0.7 the plateau stops reading as flat; above ~0.9 the rim
-/// has no room to blend and the dab steps at its edge.
+/// Cylinder plateau as a share of the brush radius. The remaining fifth of the
+/// radius forms the blended rim.
 pub const CYLINDER_PLATEAU: f64 = 0.8;
 /// Transverse knife reach relative to its along-stroke radius.
 const KNIFE_CROSS_RADIUS_SHARE: f64 = 0.55;
 
-/// Spherical stamp: 1 at the centre, 0 at and beyond the radius. The squared
-/// reference profile the sessions already converged on, kept here so a tip
-/// change cannot silently retune the default brush.
-/// Ball tip falloff: `t^2` for `t = 1 - d/r`, i.e. zero slope at the rim and
-/// steepest at the centre.
-///
-/// This is Blender's SHARP curve preset (`p^2`), not its default smooth
-/// (`3p^2 - 2p^3`) and not `SculptGL`'s `3d^4 - 4d^3 + 1`. The choice is a hand
-/// feel, and it is recorded here because it is the one law every brush shares:
-/// it decides how sharply a dab's edge meets untouched surface, and a reader
-/// comparing against another editor needs to know which curve this is rather
-/// than assuming the default.
+/// Spherical stamp falloff: `t^2` for `t = 1 - d/r`. It is one at the centre
+/// and reaches zero with zero slope at the radius.
 pub fn ball_weight(distance_mm: f64, radius_mm: f64) -> f64 {
     if distance_mm >= radius_mm
         || radius_mm <= 0.0
@@ -90,12 +77,7 @@ pub fn knife_weight(offset: DVec3, axis: Option<DVec3>, radius_mm: f64) -> f64 {
     ball_weight(elliptical_distance, radius_mm)
 }
 
-/// Flat-ended stamp: uniform inside the plateau, one smoothstep rim outside.
-/// The plateau is what makes a levelling dab a face rather than a mound; the
-/// blended rim is what keeps its edge from stepping.
-/// Flat-ended cylinder tip: a hard `CYLINDER_PLATEAU` core with a smoothstep
-/// rim (`3s^2 - 2s^3`), i.e. Blender's smooth curve over the rim band only.
-/// The plateau is what makes this tip level a surface instead of doming it.
+/// Flat-ended stamp: uniform inside the plateau, then a smoothstep rim to zero.
 pub fn cylinder_weight(distance_mm: f64, radius_mm: f64) -> f64 {
     if distance_mm >= radius_mm
         || radius_mm <= 0.0

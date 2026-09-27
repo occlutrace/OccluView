@@ -6,16 +6,15 @@
 use super::*;
 use crate::RemeshPolicy;
 
+/// Relaxation passes per ordinary dab.
 const LIVE_RESPACE_PASSES: usize = 2;
-/// Relaxation passes one swept step may run: two per dab it stands for, as a
-/// dab trail relaxed, up to this ceiling. The settle exit ends most early.
+/// Maximum passes for a swept step, which represents multiple dab intervals.
 const MAX_LIVE_RESPACE_PASSES: usize = 8;
+/// Stop the cycle when the largest accepted move is below two percent of the
+/// target spacing.
 const LIVE_RESPACE_SETTLED_SHARE: f64 = 0.02;
-/// A vertex whose relaxation pull is under this share of the target spacing
-/// is already in place and skips the landing, cover and material work. A
-/// swept step overlaps the previous one by most of its footprint, so without
-/// it every vertex under the brush was re-landed a score of times per pass of
-/// the brush for a correction measured in microns.
+/// Skip landing and surface checks when a swept step's pull is below five
+/// percent of the target spacing.
 const LIVE_RESPACE_VERTEX_SETTLED_SHARE: f64 = 0.05;
 
 impl SculptSession {
@@ -101,6 +100,7 @@ impl SculptSession {
             0.0
         };
         let passes = (LIVE_RESPACE_PASSES * self.step_dabs()).min(MAX_LIVE_RESPACE_PASSES);
+        let mut moved_groups = Vec::with_capacity(groups.len());
         for _pass in 0..passes {
             let mut steps: Vec<(u32, DVec3)> = Vec::with_capacity(groups.len());
             {
@@ -138,6 +138,7 @@ impl SculptSession {
             }
             let mut largest_pull = 0.0f64;
             let mut pass_moved = 0usize;
+            moved_groups.clear();
             for (group, target) in steps {
                 let here = self.group_v(group);
                 let target = self.clamp_step_at(group, here, target);
@@ -197,12 +198,13 @@ impl SculptSession {
                     self.set_group_material(journal, group, material);
                 }
                 pass_moved += 1;
+                moved_groups.push(group);
                 largest_pull = largest_pull.max(step);
             }
             if pass_moved == 0 || largest_pull <= settled_scale {
                 break;
             }
-            let touched = self.collect_normal_scope(&groups);
+            let touched = self.collect_normal_scope(&moved_groups);
             self.refresh_scope_normals(&touched);
             self.normal_scope = touched;
         }

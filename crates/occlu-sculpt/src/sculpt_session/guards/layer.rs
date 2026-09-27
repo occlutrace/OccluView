@@ -21,6 +21,25 @@ impl SculptSession {
         out: &mut Vec<u32>,
     ) {
         out.clear();
+        #[cfg(feature = "parallel")]
+        if triangles.len() >= PAR_FLOOR {
+            use rayon::prelude::*;
+            out.resize(triangles.len(), 0);
+            out.par_iter_mut()
+                .zip(triangles.par_iter())
+                .for_each(|(flag, &triangle)| {
+                    *flag = u32::from(self.layer_triangle_is_unsafe(triangle, mode));
+                });
+            let mut unsafe_count = 0;
+            for (index, &triangle) in triangles.iter().enumerate() {
+                if out[index] != 0 {
+                    out[unsafe_count] = triangle;
+                    unsafe_count += 1;
+                }
+            }
+            out.truncate(unsafe_count);
+            return;
+        }
         out.extend(
             triangles
                 .iter()
@@ -68,8 +87,8 @@ impl SculptSession {
             let group = queue[cursor];
             cursor += 1;
             // `marks` means queued, not permanently visited. A second seed
-            // may lower this group after it was processed; clearing the mark
-            // lets that tighter ceiling continue through the remaining mesh.
+            // can lower a processed group; clearing its mark lets the tighter
+            // ceiling continue through the remaining mesh.
             self.rollback_marks[group as usize] = 0;
             let ceiling = (self.rollback_factor[group as usize] + MAX_FACTOR_STEP).min(1.0);
             for &neighbor in self.topology.neighbors(group) {
@@ -159,10 +178,8 @@ impl SculptSession {
     }
 
     /// Commit one continuous brush field with a local, edge-continuous safety
-    /// scale. Unsafe face corners back off together and the reduction tapers
-    /// through their welded neighbours. This keeps the field continuous
-    /// without returning to the whole-disc scalar that made one grazing face
-    /// cancel a remote, healthy part of the brush.
+    /// scale. Unsafe face corners back off together, and the reduction tapers
+    /// through their welded neighbours without scaling unrelated regions.
     pub(in super::super) fn commit_even_layer(
         &mut self,
         proposals: &[(u32, DVec3)],

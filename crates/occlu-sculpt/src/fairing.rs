@@ -21,10 +21,8 @@ const SOLVE_TOLERANCE: f64 = 1e-4;
 /// Diagonal-scaled residual threshold in mm, independent of the solver's
 /// preconditioner. This local indicator is not a bound on the full solution error.
 const SOLVE_SETTLED_MM: f64 = 1.0e-7;
-/// Conjugate-gradient iterations one call may spend. The count needed grows
-/// like `scale / edge`, so this only binds on the widest brush over the finest
-/// scan, where it costs some of the requested scale and never a stalled
-/// stroke.
+/// Maximum conjugate-gradient iterations per call. The cap bounds work when a
+/// surface system converges slowly.
 const MAX_SOLVE_STEPS: usize = 192;
 /// Floor on a vertex's own area, so a collapsed sliver cannot divide by zero.
 const MIN_VERTEX_AREA_MM2: f64 = 1e-9;
@@ -40,7 +38,7 @@ pub fn smoothing_scale_mm(radius_mm: f64, _strength: f64) -> f64 {
 ///
 /// It is a trait rather than a pair of buffers because the two sessions that
 /// run this operator index their surfaces differently - one by welded group,
-/// one by mesh vertex - and neither may be made to rebuild its topology into
+/// one by mesh vertex - and neither needs to rebuild its topology into
 /// the other's shape just to be smoothed.
 pub trait FairingSurface {
     /// Highest addressable vertex id plus one; the row map is sized from it.
@@ -53,16 +51,16 @@ pub trait FairingSurface {
     fn neighbors(&self, vertex: u32) -> &[u32];
 }
 
-/// Reusable row map, owned by the caller's session.
+/// Reusable row map and solver initial guess, owned by the caller's session.
 ///
-/// Rebuilding it per call is a write over every vertex in the mesh to answer a
-/// question about a few thousand of them, and it showed: a region-local dab
-/// cost 46% more on a 194k-vertex mesh than on a 6.5k one purely through that
-/// line. It is cleared in O(footprint) instead.
+/// Only ids written by the prior selection are cleared. A same-scale local
+/// solve starts from the prior correction on vertices shared by both selections.
 #[derive(Default)]
 pub struct FairingScratch {
     slot_of: Vec<u32>,
     written: Vec<u32>,
+    warm_feature_size_mm: Option<f64>,
+    warm_start: Vec<(u32, DVec3)>,
     recycled: Option<Fairing>,
 }
 
@@ -117,15 +115,36 @@ impl FreeOperator {
     }
 
     fn multiply(&self, diagonal: &[f64], x: &[DVec3], out: &mut Vec<DVec3>) {
-        out.clear();
-        for row in 0..diagonal.len() {
-            let mut sum = DVec3::ZERO;
-            for entry in self.row_start[row]..self.row_start[row + 1] {
-                sum += x[self.column[entry]] * self.weight[entry];
-            }
-            out.push((x[row] * diagonal[row]) - sum);
+        out.resize(diagonal.len(), DVec3::ZERO);
+        #[cfg(feature = "parallel")]
+        if diagonal.len() >= crate::sculpt_session::PAR_FLOOR {
+            use rayon::prelude::*;
+            out.par_iter_mut().enumerate().for_each(|(row, value)| {
+                *value = self.multiply_row(diagonal, x, row);
+            });
+            return;
+        }
+        for (row, value) in out.iter_mut().enumerate() {
+            *value = self.multiply_row(diagonal, x, row);
         }
     }
+
+    fn multiply_row(&self, diagonal: &[f64], x: &[DVec3], row: usize) -> DVec3 {
+        let mut sum = DVec3::ZERO;
+        for entry in self.row_start[row]..self.row_start[row + 1] {
+            sum += x[self.column[entry]] * self.weight[entry];
+        }
+        (x[row] * diagonal[row]) - sum
+    }
+}
+
+fn update_solution_row(x: &mut DVec3, r: &mut DVec3, p: DVec3, ap: DVec3, alpha: f64) {
+    *x += p * alpha;
+    *r -= ap * alpha;
+}
+
+fn update_direction_row(p: &mut DVec3, z: DVec3, beta: f64) {
+    *p = z + (*p * beta);
 }
 
 impl Fairing {
@@ -210,6 +229,7 @@ pub struct FairingJob {
     settled: f64,
     steps: usize,
     done: bool,
+    feature_size_mm: f64,
 }
 
 impl FairingJob {
@@ -228,17 +248,35 @@ impl FairingJob {
         {
             return None;
         }
-        let system = build(surface, selection, scratch)?;
+        let ordered_selection = bandwidth_order(surface, selection, scratch);
+        let system = build(surface, &ordered_selection, scratch)?;
         let time = TIME_PER_SCALE_SQUARED * feature_size_mm * feature_size_mm;
         let (b, diagonal) = system.right_hand_side(time);
         let operator = FreeOperator::new(&system, time);
         let preconditioner = IncompleteCholesky::new(&operator, &diagonal);
-        let x: Vec<DVec3> = system
+        let mut x: Vec<DVec3> = system
             .position
             .iter()
             .zip(&system.free)
             .filter_map(|(&p, &free)| free.then_some(p))
             .collect();
+        if scratch
+            .warm_feature_size_mm
+            .is_some_and(|previous| previous.to_bits() == feature_size_mm.to_bits())
+        {
+            for (row, &(vertex, _)) in ordered_selection.iter().enumerate() {
+                if !system.free[row] {
+                    continue;
+                }
+                if let Ok(index) = scratch
+                    .warm_start
+                    .binary_search_by_key(&vertex, |&(id, _)| id)
+                {
+                    let free_row = system.free_row[row] as usize;
+                    x[free_row] += scratch.warm_start[index].1;
+                }
+            }
+        }
         let mut ap = Vec::with_capacity(x.len());
         operator.multiply(&diagonal, &x, &mut ap);
         let r: Vec<DVec3> = b.iter().zip(&ap).map(|(b, a)| b - (*a)).collect();
@@ -255,7 +293,7 @@ impl FairingJob {
             system,
             operator,
             preconditioner,
-            selection: selection.to_vec(),
+            selection: ordered_selection,
             rhs: b,
             diagonal,
             x,
@@ -268,6 +306,7 @@ impl FairingJob {
             settled,
             steps: 0,
             done: false,
+            feature_size_mm,
         })
     }
 
@@ -292,9 +331,31 @@ impl FairingJob {
                 break;
             }
             let alpha = self.rz / denominator;
+            #[cfg(feature = "parallel")]
+            if self.x.len() >= crate::sculpt_session::PAR_FLOOR {
+                use rayon::prelude::*;
+                self.x
+                    .par_iter_mut()
+                    .zip(self.p.par_iter())
+                    .zip(self.r.par_iter_mut())
+                    .zip(self.ap.par_iter())
+                    .for_each(|(((x, &p), r), &ap)| {
+                        update_solution_row(x, r, p, ap, alpha);
+                    });
+            } else {
+                for (((x, &p), r), &ap) in self
+                    .x
+                    .iter_mut()
+                    .zip(&self.p)
+                    .zip(&mut self.r)
+                    .zip(&self.ap)
+                {
+                    update_solution_row(x, r, p, ap, alpha);
+                }
+            }
+            #[cfg(not(feature = "parallel"))]
             for i in 0..self.x.len() {
-                self.x[i] = self.x[i] + self.p[i] * alpha;
-                self.r[i] = self.r[i] - self.ap[i] * alpha;
+                update_solution_row(&mut self.x[i], &mut self.r[i], self.p[i], self.ap[i], alpha);
             }
             self.settled = 0.0;
             self.preconditioner.apply(&self.r, &mut self.z);
@@ -305,8 +366,21 @@ impl FairingJob {
             }
             let next = dot(&self.r, &self.z);
             let beta = next / self.rz;
+            #[cfg(feature = "parallel")]
+            if self.x.len() >= crate::sculpt_session::PAR_FLOOR {
+                use rayon::prelude::*;
+                self.p
+                    .par_iter_mut()
+                    .zip(self.z.par_iter())
+                    .for_each(|(p, &z)| update_direction_row(p, z, beta));
+            } else {
+                for (p, &z) in self.p.iter_mut().zip(&self.z) {
+                    update_direction_row(p, z, beta);
+                }
+            }
+            #[cfg(not(feature = "parallel"))]
             for i in 0..self.x.len() {
-                self.p[i] = self.z[i] + self.p[i] * beta;
+                update_direction_row(&mut self.p[i], self.z[i], beta);
             }
             self.rz = next;
             self.steps += 1;
@@ -315,9 +389,23 @@ impl FairingJob {
         self.done
     }
 
-    /// Reuse allocation capacity, while rebuilding every geometric coefficient
-    /// from the next dab's surface. No stale Laplacian survives a deformation.
+    /// Store the current correction as an initial guess and recycle row storage.
+    /// The next solve rebuilds its geometric coefficients from the live surface.
     pub fn recycle(self, scratch: &mut FairingScratch) {
+        scratch.warm_start.clear();
+        for (row, &(vertex, _)) in self.selection.iter().enumerate() {
+            if self.system.free_row[row] == u32::MAX {
+                continue;
+            }
+            let free_row = self.system.free_row[row] as usize;
+            scratch
+                .warm_start
+                .push((vertex, self.x[free_row] - self.system.position[row]));
+        }
+        scratch
+            .warm_start
+            .sort_unstable_by_key(|&(vertex, _)| vertex);
+        scratch.warm_feature_size_mm = Some(self.feature_size_mm);
         scratch.recycled = Some(self.system);
     }
 
@@ -341,6 +429,92 @@ impl FairingJob {
     }
 }
 
+/// Order free rows by the selected graph so sparse factors and solver vectors
+/// retain locality. Held boundary rows do not enter the solve and follow them.
+fn bandwidth_order<S: FairingSurface + ?Sized>(
+    surface: &S,
+    selection: &[(u32, f64)],
+    scratch: &mut FairingScratch,
+) -> Vec<(u32, f64)> {
+    for &vertex in &scratch.written {
+        if let Some(slot) = scratch.slot_of.get_mut(vertex as usize) {
+            *slot = u32::MAX;
+        }
+    }
+    scratch.slot_of.resize(surface.vertex_count(), u32::MAX);
+    scratch.written.clear();
+    for (row, &(vertex, _)) in selection.iter().enumerate() {
+        scratch.slot_of[vertex as usize] = row as u32;
+        scratch.written.push(vertex);
+    }
+
+    let mut degree = vec![0usize; selection.len()];
+    for (row, &(vertex, weight)) in selection.iter().enumerate() {
+        if weight <= 0.0 {
+            continue;
+        }
+        degree[row] = surface
+            .neighbors(vertex)
+            .iter()
+            .filter(|&&neighbor| {
+                let slot = scratch.slot_of[neighbor as usize];
+                slot != u32::MAX && selection[slot as usize].1 > 0.0
+            })
+            .count();
+    }
+
+    let mut visited = vec![false; selection.len()];
+    let mut queue = Vec::with_capacity(selection.len());
+    let mut adjacent = Vec::with_capacity(8);
+    let mut rows = Vec::with_capacity(selection.len());
+    loop {
+        let start = (0..selection.len())
+            .filter(|&row| selection[row].1 > 0.0 && !visited[row])
+            .min_by_key(|&row| (degree[row], selection[row].0));
+        let Some(start) = start else {
+            break;
+        };
+        let component_start = rows.len();
+        visited[start] = true;
+        queue.push(start);
+        let mut cursor = 0;
+        while cursor < queue.len() {
+            let row = queue[cursor];
+            cursor += 1;
+            rows.push(row);
+            adjacent.clear();
+            for &neighbor in surface.neighbors(selection[row].0) {
+                let slot = scratch.slot_of[neighbor as usize];
+                if slot != u32::MAX {
+                    let neighbor_row = slot as usize;
+                    if selection[neighbor_row].1 > 0.0 && !visited[neighbor_row] {
+                        adjacent.push(neighbor_row);
+                    }
+                }
+            }
+            adjacent.sort_unstable_by_key(|&row| (degree[row], selection[row].0));
+            for &neighbor_row in &adjacent {
+                if !visited[neighbor_row] {
+                    visited[neighbor_row] = true;
+                    queue.push(neighbor_row);
+                }
+            }
+        }
+        rows[component_start..].reverse();
+        queue.clear();
+    }
+
+    let mut ordered = Vec::with_capacity(selection.len());
+    ordered.extend(rows.into_iter().map(|row| selection[row]));
+    ordered.extend(
+        selection
+            .iter()
+            .copied()
+            .filter(|&(_, weight)| weight <= 0.0),
+    );
+    ordered
+}
+
 /// Assemble the selection's cotangent system. `None` when nothing in it is
 /// free to move.
 fn build<S: FairingSurface + ?Sized>(
@@ -353,7 +527,9 @@ fn build<S: FairingSurface + ?Sized>(
     // Remeshing changes the vertex count between dabs. Preserve the untouched
     // slots instead of clearing the whole mesh whenever one vertex is added.
     for &vertex in &scratch.written {
-        scratch.slot_of[vertex as usize] = u32::MAX;
+        if let Some(slot) = scratch.slot_of.get_mut(vertex as usize) {
+            *slot = u32::MAX;
+        }
     }
     scratch.slot_of.resize(vertex_count, u32::MAX);
     scratch.written.clear();
@@ -408,37 +584,9 @@ fn build<S: FairingSurface + ?Sized>(
                 continue;
             }
             column.push(slot);
-            // uniform (umbrella) weight. Every neighbour counts the same, and
-            // every weight is positive.
-            //
-            // This replaced `max(0.5 * (cot a + cot b), 0)`, and the clamp was
-            // the defect. Cotangent weights have LINEAR PRECISION: on a planar
-            // patch they satisfy `sum_j w_ij (p_j - p_i) = 0` exactly, which is
-            // why the Laplacian of a flat surface vanishes and why the operator
-            // does not read the tessellation. Clamping each negative weight
-            // (which is what an obtuse triangle produces) destroys that identity,
-            // so a FREE vertex of a perfectly flat IRREGULAR patch acquires a
-            // nonzero operator and moves. Worse, whether a given edge is clamped
-            // depends on the current positions, and `max` is not continuous: as
-            // vertices move by a fraction of a micron the clamp set flips, so the
-            // operator solved on dab N+1 is a different function from the one
-            // solved on dab N. Repeated stationary dabs then do not converge to a
-            // fixed point — they oscillate, which is the operator's "it twitches
-            // where the triangles are bad and is fine where they are regular".
-            // Regular patches have no negative cotangents, so they never hit the
-            // clamp and never showed the symptom.
-            //
-            // Uniform weights cannot have that failure: they are symmetric,
-            // strictly positive, independent of the positions, and trivially
-            // positive definite, so the system is the same function of the
-            // selection on every dab and the solve is monotone. This is also
-            // exactly what the reference sculpting brush ships — its default
-            // smooth is a plain umbrella average over the one-ring, with no
-            // cotangent weight anywhere. The price is the one the cotangent
-            // rewrite was trying to avoid (a uniform Laplacian reads the
-            // tessellation), and it is the correct price to pay: a smoothing
-            // brush that is stable on every mesh is worth more than one that is
-            // mesh-independent in theory and oscillates in practice.
+            // Equal positive weights keep adjacency coefficients symmetric and
+            // independent of live coordinates. Area mass scales the physical
+            // response; uniform adjacency defines the smoothing operator.
             weight.push(1.0);
         }
         row_start.push(column.len() as u32);
@@ -452,4 +600,97 @@ fn build<S: FairingSurface + ?Sized>(
         mass,
         free_row,
     })
+}
+
+#[cfg(all(test, feature = "parallel"))]
+mod tests {
+    use super::*;
+
+    struct GridSurface {
+        positions: Vec<DVec3>,
+        neighbors: Vec<Vec<u32>>,
+    }
+
+    impl FairingSurface for GridSurface {
+        fn vertex_count(&self) -> usize {
+            self.positions.len()
+        }
+
+        fn position(&self, vertex: u32) -> DVec3 {
+            self.positions[vertex as usize]
+        }
+
+        fn vertex_area(&self, _vertex: u32) -> f64 {
+            1.0
+        }
+
+        fn neighbors(&self, vertex: u32) -> &[u32] {
+            &self.neighbors[vertex as usize]
+        }
+    }
+
+    fn grid_surface(side: usize) -> GridSurface {
+        let side_u32 = u32::try_from(side).expect("grid side fits the vertex index");
+        let mut positions = Vec::with_capacity(side * side);
+        let mut neighbors = Vec::with_capacity(side * side);
+        for y in 0..side_u32 {
+            for x in 0..side_u32 {
+                let id = y * side_u32 + x;
+                positions.push(DVec3::new(
+                    f64::from(x),
+                    f64::from(y),
+                    f64::from((x * 17 + y * 31) % 23) / 23.0,
+                ));
+                let mut row = Vec::with_capacity(4);
+                if y > 0 {
+                    row.push(id - side_u32);
+                }
+                if x > 0 {
+                    row.push(id - 1);
+                }
+                if x + 1 < side_u32 {
+                    row.push(id + 1);
+                }
+                if y + 1 < side_u32 {
+                    row.push(id + side_u32);
+                }
+                neighbors.push(row);
+            }
+        }
+        GridSurface {
+            positions,
+            neighbors,
+        }
+    }
+
+    #[test]
+    fn sparse_fairing_is_bit_identical_across_worker_counts_and_selection_order() {
+        let surface = grid_surface(93);
+        let vertex_count =
+            u32::try_from(surface.vertex_count()).expect("grid fits the vertex index");
+        let selection: Vec<(u32, f64)> = (0..vertex_count).map(|vertex| (vertex, 1.0)).collect();
+        let reversed: Vec<(u32, f64)> = selection.iter().copied().rev().collect();
+        let one_worker = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .expect("one-worker pool builds");
+        let four_workers = rayon::ThreadPoolBuilder::new()
+            .num_threads(4)
+            .build()
+            .expect("four-worker pool builds");
+        let mut one_scratch = FairingScratch::default();
+        let mut four_scratch = FairingScratch::default();
+        let mut first = Vec::new();
+        let mut second = Vec::new();
+        for _ in 0..2 {
+            one_worker.install(|| {
+                fair_selection(&surface, &reversed, 1.0, &mut one_scratch, &mut first);
+            });
+            four_workers.install(|| {
+                fair_selection(&surface, &selection, 1.0, &mut four_scratch, &mut second);
+            });
+            assert!(!first.is_empty());
+            assert_eq!(first, second);
+        }
+    }
 }

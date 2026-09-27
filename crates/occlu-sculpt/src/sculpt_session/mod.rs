@@ -20,6 +20,7 @@ mod live_trace;
 mod material;
 mod ray_buckets;
 mod session;
+pub(crate) use kernel::PAR_FLOOR;
 use ray_buckets::TriBuckets;
 /// The counters live in a thread-local block rather than on the session: the
 /// per-vertex clamp runs inside immutable-borrow regions (`clamp_step_at`
@@ -83,7 +84,7 @@ pub struct DabDiagnostics {
     pub seed_missing: u32,
     /// The region flood came back empty (sheet gate, clip, isolated patch).
     pub region_empty: u32,
-    /// Vertices whose step budget was zero or unusable: no move at all.
+    /// Vertices whose step budget is zero or unusable: no move at all.
     pub clamp_zero: u32,
     /// Vertices whose move the per-vertex budget truncated.
     pub clamp_truncated: u32,
@@ -93,13 +94,11 @@ pub struct DabDiagnostics {
     pub gain_min_permille: u32,
     /// Dabs whose anti-inversion waves pulled moved vertices back.
     pub rollback_resets: u32,
-    /// Dabs that found the region already unsafe before they moved anything:
-    /// the damage was there when the brush arrived, not made by this dab.
+    /// Dabs whose region violates a guard before this dab moves anything.
     pub already_unsafe_dabs: u32,
-    /// Dabs that committed no movement at all, whatever the reason. This is
-    /// the "the brush does nothing" the operator reports, and it is counted
-    /// separately from every refusal because the region and the guards can
-    /// both be innocent while the weights are zero.
+    /// Dabs that committed no movement, including dabs whose weights are zero.
+    /// This reports the operator's "the brush does nothing" symptom separately
+    /// from per-guard refusals.
     pub no_move_dabs: u32,
     /// Region points the dabs walked, so "no movement" can be read against how
     /// much surface the brush actually covered.
@@ -277,29 +276,13 @@ fn smoothstep(edge: f64, t: f64) -> f64 {
     s * s * (3.0 - 2.0 * s)
 }
 
-/// Front-face masking for clay (Add/Remove/Flatten) and the clay skirt.
-///
-/// Clay still floods across a crest — a quarter-turn fold is traversable —
-/// and Add/Remove push that flood along one footprint normal, a layer of
-/// wax. Smooth uses the same facing so a wall is not held as a needle
-/// while the top sinks. Facing kills the reverse sheet (`n·v > 0`) but not
-/// the silhouette, so an occlusal groove wall takes the brush with the cusp.
-/// Pinned by `frontface_weight_includes_the_silhouette`,
-/// `add_on_an_occlusal_groove_lifts_both_slopes`, and
-/// `smooth_crosses_a_visible_top_wall_ridge_from_an_occlusal_view`.
-///
-/// `normal` arrives already turned into the clicked sheet's convention — see
-/// [`facing_sign`]. Read against the raw winding instead, this rule calls
-/// "front" only what is wound outward, which breaks on an inward-wound mesh:
-/// every vertex the camera can see then reads as back-facing and the dab
-/// barely moves its own footprint. Taking the sign from the clicked sheet keeps
-/// the outward case untouched and makes the inward one behave like it.
+/// Front-face weight for sculpt brushes. `normal` follows the clicked sheet's
+/// orientation, including on inward-wound meshes. The silhouette stays active;
+/// the reverse-facing side fades to zero.
 fn frontface_weight(normal: DVec3, view: DVec3) -> f64 {
     // Camera looks along `view`. A front-facing vertex has n·v < 0.
-    // Dental clay has to paint fissure walls: those sit at the silhouette
-    // (n·v ≈ 0). A hard cut there left cusps lifting and grooves stuck.
-    // Full weight through the silhouette; fade across the first ~14 degrees
-    // of backface so the reverse sheet of a thin wall still dies.
+    // Keep full weight through the silhouette, then fade across the backface
+    // range defined by the 0.25 cosine limit.
     let facing_cam = -normal.dot(view);
     if facing_cam >= 0.0 {
         1.0
@@ -455,11 +438,9 @@ pub struct SculptSession {
     proposals: Vec<(u32, DVec3)>,
     /// Deduplicated incident faces reused across whole-layer line search trials.
     layer_triangles: Vec<u32>,
-    /// Scratch for the even-layer commit: the proposal origins, the proposal
-    /// group list, the rejecting faces, the moving controls of a rejecting
-    /// face, and the groups a wave lowered. Every dab ran through these as
-    /// fresh `Vec::new()`/`collect()`, which is several allocations per dab on
-    /// the hot path; they now live for the session.
+    /// Scratch buffers for proposal origins, groups, rejecting faces, moving
+    /// controls and rollback waves. The session reuses their allocation
+    /// capacity between dabs.
     layer_origins: Vec<DVec3>,
     layer_groups: Vec<u32>,
     layer_unsafe: Vec<u32>,
@@ -558,9 +539,8 @@ pub struct SculptSession {
     /// what earlier stages already spent, not to zero.
     op_stage_base: usize,
     op_stage_limit: usize,
-    /// Topology repair runs only between `start_stroke` and `end_stroke`:
-    /// direct `dab` callers without a stroke keep the exact old path and
-    /// the journal cannot grow unbounded outside history.
+    /// Topology repair runs only while a stroke is open, so each change has a
+    /// bounded journal that belongs to that stroke's history record.
     remesh_armed: bool,
     /// Per-pointer-call clay/remesh evidence packed onto the dab reply.
     live_kin: LiveKinematics,
@@ -568,9 +548,9 @@ pub struct SculptSession {
     /// stays off on the production pointer path unless the browser explicitly
     /// asks for the detailed live console.
     live_trace_audit: bool,
-    /// Groups whose faces were rewired without moving this dab. Positions
-    /// did not change, so the snapshot compare in maintenance would miss
-    /// them; they join the normal/ray refresh explicitly instead.
+    /// Groups whose faces this dab rewires without moving their positions.
+    /// They join the normal and ray refresh explicitly because maintenance
+    /// detects movement by comparing position snapshots.
     topo_touched: Vec<u32>,
     /// Faces whose corners this dab may have moved or rewired, deduplicated.
     /// A caller that keeps its own raycast tree over the pre-stroke surface

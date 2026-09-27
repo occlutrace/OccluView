@@ -108,13 +108,9 @@ impl SculptSession {
             // surface.
             selection.clear();
             {
-                // The selection's own stamp buffer, never `group_stamp`: that
-                // array is the per-dab snapshot's ledger, and `pre_group` reads
-                // it to decide what a group's pre-dab position was. Borrowing it
-                // here overwrote the snapshot stamps for every painted group, so
-                // `moved_any` measured live-against-live, every Smooth dab then
-                // read as zero movement, and the stroke record lost the vertices
-                // the brush had actually slid. See `selection_stamp`.
+                // Keep selection stamps separate from `group_stamp`, which
+                // tracks the per-dab snapshot consumed by `pre_group` and
+                // `moved_any`.
                 let generation = self.next_selection_stamp();
                 for &(group, weight) in &weighted {
                     self.selection_stamp[group as usize] = generation;

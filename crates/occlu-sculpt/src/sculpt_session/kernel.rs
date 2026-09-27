@@ -24,11 +24,9 @@ mod tests;
 
 pub use topology_journal::{TopoJournal, TopoSlice};
 
-/// Add/Remove displacement per fully-weighted dab, as a fraction of brush
-/// radius. Pinned by `tests/brush.rs:one_full_strength_dab_...`: weaker
-/// left clay (and the knife built on it) feeling dead at equal settings —
-/// budgets, wall reserve and exposure still bound the work, the gain only
-/// sets the hand feel.
+/// Add/Remove displacement per fully weighted dab, as a fraction of brush
+/// radius. The small per-dab dose accumulates along the swept stroke; local
+/// step budgets, wall reserve, and exposure constrain the final displacement.
 const ADD_REMOVE_GAIN: f64 = 0.045;
 /// Auto-smooth rim-taper width as a fraction of the radius.
 const AUTOSMOOTH_RIM_TAPER: f64 = 0.35;
@@ -41,16 +39,9 @@ const TAUBIN_MU: f64 = -0.38;
 /// The viewer-facing normals must hold at least this share of the sampled
 /// weight for the footprint normal to be trusted.
 const FRONT_BUCKET_TRUST_FRACTION: f64 = 0.6;
-/// Threaded-bundle dispatch floor: below this many entries a rayon fan-out
-/// costs more than the loop it replaces. The serial law underneath is
-/// identical, so small brushes never pay for cores they cannot use.
-///
-/// Between this floor and roughly four thousand entries the fan-out does not
-/// pay for itself, and a large dab fans out four times (weights, proposals,
-/// step budgets, scope normals). The floor therefore admits only work where
-/// the fan-out can win, which is the session-open passes rather than a dab.
+/// Minimum work size for independent Rayon loops over session data.
 #[cfg_attr(not(feature = "parallel"), allow(dead_code))]
-pub(super) const PAR_FLOOR: usize = 8192;
+pub(crate) const PAR_FLOOR: usize = 8192;
 /// Grid cells spanned by one brush radius.
 pub(super) const GRID_CELLS_ACROSS_RADIUS: f64 = 4.0;
 /// Sheet guard for region growth across a fold: a quarter-turn ridge
@@ -66,14 +57,9 @@ impl SculptSession {
             return Vec::new();
         }
 
-        // The dab deforms the surface, then one cycle of the isotropic loop
-        // rebuilds its triangulation. Both happen here, under the pointer,
-        // because they are two halves of one algorithm: the topology decides
-        // which triangles exist and the relaxation decides where their
-        // vertices sit, so neither can converge without the other's output.
-        // Splitting them across a pointer-up boundary is what let a crowded
-        // seam survive every stroke and made the surface visibly change when
-        // the button came up. See `kernel/isotropic.rs`.
+        // Deformation and one isotropic cycle form a single live dab. The
+        // remesh uses the shape produced by this dab, and relaxation uses the
+        // connectivity produced by that remesh.
         let region_points = std::mem::take(&mut self.region_points);
         let facing = facing_sign(
             self.hit_triangle.and_then(|t| self.triangle_normal(t)),
@@ -125,16 +111,9 @@ impl SculptSession {
         // frame. The cycle's own split/collapse/flip move `topo_touched`, which
         // the maintenance pass below already refreshes.
         //
-        // It runs whether or not the displacement moved a vertex. `moved_any`
-        // is the wrong gate for topology, and it is the reason a dense seam was
-        // never rebuilt: an over-dense patch has almost no curvature to flow
-        // along, so the shape solver barely moves it — the guard rolls the
-        // remaining field back — and a gate that requires movement therefore
-        // skipped the exact band the operator was pointing at. The reference
-        // tools queue edges under the brush and rebuild them regardless of how
-        // far the position pass happened to travel, because the two are
-        // separate questions. A dab whose displacement was fully rejected still
-        // has a triangulation worth repairing.
+        // Topology eligibility is independent of shape displacement: a dense
+        // patch can need retessellation even when the shape guard rejects the
+        // position field.
         if self.live_topology_open() {
             let policy = self.step_remesh_policy();
             let target = self.target_mm(dab.radius, &policy);
@@ -448,10 +427,9 @@ impl SculptSession {
         }
     }
 
-    /// Weight shared by every brush: tip falloff × explicit clinical
-    /// protection. The ray-hit component already keeps the footprint on the
-    /// selected sheet; camera-facing and open-boundary fades made otherwise
-    /// valid walls and scan edges silently uneditable.
+    /// Weight shared by every brush: tip falloff times explicit clinical
+    /// protection. The ray-hit component keeps the footprint on the selected
+    /// sheet; face orientation is handled by `facing_weight`.
     pub(super) fn weight(&self, point: SurfacePoint, dab: &Dab, facing: f64) -> f64 {
         let position = self.group_v(point.group);
         let f = if self.path_active() {
@@ -471,23 +449,9 @@ impl SculptSession {
         f * self.facing_weight(point.group, dab.view, facing, dab.mode)
     }
 
-    /// How much of the brush a vertex can take, from the angle between its
-    /// normal and the view.
-    ///
-    /// Add/Remove push the footprint along one normal, so a cusp and a
-    /// fissure wall lift together. Smooth uses the same facing: a half-weight
-    /// silhouette held the wall while the top sank, and the leftover verts
-    /// stood as needles the next Add grew into a mushroom. Facing still kills
-    /// the reverse side of a thin wall (`n·v > 0`), but the silhouette itself
-    /// (`n·v = 0`) is in the brush. Pinned by
-    /// `frontface_weight_includes_the_silhouette`,
-    /// `add_on_an_occlusal_groove_lifts_both_slopes`, and
-    /// `smooth_crosses_a_visible_top_wall_ridge_from_an_occlusal_view`.
-    /// `facing` is the sign of the sheet the operator clicked, not the raw
-    /// winding: a mesh may be wound inward, in which case its visible face
-    /// reads as back-facing against a bare camera test and gating on the raw
-    /// normal would kill the brush on the very surface being sculpted (pinned
-    /// by `an_inward_wound_sheet_sculpts_from_the_side_it_is_seen_from`).
+    /// Weight a vertex from its normal's angle to the view. The signed normal
+    /// follows the clicked sheet, so the silhouette remains active while the
+    /// reverse-facing side fades out.
     fn facing_weight(&self, group: u32, view: DVec3, facing: f64, _mode: BrushMode) -> f64 {
         let normal = self.group_n(group);
         if normal.length() <= 1e-12 || view.length() <= 1e-12 {

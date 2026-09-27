@@ -12,10 +12,9 @@ fn span_cells(span: CellSpan) -> impl Iterator<Item = Cell> {
     })
 }
 
-/// Triangle bucket grid for the session raycast (the brush must hit the
-/// current deformed surface; JS-side raycasting a 300k-tri mesh per pointer
-/// move was the drag lag). Cells stamped by triangle AABB; a 3D-DDA walk
-/// tests only the cells along the ray.
+/// Triangle bucket grid for raycasts against the current deformed surface.
+/// Triangle AABBs stamp occupied cells, and a 3D-DDA walk tests cells along
+/// the ray.
 pub(super) struct TriBuckets {
     pub(super) cell: f64,
     pub(super) lo: DVec3,
@@ -155,10 +154,8 @@ impl TriBuckets {
         affected_cells.sort_unstable();
         affected_cells.dedup();
 
-        // Thin geometry concentrates many triangles in the same 2 mm bucket.
-        // Removing each changed triangle with a separate linear search made a
-        // large Smooth footprint O(changed * bucket_size). Clear every affected
-        // bucket once, then add the complete changed batch back in linear time.
+        // Remove the changed batch from each affected bucket once, then add its
+        // updated spans. This avoids repeating a bucket search per triangle.
         let previous_occupancy: Vec<_> = affected_cells
             .iter()
             .map(|&cell| (cell, self.map.contains_key(&cell)))

@@ -44,11 +44,7 @@ impl SculptSession {
 
     /// Abort the stroke and hand back the record the caller reverts.
     ///
-    /// Abort and close take the same record now. Every dab published its own
-    /// topology to the display mirror as it ran, so there is no kernel-side
-    /// stage the mirror never saw — the difference between the two paths is
-    /// only whether the caller applies the record forward (close) or walks it
-    /// backwards (abort), and that is the caller's decision, not the kernel's.
+    /// Return the stroke record for the caller to apply or revert.
     pub fn abandon_stroke(&mut self) -> StrokeRecord {
         self.finish_stroke_record()
     }
@@ -193,9 +189,8 @@ impl SculptSession {
 
     /// Incremental position write-back shared by undo paths: only the
     /// touched region's ray buckets, brush grid cells, normals, and step
-    /// budgets refresh (the former full-mesh rebuild made every Ctrl+Z a
-    /// 50-300ms stall). Returns every vertex whose position or display
-    /// normal may have changed.
+    /// budgets, then return every vertex whose position or display normal may
+    /// have changed.
     fn restore_inner(&mut self, indices: &[u32], positions: &[f32]) -> Vec<u32> {
         // Affected groups, deduped.
         let generation = self.next_stamp();

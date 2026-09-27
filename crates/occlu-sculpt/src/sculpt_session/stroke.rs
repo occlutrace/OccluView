@@ -1,14 +1,7 @@
-//! The continuous pointer stroke: one bounded step per pointer call, raycast
-//! on the current deformed surface, with discontinuities rejected.
-//!
-//! A step is the brush under the pointer. When the previous step ended close
-//! by, the step also sweeps the short stretch between them, so an ordinary
-//! stroke stays continuous; it never reaches further back than
-//! `MAX_STEP_TRAVEL_SHARE` radii. A pointer that travelled farther starts
-//! again where it is, the way a press does. The cost of a call therefore
-//! never grows with how late it runs: an unbounded sweep made a slow call's
-//! successor longer and slower still, until the brush trailed the hand by
-//! seconds and remeshed wherever the hand had been instead of under it.
+//! One pointer call raycasts the live surface and processes a bounded swept
+//! segment. Nearby hits include the intervening path; a segment that exceeds
+//! the travel limit or crosses a surface gap starts at the current hit. This
+//! bounds the work and footprint of each call.
 
 use super::*;
 
@@ -465,9 +458,8 @@ impl SculptSession {
         let dir = dir.normalize_or_zero();
         let cell = self.rays.cell;
         let lo = self.rays.lo;
-        // The grid grows with the geometry, so its box comes from the bounds it
-        // holds now, not from the one it opened with. Cell indices stay relative
-        // to the ORIGINAL origin `lo` — that is what the buckets are keyed by.
+        // The grid bounds grow with the geometry while cell indices remain
+        // relative to its fixed origin `lo`, which is also the bucket key base.
         let (min_cell, max_cell) = (self.rays.min_cell, self.rays.max_cell);
         let box_lo = DVec3::new(
             lo.x + min_cell.0 as f64 * cell,

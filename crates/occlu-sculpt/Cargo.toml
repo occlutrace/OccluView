@@ -17,8 +17,7 @@ rayon = { workspace = true, optional = true }
 
 [features]
 default = ["parallel"]
-# Parallel remesh upkeep over the touched region. Off builds the same geometry
-# with single-threaded loops.
+# Parallel remesh upkeep and sparse fairing rows. Off uses single-threaded loops.
 parallel = ["dep:rayon"]
 
 [lints]

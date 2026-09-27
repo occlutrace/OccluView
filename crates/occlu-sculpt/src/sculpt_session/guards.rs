@@ -59,23 +59,19 @@ impl SculptSession {
     /// How far this group may travel before it would invert or crush one of its
     /// own incident triangles, in millimetres.
     ///
-    /// The measure is the smallest ALTITUDE from the group to the edge opposite
+    /// The measure is the smallest altitude from the group to the edge opposite
     /// it, over every incident triangle: vertex `v` pushes triangle `(v, p, q)`
     /// through zero area exactly when its normal displacement crosses the line
     /// `pq`, and the distance to that line is the altitude `2A / |pq|`.
     ///
-    /// This replaces `shortest_incident_edge * 0.5`, which was an invented
-    /// bound. `h_min / 2` is not only arbitrary, it is unsafe for a thin
-    /// triangle: a needle with a long opposite edge has an altitude far below
-    /// half its shortest edge, so the old budget let a dab invert it, while a
-    /// well-shaped triangle's altitude is roughly `h * sqrt(3) / 2` and the old
-    /// budget was needlessly strict there. Reading the geometry directly
-    /// removes the guess in both directions.
+    /// A shortest-edge bound does not capture the height of a thin triangle.
+    /// Using the smallest incident altitude ties the displacement budget to
+    /// the exact distance at which the triangle reaches zero area.
     ///
     /// The result is left uncapped at the top: the caller applies
     /// [`MAX_STEP_FRACTION_OF_TRIANGLE`] as the safety share, and a cap here
     /// would silently replace that share for large triangles. An isolated
-    /// group with no incident triangle keeps the generous historical fallback.
+    /// group with no incident triangle uses the 1 mm fallback.
     pub(super) fn compute_step_budget(&self) -> Vec<f32> {
         (0..self.topology.group_count() as u32)
             .map(|group| self.step_budget_for(group) as f32)
@@ -142,16 +138,13 @@ impl SculptSession {
 
     /// Recompute the budget for `groups` and their neighbors from current
     /// positions so the guard stays in step with the moved geometry.
-    /// Ratchet-up only: budgets track stretching (which genuinely allows
-    /// bigger safe steps) but never subdivision or compression. Shrinking
-    /// every budget as the mesh refines silently halves the dab's dose
-    /// stroke after stroke (measured: 17x collapse over 24 dabs); tight
-    /// moves stay safe through the per-vertex clamp below and the rollback
-    /// net, which both read live geometry rather than this heuristic.
+    /// Ratchet upward only: budgets track stretching, which allows larger safe
+    /// steps, without reducing the dose as local edges subdivide or compress.
+    /// The per-vertex clamp and rollback guard still check live geometry.
     pub(super) fn refresh_step_budget(&mut self, scope: &[u32]) {
         // Callers pass the deduplicated changed groups plus their one-ring.
         #[cfg(feature = "parallel")]
-        if scope.len() >= kernel::PAR_FLOOR {
+        if scope.len() >= PAR_FLOOR {
             // Each group recomputes from live positions and writes only its
             // own slot, so any worker count collects the identical sequence.
             use rayon::prelude::*;
@@ -184,10 +177,8 @@ impl SculptSession {
     /// One budget for the whole footprint, so the falloff — not the local
     /// triangle size — decides the dab's shape. The per-vertex clamp remains as
     /// the last line of defence, but it does not decide the profile: a mesh
-    /// whose shortest incident edge varies several-fold inside one footprint
-    /// would otherwise make the dab follow its tessellation, with each vertex
-    /// delivering its own fraction of the falloff (pinned by
-    /// `one_dab_keeps_its_falloff_profile_on_an_anisotropic_lattice`).
+    /// whose shortest incident edge varies inside one footprint would
+    /// otherwise make each vertex deliver a different fraction of the falloff.
     ///
     /// The budget is the median of the moving vertices' step budgets, so a
     /// single fine band under the brush cannot throttle the whole dab while a
@@ -197,9 +188,8 @@ impl SculptSession {
         for &(_, weight) in weighted {
             peak = peak.max(weight);
         }
-        // A swept step's weight counts dabs. The budget binds each dab's
-        // share, as it did when the dabs ran one by one, so a fast hand does
-        // not deposit less per millimetre than a slow one.
+        // A swept step's weight counts dabs. Apply the budget to each dab share
+        // so the dose per millimetre does not depend on pointer speed.
         peak = peak.min(1.0) * amplitude;
         if peak <= 0.0 || !peak.is_finite() {
             return 1.0;
@@ -310,11 +300,9 @@ impl SculptSession {
         let pre_area_squared = pre.cross.dot(pre.cross);
         let collapsed = pre_area_squared > 1e-24
             && now.cross.dot(now.cross) <= pre_area_squared * COLLAPSE_FRACTION_SQUARED;
-        // A coherent move can tumble very small source triangles without
-        // tearing anything. A real fold
-        // turns the normal most of the way around (cos near -1), so only
-        // that votes: measured tumble sits at cos ~ -0.13, true folds at
-        // cos ~ -1, and the margin between them is wide.
+        // A coherent move can rotate a small triangle without tearing it. A
+        // reversal below the -0.5 cosine threshold identifies a fold beyond
+        // 120 degrees.
         let reversed = pre_area_squared > 1e-24
             && now.cross.dot(pre.cross)
                 < -0.5 * pre_area_squared.sqrt() * now.cross.dot(now.cross).sqrt();
@@ -394,22 +382,18 @@ impl SculptSession {
         if baseline.area > 1e-12
             && candidate.cross.dot(baseline.cross) < -0.5 * candidate.area * baseline.area
         {
-            // Winding: a tear turns the normal most of the way around
-            // (cos near -1), while legitimate reshaping rotates it
-            // gradually — a carved wall legitimately rolls ~90deg from a
-            // flat session baseline (measured: a healthy 0.33 mm groove
-            // wall at 94deg). The per-dab flip predicate uses the same
-            // >120deg tear standard, so the two never disagree about what
-            // counts as torn. Uses unnormalized dots: `normalized()` on a
-            // near-degenerate cross fabricates a direction from noise.
+            // The same -0.5 cosine threshold rejects a winding reversal beyond
+            // 120 degrees while permitting gradual cumulative surface changes.
+            // Unnormalized dots avoid unstable directions from near-degenerate
+            // crosses.
             return false;
         }
         true
     }
 
-    /// Shape is a cumulative property; a rotation limit is a single-operation
-    /// property. Clay proves winding against the previous dab and the camera,
-    /// so gradual growth cannot hit a lifetime angle cap against the old scan.
+    /// Shape is cumulative; orientation is checked per operation. Clay checks
+    /// winding against the pre-dab face and camera while this rule limits the
+    /// final shape relative to the session baseline.
     fn triangle_shape_is_safe_measured(
         baseline: TriangleMeasure,
         candidate: TriangleMeasure,
@@ -433,8 +417,8 @@ impl SculptSession {
 
     /// Live Smooth, Erode and no-camera Deposit use this predicate: the move
     /// must satisfy the Apply contract against the pre-dab face, and it may
-    /// not shrink a face below [`LIVE_PAINTABLE_AREA`] unless the face was
-    /// already that small.
+    /// not shrink a face below [`LIVE_PAINTABLE_AREA`] when its input area is
+    /// above that floor.
     ///
     /// Triangle shape above the Apply floor is not a displacement limit. The
     /// same dab runs the live remesh right after it moves the surface, and the
@@ -498,15 +482,11 @@ impl SculptSession {
 
     /// A depth stroke may not erase a face's signed projected area.
     ///
-    /// Add/Remove move along the view axis, so their screen-space triangle is
-    /// invariant even when the 3-D triangle becomes a steep wall. A cosine
-    /// floor mistakes that legitimate wall for a slit because its geometric
-    /// area grows while its projected area stays fixed; it was also blind to
-    /// an already-grazing face crossing through zero. Compare the signed
-    /// projection directly instead. A healthy face keeps a paintable fraction
-    /// of its former projection; a face already at the silhouette may not lose
-    /// any more. This protects existing steep walls without pinning a depth
-    /// layer merely because the layer changed the face normal.
+    /// Add/Remove preserve the screen-space triangle while moving along the
+    /// view axis, even when the 3-D triangle becomes a steep wall. Preserve a
+    /// fraction of the signed projected area, and do not reduce it further at
+    /// the silhouette. This keeps depth changes from pinning a layer solely
+    /// because its face normal changes.
     fn triangle_hides_from_camera_measured(
         baseline: TriangleMeasure,
         candidate: TriangleMeasure,

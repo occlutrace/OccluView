@@ -57,8 +57,8 @@ pub(crate) struct MaterialEdit {
     pub(crate) after: [f32; 3],
 }
 
-/// One stroke's topology journal. Empty for strokes that never split, in
-/// which case every consumer behaves exactly as before.
+/// Topology changes from one stroke. Empty when the stroke changes positions
+/// without changing connectivity.
 #[derive(Clone, Debug, Default)]
 pub struct TopoJournal {
     pub(crate) base_verts: usize,
@@ -76,12 +76,9 @@ pub struct TopoJournal {
     pub(crate) added_origins: Vec<u32>,
     pub(crate) collapsed: Vec<CollapsedSlot>,
     pub(crate) retired: Vec<u32>,
-    /// Chronological order of the records above. A heal can collapse and
-    /// then append (the fallback densify runs after the height-field fill),
-    /// and the appended face ids depend on the collapse truncation that
-    /// preceded them; replaying `added_tris` and `collapsed` as two separate
-    /// streams puts the appends at the wrong slots, so redo produced a
-    /// different mesh than the stroke did. One ordered list fixes that.
+    /// Chronological order of the records above. A collapse can free face
+    /// slots that a later append reuses, so replay applies both operations in
+    /// this order to preserve face ids.
     pub(crate) events: Vec<TopoEvent>,
     /// Material coordinates the stroke's remesh moved. Unordered: a material
     /// point never decides topology, so history writes the whole set after the
@@ -206,17 +203,13 @@ pub struct TopoSliceMark {
     pub added_tris: usize,
     pub collapsed: usize,
     pub retired: usize,
-    /// The ordered event list is append-only and a mark is always cut at a
-    /// point in the stroke, so its records past a mark are exactly
-    /// `events[events..]`. Without this the slice encoder walked every event
-    /// of the whole stroke on every dab — 10^5 records and a fresh Vec by the
-    /// end of one r 0.38 stroke — to emit a handful.
+    /// Event offset for an append-only journal. Slice encoding reads the
+    /// records at and after this offset.
     pub events: usize,
 }
 
-/// The mirror's exact state when a slice starts. The replay is a pure
-/// function of these counts plus the ordered records, so a slice is as
-/// authoritative as the journal it was cut from.
+/// The mirror's exact state when a slice starts. Replay depends on these
+/// counts and the ordered records, so the base and slice form one contract.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TopoSliceBase {
     pub verts: u32,

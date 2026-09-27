@@ -565,6 +565,38 @@ fn identical_remeshing_strokes_are_bit_deterministic() {
     assert_eq!(first.topology_revision(), second.topology_revision());
 }
 
+#[cfg(feature = "parallel")]
+#[test]
+fn large_layer_commit_is_bit_identical_across_worker_counts() {
+    fn commit(pool: &rayon::ThreadPool) -> Vec<f32> {
+        let mut session = grid_session(46, 0.14, 0.8);
+        session.start_stroke();
+        select_all(&mut session);
+        let proposals: Vec<(u32, DVec3)> = (0..session.topology.group_count() as u32)
+            .map(|group| {
+                let here = session.group_v(group);
+                let normal = session.group_n(group).normalize_or_zero();
+                (group, here + (normal * 0.001))
+            })
+            .collect();
+        pool.install(|| session.commit_even_layer(&proposals, BrushMode::Smooth));
+        session.verts
+    }
+
+    let one_worker = rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build()
+        .expect("one-worker pool builds");
+    let four_workers = rayon::ThreadPoolBuilder::new()
+        .num_threads(4)
+        .build()
+        .expect("four-worker pool builds");
+    let one = commit(&one_worker);
+    let four = commit(&four_workers);
+    assert_ne!(one, grid_session(46, 0.14, 0.8).verts);
+    assert_eq!(one, four);
+}
+
 #[test]
 fn non_finite_dab_input_is_refused_without_geometry_changes() {
     let mut session = grid_session(4, 1.0, 0.0);
