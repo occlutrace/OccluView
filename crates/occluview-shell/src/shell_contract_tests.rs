@@ -169,7 +169,7 @@ fn assert_windows_package_modes_and_legacy_migration(package: &Value) {
         "Smoke install and uninstall",
     ] {
         let step = workflow_step(package, "windows-package", name)
-            .unwrap_or_else(|| panic!("Windows packaging includes {name}"));
+            .expect("Windows packaging includes each standard package step");
         assert!(step["if"].as_str().is_some_and(
             |condition| condition.contains("inputs.windows_configuration != 'diagnostic'")
         ));
