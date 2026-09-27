@@ -211,6 +211,7 @@ jobs:
           rm -rf "$state_dir"
           test ! -e "$state_dir"
           sudo installer -pkg "$pkg" -target /
+          test -d /Applications/OccluView.app
           test ! -e "$log"
           open -a /Applications/OccluView.app "$sample"
           for attempt in $(seq 1 60); do
