@@ -2,6 +2,16 @@
 
 use super::*;
 use roxmltree::{Document, Node};
+use std::collections::BTreeSet;
+
+const MACOS_CONTENT_TYPES: [(&str, &str); 6] = [
+    ("stl", "public.standard-tesselated-geometry-format"),
+    ("ply", "public.polygon-file-format"),
+    ("obj", "public.geometry-definition-format"),
+    ("glb", "org.khronos.glb"),
+    ("hps", "ai.occlutrace.occluview.hps"),
+    ("dcm", "org.nema.dicom"),
+];
 
 fn plist_value<'a, 'input>(dictionary: Node<'a, 'input>, key: &str) -> Option<Node<'a, 'input>> {
     let mut children = dictionary.children().filter(Node::is_element);
@@ -92,7 +102,13 @@ fn macos_document_types_are_well_formed_and_match_the_open_formats() {
         !entries.is_empty(),
         "Finder has at least one supported type"
     );
-    for entry in &entries {
+    assert_document_type_ranks(document_types, &entries);
+    assert_document_type_mappings(document_types, &entries);
+    assert_hps_imported_extension(root);
+}
+
+fn assert_document_type_ranks(document_types: Node<'_, '_>, entries: &[Node<'_, '_>]) {
+    for entry in entries {
         assert_eq!(
             plist_value(*entry, "CFBundleTypeRole").and_then(|node| node.text()),
             Some("Viewer"),
@@ -119,20 +135,58 @@ fn macos_document_types_are_well_formed_and_match_the_open_formats() {
         Some("Alternate"),
         "medical DICOM files must remain opt-in"
     );
+}
 
-    let content_types = [
-        ("stl", "public.standard-tesselated-geometry-format"),
-        ("ply", "public.polygon-file-format"),
-        ("obj", "public.geometry-definition-format"),
-        ("glb", "org.khronos.glb"),
-        ("hps", "ai.occlutrace.occluview.hps"),
-        ("dcm", "org.nema.dicom"),
-    ];
+fn assert_document_type_mappings(document_types: Node<'_, '_>, entries: &[Node<'_, '_>]) {
+    let declared_types: Vec<String> = entries
+        .iter()
+        .flat_map(|entry| {
+            plist_value(*entry, "LSItemContentTypes")
+                .filter(|node| node.tag_name().name() == "array")
+                .expect("each Finder document type declares its UTIs")
+                .children()
+                .filter(|node| node.is_element() && node.tag_name().name() == "string")
+                .map(|node| node.text().expect("UTI entries contain strings").to_owned())
+        })
+        .collect();
+    let expected_types: BTreeSet<String> = MACOS_CONTENT_TYPES
+        .iter()
+        .map(|(_, identifier)| (*identifier).to_owned())
+        .collect();
+    let declared_extensions: BTreeSet<&str> = MACOS_CONTENT_TYPES
+        .iter()
+        .map(|(extension, _)| *extension)
+        .collect();
+    let supported_extensions: BTreeSet<&str> = occluview_formats::V1_OPEN_EXTENSIONS
+        .iter()
+        .copied()
+        .collect();
     assert_eq!(
-        content_types.len(),
-        occluview_formats::V1_OPEN_EXTENSIONS.len()
+        declared_extensions.len(),
+        MACOS_CONTENT_TYPES.len(),
+        "the plist mapping has no duplicate extensions"
     );
-    for (extension, identifier) in content_types {
+    assert_eq!(
+        supported_extensions.len(),
+        occluview_formats::V1_OPEN_EXTENSIONS.len(),
+        "the format reader lists each extension once"
+    );
+    assert_eq!(
+        declared_extensions, supported_extensions,
+        "Finder registers exactly the extensions the viewer opens"
+    );
+    assert_eq!(
+        declared_types.len(),
+        expected_types.len(),
+        "Finder declares each supported UTI exactly once"
+    );
+    assert_eq!(
+        declared_types.iter().cloned().collect::<BTreeSet<_>>(),
+        expected_types,
+        "Finder registers exactly the formats the viewer can open"
+    );
+
+    for &(extension, identifier) in &MACOS_CONTENT_TYPES {
         assert!(
             occluview_formats::V1_OPEN_EXTENSIONS.contains(&extension),
             "the viewer accepts .{extension}"
@@ -146,7 +200,9 @@ fn macos_document_types_are_well_formed_and_match_the_open_formats() {
             "Finder must offer the app for .{extension} through {identifier}"
         );
     }
+}
 
+fn assert_hps_imported_extension(root: Node<'_, '_>) {
     let imported_types = plist_value(root, "UTImportedTypeDeclarations")
         .filter(|node| node.tag_name().name() == "array")
         .expect("the bundle imports the private HPS content type");
@@ -163,8 +219,65 @@ fn macos_document_types_are_well_formed_and_match_the_open_formats() {
     let extensions = plist_value(tag_specification, "public.filename-extension")
         .filter(|node| node.tag_name().name() == "array")
         .expect("the HPS type has a filename extension array");
-    assert!(array_has_string(extensions, "hps"));
+    let hps_extensions: BTreeSet<String> = extensions
+        .children()
+        .filter(|node| node.is_element() && node.tag_name().name() == "string")
+        .map(|node| {
+            node.text()
+                .expect("extension entries contain strings")
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(hps_extensions, BTreeSet::from(["hps".to_owned()]));
     assert!(plist_value(root, "UTExportedTypeDeclarations").is_none());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn system_uniform_type_identifiers_resolve_each_supported_extension() {
+    let extensions: Vec<&str> = MACOS_CONTENT_TYPES
+        .iter()
+        .map(|(extension, _)| *extension)
+        .filter(|extension| *extension != "hps")
+        .collect();
+    let source = r#"
+import Foundation
+import UniformTypeIdentifiers
+
+let extensions = ProcessInfo.processInfo.environment["OCCLUVIEW_TEST_EXTENSIONS"]!
+for ext in extensions.split(separator: ",") {
+    if let type = UTType(filenameExtension: String(ext)) {
+        print("\(ext)=\(type.identifier)")
+    } else {
+        print("\(ext)=")
+    }
+}
+"#;
+    let output = std::process::Command::new("swift")
+        .args(["-e", source])
+        .env("OCCLUVIEW_TEST_EXTENSIONS", extensions.join(","))
+        .output()
+        .expect("the macOS runner can start Swift with UniformTypeIdentifiers");
+    assert!(
+        output.status.success(),
+        "Uniform Type lookup failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let resolved: std::collections::BTreeMap<_, _> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.split_once('='))
+        .map(|(extension, identifier)| (extension.to_owned(), identifier.to_owned()))
+        .collect();
+    for (extension, expected) in MACOS_CONTENT_TYPES
+        .iter()
+        .filter(|(extension, _)| *extension != "hps")
+    {
+        assert_eq!(
+            resolved.get(*extension).map(String::as_str),
+            Some(*expected),
+            "Uniform Type lookup for .{extension} matches the Finder declaration"
+        );
+    }
 }
 
 #[test]
