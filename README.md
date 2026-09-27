@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/occlutrace/OccluView/releases/tag/v1.2.0"><img src="https://img.shields.io/badge/latest%20release-v1.2.0-1f6feb?style=for-the-badge&logo=github&logoColor=white" alt="Latest published release: v1.2.0"></a>
+  <a href="https://github.com/occlutrace/OccluView/releases/latest"><img src="https://img.shields.io/github/v/release/occlutrace/OccluView?style=for-the-badge&logo=github&logoColor=white" alt="Latest published release"></a>
   <a href="https://github.com/occlutrace/OccluView/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/occlutrace/OccluView/ci.yml?branch=main&style=for-the-badge&label=build" alt="Build status"></a>
 </p>
 
