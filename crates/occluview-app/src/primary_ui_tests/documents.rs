@@ -46,7 +46,8 @@ fn parse_version(raw: &str) -> Option<[u64; 3]> {
         .trim_start_matches('v')
         .split('.')
         .map(str::parse::<u64>)
-        .collect::<Result<_, _>>()?;
+        .collect::<Result<_, _>>()
+        .ok()?;
     (parts.len() == 3).then(|| [parts[0], parts[1], parts[2]])
 }
 

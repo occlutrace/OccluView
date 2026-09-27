@@ -292,6 +292,7 @@ mod tests {
         }
     }
 
+    #[allow(clippy::panic)]
     fn struct_fields(module: &naga::Module, name: &str) -> Vec<(String, usize, String)> {
         let (_, ty) = module
             .types
