@@ -60,6 +60,7 @@ raw-window-handle = "0.6"
 fluent-syntax        = { workspace = true }
 epaint_default_fonts = { workspace = true }
 skrifa               = { workspace = true }
+roxmltree             = { workspace = true }
 
 # Linux-only: send `_NET_ACTIVE_WINDOW` ourselves to raise the window past WM
 # focus-stealing prevention on the file handoff. See activation.rs.

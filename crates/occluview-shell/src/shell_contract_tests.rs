@@ -1,684 +1,806 @@
-use super::{owns_extension, APP_EXE_NAME, DEDICATED_FILE_ICON_EXTENSIONS, SUPPORTED_EXTENSIONS};
-use std::path::Path;
+use super::{
+    owns_extension, APP_EXE_NAME, DEDICATED_FILE_ICON_EXTENSIONS, OFFERED_ONLY_EXTENSIONS,
+    PREVIEW_HANDLER_CATEGORY, SUPPORTED_EXTENSIONS, THUMBNAIL_PROVIDER_CATEGORY,
+};
+use roxmltree::{Document, Node};
+use serde_yaml_ng::Value;
+use std::path::PathBuf;
 
-fn canonical_extension(extension: &str) -> &str {
-    if extension == "dcm" {
-        "hps"
-    } else {
-        extension
-    }
+fn repo_file(path: &str) -> String {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    std::fs::read_to_string(root.join(path)).expect("repository contract input is readable")
 }
 
-pub(super) fn registration_source() -> String {
-    [
-        include_str!("registration/mod.rs"),
-        include_str!("registration/associations.rs"),
-        include_str!("registration/clsid.rs"),
-        include_str!("registration/paths.rs"),
-        include_str!("registration/registry.rs"),
-    ]
-    .join("\n")
+fn registry_key<'a, 'input>(document: &'a Document<'input>, key: &str) -> Option<Node<'a, 'input>> {
+    document.descendants().find(|node| {
+        node.is_element()
+            && node.tag_name().name() == "RegistryKey"
+            && node
+                .attribute("Key")
+                .is_some_and(|value| expand_wix_value(document, value) == key)
+    })
 }
 
-#[test]
-fn thumbnail_registration_only_includes_implemented_stream_formats() {
-    for extension in SUPPORTED_EXTENSIONS {
-        assert!(
-            occluview_formats::probe::by_extension(extension).is_some(),
-            "{extension} is registered with Explorer, and no reader claims it"
-        );
-    }
-}
-
-#[test]
-fn open_with_targets_the_real_gui_binary_name() {
-    // Bound to the manifest that produces the file, the way platform.rs binds
-    // the Linux app id to the installed .desktop entry. Against a copy of the
-    // constant, renaming the [[bin]] target stays green while "Open with" on
-    // every installed machine points at an executable that does not exist.
-    let stem = APP_EXE_NAME.strip_suffix(".exe").unwrap_or(APP_EXE_NAME);
-    let manifest = include_str!("../../occluview-app/Cargo.toml");
-    assert!(
-        manifest.contains(&format!("name = \"{stem}\"")),
-        "APP_EXE_NAME ({APP_EXE_NAME}) must name the [[bin]] target in occluview-app/Cargo.toml"
-    );
-}
-
-#[test]
-fn installer_uses_one_generic_3d_file_type_icon() {
-    let icon_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../install/assets/file-icons");
-    assert!(icon_dir.join("occluview-3d.ico").exists());
-    assert!(icon_dir.join("occluview-3d.svg").exists());
-
-    let wxs = include_str!("../../../install/occluview.wxs");
-    for ext in DEDICATED_FILE_ICON_EXTENSIONS {
-        let upper = canonical_extension(ext).to_ascii_uppercase();
-        assert!(wxs.contains(&format!("MeshFile.{upper}")));
-        assert!(wxs.contains("occluview-3d.ico"));
-        assert!(!wxs.contains(&format!("occluview-{ext}.ico")));
-        assert!(wxs.contains(&format!("Software\\Classes\\MeshFile.{upper}\\DefaultIcon")));
-    }
-}
-
-#[test]
-fn file_type_friendly_names_are_brand_neutral() {
-    let wxs = include_str!("../../../install/occluview.wxs");
-    let registration = registration_source();
-    let reg = include_str!("../../../install/occluview-shell-registration.reg");
-
-    for ext in SUPPORTED_EXTENSIONS {
-        let upper = canonical_extension(ext).to_ascii_uppercase();
-        let friendly = format!("{upper} File");
-        assert!(wxs.contains(&format!("Value=\"{friendly}\"")));
-        assert!(reg.contains(&format!("@=\"{friendly}\"")));
-        assert!(registration.contains("format_file_type_name(ext)"));
-        assert!(!wxs.contains(&format!("Value=\"OccluView {upper} Mesh\"")));
-        assert!(!reg.contains(&format!("@=\"OccluView {upper} Mesh\"")));
-    }
-}
-
-#[test]
-fn file_type_progids_are_brand_neutral() {
-    let wxs = include_str!("../../../install/occluview.wxs");
-    let registration = registration_source();
-    let reg = include_str!("../../../install/occluview-shell-registration.reg");
-
-    for ext in SUPPORTED_EXTENSIONS {
-        let upper = canonical_extension(ext).to_ascii_uppercase();
-        let neutral = format!("MeshFile.{upper}");
-        let legacy = format!("OccluView.Mesh.{upper}");
-
-        assert!(wxs.contains(&format!("Software\\Classes\\{neutral}")));
-        assert!(wxs.contains(&format!("Value=\"{neutral}\"")));
-        assert!(wxs.contains(&format!("Name=\"{neutral}\" Type=\"string\" Value=\"\"")));
-        assert!(reg.contains(&format!("[HKEY_CLASSES_ROOT\\{neutral}]")));
-        assert!(reg.contains(&format!("@=\"{neutral}\"")));
-        assert!(reg.contains(&format!("\"{neutral}\"=\"\"")));
-        assert!(registration.contains("format!(\"MeshFile."));
-        assert!(!wxs.contains(&legacy));
-        assert!(!reg.contains(&legacy));
-    }
-}
-
-#[test]
-#[allow(clippy::too_many_lines)]
-fn installer_metadata_tracks_supported_shell_extensions() {
-    let wxs = include_str!("../../../install/occluview.wxs");
-    let reg = include_str!("../../../install/occluview-shell-registration.reg");
-
-    assert!(wxs.contains("<MajorUpgrade"));
-    assert!(!wxs.contains("AllowSameVersionUpgrades=\"yes\""));
-    assert!(wxs.contains("DowngradeErrorMessage="));
-    assert!(wxs.contains(
-        "<Component Id=\"cmpOccluViewExe\" Guid=\"{EB8EF0C2-A3F3-4A1E-AEC2-76346B975D89}\" Win64=\"yes\" Location=\"local\">"
-    ));
-    assert!(wxs.contains("<Component Id=\"cmpStartMenuShortcut\""));
-    assert!(wxs.contains(
-        "<RegistryValue\n              Root=\"HKCU\"\n              Key=\"Software\\OccluTrace\\OccluView\"\n              Name=\"StartMenuShortcut\"\n              Type=\"integer\"\n              Value=\"1\"\n              KeyPath=\"yes\""
-    ));
-    let executable_component = wxs
-        .split("<Component Id=\"cmpOccluViewExe\"")
-        .nth(1)
-        .expect("OccluView executable component must exist")
-        .split("<Component Id=\"cmpOccluViewShellDll\"")
-        .next()
-        .expect("OccluView shell component must follow the executable");
-    assert!(!executable_component.contains("<Shortcut"));
-    assert!(wxs.contains("Target=\"[INSTALLFOLDER]occluview.exe\""));
-    assert!(!wxs.contains("Target=\"[#filOccluViewExe]\""));
-    assert!(wxs.contains("&quot;[INSTALLFOLDER]occluview.exe&quot; &quot;%1&quot;"));
-    assert!(wxs.contains("Software\\RegisteredApplications"));
-    assert!(wxs.contains("Software\\OccluTrace\\OccluView\\Capabilities"));
-    assert!(wxs.contains("Capabilities\\FileAssociations"));
-    assert!(wxs.contains("ThreadingModel\" Type=\"string\" Value=\"Apartment\""));
-    assert!(
-        wxs.contains("Software\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions\\Approved")
-    );
-    assert!(wxs.contains("ThumbnailCutoff"));
-    assert!(wxs.contains("TypeOverlay"));
-    assert!(wxs.contains("Software\\Classes\\Applications\\occluview.exe"));
-    assert!(wxs.contains("SupportedTypes"));
-    assert!(wxs.contains("OpenWithList\\occluview.exe"));
-    // Explorer right-click "Edit in OccluView" on every supported extension,
-    // independent of which app owns the default association (HPS included).
-    assert!(wxs.contains("shell\\OccluView.Edit"));
-    assert!(wxs.contains("Edit in OccluView"));
-    for ext in [".stl", ".ply", ".obj", ".glb", ".dcm", ".hps"] {
-        assert!(
-            wxs.contains(&format!(
-                "SystemFileAssociations\\{ext}\\shell\\OccluView.Edit\\command"
-            )),
-            "missing Edit verb for {ext}"
-        );
-    }
-    assert!(wxs.contains("ApplicationIcon"));
-    assert!(wxs.contains("ARPCOMMENTS"));
-    assert!(wxs.contains("ARPURLINFOABOUT"));
-    assert!(wxs.contains("ARPURLUPDATEINFO"));
-    assert!(wxs.contains("ARPHELPLINK"));
-    assert!(wxs.contains("ARPNOREPAIR"));
-    assert!(wxs.contains("WixUILicenseRtf"));
-    assert!(wxs.contains("<?define ProductName = \"OccluView 3D Viewer\" ?>"));
-    assert!(Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../install/license.rtf")
-        .exists());
-    assert!(!wxs.contains("UserChoice"));
-    // The WixUI_InstallDir dialog set already injects ARPNOMODIFY=1; defining
-    // it in our authoring again is a duplicate-symbol light.exe error
-    // (LGHT0091), so the wxs must not declare it itself.
-    assert!(!wxs.contains("<Property Id=\"ARPNOMODIFY\""));
-    assert!(wxs.contains("WixUI_InstallDir"));
-    assert!(reg.contains("@=\"\\\"<APP_EXE_PATH>\\\" \\\"%1\\\"\""));
-    assert!(reg.contains("[HKEY_LOCAL_MACHINE\\Software\\RegisteredApplications]"));
-    assert!(reg.contains("[HKEY_LOCAL_MACHINE\\Software\\OccluTrace\\OccluView\\Capabilities]"));
-    assert!(reg.contains(
-        "[HKEY_LOCAL_MACHINE\\Software\\OccluTrace\\OccluView\\Capabilities\\FileAssociations]"
-    ));
-    assert!(reg.contains("\"ThumbnailCutoff\"=dword:00000001"));
-    assert!(reg.contains("\"TypeOverlay\"=\"\""));
-    assert!(reg.contains("\"ThreadingModel\"=\"Apartment\""));
-    assert!(reg.contains(
-            "[HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions\\Approved]"
-        ));
-    assert!(reg.contains("[HKEY_CLASSES_ROOT\\Applications\\occluview.exe]"));
-    assert!(reg.contains("[HKEY_CLASSES_ROOT\\Applications\\occluview.exe\\SupportedTypes]"));
-    assert!(!reg.contains("\\UserChoice"));
-
-    for ext in SUPPORTED_EXTENSIONS {
-        let dot_ext = format!(".{ext}");
-        let upper = canonical_extension(ext).to_ascii_uppercase();
-        let progid = format!("MeshFile.{upper}");
-        if owns_extension(ext) {
-            assert!(wxs.contains(&format!(
-                "Software\\Classes\\{dot_ext}\">\n              <RegistryValue Type=\"string\" Value=\"{progid}\""
-            )));
-            assert!(wxs.contains(&format!(
-                "Software\\Classes\\{dot_ext}\">\n              <RegistryValue Type=\"string\" Value=\"{progid}\" />\n              <RegistryValue Name=\"ThumbnailCutoff\""
-            )));
-            assert!(wxs.contains(&format!(
-                "Software\\Classes\\{dot_ext}\">\n              <RegistryValue Type=\"string\" Value=\"{progid}\" />\n              <RegistryValue Name=\"ThumbnailCutoff\" Type=\"integer\" Value=\"1\" />\n              <RegistryValue Name=\"TypeOverlay\""
-            )));
-            assert!(wxs.contains(&format!("Software\\Classes\\{dot_ext}\\DefaultIcon")));
-            assert!(wxs.contains(&format!("Software\\Classes\\{dot_ext}\\ShellEx")));
-        } else {
-            super::installer_contract_tests::assert_extension_is_offered_not_owned(
-                wxs, reg, &dot_ext,
-            );
-        }
-        assert!(wxs.contains(&format!("Software\\Classes\\{progid}\\ShellEx")));
-        assert!(wxs.contains(&format!("Software\\Classes\\{dot_ext}\\OpenWithProgids")));
-        assert!(wxs.contains(&format!(
-            "Software\\Classes\\{dot_ext}\\OpenWithList\\occluview.exe"
-        )));
-        assert!(wxs.contains(&format!(
-            "Name=\"{dot_ext}\" Type=\"string\" Value=\"{progid}\""
-        )));
-        assert!(wxs.contains(&format!("Name=\"{progid}\" Type=\"string\" Value=\"\"")));
-        assert!(wxs.contains(&format!("Software\\Classes\\{progid}\\DefaultIcon")));
-        if owns_extension(ext) {
-            assert!(reg.contains(&format!("[HKEY_CLASSES_ROOT\\{dot_ext}]\n@=\"{progid}\"")));
-            assert!(reg.contains(&format!(
-                "[HKEY_CLASSES_ROOT\\{dot_ext}]\n@=\"{progid}\"\n\"ThumbnailCutoff\"=dword:00000001"
-            )));
-            assert!(reg.contains(&format!(
-                "[HKEY_CLASSES_ROOT\\{dot_ext}]\n@=\"{progid}\"\n\"ThumbnailCutoff\"=dword:00000001\n\"TypeOverlay\"=\"\""
-            )));
-            assert!(reg.contains(&format!("[HKEY_CLASSES_ROOT\\{dot_ext}\\DefaultIcon]")));
-            assert!(reg.contains(&format!("[HKEY_CLASSES_ROOT\\{dot_ext}\\ShellEx")));
-        }
-        assert!(reg.contains(&format!("[HKEY_CLASSES_ROOT\\{progid}\\ShellEx")));
-        assert!(reg.contains(&format!("[HKEY_CLASSES_ROOT\\{dot_ext}\\OpenWithProgids]")));
-        assert!(reg.contains(&format!(
-            "[HKEY_CLASSES_ROOT\\{dot_ext}\\OpenWithList\\occluview.exe]"
-        )));
-        assert!(reg.contains(&format!("\"{dot_ext}\"=\"{progid}\"")));
-        assert!(reg.contains(&format!("\"{progid}\"=\"\"")));
-        assert!(reg.contains(&format!("\"{dot_ext}\"=\"\"")));
-    }
-
-    for ext in ["gltf", "3mf"] {
-        let dot_ext = format!(".{ext}");
-        assert!(!wxs.contains(&format!("Software\\Classes\\{dot_ext}\\ShellEx")));
-        assert!(!wxs.contains(&format!("Software\\Classes\\{dot_ext}\\OpenWithProgids")));
-        assert!(!wxs.contains(&format!(
-            "Software\\Classes\\{dot_ext}\\OpenWithList\\occluview.exe"
-        )));
-        assert!(!reg.contains(&format!("[HKEY_CLASSES_ROOT\\{dot_ext}\\ShellEx")));
-        assert!(!reg.contains(&format!("[HKEY_CLASSES_ROOT\\{dot_ext}\\OpenWithProgids]")));
-        assert!(!reg.contains(&format!(
-            "[HKEY_CLASSES_ROOT\\{dot_ext}\\OpenWithList\\occluview.exe]"
-        )));
-    }
-}
-
-#[test]
-fn ply_thumbnail_registration_has_direct_fallbacks() {
-    let wxs = include_str!("../../../install/occluview.wxs");
-    let reg = include_str!("../../../install/occluview-shell-registration.reg");
-    let smoke = include_str!("../../../install/test-msi-lifecycle.ps1");
-
-    assert!(wxs.contains("Software\\Classes\\.ply\\ShellEx\\$(var.ThumbnailProviderCategory)"));
-    assert!(wxs.contains("Software\\Classes\\.ply\\DefaultIcon"));
-    assert!(wxs.contains("MeshFile.PLY"));
-    assert!(wxs.contains("occluview-3d.ico"));
-    assert!(reg.contains(".ply\\ShellEx\\{E357FCCD-A995-4576-B01F-234630154E96}"));
-    assert!(reg.contains("[HKEY_CLASSES_ROOT\\.ply]\n@=\"MeshFile.PLY\""));
-    assert!(reg.contains("[HKEY_CLASSES_ROOT\\.ply\\DefaultIcon]"));
-    assert!(reg.contains("occluview-3d.ico"));
-    assert!(smoke.contains(".$ext extension ProgID"));
-    assert!(smoke.contains(".$ext extension default icon"));
-
-    let registration = registration_source();
-    assert!(registration.contains("register_extension_fallback(ext, &app_path)"));
-    assert!(registration.contains("unregister_extension_fallback(ext, app_path.as_ref())"));
-    assert!(registration.contains("delete_default_icon_if_occluview(&icon_key)"));
-    assert!(registration.contains("set_dword(hk, h!(\"ThumbnailCutoff\"), 1)?;"));
-    assert!(registration.contains("register_progid_thumbnail_handler(&progid_string"));
-    assert!(registration.contains("register_approved_shell_extension()"));
-    assert!(registration.contains("THREADING_MODEL_H: &HSTRING = h!(\"Apartment\")"));
-    assert!(registration.contains("set_string(hk, Some(h!(\"TypeOverlay\")), &HSTRING::new())?;"));
-}
-
-#[test]
-#[allow(clippy::too_many_lines)]
-fn package_workflow_runs_installer_lifecycle_smoke() {
-    let workflow = include_str!("../../../.github/workflows/package-msi.yml");
-    assert!(workflow.contains("./install/test-msi-lifecycle.ps1"));
-    assert!(workflow.contains("-UpgradeMsiPath"));
-    assert!(workflow.contains("Verify embedded HPS key build path"));
-    assert!(workflow.contains("OCCLUVIEW_HPS_EMBEDDED_KEY is required for Package MSI"));
-    assert!(workflow.contains("runtime_provider_reads_generated_embedded_key_when_present"));
-    assert!(
-        workflow
-            .matches("git grep --quiet --fixed-strings -e")
-            .count()
-            >= 2
-    );
-    assert!(workflow.contains("Select-String -Path $testLog -SimpleMatch"));
-    assert!(workflow.contains("grep -Fq -f - \"$test_log\""));
-
-    let build_msi = include_str!("../../../install/build-msi.ps1");
-    assert!(build_msi.contains("\"-dBuildDir=$buildDir\""));
-    assert!(build_msi.contains("\"-dProductVersion=$Version\""));
-    assert!(build_msi.contains("Assert-MsiProductVersion"));
-    assert!(build_msi.contains("Private HPS key embedding enabled for this build."));
-    assert!(!build_msi.contains("\n    -dBuildDir=$buildDir `"));
-    assert!(!build_msi.contains("\n    -dProductVersion=$Version `"));
-
-    let smoke_path =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../install/test-msi-lifecycle.ps1");
-    assert!(smoke_path.exists());
-
-    let smoke = include_str!("../../../install/test-msi-lifecycle.ps1");
-    let thumbnail_smoke = include_str!("../../../install/test-thumbnail-provider.ps1");
-    let preview_smoke = include_str!("../../../install/test-preview-handler.ps1");
-    assert!(smoke.contains("msiexec.exe"));
-    assert!(smoke.contains("UpgradeMsiPath"));
-    assert!(smoke.contains("Assert-InstalledRegistry"));
-    assert!(smoke.contains("Assert-UninstalledRegistry"));
-    assert!(smoke.contains("test-thumbnail-provider.ps1"));
-    assert!(thumbnail_smoke.contains("@(16, 32, 96, 256, 1024)"));
-    assert!(thumbnail_smoke.contains("ProbeDirect("));
-    assert!(thumbnail_smoke.contains("Type.GetTypeFromCLSID"));
-    assert!(thumbnail_smoke.contains("IInitializeWithFile"));
-    assert!(thumbnail_smoke.contains("IThumbnailProvider"));
-    assert!(thumbnail_smoke.contains("HammingDistance"));
-    assert!(thumbnail_smoke.contains("using System.Diagnostics;"));
-    assert!(thumbnail_smoke.contains("shellWarm"));
-    assert!(thumbnail_smoke.contains("warm-shell-stable"));
-    assert!(thumbnail_smoke.contains("elapsed="));
-    assert!(thumbnail_smoke.contains("$minimumPrimarySpan"));
-    assert!(thumbnail_smoke.contains("$minimumSecondarySpan"));
-    assert!(thumbnail_smoke.contains("$primarySpan -lt $minimumPrimarySpan"));
-    assert!(thumbnail_smoke.contains("New-SmokePly"));
-    assert!(thumbnail_smoke.contains("New-SmokeObj"));
-    assert!(thumbnail_smoke.contains("New-SmokeHps"));
-    assert!(thumbnail_smoke.contains("New-SmokeLegacyHps"));
-    assert!(thumbnail_smoke.contains(
-        "Add-Type -AssemblyName System.IO.Compression -ErrorAction Stop\nAdd-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop"
-    ));
-    assert!(thumbnail_smoke.contains("Assert-ShellProbeSucceeded"));
-    assert!(!preview_smoke.contains("?? throw"));
-    assert!(!preview_smoke.contains("out RECT rect"));
-    let prevhost_probe = preview_smoke
-        .split("public static string ProbePrevhost(")
-        .nth(1)
-        .and_then(|probe| probe.split("// The detailed pixel").next())
-        .expect("Prevhost liveness probe must remain separately scoped");
-    assert!(prevhost_probe.contains("FindWindowExW(parent, IntPtr.Zero, PreviewChildClass, null)"));
-    assert!(prevhost_probe.contains("var initialFrame = CaptureFrame(child);"));
-    assert!(prevhost_probe.contains("EnsureFrameVisible(initialFrame"));
-    assert!(
-        !prevhost_probe.contains("UpdateWindow(")
-            && !prevhost_probe.contains("WaitForVisibleFrame")
-            && !prevhost_probe.contains("Thread.Sleep"),
-        "the low-integrity Prevhost probe must capture the frame returned by DoPreview without dispatching or waiting"
-    );
-    assert!(thumbnail_smoke.contains("Assert-MixedFolderBurst"));
-    assert!(thumbnail_smoke.contains("occluview-thumbnail-mixed"));
-    assert!(thumbnail_smoke.contains("ProbeShellForced"));
-    assert!(thumbnail_smoke.contains("WTS_FORCEEXTRACTION"));
-    assert!(thumbnail_smoke.contains("$noiseCount"));
-    assert!(thumbnail_smoke.contains("$request.Is3d"));
-    assert!(thumbnail_smoke.contains("if (-not $request.Is3d)"));
-    assert!(thumbnail_smoke.contains("continue"));
-    assert!(thumbnail_smoke.contains("-lt 96"));
-    assert!(thumbnail_smoke.contains("Thumbnail shell path drifted"));
-    assert!(smoke.contains("approved shell extension"));
-    assert!(smoke.contains("Assert-RegistryDefaultNotEquals"));
-    assert!(smoke.contains("Assert-RegistryNamedValueAbsent"));
-    assert!(smoke.contains("Capabilities FileAssociations"));
-    assert!(smoke.contains("Applications SupportedTypes"));
-    assert!(smoke.contains("OpenWithList"));
-    assert!(smoke.contains("$formatProgIds"));
-    assert!(smoke.contains("$legacyFormatProgIds"));
-    assert!(smoke.contains("$formatIconFiles"));
-    assert!(!smoke.contains("Assert-PathAbsent \"HKLM:\\Software\\Classes\\.$ext\\ShellEx"));
-    assert!(!smoke.contains(".DisplayName"));
-    assert!(
-        smoke
-            .matches("$codes = @(Find-InstalledProductCodes)")
-            .count()
-            >= 2
-    );
-    for ext in SUPPORTED_EXTENSIONS {
-        assert!(smoke.contains(&format!("\"{ext}\"")));
-        let upper = canonical_extension(ext).to_ascii_uppercase();
-        assert!(smoke.contains(&format!("MeshFile.{upper}")));
-        assert!(smoke.contains(&format!("OccluView.Mesh.{upper}")));
-    }
-    assert!(smoke.contains("occluview-3d.ico"));
-}
-
-#[test]
-fn package_workflow_builds_linux_deb_release_assets() {
-    let workflow = include_str!("../../../.github/workflows/package-msi.yml");
-    let build_deb = include_str!("../../../install/linux/build-deb.sh");
-    let check_deb = include_str!("../../../install/linux/check-deb.sh");
-
-    assert!(workflow.contains("name: build linux deb"));
-    assert!(workflow.contains("runs-on: ubuntu-latest"));
-    assert!(workflow.contains("OCCLUVIEW_HPS_EMBEDDED_KEY"));
-    assert!(workflow.contains("OCCLUVIEW_HPS_EMBEDDED_KEY is required for Package Linux"));
-    assert!(workflow.contains("cargo test --locked -p occluview-hps --features private-hps-key"));
-    assert!(workflow.contains("install/linux/build-deb.sh"));
-    // The package to validate is the one build-deb.sh just named; globbing
-    // target/deb hands dpkg-deb a second path as a control-file name.
-    assert!(workflow.contains("install/linux/check-deb.sh \"$DEB\""));
-    assert!(workflow.contains("appstreamcli validate --no-net"));
-    assert!(workflow.contains("xmllint --noout"));
-    assert!(workflow.contains("lintian"));
-    assert!(workflow.contains("dpkg-deb --info"));
-    assert!(workflow.contains("sha256sum \"$(basename \"$deb\")\""));
-    assert!(workflow.contains("occluview-linux-package"));
-    assert!(workflow.contains("actions/download-artifact"));
-    assert!(workflow.contains("*.deb"));
-    assert!(workflow.contains("*.sha256"));
-    assert!(build_deb.contains("OCCLUVIEW_HPS_EMBEDDED_KEY"));
-    assert!(build_deb.contains("occluview-formats/private-hps-key"));
-    assert!(build_deb.contains("Private HPS key embedding enabled for this build."));
-    assert!(build_deb.contains(".occluview-build-provenance"));
-    assert!(build_deb.contains("git diff --binary HEAD"));
-    assert!(build_deb.contains("validate_release_provenance"));
-    assert!(build_deb.contains("release binaries are stale or were built with different features"));
-    assert!(build_deb.contains("-Zxz"));
-
-    assert!(check_deb.contains("dpkg-deb --control"));
-    assert!(check_deb.contains("dpkg-deb -x"));
-    assert!(check_deb.contains("usr/bin/occluview"));
-    assert!(check_deb.contains("usr/bin/occluview-cli"));
-    assert!(check_deb.contains("usr/share/thumbnailers/ai.occlutrace.OccluView.thumbnailer"));
-    assert!(check_deb.contains("usr/share/doc/occluview/NEWS.gz"));
-    assert!(check_deb.contains("usr/share/doc/occluview/changelog.gz"));
-    assert!(check_deb.contains("usr/share/man/man1/occluview.1.gz"));
-    assert!(check_deb.contains("usr/share/man/man1/occluview-cli.1.gz"));
-    assert!(check_deb.contains("/usr/share/common-licenses/Apache-2.0"));
-    assert!(check_deb.contains("desktop-file-validate"));
-    assert!(check_deb.contains("appstreamcli validate --no-net"));
-    assert!(check_deb.contains("xmllint --noout"));
-    assert!(check_deb.contains("lintian --fail-on error"));
-    assert!(check_deb.contains("ldd"));
-}
-
-#[test]
-fn package_pipeline_can_sign_windows_artifacts_when_certificate_is_configured() {
-    let build_msi = include_str!("../../../install/build-msi.ps1");
-
-    assert!(build_msi.contains("[ValidateSet(\"auto\", \"none\", \"certstore\", \"pfx\")]"));
-    assert!(build_msi.contains("Find-SignTool"));
-    assert!(build_msi.contains("Resolve-SigningMode"));
-    assert!(build_msi.contains("Sign-WindowsArtifact"));
-    assert!(build_msi.contains("signtool.exe"));
-    assert!(build_msi.contains("Get-AuthenticodeSignature"));
-    assert!(build_msi.contains("OCCLUVIEW_SIGN_CERT_SHA1"));
-    assert!(build_msi.contains("OCCLUVIEW_SIGN_PFX_PATH"));
-    assert!(build_msi.contains("OCCLUVIEW_SIGN_PFX_PASSWORD"));
-    assert!(build_msi.contains("OCCLUVIEW_SIGN_TIMESTAMP_URL"));
-    assert!(build_msi.contains("Signing disabled"));
-    assert!(build_msi.contains("occluview.exe"));
-    assert!(build_msi.contains("occluview_shell.dll"));
-    assert!(!build_msi.contains("\"-p\", \"occluview-cli\""));
-    assert!(!build_msi.contains("Join-Path $buildDir \"occluview-cli.exe\""));
-    assert!(build_msi.contains("Sign-WindowsArtifact -Path $msiPath"));
-    assert!(build_msi.contains("CARGO_ENCODED_RUSTFLAGS"));
-    assert!(build_msi.contains("--remap-path-prefix=$repoRoot=occluview"));
-    assert!(build_msi.contains("OCCLUVIEW_HPS_EMBEDDED_KEY"));
-    assert!(build_msi.contains("occluview-formats/private-hps-key"));
-    // The Explorer shell DLL — not just the app — must embed the key, or HPS
-    // thumbnails and the preview pane fall back to the placeholder cube while the
-    // app opens the same encrypted scan fine.
-    assert!(
-        build_msi.contains(
-            "$shellCargoArgs += @(\"--features\", \"occluview-formats/private-hps-key\")"
-        ),
-        "the shell build must also enable the private HPS key feature"
-    );
-    assert!(build_msi.contains("$msiPath"));
-
-    let workspace = include_str!("../../../Cargo.toml");
-    assert!(workspace.contains("strip = \"symbols\""));
-    assert!(workspace.contains("debug = false"));
-    assert!(workspace.contains("panic = \"abort\""));
-    // The shell DLL ships from the unwind profile: a panic=abort cdylib takes
-    // Explorer's whole dllhost down (every thumbnail in the folder blanks);
-    // unwinding lets the COM boundary substitute a placeholder instead.
-    assert!(workspace.contains("[profile.release-unwind]"));
-    assert!(workspace.contains("panic = \"unwind\""));
-    let build_msi_script = include_str!("../../../install/build-msi.ps1");
-    assert!(build_msi_script.contains(r#""--profile", "release-unwind""#));
-
-    let workflow = include_str!("../../../.github/workflows/package-msi.yml");
-    assert!(workflow.contains("OCCLUVIEW_SIGN_PFX_BASE64"));
-    assert!(workflow.contains("OCCLUVIEW_SIGN_PFX_PATH"));
-    assert!(workflow.contains("OCCLUVIEW_SIGN_PFX_PASSWORD"));
-    assert!(workflow.contains("OCCLUVIEW_SIGN_CERT_SHA1"));
-    assert!(workflow.contains("OCCLUVIEW_HPS_EMBEDDED_KEY"));
-    assert!(workflow.contains("cargo test --locked -p occluview-hps --features private-hps-key"));
-    assert!(workflow.contains("-SignMode auto"));
-    assert!(!workflow.contains("OCCLUVIEW_SIGN_PFX_PASSWORD: \""));
-
-    let build_windows = include_str!("../../../scripts/build-windows-msvc.sh");
-    assert!(build_windows.contains("OCCLUVIEW_HPS_EMBEDDED_KEY"));
-    assert!(build_windows.contains("occluview-formats/private-hps-key"));
-    assert!(build_windows.contains("CARGO_ENCODED_RUSTFLAGS"));
-    assert!(build_windows.contains("--remap-path-prefix=$repo_root=occluview"));
-}
-
-#[test]
-fn release_notes_put_the_recommended_installer_before_technical_verification() {
-    let workflow = include_str!("../../../.github/workflows/package-msi.yml");
-    let notes = workflow
-        .split_once("- name: Write release notes")
-        .and_then(|(_, rest)| {
-            rest.split_once("- name: Sign update artifacts and write latest.json")
-        })
-        .map(|(notes, _)| notes)
-        .expect("release-notes template");
-
-    let download = notes
-        .find("## Download for Windows")
-        .expect("release notes must start with the Windows download choice");
-    let installer = notes
-        .find("**OccluView-Windows-Setup.msi**")
-        .expect("release notes must identify the Windows installer as recommended");
-    let portable = notes
-        .find("**OccluView-Windows-Portable.zip**")
-        .expect("release notes must explain the portable Windows package");
-    assert!(notes.contains("awk -v version=\"$version\""));
-    assert!(notes.contains("CHANGELOG.md > \"$changelog_section\""));
-    assert!(download < installer && installer < portable);
-    assert!(!notes.contains("OccluView-Linux.deb"));
-    assert!(!notes.contains("<details>"));
-}
-
-#[test]
-fn public_release_uses_plain_package_names() {
-    let workflow = include_str!("../../../.github/workflows/package-msi.yml");
-    let signing = workflow
-        .split_once("- name: Sign update artifacts and write latest.json")
-        .and_then(|(_, rest)| {
-            rest.split_once("- name: Verify the signatures against the key the updater ships")
-        })
-        .map(|(signing, _)| signing)
-        .expect("release workflow must normalize the customer-facing package names");
-    let (_, publish) = workflow
-        .split_once("- name: Publish GitHub Release")
-        .expect("release workflow must publish the customer-facing downloads");
-
-    for asset in [
-        "OccluView-Windows-Setup.msi",
-        "OccluView-Windows-Portable.zip",
-        "OccluView-Linux.deb",
-    ] {
-        assert!(
-            signing.contains(asset),
-            "the signed release package should use the plain name {asset}"
-        );
-        assert!(
-            publish.contains(asset),
-            "the customer-facing release should publish {asset}"
-        );
-    }
-}
-
-#[test]
-fn public_release_groups_technical_verification_material_into_one_download() {
-    let workflow = include_str!("../../../.github/workflows/package-msi.yml");
-    let (_, bundle) = workflow
-        .split_once("- name: Bundle verification material")
-        .expect("release workflow must bundle technical verification material");
-    let (_, publish) = workflow
-        .split_once("- name: Publish GitHub Release")
-        .expect("release workflow must publish the customer-facing downloads");
-
-    assert!(bundle.contains("OccluView-${version}-verification.zip"));
-    assert!(bundle.contains("latest.json"));
-    assert!(bundle.contains("sbom-*.json"));
-    assert!(publish.contains("-name '*-verification.zip'"));
-    assert!(publish.contains("-name 'latest.json'"));
-    assert!(publish.contains("-name 'latest.json.minisig'"));
-    assert!(!publish.contains("-o -name '*.sha256'"));
-    assert!(!publish.contains("-o -name '*.minisig'"));
-    assert!(!publish.contains("-o -name '*.json'"));
-}
-
-#[test]
-fn release_note_markdown_is_written_as_data() {
-    let workflow = include_str!("../../../.github/workflows/package-msi.yml");
-    let (_, write_notes) = workflow
-        .split_once("- name: Write release notes")
-        .expect("release workflow must write customer-facing notes");
-    let (write_notes, _) = write_notes
-        .split_once("- name: Sign update artifacts and write latest.json")
-        .expect("release workflow must finish writing notes before signing");
-
-    assert!(write_notes.contains("cat \"$changelog_section\""));
-    assert!(write_notes.contains("> dist/release-notes.md"));
-    assert!(!write_notes.contains("<<NOTES"));
-    assert!(!write_notes.contains("eval "));
-}
-
-#[test]
-fn release_version_is_kept_in_sync_across_workspace_lockfile_and_installer() {
-    let cargo_toml = include_str!("../../../Cargo.toml");
-    let cargo_lock = include_str!("../../../Cargo.lock");
-    let wxs = include_str!("../../../install/occluview.wxs");
-
-    let version = workspace_package_version(cargo_toml);
-    assert!(version.is_some(), "workspace package version is present");
-    let Some(version) = version else {
-        return;
-    };
-    let wix_version = wix_product_version(wxs);
-    assert!(
-        wix_version.is_some(),
-        "WiX fallback product version is present"
-    );
-    let Some(wix_version) = wix_version else {
-        return;
-    };
-    assert_eq!(
-        wix_version, version,
-        "WiX ProductVersion fallback must match Cargo workspace version"
-    );
-
-    for package in [
-        "occluview-app",
-        "occluview-cli",
-        "occluview-core",
-        "occluview-formats",
-        "occluview-render",
-        "occluview-shell",
-        "occluview-thumbnail",
-        "occluview-update",
-        "occluview-hps",
-        "occluview-robust-csg",
-        "occlu-mesh-edit",
-    ] {
-        assert_eq!(
-            cargo_lock_package_version(cargo_lock, package),
-            Some(version),
-            "{package} version in Cargo.lock must match Cargo workspace version"
-        );
-    }
-}
-fn workspace_package_version(cargo_toml: &str) -> Option<&str> {
-    let section = cargo_toml.split("[workspace.package]").nth(1)?;
-    toml_quoted_value(section, "version")
-}
-
-fn cargo_lock_package_version<'a>(cargo_lock: &'a str, package_name: &str) -> Option<&'a str> {
-    let package_line = format!("name = \"{package_name}\"");
-    cargo_lock
-        .split("[[package]]")
-        .find(|block| block.lines().any(|line| line.trim() == package_line))
-        .and_then(|block| toml_quoted_value(block, "version"))
-}
-
-fn wix_product_version(wxs: &str) -> Option<&str> {
-    let marker = "<?define ProductVersion = \"";
-    let rest = wxs.get(wxs.find(marker)? + marker.len()..)?;
-    rest.get(..rest.find('"')?)
-}
-
-fn toml_quoted_value<'a>(text: &'a str, key: &str) -> Option<&'a str> {
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('#') {
-            continue;
-        }
-        let Some(rest) = trimmed.strip_prefix(key) else {
+fn expand_wix_value(document: &Document<'_>, value: &str) -> String {
+    let mut expanded = value.to_owned();
+    for instruction in document.descendants().filter_map(|node| node.pi()) {
+        let Some(definition) = instruction.value.filter(|_| instruction.target == "define") else {
             continue;
         };
-        let rest = rest.trim_start();
-        let Some(rest) = rest.strip_prefix('=') else {
+        let Some((name, value)) = definition.split_once('=') else {
             continue;
         };
-        let rest = rest.trim_start();
-        let Some(rest) = rest.strip_prefix('"') else {
+        let name = name.trim();
+        let value = value.trim().trim_matches('"');
+        expanded = expanded.replace(&format!("$(var.{name})"), value);
+    }
+    expanded
+}
+
+fn registry_value<'a, 'input>(
+    document: &'a Document<'input>,
+    key: &str,
+    name: Option<&str>,
+) -> Option<String> {
+    let key = registry_key(document, key)?;
+    key.children()
+        .filter(|node| node.is_element() && node.tag_name().name() == "RegistryValue")
+        .find(|node| node.attribute("Name") == name)
+        .and_then(|node| node.attribute("Value"))
+        .map(str::to_owned)
+}
+
+fn wix_element_has_id(document: &Document<'_>, element: &str, id: &str) -> bool {
+    document.descendants().any(|node| {
+        node.is_element() && node.tag_name().name() == element && node.attribute("Id") == Some(id)
+    })
+}
+
+fn registry_section_exists(registry: &str, key: &str) -> bool {
+    let expected = format!("[{key}]");
+    registry.lines().map(str::trim).any(|line| line == expected)
+}
+
+fn registry_string_value(registry: &str, key: &str, name: &str) -> Option<String> {
+    let mut in_section = false;
+    for line in registry.lines().map(str::trim) {
+        if let Some(section) = line
+            .strip_prefix('[')
+            .and_then(|line| line.strip_suffix(']'))
+        {
+            in_section = section == key;
+            continue;
+        }
+        if !in_section || line.is_empty() || line.starts_with(';') {
+            continue;
+        }
+        let Some((field, value)) = line.split_once('=') else {
             continue;
         };
-        return rest.get(..rest.find('"')?);
+        if field.trim().trim_matches('"') == name {
+            return Some(value.trim().trim_matches('"').to_owned());
+        }
     }
     None
+}
+
+fn package_workflow() -> Value {
+    serde_yaml_ng::from_str(&repo_file(".github/workflows/package-msi.yml"))
+        .expect("package workflow is valid YAML")
+}
+
+fn ci_workflow() -> Value {
+    serde_yaml_ng::from_str(&repo_file(".github/workflows/ci.yml"))
+        .expect("CI workflow is valid YAML")
+}
+
+fn workflow_step<'a>(workflow: &'a Value, job: &str, name: &str) -> Option<&'a Value> {
+    workflow["jobs"][job]["steps"]
+        .as_sequence()?
+        .iter()
+        .find(|step| step["name"].as_str() == Some(name))
+}
+
+fn step_runs(workflow: &Value, job: &str, name: &str, command: &str) -> bool {
+    workflow_step(workflow, job, name)
+        .and_then(|step| step["run"].as_str())
+        .is_some_and(|run| run.contains(command))
+}
+
+fn any_step_runs(workflow: &Value, job: &str, command: &str) -> bool {
+    workflow["jobs"][job]["steps"]
+        .as_sequence()
+        .is_some_and(|steps| {
+            steps.iter().any(|step| {
+                step["run"]
+                    .as_str()
+                    .is_some_and(|run| run.contains(command))
+            })
+        })
+}
+
+fn checkout_fetch_depth(workflow: &Value, job: &str) -> Option<u64> {
+    workflow["jobs"][job]["steps"]
+        .as_sequence()?
+        .iter()
+        .find(|step| {
+            step["uses"]
+                .as_str()
+                .is_some_and(|action| action.starts_with("actions/checkout@"))
+        })
+        .and_then(|step| step["with"]["fetch-depth"].as_u64())
+}
+
+fn progid_extension(extension: &str) -> String {
+    if extension == "dcm" {
+        "HPS".to_owned()
+    } else {
+        extension.to_ascii_uppercase()
+    }
+}
+
+fn assert_supported_registry_entry(wix: &Document<'_>, extension: &str) {
+    assert!(
+        occluview_formats::probe::by_extension(extension).is_some(),
+        "Explorer must not advertise an extension without a reader: {extension}"
+    );
+    let class = progid_extension(extension);
+    let progid = format!("MeshFile.{class}");
+    let progid_key = format!("Software\\Classes\\{progid}");
+    let open_with_key = format!("Software\\Classes\\.{extension}\\OpenWithProgids");
+    assert_eq!(
+        registry_value(wix, &open_with_key, Some(progid.as_str())).as_deref(),
+        Some(""),
+        "the MSI Open with entry must resolve to {progid}"
+    );
+    assert_eq!(
+        registry_value(wix, &progid_key, None).as_deref(),
+        Some(format!("{class} File").as_str()),
+        "the registered file type name must describe {extension}"
+    );
+
+    for category in [THUMBNAIL_PROVIDER_CATEGORY, PREVIEW_HANDLER_CATEGORY] {
+        let key = format!("{progid_key}\\ShellEx\\{category}");
+        assert!(registry_key(wix, &key).is_some());
+    }
+    let dot_extension_key = format!("Software\\Classes\\.{extension}");
+    if owns_extension(extension) {
+        assert_eq!(
+            registry_value(wix, &dot_extension_key, None).as_deref(),
+            Some(progid.as_str()),
+            "the owned extension must resolve to its Open with ProgID"
+        );
+        for category in [THUMBNAIL_PROVIDER_CATEGORY, PREVIEW_HANDLER_CATEGORY] {
+            let direct = format!("{dot_extension_key}\\ShellEx\\{category}");
+            let system = format!(
+                "Software\\Classes\\SystemFileAssociations\\.{extension}\\ShellEx\\{category}"
+            );
+            assert!(registry_key(wix, &direct).is_some());
+            assert!(registry_key(wix, &system).is_some());
+        }
+    } else {
+        assert_eq!(registry_value(wix, &dot_extension_key, None), None);
+        assert!(registry_key(wix, &format!("{dot_extension_key}\\DefaultIcon")).is_none());
+        for category in [THUMBNAIL_PROVIDER_CATEGORY, PREVIEW_HANDLER_CATEGORY] {
+            let direct = format!("{dot_extension_key}\\ShellEx\\{category}");
+            let system = format!(
+                "Software\\Classes\\SystemFileAssociations\\.{extension}\\ShellEx\\{category}"
+            );
+            assert!(registry_key(wix, &direct).is_none());
+            assert!(registry_key(wix, &system).is_none());
+        }
+    }
+
+    let edit_key =
+        format!("Software\\Classes\\SystemFileAssociations\\.{extension}\\shell\\OccluView.Edit");
+    assert!(registry_key(wix, &edit_key).is_some());
+    assert!(registry_key(wix, &format!("{edit_key}\\command")).is_some());
+
+    if DEDICATED_FILE_ICON_EXTENSIONS.contains(&extension) && extension != "dcm" {
+        let icon_key = format!("{progid_key}\\DefaultIcon");
+        assert_eq!(
+            registry_value(wix, &icon_key, None).as_deref(),
+            Some("[INSTALLFOLDER]occluview-3d.ico")
+        );
+    }
+}
+
+#[test]
+fn explorer_open_with_and_icon_entries_match_the_reader_set() {
+    let source = repo_file("install/occluview.wxs");
+    let wix = Document::parse(&source).expect("WiX source is well-formed XML");
+    assert_eq!(
+        wix_variable(&wix, "ThumbnailProviderCategory"),
+        Some(THUMBNAIL_PROVIDER_CATEGORY.to_owned())
+    );
+    assert_eq!(
+        wix_variable(&wix, "PreviewHandlerCategory"),
+        Some(PREVIEW_HANDLER_CATEGORY.to_owned())
+    );
+    for (component, file) in [
+        ("cmpLicenseFile", "filLicenseFile"),
+        ("cmpNoticeFile", "filNoticeFile"),
+        ("cmpThirdPartyNotices", "filThirdPartyNotices"),
+        ("cmpThirdPartyNoticesNative", "filThirdPartyNoticesNative"),
+    ] {
+        assert!(wix_element_has_id(&wix, "Component", component));
+        assert!(wix_element_has_id(&wix, "File", file));
+        assert!(wix_element_has_id(&wix, "ComponentRef", component));
+    }
+    let major_upgrade = wix
+        .descendants()
+        .find(|node| node.is_element() && node.tag_name().name() == "MajorUpgrade")
+        .expect("the MSI declares its upgrade policy");
+    assert_eq!(
+        major_upgrade.attribute("Schedule"),
+        Some("afterInstallInitialize")
+    );
+    assert_ne!(
+        major_upgrade.attribute("AllowSameVersionUpgrades"),
+        Some("yes")
+    );
+
+    for extension in SUPPORTED_EXTENSIONS {
+        assert_supported_registry_entry(&wix, extension);
+    }
+
+    assert_eq!(
+        OFFERED_ONLY_EXTENSIONS,
+        [occluview_formats::LEGACY_HPS_EXTENSION]
+    );
+    assert!(!owns_extension("dcm"));
+    for extension in ["stl", "ply", "obj", "glb", "hps"] {
+        assert!(owns_extension(extension));
+    }
+    for forbidden in [
+        "Software\\Classes\\.dcm",
+        "Software\\Classes\\.dcm\\DefaultIcon",
+        "Software\\Classes\\.dcm\\ShellEx",
+        "Software\\Classes\\SystemFileAssociations\\.dcm\\ShellEx",
+    ] {
+        assert!(
+            registry_key(&wix, forbidden).is_none(),
+            "the installer must not claim medical DICOM files through {forbidden}"
+        );
+    }
+    assert!(registry_key(
+        &wix,
+        "Software\\Classes\\SystemFileAssociations\\.dcm\\shell\\OccluView.Edit"
+    )
+    .is_some());
+    assert!(
+        registry_key(
+            &wix,
+            &format!("Software\\Classes\\Applications\\{APP_EXE_NAME}")
+        )
+        .is_some(),
+        "the Open with executable entry must name the shipped viewer"
+    );
+
+    assert_manual_registry_contract(&wix);
+}
+
+fn assert_manual_registry_contract(wix: &Document<'_>) {
+    let manual = repo_file("install/occluview-shell-registration.reg");
+    let preview_app_id = "{6D2B5079-2F0B-48DD-AB7F-97CEC514D30B}";
+    assert_eq!(
+        wix_variable(wix, "PrevhostAppId").as_deref(),
+        Some(preview_app_id)
+    );
+    assert_eq!(
+        registry_string_value(
+            &manual,
+            "HKEY_CLASSES_ROOT\\CLSID\\{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}",
+            "AppID"
+        )
+        .as_deref(),
+        Some(preview_app_id),
+        "manual shell registration uses Windows' Prevhost AppID"
+    );
+    assert!(!registry_section_exists(
+        &manual,
+        &format!("HKEY_CLASSES_ROOT\\AppID\\{preview_app_id}")
+    ));
+    for extension in SUPPORTED_EXTENSIONS {
+        let dot_extension = format!("HKEY_CLASSES_ROOT\\.{extension}");
+        if owns_extension(extension) {
+            assert_eq!(
+                registry_string_value(&manual, &dot_extension, "@"),
+                Some(format!("MeshFile.{}", progid_extension(extension)))
+            );
+        } else {
+            assert_eq!(registry_string_value(&manual, &dot_extension, "@"), None);
+            assert!(!registry_section_exists(
+                &manual,
+                &format!("{dot_extension}\\DefaultIcon")
+            ));
+            for category in [THUMBNAIL_PROVIDER_CATEGORY, PREVIEW_HANDLER_CATEGORY] {
+                assert!(!registry_section_exists(
+                    &manual,
+                    &format!("{dot_extension}\\ShellEx\\{category}")
+                ));
+                assert!(!registry_section_exists(
+                    &manual,
+                    &format!(
+                        "HKEY_CLASSES_ROOT\\SystemFileAssociations\\.{extension}\\ShellEx\\{category}"
+                    )
+                ));
+            }
+        }
+    }
+    assert_eq!(
+        registry_string_value(
+            &manual,
+            "HKEY_CLASSES_ROOT\\.dcm\\OpenWithProgids",
+            "MeshFile.HPS"
+        ),
+        Some(String::new()),
+        ".dcm remains available through the explicit Open With menu"
+    );
+    assert_eq!(
+        registry_string_value(
+            &manual,
+            "HKEY_CLASSES_ROOT\\Applications\\occluview.exe\\SupportedTypes",
+            ".dcm"
+        ),
+        Some(String::new()),
+        ".dcm remains visible in Windows app discovery"
+    );
+}
+
+fn wix_variable(document: &Document<'_>, name: &str) -> Option<String> {
+    document
+        .descendants()
+        .filter_map(|node| node.pi())
+        .filter(|instruction| instruction.target == "define")
+        .filter_map(|instruction| instruction.value)
+        .filter_map(|definition| definition.split_once('='))
+        .find_map(|(defined_name, value)| {
+            (defined_name.trim() == name).then(|| value.trim().trim_matches('"').to_owned())
+        })
+}
+
+#[test]
+fn linux_mime_metadata_distinguishes_hps_dcm_from_medical_dicom() {
+    let source = repo_file("install/linux/occluview-mime.xml");
+    let mime = Document::parse(&source).expect("shared MIME metadata is well-formed XML");
+    let hps = mime
+        .descendants()
+        .find(|node| {
+            node.is_element()
+                && node.tag_name().name() == "mime-type"
+                && node.attribute("type") == Some("application/x-occluview-hps")
+        })
+        .expect("the HPS MIME type is declared");
+
+    for pattern in ["*.dcm", "*.DCM"] {
+        assert!(hps.children().any(|node| {
+            node.is_element()
+                && node.tag_name().name() == "glob"
+                && node.attribute("pattern") == Some(pattern)
+                && node.attribute("weight") == Some("40")
+        }));
+    }
+    for pattern in ["*.hps", "*.HPS"] {
+        assert!(hps.children().any(|node| {
+            node.is_element()
+                && node.tag_name().name() == "glob"
+                && node.attribute("pattern") == Some(pattern)
+        }));
+    }
+    assert!(hps.descendants().any(|node| {
+        node.is_element()
+            && node.tag_name().name() == "magic"
+            && node.attribute("priority") == Some("60")
+            && node.children().any(|matcher| {
+                matcher.is_element()
+                    && matcher.tag_name().name() == "match"
+                    && matcher.attribute("value") == Some("<HPS")
+                    && matcher.attribute("offset") == Some("0:256")
+            })
+    }));
+
+    let wavefront = mime
+        .descendants()
+        .find(|node| {
+            node.is_element()
+                && node.tag_name().name() == "mime-type"
+                && node.attribute("type") == Some("model/obj")
+        })
+        .expect("the Wavefront MIME type is declared");
+    for pattern in ["*.obj", "*.OBJ"] {
+        assert!(wavefront.children().any(|node| {
+            node.is_element()
+                && node.tag_name().name() == "glob"
+                && node.attribute("pattern") == Some(pattern)
+                && node.attribute("weight") == Some("60")
+        }));
+    }
+
+    let ply = mime
+        .descendants()
+        .find(|node| {
+            node.is_element()
+                && node.tag_name().name() == "mime-type"
+                && node.attribute("type") == Some("application/x-ply")
+        })
+        .expect("the PLY MIME type is declared");
+    for pattern in ["*.ply", "*.PLY"] {
+        assert!(ply.children().any(|node| {
+            node.is_element()
+                && node.tag_name().name() == "glob"
+                && node.attribute("pattern") == Some(pattern)
+        }));
+    }
+}
+
+#[test]
+fn package_workflow_parses_and_runs_real_artifact_smokes() {
+    let ci = ci_workflow();
+    let package = package_workflow();
+
+    assert_ci_artifact_smokes(&ci);
+    assert_package_artifact_smokes(&package);
+    assert_release_gate(&package);
+}
+
+fn assert_ci_artifact_smokes(ci: &Value) {
+    assert_eq!(
+        checkout_fetch_depth(ci, "linux-renderer-tests"),
+        Some(0),
+        "the shell-pin report test needs the pinned revision in the checkout"
+    );
+    assert!(step_runs(
+        ci,
+        "macos-arm",
+        "Package and verify unsigned Apple Silicon app, DMG, and PKG",
+        "bash install/macos/build-app.sh --no-build"
+    ));
+    let macos = workflow_step(
+        ci,
+        "macos-arm",
+        "Package and verify unsigned Apple Silicon app, DMG, and PKG",
+    )
+    .and_then(|step| step["run"].as_str())
+    .expect("the CI macOS lane validates built packages");
+    for check in [
+        "hdiutil verify",
+        "pkgutil --payload-files",
+        "Contents/Resources/Legal/$notice",
+        "occluview-cli --version",
+    ] {
+        assert!(
+            macos.contains(check),
+            "the macOS package smoke runs {check}"
+        );
+    }
+    assert!(step_runs(
+        ci,
+        "linux-package-smoke",
+        "Validate the package contents",
+        "install/linux/check-deb.sh \"$DEB\""
+    ));
+    assert!(step_runs(
+        ci,
+        "third-party-notices",
+        "Regenerate THIRD-PARTY-NOTICES.md",
+        "./scripts/gen-third-party.sh"
+    ));
+    assert!(step_runs(
+        ci,
+        "third-party-notices",
+        "Fail on drift",
+        "git diff --exit-code -- THIRD-PARTY-NOTICES.md"
+    ));
+    assert!(any_step_runs(
+        ci,
+        "third-party-notices",
+        "cargo install cargo-about --version 0.8.4 --locked"
+    ));
+    for (job, duration, limit) in [
+        ("fuzz-smoke", "60", "65536"),
+        ("fuzz-weekly", "300", "131072"),
+    ] {
+        for target in ["dispatch", "hps_parser", "stl", "ply", "glb"] {
+            assert!(any_step_runs(
+                ci,
+                job,
+                &format!("./scripts/run-fuzz.sh {target} {duration} {limit}")
+            ));
+        }
+    }
+}
+
+fn assert_package_artifact_smokes(package: &Value) {
+    assert!(step_runs(
+        package,
+        "windows-package",
+        "Smoke install and uninstall",
+        "./install/test-msi-lifecycle.ps1"
+    ));
+    let windows_smoke = workflow_step(package, "windows-package", "Smoke install and uninstall")
+        .and_then(|step| step["run"].as_str())
+        .expect("Windows packaging runs its MSI lifecycle smoke");
+    assert!(windows_smoke.contains("-DowngradeMsiPath $releaseMsi.FullName"));
+    assert!(windows_smoke.contains("-UpgradeMsiPath"));
+    let portable = workflow_step(package, "windows-package", "Build portable ZIP")
+        .and_then(|step| step["run"].as_str())
+        .expect("the Windows package lane builds its portable archive");
+    for notice in ["THIRD-PARTY-NOTICES.md", "THIRD-PARTY-NOTICES-NATIVE.md"] {
+        assert!(
+            portable.contains(notice),
+            "the portable ZIP includes {notice}"
+        );
+    }
+
+    let linux_build = workflow_step(package, "linux-package", "Build Debian package")
+        .and_then(|step| step["run"].as_str())
+        .expect("the Linux package lane captures its Debian package path");
+    assert!(linux_build.contains("set -o pipefail"));
+    assert!(linux_build.contains("install/linux/build-deb.sh | tail -n 1"));
+    assert!(step_runs(
+        package,
+        "linux-package",
+        "Validate Debian package",
+        "install/linux/check-deb.sh \"$DEB\""
+    ));
+    let macos_verify = workflow_step(package, "macos-package", "Verify the packages")
+        .and_then(|step| step["run"].as_str())
+        .expect("the package lane verifies its DMG and PKG");
+    assert!(macos_verify.contains("hdiutil verify"));
+    assert!(macos_verify.contains("Contents/Resources/Legal/$notice"));
+    assert!(step_runs(
+        package,
+        "macos-package",
+        "Build the app with the embedded HPS key",
+        "bash install/macos/build-app.sh"
+    ));
+    assert!(step_runs(
+        package,
+        "macos-package",
+        "Package, and sign and notarize when configured",
+        "bash install/macos/build-pkg.sh --no-build"
+    ));
+}
+
+fn assert_release_gate(package: &Value) {
+    let rehearsal_input = &package["on"]["workflow_dispatch"]["inputs"]["release_dry_run"];
+    assert_eq!(rehearsal_input["type"].as_str(), Some("boolean"));
+    let publish = &package["jobs"]["publish"];
+    assert!(publish["if"].as_str().is_some_and(|condition| {
+        condition.contains("inputs.release_dry_run")
+            && condition.contains("windows_configuration != 'diagnostic'")
+    }));
+    assert!(publish["needs"].as_sequence().is_some_and(|needs| {
+        [
+            "windows-package",
+            "linux-package",
+            "macos-package",
+            "full-ci",
+        ]
+        .iter()
+        .all(|expected| needs.iter().any(|job| job.as_str() == Some(expected)))
+    }));
+    assert_eq!(
+        package["jobs"]["full-ci"]["uses"].as_str(),
+        Some("./.github/workflows/ci.yml"),
+        "release packaging waits for the reusable CI workflow"
+    );
+    assert!(package["jobs"]["full-ci"]["if"]
+        .as_str()
+        .is_some_and(|condition| {
+            condition.contains("inputs.release_dry_run")
+                && condition.contains("startsWith(github.ref, 'refs/tags/')")
+        }));
+    let release = workflow_step(package, "publish", "Publish GitHub Release")
+        .expect("release publishing has its own guarded step");
+    assert_eq!(
+        release["if"].as_str(),
+        Some("${{ !inputs.release_dry_run }}"),
+        "a release rehearsal builds and verifies artifacts without publishing them"
+    );
+    let notes = workflow_step(package, "publish", "Write release notes")
+        .and_then(|step| step["run"].as_str())
+        .expect("the release page is prepared from changelog data");
+    for check in [
+        "awk -v version=\"$version\"",
+        "CHANGELOG.md",
+        "if [[ ! -s \"$changelog_section\" ]]",
+    ] {
+        assert!(notes.contains(check), "release-note step includes {check}");
+    }
+    let verification = workflow_step(package, "publish", "Bundle verification material")
+        .and_then(|step| step["run"].as_str())
+        .expect("the release carries one technical verification archive");
+    for material in ["*.sha256", "*.minisig", "latest.json", "sbom-*.json"] {
+        assert!(verification.contains(material));
+    }
+    assert!(step_runs(
+        package,
+        "publish",
+        "Verify the signatures against the key the updater ships",
+        "minisign -V -P \"$pubkey\" -m \"$file\""
+    ));
+    let attest = workflow_step(package, "publish", "Attest build provenance")
+        .expect("the release artifacts have build provenance");
+    assert!(attest["uses"]
+        .as_str()
+        .is_some_and(|action| action.starts_with("actions/attest-build-provenance@")));
+    let subjects = attest["with"]["subject-path"]
+        .as_str()
+        .expect("provenance lists the package subjects");
+    for pattern in ["dist/*.msi", "dist/*.deb", "dist/sbom-*.json"] {
+        assert!(subjects.lines().any(|line| line.trim() == pattern));
+    }
+    for (job, step, sbom) in [
+        (
+            "windows-package",
+            "Generate SBOM (Windows)",
+            "sbom-windows.json",
+        ),
+        ("linux-package", "Generate SBOM (Linux)", "sbom-linux.json"),
+    ] {
+        let run = workflow_step(package, job, step)
+            .and_then(|step| step["run"].as_str())
+            .expect("each release package produces its SBOM");
+        assert!(run.contains("cargo metadata --locked --format-version 1"));
+        assert!(run.contains("git diff --exit-code -- Cargo.lock"));
+        assert!(run.contains(sbom));
+    }
+}
+
+#[test]
+fn diagnostic_events_keep_a_fixed_privacy_safe_shape() {
+    use crate::shell_diagnostics::{
+        ShellDiagnosticAdapter, ShellDiagnosticComponent, ShellDiagnosticEvent,
+        ShellDiagnosticEventInput, ShellDiagnosticOutcome, ShellDiagnosticProcess,
+        ShellDiagnosticStage,
+    };
+
+    let event = ShellDiagnosticEvent::normal(
+        ShellDiagnosticEventInput {
+            component: ShellDiagnosticComponent::Preview,
+            stage: ShellDiagnosticStage::BitmapPublish,
+            adapter: ShellDiagnosticAdapter::Hardware,
+            elapsed_ms: 18,
+        },
+        ShellDiagnosticOutcome::Completed,
+        ShellDiagnosticProcess {
+            timestamp_unix_ms: 1_725_000_001,
+            process_id: 42,
+        },
+    )
+    .json_line();
+    let parsed: serde_json::Value = serde_json::from_str(&event).expect("diagnostic JSON parses");
+
+    for (field, expected) in [
+        ("component", "preview"),
+        ("stage", "bitmap_publish"),
+        ("outcome", "completed"),
+        ("adapter", "hardware"),
+    ] {
+        assert_eq!(parsed[field], expected);
+    }
+    assert_eq!(parsed["elapsed_ms"], 18);
+    for field in ["path", "filename", "driver", "error"] {
+        assert!(parsed.get(field).is_none(), "diagnostics omit {field}");
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn com_entry_returns_the_fallback_when_the_body_panics() {
+    let value = crate::com::com_entry("test::body_returns", || 0_u32, || 7);
+    assert_eq!(value, 7, "a successful COM body returns its result");
+
+    let caught = crate::com::com_entry("test::body_panics", || 0_u32, || panic!("boom"));
+    assert_eq!(caught, 0, "a COM entry converts a panic into its fallback");
+}
+
+#[cfg(unix)]
+fn shell_pin_script() -> PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("scripts/report-shell-pin.sh")
+}
+
+#[cfg(unix)]
+fn shell_pin_commits(report: &serde_json::Value) -> u64 {
+    report["commits_behind"]
+        .as_u64()
+        .expect("the shell-pin report includes its commit count")
+}
+
+#[cfg(unix)]
+#[test]
+fn shell_pin_report_handles_carriage_returns_in_python_fields() {
+    use std::process::Command;
+
+    let script = shell_pin_script();
+    assert!(script.is_file(), "the package report script is present");
+    let root = script
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("the report script belongs to the workspace");
+    let python = Command::new("sh")
+        .arg("-c")
+        .arg("command -v python3")
+        .output()
+        .expect("the packaging runner starts a shell");
+    assert!(
+        python.status.success(),
+        "Python 3 is installed for packaging"
+    );
+    let python = String::from_utf8(python.stdout)
+        .expect("the Python executable path is UTF-8")
+        .trim()
+        .to_owned();
+
+    let temp = std::env::temp_dir().join(format!(
+        "occluview-crlf-shell-pin-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = std::fs::remove_dir_all(&temp);
+    std::fs::create_dir_all(&temp).expect("create the script test directory");
+    let shim = temp.join("python3");
+    std::fs::write(
+        &shim,
+        format!(
+            "#!/bin/bash\n\"{python}\" \"$@\" | \"{python}\" -c 'import sys; sys.stdout.buffer.write(sys.stdin.buffer.read().replace(b\"\\0\", b\"\\r\\0\"))'\n"
+        ),
+    )
+    .expect("write the Python field shim");
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755))
+            .expect("make the shim executable");
+    }
+    let path = std::env::join_paths(std::iter::once(temp.clone()).chain(std::env::split_paths(
+        &std::env::var_os("PATH").expect("packaging PATH is set"),
+    )))
+    .expect("compose a valid executable search path");
+    let crlf_path = temp.join("crlf-report.json");
+    let output = Command::new("bash")
+        .arg(&script)
+        .arg(&crlf_path)
+        .current_dir(root)
+        .env("PATH", path)
+        .env("GIT_CONFIG_COUNT", "1")
+        .env("GIT_CONFIG_KEY_0", "remote.origin.url")
+        .env("GIT_CONFIG_VALUE_0", root)
+        .output()
+        .expect("run the shell-pin report with CR-tainted Python fields");
+    assert!(
+        output.status.success(),
+        "the report handles carriage returns in field values: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let crlf: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&crlf_path).expect("the script writes its JSON report"),
+    )
+    .expect("report with CR-tainted input fields is valid JSON");
+    assert_eq!(crlf["revision"].as_str().map(str::len), Some(40));
+
+    let clean_path = temp.join("clean-report.json");
+    let clean = Command::new("bash")
+        .arg(&script)
+        .arg(&clean_path)
+        .current_dir(root)
+        .env("GIT_CONFIG_COUNT", "1")
+        .env("GIT_CONFIG_KEY_0", "remote.origin.url")
+        .env("GIT_CONFIG_VALUE_0", root)
+        .output()
+        .expect("run the shell-pin report with normal Python output");
+    assert!(clean.status.success(), "the baseline report succeeds");
+    let clean: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&clean_path).expect("the baseline JSON report exists"),
+    )
+    .expect("baseline report is valid JSON");
+    assert_eq!(
+        shell_pin_commits(&crlf),
+        shell_pin_commits(&clean),
+        "CRLF output must not truncate the shell crate path list"
+    );
+    let _ = std::fs::remove_dir_all(&temp);
 }

@@ -20,8 +20,6 @@
 #[cfg(any(windows, test))]
 mod deferred_source;
 pub mod error;
-#[cfg(test)]
-mod installer_contract_tests;
 mod offscreen_factory;
 #[cfg(any(windows, test))]
 mod preview_canvas;
@@ -33,8 +31,6 @@ mod shell_contract;
 mod shell_contract_tests;
 #[cfg(any(test, all(windows, feature = "diagnostic-logs")))]
 mod shell_diagnostics;
-#[cfg(test)]
-mod shell_preview_tests;
 #[cfg(any(windows, test))]
 mod stream_read {
     #[allow(unused_imports)]
