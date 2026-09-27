@@ -180,13 +180,12 @@ fn header(ui: &mut egui::Ui, locale: &crate::i18n::LocaleManager) -> Option<Brus
                     egui::StrokeKind::Inside,
                 );
             }
-            close_response.widget_info(|| {
-                egui::WidgetInfo::labeled(
-                    egui::WidgetType::Button,
-                    true,
-                    locale.tr("align-brush-close-hint"),
-                )
-            });
+            crate::accessibility::button(
+                &close_response,
+                &locale.tr("align-brush-close-hint"),
+                true,
+                None,
+            );
             if close_response
                 .on_hover_text(locale.tr("align-brush-close-hint"))
                 .clicked()

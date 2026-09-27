@@ -98,8 +98,7 @@ fn tab_pill(ui: &mut egui::Ui, label: &str, width: f32, active: bool) -> egui::R
             egui::StrokeKind::Inside,
         );
     }
-    response
-        .widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, active, label));
+    crate::accessibility::button(&response, label, true, Some(active));
     response
 }
 
@@ -130,8 +129,7 @@ fn close_cross(
         );
     }
     let label = locale.tr("meshedit-cancel-session");
-    response
-        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label.clone()));
+    crate::accessibility::button(&response, &label, true, None);
     response.on_hover_text(label)
 }
 

@@ -567,6 +567,7 @@ guard-cancel = Cancelar
 error-retry-graphics = Intentar de nuevo
 error-close = Cerrar
 error-copy-details = Copiar detalles
+error-details = Detalles del error
 
 about-website = Sitio web
 about-source = Código
@@ -816,6 +817,26 @@ render-failed-summary = El archivo abrió, pero el visor no renderiza.
 render-failed-status = Falló el render
 
 tint-choose = Elegir tinte
+tint-group-model = Modelo
+tint-group-overlays = Superposiciones de contraste
+tint-color-stone-iv = Piedra IV
+tint-color-baked = Cocido
+tint-color-plaster = Yeso
+tint-color-sage = Salvia
+tint-color-wax = Cera
+tint-color-glacier = Glaciar
+tint-color-coral = Coral
+tint-color-mint = Menta
+tint-color-lilac = Lila
+tint-color-amber = Ámbar
+tint-color-cobalt = Cobalto
+tint-color-tangerine = Mandarina
+tint-color-violet = Violeta
+tint-color-lime = Lima
+tint-color-teal = Verde azulado
+tint-color-magenta = Magenta
+tint-color-crimson = Carmesí
+tint-color-slate = Pizarra
 
 ## Status tail: brush, lasso, loading, GPU, align jobs — DRAFT.
 

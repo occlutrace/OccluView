@@ -36,6 +36,8 @@ const FOREGROUND_PULSE_DURATION: Duration = Duration::from_millis(250);
 #[cfg(not(windows))]
 const LINUX_OPEN_REQUEST_REPAINT_INTERVAL: Duration = Duration::from_millis(50);
 
+#[cfg(test)]
+mod app_accessibility_tests;
 mod app_align;
 mod app_align_brush;
 pub(crate) mod app_align_display;
