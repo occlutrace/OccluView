@@ -84,9 +84,8 @@ pub(crate) fn check_scene_estimate(estimated_bytes: u64) -> Result<(), FormatErr
 
 fn may_decode_texture(kind: FormatKind, bytes: &[u8]) -> bool {
     match kind {
-        FormatKind::Stl | FormatKind::Off | FormatKind::Threemf => false,
+        FormatKind::Stl | FormatKind::Off | FormatKind::Threemf | FormatKind::Obj => false,
         FormatKind::Ply => contains(bytes, b"OccluViewTexture") && crate::ply::may_have_uvs(bytes),
-        FormatKind::Obj => false,
         FormatKind::Gltf => {
             let Ok((json, _)) = crate::gltf::glb::split(bytes) else {
                 return false;
