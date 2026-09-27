@@ -3,7 +3,7 @@
 use crate::error::FormatError;
 use crate::probe::FormatKind;
 
-/// Maximum estimated CPU memory held by a scene and its active import.
+/// Maximum estimated scene memory held by a scene and its active import.
 pub const SCENE_IMPORT_MEMORY_BUDGET_BYTES: u64 = 2 << 30;
 
 /// Estimate the peak bytes held while dispatching one input file.
