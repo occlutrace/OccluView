@@ -11,10 +11,8 @@
 use super::*;
 use crate::hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
-/// Never birth a child the cycle would immediately treat as a sliver.
-/// Mints in [0.02, 0.25) were legal to the splitter but a hard defect to every
-/// later stage, so Smooth-then-Add `FILLed` the disc into a mushroom. Coarse
-/// healthy patches still pass this bar; needles do not.
+/// Require each split child to meet the shared quality floor used by later
+/// topology operators. Healthy coarse patches pass; needles do not.
 const SPLIT_MIN_CHILD_QUALITY: f64 = crate::SLIVER_QUALITY_FLOOR;
 
 use super::topology_journal::*;
@@ -76,9 +74,8 @@ impl SculptSession {
         plan
     }
 
-    /// The two halves of one cut, from the stored cyclic order: replacing
-    /// one corner of the edge and emitting the complementary half keeps
-    /// each face's winding (pinned by unit tests on both orientations).
+    /// The two halves of one cut, from the stored cyclic order, preserve each
+    /// face's winding when the edge midpoint replaces a corner.
     // the two corners, the midpoint and the rewiring buffers are one split plan.
     #[allow(clippy::too_many_arguments)]
     fn split_corners(
@@ -516,15 +513,8 @@ impl SculptSession {
                     if !policy.should_split(length, target) {
                         continue;
                     }
-                    // note: the candidate cap is applied after the sort below,
-                    // never here. Capping the collection first truncated it in
-                    // whatever order the region was walked, so the longest
-                    // edges could be dropped before the ordering that was
-                    // supposed to choose them ever ran — the cap silently
-                    // stopped being "the longest edges" and became "the
-                    // longest edges among the first N encountered". Blender
-                    // seeds its whole edge heap and drains it longest-first,
-                    // so its budget is a priority, not a lottery.
+                    // Collect all candidates before sorting so the operation
+                    // budget selects the longest edges across the full region.
                     candidates.push((length, key));
                 }
             }
@@ -621,9 +611,8 @@ impl SculptSession {
             }
         }
         // Finalize minted groups: face-averaged normal (endpoint fallback),
-        // Voronoi-share area, ring budget, grid slot, journal evidence. The
-        // record itself was pushed at mint time, where the split's rewires
-        // need it; only its evidence is written here, in place.
+        // Voronoi-share area, ring budget, grid slot, and journal evidence. The
+        // split record is appended when the group is minted, then updated here.
         for &(group, a, b, record) in &fresh {
             let mut sum = DVec3::ZERO;
             let mut area = 0.0f64;
@@ -649,7 +638,7 @@ impl SculptSession {
             // Subdivision changes sampling, not the physical dose the surface
             // may accept. Inherit the parent field and only ratchet upward if
             // this split actually spans a longer safe edge; seeding the child
-            // from its new half-edge made a Smooth heal throttle the next Add.
+            // from its new half-edge can throttle the next Add operation.
             let inherited_budget =
                 f32::midpoint(self.step_budget[a as usize], self.step_budget[b as usize]);
             let budget = inherited_budget.max(self.shortest_incident_edge(group) as f32);
@@ -674,9 +663,8 @@ impl SculptSession {
                 entry.component = self.sheet_component[group as usize];
             }
         }
-        // The solve below reads per-group areas as its mass matrix: refresh
-        // the touched scope now, not after the dab, so split-induced
-        // incident changes do not enter the system as stale masses.
+        // Refresh per-group areas before the solve uses them in its mass
+        // matrix, so split-induced incident changes use current masses.
         {
             let fresh_groups: Vec<u32> = fresh.iter().map(|(group, _, _, _)| *group).collect();
             let scope = self.collect_normal_scope(&fresh_groups);

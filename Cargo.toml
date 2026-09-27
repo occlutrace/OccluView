@@ -3,7 +3,7 @@
 # Workspace layering:
 #   geometry-math ← (nothing; shared constants + trivial pure math)
 #   mesh-edit     → geometry-math
-#   sculpt        → (nothing; its own f64 millimetre geometry)
+#   sculpt        → geometry-math (f64 millimetre geometry)
 #   hps           → geometry-math (no other OccluView crates)
 #   align         ← (nothing OccluView; plain slices in, plain values out)
 #   core          → mesh-edit + geometry-math (+ optional robust-csg bridge fallback)

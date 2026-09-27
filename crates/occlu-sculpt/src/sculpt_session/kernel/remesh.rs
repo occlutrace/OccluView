@@ -392,11 +392,9 @@ impl SculptSession {
         }
     }
 
-    /// Give the next stage its own slice of the pass budget, counted from what
-    /// earlier stages already spent. Splitting, flipping and collapsing draw
-    /// one counter, and without a per-stage floor the first stage to run takes
-    /// the whole budget: flip-first starved collapse, so the isotropic half of
-    /// the heal never ran on a region big enough to exhaust it.
+    /// Give each stage a share of the per-dab budget, counted from the work
+    /// already spent. Splitting, flipping and collapsing share one counter, and
+    /// the per-stage floor leaves each operation a chance to run.
     pub(super) fn begin_op_stage(&mut self, share: usize) {
         self.op_stage_base = self.dab_topo_ops;
         self.op_stage_limit = share.max(1);

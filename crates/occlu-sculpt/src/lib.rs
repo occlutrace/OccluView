@@ -41,7 +41,6 @@ mod fairing;
 mod flatten;
 mod hash;
 mod knot;
-mod relax;
 mod remesh_policy;
 mod respace;
 pub mod sculpt_session;
@@ -77,11 +76,8 @@ pub fn triangle_quality_3d(a: DVec3, b: DVec3, c: DVec3) -> f64 {
 /// degenerate).
 pub const SLIVER_QUALITY_FLOOR: f64 = 0.25;
 pub use knot::{clamp_dab_displacement, KnotSurface, KNOT_TANGENT_SHARE};
-pub use relax::{laplacian_relax_target, RelaxSurface};
 pub use remesh_policy::{RemeshPolicy, TopologyRevision};
-pub use respace::{
-    tangential_respace_target, RespaceSurface, RESPACE_GAIN, RESPACE_PASSES, RESPACE_SETTLED_SHARE,
-};
+pub use respace::{tangential_respace_target, RespaceSurface, RESPACE_GAIN};
 pub use sculpt_session::*;
 pub use shape_preserve::{preserve_alpha, DEFAULT_PRESERVE_RINGS};
 pub use surface_topology::{SurfacePoint, SurfaceTopology};

@@ -2,9 +2,7 @@ use super::*;
 
 /// Everything a validated diagonal flip needs in order to be applied.
 ///
-/// Same split as the collapse: the flip interleaved fourteen rejection gates
-/// with the two triangle rewrites and their journal, row and index updates.
-/// Validation now returns this plan and the commit applies it.
+/// Validated face rewrites and index updates for one diagonal flip.
 struct FlipPlan {
     a: u32,
     b: u32,
@@ -41,17 +39,8 @@ impl SculptSession {
 
     /// The surface direction at an interior edge, from its two incident faces.
     ///
-    /// This is the only sound source for the orientation test, because the
-    /// direction belongs to the edge, not to the brush. A triangle the pointer
-    /// last hit is not a property of the edge at all, and the heal invalidates
-    /// it against itself: a collapse
-    /// truncates the triangle array and moves the tail face into a freed slot,
-    /// so mid-heal the latched slot can be past the live count (every collapse
-    /// then refused on a missing normal, for that cycle and every cycle after,
-    /// while flips still ran) or can hold a face from elsewhere on the model
-    /// (every orientation test then judged against the wrong side of the
-    /// surface). Both failures were self-inflicted, and both are impossible once
-    /// the normal is read from the two faces the operation is actually about.
+    /// Both faces must be live and consistently wound; a missing or opposing
+    /// normal means the edge does not define a usable surface direction.
     ///
     /// A consistently wound manifold gives its two incident faces the same
     /// geometric normal, so their sum is the local sheet direction. If the sum
@@ -93,11 +82,8 @@ impl SculptSession {
             return None;
         }
         let (t0, t1) = (incident[0], incident[1]);
-        // The rows name the faces; the array decides. A row can still list a
-        // face the edge no longer carries — the heal patches thousands of rows
-        // incrementally — and a flip that trusts it rewrites two triangles that
-        // were never adjacent, which is a crack in the surface. The split path
-        // has always re-derived its plan from the corners; the flip must too.
+        // Edge rows nominate candidate faces. Verify each face's live corners
+        // contain this edge before constructing a replacement.
         //
         // The opposite corner is found in GROUP space. Comparing the corner's
         // vertex id against `a`/`b` only works while group ids and vertex ids
@@ -173,9 +159,7 @@ impl SculptSession {
         // Boundary vertices want four, not six: an open edge has one face where
         // an interior edge has two, so counting them the same would push a flip
         // the wrong way along a rim — which is where stitched patches live.
-        // Target valence 6 interior, 4 on an open boundary — CGAL's
-        // `is_border ? 4 : 6` in its flip predicate, and the same target the
-        // Botsch-Kobbelt loop names.
+        // Interior and boundary vertices use their respective regular valences.
         let valence = |group: u32| self.topology.neighbors(group).len() as f64;
         let desired = |group: u32| {
             if self.group_is_boundary(group) {
@@ -198,8 +182,8 @@ impl SculptSession {
         // rewires and can never describe a different part of the model.
         let sheet = self.edge_sheet_normal(t0, t1)?;
         let mut choice: Option<([u32; 3], [u32; 3])> = None;
-        // Preserve the scale of the two live faces being replaced. Opening
-        // material coordinates are unrelated to this diagonal after remeshing.
+        // Preserve the scale of the two faces. Material coordinates do not
+        // describe the replacement diagonal.
         let area_floor = {
             let corner = |group: u32| self.group_v(group);
             let area = triangle_cross([corner(a), corner(b), corner(c)])
@@ -315,9 +299,8 @@ impl SculptSession {
         })
     }
 
-    /// Apply a validated flip. The single `return false` is a staleness check:
-    /// if the two face slots no longer hold the corners the plan was built from,
-    /// nothing is applied.
+    /// Apply a validated flip. The face slots must still match the planned
+    /// corners before any mutation occurs.
     fn commit_flip_edge(&mut self, plan: FlipPlan, journal: &mut TopoJournal) -> bool {
         let FlipPlan {
             a,
@@ -389,22 +372,9 @@ impl SculptSession {
     ) {
         // The longest diagonal a flip may create.
         //
-        // A flip is chosen for its valence and its shape, and neither term looks
-        // at how LONG the new diagonal is: a pair of thin triangles can both
-        // improve in quality while the diagonal that replaces them is far longer
-        // than the edge it removed. That is a new long edge — the density defect
-        // this heal exists to remove, minted by the repair itself — and it is
-        // how a stroke over a density seam produced an Apply-rejected face.
-        //
-        // Bounded by the same single target the splitter uses, so a flip can
-        // never create an edge the splitter would immediately cut back.
-        //
-        // Measuring it from the live footprint density instead would be
-        // self-referential: in an over-dense patch the local scale is the dense
-        // value, so the limit tightens to the patch's own tight spacing and the
-        // flips that would even the patch out — the ones whose new diagonal is
-        // longer than the old but still at target — are refused. One target for
-        // both directions keeps the patch retriangulable.
+        // Valence and triangle quality do not constrain diagonal length. Bound
+        // the replacement edge by the split threshold so a flip cannot create
+        // an edge eligible for an immediate split.
         let diagonal_limit = if target.is_finite() && target > 0.0 {
             target * policy.split_hysteresis
         } else {

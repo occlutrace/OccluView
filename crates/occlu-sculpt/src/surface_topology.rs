@@ -3,7 +3,7 @@
 //!
 //! It knows vertex ids, triangle corners and welded groups, and nothing about
 //! what the surface represents. Every operator indexes its surface through
-//! this same structure, which is what lets one remesher serve them all.
+//! the same structure.
 //!
 //! Overlay maps sit beside the frozen base arrays: base rows are never
 //! rewritten, and an edit records its new rows here so the base stays exactly
@@ -117,9 +117,8 @@ impl SurfaceTopology {
                 vertex_group[triangle[2] as usize],
             ]);
         }
-        // Neighbour rows are gathered per group and each short row is sorted
-        // on its own: one global sort of every directed edge was a third of
-        // the session open on a dense scan, for the same sorted, unique rows.
+        // Gather neighbour rows per group and sort each row to keep adjacency
+        // unique and deterministic.
         let mut raw_off = vec![0u32; group_count as usize + 1];
         for groups in &triangles {
             for (a, b) in [
@@ -279,9 +278,8 @@ impl SurfaceTopology {
     #[inline]
     /// One-ring group neighbours, following any densification overlay.
     ///
-    /// An appended group with no derived row yet, and a retired group whose
-    /// row was cleared, have no neighbours rather than a base row: they own no
-    /// part of the opening mesh to index.
+    /// An appended group with no derived row, or a retired group with a cleared
+    /// row, has no neighbours because neither has an opening-mesh row.
     pub fn neighbors(&self, group: u32) -> &[u32] {
         // Densification overlays are empty for every session that never
         // densified, and every per-vertex hot loop (relax passes, region

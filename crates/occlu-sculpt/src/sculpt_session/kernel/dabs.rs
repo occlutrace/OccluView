@@ -90,13 +90,11 @@ impl SculptSession {
         // target density, well under the brush scale so the skirt accents
         // the dab instead of becoming it.
         let reach = 0.75 * radius;
-        // Dijkstra frontier: settling happens at POP time — the popped entry
-        // is final only if no shorter path was recorded since it was
-        // pushed. Marking vertices seen at PUSH time lets discovery order
-        // win, and on a dense mesh the short way is one of many: a
-        // longer first discovery would poison the vertex with an inflated
-        // distance. So a shorter re-discovery re-pushes, and a stale pop
-        // is skipped. BinaryHeap is a max-heap: the reversed key pops the
+        // Dijkstra frontier settles at pop time. A popped entry is current
+        // only when the best map has no shorter path. Marking vertices at
+        // push time makes discovery order affect distance, so shorter
+        // rediscoveries re-enter the heap and stale pops are skipped.
+        // BinaryHeap is a max-heap: the reversed key pops the
         // smallest distance first. (bits, id) is a total order — bit patterns
         // order like the non-negative floats they encode — so two runs agree
         // bit for bit. Each entry carries its distance and inherited
@@ -123,7 +121,7 @@ impl SculptSession {
             let group = (entry.order).1;
             let dist = entry.dist;
             let from = entry.from;
-            // Stale pop: a shorter path to this group was recorded since.
+            // Skip an entry when the best map contains a shorter path.
             if best.get(&group).is_some_and(|&(d, _)| dist > d) {
                 continue;
             }
@@ -193,9 +191,8 @@ impl SculptSession {
             .hit_triangle
             .and_then(|triangle| self.triangle_normal(triangle))
             .unwrap_or(DVec3::ZERO);
-        // Reference amplitude (`tests/brush.rs:one_full_strength_dab_...`):
-        // radius-relative so the brush feels the same at every zoom; per-dab
-        // small since a drag accumulates arc-length-spaced dabs.
+        // The dose scales with brush radius and stays small per dab because a
+        // drag accumulates arc-length-spaced dabs.
         let amplitude = (dab.radius * ADD_REMOVE_GAIN * strength * self.dab_exposure).max(0.0);
         if push.length() <= 1e-12 || amplitude <= 0.0 {
             self.weights = weighted;
@@ -210,15 +207,9 @@ impl SculptSession {
         // per-vertex clamp below still bounds every move, so safety never
         // depended on it.
         //
-        // A knife is narrower, so it must bite harder at its centre to cut at
-        // all — but the response is a RATE, and a stroke paints many dabs, so a
-        // large centre gain does not buy reach: it only makes the first dab of a
-        // fast stroke gouge. Measured at equal settings against the ball, the
-        // previous 3.0 delivered 3.85x at a 0.5 mm radius and 3.05x at 4 mm, and
-        // at the top of the range one dab took 0.5 mm off a surface whose
-        // minimum permitted wall is 0.5 mm. 2.0 keeps the tip decisive — still
-        // clearly deeper than the ball at every radius — with the disproportion
-        // roughly halved. Pinned by `knife_cuts_deeper_than_ball`.
+        // The knife's narrower support needs a higher centre gain to remain
+        // distinct from Ball. The per-vertex clamp and simultaneous face guard
+        // still bound every move.
         let tip_gain = match self.brush_tip {
             TipStamp::Knife => 2.0,
             TipStamp::Ball | TipStamp::Cylinder => 1.0,
@@ -348,22 +339,11 @@ impl SculptSession {
             smoothstep(AUTOSMOOTH_RIM_TAPER, t)
                 * self.facing_weight(point.group, dab.view, facing, dab.mode)
         });
-        // The denoise runs on the DOSE, not on the surface.
-        //
-        // Every proposal is `pre + push * sign * amount` with one constant
-        // `push` and one constant `sign` for the whole dab, so the along-push
-        // scalar `amount` carries the entire dab and the Laplacian over it is
-        // the Laplacian of the displacement field. The previous formulation
-        // wrote the raw layer into the live mesh, re-read it four times as a
-        // vector field, wrote each pass back, rebuilt the proposals from the
-        // mesh and finally restored every position — five whole-region writes
-        // per dab to compute a scalar. It is now computed where it lives and
-        // the live mesh is never touched before the single commit.
-        //
-        // `amount` is seeded to zero over the snapshot, which is exactly what
-        // the mesh formulation read as an unmoved increment, and the raw
-        // proposals overwrite it. The pass is collected before it is applied,
-        // so it stays order-independent.
+        // Denoise the scalar dose along the dab's constant push direction.
+        // Applying each pass after collecting its values keeps the field
+        // independent of iteration order, and the live surface stays untouched
+        // until the guarded commit. Untouched snapshot groups contribute zero
+        // displacement; proposals overwrite their dose entries first.
         let mut amount = std::mem::take(&mut self.denoise_amount);
         for index in 0..self.dab_groups.len() {
             amount[self.dab_groups[index] as usize] = 0.0;
