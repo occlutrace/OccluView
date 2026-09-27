@@ -1,5 +1,61 @@
 use super::*;
 
+fn grid_session(half_cells: usize, spacing: f64, spike_height: f64) -> SculptSession {
+    let side = half_cells * 2 + 1;
+    let mut verts = Vec::with_capacity(side * side * 3);
+    for y in 0..side {
+        for x in 0..side {
+            let px = (x as f64 - half_cells as f64) * spacing;
+            let py = (y as f64 - half_cells as f64) * spacing;
+            let height = if x == half_cells && y == half_cells {
+                spike_height
+            } else {
+                0.0
+            };
+            verts.extend_from_slice(&[px as f32, py as f32, height as f32]);
+        }
+    }
+    let mut tris = Vec::with_capacity((side - 1) * (side - 1) * 6);
+    let index = |x: usize, y: usize| (y * side + x) as u32;
+    for y in 0..side - 1 {
+        for x in 0..side - 1 {
+            let (a, b, c, d) = (
+                index(x, y),
+                index(x + 1, y),
+                index(x, y + 1),
+                index(x + 1, y + 1),
+            );
+            tris.extend_from_slice(&[a, b, d, a, d, c]);
+        }
+    }
+    SculptSession::new(verts, tris)
+}
+
+fn grid_vertex(half_cells: usize, x: usize, y: usize) -> u32 {
+    ((y + half_cells) * (half_cells * 2 + 1) + x + half_cells) as u32
+}
+
+fn centered_dab(radius: f64, mode: BrushMode, strength: f64) -> Dab {
+    Dab {
+        center: DVec3::ZERO,
+        radius,
+        strength,
+        view: DVec3::new(0.0, 0.0, -1.0),
+        mode,
+    }
+}
+
+fn center_curvature(session: &SculptSession, center_vertex: u32) -> f64 {
+    let group = session.topology.group_of(center_vertex);
+    let neighbors = session.topology.neighbors(group);
+    let neighbor_mean = neighbors
+        .iter()
+        .map(|&neighbor| session.group_v(neighbor).z)
+        .sum::<f64>()
+        / neighbors.len() as f64;
+    session.group_v(group).z - neighbor_mean
+}
+
 fn select_all(session: &mut SculptSession) {
     session.region_points = (0..session.topology.group_count() as u32)
         .filter(|&group| session.group_is_live(group))
@@ -341,5 +397,200 @@ fn split_inherits_material_depth_across_strokes_and_history() {
         assert_eq!(session.reference_verts, reference);
         assert_eq!(session.reference_normals, reference_normals);
         assert_rows(&session);
+    }
+}
+
+#[test]
+fn add_and_remove_move_the_surface_by_the_brush_dose() {
+    let center = grid_vertex(8, 0, 0);
+    let dab = centered_dab(2.0, BrushMode::Deposit, 1.0);
+    let mut raised = grid_session(8, 0.5, 0.0);
+    assert!(!raised.dab(&dab).is_empty());
+    let lift = raised.group_v(raised.topology.group_of(center)).z;
+    assert!((0.04..=0.14).contains(&lift), "the center lift is {lift}");
+
+    let mut lowered = grid_session(8, 0.5, 0.0);
+    let remove = Dab {
+        mode: BrushMode::Erode,
+        ..dab
+    };
+    assert!(!lowered.dab(&remove).is_empty());
+    let cut = lowered.group_v(lowered.topology.group_of(center)).z;
+    assert!((-0.14..=-0.04).contains(&cut), "the center cut is {cut}");
+}
+
+#[test]
+fn smooth_reduces_the_curvature_of_a_synthetic_spike() {
+    let center = grid_vertex(6, 0, 0);
+    let mut session = grid_session(6, 0.5, 2.0);
+    let before = center_curvature(&session, center).abs();
+    let dab = centered_dab(2.5, BrushMode::Smooth, 1.0);
+    for _ in 0..8 {
+        assert!(!session.dab(&dab).is_empty());
+    }
+    let after = center_curvature(&session, center).abs();
+    assert!(
+        after < before * 0.75,
+        "curvature changed from {before} to {after}"
+    );
+}
+
+#[test]
+fn knife_displacement_follows_its_stroke_axis() {
+    let mut session = grid_session(10, 0.5, 0.0);
+    session.set_brush_tip(TipStamp::Knife);
+    session.set_dab_axis(Some(DVec3::X));
+    let changed = session.dab(&centered_dab(4.0, BrushMode::Deposit, 1.0));
+    assert!(!changed.is_empty());
+    let along = session
+        .group_v(session.topology.group_of(grid_vertex(10, 4, 0)))
+        .z;
+    let across = session
+        .group_v(session.topology.group_of(grid_vertex(10, 0, 4)))
+        .z;
+    assert!(
+        along > across + 0.04,
+        "axis lift={along}, cross lift={across}"
+    );
+}
+
+#[test]
+fn cylinder_tip_makes_a_flat_deposit_plateau() {
+    let mut session = grid_session(16, 0.25, 0.0);
+    session.set_brush_tip(TipStamp::Cylinder);
+    assert!(!session
+        .dab(&centered_dab(3.5, BrushMode::Deposit, 1.0))
+        .is_empty());
+    let center = session
+        .group_v(session.topology.group_of(grid_vertex(16, 0, 0)))
+        .z;
+    let plateau = session
+        .group_v(session.topology.group_of(grid_vertex(16, 10, 0)))
+        .z;
+    let rim = session
+        .group_v(session.topology.group_of(grid_vertex(16, 13, 0)))
+        .z;
+    assert!(
+        (center - plateau).abs() < 0.025,
+        "center={center}, plateau={plateau}"
+    );
+    assert!(plateau > rim + 0.02, "plateau={plateau}, rim={rim}");
+}
+
+fn run_long_remesh_stroke(session: &mut SculptSession) {
+    session.start_stroke();
+    let dab = centered_dab(12.0, BrushMode::Smooth, 0.5);
+    for _ in 0..12 {
+        let _ = session.dab(&dab);
+    }
+}
+
+fn assert_live_surface_invariants(session: &SculptSession, target: f64) {
+    use std::collections::BTreeMap;
+    let mut edges: BTreeMap<(u32, u32), (usize, i32)> = BTreeMap::new();
+    let mut min_edge = f64::INFINITY;
+    let mut max_edge = 0.0_f64;
+    for face in session.faces().as_chunks::<3>().0 {
+        let [a, b, c] = *face;
+        assert!(a != b && b != c && c != a);
+        let points = [
+            session.group_v(session.topology.group_of(a)),
+            session.group_v(session.topology.group_of(b)),
+            session.group_v(session.topology.group_of(c)),
+        ];
+        let normal = (points[1] - points[0]).cross(points[2] - points[0]);
+        assert!(normal.length() > 1e-8, "a live triangle is degenerate");
+        assert!(normal.z > 0.0, "a live triangle is inverted");
+        for (from, to) in [(a, b), (b, c), (c, a)] {
+            let (key, direction) = if from < to {
+                ((from, to), 1)
+            } else {
+                ((to, from), -1)
+            };
+            let edge = (session.group_v(session.topology.group_of(from))
+                - session.group_v(session.topology.group_of(to)))
+            .length();
+            min_edge = min_edge.min(edge);
+            max_edge = max_edge.max(edge);
+            let incidence = edges.entry(key).or_default();
+            incidence.0 += 1;
+            incidence.1 += direction;
+        }
+    }
+    assert!(edges
+        .values()
+        .all(|&(count, direction)| count <= 2 && (count == 1 || direction == 0)));
+    let policy = RemeshPolicy::standard();
+    assert!(
+        min_edge >= target * policy.collapse_hysteresis * 0.3,
+        "short edge {min_edge} fell below the remesh band"
+    );
+    assert!(
+        max_edge <= target * policy.split_hysteresis * 1.5,
+        "long edge {max_edge} exceeded the remesh band"
+    );
+}
+
+#[test]
+fn long_remeshing_stroke_stays_manifold_and_restores_exact_history() {
+    let mut session = grid_session(2, 4.0, 0.0);
+    let before_verts = session.verts.clone();
+    let before_tris = session.faces().to_vec();
+    run_long_remesh_stroke(&mut session);
+    assert!(session.topology_revision() > 0, "the stroke must remesh");
+    assert_live_surface_invariants(&session, 2.0);
+    let after_verts = session.verts.clone();
+    let after_tris = session.faces().to_vec();
+    let record = session.end_stroke();
+    assert!(session
+        .restore_topo(&record.indices, &record.before, false, &record.journal)
+        .is_some());
+    assert_eq!(session.verts, before_verts);
+    assert_eq!(session.faces(), before_tris);
+    assert!(session
+        .restore_topo(&record.indices, &record.after, true, &record.journal)
+        .is_some());
+    assert_eq!(session.verts, after_verts);
+    assert_eq!(session.faces(), after_tris);
+}
+
+#[test]
+fn identical_remeshing_strokes_are_bit_deterministic() {
+    let mut first = grid_session(2, 4.0, 0.0);
+    let mut second = grid_session(2, 4.0, 0.0);
+    run_long_remesh_stroke(&mut first);
+    run_long_remesh_stroke(&mut second);
+    assert_eq!(first.verts, second.verts);
+    assert_eq!(first.faces(), second.faces());
+    assert_eq!(first.topology_revision(), second.topology_revision());
+}
+
+#[test]
+fn non_finite_dab_input_is_refused_without_geometry_changes() {
+    let mut session = grid_session(4, 1.0, 0.0);
+    let original_verts = session.verts.clone();
+    let original_faces = session.faces().to_vec();
+    let base = centered_dab(2.0, BrushMode::Deposit, 1.0);
+    for invalid in [
+        Dab {
+            center: DVec3::splat(f64::NAN),
+            ..base
+        },
+        Dab {
+            view: DVec3::new(f64::INFINITY, 0.0, 0.0),
+            ..base
+        },
+        Dab {
+            radius: f64::INFINITY,
+            ..base
+        },
+        Dab {
+            strength: f64::NAN,
+            ..base
+        },
+    ] {
+        assert!(session.dab(&invalid).is_empty());
+        assert_eq!(session.verts, original_verts);
+        assert_eq!(session.faces(), original_faces);
     }
 }

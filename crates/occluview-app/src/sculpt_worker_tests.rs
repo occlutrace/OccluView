@@ -34,12 +34,28 @@ fn session_for(mesh: &Mesh) -> SculptSession {
         world_to_local: Affine3A::IDENTITY,
         local_per_world: mean_uniform_scale(&Affine3A::IDENTITY),
         dirty_stroke: false,
+        topology_dirty_stroke: false,
         stroke_start_mesh: None,
     }
 }
 
 fn worker_for(mesh: &Mesh) -> SculptWorker {
     SculptWorker::spawn(session_for(mesh))
+}
+
+fn queue_face_delta(worker: &SculptWorker, triangle: u32, indices: [u32; 3]) {
+    let pick = worker.state.pick.read().expect("pick state");
+    let delta = SculptTopologyDelta {
+        base_vertex_count: pick.shadow.read().expect("display shadow").len(),
+        appended_vertices: Vec::new(),
+        updated_vertices: Vec::new(),
+        base_index_count: pick.indices.len(),
+        live_index_count: pick.indices.len(),
+        face_updates: vec![occluview_render::SculptFaceUpdate { triangle, indices }],
+        dirty_triangles: vec![triangle as usize],
+    };
+    drop(pick);
+    worker.queue_topology_delta_for_tests(delta);
 }
 
 /// The four-vertex quad every stroke test below sculpts on.
@@ -209,30 +225,19 @@ fn live_picker_follows_a_triangle_that_left_the_original_bvh_bounds() {
 }
 
 #[test]
-fn ordered_output_snapshot_keeps_rebuild_and_completion_together() {
+fn ordered_output_snapshot_keeps_topology_and_completion_together() {
     let worker = test_worker();
-    let mesh = coarse_ridge_mesh();
-    let topology = PreparedSceneTopology::from_mesh(&mesh);
-    worker.state.record_rebuild(
-        1,
-        SculptRebuild {
-            topology,
-            mesh: mesh.clone(),
-        },
-    );
+    queue_face_delta(&worker, 0, [0, 2, 1]);
+    let mesh = Arc::new(coarse_ridge_mesh());
     assert!(worker.state.push_completion(SculptCompletion {
-        before: Arc::new(mesh.clone()),
+        before: Arc::clone(&mesh),
         mesh,
     }));
 
-    let (rebuilds, completions, update) = worker
+    let (deltas, completions, update) = worker
         .take_ordered_outputs()
         .expect("the ordered output boundary must be available");
-    assert_eq!(
-        rebuilds.len(),
-        1,
-        "the topology replacement must be present"
-    );
+    assert_eq!(deltas.len(), 1, "the local topology patch must be present");
     assert_eq!(
         completions.len(),
         1,
@@ -270,14 +275,14 @@ fn coarse_ridge_mesh() -> Mesh {
     Mesh::new(Some("coarse-ridge".to_string()), vertices, indices).expect("ridge mesh")
 }
 
-fn wait_for_rebuild(worker: &SculptWorker) -> SculptRebuild {
+fn wait_for_topology_delta(worker: &SculptWorker) -> SculptTopologyDelta {
     for _ in 0..2_000 {
-        if let Ok(Some(rebuild)) = worker.try_take_rebuild() {
-            return rebuild;
+        if let Ok(Some(delta)) = worker.try_take_topology_delta() {
+            return delta;
         }
         thread::sleep(Duration::from_millis(1));
     }
-    panic!("the densifying dab never produced a layer rebuild");
+    panic!("the densifying dab never produced a topology delta");
 }
 
 fn wait_for_completions(worker: &SculptWorker, expected: usize) -> usize {
@@ -410,7 +415,7 @@ fn repeated_completions_survive_scene_and_edit_state_commit() {
             .iter_mut()
             .find(|entry| entry.id() == layer_id)
             .expect("scene layer")
-            .mesh = Arc::new(mesh);
+            .mesh = Arc::clone(&mesh);
         edit_mode.sync_to_scene(&scene);
         assert_eq!(
             edit_mode.finish_layer_edit_success(token),
@@ -419,12 +424,10 @@ fn repeated_completions_survive_scene_and_edit_state_commit() {
     }
 }
 
-/// Densification changes the topology, and the ids must reflect it: the
-/// rebuilt layer gets a fresh `topology_id` (the renderer's cue to drop its
-/// exactly-sized buffers), while the undo baseline keeps the pre-stroke
-/// identity and the pre-stroke triangle list.
+/// Densification publishes the appended rows and rewired faces while the
+/// committed mesh receives a new topology identity.
 #[test]
-fn a_densifying_stroke_mints_a_new_topology_id_and_keeps_a_coarse_undo_baseline() {
+fn a_densifying_stroke_publishes_local_rows_and_keeps_a_coarse_undo_baseline() {
     let mesh = coarse_ridge_mesh();
     let original_vertices = mesh.vertices().len();
     let original_triangles = mesh.triangle_count();
@@ -437,38 +440,28 @@ fn a_densifying_stroke_mints_a_new_topology_id_and_keeps_a_coarse_undo_baseline(
         view_dir: [0.0, 0.0, -1.0],
     };
     assert!(worker.try_apply(stroke, BrushMode::Smooth));
-    let rebuild = wait_for_rebuild(&worker);
+    let delta = wait_for_topology_delta(&worker);
+    let (live_vertices, live_indices) = worker.live_geometry().expect("live geometry");
+    assert!(live_vertices.len() > original_vertices);
+    assert!(live_indices.len() > mesh.indices().len());
+    assert_eq!(delta.base_vertex_count, original_vertices);
+    assert_eq!(delta.base_index_count, mesh.indices().len());
+    assert!(!delta.appended_vertices.is_empty());
+    assert!(!delta.face_updates.is_empty());
     assert!(worker.finish_stroke());
     let completion = wait_for_completion(&worker);
 
-    // The rebuilt layer grew, and its token describes itself; a mismatch
-    // here would write a stale GPU buffer.
-    assert!(rebuild.mesh.vertices().len() > original_vertices);
-    assert!(rebuild.mesh.triangle_count() > original_triangles);
+    assert!(completion.mesh.vertices().len() > original_vertices);
+    assert!(completion.mesh.triangle_count() > original_triangles);
     assert_ne!(
-        rebuild.mesh.topology_id(),
+        completion.mesh.topology_id(),
         original_topology_id,
-        "a grown mesh must not reuse the frozen sculpt topology id"
-    );
-    assert_eq!(
-        rebuild.topology,
-        PreparedSceneTopology::from_mesh(&rebuild.mesh)
+        "a changed mesh must receive a new topology identity"
     );
 
-    // Undo goes back to the coarse mesh, not to the dense one with old
-    // coordinates.
     assert_eq!(completion.before.vertices().len(), original_vertices);
     assert_eq!(completion.before.triangle_count(), original_triangles);
     assert_eq!(completion.before.topology_id(), original_topology_id);
-
-    // The committed mesh matches the geometry already on the GPU, so the
-    // commit is a content swap and not another re-upload.
-    assert_eq!(
-        completion.mesh.vertices().len(),
-        rebuild.mesh.vertices().len()
-    );
-    assert_eq!(completion.mesh.indices(), rebuild.mesh.indices());
-    assert_eq!(completion.mesh.topology_id(), rebuild.mesh.topology_id());
 }
 
 /// A densified layer must arrive pick-ready and stay pick-ready across the
@@ -476,9 +469,8 @@ fn a_densifying_stroke_mints_a_new_topology_id_and_keeps_a_coarse_undo_baseline(
 ///
 /// The viewport lays a dab only where the cursor hits the surface, and the
 /// hit test refuses to build a scan-sized BVH on the egui thread; session
-/// preparation is what warms one. A densifying dab swaps in a rebuilt mesh
-/// without re-preparing the session, so the rebuild must carry a warm BVH or
-/// every later stroke on the layer finds no surface and does nothing.
+/// preparation warms the base tree while changed live faces use the local
+/// dirty-face list.
 #[test]
 fn a_densified_layer_is_still_pickable_so_the_next_stroke_can_land() {
     let mesh = coarse_ridge_mesh();
@@ -490,33 +482,32 @@ fn a_densified_layer_is_still_pickable_so_the_next_stroke_can_land() {
         view_dir: [0.0, 0.0, -1.0],
     };
     assert!(worker.try_apply(stroke, BrushMode::Smooth));
-    let rebuild = wait_for_rebuild(&worker);
+    let delta = wait_for_topology_delta(&worker);
+    assert!(!delta.dirty_triangles.is_empty());
     assert!(
-        rebuild.mesh.bvh_is_ready(),
-        "the rebuilt layer goes into the scene as-is; a cold BVH there kills \
-         the hit test, and nothing downstream ever warms it again"
+        worker
+            .pick_local_ray(Vec3::new(0.0, 0.0, 20.0), -Vec3::Z)
+            .is_some(),
+        "the live remeshed sheet stays pickable"
     );
 
     assert!(worker.finish_stroke());
     let completion = wait_for_completion(&worker);
-    assert!(
-        completion.mesh.bvh_is_ready(),
-        "the committed mesh replaces the layer after the stroke; it has to \
-         stay pick-ready or the SECOND stroke is the one that dies"
-    );
+    assert!(completion.mesh.bvh_is_ready());
 }
 
-/// A live-remesh dab that subdivides the surface publishes a whole-layer
-/// rebuild, and the committed layer carries the new topology id.
+/// A live-remesh dab subdivides the surface through an append and face patch.
 #[test]
-fn a_topology_changing_dab_publishes_a_rebuild() {
+fn a_topology_changing_dab_publishes_a_local_delta() {
     let worker = test_worker();
     assert!(worker.try_apply(a_dab(), BrushMode::Add));
-    let rebuild = wait_for_rebuild(&worker);
+    let delta = wait_for_topology_delta(&worker);
     assert!(
-        rebuild.mesh.vertices().len() > 4,
-        "the live remesh must subdivide a facet coarser than the brush target"
+        !delta.appended_vertices.is_empty(),
+        "the live remesh must append vertices in a facet coarser than the brush target"
     );
+    assert!(!delta.face_updates.is_empty());
+    assert!(worker.live_geometry().is_some());
     assert!(worker.finish_stroke());
     let completion = wait_for_completion(&worker);
     assert_ne!(
@@ -526,24 +517,20 @@ fn a_topology_changing_dab_publishes_a_rebuild() {
     );
 }
 
-/// The worker keeps its own buffer token until the UI installs the rebuild,
-/// so a rebuild that is never consumed cannot be mistaken for a positions-only
-/// dab.
+/// The worker keeps its committed buffer token until the UI accepts the
+/// finished mesh, while live rows remain available for display.
 #[test]
-fn a_pending_rebuild_leaves_the_worker_token_frozen() {
+fn a_pending_topology_delta_leaves_the_worker_token_frozen() {
     let worker = test_worker();
     let frozen = worker.topology_id;
     assert!(worker.try_apply(a_dab(), BrushMode::Add));
-    let rebuild = wait_for_rebuild(&worker);
+    let delta = wait_for_topology_delta(&worker);
     assert_eq!(
         worker.topology_id, frozen,
-        "only the UI installs a rebuilt layer, so the worker's token is frozen"
+        "the UI owns the committed topology token"
     );
-    assert_ne!(
-        rebuild.mesh.topology_id(),
-        frozen,
-        "the rebuilt layer carries the new token"
-    );
+    assert_eq!(delta.base_vertex_count, 4);
+    assert!(worker.live_geometry().expect("live geometry").0.len() > 4);
 }
 
 /// A dirty stroke whose undo baseline was lost, and one whose display shadow no
@@ -674,43 +661,31 @@ fn assert_no_further_output(worker: &SculptWorker) {
     }
 }
 
-/// A densifying dab whose authoritative scene mesh cannot be built is terminal:
-/// the kernel topology has already grown, so the worker must report the failure
-/// and stop rather than keep streaming sparse ids that index a mesh the renderer
-/// never received. The rebuild failure cannot be provoked through a well-formed
-/// mesh, so the session's rebuild is forced to fail for this one layer.
+/// A topology patch must match the current index prefix before it changes the
+/// live picker or enters the frame output queue.
 #[test]
-fn densification_failure_is_not_silently_dropped() {
-    let mesh = coarse_ridge_mesh();
-    let mut session = session_for(&mesh);
-    // Arm the forced rebuild failure for this worker's layer only.
-    crate::sculpt_tool::FORCE_REBUILD_FAILURE_LAYER.store(session.layer_id.get(), Ordering::SeqCst);
-    session.dirty_stroke = false;
-    session.stroke_start_mesh = None;
-    let worker = SculptWorker::spawn(session);
+fn malformed_topology_delta_is_rejected_before_publication() {
+    let worker = test_worker();
+    let before = worker.live_geometry().expect("base live geometry");
+    worker.state.record_topology(SculptTopologyDelta {
+        base_vertex_count: before.0.len(),
+        appended_vertices: Vec::new(),
+        updated_vertices: Vec::new(),
+        base_index_count: before.1.len() + 3,
+        live_index_count: before.1.len(),
+        face_updates: Vec::new(),
+        dirty_triangles: Vec::new(),
+    });
 
-    let stroke = BrushStroke {
-        center: [0.0, 0.0, 4.0],
-        radius_mm: 3.5,
-        strength: 1.0,
-        view_dir: [0.0, 0.0, -1.0],
-    };
-    assert!(worker.try_apply(stroke, BrushMode::Smooth));
-
-    let failure = wait_for_error(&worker);
-    assert!(
-        matches!(
-            failure,
-            Some(SculptFailure::TopologyRebuild { ref detail }) if detail.contains("for the test")
-        ),
-        "a failed densification rebuild must surface as TopologyRebuild, not be \
-         dropped as an empty dab: {failure:?}"
+    assert_eq!(
+        worker.take_error(),
+        Some(SculptFailure::ShadowShapeMismatch)
     );
-
-    // And it stops: no rebuild, no completion, no later command consumed.
-    assert_no_further_output(&worker);
-    // Reset so a later test in this binary is not affected.
-    crate::sculpt_tool::FORCE_REBUILD_FAILURE_LAYER.store(0, Ordering::SeqCst);
+    assert_eq!(
+        worker.live_geometry().expect("geometry stays valid"),
+        before
+    );
+    assert!(!worker.has_pending_topology_delta());
 }
 
 /// A panic in the worker body must not take the viewer down or leave the stroke

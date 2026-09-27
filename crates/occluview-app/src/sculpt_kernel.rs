@@ -14,7 +14,8 @@
 use crate::sculpt_tool::SculptTip;
 use glam::DVec3;
 use occlu_sculpt::{BrushMode as KernelMode, Dab, SculptSession, TipStamp};
-use occluview_core::{EditVertex, MeshEditBuffers, MeshEditError, MeshTopology};
+use occluview_core::{EditVertex, MeshEditBuffers, MeshEditError, MeshTopology, Vertex};
+use occluview_render::{SculptFaceUpdate, SculptTopologyDelta, SculptVertexUpdate};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Which sculpting operation a dab performs.
@@ -46,23 +47,23 @@ pub(crate) struct BrushSession {
     kernel: SculptSession,
     /// Attribute mirror, one entry per kernel vertex, in the same order.
     vertices: Vec<EditVertex>,
-    /// Live triangle indices, refreshed whenever a dab changes the topology.
+    /// Live triangle indices, patched from the kernel's changed face rows.
     indices: Vec<u32>,
     /// Whether the kernel has an open stroke. The kernel gates live remeshing
     /// on it, so the first dab of a drag opens one and the commit closes it.
     stroke_open: bool,
 }
 
-/// One dab's result: vertex ids whose position or normal changed, face ids a
-/// caller's pick tree must re-test, and how many vertices the dab minted.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// One dab's result: sparse vertex ids, dirty pick faces, and an optional
+/// append/patch delta when topology changed.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct BrushStrokeOutcome {
     /// Vertex ids whose position or normal changed, sorted and deduplicated.
     pub(crate) touched_vertices: Vec<usize>,
     /// Face ids whose corners may have moved or been rewired, sorted.
     pub(crate) dirty_triangles: Vec<usize>,
-    /// Vertices appended by densification during this dab.
-    pub(crate) added_vertices: usize,
+    /// Local geometry update for a topology-changing dab.
+    pub(crate) topology_delta: Option<SculptTopologyDelta>,
 }
 
 impl BrushStrokeOutcome {
@@ -70,7 +71,7 @@ impl BrushStrokeOutcome {
     /// would leave the caller's uploaded geometry stale in size and content.
     #[must_use]
     pub(crate) fn topology_changed(&self) -> bool {
-        self.added_vertices > 0
+        self.topology_delta.is_some()
     }
 }
 
@@ -161,6 +162,11 @@ impl BrushSession {
         &self.vertices
     }
 
+    /// Current live triangle rows, including append and swap-delete updates.
+    pub(crate) fn indices(&self) -> &[u32] {
+        &self.indices
+    }
+
     /// Seal the current stroke, so the next dab opens a new one.
     pub(crate) fn finish_stroke(&mut self) {
         if self.stroke_open {
@@ -180,7 +186,9 @@ impl BrushSession {
             self.kernel.start_stroke();
             self.stroke_open = true;
         }
-        let before = self.vertices.len();
+        let base_vertex_count = self.vertices.len();
+        let base_index_count = self.indices.len();
+        let base_revision = self.kernel.topology_revision();
         let radius = f64::from(stroke.radius_mm);
         let view = DVec3::new(
             f64::from(stroke.view_dir[0]),
@@ -221,18 +229,50 @@ impl BrushSession {
             .dab_dirty_triangles()
             .iter()
             .map(|&face| face as usize)
-            .collect();
+            .collect::<Vec<_>>();
         self.sync_mirror(&touched, &added);
+        let topology_delta = (self.kernel.topology_revision() != base_revision).then(|| {
+            let face_updates = self.sync_indices(base_index_count, &dirty);
+            let mut updated_vertices = touched
+                .iter()
+                .copied()
+                .filter(|&vertex| (vertex as usize) < base_vertex_count)
+                .filter_map(|vertex| {
+                    self.vertices
+                        .get(vertex as usize)
+                        .copied()
+                        .map(|value| SculptVertexUpdate {
+                            vertex,
+                            value: vertex_from_edit_vertex(value),
+                        })
+                })
+                .collect::<Vec<_>>();
+            updated_vertices.sort_unstable_by_key(|update| update.vertex);
+            updated_vertices.dedup_by_key(|update| update.vertex);
+            SculptTopologyDelta {
+                base_vertex_count,
+                appended_vertices: self.vertices[base_vertex_count..]
+                    .iter()
+                    .copied()
+                    .map(vertex_from_edit_vertex)
+                    .collect(),
+                updated_vertices,
+                base_index_count,
+                live_index_count: self.indices.len(),
+                face_updates,
+                dirty_triangles: dirty.clone(),
+            }
+        });
         BrushStrokeOutcome {
             touched_vertices: touched.iter().map(|&vertex| vertex as usize).collect(),
             dirty_triangles: dirty,
-            added_vertices: self.vertices.len() - before,
+            topology_delta,
         }
     }
 
     /// Bring the attribute mirror back in line with the kernel: copy the moved
     /// positions and normals, then blend an attribute row for each minted
-    /// vertex and refresh the index list when the topology changed.
+    /// vertex.
     fn sync_mirror(&mut self, touched: &[u32], added: &[(u32, u32, u32)]) {
         let live = &self.kernel.verts;
         let normals = self.kernel.normals();
@@ -266,7 +306,54 @@ impl BrushSession {
                 *slot = row;
             }
         }
-        self.indices = self.kernel.faces().to_vec();
+    }
+
+    fn sync_indices(&mut self, base_index_count: usize, dirty: &[usize]) -> Vec<SculptFaceUpdate> {
+        let faces = self.kernel.faces();
+        let previous_triangles = base_index_count / 3;
+        let live_triangles = faces.len() / 3;
+        if self.indices.len() > faces.len() {
+            self.indices.truncate(faces.len());
+        } else if self.indices.len() < faces.len() {
+            let start = self.indices.len();
+            self.indices.extend_from_slice(&faces[start..]);
+        }
+        let mut changed: Vec<usize> = dirty
+            .iter()
+            .copied()
+            .filter(|&triangle| triangle < live_triangles)
+            .collect();
+        changed.extend(previous_triangles.min(live_triangles)..live_triangles);
+        changed.sort_unstable();
+        changed.dedup();
+        let mut updates = Vec::with_capacity(changed.len());
+        for triangle in changed {
+            let offset = triangle * 3;
+            let Some(corners) = faces.get(offset..offset + 3) else {
+                continue;
+            };
+            let current = &self.indices[offset..offset + 3];
+            if current != corners || triangle >= previous_triangles {
+                self.indices[offset..offset + 3].copy_from_slice(corners);
+                let Ok(triangle) = u32::try_from(triangle) else {
+                    continue;
+                };
+                updates.push(SculptFaceUpdate {
+                    triangle,
+                    indices: [corners[0], corners[1], corners[2]],
+                });
+            }
+        }
+        updates
+    }
+}
+
+pub(crate) fn vertex_from_edit_vertex(vertex: EditVertex) -> Vertex {
+    Vertex {
+        position: vertex.position,
+        normal: vertex.normal,
+        color: vertex.color,
+        uv: vertex.uv,
     }
 }
 

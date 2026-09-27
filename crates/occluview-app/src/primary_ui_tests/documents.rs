@@ -31,24 +31,30 @@ fn the_changelog_only_names_versions_that_can_be_released() {
          of it would publish empty notes"
     );
 
-    // Every other section must be a version that was actually tagged. The
-    // newest one is the release being prepared; the rest are history.
+    // An unreleased section may lead the release notes; the current workspace
+    // version remains the release being prepared below it.
     let sections: Vec<&str> = changelog
         .lines()
         .filter(|line| line.starts_with("## "))
         .collect();
+    let unreleased = sections.first() == Some(&"## Unreleased");
+    let release_sections = if unreleased {
+        &sections[1..]
+    } else {
+        &sections[..]
+    };
     assert!(
-        sections
+        release_sections
             .first()
             .is_some_and(|first| first.starts_with(&heading)),
-        "the newest section should be the version about to ship, got {:?}",
-        sections.first()
+        "the release notes should lead with the workspace version {version}, got {:?}",
+        release_sections.first()
     );
     // The rest are history, and history goes one way. A repeat, or an older
     // section above a newer one, means a local bump grew its own section
     // instead of folding into the release being prepared.
     let mut seen: Vec<[u64; 3]> = Vec::new();
-    for line in &sections {
+    for line in release_sections {
         let Some(number) = line.split_whitespace().nth(1) else {
             panic!("changelog section without a version: {line:?}");
         };
@@ -72,8 +78,9 @@ fn the_changelog_only_names_versions_that_can_be_released() {
         seen.push(parsed);
     }
 
-    // Ordering alone is not the rule the test name promises. A section below
-    // the newest claims something was released, so a tag has to exist for it.
+    // Ordering alone is not the rule the test name promises. A version below
+    // the release being prepared claims something shipped, so a tag has to
+    // exist for it.
     // Tags come from git; a source tarball has none, and there the ordering
     // above is all there is.
     let Some(tags) = repository_tags() else {
@@ -91,7 +98,7 @@ fn the_changelog_only_names_versions_that_can_be_released() {
     let Some(first_tagged) = tags.iter().filter_map(|tag| parse_version(tag)).min() else {
         return;
     };
-    for line in sections.iter().skip(1) {
+    for line in release_sections.iter().skip(1) {
         let Some(number) = line.split_whitespace().nth(1) else {
             continue;
         };
