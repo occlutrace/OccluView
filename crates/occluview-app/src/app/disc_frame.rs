@@ -4,7 +4,7 @@
 //! same gestures over the same Section panel. Sharing this arithmetic keeps the
 //! two tools from disagreeing about what the wheel does over one panel.
 
-use super::app_cut_measure::CUT_WHEEL_PX_PER_NOTCH;
+use super::app_cut::CUT_WHEEL_PX_PER_NOTCH;
 use super::egui;
 use crate::viewer::{project_world_to_viewport, viewport_ray};
 use glam::Vec3;
