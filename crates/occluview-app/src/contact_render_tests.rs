@@ -18,7 +18,7 @@
 
 #![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
 
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 use occluview_align::Soup;
 use occluview_contact::{
     compute_contact_field, ContactReading, ContactReadingKind, ContactScale, ContactSettings,
@@ -162,8 +162,13 @@ fn mesh_from(positions: &[f32], indices: &[u32]) -> Option<Mesh> {
 /// than as a flat field of colour.
 fn occlusal_camera(center: Vec3, radius: f32) -> GpuCamera {
     let eye = center + Vec3::new(0.18, -0.14, -0.97).normalize() * radius * 2.4;
-    let view = Mat4::look_at_rh(eye, center, Vec3::Y);
-    let proj = Mat4::perspective_rh(45.0_f32.to_radians(), 1.0, radius * 0.05, radius * 40.0);
+    let view = glam::camera::rh::view::look_at_mat4(eye, center, Vec3::Y);
+    let proj = glam::camera::rh::proj::directx::perspective(
+        45.0_f32.to_radians(),
+        1.0,
+        radius * 0.05,
+        radius * 40.0,
+    );
     GpuCamera::new(view, proj, Vec3::new(0.25, -0.5, -0.83), eye)
 }
 

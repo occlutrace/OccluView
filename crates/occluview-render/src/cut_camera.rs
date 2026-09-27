@@ -12,7 +12,7 @@
 
 use crate::camera::GpuCamera;
 use crate::clipping::ClipPlane;
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 use occluview_core::Aabb;
 
 /// Build an orthographic cut-view camera looking along the clip plane's
@@ -28,8 +28,9 @@ use occluview_core::Aabb;
 pub fn cut_view_camera(plane: &ClipPlane, bbox: Aabb) -> GpuCamera {
     if bbox.is_empty() {
         // Degenerate: return a default camera (the render will be empty).
-        let view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 100.0), Vec3::ZERO, Vec3::Y);
-        let proj = Mat4::orthographic_rh(-1.0, 1.0, -1.0, 1.0, 0.1, 1000.0);
+        let view =
+            glam::camera::rh::view::look_at_mat4(Vec3::new(0.0, 0.0, 100.0), Vec3::ZERO, Vec3::Y);
+        let proj = glam::camera::rh::proj::directx::orthographic(-1.0, 1.0, -1.0, 1.0, 0.1, 1000.0);
         return GpuCamera::new(view, proj, Vec3::Z, Vec3::new(0.0, 0.0, 100.0));
     }
 
@@ -53,11 +54,11 @@ pub fn cut_view_camera(plane: &ClipPlane, bbox: Aabb) -> GpuCamera {
         Vec3::Z
     };
 
-    let view = Mat4::look_at_rh(eye, center, up);
+    let view = glam::camera::rh::view::look_at_mat4(eye, center, up);
     // Orthographic frustum: square, sized to 2x the half-diagonal (oversized
     // so the cross-section fits with margin).
     let half_extent = half_diag * 1.2;
-    let proj = Mat4::orthographic_rh(
+    let proj = glam::camera::rh::proj::directx::orthographic(
         -half_extent,
         half_extent,
         -half_extent,
@@ -83,7 +84,7 @@ fn slice_up_hint(normal: Vec3) -> Vec3 {
 }
 
 /// The slice camera's world-space `(right, up)` axes for a plane normal — the
-/// same basis `Mat4::look_at_rh(eye, focus, slice_up_hint)` induces when the eye
+/// same basis `glam::camera::rh::view::look_at_mat4(eye, focus, slice_up_hint)` induces when the eye
 /// looks **along** `normal`. A point `p` on the section plane projects to panel
 /// offsets `(right · (p - focus), up · (p - focus))` in world mm, so the ruler
 /// can convert panel pixels to section-plane millimeters exactly.
@@ -164,11 +165,11 @@ pub fn cut_view_camera_focused_with_up(
     let back_off = scene_extent * 2.0 + 1.0;
     let eye = focus - normal * back_off;
     let (_, up) = slice_view_basis_with_up(normal, up_hint);
-    let view = Mat4::look_at_rh(eye, focus, up);
+    let view = glam::camera::rh::view::look_at_mat4(eye, focus, up);
     // Far must span from the eye across the entire kept half (which extends up to
     // ~scene_extent past the plane on the +normal side).
     let far = back_off + 2.0 * scene_extent + 1.0;
-    let proj = Mat4::orthographic_rh(
+    let proj = glam::camera::rh::proj::directx::orthographic(
         -half_extent,
         half_extent,
         -half_extent,
