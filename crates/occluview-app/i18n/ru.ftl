@@ -160,8 +160,8 @@ load-open-failed-start = Не удалось открыть: загрузчик 
 load-add-failed-start = Не удалось добавить: загрузчик не запустился
 load-open-failed-stopped = Не удалось открыть: загрузчик остановлен
 load-loader-failed-summary = Не удалось запустить фоновый загрузчик сцены.
-load-file-too-large = Файл { $size } ГБ — больше, чем { $limit } ГБ, которые программа читает за один раз
-load-memory-budget-exceeded = Текущая сцена и эти файлы займут около { $size } ГБ; лимит импорта программы — { $limit } ГБ. Закройте слои или загрузите меньше файлов.
+load-file-too-large = Файл { $size } GiB — больше, чем { $limit } GiB, которые программа читает за один раз
+load-memory-budget-exceeded = Текущая сцена и эти файлы займут около { $size } GiB; лимит импорта программы — { $limit } GiB. Закройте слои или загрузите меньше файлов.
 load-action-failed-open = Не удалось открыть: { $detail }
 load-action-failed-add = Не удалось добавить: { $detail }
 

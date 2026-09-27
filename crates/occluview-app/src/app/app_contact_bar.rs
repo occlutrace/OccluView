@@ -31,6 +31,7 @@ const LEGEND_STEPS: usize = 96;
 const MODE_BUTTON_WIDTH: f32 = 88.0;
 /// Width of the load slider, including its label.
 const SLIDER_WIDTH: f32 = 196.0;
+const LOAD_VALUE_WIDTH: f32 = 52.0;
 /// Height of one control row. Matches `align_panel`'s chip so the bar reads as
 /// the same family, and keeps the strip exactly `BAR_HEIGHT` tall.
 const CHIP_HEIGHT: f32 = 26.0;
@@ -416,37 +417,48 @@ fn paint_load(
         egui::vec2(width, CHIP_HEIGHT),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
-            // Slider ignores add_sized's requested track width. Reserve the
-            // value editor explicitly, or it grows into the Details action.
-            ui.spacing_mut().slider_width = if show_value {
-                (width - 110.0).max(24.0)
-            } else {
-                (width - 50.0).max(24.0)
-            };
             // Label first, then the control: the same order every settings row
             // uses, so "heavy at" reads as the name of the slider rather than a
             // caption that drifted to the wrong side of it.
-            ui.label(
-                egui::RichText::new(locale.tr(crate::i18n::message_id!("contact-load-label")))
+            let label = locale.tr(crate::i18n::message_id!("contact-load-label"));
+            let label_response = ui.label(
+                egui::RichText::new(label.clone())
                     .size(10.5)
                     .color(ui_theme::text_weak()),
             );
+            let item_spacing = ui.spacing().item_spacing.x;
+            let value_width = if show_value { LOAD_VALUE_WIDTH } else { 0.0 };
+            let slider_width = (width
+                - label_response.rect.width()
+                - item_spacing * if show_value { 2.0 } else { 1.0 }
+                - value_width)
+                .max(24.0);
+            ui.spacing_mut().slider_width = slider_width;
             let slider = ui
                 .add_sized(
-                    egui::vec2(width - 52.0, 18.0),
-                    egui::Slider::new(load_mm, LOAD_MIN_MM..=LOAD_MAX_MM)
-                        .suffix(locale.tr(crate::i18n::message_id!("contact-load-suffix")))
-                        .fixed_decimals(2)
-                        .show_value(show_value),
+                    egui::vec2(slider_width, 18.0),
+                    egui::Slider::new(load_mm, LOAD_MIN_MM..=LOAD_MAX_MM).show_value(false),
                 )
+                .labelled_by(label_response.id)
                 .on_hover_text(locale.tr(crate::i18n::message_id!("contact-load-hint")));
-            crate::accessibility::slider(
-                &slider,
-                &locale.tr(crate::i18n::message_id!("contact-load-label")),
-                true,
-                *load_mm,
-            );
-            if slider.changed() {
+            crate::accessibility::slider(&slider, &label, true, *load_mm);
+            let value_changed = if show_value {
+                let value = ui
+                    .add_sized(
+                        egui::vec2(LOAD_VALUE_WIDTH, 18.0),
+                        egui::DragValue::new(load_mm)
+                            .speed(0.01)
+                            .range(LOAD_MIN_MM..=LOAD_MAX_MM)
+                            .fixed_decimals(2)
+                            .suffix(locale.tr(crate::i18n::message_id!("contact-load-suffix"))),
+                    )
+                    .labelled_by(label_response.id);
+                crate::accessibility::spin_button(&value, &label, true);
+                value.changed()
+            } else {
+                false
+            };
+            if slider.changed() || value_changed {
                 request.load_mm = Some(*load_mm);
             }
         },
