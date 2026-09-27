@@ -304,8 +304,8 @@ pub(super) fn candidate_folds(candidate: &CapCandidate<'_>) -> bool {
 /// Symmetric piercing test: any edge of one triangle passing strictly through
 /// the interior of the other.
 fn triangles_pierce(t1: &GuardTriangle, t2: &GuardTriangle) -> bool {
-    let a = t1.positions.map(|p| p.as_dvec3());
-    let b = t2.positions.map(|p| p.as_dvec3());
+    let a = t1.positions.map(Vec3::as_dvec3);
+    let b = t2.positions.map(Vec3::as_dvec3);
     edge_pierces(a[0], a[1], &b)
         || edge_pierces(a[1], a[2], &b)
         || edge_pierces(a[2], a[0], &b)
