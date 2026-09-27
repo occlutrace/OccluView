@@ -73,7 +73,7 @@ pub(crate) fn estimate_peak_bytes(bytes: &[u8], reserved_bytes: u64) -> Result<u
     crate::memory::check_estimate(reserved_bytes.saturating_add(base_estimate))?;
 
     let doc: json::GltfDoc =
-        serde_json::from_slice(json_chunk).map_err(|error| FormatError::Malformed {
+        serde_json::from_slice(&json_chunk).map_err(|error| FormatError::Malformed {
             format: "glTF",
             offset: 0,
             reason: format!("invalid JSON: {error}"),

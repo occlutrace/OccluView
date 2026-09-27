@@ -51,14 +51,8 @@ pub(crate) struct TriangleBvh {
 
 impl TriangleBvh {
     pub(crate) fn estimated_memory_bytes(&self) -> u64 {
-        let node_bytes = self
-            .nodes
-            .capacity()
-            .saturating_mul(std::mem::size_of::<Node>());
-        let order_bytes = self
-            .order
-            .capacity()
-            .saturating_mul(std::mem::size_of::<u32>());
+        let node_bytes = self.nodes.capacity().saturating_mul(size_of::<Node>());
+        let order_bytes = self.order.capacity().saturating_mul(size_of::<u32>());
         u64::try_from(node_bytes.saturating_add(order_bytes)).unwrap_or(u64::MAX)
     }
 
