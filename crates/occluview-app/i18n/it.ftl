@@ -153,6 +153,7 @@ load-add-failed-start = Aggiunta fallita: loader non partito
 load-open-failed-stopped = Apertura fallita: loader fermo
 load-loader-failed-summary = Il loader di scena non si è avviato.
 load-file-too-large = Il file è di { $size } GB, oltre i { $limit } GB letti in un colpo solo
+load-memory-budget-exceeded = La scena attuale e questi file richiedono circa { $size } GB; il limite di importazione è { $limit } GB. Chiudi alcuni livelli o carica meno file.
 load-action-failed-open = Apertura fallita: { $detail }
 load-action-failed-add = Aggiunta fallita: { $detail }
 

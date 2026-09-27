@@ -16,9 +16,7 @@ use super::viewer::{
     pick_scene_point, render_extent_change_requires_rerender, viewport_orbit_drag_active,
     viewport_pan_drag_active, zoom_factor_from_scroll, AxisGizmoInput,
 };
-use super::{
-    read_files_with_key_provider, single_instance, Context, PathBuf, Result, RuntimeHpsKeyProvider,
-};
+use super::{read_files_with_memory_budget, single_instance, Context, PathBuf, Result};
 use crate::scale_bar::ScaleBar;
 use anyhow::Error;
 use eframe::egui;
@@ -108,7 +106,7 @@ use app_layer_edits::{
     apply_layer_context_action_with_status,
     apply_visible_selected_face_mesh_edit_action_with_limit,
 };
-use app_load_errors::load_error_dialog;
+use app_load_errors::{load_error_dialog, load_failure_summary};
 use app_scale_bar::paint_scale_bar;
 pub(crate) use state::OccluViewApp;
 use state_document::MeshSelectionDrag;

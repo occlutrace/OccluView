@@ -43,6 +43,15 @@ fn bounded_capacity<T>(declared: usize, remaining_bytes: usize) -> usize {
 /// - [`FormatError::Malformed`] for truncated or structurally invalid data.
 /// - [`FormatError::Core`] for index-out-of-range.
 pub fn read(bytes: &[u8]) -> Result<Mesh, FormatError> {
+    crate::memory::check_estimate(crate::memory::estimate_file_peak_bytes(
+        crate::probe::FormatKind::Off,
+        bytes,
+        0,
+    )?)?;
+    read_admitted(bytes)
+}
+
+pub(crate) fn read_admitted(bytes: &[u8]) -> Result<Mesh, FormatError> {
     // Detect ASCII vs binary by the first line.
     if bytes.starts_with(b"OFF BINARY") {
         read_binary(bytes)

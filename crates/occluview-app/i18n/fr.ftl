@@ -153,6 +153,7 @@ load-add-failed-start = Échec d’ajout : chargeur non démarré
 load-open-failed-stopped = Échec d’ouverture : chargeur arrêté
 load-loader-failed-summary = Le chargeur de scène n’a pas pu démarrer.
 load-file-too-large = Le fichier fait { $size } Go, au-delà des { $limit } Go lus d'un seul tenant
+load-memory-budget-exceeded = La scène actuelle et ces fichiers nécessitent environ { $size } Go ; la limite d’importation est de { $limit } Go. Fermez des calques ou chargez moins de fichiers.
 load-action-failed-open = Échec d’ouverture : { $detail }
 load-action-failed-add = Échec d’ajout : { $detail }
 
