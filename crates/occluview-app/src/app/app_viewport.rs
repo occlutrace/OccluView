@@ -3,7 +3,7 @@ use super::{
     render_extent_change_requires_rerender, viewport_orbit_drag_active, viewport_pan_drag_active,
     zoom_factor_from_scroll, MeshSelectionDrag, OccluViewApp,
 };
-use crate::app_settings::ScrollBehavior;
+use crate::app_settings::{ScrollBehavior, Settings};
 use glam::Vec2;
 
 #[derive(Clone, Copy)]
@@ -41,6 +41,30 @@ fn pan_camera_from_point_scroll(
         Vec2::new(viewport_size.x.max(1.0), viewport_size.y.max(1.0)),
     );
     true
+}
+
+pub(super) fn update_camera_from_scroll(
+    camera: &mut occluview_core::Camera,
+    ctx: &egui::Context,
+    viewport_rect: egui::Rect,
+    settings: &Settings,
+) -> bool {
+    let scroll_behavior = if cfg!(target_os = "macos") {
+        settings.scroll_behavior
+    } else {
+        ScrollBehavior::Zoom
+    };
+    let mut changed = pan_camera_from_point_scroll(camera, ctx, viewport_rect, scroll_behavior);
+    if let Some(pointer) = ctx.input(|input| input.pointer.hover_pos()) {
+        changed |= zoom_camera_from_wheel(
+            camera,
+            ctx,
+            settings.zoom_sensitivity(),
+            viewport_rect,
+            pointer,
+        );
+    }
+    changed
 }
 
 pub(super) fn zoom_camera_from_wheel(
@@ -362,21 +386,8 @@ impl OccluViewApp {
         }
 
         if response.hovered() && !sculpt_wheel_used {
-            let scroll_behavior = if cfg!(target_os = "macos") {
-                self.persistence.settings.scroll_behavior
-            } else {
-                ScrollBehavior::Zoom
-            };
-            changed |= pan_camera_from_point_scroll(camera, ctx, viewport_rect, scroll_behavior);
-            if let Some(pointer) = ctx.input(|input| input.pointer.hover_pos()) {
-                changed |= zoom_camera_from_wheel(
-                    camera,
-                    ctx,
-                    self.persistence.settings.zoom_sensitivity(),
-                    viewport_rect,
-                    pointer,
-                );
-            }
+            changed |=
+                update_camera_from_scroll(camera, ctx, viewport_rect, &self.persistence.settings);
         }
 
         if changed {
