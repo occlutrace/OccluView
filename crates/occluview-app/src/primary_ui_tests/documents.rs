@@ -39,7 +39,7 @@ fn the_changelog_only_names_versions_that_can_be_released() {
         .collect();
     let unreleased_count = sections
         .iter()
-        .filter(|line| *line == "## Unreleased")
+        .filter(|line| **line == "## Unreleased")
         .count();
     assert!(
         unreleased_count <= 1
