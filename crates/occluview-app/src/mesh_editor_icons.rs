@@ -80,9 +80,7 @@ pub(crate) fn icon_button(
             egui::StrokeKind::Inside,
         );
     }
-    response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, active, label)
-    });
+    crate::accessibility::button(&response, label, enabled, Some(active));
     response.on_hover_text(tooltip)
 }
 

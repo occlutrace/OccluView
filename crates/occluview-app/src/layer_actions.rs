@@ -4,16 +4,19 @@ use occluview_core::{Scene, SceneMesh, SceneMeshId};
 /// surface is judged by its shading, and a saturated one hides the detail the
 /// shading is carrying.
 pub(crate) const LAYER_TINT_PRESETS: [([f32; 4], &str); 10] = [
-    (occluview_core::DEFAULT_UNTEXTURED_MESH_TINT, "Stone IV"),
-    ([0.74, 0.58, 0.32, 1.0], "Baked"),
-    ([0.92, 0.80, 0.56, 1.0], "Plaster"),
-    ([0.72, 0.75, 0.68, 1.0], "Sage"),
-    ([0.82, 0.74, 0.64, 1.0], "Wax"),
-    ([0.55, 0.65, 0.85, 1.0], "Glacier"),
-    ([0.85, 0.45, 0.45, 1.0], "Coral"),
-    ([0.45, 0.75, 0.55, 1.0], "Mint"),
-    ([0.80, 0.65, 0.85, 1.0], "Lilac"),
-    ([0.85, 0.75, 0.35, 1.0], "Amber"),
+    (
+        occluview_core::DEFAULT_UNTEXTURED_MESH_TINT,
+        "tint-color-stone-iv",
+    ),
+    ([0.74, 0.58, 0.32, 1.0], "tint-color-baked"),
+    ([0.92, 0.80, 0.56, 1.0], "tint-color-plaster"),
+    ([0.72, 0.75, 0.68, 1.0], "tint-color-sage"),
+    ([0.82, 0.74, 0.64, 1.0], "tint-color-wax"),
+    ([0.55, 0.65, 0.85, 1.0], "tint-color-glacier"),
+    ([0.85, 0.45, 0.45, 1.0], "tint-color-coral"),
+    ([0.45, 0.75, 0.55, 1.0], "tint-color-mint"),
+    ([0.80, 0.65, 0.85, 1.0], "tint-color-lilac"),
+    ([0.85, 0.75, 0.35, 1.0], "tint-color-amber"),
 ];
 
 /// Overlay tints: for telling two scans apart while they sit on top of each
@@ -33,14 +36,14 @@ pub(crate) const LAYER_TINT_PRESETS: [([f32; 4], &str); 10] = [
 /// blue-leaning enough that even multiplied into the warm neutral material
 /// it still reads cool.
 pub(crate) const LAYER_OVERLAY_TINT_PRESETS: [([f32; 4], &str); 8] = [
-    ([0.03, 0.15, 0.79, 1.0], "Cobalt"),
-    ([0.89, 0.24, 0.00, 1.0], "Tangerine"),
-    ([0.25, 0.11, 0.87, 1.0], "Violet"),
-    ([0.39, 0.64, 0.01, 1.0], "Lime"),
-    ([0.01, 0.39, 0.35, 1.0], "Teal"),
-    ([0.75, 0.05, 0.39, 1.0], "Magenta"),
-    ([0.72, 0.02, 0.06, 1.0], "Crimson"),
-    ([0.10, 0.18, 0.28, 1.0], "Slate"),
+    ([0.03, 0.15, 0.79, 1.0], "tint-color-cobalt"),
+    ([0.89, 0.24, 0.00, 1.0], "tint-color-tangerine"),
+    ([0.25, 0.11, 0.87, 1.0], "tint-color-violet"),
+    ([0.39, 0.64, 0.01, 1.0], "tint-color-lime"),
+    ([0.01, 0.39, 0.35, 1.0], "tint-color-teal"),
+    ([0.75, 0.05, 0.39, 1.0], "tint-color-magenta"),
+    ([0.72, 0.02, 0.06, 1.0], "tint-color-crimson"),
+    ([0.10, 0.18, 0.28, 1.0], "tint-color-slate"),
 ];
 
 /// Every action the layer context menu can raise.

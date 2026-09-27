@@ -25,12 +25,18 @@ pub(crate) fn matching(
     .on_hover_text(locale.tr("align-matching-parts-hint"));
     ui.scope(|ui| {
         ui.spacing_mut().slider_width = slider_width;
-        ui.add_enabled(
+        let slider = ui.add_enabled(
             enabled,
             egui::Slider::new(&mut settings.matching_ratio, 0.1..=1.0)
                 .custom_formatter(|value, _| format!("{:.0}%", value * 100.0)),
-        )
-        .on_hover_text(locale.tr("align-matching-parts-hint"));
+        );
+        crate::accessibility::slider(
+            &slider,
+            &locale.tr("align-matching-parts"),
+            enabled,
+            f64::from(settings.matching_ratio),
+        );
+        slider.on_hover_text(locale.tr("align-matching-parts-hint"));
     });
     ui.label(
         egui::RichText::new(locale.tr("align-max-influence"))
@@ -40,11 +46,17 @@ pub(crate) fn matching(
     .on_hover_text(locale.tr("align-max-influence-hint"));
     ui.scope(|ui| {
         ui.spacing_mut().slider_width = slider_width;
-        ui.add_enabled(
+        let slider = ui.add_enabled(
             enabled,
             egui::Slider::new(&mut settings.influence_radius_mm, 0.2..=10.0).suffix(" mm"),
-        )
-        .on_hover_text(locale.tr("align-max-influence-hint"));
+        );
+        crate::accessibility::slider(
+            &slider,
+            &locale.tr("align-max-influence"),
+            enabled,
+            f64::from(settings.influence_radius_mm),
+        );
+        slider.on_hover_text(locale.tr("align-max-influence-hint"));
     });
     ui.collapsing(locale.tr("align-orientation-title"), |ui| {
         facing(ui, &mut settings.orientation, enabled, locale);
