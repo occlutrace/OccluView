@@ -47,10 +47,10 @@ const HARMONIC_ITERATIONS: usize = 128;
 /// Density is set by the rim edge scale; this is only a runaway safety valve.
 const MAX_GENERATED_PER_RIM: usize = 32;
 /// Absolute interior-vertex budget per hole. Rim-density refinement of a large
-/// hole needs `O(rim_len^2)` interior vertices: a 1000-edge rim takes seconds
-/// and a 20 000-edge rim minutes. When the density estimate exceeds
-/// this budget, the target edge scale is raised so refinement terminates at a
-/// uniformly coarser (still even) sampling instead of stalling mid-pass.
+/// hole needs `O(rim_len^2)` interior vertices. When the density estimate
+/// exceeds this budget, the target edge scale is raised so refinement
+/// terminates at a uniformly coarser (still even) sampling instead of
+/// exhausting the per-hole vertex budget.
 const CAP_INTERIOR_BUDGET: usize = 12_000;
 
 /// A refined cap: generated interior vertices plus the full cap triangulation
@@ -112,7 +112,7 @@ pub(super) fn refine_and_relax(
     // sliver-proof choice: the ear-clip base of a many-thousand-edge rim is a
     // fan of long slivers that flips alone cannot fully regularize, and
     // centroid (1:3) splits of slivers cascade — an 8000-edge rim runs
-    // straight to the runaway valve (256k vertices, minutes of work).
+    // straight to the runaway valve.
     // Halving the longest edge attacks exactly the sliver axis, provably
     // terminates (each split halves one edge, lengths are bounded below by
     // the target scale), and the per-pass repairs restore Delaunay quality —
@@ -227,9 +227,9 @@ fn bisect_pass(
 
 /// Raise the target edge scale so the estimated interior vertex count stays
 /// within [`CAP_INTERIOR_BUDGET`]. Refinement density is quadratic in the rim
-/// length for round holes; without this, a 20 000-edge rim generates 640 000
-/// interior vertices and the fill runs for minutes. Rims small enough to fit
-/// the budget (~250 edges for a round hole) are left byte-for-byte unchanged.
+/// length for round holes; without this, a 20 000-edge rim can exceed the
+/// per-hole vertex budget. Rims small enough to fit the budget (~250 edges for
+/// a round hole) are left byte-for-byte unchanged.
 fn rescale_for_budget(uv: &[Vec2], rim_len: usize, scale: &mut [f32]) {
     if rim_len < 3 {
         return;
