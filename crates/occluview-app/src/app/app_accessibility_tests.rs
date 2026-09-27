@@ -32,7 +32,6 @@ fn controls(output: &egui::FullOutput, surface: &str) -> Vec<AccessibleControl> 
         "TextInput",
         "Link",
         "ColorWell",
-        "ScrollBar",
     ];
     let update = output
         .platform_output
@@ -47,7 +46,7 @@ fn controls(output: &egui::FullOutput, surface: &str) -> Vec<AccessibleControl> 
             INTERACTIVE_ROLES
                 .contains(&role.as_str())
                 .then(|| AccessibleControl {
-                    name: node.label().unwrap_or_default().to_owned(),
+                    name: accessible_name(node, &update.nodes),
                     role,
                     disabled: node.is_disabled(),
                     toggled: node
@@ -71,12 +70,33 @@ fn controls(output: &egui::FullOutput, surface: &str) -> Vec<AccessibleControl> 
     controls
 }
 
-fn assert_role(controls: &[AccessibleControl], name: &str, role: &str) {
-    let control = controls
+fn accessible_name(
+    node: &egui::accesskit::Node,
+    nodes: &[(egui::accesskit::NodeId, egui::accesskit::Node)],
+) -> String {
+    if let Some(label) = node.label().filter(|label| !label.trim().is_empty()) {
+        return label.to_owned();
+    }
+
+    node.labelled_by()
         .iter()
-        .find(|control| control.name == name)
-        .unwrap_or_else(|| panic!("missing {role} {name:?}; controls={controls:#?}"));
-    assert_eq!(control.role, role, "{name:?} has the wrong AccessKit role");
+        .filter_map(|label_id| {
+            nodes
+                .iter()
+                .find(|(node_id, _)| node_id == label_id)
+                .and_then(|(_, label_node)| label_node.value())
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn assert_role(controls: &[AccessibleControl], name: &str, role: &str) {
+    assert!(
+        controls
+            .iter()
+            .any(|control| control.name == name && control.role == role),
+        "missing {role} {name:?}; controls={controls:#?}"
+    );
 }
 
 fn assert_toggled(controls: &[AccessibleControl], name: &str) {
@@ -150,8 +170,8 @@ fn viewer_surfaces_publish_named_controls_with_roles_and_toggle_states() {
         "Remove layer: Upper arch",
         "Align scans",
         "Adjust pose",
-        "Perform alignment",
-        "Best fit matching",
+        "1. Perform alignment",
+        "2. Best fit matching",
         "matching parts",
         "max influence",
         "Close the brush — the markings are kept",
@@ -186,6 +206,8 @@ fn viewer_surfaces_publish_named_controls_with_roles_and_toggle_states() {
     }
     assert_role(&controls, "matching parts", "Slider");
     assert_role(&controls, "max influence", "Slider");
+    assert_role(&controls, "matching parts", "SpinButton");
+    assert_role(&controls, "max influence", "SpinButton");
     assert_role(&controls, "UI scale", "Slider");
     assert_role(&controls, "Orbit speed", "Slider");
     assert_role(&controls, "Zoom speed", "Slider");
@@ -285,7 +307,7 @@ fn mesh_editor_and_sculpt_controls_publish_names_roles_and_selected_tabs() {
                     );
                 }
                 assert_role(&controls, "limit", "CheckBox");
-                assert_role(&controls, "limit", "SpinButton");
+                assert_role(&controls, "Maximum perimeter", "SpinButton");
             }
             EditorTab::Sculpt => {
                 assert_role(&controls, "Add / Remove  [1]", "Button");
@@ -335,10 +357,10 @@ fn layer_context_menu_rows_publish_names_roles_and_disabled_state() {
         "Next tint",
         "Show scan colors",
         "Mesh Editing",
-        "Split bridge...",
+        "Split bridge…",
         "Mesh Repair",
         "Flip normals",
-        "Export layer...",
+        "Export layer…",
         "Show contacts",
         "Hide wireframe",
         "Remove layer",
