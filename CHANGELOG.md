@@ -3,6 +3,13 @@
 This file records user-visible changes. Internal refactors and test-only work
 remain in the Git history.
 
+## Unreleased
+
+### Viewer
+
+- Keyboard and mouse help lists two-finger scroll pan only on macOS, where pixel
+  scroll pans the view.
+
 ## 1.2.1 - 2026-09-21
 
 ### Viewer

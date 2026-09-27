@@ -7,7 +7,7 @@
 use super::*;
 
 #[test]
-fn the_changelog_only_names_versions_that_can_be_released() {
+fn the_changelog_keeps_unreleased_notes_above_tagged_versions() {
     // Release notes come from the section matching the current version.
     let changelog = include_str!("../../../../CHANGELOG.md");
     let manifest = include_str!("../../../../Cargo.toml");
@@ -31,24 +31,42 @@ fn the_changelog_only_names_versions_that_can_be_released() {
          of it would publish empty notes"
     );
 
-    // Every other section must be a version that was actually tagged. The
-    // newest one is the release being prepared; the rest are history.
+    // Draft notes stay separate from versioned sections and can appear once at
+    // the top. The newest versioned section is the release being prepared.
     let sections: Vec<&str> = changelog
         .lines()
         .filter(|line| line.starts_with("## "))
         .collect();
+    let unreleased_sections: Vec<usize> = sections
+        .iter()
+        .enumerate()
+        .filter_map(|(index, line)| (*line == "## Unreleased").then_some(index))
+        .collect();
     assert!(
-        sections
+        unreleased_sections.len() <= 1,
+        "the draft section appears at most once"
+    );
+    assert!(
+        unreleased_sections.first().is_none_or(|index| *index == 0),
+        "the draft section stays above versioned history"
+    );
+    let versioned_sections: Vec<&str> = sections
+        .iter()
+        .copied()
+        .filter(|line| *line != "## Unreleased")
+        .collect();
+    assert!(
+        versioned_sections
             .first()
             .is_some_and(|first| first.starts_with(&heading)),
-        "the newest section should be the version about to ship, got {:?}",
-        sections.first()
+        "the newest versioned section should be the version about to ship, got {:?}",
+        versioned_sections.first()
     );
     // The rest are history, and history goes one way. A repeat, or an older
     // section above a newer one, means a local bump grew its own section
     // instead of folding into the release being prepared.
     let mut seen: Vec<[u64; 3]> = Vec::new();
-    for line in &sections {
+    for line in &versioned_sections {
         let Some(number) = line.split_whitespace().nth(1) else {
             panic!("changelog section without a version: {line:?}");
         };
@@ -91,7 +109,7 @@ fn the_changelog_only_names_versions_that_can_be_released() {
     let Some(first_tagged) = tags.iter().filter_map(|tag| parse_version(tag)).min() else {
         return;
     };
-    for line in sections.iter().skip(1) {
+    for line in versioned_sections.iter().skip(1) {
         let Some(number) = line.split_whitespace().nth(1) else {
             continue;
         };
