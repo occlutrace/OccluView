@@ -117,17 +117,8 @@ impl ThemePreference {
     pub(crate) const OPTIONS: [Self; 2] = [Self::Light, Self::Dark];
 }
 
-/// Entries the Open menu's recent list keeps.
-///
-/// Fixed rather than a preference: menu length has no clinical outcome, and the
-/// preferences panel holds choices that change what the operator sees on a
-/// scan. The field stays in the settings file so an existing document keeps
-/// loading, but no control sets it.
+/// Number of recent scenes the Open menu keeps.
 pub(crate) const RECENT_FILES_LIMIT: usize = 8;
-/// Fewest recent scenes the Open chevron keeps.
-pub(crate) const RECENT_FILES_LIMIT_MIN: usize = 4;
-/// Most recent scenes the Open chevron keeps.
-pub(crate) const RECENT_FILES_LIMIT_MAX: usize = 20;
 
 /// The durable choices exposed by the preferences panel. Many independent
 /// toggles is the shape of a preferences document; collapsing them into enums
@@ -148,8 +139,6 @@ pub(crate) struct Settings {
     pub(crate) orbit_sensitivity: f32,
     /// Exponent on the scroll zoom factor, clamped at use to 0.25..=4.
     pub(crate) zoom_sensitivity: f32,
-    /// How many recent scenes the Open chevron keeps, clamped at use to 4..=20.
-    pub(crate) recent_files_limit: usize,
     pub(crate) viewport_background: ViewportBackground,
     /// Draw the cut-away side as a translucent ghost during a cut view.
     pub(crate) show_cut_ghost: bool,
@@ -179,7 +168,6 @@ impl Default for Settings {
             double_click_resets_camera: true,
             orbit_sensitivity: 1.0,
             zoom_sensitivity: 1.0,
-            recent_files_limit: RECENT_FILES_LIMIT,
             viewport_background: ViewportBackground::default(),
             show_cut_ghost: true,
             unit_display: UnitDisplay::default(),
@@ -387,7 +375,8 @@ mod tests {
             "keep_source_export_format": false,
             "remember_export_dir": false,
             "last_export_dir": null,
-            "update_check_on_start": true
+            "update_check_on_start": true,
+            "recent_files_limit": 20
         }"#;
         let settings: Settings = serde_json::from_slice(legacy)?;
         let rewritten = serde_json::to_value(settings)?;
@@ -400,12 +389,7 @@ mod tests {
         assert!(rewritten.get("keep_source_export_format").is_none());
         assert!(rewritten.get("schema_version").is_none());
         assert!(rewritten.get("reset_camera_on_open").is_none());
-        // The limit is read when the recent list is loaded, so a rewritten
-        // document keeps the value it holds.
-        assert_eq!(
-            rewritten["recent_files_limit"],
-            Settings::default().recent_files_limit
-        );
+        assert!(rewritten.get("recent_files_limit").is_none());
         Ok(())
     }
 
