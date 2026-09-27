@@ -37,18 +37,21 @@ fn the_changelog_only_names_versions_that_can_be_released() {
         .lines()
         .filter(|line| line.starts_with("## "))
         .collect();
+    let release_sections = sections
+        .strip_prefix(&["## Unreleased"])
+        .unwrap_or(&sections);
     assert!(
-        sections
+        release_sections
             .first()
             .is_some_and(|first| first.starts_with(&heading)),
-        "the newest section should be the version about to ship, got {:?}",
-        sections.first()
+        "the newest published section should be the version about to ship, got {:?}",
+        release_sections.first()
     );
     // The rest are history, and history goes one way. A repeat, or an older
     // section above a newer one, means a local bump grew its own section
     // instead of folding into the release being prepared.
     let mut seen: Vec<[u64; 3]> = Vec::new();
-    for line in &sections {
+    for line in release_sections {
         let Some(number) = line.split_whitespace().nth(1) else {
             panic!("changelog section without a version: {line:?}");
         };
@@ -91,7 +94,7 @@ fn the_changelog_only_names_versions_that_can_be_released() {
     let Some(first_tagged) = tags.iter().filter_map(|tag| parse_version(tag)).min() else {
         return;
     };
-    for line in sections.iter().skip(1) {
+    for line in release_sections.iter().skip(1) {
         let Some(number) = line.split_whitespace().nth(1) else {
             continue;
         };
