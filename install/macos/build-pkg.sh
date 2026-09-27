@@ -72,5 +72,5 @@ pkgbuild --root "$package_root" \
   --ownership recommended \
   "$output"
 payload="$(pkgutil --payload-files "$output")"
-printf '%s\n' "$payload" | grep -F 'Applications/OccluView.app/Contents/MacOS/occluview'
+printf '%s\n' "$payload" | grep -F 'OccluView.app/Contents/MacOS/occluview'
 printf 'Created unsigned Apple Silicon installer package: %s\n' "$output"
