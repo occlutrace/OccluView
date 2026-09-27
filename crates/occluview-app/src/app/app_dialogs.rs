@@ -715,7 +715,7 @@ mod tests {
         let root_viewport = input.viewports.get_mut(&egui::ViewportId::ROOT);
         assert!(root_viewport.is_some(), "root viewport exists");
         let Some(root_viewport) = root_viewport else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         root_viewport.events.push(egui::ViewportEvent::Close);
         let mut close_guard_open = false;

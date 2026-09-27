@@ -10,7 +10,7 @@
 //! through the same pipeline.
 //!
 #![cfg_attr(not(test), deny(unsafe_code))]
-#![cfg_attr(test, allow(clippy::expect_used))]
+#![cfg_attr(test, allow(clippy::expect_used, clippy::panic))]
 // The COM class (`com.rs`) is `unsafe` by definition (FFI + raw pointers across
 // the COM ABI). Its module-level `#![allow(unsafe_code)]` overrides this gate
 // under `cfg(windows)` only; the platform-agnostic code stays panic-free and

@@ -181,13 +181,13 @@ fn visible_selection_batch_deletes_or_crops_every_visible_layer() {
         LayerContextAction::CropToSelectedFaces,
     ] {
         let Some(mut scene) = batch_scene_with_two_layers() else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         let mut edit_mode = EditModeController::new(4, 1_000_000);
         select_batch_faces(&scene, &mut edit_mode, 0);
 
         let Some(apply) = apply_batch(&mut scene, &mut edit_mode, action) else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
 
         assert!(apply.scene_changed);
@@ -206,7 +206,7 @@ fn visible_selection_batch_deletes_or_crops_every_visible_layer() {
 #[test]
 fn visible_selection_batch_skips_hidden_layer_byte_for_byte() {
     let Some(mut scene) = batch_scene_with_two_layers() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut edit_mode = EditModeController::new(4, 1_000_000);
     select_batch_faces(&scene, &mut edit_mode, 0);
@@ -227,7 +227,7 @@ fn visible_selection_batch_skips_hidden_layer_byte_for_byte() {
 #[test]
 fn visible_selection_batch_refuses_whole_selection_without_touching_other_layers() {
     let Some(mut scene) = batch_scene_with_two_layers() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut edit_mode = EditModeController::new(4, 1_000_000);
     assert!(edit_mode.select_face_hit(
@@ -249,7 +249,7 @@ fn visible_selection_batch_refuses_whole_selection_without_touching_other_layers
         &mut edit_mode,
         LayerContextAction::DeleteSelectedFaces,
     ) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
 
     assert!(!apply.scene_changed);
@@ -260,7 +260,7 @@ fn visible_selection_batch_refuses_whole_selection_without_touching_other_layers
 #[test]
 fn visible_selection_batch_rolls_back_when_a_later_layer_fails_preflight() {
     let Some(mut scene) = batch_scene_with_two_layers() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut edit_mode = EditModeController::new(4, 1_000_000);
     select_batch_faces(&scene, &mut edit_mode, 0);
@@ -273,7 +273,7 @@ fn visible_selection_batch_rolls_back_when_a_later_layer_fails_preflight() {
         &mut edit_mode,
         LayerContextAction::SeparateSelectedComponents,
     ) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
 
     assert!(!apply.scene_changed);
@@ -284,7 +284,7 @@ fn visible_selection_batch_rolls_back_when_a_later_layer_fails_preflight() {
 #[test]
 fn visible_selection_batch_has_one_undo_for_all_layers() {
     let Some(mut scene) = batch_scene_with_two_layers() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let before = scene.clone();
     let mut edit_mode = EditModeController::new(4, 1_000_000);
@@ -307,7 +307,7 @@ fn visible_selection_batch_has_one_undo_for_all_layers() {
         "one scene undo should restore the complete batch"
     );
     let crate::edit_mode::StructuralHistoryStep::Restored(restored) = restored else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(
         batch_scene_signature(&restored),
@@ -318,7 +318,7 @@ fn visible_selection_batch_has_one_undo_for_all_layers() {
 #[test]
 fn visible_selection_batch_undo_redo_restores_the_complete_scene() {
     let Some(mut scene) = batch_scene_with_two_layers() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let original = scene.clone();
     let focus_layer_id = scene.meshes()[0].id();
@@ -338,7 +338,7 @@ fn visible_selection_batch_undo_redo_restores_the_complete_scene() {
         "batch undo should restore the original scene"
     );
     let crate::edit_mode::StructuralHistoryStep::Restored(undone) = undo else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(
         batch_scene_signature(&undone),
@@ -351,7 +351,7 @@ fn visible_selection_batch_undo_redo_restores_the_complete_scene() {
         "batch redo should restore the complete edited scene"
     );
     let crate::edit_mode::StructuralHistoryStep::Restored(redone) = redo else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(batch_scene_signature(&redone), edited_signature);
 }
@@ -359,7 +359,7 @@ fn visible_selection_batch_undo_redo_restores_the_complete_scene() {
 #[test]
 fn visible_selection_batch_rejects_oversized_snapshot_before_mutation() {
     let Some(mut scene) = batch_scene_with_two_layers() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let before = batch_scene_signature(&scene);
     let mut edit_mode = EditModeController::new(4, 0);
@@ -370,7 +370,7 @@ fn visible_selection_batch_rejects_oversized_snapshot_before_mutation() {
         &mut edit_mode,
         LayerContextAction::DeleteSelectedFaces,
     ) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
 
     assert!(!apply.scene_changed);
@@ -382,7 +382,7 @@ fn visible_selection_batch_rejects_oversized_snapshot_before_mutation() {
 #[test]
 fn visible_selection_batch_cut_and_separate_keep_deterministic_source_order() {
     let Some(mut scene) = batch_scene_with_two_layers() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut edit_mode = EditModeController::new(4, 1_000_000);
     select_batch_faces(&scene, &mut edit_mode, 0);
@@ -402,7 +402,7 @@ fn visible_selection_batch_cut_and_separate_keep_deterministic_source_order() {
     );
 
     let Some(mut scene) = batch_scene_with_two_layers() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut edit_mode = EditModeController::new(4, 1_000_000);
     select_batch_faces(&scene, &mut edit_mode, 0);

@@ -18,10 +18,10 @@ fn pick_hit(layer_index: usize, layer_id: SceneMeshId, triangle_index: usize) ->
 #[test]
 fn switching_targets_restores_cached_marks_per_layer() {
     let Some(mesh_a) = two_triangle_mesh("A") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let Some(mesh_b) = two_triangle_mesh("B") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
     let index_a = scene.add(SceneMesh::new(mesh_a));
@@ -44,7 +44,7 @@ fn switching_targets_restores_cached_marks_per_layer() {
     assert_eq!(controller.selected_layer_id(), Some(id_a));
     assert_eq!(controller.selected_face_count(), 1);
     let Some(selection_a) = controller.selected_faces_for_layer(id_a) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(selection_a.as_slice(), &[true, false]);
 
@@ -52,7 +52,7 @@ fn switching_targets_restores_cached_marks_per_layer() {
     assert_eq!(controller.selected_layer_id(), Some(id_b));
     assert_eq!(controller.selected_face_count(), 1);
     let Some(selection_b) = controller.selected_faces_for_layer(id_b) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(selection_b.as_slice(), &[false, true]);
 }
@@ -60,10 +60,10 @@ fn switching_targets_restores_cached_marks_per_layer() {
 #[test]
 fn cached_marks_reset_when_same_layer_topology_changes_with_same_triangle_count() {
     let Some(mesh_a) = two_triangle_mesh("A") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let Some(mesh_b) = two_triangle_mesh("B") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let Some(rebuilt_a) = Mesh::new(
         Some("A-rebuilt".to_string()),
@@ -78,7 +78,7 @@ fn cached_marks_reset_when_same_layer_topology_changes_with_same_triangle_count(
         vec![0, 1, 2, 3, 4, 5],
     )
     .ok() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
     let index_a = scene.add(SceneMesh::new(mesh_a));
@@ -104,7 +104,7 @@ fn cached_marks_reset_when_same_layer_topology_changes_with_same_triangle_count(
     assert_eq!(controller.selected_layer_id(), Some(id_a));
     assert_eq!(controller.selected_face_count(), 0);
     let Some(selection) = controller.selected_faces_for_layer(id_a) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(selection.as_slice(), &[false, false]);
 }
@@ -112,16 +112,16 @@ fn cached_marks_reset_when_same_layer_topology_changes_with_same_triangle_count(
 #[test]
 fn switching_targets_keeps_original_session_baseline_for_cancel() {
     let Some(mesh_a) = two_triangle_mesh("A") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let Some(mesh_b) = two_triangle_mesh("B") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let Some(edited_a) = triangle_mesh("A-edited") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let Some(edited_b) = triangle_mesh("B-edited") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
     let index_a = scene.add(SceneMesh::new(mesh_a));
@@ -134,7 +134,7 @@ fn switching_targets_keeps_original_session_baseline_for_cancel() {
     assert!(controller.begin_face_selection(&layer_a, &scene));
     let Some(token) = controller.begin_layer_edit(&layer_a, EditModeCommand::DeleteSelectedFaces)
     else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(
         controller.finish_layer_edit_success(token),
@@ -145,7 +145,7 @@ fn switching_targets_keeps_original_session_baseline_for_cancel() {
 
     assert!(controller.begin_face_selection(&scene.meshes()[index_b], &scene));
     let Some(token) = controller.begin_layer_edit(&layer_b, EditModeCommand::CloseHoles) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(
         controller.finish_layer_edit_success(token),
@@ -155,7 +155,7 @@ fn switching_targets_keeps_original_session_baseline_for_cancel() {
     controller.sync_to_scene(&scene);
 
     let Some(restored) = controller.cancel_edit_session() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(restored.meshes().len(), original.meshes().len());
     for (restored_entry, original_entry) in restored.meshes().iter().zip(original.meshes()) {
@@ -175,10 +175,10 @@ fn switching_targets_keeps_original_session_baseline_for_cancel() {
 #[test]
 fn hidden_or_removed_active_target_never_retargets_silently() {
     let Some(mesh) = two_triangle_mesh("hidden") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let Some(other_mesh) = two_triangle_mesh("other") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
     let layer_index = scene.add(SceneMesh::new(mesh));
@@ -196,10 +196,10 @@ fn hidden_or_removed_active_target_never_retargets_silently() {
 
     let mut scene = Scene::new();
     let Some(mesh) = two_triangle_mesh("hidden") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let Some(other_mesh) = two_triangle_mesh("other") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let layer_index = scene.add(SceneMesh::new(mesh));
     let other_index = scene.add(SceneMesh::new(other_mesh));
@@ -219,10 +219,10 @@ fn hidden_or_removed_active_target_never_retargets_silently() {
 #[test]
 fn hidden_layers_cannot_become_the_active_editor_target() {
     let Some(visible_mesh) = two_triangle_mesh("visible") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let Some(hidden_mesh) = two_triangle_mesh("hidden") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
     let visible_index = scene.add(SceneMesh::new(visible_mesh));
@@ -241,13 +241,13 @@ fn hidden_layers_cannot_become_the_active_editor_target() {
 #[test]
 fn cancel_restores_dirty_session_after_its_active_layer_is_removed_then_switched() {
     let Some(mesh_a) = two_triangle_mesh("A") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let Some(mesh_b) = two_triangle_mesh("B") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let Some(edited_a) = triangle_mesh("A-edited") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
     let index_a = scene.add(SceneMesh::new(mesh_a));
@@ -260,7 +260,7 @@ fn cancel_restores_dirty_session_after_its_active_layer_is_removed_then_switched
     assert!(controller.begin_face_selection(&layer_a, &scene));
     let Some(token) = controller.begin_layer_edit(&layer_a, EditModeCommand::DeleteSelectedFaces)
     else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(
         controller.finish_layer_edit_success(token),
@@ -279,7 +279,7 @@ fn cancel_restores_dirty_session_after_its_active_layer_is_removed_then_switched
     assert_eq!(controller.selected_layer_id(), Some(layer_b_id));
 
     let Some(restored) = controller.cancel_edit_session() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(restored.meshes().len(), original.meshes().len());
     for (restored_entry, original_entry) in restored.meshes().iter().zip(original.meshes()) {

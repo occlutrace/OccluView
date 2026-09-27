@@ -205,7 +205,7 @@ fn controller_records_layer_edit_undo_and_dirty_state() {
     assert_eq!(controller.undo_len(), 1);
 
     let Some(token) = token else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(
         controller.finish_layer_edit_success(token),
@@ -217,10 +217,10 @@ fn controller_records_layer_edit_undo_and_dirty_state() {
 #[test]
 fn controller_undo_restores_last_snapshot_for_matching_layer() {
     let Some(before_mesh) = triangle_mesh("before") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let Some(after_mesh) = triangle_mesh("after") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let layer = SceneMesh::new(before_mesh);
     let mut current = layer.clone();
@@ -228,7 +228,7 @@ fn controller_undo_restores_last_snapshot_for_matching_layer() {
     let mut controller = EditModeController::new(4, 1_000_000);
 
     let Some(token) = controller.begin_layer_edit(&layer, EditModeCommand::InvertNormals) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(
         controller.finish_layer_edit_success(token),
@@ -239,7 +239,7 @@ fn controller_undo_restores_last_snapshot_for_matching_layer() {
     let restored = controller.undo_last_layer_edit(&current);
     assert!(restored.is_some());
     let Some(restored) = restored else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
 
     assert_eq!(restored.id(), layer.id());
@@ -251,17 +251,17 @@ fn controller_undo_restores_last_snapshot_for_matching_layer() {
 #[test]
 fn controller_undo_rejects_stale_layer_without_popping_history() {
     let Some(before_mesh) = triangle_mesh("before") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let Some(other_mesh) = triangle_mesh("other") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let layer = SceneMesh::new(before_mesh);
     let other_layer = SceneMesh::new(other_mesh);
     let mut controller = EditModeController::new(4, 1_000_000);
 
     let Some(token) = controller.begin_layer_edit(&layer, EditModeCommand::InvertNormals) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(
         controller.finish_layer_edit_success(token),
@@ -275,10 +275,10 @@ fn controller_undo_rejects_stale_layer_without_popping_history() {
 #[test]
 fn controller_undo_is_lifo_across_layer_edits() {
     let Some(first_mesh) = triangle_mesh("first") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let Some(second_mesh) = triangle_mesh("second") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let first = SceneMesh::new(first_mesh);
     let second = SceneMesh::new(second_mesh);
@@ -286,7 +286,7 @@ fn controller_undo_is_lifo_across_layer_edits() {
 
     let Some(first_token) = controller.begin_layer_edit(&first, EditModeCommand::InvertNormals)
     else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(
         controller.finish_layer_edit_success(first_token),
@@ -295,7 +295,7 @@ fn controller_undo_is_lifo_across_layer_edits() {
 
     let Some(second_token) = controller.begin_layer_edit(&second, EditModeCommand::InvertNormals)
     else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(
         controller.finish_layer_edit_success(second_token),
@@ -321,10 +321,10 @@ fn controller_undo_is_lifo_across_layer_edits() {
 #[test]
 fn controller_restores_scene_snapshot_when_layer_set_is_unchanged() {
     let Some(first_mesh) = triangle_mesh("first") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let Some(second_mesh) = triangle_mesh("second") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
     let first_index = scene.add(SceneMesh::new(first_mesh));
@@ -335,7 +335,7 @@ fn controller_restores_scene_snapshot_when_layer_set_is_unchanged() {
     let Some(token) =
         controller.begin_scene_edit(&scene, layer_id, EditModeCommand::CutSelectionToNewLayer)
     else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     // Stamp the post-op fingerprint to the current (unchanged) id-set.
     assert_eq!(
@@ -354,7 +354,7 @@ fn controller_restores_scene_snapshot_when_layer_set_is_unchanged() {
         "an unchanged layer set should restore the scene snapshot"
     );
     let StructuralHistoryStep::Restored(restored) = step else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(restored.meshes().len(), 2);
     assert!(restored.meshes()[0].visible);
@@ -366,10 +366,10 @@ fn controller_refuses_scene_snapshot_when_layer_was_removed_since() {
     // Structural-history guard: a whole-scene restore is refused when the live
     // scene lost a layer since the structural step, rather than resurrecting it.
     let Some(first_mesh) = triangle_mesh("first") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let Some(second_mesh) = triangle_mesh("second") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
     let first_index = scene.add(SceneMesh::new(first_mesh));
@@ -380,7 +380,7 @@ fn controller_refuses_scene_snapshot_when_layer_was_removed_since() {
     let Some(token) =
         controller.begin_scene_edit(&scene, layer_id, EditModeCommand::CutSelectionToNewLayer)
     else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(
         controller.finish_scene_edit_success(token, &scene),
@@ -406,7 +406,7 @@ fn controller_refuses_scene_snapshot_when_layer_was_appended_since() {
     // Data-loss case: a layer appended after a structural op must not be
     // deleted by an undo that restores the pre-append whole-scene snapshot.
     let Some(mesh) = triangle_mesh("source") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
     let index = scene.add(SceneMesh::new(mesh));
@@ -416,11 +416,11 @@ fn controller_refuses_scene_snapshot_when_layer_was_appended_since() {
     let Some(token) =
         controller.begin_scene_edit(&scene, layer_id, EditModeCommand::CutSelectionToNewLayer)
     else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     // Simulate the structural product being inserted before the op finishes.
     let Some(product) = triangle_mesh("product") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     scene.add(SceneMesh::new(product));
     assert_eq!(
@@ -430,7 +430,7 @@ fn controller_refuses_scene_snapshot_when_layer_was_appended_since() {
 
     // The operator now appends a fresh layer (a separate load) after the op.
     let Some(appended) = triangle_mesh("appended") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     scene.add(SceneMesh::new(appended));
 
@@ -450,7 +450,7 @@ fn controller_records_failed_layer_edit_as_recoverable_error() {
     let mut controller = EditModeController::new(4, 1_000_000);
 
     let Some(token) = controller.begin_layer_edit(&layer, EditModeCommand::InvertNormals) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
 
     assert_eq!(
@@ -470,7 +470,7 @@ fn controller_records_failed_layer_edit_as_recoverable_error() {
 #[test]
 fn controller_records_face_selection_from_scene_pick_hit() {
     let Some(mesh) = two_triangle_mesh("selectable") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
     let layer_index = scene.add(SceneMesh::new(mesh));
@@ -492,7 +492,7 @@ fn controller_records_face_selection_from_scene_pick_hit() {
     assert_eq!(controller.selected_layer_id(), Some(layer_id));
     assert_eq!(controller.selected_face_count(), 1);
     let Some(selection) = controller.selected_faces_for_layer(layer_id) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(selection.as_slice(), &[false, true]);
 }
@@ -500,7 +500,7 @@ fn controller_records_face_selection_from_scene_pick_hit() {
 #[test]
 fn controller_rejects_stale_face_selection_hit_without_clearing_current_selection() {
     let Some(mesh) = two_triangle_mesh("selectable") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
     let layer_index = scene.add(SceneMesh::new(mesh));
@@ -532,7 +532,7 @@ fn controller_rejects_stale_face_selection_hit_without_clearing_current_selectio
 
     assert!(!stale_selected);
     let Some(selection) = controller.selected_faces_for_layer(layer_id) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(selection.as_slice(), &[true, false]);
 }
@@ -540,7 +540,7 @@ fn controller_rejects_stale_face_selection_hit_without_clearing_current_selectio
 #[test]
 fn controller_can_accumulate_invert_and_clear_selection_without_leaving_edit_mode() {
     let Some(mesh) = two_triangle_mesh("selectable") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
     let layer_index = scene.add(SceneMesh::new(mesh));
@@ -575,7 +575,7 @@ fn controller_can_accumulate_invert_and_clear_selection_without_leaving_edit_mod
         false,
     ));
     let Some(selection) = controller.selected_faces_for_layer(layer_id) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(selection.as_slice(), &[true, true]);
 
@@ -592,7 +592,7 @@ fn controller_can_accumulate_invert_and_clear_selection_without_leaving_edit_mod
         true,
     ));
     let Some(selection) = controller.selected_faces_for_layer(layer_id) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(selection.as_slice(), &[false, true]);
 
@@ -600,20 +600,20 @@ fn controller_can_accumulate_invert_and_clear_selection_without_leaving_edit_mod
     assert_eq!(controller.selected_layer_id(), Some(layer_id));
     assert_eq!(controller.selected_face_count(), 0);
     let Some(selection) = controller.selected_faces_for_layer(layer_id) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(selection.as_slice(), &[false, false]);
 
     assert!(controller.invert_face_selection());
     let Some(selection) = controller.selected_faces_for_layer(layer_id) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(selection.as_slice(), &[true, true]);
 
     assert!(controller.clear_face_selection());
     assert!(controller.select_all_faces());
     let Some(selection) = controller.selected_faces_for_layer(layer_id) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(selection.as_slice(), &[true, true]);
 }
@@ -664,7 +664,7 @@ fn object_mode_defaults_off_and_is_mutually_exclusive_with_lasso() {
 #[test]
 fn object_click_selects_whole_component_accumulating_with_shift_unmark() {
     let Some(mesh) = two_object_soup_mesh("multi-object") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
     let layer_index = scene.add(SceneMesh::new(mesh));
@@ -678,21 +678,21 @@ fn object_click_selects_whole_component_accumulating_with_shift_unmark() {
     // object B (2,3) is untouched — not confetti, not the neighbour.
     assert!(controller.select_component_hit(&scene, pick_hit(layer_index, layer_id, 0), false));
     let Some(selection) = controller.selected_faces_for_layer(layer_id) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(selection.as_slice(), &[true, true, false, false]);
 
     // Clicking object B accumulates (dental CAD convention — plain click adds).
     assert!(controller.select_component_hit(&scene, pick_hit(layer_index, layer_id, 3), false));
     let Some(selection) = controller.selected_faces_for_layer(layer_id) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(selection.as_slice(), &[true, true, true, true]);
 
     // Shift-click on object A un-marks the whole object A.
     assert!(controller.select_component_hit(&scene, pick_hit(layer_index, layer_id, 1), true));
     let Some(selection) = controller.selected_faces_for_layer(layer_id) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(selection.as_slice(), &[false, false, true, true]);
 
@@ -700,7 +700,7 @@ fn object_click_selects_whole_component_accumulating_with_shift_unmark() {
     assert!(controller.select_component_hit(&scene, pick_hit(layer_index, layer_id, 0), false));
     assert!(controller.select_component_hit(&scene, pick_hit(layer_index, layer_id, 0), false));
     let Some(selection) = controller.selected_faces_for_layer(layer_id) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(selection.as_slice(), &[true, true, true, true]);
 }
@@ -708,7 +708,7 @@ fn object_click_selects_whole_component_accumulating_with_shift_unmark() {
 #[test]
 fn object_click_on_a_different_layer_is_a_noop() {
     let Some(mesh) = two_object_soup_mesh("multi-object") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
     let layer_index = scene.add(SceneMesh::new(mesh));
@@ -731,7 +731,7 @@ fn object_click_on_a_different_layer_is_a_noop() {
 #[test]
 fn object_mode_resets_when_the_session_ends() {
     let Some(mesh) = two_object_soup_mesh("reset") else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
     let layer_index = scene.add(SceneMesh::new(mesh));

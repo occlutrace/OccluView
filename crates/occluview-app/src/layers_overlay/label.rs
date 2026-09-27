@@ -58,7 +58,7 @@ mod tests {
         let named_mesh_result = Mesh::new(Some("Upper arch".into()), vec![], vec![]);
         assert!(named_mesh_result.is_ok(), "named mesh should construct");
         let Ok(named_mesh) = named_mesh_result else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         let named = SceneMesh::new(named_mesh);
         let unnamed = SceneMesh::new(Mesh::empty());
@@ -76,7 +76,7 @@ mod tests {
         let named_mesh_result = Mesh::new(Some("Part B".into()), vec![], vec![]);
         assert!(named_mesh_result.is_ok(), "named mesh should construct");
         let Ok(named_mesh) = named_mesh_result else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         let named = SceneMesh::new(named_mesh);
         let placeholder = vec![PathBuf::new()];

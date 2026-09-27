@@ -179,7 +179,7 @@ fn pick_ray_hits_visible_triangle_surface() {
 
     assert!(hit.is_some(), "expected surface hit");
     let Some(hit) = hit else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert!(
         (hit - Vec3::new(0.25, 0.25, 0.0)).length() < 1e-5,
@@ -197,7 +197,7 @@ fn pick_ray_returns_nearest_visible_hit() {
 
     assert!(hit.is_some(), "expected nearest hit");
     let Some(hit) = hit else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert!((hit.z - 5.0).abs() < 1e-5, "hit={hit}");
 }
@@ -216,7 +216,7 @@ fn pick_ray_hit_reports_layer_identity_and_triangle_index() {
 
     assert!(hit.is_some(), "expected editable face hit");
     let Some(hit) = hit else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(hit.layer_index, layer_index);
     assert_eq!(hit.layer_id, layer_id);
@@ -273,7 +273,7 @@ fn pick_ray_ignores_hidden_meshes() {
 
     assert!(hit.is_some(), "expected visible hit");
     let Some(hit) = hit else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert!(hit.z.abs() < 1e-5, "hit={hit}");
 }

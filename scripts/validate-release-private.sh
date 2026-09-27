@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Validate a release against the private scan corpus.
 #
-# The align acceptance tests need real scans, and real scans are patient data:
-# they live outside the repository and CI never has them. The tests therefore
-# skip when OCCLUVIEW_ALIGN_FIXTURES is unset, so a green CI run covers the
-# synthetic surfaces only, not whether a real arch seats within 0.05 mm.
+# The alignment and contact acceptance tests need real scans, and real scans
+# are patient data: they live outside the repository and CI never has them.
+# The tests report a skip without the corpus, so this gate makes missing data a
+# failure rather than claiming clinical coverage without running the checks.
 #
 # This script is that gate. It fails when the corpus is absent instead of
 # skipping, runs the acceptance tests with the corpus required, and writes a
@@ -103,7 +103,8 @@ fi
 # variable. Forced here, in gate mode, so "contact renders" is something the
 # release actually checked rather than something it hoped.
 OCCLUVIEW_CONTACT_FIXTURES="$corpus" \
-OCCLUVIEW_CONTACT_FIXTURES_REQUIRED=1 \
+OCCLUVIEW_ALIGN_FIXTURES_REQUIRED=1 \
+OCCLUVIEW_REQUIRE_GPU_TESTS=1 \
   cargo test --locked -p occluview-app contact_render_tests -- --nocapture --test-threads=1 \
   >>"$log" 2>&1 || status=$?
 
