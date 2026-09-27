@@ -114,6 +114,9 @@ jobs:
       - name: Install WiX Toolset
         shell: pwsh
         run: choco install wixtoolset --version 3.14.1 --allow-downgrade --yes --no-progress
+      - name: Enable long Git paths for native dependency sources
+        shell: pwsh
+        run: git config --global core.longpaths true
       - name: Build diagnostic MSI from the current shell source
         shell: pwsh
         run: ./install/build-msi.ps1 -Configuration diagnostic -SignMode none
