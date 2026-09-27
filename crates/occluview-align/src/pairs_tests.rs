@@ -84,10 +84,9 @@ fn a_pair_fit_keeps_large_residuals_as_diagnostics_for_surface_refinement() {
     let mut fixed = posed(&moving);
     fixed[2] += DVec3::new(0.0, 0.0, 10.0);
 
-    let fit = fit(&moving, &fixed, None, 40.0)
-        .expect("point pairs provide a candidate, not a surface-acceptance decision");
+    let fit = fit(&moving, &fixed, None, 40.0).unwrap();
 
-    assert!(fit.max_pair_err > 1.0, "the diagnostic was {:?}", fit);
+    assert!(fit.max_pair_err > 1.0, "the diagnostic was {fit:?}");
     assert!(fit.pair_rms.is_finite());
 }
 
@@ -323,7 +322,7 @@ fn two_pair_roll_estimates_are_averaged_without_an_unmeasured_angle_cutoff() {
         Some((&moving_normals, &fixed_normals)),
         40.0,
     )
-    .expect("the averaged normal constraints leave a defined candidate frame");
+    .unwrap();
 
     for (moving_normal, fixed_normal) in moving_normals.iter().zip(&fixed_normals) {
         assert!(
