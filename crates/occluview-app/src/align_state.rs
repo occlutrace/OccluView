@@ -63,5 +63,9 @@ pub(crate) struct AlignState {
     pub(crate) overlay: AlignOverlay,
     pub(crate) session_poses: Vec<(SceneMeshId, Affine3A)>,
     pub(crate) tab: AlignTab,
-    pub(crate) ghosted: Vec<(SceneMeshId, f32)>,
+    /// Layers drawn faded while the map is up. Applied when the frame's
+    /// uniforms are built, never written into the scene: a fade stored as the
+    /// layer's opacity was captured by every history step and save taken while
+    /// the map was up, and came back with no map to justify it.
+    pub(crate) ghosted: Vec<SceneMeshId>,
 }

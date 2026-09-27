@@ -14,6 +14,10 @@ remain in the Git history.
 
 - Imports estimate mesh, image, and current-scene memory before decoding and
   refuse a scene that exceeds the viewer's 2 GiB import budget.
+- Best fit refuses equally plausible surface matches and tells you to mark the
+  matching area or move the scans closer before trying again.
+- Point-pair placement remains provisional until surface refinement passes;
+  deviation maps require a verified pose.
 
 ### Windows
 

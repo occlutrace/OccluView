@@ -6,7 +6,7 @@
 
 #![allow(clippy::expect_used, clippy::panic)]
 
-use super::{closest_point_on_triangle, SurfaceHit, SurfaceIndex};
+use super::{closest_feature_on_triangle, Feature, SurfaceHit, SurfaceIndex};
 use crate::Soup;
 use glam::DVec3;
 
@@ -230,9 +230,10 @@ fn brute_nearest(index: &SurfaceIndex, point: DVec3, radius: f64) -> Option<Surf
         return None;
     }
     let limit = radius * radius;
-    let mut best: Option<(f64, u32, DVec3, usize)> = None;
+    let mut best: Option<(f64, u32, DVec3, usize, Feature)> = None;
     for (slot, corners) in index.corners.iter().enumerate() {
-        let candidate = closest_point_on_triangle(point, corners[0], corners[1], corners[2]);
+        let (candidate, feature) =
+            closest_feature_on_triangle(point, corners[0], corners[1], corners[2]);
         let distance = (candidate - point).length_squared();
         if distance > limit {
             continue;
@@ -240,24 +241,28 @@ fn brute_nearest(index: &SurfaceIndex, point: DVec3, radius: f64) -> Option<Surf
         let source = index.sources[slot];
         let better = match best {
             None => true,
-            Some((best_distance, best_source, _, _)) => {
+            Some((best_distance, best_source, _, _, _)) => {
                 distance < best_distance || (distance == best_distance && source < best_source)
             }
         };
         if better {
-            best = Some((distance, source, candidate, slot));
+            best = Some((distance, source, candidate, slot, feature));
         }
     }
-    best.map(|(_, triangle, point, slot)| SurfaceHit {
-        point,
-        normal: index.normals[slot],
-        triangle,
-    })
+    best.map(|(_, triangle, point, slot, feature)| index.hit(slot, triangle, point, feature))
 }
 
 /// Compare the two answers on every field a caller can observe.
 fn assert_same(index: &SurfaceIndex, point: DVec3, radius: f64) {
-    let shape = |hit: SurfaceHit| (hit.triangle, hit.point.to_array(), hit.normal.to_array());
+    let shape = |hit: SurfaceHit| {
+        (
+            hit.triangle,
+            hit.point.to_array(),
+            hit.normal.to_array(),
+            hit.pseudo_normal.to_array(),
+            hit.on_border,
+        )
+    };
     assert_eq!(
         index.nearest(point, radius).map(shape),
         brute_nearest(index, point, radius).map(shape),

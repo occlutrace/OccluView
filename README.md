@@ -90,6 +90,13 @@ matching settings or the exclusion markings, or returning to Automatic, clears
 it until a new matching result is available. Manual alignment remains
 available when the automatic pair is not appropriate.
 
+When Best fit finds more than one equally plausible pose, it refuses to confirm
+the alignment. Mark the corresponding area or move the scans closer, then try
+again.
+
+Point-pair placement supplies a starting pose. It remains unverified until
+surface refinement passes, and the deviation map stays unavailable until then.
+
 ## Mesh Editing
 
 <p align="center">

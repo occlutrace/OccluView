@@ -14,10 +14,13 @@ use crate::Soup;
 
 #[path = "surface_geometry.rs"]
 mod surface_geometry;
-pub(super) use surface_geometry::closest_point_on_triangle;
+use surface_geometry::{closest_feature_on_triangle, Feature};
 #[path = "surface_helpers.rs"]
 mod surface_helpers;
 use surface_helpers::{canonical_bits, cell_count, grid_dims, longest_edge, read_triangle};
+#[path = "surface_topology.rs"]
+mod surface_topology;
+use surface_topology::{Topology, TopologyBuilder};
 
 /// Triangles whose doubled area falls below this are dropped at build time:
 /// they have no usable normal and no interior to project onto.
@@ -66,6 +69,7 @@ struct Candidate {
     source: u32,
     point: DVec3,
     slot: usize,
+    feature: Feature,
 }
 
 /// One query's fixed terms: the point, the squared radius, and the cell window
@@ -100,6 +104,18 @@ pub struct SurfaceHit {
     pub normal: DVec3,
     /// Index of that triangle within the source soup.
     pub triangle: u32,
+    /// Unit outward normal of the closest feature: the face normal inside a
+    /// face, the mean of the two faces along an edge, the corner-angle-weighted
+    /// mean of the faces around a vertex. Which side of the surface the query
+    /// point lies on is the sign of `(query - point) · pseudo_normal`; with the
+    /// face `normal` that sign is wrong outside a sharp edge whenever the face
+    /// listed first in the file points away from the query.
+    pub pseudo_normal: DVec3,
+    /// The closest feature lies on the surface's open border: an edge only one
+    /// indexed triangle uses, or a vertex on one (the rim of a masked region
+    /// included). The query's counterpart on this surface, if any, lies beyond
+    /// what the surface covers.
+    pub on_border: bool,
 }
 
 /// A deterministic representative of one indexed triangle for bounded
@@ -163,6 +179,7 @@ pub struct SurfaceIndex {
     gaps: Vec<u8>,
     components: Vec<(DVec3, DVec3)>,
     triangle_components: Vec<usize>,
+    topology: Topology,
 }
 
 impl SurfaceIndex {
@@ -193,6 +210,7 @@ impl SurfaceIndex {
         // component after all unions have been completed. Keeping all three
         // ids here needlessly triples temporary memory on a dense scan.
         let mut triangle_anchors = Vec::new();
+        let mut topology = TopologyBuilder::default();
 
         for (triangle, slice) in soup.indices.as_chunks::<3>().0.iter().enumerate() {
             // Any masked corner takes the whole triangle out. A triangle with
@@ -204,15 +222,6 @@ impl SurfaceIndex {
             let Some(vertices) = read_triangle(soup.positions, vertex_count, slice) else {
                 continue;
             };
-            let normal = (vertices[1] - vertices[0]).cross(vertices[2] - vertices[0]);
-            let length = normal.length();
-            if !length.is_finite() || length < MIN_DOUBLE_AREA {
-                continue;
-            }
-            for corner in vertices {
-                min = min.min(corner);
-                max = max.max(corner);
-            }
             let [a, b, c] = *slice;
             let (Ok(a), Ok(b), Ok(c)) =
                 (usize::try_from(a), usize::try_from(b), usize::try_from(c))
@@ -221,24 +230,34 @@ impl SurfaceIndex {
             };
             // STL and a few preview loaders duplicate every facet corner. The
             // index still keeps those corners separate for exact nearest-hit
-            // behaviour, but component discovery must weld equal positions or
-            // every triangle becomes a false one-triangle component.
-            for (vertex, point) in [a, b, c].into_iter().zip(vertices) {
-                let key = [
-                    canonical_bits(point.x),
-                    canonical_bits(point.y),
-                    canonical_bits(point.z),
-                ];
-                if let Some(&other) = welded_positions.get(&key) {
-                    union(&mut parent, &mut component_size, other, vertex);
-                } else {
-                    welded_positions.insert(key, vertex);
-                }
+            // behaviour, but component discovery and edge adjacency must weld
+            // equal positions or every triangle becomes a false one-triangle
+            // component whose every edge is open border.
+            let corner_ids = [a, b, c];
+            let welded: [usize; 3] = std::array::from_fn(|corner| {
+                weld(
+                    &mut welded_positions,
+                    &mut parent,
+                    &mut component_size,
+                    corner_ids[corner],
+                    vertices[corner],
+                )
+            });
+            let normal = (vertices[1] - vertices[0]).cross(vertices[2] - vertices[0]);
+            let length = normal.length();
+            if !length.is_finite() || length < MIN_DOUBLE_AREA {
+                topology.add_connector(welded);
+                continue;
+            }
+            for corner in vertices {
+                min = min.min(corner);
+                max = max.max(corner);
             }
             union(&mut parent, &mut component_size, a, b);
             union(&mut parent, &mut component_size, b, c);
             triangle_anchors.push(a);
             edge_total += longest_edge(&vertices);
+            topology.add_kept(welded, &vertices, normal / length);
             corners.push(vertices);
             normals.push(normal / length);
             sources.push(u32::try_from(triangle).unwrap_or(u32::MAX));
@@ -289,6 +308,7 @@ impl SurfaceIndex {
             gaps: Vec::new(),
             components,
             triangle_components,
+            topology: topology.finish(),
         };
         Some(index.in_cell_order().with_buckets().with_gaps())
     }
@@ -502,11 +522,20 @@ impl SurfaceIndex {
             self.visit_ring(&query, ring, &mut best);
         }
 
-        best.map(|found| SurfaceHit {
-            point: found.point,
-            normal: self.normals.get(found.slot).copied().unwrap_or(DVec3::Z),
-            triangle: found.source,
-        })
+        best.map(|found| self.hit(found.slot, found.source, found.point, found.feature))
+    }
+
+    /// The hit a query reports for the closest point `point` on `slot`.
+    fn hit(&self, slot: usize, source: u32, point: DVec3, feature: Feature) -> SurfaceHit {
+        let normal = self.normals.get(slot).copied().unwrap_or(DVec3::Z);
+        let (pseudo_normal, on_border) = self.topology.at(slot, feature, normal);
+        SurfaceHit {
+            point,
+            normal,
+            triangle: source,
+            pseudo_normal,
+            on_border,
+        }
     }
 
     /// Squared distance from the query point to the nearest cell of shell
@@ -617,8 +646,8 @@ impl SurfaceIndex {
             let Some(corners) = self.corners.get(slot) else {
                 continue;
             };
-            let candidate =
-                closest_point_on_triangle(query.point, corners[0], corners[1], corners[2]);
+            let (candidate, feature) =
+                closest_feature_on_triangle(query.point, corners[0], corners[1], corners[2]);
             let distance = (candidate - query.point).length_squared();
             if distance > query.limit {
                 continue;
@@ -642,6 +671,7 @@ impl SurfaceIndex {
                     source,
                     point: candidate,
                     slot,
+                    feature,
                 });
             }
         }
@@ -693,6 +723,9 @@ impl SurfaceIndex {
         self.normals = gather(&self.normals, &order);
         self.sources = gather(&self.sources, &order);
         self.triangle_components = gather(&self.triangle_components, &order);
+        self.topology.corners = gather(&self.topology.corners, &order);
+        self.topology.edge_normals = gather(&self.topology.edge_normals, &order);
+        self.topology.edge_border = gather(&self.topology.edge_border, &order);
         self
     }
 
@@ -953,6 +986,27 @@ fn find(parent: &mut [usize], node: usize) -> usize {
         current = next;
     }
     root
+}
+
+/// The representative vertex for `point`: the first vertex seen at exactly
+/// that position, with `vertex` joined to its component.
+fn weld(
+    positions: &mut BTreeMap<[u64; 3], usize>,
+    parent: &mut [usize],
+    component_size: &mut [usize],
+    vertex: usize,
+    point: DVec3,
+) -> usize {
+    let key = [
+        canonical_bits(point.x),
+        canonical_bits(point.y),
+        canonical_bits(point.z),
+    ];
+    let representative = *positions.entry(key).or_insert(vertex);
+    if representative != vertex {
+        union(parent, component_size, representative, vertex);
+    }
+    representative
 }
 
 /// Join two indexed vertices into one surface component.

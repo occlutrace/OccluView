@@ -730,6 +730,7 @@ align-reject-unpaired = Beide Seiten jedes Pfeilpaares vervollständigen
 align-reject-degenerate-plain = Matching-Punkte über die Fläche verteilen
 align-reject-unit = Scans verwenden unterschiedliche Einheiten
 align-reject-apart = Pfeilpaare prüfen und Scans näher platzieren
+align-reject-inconsistent = Die Pfeile widersprechen sich – prüfen, ob jeder Pfeil denselben Punkt auf beiden Scans verbindet
 align-reject-runaway = Scans näher platzieren und Best-Fit-Matching erneut ausführen
 align-reject-no-improvement = Best-Fit konnte keine Verbesserung bestätigen — Scans näher platzieren und erneut versuchen
 align-reject-ambiguous = Best-Fit fand mehrere gleich plausible Flächen — passende Bereiche markieren oder Scans näher platzieren
