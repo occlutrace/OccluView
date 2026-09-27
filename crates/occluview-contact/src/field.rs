@@ -32,7 +32,7 @@
 use std::time::Instant;
 
 use glam::DVec3;
-use occluview_align::{CancelFlag, Soup, SurfaceIndex};
+use occluview_surface_query::{CancelFlag, Soup, SurfaceIndex};
 use rayon::prelude::*;
 
 use crate::stats::{self, ContactStats};

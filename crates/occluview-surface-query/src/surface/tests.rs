@@ -224,6 +224,7 @@ impl Scatter {
 
 /// The answer a full scan over every triangle gives, with the query's own
 /// tie-break. This is the definition the index must reproduce.
+#[allow(clippy::float_cmp)]
 fn brute_nearest(index: &SurfaceIndex, point: DVec3, radius: f64) -> Option<SurfaceHit> {
     if !point.is_finite() || !radius.is_finite() || radius <= 0.0 {
         return None;
@@ -459,10 +460,10 @@ fn marked_triangles_are_left_out_of_the_index_entirely() {
     .expect("a plane is a surface");
 
     // Mark out everything with x below 4, which is half the sheet.
-    let mut mask = vec![crate::INCLUDED; vertex_count];
+    let mut mask = vec![0; vertex_count];
     for vertex in 0..vertex_count {
         if positions[vertex * 3] < 4.0 {
-            mask[vertex] = crate::EXCLUDED;
+            mask[vertex] = 1;
         }
     }
     let masked = SurfaceIndex::build(Soup {
@@ -504,7 +505,7 @@ fn marked_triangles_are_left_out_of_the_index_entirely() {
 #[test]
 fn marking_the_whole_mesh_leaves_no_index() {
     let (positions, indices) = plane(4, 1.0);
-    let mask = vec![crate::EXCLUDED; positions.len() / 3];
+    let mask = vec![1; positions.len() / 3];
     assert!(SurfaceIndex::build(Soup {
         positions: &positions,
         indices: &indices,
