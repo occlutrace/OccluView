@@ -31,8 +31,8 @@ fn the_changelog_only_names_versions_that_can_be_released() {
          of it would publish empty notes"
     );
 
-    // Every other section must be a version that was actually tagged. The
-    // newest one is the release being prepared; the rest are history.
+    // Unreleased is the pending section; the version sections below it are
+    // release history, newest first.
     let sections: Vec<&str> = changelog
         .lines()
         .filter(|line| line.starts_with("## "))
@@ -40,15 +40,21 @@ fn the_changelog_only_names_versions_that_can_be_released() {
     assert!(
         sections
             .first()
-            .is_some_and(|first| first.starts_with(&heading)),
-        "the newest section should be the version about to ship, got {:?}",
+            .is_some_and(|first| *first == "## Unreleased"),
+        "the pending section should lead the changelog, got {:?}",
         sections.first()
     );
-    // The rest are history, and history goes one way. A repeat, or an older
-    // section above a newer one, means a local bump grew its own section
-    // instead of folding into the release being prepared.
+    assert!(
+        sections
+            .get(1)
+            .is_some_and(|section| section.starts_with(&heading)),
+        "the workspace version {version} needs a changelog section after Unreleased"
+    );
+    // Version history goes one way. A repeat or an older section above a
+    // newer one means a local bump grew its own section instead of folding
+    // into the release being prepared.
     let mut seen: Vec<[u64; 3]> = Vec::new();
-    for line in &sections {
+    for line in sections.iter().skip(1) {
         let Some(number) = line.split_whitespace().nth(1) else {
             panic!("changelog section without a version: {line:?}");
         };
