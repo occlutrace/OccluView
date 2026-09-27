@@ -1,9 +1,8 @@
 use super::Vertex;
 use glam::Vec3;
-use occlu_geometry_math::{
-    accumulate_smooth_normals, DUPLICATE_NORMAL_DOT, MAX_DUPLICATE_CLUSTERS,
-    MAX_PAIRWISE_DUPLICATE_GROUP,
-};
+use occlu_geometry_math::{accumulate_smooth_normals, average_duplicate_normal_group};
+#[cfg(test)]
+use occlu_geometry_math::{DUPLICATE_NORMAL_DOT, MAX_PAIRWISE_DUPLICATE_GROUP};
 use rayon::prelude::*;
 
 /// The welding tolerance and its key function live in `occlu-geometry-math`,
@@ -225,89 +224,16 @@ fn smooth_duplicate_position_normals(vertices: &mut [Vertex]) {
     }
 }
 
-/// Average a large coincident group by clustering it, not by one global mean.
-///
-/// A single mean is right while the group points one way and wrong the moment
-/// it does not: K coincident vertices at a hard crease form two clusters ninety
-/// degrees apart; the mean lands on the bisector, both clusters agree with it
-/// to within sixty degrees, and the crease is welded flat. Measured on a
-/// 400-member pile split in two: 45 degrees of error on all 400. Members join
-/// the first cluster they agree with instead, so a crease keeps its two. Cost
-/// stays linear in the group for any bounded cluster count.
-fn average_by_cluster(members: &[([i32; 3], u32)], source_normals: &[Vec3], out: &mut [Vec3]) {
-    let mut sums: Vec<Vec3> = Vec::new();
-    let mut assigned: Vec<Option<usize>> = vec![None; members.len()];
-
-    for (slot, &(_, index)) in members.iter().enumerate() {
-        let current = source_normals[index as usize];
-        if current.length_squared() <= f32::EPSILON {
-            continue;
-        }
-        let existing = sums
-            .iter()
-            .position(|sum| sum.normalize_or_zero().dot(current) >= DUPLICATE_NORMAL_DOT);
-        if let Some(cluster) = existing {
-            sums[cluster] += current;
-            assigned[slot] = Some(cluster);
-        } else {
-            if sums.len() == MAX_DUPLICATE_CLUSTERS {
-                // Too many directions to be a surface. Leave them as they
-                // arrived; an invented average here smears the crease.
-                return;
-            }
-            sums.push(current);
-            assigned[slot] = Some(sums.len() - 1);
-        }
-    }
-
-    for (slot, cluster) in assigned.iter().enumerate() {
-        let Some(cluster) = *cluster else { continue };
-        let mean = sums[cluster].normalize_or_zero();
-        if mean.length_squared() > f32::EPSILON {
-            out[slot] = mean;
-        }
-    }
-}
-
 /// Average one run of coincident vertices into `out`, one slot per member.
 ///
 /// `Vec3::ZERO` is left where a member keeps its own normal; every value
 /// written is normalized, so zero is unambiguous.
 fn average_duplicate_run(members: &[([i32; 3], u32)], source_normals: &[Vec3], out: &mut [Vec3]) {
-    // The exact form below compares every member against every other: fine at
-    // real valences, quadratic at absurd ones. Piles of coincident vertices
-    // are not hypothetical -- a fan collapsed by bad decimation, a scanner
-    // artefact, or a file written to be one. k=2000 costs 19 ms, k=8000 costs
-    // 214 ms, k=20000 costs 1.3 s, on the loading thread with no cancellation,
-    // or inside `dllhost` holding one of twelve thumbnail lanes long after
-    // Explorer has been told the request timed out.
-    //
-    // Past the threshold, cluster the group in one greedy pass instead.
-    if members.len() > MAX_PAIRWISE_DUPLICATE_GROUP {
-        average_by_cluster(members, source_normals, out);
-        return;
-    }
-
-    for (slot, &(_, index)) in members.iter().enumerate() {
-        let current = source_normals[index as usize];
-        if current.length_squared() <= f32::EPSILON {
-            continue;
-        }
-
-        let mut normal = Vec3::ZERO;
-        for &(_, neighbor) in members {
-            let candidate = source_normals[neighbor as usize];
-            if candidate.length_squared() > f32::EPSILON
-                && candidate.dot(current) >= DUPLICATE_NORMAL_DOT
-            {
-                normal += candidate;
-            }
-        }
-
-        if normal.length_squared() > f32::EPSILON {
-            out[slot] = normal.normalize();
-        }
-    }
+    average_duplicate_normal_group(
+        members.len(),
+        |slot| source_normals[members[slot].1 as usize],
+        out,
+    );
 }
 
 #[cfg(test)]

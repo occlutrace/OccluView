@@ -76,12 +76,13 @@ pub fn triangle_quality_3d(a: DVec3, b: DVec3, c: DVec3) -> f64 {
 /// degenerate).
 pub const SLIVER_QUALITY_FLOOR: f64 = 0.25;
 pub use knot::{clamp_dab_displacement, KnotSurface, KNOT_TANGENT_SHARE};
+pub use occlu_geometry_math::{
+    ball_weight, cylinder_weight, knife_weight, stamp_weight, TipStamp, CYLINDER_PLATEAU,
+    KNIFE_CROSS_RADIUS_SHARE,
+};
 pub use remesh_policy::{RemeshPolicy, TopologyRevision};
 pub use respace::{tangential_respace_target, RespaceSurface, RESPACE_GAIN};
 pub use sculpt_session::*;
 pub use shape_preserve::{preserve_alpha, DEFAULT_PRESERVE_RINGS};
 pub use surface_topology::{SurfacePoint, SurfaceTopology};
-pub use tip_stamp::{
-    ball_weight, cylinder_weight, knife_weight, segment_stamp_weight, stamp_weight, TipStamp,
-    CYLINDER_PLATEAU,
-};
+pub use tip_stamp::segment_stamp_weight;

@@ -3,6 +3,7 @@
 //! checked against that local surface before commit. Release records history
 //! only; it cannot start another geometry operation.
 
+use super::remesh::LocalSurface;
 use super::*;
 use crate::RemeshPolicy;
 
@@ -67,7 +68,7 @@ impl SculptSession {
         }
         let touched = std::mem::take(&mut self.topo_touched);
         let scope = self.collect_normal_scope(&touched);
-        self.refresh_scope_normals(&scope);
+        self.refresh_brush_scope_normals(&scope);
         self.normal_scope = scope;
         self.topo_touched = touched;
     }
@@ -101,6 +102,7 @@ impl SculptSession {
         };
         let passes = (LIVE_RESPACE_PASSES * self.step_dabs()).min(MAX_LIVE_RESPACE_PASSES);
         let mut moved_groups = Vec::with_capacity(groups.len());
+        let mut star = LocalSurface::new();
         for _pass in 0..passes {
             let mut steps: Vec<(u32, DVec3)> = Vec::with_capacity(groups.len());
             {
@@ -144,9 +146,9 @@ impl SculptSession {
                 let target = self.clamp_step_at(group, here, target);
                 // Land on the surface the vertex slides across: its own star
                 // as it stands before the move.
-                let Some(star) = self.local_surface(&[group]) else {
+                if !self.fill_local_surface(&[group], &mut star) {
                     continue;
-                };
+                }
                 let Some((landing, off_surface)) = star.nearest(target) else {
                     continue;
                 };
@@ -205,7 +207,7 @@ impl SculptSession {
                 break;
             }
             let touched = self.collect_normal_scope(&moved_groups);
-            self.refresh_scope_normals(&touched);
+            self.refresh_brush_scope_normals(&touched);
             self.normal_scope = touched;
         }
     }
