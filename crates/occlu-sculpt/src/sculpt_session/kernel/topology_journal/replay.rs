@@ -229,7 +229,7 @@ impl SculptSession {
         let base_v3 = journal.base_verts * 3;
         self.tris.truncate(journal.base_tris * 3);
         self.verts.truncate(base_v3);
-        self.normals.truncate(base_v3);
+        self.brush_normals.truncate(base_v3);
         self.stroke_mark.truncate(journal.base_verts);
         self.material_mark.truncate(journal.base_verts);
         self.dirty_marks.truncate(journal.base_verts);
@@ -303,7 +303,7 @@ impl SculptSession {
                         return false;
                     }
                     self.verts.extend_from_slice(&added.pos);
-                    self.normals.extend_from_slice(&added.nrm);
+                    self.brush_normals.extend_from_slice(&added.nrm);
                     self.stroke_mark.push(0);
                     self.material_mark.push(0);
                     self.dirty_marks.push(0);

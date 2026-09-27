@@ -35,6 +35,31 @@ fn grid_vertex(half_cells: usize, x: usize, y: usize) -> u32 {
     ((y + half_cells) * (half_cells * 2 + 1) + x + half_cells) as u32
 }
 
+fn cube_crease_session() -> SculptSession {
+    let faces = [
+        [
+            [-1.0, -1.0, 1.0],
+            [1.0, -1.0, 1.0],
+            [1.0, 1.0, 1.0],
+            [-1.0, 1.0, 1.0],
+        ],
+        [
+            [-1.0, 1.0, -1.0],
+            [-1.0, 1.0, 1.0],
+            [1.0, 1.0, 1.0],
+            [1.0, 1.0, -1.0],
+        ],
+    ];
+    let mut verts = Vec::with_capacity(24);
+    let mut tris = Vec::with_capacity(12);
+    for (face_index, face) in faces.into_iter().enumerate() {
+        verts.extend(face.into_iter().flatten());
+        let base = (face_index * 4) as u32;
+        tris.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+    SculptSession::new(verts, tris)
+}
+
 fn centered_dab(radius: f64, mode: BrushMode, strength: f64) -> Dab {
     Dab {
         center: DVec3::ZERO,
@@ -477,6 +502,49 @@ fn cylinder_tip_makes_a_flat_deposit_plateau() {
     assert!(plateau > rim + 0.02, "plateau={plateau}, rim={rim}");
 }
 
+#[test]
+fn sculpt_dab_preserves_split_shading_normals_on_a_cube_crease() {
+    use glam::Vec3;
+
+    let mut session = cube_crease_session();
+    let top_corner = 2;
+    let side_corner = 6;
+    assert_eq!(
+        session.topology.group_of(top_corner),
+        session.topology.group_of(side_corner),
+        "the two face corners share one welded sculpt position"
+    );
+    session.start_stroke();
+    let changed = session.dab(&Dab {
+        center: DVec3::new(0.0, 0.0, 1.0),
+        radius: 2.5,
+        strength: 0.8,
+        view: DVec3::new(0.0, 0.0, -1.0),
+        mode: BrushMode::Deposit,
+    });
+    assert!(!changed.is_empty(), "the cube crease accepts the dab");
+
+    let normals = session.normals();
+    let top = Vec3::from_slice(&normals[top_corner as usize * 3..top_corner as usize * 3 + 3]);
+    let side = Vec3::from_slice(&normals[side_corner as usize * 3..side_corner as usize * 3 + 3]);
+    assert!(top.dot(Vec3::Z) > 0.7, "top normal was {top:?}");
+    assert!(side.dot(Vec3::Y) > 0.7, "side normal was {side:?}");
+    assert!(
+        top.dot(side) < 0.6,
+        "crease normals were {top:?} and {side:?}"
+    );
+    let record = session.end_stroke();
+    let top_slot = record
+        .normal_indices
+        .iter()
+        .position(|&vertex| vertex == top_corner)
+        .expect("the moved top corner has a display-normal record");
+    assert_eq!(
+        &record.normal_values[top_slot * 3..top_slot * 3 + 3],
+        &top.to_array()
+    );
+}
+
 fn run_long_remesh_stroke(session: &mut SculptSession) {
     session.start_stroke();
     let dab = centered_dab(12.0, BrushMode::Smooth, 0.5);
@@ -562,16 +630,18 @@ fn identical_remeshing_strokes_are_bit_deterministic() {
     run_long_remesh_stroke(&mut second);
     assert_eq!(first.verts, second.verts);
     assert_eq!(first.faces(), second.faces());
+    assert_eq!(first.normals(), second.normals());
     assert_eq!(first.topology_revision(), second.topology_revision());
 }
 
 #[cfg(feature = "parallel")]
 #[test]
 fn large_layer_commit_is_bit_identical_across_worker_counts() {
-    fn commit(pool: &rayon::ThreadPool) -> Vec<f32> {
+    fn commit(pool: &rayon::ThreadPool) -> (Vec<f32>, Vec<f32>) {
         let mut session = grid_session(46, 0.14, 0.8);
         session.start_stroke();
         select_all(&mut session);
+        let before_normals = session.normals().to_vec();
         let proposals: Vec<(u32, DVec3)> = (0..session.topology.group_count() as u32)
             .map(|group| {
                 let here = session.group_v(group);
@@ -579,8 +649,15 @@ fn large_layer_commit_is_bit_identical_across_worker_counts() {
                 (group, here + (normal * 0.001))
             })
             .collect();
-        pool.install(|| session.commit_even_layer(&proposals, BrushMode::Smooth));
-        session.verts
+        let groups: Vec<u32> = (0..session.topology.group_count() as u32).collect();
+        pool.install(|| {
+            session.commit_even_layer(&proposals, BrushMode::Smooth);
+            let scope = session.collect_normal_scope(&groups);
+            session.refresh_scope_normals(&scope);
+        });
+        let normals = session.normals().to_vec();
+        assert_ne!(normals, before_normals);
+        (session.verts, normals)
     }
 
     let one_worker = rayon::ThreadPoolBuilder::new()
@@ -593,7 +670,7 @@ fn large_layer_commit_is_bit_identical_across_worker_counts() {
         .expect("four-worker pool builds");
     let one = commit(&one_worker);
     let four = commit(&four_workers);
-    assert_ne!(one, grid_session(46, 0.14, 0.8).verts);
+    assert_ne!(one.0, grid_session(46, 0.14, 0.8).verts);
     assert_eq!(one, four);
 }
 

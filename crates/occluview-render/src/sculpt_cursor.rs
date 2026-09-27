@@ -7,7 +7,22 @@
 //! carries finite GPU inputs and the canonical cone/cylinder geometry.
 
 use bytemuck::{Pod, Zeroable};
+use glam::DVec3;
+use occlu_geometry_math::{
+    stamp_weight, CYLINDER_PLATEAU, KNIFE_AXIS_MIN_LENGTH, KNIFE_CROSS_RADIUS_SHARE,
+};
 use std::f32::consts::TAU;
+
+pub use occlu_geometry_math::TipStamp as SculptTipStamp;
+pub use occlu_geometry_math::{
+    CYLINDER_PLATEAU as SCULPT_CYLINDER_PLATEAU,
+    KNIFE_CROSS_RADIUS_SHARE as SCULPT_KNIFE_CROSS_SHARE,
+};
+
+pub(crate) const SCULPT_FEEDBACK_SHADER_SRC: &str = concat!(
+    include_str!("../shaders/sculpt_field.wgsl"),
+    include_str!("../shaders/sculpt_feedback.wgsl")
+);
 
 /// The three tool-volume shapes used by the native Sculpt editor.
 #[repr(u32)]
@@ -44,8 +59,12 @@ pub struct SculptBrushUniform {
     pub color: [f32; 4],
     /// `1` while the cursor is valid; `0` is a no-op.
     pub visible: u32,
-    /// Explicit uniform tail padding.
-    pub padding: [u32; 3],
+    /// Transverse knife reach from the shared sculpt field contract.
+    pub knife_cross_share: f32,
+    /// Cylinder plateau width from the shared sculpt field contract.
+    pub cylinder_plateau: f32,
+    /// Minimum stroke-axis length from the shared sculpt field contract.
+    pub knife_axis_min_length: f32,
 }
 
 impl SculptBrushUniform {
@@ -61,32 +80,15 @@ impl SculptBrushUniform {
             tip: SculptTipStamp::Ball as u32,
             color: [0.0; 4],
             visible: 0,
-            padding: [0; 3],
+            knife_cross_share: KNIFE_CROSS_RADIUS_SHARE,
+            cylinder_plateau: CYLINDER_PLATEAU,
+            knife_axis_min_length: KNIFE_AXIS_MIN_LENGTH,
         }
     }
 }
 
-/// Tip stamps of the sculpt kernel, by wire discriminant. Kept here so the
-/// cursor's field law and the kernel's stamp name the same number.
-#[repr(u32)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SculptTipStamp {
-    /// Spherical falloff.
-    Ball = 0,
-    /// Narrow, travel-aligned edge.
-    Knife = 1,
-    /// Flat plateau with a blended rim.
-    Cylinder = 2,
-}
-
-/// Cylinder plateau as a share of the brush radius, matching the kernel stamp.
-pub const SCULPT_CYLINDER_PLATEAU: f32 = 0.8;
-/// Transverse knife reach relative to its along-stroke reach.
-pub const SCULPT_KNIFE_CROSS_SHARE: f32 = 0.55;
-
-/// The footprint share at a surface offset, in `0..=1`. This is the CPU mirror
-/// of the field `sculpt_feedback.wgsl` paints into the selected mesh, so a test
-/// can pin the shape of every tip without a GPU. Both must be changed together.
+/// Evaluate the shared brush field for cursor geometry and field assertions.
+#[allow(clippy::cast_possible_truncation)]
 #[must_use]
 pub fn sculpt_footprint_field(
     tip: SculptTipStamp,
@@ -97,46 +99,15 @@ pub fn sculpt_footprint_field(
     if !radius.is_finite() || radius <= 0.0 {
         return 0.0;
     }
-    let radial = (offset[0] * offset[0] + offset[1] * offset[1] + offset[2] * offset[2]).sqrt();
-    let rho = radial / radius;
-    match tip {
-        SculptTipStamp::Ball => soft_share(rho),
-        SculptTipStamp::Knife => {
-            let axis_length = (axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]).sqrt();
-            if !axis_length.is_finite() || axis_length <= 0.5 {
-                return soft_share(rho / SCULPT_KNIFE_CROSS_SHARE.sqrt());
-            }
-            let unit = [
-                axis[0] / axis_length,
-                axis[1] / axis_length,
-                axis[2] / axis_length,
-            ];
-            let along = offset[0] * unit[0] + offset[1] * unit[1] + offset[2] * unit[2];
-            let across = [
-                offset[0] - unit[0] * along,
-                offset[1] - unit[1] * along,
-                offset[2] - unit[2] * along,
-            ];
-            let across_length =
-                (across[0] * across[0] + across[1] * across[1] + across[2] * across[2]).sqrt();
-            let edge = (along * along + (across_length / SCULPT_KNIFE_CROSS_SHARE).powi(2)).sqrt();
-            soft_share(edge / radius)
-        }
-        SculptTipStamp::Cylinder => 1.0 - smoothstep(SCULPT_CYLINDER_PLATEAU, 1.0, rho),
-    }
-}
-
-fn soft_share(rho: f32) -> f32 {
-    let t = (1.0 - rho).clamp(0.0, 1.0);
-    t * t
-}
-
-fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
-    if edge1 <= edge0 {
-        return f32::from(x >= edge1);
-    }
-    let s = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
-    s * s * (3.0 - 2.0 * s)
+    let offset = DVec3::new(
+        f64::from(offset[0]),
+        f64::from(offset[1]),
+        f64::from(offset[2]),
+    );
+    let axis = DVec3::new(f64::from(axis[0]), f64::from(axis[1]), f64::from(axis[2]));
+    let axis =
+        (axis.is_finite() && axis.length() > f64::from(KNIFE_AXIS_MIN_LENGTH)).then_some(axis);
+    stamp_weight(tip, offset, offset.length(), axis, f64::from(radius)) as f32
 }
 
 /// Per-volume transform and material. The transform maps the unit shape

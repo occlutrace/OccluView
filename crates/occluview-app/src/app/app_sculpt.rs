@@ -687,7 +687,7 @@ impl OccluViewApp {
                 tip: tip.kernel_stamp(),
                 color: color_rgba,
                 visible: 1,
-                padding: [0; 3],
+                ..SculptBrushUniform::hidden()
             },
             tool: SculptToolUniform {
                 model: tool_model.to_cols_array(),
