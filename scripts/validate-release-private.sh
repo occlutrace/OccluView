@@ -149,8 +149,12 @@ test_names = []
 log = pathlib.Path(os.environ["OCCLUVIEW_RECEIPT_LOG"]).read_text(
     encoding="utf-8", errors="replace"
 )
-for match in re.finditer(r"^test ([a-z0-9_]+) \.\.\. ok$", log, flags=re.MULTILINE):
+for match in re.finditer(r"^test ([a-z0-9_:]+) \.\.\.", log, flags=re.MULTILINE):
     test_names.append(match.group(1))
+if len(test_names) != 9:
+    raise SystemExit(
+        f"validate-release-private: expected nine completed acceptance tests in the log, found {len(test_names)}"
+    )
 for name, value in (
     ("max_residual_mm", r"MAX_RESIDUAL_MM: f64 = ([0-9.]+)"),
     ("min_measured_share", r"MIN_MEASURED_SHARE: f64 = ([0-9.]+)"),
