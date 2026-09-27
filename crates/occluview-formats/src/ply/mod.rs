@@ -189,9 +189,10 @@ fn declared_memory_bytes(parsed: &header::ParsedHeader<'_>) -> u64 {
     parsed.elements.iter().fold(0_u64, |total, element| {
         let count = u64::try_from(element.count).unwrap_or(u64::MAX);
         let bytes_per_item = match element.name.as_str() {
-            "vertex" => std::mem::size_of::<occluview_core::Vertex>()
-                .saturating_add(std::mem::size_of::<Option<[f32; 2]>>()),
-            "face" => std::mem::size_of::<u32>().saturating_mul(3),
+            "vertex" => {
+                size_of::<occluview_core::Vertex>().saturating_add(size_of::<Option<[f32; 2]>>())
+            }
+            "face" => size_of::<u32>().saturating_mul(3),
             _ => 0,
         };
         total

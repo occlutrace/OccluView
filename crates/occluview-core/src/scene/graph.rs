@@ -74,7 +74,7 @@ impl Scene {
         let entries = self
             .meshes
             .capacity()
-            .saturating_mul(std::mem::size_of::<super::SceneMesh>());
+            .saturating_mul(size_of::<SceneMesh>());
         let entry_bytes = u64::try_from(entries).unwrap_or(u64::MAX);
         self.meshes.iter().fold(entry_bytes, |total, mesh| {
             total.saturating_add(mesh.estimated_memory_bytes())

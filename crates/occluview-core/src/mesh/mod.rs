@@ -361,14 +361,8 @@ impl Mesh {
     /// scene layers may count its shared storage more than once.
     #[must_use]
     pub fn estimated_memory_bytes(&self) -> u64 {
-        let vertex_bytes = self
-            .vertices
-            .capacity()
-            .saturating_mul(std::mem::size_of::<Vertex>());
-        let index_bytes = self
-            .indices
-            .capacity()
-            .saturating_mul(std::mem::size_of::<u32>());
+        let vertex_bytes = self.vertices.capacity().saturating_mul(size_of::<Vertex>());
+        let index_bytes = self.indices.capacity().saturating_mul(size_of::<u32>());
         let texture_bytes = self
             .texture
             .as_ref()
