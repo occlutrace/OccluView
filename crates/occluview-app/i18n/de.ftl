@@ -153,6 +153,7 @@ load-add-failed-start = Hinzufügen fehlgeschlagen: Loader startet nicht
 load-open-failed-stopped = Öffnen fehlgeschlagen: Loader angehalten
 load-loader-failed-summary = Szenen-Loader konnte nicht gestartet werden.
 load-file-too-large = Die Datei ist { $size } GB groß — mehr als die { $limit } GB, die das Programm am Stück liest
+load-memory-budget-exceeded = Die aktuelle Szene und diese Dateien benötigen etwa { $size } GB; das Importlimit beträgt { $limit } GB. Schließen Sie Ebenen oder laden Sie weniger Dateien.
 load-action-failed-open = Öffnen fehlgeschlagen: { $detail }
 load-action-failed-add = Hinzufügen fehlgeschlagen: { $detail }
 

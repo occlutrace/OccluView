@@ -20,7 +20,7 @@ pub use error::{HpsError, ReadError};
 pub use key::{
     EnvHpsKeyProvider, HpsKeyProvider, HpsSecretKey, NoHpsKeyProvider, RuntimeHpsKeyProvider,
 };
-pub use parser::{read, read_with_key_provider};
+pub use parser::{package_uncompressed_size, read, read_with_key_provider};
 pub use surface::{DecodedSurface, DecodedSurfaceParts, DecodedTexture};
 pub use texture::{MAX_TEXTURE_DIMENSION_PX, MAX_TEXTURE_RGBA_BYTES};
 

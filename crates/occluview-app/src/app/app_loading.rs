@@ -13,18 +13,21 @@
 //! they had not moved it.
 
 use super::{
-    combine_loaded_scene, egui, load_error_dialog, load_status_message, mpsc,
-    read_files_with_key_provider, single_instance, AppErrorAction, AppErrorDialog, Instant,
+    combine_loaded_scene, egui, load_error_dialog, load_failure_summary, load_status_message, mpsc,
+    read_files_with_memory_budget, single_instance, AppErrorAction, AppErrorDialog, Instant,
     LoadQueueCameraReset, OccluViewApp, PathBuf, PendingReplaceOpen, PendingSceneLoad, Result,
-    RuntimeHpsKeyProvider, Scene, SceneLoadMode, SceneLoadRequest, TryRecvError,
-    FOREGROUND_PULSE_DURATION,
+    Scene, SceneLoadMode, SceneLoadRequest, TryRecvError, FOREGROUND_PULSE_DURATION,
 };
 use crate::scene_loading::{queue_request_while_active, replace_result_requires_guard};
+use occluview_formats::hps::RuntimeHpsKeyProvider;
 
 /// Load one or more mesh files into a scene.
-pub(super) fn load_scene(paths: &[PathBuf]) -> Result<Scene> {
-    read_files_with_key_provider(paths, &RuntimeHpsKeyProvider)
-        .map_err(|(path, e)| anyhow::anyhow!("{}: {}", path.display(), e))
+pub(super) fn load_scene(paths: &[PathBuf], retained_scene_bytes: u64) -> Result<Scene> {
+    read_files_with_memory_budget(paths, &RuntimeHpsKeyProvider, retained_scene_bytes).map_err(
+        |(path, error)| {
+            anyhow::Error::new(error).context(format!("{}: format reader failed", path.display()))
+        },
+    )
 }
 
 /// The failure text with every path of the request removed.
@@ -193,13 +196,18 @@ impl OccluViewApp {
             dirty_at_request,
         } = request;
         let load_paths = paths.clone();
+        let retained_scene_bytes = self
+            .document
+            .scene
+            .as_deref()
+            .map_or(0, Scene::estimated_memory_bytes);
         let started_at = Instant::now();
         let (sender, receiver) = mpsc::channel();
         let repaint_ctx = self.ui.repaint_ctx.clone();
         let spawn_result = std::thread::Builder::new()
             .name("scene-load".to_string())
             .spawn(move || {
-                let result = load_scene(&load_paths);
+                let result = load_scene(&load_paths, retained_scene_bytes);
                 let _ = sender.send(result);
                 repaint_ctx.request_repaint();
             });
@@ -445,15 +453,7 @@ impl OccluViewApp {
                         self.reset_camera_to_home();
                     }
                 }
-                self.ui.status_message = Some(if append {
-                    self.ui
-                        .locale
-                        .tr_with("load-action-failed-add", &[("detail", &format!("{e:#}"))])
-                } else {
-                    self.ui
-                        .locale
-                        .tr_with("load-action-failed-open", &[("detail", &format!("{e:#}"))])
-                });
+                self.ui.status_message = Some(load_failure_summary(&self.ui.locale, action, &e));
                 self.ui.app_error = Some(load_error_dialog(
                     &self.ui.locale,
                     action,

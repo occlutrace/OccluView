@@ -154,6 +154,7 @@ load-add-failed-start = Falha ao adicionar: carregador não iniciou
 load-open-failed-stopped = Falha ao abrir: carregador parou
 load-loader-failed-summary = Não deu para iniciar o carregador de cena.
 load-file-too-large = O arquivo tem { $size } GB, acima dos { $limit } GB lidos de uma vez
+load-memory-budget-exceeded = A cena atual e estes arquivos precisam de cerca de { $size } GB; o limite de importação é { $limit } GB. Feche camadas ou carregue menos arquivos.
 load-action-failed-open = Falha ao abrir: { $detail }
 load-action-failed-add = Falha ao adicionar: { $detail }
 
