@@ -1,6 +1,7 @@
 #![allow(clippy::expect_used, clippy::panic)]
 
 use super::*;
+#[cfg(target_os = "linux")]
 use roxmltree::Document;
 
 #[test]

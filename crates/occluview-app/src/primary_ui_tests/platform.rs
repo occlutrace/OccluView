@@ -18,7 +18,7 @@ fn array_has_string(array: Node<'_, '_>, expected: &str) -> bool {
     })
 }
 
-fn plist_dictionary(plist: &Document<'_>) -> Node<'_, '_> {
+fn plist_dictionary<'a, 'input>(plist: &'a Document<'input>) -> Node<'a, 'input> {
     let root = plist.root_element();
     assert_eq!(root.tag_name().name(), "plist");
     root.children()
@@ -52,7 +52,7 @@ fn windows_process_and_start_menu_shortcut_share_the_app_identity() {
 
     assert_eq!(
         shortcut.and_then(|node| node.attribute("Value")),
-        Some(crate::APP_USER_MODEL_ID),
+        Some(APP_USER_MODEL_ID),
         "the installed shortcut must use the identity assigned to the process"
     );
 }

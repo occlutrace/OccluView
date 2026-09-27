@@ -37,11 +37,7 @@ fn expand_wix_value(document: &Document<'_>, value: &str) -> String {
     expanded
 }
 
-fn registry_value<'a, 'input>(
-    document: &'a Document<'input>,
-    key: &str,
-    name: Option<&str>,
-) -> Option<String> {
+fn registry_value(document: &Document<'_>, key: &str, name: Option<&str>) -> Option<String> {
     let key = registry_key(document, key)?;
     key.children()
         .filter(|node| node.is_element() && node.tag_name().name() == "RegistryValue")
@@ -689,6 +685,7 @@ fn diagnostic_events_keep_a_fixed_privacy_safe_shape() {
 
 #[cfg(windows)]
 #[test]
+#[allow(clippy::panic)]
 fn com_entry_returns_the_fallback_when_the_body_panics() {
     let value = crate::com::com_entry("test::body_returns", || 0_u32, || 7);
     assert_eq!(value, 7, "a successful COM body returns its result");
