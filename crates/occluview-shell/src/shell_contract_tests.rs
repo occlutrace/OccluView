@@ -112,7 +112,7 @@ dmg="$(find target/macos -maxdepth 1 -type f -name 'OccluView-*-aarch64.dmg' -pr
 pkg="$(find target/macos -maxdepth 1 -type f -name 'OccluView-*-aarch64.pkg' -print -quit)"
 test -n "$dmg" && test -n "$pkg"
 hdiutil verify "$dmg"
-pkgutil --payload-files "$pkg" | grep -F './OccluView.app/Contents/MacOS/occluview'
+pkgutil --payload-files "$pkg" | grep -F 'Applications/OccluView.app/Contents/MacOS/occluview'
 lipo -archs target/macos/OccluView.app/Contents/MacOS/occluview | grep -Fx arm64
 for notice in LICENSE NOTICE THIRD-PARTY-NOTICES.md THIRD-PARTY-NOTICES-NATIVE.md; do
   test -s "target/macos/OccluView.app/Contents/Resources/Legal/$notice"
@@ -166,7 +166,7 @@ const MACOS_PACKAGE_VERIFY: &str = r#"version="$(sed -n '/^\[workspace\.package\
 dmg="target/macos/OccluView-$version-aarch64.dmg"
 pkg="target/macos/OccluView-$version-aarch64.pkg"
 hdiutil verify "$dmg"
-pkgutil --payload-files "$pkg" | grep -F './OccluView.app/Contents/MacOS/occluview'
+pkgutil --payload-files "$pkg" | grep -F 'Applications/OccluView.app/Contents/MacOS/occluview'
 lipo -archs target/macos/OccluView.app/Contents/MacOS/occluview | grep -Fx arm64
 for notice in LICENSE NOTICE THIRD-PARTY-NOTICES.md THIRD-PARTY-NOTICES-NATIVE.md; do
   test -s "target/macos/OccluView.app/Contents/Resources/Legal/$notice"
