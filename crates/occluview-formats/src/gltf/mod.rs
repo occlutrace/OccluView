@@ -38,6 +38,11 @@ use occluview_core::Mesh;
 /// - [`FormatError::Truncated`] for a buffer view past end of BIN chunk.
 /// - [`FormatError::Core`] for index-out-of-range.
 pub fn read(bytes: &[u8]) -> Result<Mesh, FormatError> {
+    crate::memory::check_estimate(estimate_peak_bytes(bytes, 0)?)?;
+    read_admitted(bytes)
+}
+
+pub(crate) fn read_admitted(bytes: &[u8]) -> Result<Mesh, FormatError> {
     if !bytes.starts_with(b"glTF") {
         return Err(FormatError::BadSignature {
             format: "glTF",
@@ -52,4 +57,52 @@ pub fn read(bytes: &[u8]) -> Result<Mesh, FormatError> {
             reason: format!("invalid JSON: {e}"),
         })?;
     reader::read_doc(&doc, bin_chunk)
+}
+
+pub(crate) fn estimate_peak_bytes(bytes: &[u8], reserved_bytes: u64) -> Result<u64, FormatError> {
+    if !bytes.starts_with(b"glTF") {
+        return Ok(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
+    }
+    let (json_chunk, bin_chunk) = glb::split(bytes)?;
+    let source_bytes = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+    let json_bytes = u64::try_from(json_chunk.len()).unwrap_or(u64::MAX);
+    let bin_bytes = u64::try_from(bin_chunk.len()).unwrap_or(u64::MAX);
+    let base_estimate = source_bytes
+        .saturating_add(json_bytes.saturating_mul(4))
+        .saturating_add(bin_bytes.saturating_mul(12));
+    crate::memory::check_estimate(reserved_bytes.saturating_add(base_estimate))?;
+
+    let doc: json::GltfDoc =
+        serde_json::from_slice(&json_chunk).map_err(|error| FormatError::Malformed {
+            format: "glTF",
+            offset: 0,
+            reason: format!("invalid JSON: {error}"),
+        })?;
+    let largest_primitive =
+        doc.meshes
+            .iter()
+            .flat_map(|mesh| &mesh.primitives)
+            .fold(0_u64, |largest, primitive| {
+                let stream_bytes = [
+                    (primitive.attributes.position, 12_u64),
+                    (primitive.attributes.normal, 12_u64),
+                    (primitive.attributes.color_0, 4_u64),
+                    (primitive.attributes.texcoord_0, 8_u64),
+                    (primitive.indices, 4_u64),
+                ]
+                .into_iter()
+                .fold(0_u64, |total, (accessor, stride)| {
+                    accessor
+                        .and_then(|index| doc.accessors.get(index))
+                        .map_or(total, |accessor| {
+                            total.saturating_add(
+                                u64::try_from(accessor.count)
+                                    .unwrap_or(u64::MAX)
+                                    .saturating_mul(stride),
+                            )
+                        })
+                });
+                largest.max(stream_bytes)
+            });
+    Ok(base_estimate.saturating_add(largest_primitive))
 }
