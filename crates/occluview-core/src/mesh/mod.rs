@@ -50,7 +50,7 @@ pub use edit_adapter::{
     fill_holes_in_mesh, fill_selected_holes_in_mesh, invert_mesh_orientation,
     mesh_edit_buffers_from_mesh, mesh_from_edit_buffers_like, mesh_from_sculpt_session_like,
     repair_mesh_in_mesh, selected_connected_components_in_mesh, CoreMeshEditResult,
-    CoreMeshRepairResult,
+    CoreMeshRepairResult, SculptSessionBuffers,
 };
 pub use principal_axis::PrincipalFrame;
 pub use texture::MeshTexture;

@@ -4,9 +4,10 @@
 //! bounded command queue and the worker-side [`SculptSession`]; the UI only
 //! submits the newest brush samples and drains sparse GPU updates/completions.
 
-use crate::sculpt_tool::{DabFailure, SculptPickState, SculptRebuild, SculptSession};
+use crate::sculpt_kernel::{BrushMode, BrushStroke};
+use crate::sculpt_tool::{DabFailure, SculptPickState, SculptRebuild, SculptSession, SculptTip};
 use glam::Affine3A;
-use occluview_core::{BrushMode, BrushStroke, Mesh, SceneMeshId, Vertex};
+use occluview_core::{Mesh, SceneMeshId, Vertex};
 use occluview_render::PreparedSceneTopology;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -36,6 +37,8 @@ enum SculptCommand {
         stroke_id: u64,
         stroke: BrushStroke,
         mode: BrushMode,
+        tip: SculptTip,
+        axis: Option<[f32; 3]>,
     },
     Finish {
         stroke_id: u64,
@@ -84,7 +87,13 @@ impl SculptCommandQueue {
     /// dab when the worker is busy. The stroke id is essential: a global cap
     /// would evict all dabs between two Finish markers when the operator makes
     /// two quick strokes, leaving the second stroke with no geometry to apply.
-    fn push_apply(&self, stroke: BrushStroke, mode: BrushMode) -> bool {
+    fn push_apply(
+        &self,
+        stroke: BrushStroke,
+        mode: BrushMode,
+        tip: SculptTip,
+        axis: Option<[f32; 3]>,
+    ) -> bool {
         let Ok(mut state) = self.state.lock() else {
             self.report_failure();
             return false;
@@ -138,6 +147,8 @@ impl SculptCommandQueue {
         };
         state.commands.push_back(SculptCommand::Apply {
             stroke_id,
+            tip,
+            axis,
             stroke,
             mode,
         });
@@ -696,8 +707,22 @@ impl SculptWorker {
         worker
     }
 
+    /// Test-only shorthand for a ball dab with no stroke bearing.
+    #[cfg(test)]
     pub(crate) fn try_apply(&self, stroke: BrushStroke, mode: BrushMode) -> bool {
-        self.queue.push_apply(stroke, mode)
+        self.queue.push_apply(stroke, mode, SculptTip::Ball, None)
+    }
+
+    /// Submit one dab with the operator's tip and stroke bearing. The tip and
+    /// the axis travel with the command because both can change mid-stroke.
+    pub(crate) fn try_apply_tipped(
+        &self,
+        stroke: BrushStroke,
+        mode: BrushMode,
+        tip: SculptTip,
+        axis: Option<[f32; 3]>,
+    ) -> bool {
+        self.queue.push_apply(stroke, mode, tip, axis)
     }
 
     pub(crate) fn finish_stroke(&self) -> bool {

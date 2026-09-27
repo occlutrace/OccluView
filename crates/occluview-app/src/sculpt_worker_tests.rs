@@ -12,9 +12,11 @@
 
 use super::*;
 use crate::edit_mode::{BusyFinish, EditModeCommand, EditModeController};
+use crate::sculpt_kernel::BrushSession;
 use crate::sculpt_tool::mean_uniform_scale;
+use crate::sculpt_tool::SculptTip;
 use glam::Vec3;
-use occluview_core::{mesh_edit_buffers_from_mesh, BrushSession, Mesh, Scene, SceneMesh};
+use occluview_core::{mesh_edit_buffers_from_mesh, Mesh, Scene, SceneMesh};
 use std::time::Duration;
 
 fn session_for(mesh: &Mesh) -> SculptSession {
@@ -150,7 +152,7 @@ fn command_queue_has_a_global_bound_across_rapid_strokes() {
     };
     for _ in 0..32 {
         for _ in 0..APPLY_QUEUE_CAPACITY_PER_STROKE {
-            assert!(queue.push_apply(stroke, BrushMode::Add));
+            assert!(queue.push_apply(stroke, BrushMode::Add, SculptTip::Ball, None));
         }
         assert!(queue.push_finish());
     }
@@ -176,7 +178,7 @@ fn a_rejected_new_stroke_does_not_leave_a_phantom_open_stroke() {
     }
 
     assert!(
-        !queue.push_apply(stroke, BrushMode::Add),
+        !queue.push_apply(stroke, BrushMode::Add, SculptTip::Ball, None),
         "a full queue of finish markers must reject a new apply"
     );
     let state = queue.state.lock().expect("queue state");
@@ -345,14 +347,23 @@ fn consuming_each_completion_does_not_disable_the_next_stroke() {
         strength: 1.0,
         view_dir: [0.0, 0.0, -1.0],
     };
+    let mut committed = 0;
     for _ in 0..4 {
         for _ in 0..16 {
             let _ = worker.try_apply(stroke, BrushMode::Add);
         }
         assert!(worker.finish_stroke());
         let completion = wait_for_completion(&worker);
-        assert_eq!(completion.mesh.vertices().len(), 4);
+        assert!(
+            completion.mesh.vertices().len() >= 4,
+            "every stroke must commit a layer"
+        );
+        committed += 1;
     }
+    assert_eq!(
+        committed, 4,
+        "consuming one completion must not disable the next stroke"
+    );
 }
 
 #[test]
@@ -495,29 +506,43 @@ fn a_densified_layer_is_still_pickable_so_the_next_stroke_can_land() {
     );
 }
 
-/// A stroke that changes no topology streams sparsely and freezes the
-/// topology id.
+/// A live-remesh dab that subdivides the surface publishes a whole-layer
+/// rebuild, and the committed layer carries the new topology id.
 #[test]
-fn a_stroke_that_does_not_densify_still_freezes_the_topology_id() {
+fn a_topology_changing_dab_publishes_a_rebuild() {
     let worker = test_worker();
-    let stroke = BrushStroke {
-        center: [0.0, 0.0, 0.0],
-        radius_mm: 2.0,
-        strength: 1.0,
-        view_dir: [0.0, 0.0, -1.0],
-    };
-    assert!(worker.try_apply(stroke, BrushMode::Add));
+    assert!(worker.try_apply(a_dab(), BrushMode::Add));
+    let rebuild = wait_for_rebuild(&worker);
+    assert!(
+        rebuild.mesh.vertices().len() > 4,
+        "the live remesh must subdivide a facet coarser than the brush target"
+    );
     assert!(worker.finish_stroke());
     let completion = wait_for_completion(&worker);
-    assert!(
-        worker.try_take_rebuild().expect("rebuild lock").is_none(),
-        "Add must not densify"
-    );
-    assert_eq!(completion.mesh.vertices().len(), 4);
-    assert_eq!(
+    assert_ne!(
         completion.mesh.topology_id(),
         completion.before.topology_id(),
-        "a positions-only sculpt keeps the GPU buffer token frozen"
+        "a topology change mints a new GPU buffer token"
+    );
+}
+
+/// The worker keeps its own buffer token until the UI installs the rebuild,
+/// so a rebuild that is never consumed cannot be mistaken for a positions-only
+/// dab.
+#[test]
+fn a_pending_rebuild_leaves_the_worker_token_frozen() {
+    let worker = test_worker();
+    let frozen = worker.topology_id;
+    assert!(worker.try_apply(a_dab(), BrushMode::Add));
+    let rebuild = wait_for_rebuild(&worker);
+    assert_eq!(
+        worker.topology_id, frozen,
+        "only the UI installs a rebuilt layer, so the worker's token is frozen"
+    );
+    assert_ne!(
+        rebuild.mesh.topology_id(),
+        frozen,
+        "the rebuilt layer carries the new token"
     );
 }
 

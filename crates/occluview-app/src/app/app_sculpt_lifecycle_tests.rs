@@ -9,13 +9,11 @@ use super::app_mesh_export::PendingLayerExports;
 use super::*;
 use crate::app::app_test_support::{delivered_load, test_app};
 use crate::scene_loading::SceneLoadMode;
+use crate::sculpt_kernel::{BrushMode, BrushSession, BrushStroke};
 use crate::sculpt_tool::{SculptSession, SculptToolKind, StrokeState};
 use crate::sculpt_worker::SculptWorker;
 use glam::{Affine3A, Vec3};
-use occluview_core::{
-    mesh_edit_buffers_from_mesh, BrushMode, BrushSession, BrushStroke, Mesh, Scene, SceneMesh,
-    SceneMeshId, Vertex,
-};
+use occluview_core::{mesh_edit_buffers_from_mesh, Mesh, Scene, SceneMesh, SceneMeshId, Vertex};
 use occluview_render::PreparedSceneTopology;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
@@ -88,6 +86,7 @@ fn app_with_a_live_stroke(name: &str) -> (OccluViewApp, SceneMeshId) {
         layer_id,
         last_dab_local: None,
         hold_seconds: 0.0,
+        last_axis: None,
     });
     app.document.unsaved_sculpt_stroke = true;
     (app, layer_id)

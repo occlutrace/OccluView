@@ -1,10 +1,11 @@
 //! State and scheduling for the interactive sculpt brushes.
 
+use crate::sculpt_kernel::BrushSession;
+use crate::sculpt_kernel::{BrushMode, BrushStroke};
 use crate::sculpt_worker::SculptWorker;
 use glam::{Affine3A, Vec3};
 use occluview_core::{
-    mesh_edit_buffers_from_mesh, mesh_from_sculpt_session_like, BrushMode, BrushSession,
-    BrushStroke, Mesh, Scene, SceneMeshId, Vertex,
+    mesh_edit_buffers_from_mesh, mesh_from_sculpt_session_like, Mesh, Scene, SceneMeshId, Vertex,
 };
 use occluview_render::PreparedSceneTopology;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -81,6 +82,51 @@ impl SculptToolKind {
         match self {
             Self::Smooth if shift => base_mm * SHIFT_SMOOTH_RADIUS_BOOST,
             _ => base_mm,
+        }
+    }
+}
+
+/// The brush tip a dab is stamped with. The wire discriminants are the
+/// kernel's own, so the UI, the worker and the display agree on one number.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum SculptTip {
+    /// Spherical falloff: the all-round shaping stamp.
+    #[default]
+    Ball,
+    /// Narrow, travel-aligned blade with a blended transverse shoulder.
+    Knife,
+    /// Flat plateau with a soft rim, for levelling one face.
+    Cylinder,
+}
+
+impl SculptTip {
+    /// Every tip, in the order the Sculpt panel offers them.
+    pub(crate) const ALL: [Self; 3] = [Self::Ball, Self::Knife, Self::Cylinder];
+
+    /// The kernel's tip discriminant.
+    pub(crate) fn kernel_stamp(self) -> u32 {
+        match self {
+            Self::Ball => 0,
+            Self::Knife => 1,
+            Self::Cylinder => 2,
+        }
+    }
+
+    /// Localization key for the tip's name.
+    pub(crate) fn label_key(self) -> &'static str {
+        match self {
+            Self::Ball => "meshedit-sculpt-tip-ball",
+            Self::Knife => "meshedit-sculpt-tip-knife",
+            Self::Cylinder => "meshedit-sculpt-tip-cylinder",
+        }
+    }
+
+    /// Localization key for the tip's explanation.
+    pub(crate) fn hint_key(self) -> &'static str {
+        match self {
+            Self::Ball => "meshedit-sculpt-tip-ball-hint",
+            Self::Knife => "meshedit-sculpt-tip-knife-hint",
+            Self::Cylinder => "meshedit-sculpt-tip-cylinder-hint",
         }
     }
 }
@@ -489,26 +535,48 @@ impl SculptSession {
     /// entry (an empty dab does not).
     #[cfg(test)]
     pub(crate) fn apply_dab(&mut self, stroke: BrushStroke, mode: BrushMode) -> DabOutcome {
-        self.apply_dab_inner(stroke, mode, None).unwrap_or_default()
+        self.apply_dab_inner(stroke, mode, None, SculptTip::Ball, None)
+            .unwrap_or_default()
+    }
+
+    /// Test-only: one dab with an explicit tip and stroke bearing.
+    #[cfg(test)]
+    pub(crate) fn apply_dab_tipped(
+        &mut self,
+        stroke: BrushStroke,
+        mode: BrushMode,
+        tip: SculptTip,
+        axis: Option<[f32; 3]>,
+    ) -> DabOutcome {
+        self.apply_dab_inner(stroke, mode, None, tip, axis)
+            .unwrap_or_default()
     }
 
     /// Cancellable worker variant. A cancellation never returns a dab outcome:
     /// the owning worker is being torn down, so its potentially partial session
     /// and shadow must be discarded together.
+    // The cancellation flag rides beside the dab's own arguments.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn apply_dab_cancellable(
         &mut self,
         stroke: BrushStroke,
         mode: BrushMode,
         cancel: &AtomicBool,
+        tip: SculptTip,
+        axis: Option<[f32; 3]>,
     ) -> Option<DabOutcome> {
-        self.apply_dab_inner(stroke, mode, Some(cancel))
+        self.apply_dab_inner(stroke, mode, Some(cancel), tip, axis)
     }
 
+    // The cancellation flag rides beside the dab's own arguments.
+    #[allow(clippy::too_many_arguments)]
     fn apply_dab_inner(
         &mut self,
         stroke: BrushStroke,
         mode: BrushMode,
         cancel: Option<&AtomicBool>,
+        tip: SculptTip,
+        axis: Option<[f32; 3]>,
     ) -> Option<DabOutcome> {
         if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
             return None;
@@ -527,8 +595,8 @@ impl SculptSession {
         let outcome = match cancel {
             Some(cancel) => self
                 .session
-                .apply_stroke_cancellable(stroke, mode, cancel)?,
-            None => self.session.apply_stroke(stroke, mode),
+                .apply_stroke_cancellable(stroke, mode, tip, axis, cancel)?,
+            None => self.session.apply_stroke(stroke, mode, tip, axis),
         };
         if outcome.topology_changed() {
             if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
@@ -557,12 +625,10 @@ impl SculptSession {
         if outcome.touched_vertices.is_empty() {
             return Some(DabOutcome::default());
         }
-        let normal_vertices = outcome.normal_vertices;
         let dirty_triangles = outcome.dirty_triangles;
-        if self
-            .patch_shadow(&outcome.touched_vertices, &normal_vertices)
-            .is_err()
-        {
+        // The kernel reports every vertex whose position or normal changed in
+        // one list, so there is no separate normal-only scope to patch.
+        if self.patch_shadow(&outcome.touched_vertices, &[]).is_err() {
             return Some(DabOutcome {
                 touched: Vec::new(),
                 dirty_triangles: Vec::new(),
@@ -571,8 +637,7 @@ impl SculptSession {
             });
         }
         self.dirty_stroke = true;
-        let mut touched = outcome.touched_vertices;
-        touched.extend(normal_vertices);
+        let touched = outcome.touched_vertices;
         Some(DabOutcome {
             touched,
             dirty_triangles,
@@ -715,6 +780,10 @@ pub(crate) struct StrokeState {
     pub(crate) last_dab_local: Option<Vec3>,
     /// Seconds accumulated since the last dab while (near) stationary.
     pub(crate) hold_seconds: f32,
+    /// Last travel-derived stroke bearing in mesh-local space. The knife stamp
+    /// follows it, and it survives a stroke boundary so a press with no travel
+    /// yet still cuts along the operator's previous gesture.
+    pub(crate) last_axis: Option<Vec3>,
 }
 
 /// Mean scale of a scene transform's linear part — converts the on-model mm
