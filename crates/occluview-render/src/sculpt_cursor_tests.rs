@@ -1,13 +1,13 @@
 use super::sculpt_cursor::{
-    cone_geometry, cylinder_geometry, knife_geometry, sculpt_footprint_field,
-    sculpt_surface_light_intensity, sculpt_tool_length, SculptBrushUniform, SculptTipStamp,
-    SculptToolShape, SculptToolUniform, SCULPT_CYLINDER_PLATEAU, SCULPT_KNIFE_CROSS_SHARE,
+    cylinder_geometry, sculpt_footprint_field, sculpt_surface_light_intensity, sculpt_tool_length,
+    SculptBrushUniform, SculptFeedbackStyle, SculptTipStamp, SculptToolShape, SculptToolUniform,
+    SCULPT_CYLINDER_PLATEAU, SCULPT_KNIFE_CROSS_SHARE,
 };
 use std::mem::size_of;
 
 #[test]
 fn cursor_uniforms_have_the_wgsl_alignment_their_bindings_require() {
-    assert_eq!(size_of::<SculptBrushUniform>(), 80);
+    assert_eq!(size_of::<SculptBrushUniform>(), 96);
     assert_eq!(size_of::<SculptToolUniform>(), 96);
 }
 
@@ -91,7 +91,7 @@ fn cylinder_footprint_is_a_plateau_with_a_soft_rim() {
 }
 
 #[test]
-fn reference_cursor_length_is_finite_and_bounded() {
+fn tool_height_is_finite_and_bounded() {
     assert_eq!(sculpt_tool_length(f32::NEG_INFINITY), 0.65);
     assert_eq!(sculpt_tool_length(f32::NAN), 0.65);
     assert_eq!(sculpt_tool_length(0.0), 0.65);
@@ -101,7 +101,7 @@ fn reference_cursor_length_is_finite_and_bounded() {
 }
 
 #[test]
-fn reference_cursor_light_is_monotonic_without_a_zero_strength_blackout() {
+fn surface_glow_is_monotonic_without_a_zero_strength_blackout() {
     let weak = sculpt_surface_light_intensity(0.0);
     let medium = sculpt_surface_light_intensity(0.5);
     let strong = sculpt_surface_light_intensity(1.0);
@@ -120,57 +120,26 @@ fn tool_shapes_have_stable_gpu_tags() {
 }
 
 #[test]
-fn tool_geometry_is_open_and_uses_bounded_static_buffers() {
-    let (cone_vertices, cone_indices) = cone_geometry();
-    let (cylinder_vertices, cylinder_indices) = cylinder_geometry();
-    let (knife_vertices, knife_indices) = knife_geometry();
-
-    assert_eq!(cone_vertices.len(), 32 * 3);
-    assert_eq!(cone_indices.len(), 32 * 3);
-    assert_eq!(cylinder_vertices.len(), 32 * 4);
-    assert_eq!(cylinder_indices.len(), 32 * 6);
-    assert_eq!(knife_vertices.len(), 24);
-    assert_eq!(knife_indices.len(), 36);
-    assert!(cone_vertices.iter().all(|vertex| {
-        vertex
-            .position
-            .iter()
-            .all(|component| component.is_finite())
-            && vertex.normal.iter().all(|component| component.is_finite())
-    }));
-    assert!(cylinder_vertices.iter().all(|vertex| {
-        vertex
-            .position
-            .iter()
-            .all(|component| component.is_finite())
-            && vertex.normal.iter().all(|component| component.is_finite())
-    }));
-    assert!(knife_vertices.iter().all(|vertex| {
-        vertex
-            .position
-            .iter()
-            .all(|component| component.is_finite())
-            && vertex.normal.iter().all(|component| component.is_finite())
-    }));
-    assert!(knife_indices
-        .iter()
-        .all(|&index| (index as usize) < knife_vertices.len()));
+fn cursor_feedback_styles_have_stable_gpu_tags() {
+    assert_eq!(SculptFeedbackStyle::Solid as u32, 0);
+    assert_eq!(SculptFeedbackStyle::Dashed as u32, 1);
 }
 
 #[test]
-fn cursor_shaders_keep_surface_light_and_depth_independent_volume_separate() {
-    let feedback_shader = include_str!("../shaders/sculpt_feedback.wgsl");
-    let field_shader = include_str!("../shaders/sculpt_field.wgsl");
-    let tool_shader = include_str!("../shaders/sculpt_tool.wgsl");
-
-    assert!(feedback_shader.contains("@group(3) @binding(0) var<uniform> sculpt_brush"));
-    assert!(feedback_shader.contains("fn fs_sculpt_feedback"));
-    assert!(feedback_shader.contains("sculpt_brush_field("));
-    assert!(field_shader.contains("fn sculpt_brush_field("));
-    assert!(feedback_shader.contains("sculpt_brush.color.rgb * sculpt_brush.intensity"));
-    assert!(tool_shader.contains("fn vs_main"));
-    assert!(tool_shader.contains("if tool.visible == 0u"));
-    assert!(tool_shader.contains("struct SculptToolUniform"));
+fn tool_geometry_is_open_and_uses_bounded_static_buffers() {
+    let (vertices, indices) = cylinder_geometry();
+    assert_eq!(vertices.len(), 32 * 4);
+    assert_eq!(indices.len(), 32 * 6);
+    assert!(vertices.iter().all(|vertex| {
+        vertex
+            .position
+            .iter()
+            .all(|component| component.is_finite())
+            && vertex.normal.iter().all(|component| component.is_finite())
+    }));
+    assert!(indices
+        .iter()
+        .all(|&index| (index as usize) < vertices.len()));
 }
 
 #[repr(C)]

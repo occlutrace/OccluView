@@ -162,8 +162,7 @@ impl SculptSession {
         }
     }
 
-    /// Add/Remove moves along the surface normal under the brush with a
-    /// signed layer. Taubin filters
+    /// Add/Remove moves along the camera-depth axis with a signed layer. Taubin filters
     /// only that new displacement before the whole field is committed; a
     /// rejected layer cannot keep smoothing or pulling the old surface back.
     // the clay field, its denoise and its commit are one operator.
@@ -178,15 +177,16 @@ impl SculptSession {
         // A swept step's weights count dabs; the densest point of the trail
         // bounds how much dose the denoise below may carry.
         let dab_peak = weighted.iter().map(|&(_, w)| w).fold(1.0f64, f64::max);
-        // Material grows out of the surface under the brush, not toward the
-        // camera: one direction per step, the area-weighted normal of the
-        // footprint as the operator sees it. A tilted view then builds on the
-        // slope it touches instead of stacking material along the line of
-        // sight. The layer guard still refuses a face the lift would fold or
-        // hide, and the single direction keeps the dose denoise below exact.
+        // One depth axis keeps every point in the field aligned with the view,
+        // including when a dab spans tilted faces. The layer guard still
+        // refuses a face that turns edge-on or loses too much area.
         let knife = self.brush_tip == TipStamp::Knife;
         let view = dab.view.normalize_or_zero();
-        let push = self.brush_normal(&weighted, dab.view, facing);
+        let push = if view.is_finite() && view.length_squared() > 1e-24 {
+            -view
+        } else {
+            self.brush_normal(&weighted, dab.view, facing)
+        };
         let hit_n = self
             .hit_triangle
             .and_then(|triangle| self.triangle_normal(triangle))
@@ -198,14 +198,8 @@ impl SculptSession {
             self.weights = weighted;
             return;
         }
-        // The median-edge budget scales the entire footprint once.
-        let gain = self.dab_step_gain(&weighted, amplitude);
-        // Tip gain after the budget fit, never inside it: the fit preserves
-        // the falloff profile against the step budget, and folding the tip
-        // into the amplitude lets the fit normalize it straight back out
-        // (folding a knife gain into the amplitude dug as deep as a ball). The
-        // per-vertex clamp below still bounds every move, so safety never
-        // depended on it.
+        // Every vertex keeps the requested dose along the same depth axis;
+        // per-vertex tearing limits and the simultaneous layer guard bound it.
         //
         // The knife's narrower support needs a higher centre gain to remain
         // distinct from Ball. The per-vertex clamp and simultaneous face guard
@@ -246,7 +240,7 @@ impl SculptSession {
             }
             let dir = push;
             // Safety sees the complete displacement field after denoise.
-            let target = here + (dir * (sign * weight * amplitude * gain * tip_gain));
+            let target = here + (dir * (sign * weight * amplitude * tip_gain));
             let clamped = if knife {
                 // Each dab-equivalent of a swept step takes the tearing clamp
                 // on its own share, exactly as consecutive dabs did.
@@ -276,7 +270,7 @@ impl SculptSession {
         self.live_kin.nz = push.z as f32;
         self.live_kin.facing = facing as f32;
         self.live_kin.amplitude = amplitude as f32;
-        self.live_kin.gain = gain as f32;
+        self.live_kin.gain = 1.0;
         self.live_kin.weighted = weighted.len() as u32;
         self.live_kin.proposals = proposals.len() as u32;
         self.live_kin.front_min = if count > 0.0 { front_min as f32 } else { 0.0 };
@@ -353,7 +347,7 @@ impl SculptSession {
         }
         // Denoise may redistribute this dab's dose, but cannot turn Add into
         // Remove or amplify it past its budget.
-        let dose_cap = amplitude * gain * tip_gain * dab_peak;
+        let dose_cap = amplitude * tip_gain * dab_peak;
         let mut pass = std::mem::take(&mut self.denoise_pass);
         for _ in 0..CLAY_AUTOSMOOTH_PASSES {
             for factor in [TAUBIN_LAMBDA, TAUBIN_MU] {

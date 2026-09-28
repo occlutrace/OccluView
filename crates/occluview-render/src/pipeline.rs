@@ -417,7 +417,7 @@ impl Renderer {
     }
 
     /// Draw the translucent Sculpt tool volume. It is intentionally
-    /// depth-independent, matching the reference cursor: the volume remains
+    /// depth-independent: the volume remains
     /// visible while it hovers over a dense scan and cannot affect the depth
     /// buffer or any authoritative picking result.
     pub fn draw_sculpt_tool(

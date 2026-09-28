@@ -207,6 +207,8 @@ const NON_KEYBOARD_BINDINGS: &[&str] = &[
     "Help",
     "W",
     "Shift",
+    "Ctrl+Shift",
+    "⌘+Shift",
     "Shift+wheel",
     "Ctrl/Command+drag",
     "RMB click",

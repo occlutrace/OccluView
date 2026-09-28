@@ -33,7 +33,9 @@ impl SculptSession {
     pub(super) fn set_incident_row(topology: &mut SurfaceTopology, group: u32, mut row: Vec<u32>) {
         row.sort_unstable();
         row.dedup();
-        if topology.incident_triangles_or_empty(group) == row.as_slice() {
+        if group < topology.base_group_count()
+            && topology.incident_triangles_or_empty(group) == row.as_slice()
+        {
             return;
         }
         topology.set_incident(group, row);
@@ -53,7 +55,9 @@ impl SculptSession {
                 }
             }
             row.sort_unstable();
-            if topology.neighbors_or_empty(group) == row.as_slice() {
+            if group < topology.base_group_count()
+                && topology.neighbors_or_empty(group) == row.as_slice()
+            {
                 continue;
             }
             topology.set_neighbors(group, row);

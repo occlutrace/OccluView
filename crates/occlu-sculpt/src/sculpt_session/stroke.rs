@@ -607,8 +607,26 @@ impl SculptSession {
         let (t, ti) = best?;
         let k = ti as usize * 3;
         let (a, b, c) = (v(tris[k]), v(tris[k + 1]), v(tris[k + 2]));
-        let n = (b - a).cross(c - a).normalize_or_zero();
+        let face = (b - a).cross(c - a);
+        let face_normal = face.normalize_or_zero();
+        let hit = orig + dir * t;
+        let normal = if face.length_squared() > 1e-24 {
+            let wa = (c - b).cross(hit - b).dot(face) / face.length_squared();
+            let wb = (a - c).cross(hit - c).dot(face) / face.length_squared();
+            let wc = 1.0 - wa - wb;
+            let smooth = (self.display_n(tris[k]) * wa
+                + self.display_n(tris[k + 1]) * wb
+                + self.display_n(tris[k + 2]) * wc)
+                .normalize_or_zero();
+            if smooth.length() > 0.5 && smooth.dot(face_normal) > 0.2 {
+                smooth
+            } else {
+                face_normal
+            }
+        } else {
+            face_normal
+        };
         self.hit_triangle = Some(ti);
-        Some(((orig + dir * t), n))
+        Some((hit, normal))
     }
 }

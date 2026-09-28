@@ -183,6 +183,10 @@ const SCULPT: &[HintRow] = &[
         ),
     },
     HintRow {
+        gesture: "Ctrl/⌘+Shift + LMB drag",
+        key: crate::i18n::message_id!("help-hint-sculpt-gentle-relax"),
+    },
+    HintRow {
         gesture: "Shift+wheel",
         key: crate::i18n::message_id!("help-hint-sculpt-change-brush-size"),
     },

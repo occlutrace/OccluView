@@ -296,13 +296,17 @@ impl SurfaceTopology {
     pub fn incident_triangles(&self, group: u32) -> &[u32] {
         // Same overlay-empty shortcut as `neighbors`: the rollback scan and
         // the maintenance scope walk read this row for every touched group.
-        if self.incident_overlay.is_empty() {
+        if self.incident_overlay.is_empty() && group < self.base_groups {
             return self.base_incident(group);
         }
         if let Some(row) = self.incident_overlay.get(&group) {
             return row;
         }
-        self.base_incident(group)
+        if group < self.base_groups {
+            self.base_incident(group)
+        } else {
+            &[]
+        }
     }
 
     /// Incident row without trapping on groups that have no row yet (fresh

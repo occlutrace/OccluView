@@ -58,9 +58,10 @@ pub(crate) enum SculptToolKind {
 }
 
 impl SculptToolKind {
-    /// The kernel brush mode for a dab, given whether Shift is held.
-    pub(crate) fn brush_mode(self, shift: bool) -> BrushMode {
+    /// Resolve a dab's mode from the active tool and held modifiers.
+    pub(crate) fn brush_mode(self, shift: bool, command: bool) -> BrushMode {
         match self {
+            Self::AddRemove if shift && command => BrushMode::Relax,
             Self::AddRemove if shift => BrushMode::Remove,
             Self::AddRemove => BrushMode::Add,
             Self::Smooth => BrushMode::Smooth,

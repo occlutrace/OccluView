@@ -3,6 +3,12 @@
 This file records user-visible changes. Internal refactors and test-only work
 remain in the Git history.
 
+## Unreleased
+
+- Sculpt Add/Remove follows camera depth and scales with strength. Ctrl+Shift
+  gently evens surface detail, with cursor color, body, and outline matching the
+  active operation.
+
 ## 1.2.1 - 2026-09-27
 
 ### Accessibility

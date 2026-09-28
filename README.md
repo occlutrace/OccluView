@@ -123,6 +123,8 @@ whole viewport.
 
 The surface repaints itself under the brush: the emissive footprint follows the
 tip you chose, so the mark on the scan is the shape the next dab will stamp.
+Hold **Ctrl+Shift** (**⌘+Shift** on macOS) while dragging in Add/Remove to
+gently even small surface detail without changing the broader form.
 
 ## Mesh Repair
 
@@ -170,6 +172,8 @@ Press **F1** — or open **Settings → Keyboard shortcuts** — for the complet
   changed.
 - In Sculpt, **1** chooses Add/Remove and **2** chooses Smooth. **Shift+wheel** changes Sculpt brush size; **Ctrl+wheel** (**⌘+wheel** on macOS) changes intensity.
   Holding **Shift** during a drag removes or strengthens the active brush mode.
+  In Add/Remove, hold **Ctrl+Shift** (**⌘+Shift** on macOS) while dragging to
+  gently even surface detail.
 - In Ruler, after the first point, a click on a drawn ruler line ends the
   ruler on that line (for example the Korkhaus arch length from the incisal
   point to the Pont premolar line). The end goes where you click along the
