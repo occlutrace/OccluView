@@ -1,8 +1,6 @@
-# Normalize line endings to LF everywhere -- in the repository and on checkout.
-# The header used to promise CRLF on Windows checkout, which `eol=lf` does not
-# do and never did. LF everywhere is what this repository actually wants: mixed
-# endings cause needless diffs and break the shell-extension registration
-# scripts.
+# Normalize line endings to LF everywhere, in the repository and on checkout:
+# mixed endings cause needless diffs and break the shell-extension
+# registration scripts.
 * text=auto eol=lf
 
 # Binary file types — never merge / diff as text.
