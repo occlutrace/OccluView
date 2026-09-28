@@ -15,8 +15,9 @@ use glam::{Mat4, Quat, Vec3};
 use occluview_core::{SceneMeshId, ScenePickHit};
 use occluview_render::{
     sculpt_surface_light_intensity, sculpt_tool_length, PreparedSceneTopology, SculptBrushUniform,
-    SculptToolShape, SculptToolUniform,
+    SculptFeedbackStyle, SculptToolShape, SculptToolUniform,
 };
+use std::f32::consts::TAU;
 use std::sync::Arc;
 
 impl OccluViewApp {
@@ -144,12 +145,13 @@ impl OccluViewApp {
             return false;
         }
 
-        let (pressed, down, pointer, shift) = ctx.input(|input| {
+        let (pressed, down, pointer, shift, command) = ctx.input(|input| {
             (
                 input.pointer.button_pressed(egui::PointerButton::Primary),
                 input.pointer.button_down(egui::PointerButton::Primary),
                 input.pointer.interact_pos(),
                 input.modifiers.shift,
+                input.modifiers.command,
             )
         });
         let dt = ctx.input(|input| input.stable_dt);
@@ -212,6 +214,7 @@ impl OccluViewApp {
             DabInput {
                 kind,
                 shift,
+                command,
                 dt,
                 fresh_press: pressed,
             },
@@ -292,7 +295,7 @@ impl OccluViewApp {
             strength: input
                 .kind
                 .dab_strength(mesh_editor_overlay::sculpt_intensity01(ctx), input.shift),
-            mode: input.kind.brush_mode(input.shift),
+            mode: input.kind.brush_mode(input.shift, input.command),
             tip: mesh_editor_overlay::sculpt_tip(ctx),
             dt: input.dt,
         };
@@ -619,13 +622,17 @@ impl OccluViewApp {
             self.publish_sculpt_cursor(None);
             return;
         };
-        let shift = ui.ctx().input(|input| input.modifiers.shift);
+        let (shift, command) = ui
+            .ctx()
+            .input(|input| (input.modifiers.shift, input.modifiers.command));
         // Show the effective footprint, including Shift+Smooth widening.
         let radius_world =
             kind.dab_radius_mm(mesh_editor_overlay::sculpt_radius_mm(ui.ctx()), shift);
         let intensity01 = mesh_editor_overlay::sculpt_intensity01(ui.ctx());
-        let color = sculpt_cursor_color(kind, shift);
+        let mode = kind.brush_mode(shift, command);
+        let color = animate_sculpt_cursor_color(ui.ctx(), sculpt_cursor_color(mode));
         let strength = kind.dab_strength(intensity01, shift);
+        let action = animate_sculpt_cursor_action(ui.ctx(), mode);
         let tip = mesh_editor_overlay::sculpt_tip(ui.ctx());
         let shape = match tip {
             SculptTip::Ball => SculptToolShape::Cone,
@@ -643,14 +650,7 @@ impl OccluViewApp {
             .filter(|axis| axis.is_finite() && axis.length_squared() > f32::EPSILON)
             .map(Vec3::normalize);
         let color_rgba = color.to_array().map(|channel| f32::from(channel) / 255.0);
-        let tool_length = sculpt_tool_length(strength);
-        // Remove builds in the opposite direction: the body points into the
-        // surface it is carving instead of hovering over it.
-        let direction = if kind.brush_mode(shift) == BrushMode::Remove {
-            -normal
-        } else {
-            normal
-        };
+        let direction = normal;
         let base_rotation = Quat::from_rotation_arc(Vec3::Z, direction);
         let tool_rotation = if tip == SculptTip::Knife {
             let fallback_axis = camera
@@ -665,11 +665,9 @@ impl OccluViewApp {
         } else {
             base_rotation
         };
-        let tool_width = if tip == SculptTip::Knife {
-            radius_world * 0.12
-        } else {
-            radius_world
-        };
+        let tool_width = radius_world;
+        let target_height = sculpt_cursor_height(mode, strength, radius_world);
+        let tool_length = animate_sculpt_cursor_height(ui.ctx(), target_height);
         let tool_model = Mat4::from_scale_rotation_translation(
             Vec3::new(tool_width, radius_world, tool_length),
             tool_rotation,
@@ -687,6 +685,11 @@ impl OccluViewApp {
                 tip: tip.kernel_stamp(),
                 color: color_rgba,
                 visible: 1,
+                edge_style: if mode == BrushMode::Relax {
+                    SculptFeedbackStyle::Dashed as u32
+                } else {
+                    SculptFeedbackStyle::Solid as u32
+                },
                 ..SculptBrushUniform::hidden()
             },
             tool: SculptToolUniform {
@@ -694,8 +697,7 @@ impl OccluViewApp {
                 color: color_rgba,
                 opacity: 0.20 + 0.12 * strength,
                 shape: shape as u32,
-                visible: 1,
-                padding: 0,
+                action,
             },
         }));
 
@@ -710,16 +712,17 @@ impl OccluViewApp {
                 radius_px,
                 color.gamma_multiply(0.025 + intensity * 0.035),
             );
-            canvas.circle_stroke(
-                pointer,
-                radius_px,
-                egui::Stroke::new(1.0_f32, color.gamma_multiply(0.58 + intensity * 0.18)),
-            );
-            canvas.circle_stroke(
-                pointer,
-                (radius_px - 2.0).max(1.0),
-                egui::Stroke::new(1.0_f32, color.gamma_multiply(0.16)),
-            );
+            let edge_color = color.gamma_multiply(0.58 + intensity * 0.18);
+            if mode == BrushMode::Relax {
+                paint_dashed_cursor_edge(canvas, pointer, radius_px, edge_color);
+            } else {
+                canvas.circle_stroke(pointer, radius_px, egui::Stroke::new(1.0_f32, edge_color));
+                canvas.circle_stroke(
+                    pointer,
+                    (radius_px - 2.0).max(1.0),
+                    egui::Stroke::new(1.0_f32, color.gamma_multiply(0.16)),
+                );
+            }
             canvas.circle_filled(pointer, 1.5, color.gamma_multiply(0.62));
         }
     }
@@ -830,13 +833,95 @@ fn sculpt_target(
         })
 }
 
-/// Quiet semantic colors: build, carve, and smooth remain distinguishable
-/// without introducing a saturated blue accent.
-fn sculpt_cursor_color(kind: SculptToolKind, shift: bool) -> egui::Color32 {
-    match (kind, shift) {
-        (SculptToolKind::AddRemove, false) => egui::Color32::from_rgb(255, 145, 58),
-        (SculptToolKind::AddRemove, true) => egui::Color32::from_rgb(74, 177, 255),
-        (SculptToolKind::Smooth, _) => egui::Color32::from_rgb(178, 126, 255),
+/// Keep the four surface operations visually distinct.
+const SCULPT_CURSOR_TRANSITION_SEC: f32 = 0.07;
+const SCULPT_IRON_HEIGHT_SHARE: f32 = 0.22;
+
+fn sculpt_cursor_color(mode: BrushMode) -> egui::Color32 {
+    match mode {
+        BrushMode::Add => egui::Color32::from_rgb(67, 203, 119),
+        BrushMode::Remove => egui::Color32::from_rgb(240, 86, 86),
+        BrushMode::Relax => egui::Color32::from_rgb(78, 155, 255),
+        BrushMode::Smooth => egui::Color32::from_rgb(178, 126, 255),
+    }
+}
+
+fn sculpt_cursor_height(mode: BrushMode, strength: f32, radius: f32) -> f32 {
+    if matches!(mode, BrushMode::Add | BrushMode::Remove) {
+        sculpt_tool_length(strength)
+    } else {
+        (radius * SCULPT_IRON_HEIGHT_SHARE).max(0.05)
+    }
+}
+
+fn animate_sculpt_cursor_height(context: &egui::Context, target: f32) -> f32 {
+    context.animate_value_with_time(
+        egui::Id::new("sculpt-cursor-height"),
+        target,
+        SCULPT_CURSOR_TRANSITION_SEC,
+    )
+}
+
+fn animate_sculpt_cursor_color(context: &egui::Context, target: egui::Color32) -> egui::Color32 {
+    let rgba = target.to_array().map(|channel| f32::from(channel) / 255.0);
+    let red = context.animate_value_with_time(
+        egui::Id::new("sculpt-cursor-red"),
+        rgba[0],
+        SCULPT_CURSOR_TRANSITION_SEC,
+    );
+    let green = context.animate_value_with_time(
+        egui::Id::new("sculpt-cursor-green"),
+        rgba[1],
+        SCULPT_CURSOR_TRANSITION_SEC,
+    );
+    let blue = context.animate_value_with_time(
+        egui::Id::new("sculpt-cursor-blue"),
+        rgba[2],
+        SCULPT_CURSOR_TRANSITION_SEC,
+    );
+    egui::Color32::from(egui::Rgba::from_rgba_unmultiplied(red, green, blue, 1.0))
+}
+
+fn animate_sculpt_cursor_action(context: &egui::Context, mode: BrushMode) -> [f32; 2] {
+    let target = sculpt_cursor_action(mode);
+    [
+        context.animate_value_with_time(
+            egui::Id::new("sculpt-cursor-invert"),
+            target[0],
+            SCULPT_CURSOR_TRANSITION_SEC,
+        ),
+        context.animate_value_with_time(
+            egui::Id::new("sculpt-cursor-flat"),
+            target[1],
+            SCULPT_CURSOR_TRANSITION_SEC,
+        ),
+    ]
+}
+
+fn sculpt_cursor_action(mode: BrushMode) -> [f32; 2] {
+    match mode {
+        BrushMode::Add => [0.0, 0.0],
+        BrushMode::Remove => [1.0, 0.0],
+        BrushMode::Relax | BrushMode::Smooth => [0.0, 1.0],
+    }
+}
+
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "24 fixed segments are exactly representable"
+)]
+fn paint_dashed_cursor_edge(
+    painter: &egui::Painter,
+    center: egui::Pos2,
+    radius: f32,
+    color: egui::Color32,
+) {
+    const DASH_COUNT: usize = 24;
+    for dash in 0..DASH_COUNT {
+        let start = (dash as f32 + 0.12) * TAU / DASH_COUNT as f32;
+        let end = (dash as f32 + 0.68) * TAU / DASH_COUNT as f32;
+        let point = |angle: f32| center + egui::vec2(radius * angle.cos(), radius * angle.sin());
+        painter.line_segment([point(start), point(end)], egui::Stroke::new(1.0, color));
     }
 }
 

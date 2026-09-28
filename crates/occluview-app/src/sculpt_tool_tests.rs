@@ -17,12 +17,26 @@ fn toggling_a_tool_arms_it_and_toggling_again_disarms() {
 
 #[test]
 fn shift_flips_add_to_remove_and_forces_smooth() {
-    assert_eq!(SculptToolKind::AddRemove.brush_mode(false), BrushMode::Add);
     assert_eq!(
-        SculptToolKind::AddRemove.brush_mode(true),
+        SculptToolKind::AddRemove.brush_mode(false, false),
+        BrushMode::Add
+    );
+    assert_eq!(
+        SculptToolKind::AddRemove.brush_mode(true, false),
         BrushMode::Remove
     );
-    assert_eq!(SculptToolKind::Smooth.brush_mode(true), BrushMode::Smooth);
+    assert_eq!(
+        SculptToolKind::AddRemove.brush_mode(true, true),
+        BrushMode::Relax
+    );
+    assert_eq!(
+        SculptToolKind::AddRemove.brush_mode(false, true),
+        BrushMode::Add
+    );
+    assert_eq!(
+        SculptToolKind::Smooth.brush_mode(true, true),
+        BrushMode::Smooth
+    );
     // Shift forces Smooth to maximum regardless of the slider; Add/Remove
     // follows the intensity slider with or without Shift.
     assert_eq!(SculptToolKind::Smooth.dab_strength(0.3, true), 1.0);

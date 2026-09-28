@@ -64,8 +64,8 @@ pub use offscreen::{
 pub use pipeline::live_depth_format;
 pub use pipeline::Renderer;
 pub use sculpt_cursor::{
-    sculpt_surface_light_intensity, sculpt_tool_length, SculptBrushUniform, SculptToolShape,
-    SculptToolUniform,
+    sculpt_surface_light_intensity, sculpt_tool_length, SculptBrushUniform, SculptFeedbackStyle,
+    SculptToolShape, SculptToolUniform,
 };
 pub use texture::GpuTexture;
 

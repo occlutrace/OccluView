@@ -103,7 +103,6 @@ impl SculptSession {
             normal_scratch: Vec::new(),
             #[cfg(feature = "parallel")]
             budget_scratch: Vec::new(),
-            percentile_scratch: Vec::new(),
             dab_exposure: 1.0,
             session_base_groups: group_count as u32,
             retired_groups: 0,
@@ -251,6 +250,15 @@ impl SculptSession {
             self.brush_normals[k] as f64,
             self.brush_normals[k + 1] as f64,
             self.brush_normals[k + 2] as f64,
+        )
+    }
+
+    pub(super) fn display_n(&self, i: u32) -> DVec3 {
+        let k = i as usize * 3;
+        DVec3::new(
+            self.display_normals[k] as f64,
+            self.display_normals[k + 1] as f64,
+            self.display_normals[k + 2] as f64,
         )
     }
 

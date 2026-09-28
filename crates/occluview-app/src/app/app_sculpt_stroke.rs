@@ -15,6 +15,7 @@ use glam::Vec3;
 pub(super) struct DabInput {
     pub(super) kind: SculptToolKind,
     pub(super) shift: bool,
+    pub(super) command: bool,
     pub(super) dt: f32,
     /// Whether the primary button was pressed this frame, i.e. a fresh edge.
     ///

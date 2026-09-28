@@ -130,7 +130,7 @@ impl SculptSession {
 
         let tolerance = clay_area_roundoff(pre, now);
         match mode {
-            BrushMode::Smooth => {
+            BrushMode::Smooth | BrushMode::Relax => {
                 // A coherent normal-flow pass may not fold, tear or hide a
                 // face; the remesh that follows repairs a thin one. No camera
                 // or frozen-reference test belongs here: changing the

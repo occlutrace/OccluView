@@ -4,7 +4,7 @@
 //! onto the picked surface and a translucent tool volume hovering just above
 //! it. Neither piece participates in picking, dab scheduling, or mesh writes.
 //! The app still owns the one authoritative surface hit; this module only
-//! carries finite GPU inputs and the canonical cone/cylinder geometry.
+//! carries finite GPU inputs and the unit tool geometry.
 
 use bytemuck::{Pod, Zeroable};
 use glam::DVec3;
@@ -28,12 +28,22 @@ pub(crate) const SCULPT_FEEDBACK_SHADER_SRC: &str = concat!(
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SculptToolShape {
-    /// Add/Remove uses the tapered Freeforming cone.
+    /// Ball uses the full-radius profile.
     Cone = 0,
-    /// Smooth uses a short cylindrical plateau.
+    /// Cylinder uses the full-radius straight profile.
     Cylinder = 1,
-    /// Knife uses a thin blade aligned with the current stroke bearing.
+    /// Knife uses the narrow profile.
     Knife = 2,
+}
+
+/// Outline treatment at the footprint edge.
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SculptFeedbackStyle {
+    /// One continuous hairline.
+    Solid = 0,
+    /// A broken hairline for a non-depositing pass.
+    Dashed = 1,
 }
 
 /// Surface-light input. The layout is shared by Rust and
@@ -47,7 +57,7 @@ pub struct SculptBrushUniform {
     pub radius: f32,
     /// World-space surface normal, oriented toward the camera.
     pub normal: [f32; 3],
-    /// Reference cursor light intensity, including a non-zero idle glow.
+    /// Surface light intensity, including a non-zero idle glow.
     pub intensity: f32,
     /// World-space stroke bearing the knife footprint elongates along. Zero
     /// leaves the knife a narrow radial footprint.
@@ -65,6 +75,14 @@ pub struct SculptBrushUniform {
     pub cylinder_plateau: f32,
     /// Minimum stroke-axis length from the shared sculpt field contract.
     pub knife_axis_min_length: f32,
+    /// Footprint outline treatment.
+    pub edge_style: u32,
+    /// Explicit scalar tail padding.
+    pub padding_0: u32,
+    /// Explicit scalar tail padding.
+    pub padding_1: u32,
+    /// Explicit scalar tail padding.
+    pub padding_2: u32,
 }
 
 impl SculptBrushUniform {
@@ -83,6 +101,10 @@ impl SculptBrushUniform {
             knife_cross_share: KNIFE_CROSS_RADIUS_SHARE,
             cylinder_plateau: CYLINDER_PLATEAU,
             knife_axis_min_length: KNIFE_AXIS_MIN_LENGTH,
+            edge_style: SculptFeedbackStyle::Solid as u32,
+            padding_0: 0,
+            padding_1: 0,
+            padding_2: 0,
         }
     }
 }
@@ -115,18 +137,16 @@ pub fn sculpt_footprint_field(
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct SculptToolUniform {
-    /// World transform for the canonical cone/cylinder.
+    /// World transform for the unit tool body.
     pub model: [f32; 16],
     /// Linear-sRGB volume color.
     pub color: [f32; 4],
     /// Source alpha for the translucent volume.
     pub opacity: f32,
-    /// `SculptToolShape` tag selecting the geometry buffer.
+    /// `SculptToolShape` tag selecting the tip profile.
     pub shape: u32,
-    /// `1` while the volume is valid; `0` is a no-op.
-    pub visible: u32,
-    /// Explicit uniform tail padding.
-    pub padding: u32,
+    /// Morph weights for pressing and flattening the tip profile.
+    pub action: [f32; 2],
 }
 
 impl SculptToolUniform {
@@ -138,8 +158,7 @@ impl SculptToolUniform {
             color: [0.0; 4],
             opacity: 0.0,
             shape: SculptToolShape::Cone as u32,
-            visible: 0,
-            padding: 0,
+            action: [0.0; 2],
         }
     }
 }
@@ -179,40 +198,8 @@ pub(crate) fn vertex_layout() -> wgpu::VertexBufferLayout<'static> {
     }
 }
 
-/// Build an open-sided cone. Its base is z=0 and its tip is z=1, matching the
-/// reference cursor's transparent `ConeGeometry(..., openEnded=true)`.
-pub(crate) fn cone_geometry() -> (Vec<SculptToolVertex>, Vec<u32>) {
-    let mut vertices = Vec::with_capacity(SEGMENTS * 3);
-    let mut indices = Vec::with_capacity(SEGMENTS * 3);
-    for segment in 0..SEGMENTS {
-        let next = (segment + 1) % SEGMENTS;
-        let (x0, y0) = ring_point(segment);
-        let (x1, y1) = ring_point(next);
-        let n0 = cone_normal(x0, y0);
-        let n1 = cone_normal(x1, y1);
-        let start = u32::try_from(vertices.len()).unwrap_or(u32::MAX);
-        vertices.extend_from_slice(&[
-            SculptToolVertex {
-                position: [x0, y0, 0.0],
-                normal: n0,
-            },
-            SculptToolVertex {
-                position: [x1, y1, 0.0],
-                normal: n1,
-            },
-            SculptToolVertex {
-                position: [0.0, 0.0, 1.0],
-                normal: cone_normal(x0.midpoint(x1), y0.midpoint(y1)),
-            },
-        ]);
-        indices.extend_from_slice(&[start, start + 1, start + 2]);
-    }
-    (vertices, indices)
-}
-
-/// Build an open-sided cylinder/plateau. Its caps stay open so the surface
-/// light and the existing ring communicate the actual contact patch instead
-/// of hiding it behind an opaque disc.
+/// Build an open-sided unit cylinder; the shader shapes it for the active tip
+/// and modifier state while its caps leave the contact patch visible.
 pub(crate) fn cylinder_geometry() -> (Vec<SculptToolVertex>, Vec<u32>) {
     let mut vertices = Vec::with_capacity(SEGMENTS * 4);
     let mut indices = Vec::with_capacity(SEGMENTS * 6);
@@ -244,83 +231,11 @@ pub(crate) fn cylinder_geometry() -> (Vec<SculptToolVertex>, Vec<u32>) {
     (vertices, indices)
 }
 
-/// Build a flat tapered blade, with its long edge along local Y and its face
-/// extending from the contact edge at z=0 toward the handle at z=1.
-pub(crate) fn knife_geometry() -> (Vec<SculptToolVertex>, Vec<u32>) {
-    let mut vertices = Vec::with_capacity(24);
-    let mut indices = Vec::with_capacity(36);
-    let mut quad = |positions: [[f32; 3]; 4], normal: [f32; 3]| {
-        let start = u32::try_from(vertices.len()).unwrap_or(u32::MAX);
-        vertices.extend(positions.map(|position| SculptToolVertex { position, normal }));
-        indices.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
-    };
-    quad(
-        [
-            [-0.18, -1.0, 1.0],
-            [0.18, -1.0, 1.0],
-            [0.18, 1.0, 1.0],
-            [-0.18, 1.0, 1.0],
-        ],
-        [0.0, 0.0, 1.0],
-    );
-    quad(
-        [
-            [-0.055, -1.0, 0.0],
-            [0.055, -1.0, 0.0],
-            [0.055, 1.0, 0.0],
-            [-0.055, 1.0, 0.0],
-        ],
-        [0.0, 0.0, -1.0],
-    );
-    quad(
-        [
-            [0.18, -1.0, 1.0],
-            [0.18, 1.0, 1.0],
-            [0.055, 1.0, 0.0],
-            [0.055, -1.0, 0.0],
-        ],
-        [1.0, 0.0, 0.0],
-    );
-    quad(
-        [
-            [-0.18, 1.0, 1.0],
-            [-0.18, -1.0, 1.0],
-            [-0.055, -1.0, 0.0],
-            [-0.055, 1.0, 0.0],
-        ],
-        [-1.0, 0.0, 0.0],
-    );
-    quad(
-        [
-            [-0.18, 1.0, 1.0],
-            [0.18, 1.0, 1.0],
-            [0.055, 1.0, 0.0],
-            [-0.055, 1.0, 0.0],
-        ],
-        [0.0, 1.0, 0.0],
-    );
-    quad(
-        [
-            [0.18, -1.0, 1.0],
-            [-0.18, -1.0, 1.0],
-            [-0.055, -1.0, 0.0],
-            [0.055, -1.0, 0.0],
-        ],
-        [0.0, -1.0, 0.0],
-    );
-    (vertices, indices)
-}
-
 const SEGMENTS: usize = 32;
 
 fn ring_point(segment: usize) -> (f32, f32) {
     let angle = TAU * segment as f32 / SEGMENTS as f32;
     (angle.cos(), angle.sin())
-}
-
-fn cone_normal(x: f32, y: f32) -> [f32; 3] {
-    let length = (x * x + y * y + 1.0).sqrt().max(f32::EPSILON);
-    [x / length, y / length, 1.0 / length]
 }
 
 fn normalized_strength(strength: f32) -> f32 {
@@ -337,7 +252,7 @@ fn normalized_strength(strength: f32) -> f32 {
     }
 }
 
-/// Reference Freeforming cone length, bounded against invalid UI input.
+/// Tool height, bounded against invalid UI input.
 #[must_use]
 pub fn sculpt_tool_length(strength: f32) -> f32 {
     const MIN: f32 = 0.65;
@@ -345,7 +260,7 @@ pub fn sculpt_tool_length(strength: f32) -> f32 {
     MIN + (MAX - MIN) * normalized_strength(strength)
 }
 
-/// Reference low-power surface glow. The non-zero floor keeps the cursor
+/// Low-power surface glow. The non-zero floor keeps the cursor
 /// visible at low force while the volume still communicates the main shape.
 #[must_use]
 pub fn sculpt_surface_light_intensity(strength: f32) -> f32 {

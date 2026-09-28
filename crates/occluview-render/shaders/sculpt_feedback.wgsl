@@ -45,6 +45,10 @@ struct SculptBrushUniform {
     knife_cross_share: f32,
     cylinder_plateau: f32,
     knife_axis_min_length: f32,
+    edge_style: u32,
+    _padding_0: u32,
+    _padding_1: u32,
+    _padding_2: u32,
 }
 
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -97,10 +101,6 @@ fn fs_sculpt_feedback(in: VertexOut) -> @location(0) vec4<f32> {
         sculpt_brush.cylinder_plateau,
         sculpt_brush.knife_axis_min_length,
     );
-    if field <= 0.0 {
-        discard;
-    }
-
     var n = in.normal;
     if length(n) < 0.001 {
         n = vec3<f32>(0.0, 0.0, 1.0);
@@ -113,10 +113,61 @@ fn fs_sculpt_feedback(in: VertexOut) -> @location(0) vec4<f32> {
     } else {
         brush_n = normalize(brush_n);
     }
+    let edge_rho = sculpt_brush_edge_coordinate(
+        sculpt_brush.tip,
+        offset,
+        radius,
+        sculpt_brush.axis,
+        sculpt_brush.knife_cross_share,
+        sculpt_brush.knife_axis_min_length,
+    );
+    let rim_width = max(fwidth(edge_rho), 0.00001);
+    var rim = 1.0 - smoothstep(0.0, 1.5 * rim_width, abs(edge_rho - 1.0));
+    if sculpt_brush.edge_style == 1u {
+        let angle = sculpt_brush_rim_angle(offset, brush_n);
+        let dash = fract((angle + 3.14159265) / 6.2831853 * 20.0);
+        rim *= select(0.0, 1.0, dash < 0.62);
+    }
+    if field <= 0.0 && rim <= 0.0 {
+        discard;
+    }
     let alignment = abs(dot(n, brush_n));
     let visible_field = field * (0.58 + 0.42 * alignment);
     return vec4<f32>(
-        sculpt_brush.color.rgb * sculpt_brush.intensity * visible_field,
+        sculpt_brush.color.rgb * (sculpt_brush.intensity * visible_field + 0.24 * rim),
         0.0,
     );
+}
+
+fn sculpt_brush_edge_coordinate(
+    tip: u32,
+    offset: vec3<f32>,
+    radius: f32,
+    axis_input: vec3<f32>,
+    knife_cross_share: f32,
+    knife_axis_min_length: f32,
+) -> f32 {
+    if tip == 1u {
+        let axis_length = length(axis_input);
+        if axis_length > knife_axis_min_length {
+            let axis = axis_input / axis_length;
+            let along = dot(offset, axis);
+            let across = length(offset - axis * along);
+            return length(vec2<f32>(along, across / knife_cross_share)) / radius;
+        }
+        return length(offset) / (radius * sqrt(knife_cross_share));
+    }
+    return length(offset) / radius;
+}
+
+fn sculpt_brush_rim_angle(offset: vec3<f32>, normal_input: vec3<f32>) -> f32 {
+    let normal = normalize(normal_input);
+    let reference = select(
+        vec3<f32>(1.0, 0.0, 0.0),
+        vec3<f32>(0.0, 1.0, 0.0),
+        abs(normal.x) > 0.8,
+    );
+    let tangent = normalize(cross(normal, reference));
+    let bitangent = cross(normal, tangent);
+    return atan2(dot(offset, bitangent), dot(offset, tangent));
 }
