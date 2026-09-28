@@ -68,6 +68,10 @@ fn deferred_unsupported_and_infra_failures_stay_plain() {
             offset: 0,
             reason: "too big".to_string(),
         }),
+        ThumbnailError::Format(FormatError::MemoryBudgetExceeded {
+            estimated_bytes: 3_u64 << 30,
+            limit: 2_u64 << 30,
+        }),
         // GPU / renderer / win32 failures are not the file's fault.
         ThumbnailError::Render(RenderError::NoAdapter),
         ThumbnailError::Render(RenderError::Surface("lost the offscreen lease".to_string())),

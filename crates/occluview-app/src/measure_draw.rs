@@ -362,12 +362,6 @@ mod tests {
         });
     }
 
-    fn distance_to_segment(point: egui::Pos2, a: egui::Pos2, b: egui::Pos2) -> f32 {
-        let along = b - a;
-        let t = ((point - a).dot(along) / along.length_sq()).clamp(0.0, 1.0);
-        point.distance(a + along * t)
-    }
-
     /// A label beside a segment clears it at every angle, so a perpendicular's
     /// length never sits on its own line.
     #[test]
@@ -390,7 +384,11 @@ mod tests {
                         label.lerp_inside(egui::vec2(1.0, f)),
                     ]
                 })
-                .map(|p| distance_to_segment(p, a, b))
+                .map(|p| {
+                    crate::cut_geometry::closest_param_on_segment(p, a, b)
+                        .1
+                        .sqrt()
+                })
                 .fold(f32::INFINITY, f32::min);
             assert!(
                 nearest >= LABEL_SIDE_GAP_PX - 0.5,

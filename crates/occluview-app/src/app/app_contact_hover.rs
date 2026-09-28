@@ -122,8 +122,10 @@ fn paint_readout(ui: &mut egui::Ui, readout: Readout<'_>) {
         ContactReadingKind::Gap => "−",
     };
     let label = match reading.kind {
-        ContactReadingKind::Penetration => locale.tr("contact-readout-load"),
-        ContactReadingKind::Gap => locale.tr("contact-readout-gap"),
+        ContactReadingKind::Penetration => {
+            locale.tr(crate::i18n::message_id!("contact-readout-load"))
+        }
+        ContactReadingKind::Gap => locale.tr(crate::i18n::message_id!("contact-readout-gap")),
     };
     // The operator's length preference applies here as it does to the ruler,
     // the thickness probe and the scale bar.

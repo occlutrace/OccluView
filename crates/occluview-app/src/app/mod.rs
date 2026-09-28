@@ -16,9 +16,7 @@ use super::viewer::{
     pick_scene_point, render_extent_change_requires_rerender, viewport_orbit_drag_active,
     viewport_pan_drag_active, zoom_factor_from_scroll, AxisGizmoInput,
 };
-use super::{
-    read_files_with_key_provider, single_instance, Context, PathBuf, Result, RuntimeHpsKeyProvider,
-};
+use super::{read_files_with_memory_budget, single_instance, Context, PathBuf, Result};
 use crate::scale_bar::ScaleBar;
 use anyhow::Error;
 use eframe::egui;
@@ -36,6 +34,8 @@ const FOREGROUND_PULSE_DURATION: Duration = Duration::from_millis(250);
 #[cfg(not(windows))]
 const LINUX_OPEN_REQUEST_REPAINT_INTERVAL: Duration = Duration::from_millis(50);
 
+#[cfg(test)]
+mod app_accessibility_tests;
 mod app_align;
 mod app_align_brush;
 pub(crate) mod app_align_display;
@@ -49,7 +49,7 @@ mod app_contact_bar;
 mod app_contact_hover;
 #[cfg(test)]
 mod app_contact_tests;
-mod app_cut_measure;
+mod app_cut;
 mod app_dialogs;
 mod app_empty_state;
 mod app_guard_dialog;
@@ -63,6 +63,7 @@ mod app_load_errors;
 mod app_loading;
 #[cfg(test)]
 mod app_loading_tests;
+mod app_measure;
 mod app_mesh_editor;
 mod app_mesh_export;
 #[cfg(test)]
@@ -84,6 +85,7 @@ mod app_sculpt_abort_tests;
 mod app_sculpt_characterization_tests;
 #[cfg(test)]
 mod app_sculpt_lifecycle_tests;
+mod app_sculpt_stroke;
 mod app_sculpt_worker;
 mod app_settings_panel;
 mod app_settings_window;
@@ -108,7 +110,7 @@ use app_layer_edits::{
     apply_layer_context_action_with_status,
     apply_visible_selected_face_mesh_edit_action_with_limit,
 };
-use app_load_errors::load_error_dialog;
+use app_load_errors::{load_error_dialog, load_failure_summary};
 use app_scale_bar::paint_scale_bar;
 pub(crate) use state::OccluViewApp;
 use state_document::MeshSelectionDrag;

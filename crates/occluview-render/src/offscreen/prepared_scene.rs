@@ -1,9 +1,10 @@
 use super::{
     helpers::is_transparent, ContactPaintSource, EntryContact, PreparedScene, PreparedSceneEntry,
-    PreparedSceneSource, PreparedSceneTopology, PreparedSceneUpdate,
+    PreparedSceneSource, PreparedSceneTopology, PreparedSceneUpdate, SculptBufferUpdateStats,
+    SculptTopologyDelta,
 };
 use crate::contact_texture::GpuContactMaterial;
-use crate::gpu::GpuMesh;
+use crate::gpu::{GpuMesh, SculptGeometry};
 use crate::pipeline::{Renderer, SculptSurfaceFeedbackBindings};
 use crate::texture::GpuTexture;
 use occluview_core::{MeshKind, Vertex};
@@ -163,7 +164,7 @@ impl PreparedScene {
         else {
             return false;
         };
-        if u32::try_from(vertices.len()) != Ok(entry.mesh.vertex_count) {
+        if u32::try_from(vertices.len()).is_ok_and(|count| count < entry.mesh.vertex_count) {
             return false;
         }
         renderer
@@ -208,7 +209,7 @@ impl PreparedScene {
         else {
             return false;
         };
-        if u32::try_from(vertices.len()) != Ok(entry.mesh.vertex_count) {
+        if u32::try_from(vertices.len()).is_ok_and(|count| count < entry.mesh.vertex_count) {
             return false;
         }
         let queue = renderer.queue();
@@ -248,6 +249,54 @@ impl PreparedScene {
             );
         }
         true
+    }
+
+    /// Apply appended vertices and changed face rows to an existing triangle
+    /// entry. Retired slots stay degenerate through the active stroke and the
+    /// committed mesh compacts them once the stroke closes.
+    pub fn write_entry_sculpt_delta(
+        &mut self,
+        renderer: &Renderer,
+        topology: &PreparedSceneTopology,
+        delta: &SculptTopologyDelta,
+    ) -> Option<SculptBufferUpdateStats> {
+        let entry = self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.topology == *topology)?;
+        if entry.kind != MeshKind::TriangleMesh {
+            return None;
+        }
+        entry
+            .mesh
+            .write_sculpt_delta(renderer.device(), renderer.queue(), delta, entry.wireframe)
+    }
+
+    /// Reconcile a newly prepared entry with the current live sculpt arrays.
+    /// This is the cold path after a scene prepare or a rejected delta.
+    pub fn write_entry_sculpt_geometry(
+        &mut self,
+        renderer: &Renderer,
+        topology: &PreparedSceneTopology,
+        vertices: &[Vertex],
+        indices: &[u32],
+    ) -> Option<SculptBufferUpdateStats> {
+        let entry = self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.topology == *topology)?;
+        if entry.kind != MeshKind::TriangleMesh {
+            return None;
+        }
+        entry.mesh.write_sculpt_geometry(
+            renderer.device(),
+            renderer.queue(),
+            SculptGeometry {
+                vertices,
+                indices,
+                draw_wireframe: entry.wireframe,
+            },
+        )
     }
 
     /// Number of GPU-resident layer entries.

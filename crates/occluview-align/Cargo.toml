@@ -16,4 +16,5 @@ workspace = true
 [dependencies]
 glam = { workspace = true }
 rayon = { workspace = true }
-kdtree = "0.8"
+occluview-surface-query = { workspace = true }
+kdtree = "0.8.1"

@@ -1,162 +1,24 @@
 //! Viewport input and rendering integration for the sculpt brushes.
 
+pub(super) use super::app_sculpt_stroke::apply_sculpt_wheel_settings;
+#[cfg(test)]
+use super::app_sculpt_stroke::plan_dab_centers;
+use super::app_sculpt_stroke::{schedule_dabs, DabInput, DabParams};
 use super::{egui, live_viewport, mesh_editor_overlay, OccluViewApp};
-use crate::sculpt_tool::{
-    uniform_scene_scale, SculptToolKind, StrokeState, DAB_SPACING_FRACTION, HOLD_DAB_INTERVAL_SEC,
-    MAX_DABS_PER_FRAME, SCULPT_INTENSITY_MAX, SCULPT_INTENSITY_MIN, SCULPT_SIZE_MAX,
-    SCULPT_SIZE_MIN, SCULPT_WHEEL_STEP,
-};
+use crate::sculpt_kernel::BrushMode;
+#[cfg(test)]
+use crate::sculpt_kernel::BrushStroke;
+use crate::sculpt_tool::{uniform_scene_scale, SculptTip, SculptToolKind, StrokeState};
 use crate::sculpt_worker::SculptWorker;
 use crate::viewer::viewport_ray;
 use glam::{Mat4, Quat, Vec3};
-use occluview_core::{BrushMode, BrushStroke, SceneMeshId, ScenePickHit};
+use occluview_core::{SceneMeshId, ScenePickHit};
 use occluview_render::{
     sculpt_surface_light_intensity, sculpt_tool_length, PreparedSceneTopology, SculptBrushUniform,
-    SculptToolShape, SculptToolUniform,
+    SculptFeedbackStyle, SculptToolShape, SculptToolUniform,
 };
+use std::f32::consts::TAU;
 use std::sync::Arc;
-
-/// What the pointer/keyboard said this frame, resolved once so the dab loop
-/// does not re-read input.
-struct DabInput {
-    kind: SculptToolKind,
-    shift: bool,
-    dt: f32,
-    /// Whether the primary button was pressed this frame, i.e. a fresh edge.
-    ///
-    /// A stroke may only begin on an edge. Carried through the input rather than
-    /// re-read inside the dab loop so the frame that decides it is the same one
-    /// that observed it.
-    fresh_press: bool,
-}
-
-/// A frame's dab request in world space plus the resolved kernel mode/strength;
-/// [`schedule_dabs`] converts to the layer's local space and spaces the dabs.
-struct DabParams {
-    hit_world: Vec3,
-    view_world: Vec3,
-    radius_world: f32,
-    strength: f32,
-    mode: BrushMode,
-    dt: f32,
-}
-
-pub(super) fn apply_sculpt_wheel_settings(ctx: &egui::Context) -> bool {
-    let raw_scroll = super::app_input::raw_wheel_delta(ctx);
-    let (shift, ctrl) = ctx.input(|input| {
-        (
-            input.modifiers.shift,
-            input.modifiers.ctrl || input.modifiers.command,
-        )
-    });
-    // Shift+wheel may arrive on either scroll axis.
-    let scroll = if raw_scroll.y.abs() >= raw_scroll.x.abs() {
-        raw_scroll.y
-    } else {
-        raw_scroll.x
-    };
-    if scroll.abs() < f32::EPSILON || !(shift || ctrl) {
-        return false;
-    }
-    let delta = scroll.signum() * SCULPT_WHEEL_STEP;
-    if shift {
-        let next =
-            (mesh_editor_overlay::sculpt_size(ctx) + delta).clamp(SCULPT_SIZE_MIN, SCULPT_SIZE_MAX);
-        mesh_editor_overlay::set_sculpt_size(ctx, next);
-    } else {
-        let next = (mesh_editor_overlay::sculpt_intensity(ctx) + delta)
-            .clamp(SCULPT_INTENSITY_MIN, SCULPT_INTENSITY_MAX);
-        mesh_editor_overlay::set_sculpt_intensity(ctx, next);
-    }
-    true
-}
-
-/// Lay this frame's dabs on `session`, updating `stroke`'s scheduler state, and
-/// return the touched vertex ids. The spacing decision is the pure
-/// [`plan_dab_centers`]; this only converts to local space and applies.
-fn schedule_dabs(worker: &SculptWorker, stroke: &mut StrokeState, params: &DabParams) -> usize {
-    let radius_local = (params.radius_world * worker.local_per_world).max(1e-4);
-    let center = worker.world_to_local.transform_point3(params.hit_world);
-    let view_local = worker
-        .world_to_local
-        .transform_vector3(params.view_world)
-        .normalize_or_zero();
-    let spacing = (radius_local * DAB_SPACING_FRACTION).max(1e-4);
-
-    let (centers, last_dab, hold_seconds) = plan_dab_centers(
-        stroke.last_dab_local,
-        center,
-        spacing,
-        stroke.hold_seconds,
-        params.dt,
-    );
-    stroke.last_dab_local = last_dab;
-    stroke.hold_seconds = hold_seconds;
-
-    let mut queued = 0;
-    for at in centers {
-        queued += usize::from(worker.try_apply(
-            BrushStroke {
-                center: at.to_array(),
-                radius_mm: radius_local,
-                strength: params.strength,
-                view_dir: view_local.to_array(),
-            },
-            params.mode,
-        ));
-    }
-    queued
-}
-
-/// Pure dab scheduler: given the previous dab, the cursor `center`, the
-/// `spacing`, and the hold accumulator, returns this frame's dab centers and the
-/// updated `(last_dab, hold_seconds)`. Dabs are spaced by arc length while
-/// moving and by a time cadence while (near) stationary, at most
-/// [`MAX_DABS_PER_FRAME`] per frame. If the cursor jumps farther than that
-/// budget, the segment is sampled evenly and the scheduler advances all the
-/// way to the current point; this keeps input latency bounded instead of
-/// building an invisible backlog of expensive dabs.
-#[allow(clippy::cast_precision_loss)]
-fn plan_dab_centers(
-    last_dab: Option<Vec3>,
-    center: Vec3,
-    spacing: f32,
-    hold_seconds: f32,
-    dt: f32,
-) -> (Vec<Vec3>, Option<Vec3>, f32) {
-    let Some(last) = last_dab else {
-        return (vec![center], Some(center), 0.0);
-    };
-    let segment = center - last;
-    let distance = segment.length();
-    if distance >= spacing {
-        if distance > spacing * MAX_DABS_PER_FRAME as f32 {
-            let count = MAX_DABS_PER_FRAME as f32;
-            let centers = (1..=MAX_DABS_PER_FRAME)
-                .map(|step| last + segment * (step as f32 / count))
-                .collect();
-            return (centers, Some(center), 0.0);
-        }
-        let direction = segment / distance;
-        let mut cursor = last;
-        let mut walked = 0.0;
-        let mut centers = Vec::new();
-        while walked + spacing <= distance && centers.len() < MAX_DABS_PER_FRAME {
-            cursor += direction * spacing;
-            walked += spacing;
-            centers.push(cursor);
-        }
-        (centers, Some(cursor), 0.0)
-    } else {
-        let mut hold = hold_seconds + dt.clamp(0.0, HOLD_DAB_INTERVAL_SEC * 4.0);
-        let mut centers = Vec::new();
-        while hold >= HOLD_DAB_INTERVAL_SEC && centers.len() < MAX_DABS_PER_FRAME {
-            hold -= HOLD_DAB_INTERVAL_SEC;
-            centers.push(center);
-        }
-        (centers, Some(last), hold)
-    }
-}
 
 impl OccluViewApp {
     /// Arm/disarm a sculpt tool (toggling the armed one disarms).
@@ -179,14 +41,19 @@ impl OccluViewApp {
             self.tools.sculpt.disarm();
         }
         self.ui.status_message = Some(match self.tools.sculpt.armed {
-            Some(SculptToolKind::AddRemove) if self.tools.sculpt.worker.is_some() => {
-                self.ui.locale.tr("sculpt-armed-addremove")
-            }
-            Some(SculptToolKind::Smooth) if self.tools.sculpt.worker.is_some() => {
-                self.ui.locale.tr("sculpt-armed-smooth")
-            }
-            Some(_) => self.ui.locale.tr("sculpt-preparing"),
-            None => self.ui.locale.tr("sculpt-off"),
+            Some(SculptToolKind::AddRemove) if self.tools.sculpt.worker.is_some() => self
+                .ui
+                .locale
+                .tr(crate::i18n::message_id!("sculpt-armed-addremove")),
+            Some(SculptToolKind::Smooth) if self.tools.sculpt.worker.is_some() => self
+                .ui
+                .locale
+                .tr(crate::i18n::message_id!("sculpt-armed-smooth")),
+            Some(_) => self
+                .ui
+                .locale
+                .tr(crate::i18n::message_id!("sculpt-preparing")),
+            None => self.ui.locale.tr(crate::i18n::message_id!("sculpt-off")),
         });
         // Rebuild selection display data when Sculpt changes the visible mesh.
         self.render.invalidation.selection_changed();
@@ -278,12 +145,13 @@ impl OccluViewApp {
             return false;
         }
 
-        let (pressed, down, pointer, shift) = ctx.input(|input| {
+        let (pressed, down, pointer, shift, command) = ctx.input(|input| {
             (
                 input.pointer.button_pressed(egui::PointerButton::Primary),
                 input.pointer.button_down(egui::PointerButton::Primary),
                 input.pointer.interact_pos(),
                 input.modifiers.shift,
+                input.modifiers.command,
             )
         });
         let dt = ctx.input(|input| input.stable_dt);
@@ -295,6 +163,10 @@ impl OccluViewApp {
         }
 
         if !down {
+            let pointer_moved = ctx.input(|input| input.pointer.delta().length_sq() > f32::EPSILON);
+            if response.contains_pointer() && pointer_moved {
+                ctx.request_repaint();
+            }
             if self.tools.sculpt.stroke.is_some() {
                 if !self.commit_sculpt_stroke(ctx) {
                     return true;
@@ -321,7 +193,11 @@ impl OccluViewApp {
             && !self.ensure_sculpt_session_for_target()
             && self.tools.sculpt.worker.is_none()
         {
-            self.ui.status_message = Some(self.ui.locale.tr("sculpt-preparing"));
+            self.ui.status_message = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("sculpt-preparing")),
+            );
             ctx.request_repaint();
         }
         let Some(hit) = self.sculpt_surface_hit(response.rect, pointer) else {
@@ -338,6 +214,7 @@ impl OccluViewApp {
             DabInput {
                 kind,
                 shift,
+                command,
                 dt,
                 fresh_press: pressed,
             },
@@ -387,6 +264,10 @@ impl OccluViewApp {
                     ctx.request_repaint();
                     return;
                 }
+                if self.tools.sculpt.worker_has_pending_work() {
+                    ctx.request_repaint();
+                    return;
+                }
                 if !self.ensure_sculpt_session_for_hit(hit) {
                     ctx.request_repaint();
                     return;
@@ -395,6 +276,7 @@ impl OccluViewApp {
                     layer_id: hit.layer_id,
                     last_dab_local: None,
                     hold_seconds: 0.0,
+                    last_axis: None,
                 });
                 self.document.unsaved_sculpt_stroke = true;
             }
@@ -413,11 +295,16 @@ impl OccluViewApp {
             strength: input
                 .kind
                 .dab_strength(mesh_editor_overlay::sculpt_intensity01(ctx), input.shift),
-            mode: input.kind.brush_mode(input.shift),
+            mode: input.kind.brush_mode(input.shift, input.command),
+            tip: mesh_editor_overlay::sculpt_tip(ctx),
             dt: input.dt,
         };
         let Some(worker) = self.tools.sculpt.worker.as_ref() else {
-            self.ui.status_message = Some(self.ui.locale.tr("sculpt-preparing"));
+            self.ui.status_message = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("sculpt-preparing")),
+            );
             return;
         };
         let queued = {
@@ -473,7 +360,11 @@ impl OccluViewApp {
             return false;
         }
         if uniform_scene_scale(&entry.transform).is_none() {
-            self.ui.status_message = Some(self.ui.locale.tr("sculpt-nonuniform-scale"));
+            self.ui.status_message = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("sculpt-nonuniform-scale")),
+            );
             return false;
         }
         if self
@@ -524,9 +415,17 @@ impl OccluViewApp {
                 .get(index)
                 .is_some_and(|entry| uniform_scene_scale(&entry.transform).is_none())
             {
-                self.ui.status_message = Some(self.ui.locale.tr("sculpt-nonuniform-scale"));
+                self.ui.status_message = Some(
+                    self.ui
+                        .locale
+                        .tr(crate::i18n::message_id!("sculpt-nonuniform-scale")),
+                );
             } else {
-                self.ui.status_message = Some(self.ui.locale.tr("sculpt-preparing"));
+                self.ui.status_message = Some(
+                    self.ui
+                        .locale
+                        .tr(crate::i18n::message_id!("sculpt-preparing")),
+                );
             }
         }
     }
@@ -553,11 +452,10 @@ impl OccluViewApp {
                 }
             }
             Err(error) => {
-                self.ui.status_message = Some(
-                    self.ui
-                        .locale
-                        .tr_with("sculpt-failed", &[("detail", error.as_str())]),
-                );
+                self.ui.status_message = Some(self.ui.locale.tr_with(
+                    crate::i18n::message_id!("sculpt-failed"),
+                    &[("detail", error.as_str())],
+                ));
                 ctx.request_repaint();
             }
         }
@@ -579,50 +477,12 @@ impl OccluViewApp {
     }
 
     pub(super) fn invalidate_sculpt_session_silent(&mut self) {
-        self.restore_sculpt_preview_baseline();
         self.document.unsaved_sculpt_stroke = false;
         // Cancel any worker prepared from the pre-edit scene as well as the
         // live GPU shadow. Otherwise a stale background result could become
         // active after an undo, layer removal, or structural mesh edit.
         self.tools.sculpt.invalidate_session();
         self.render.invalidation.sculpt_topology_changed();
-    }
-
-    fn restore_sculpt_preview_baseline(&mut self) -> bool {
-        let Some(baseline) = self.tools.sculpt.preview_baseline().cloned() else {
-            return false;
-        };
-        self.tools.sculpt.clear_preview_baseline();
-        let Some(mut scene_arc) = self.document.scene.take() else {
-            return false;
-        };
-        let restored = {
-            let scene = super::state_document::taken_scene_mut(&mut scene_arc);
-            match scene
-                .meshes_mut()
-                .iter_mut()
-                .find(|entry| entry.id() == baseline.layer_id)
-            {
-                Some(entry) if entry.mesh.topology_id() == baseline.preview_topology_id => {
-                    entry.mesh = Arc::clone(&baseline.mesh);
-                    true
-                }
-                _ => false,
-            }
-        };
-        self.document.scene = Some(scene_arc);
-        if !restored {
-            return false;
-        }
-        if let Some(scene) = self.document.scene.as_ref() {
-            self.document.edit_mode.sync_to_scene(scene);
-        }
-        self.render.invalidation.scene_geometry_changed();
-        if self.can_render_cut_view() {
-            self.tools.cut_view.mark_dirty();
-        }
-        self.ui.repaint_ctx.request_repaint();
-        true
     }
 
     /// Shift/Ctrl + wheel resizes / re-intensifies the brush instead of zooming.
@@ -762,24 +622,56 @@ impl OccluViewApp {
             self.publish_sculpt_cursor(None);
             return;
         };
-        let shift = ui.ctx().input(|input| input.modifiers.shift);
+        let (shift, command) = ui
+            .ctx()
+            .input(|input| (input.modifiers.shift, input.modifiers.command));
         // Show the effective footprint, including Shift+Smooth widening.
         let radius_world =
             kind.dab_radius_mm(mesh_editor_overlay::sculpt_radius_mm(ui.ctx()), shift);
         let intensity01 = mesh_editor_overlay::sculpt_intensity01(ui.ctx());
-        let color = sculpt_cursor_color(kind, shift);
+        let mode = kind.brush_mode(shift, command);
+        let color = animate_sculpt_cursor_color(ui.ctx(), sculpt_cursor_color(mode));
         let strength = kind.dab_strength(intensity01, shift);
-        let shape = match kind {
-            SculptToolKind::AddRemove => SculptToolShape::Cone,
-            SculptToolKind::Smooth => SculptToolShape::Cylinder,
+        let action = animate_sculpt_cursor_action(ui.ctx(), mode);
+        let tip = mesh_editor_overlay::sculpt_tip(ui.ctx());
+        let shape = match tip {
+            SculptTip::Ball => SculptToolShape::Cone,
+            SculptTip::Knife => SculptToolShape::Knife,
+            SculptTip::Cylinder => SculptToolShape::Cylinder,
         };
+        let axis = self
+            .tools
+            .sculpt
+            .stroke
+            .as_ref()
+            .and_then(|stroke| stroke.last_axis);
+        let axis_world = axis
+            .map(|axis| entry.transform.transform_vector3(axis))
+            .filter(|axis| axis.is_finite() && axis.length_squared() > f32::EPSILON)
+            .map(Vec3::normalize);
         let color_rgba = color.to_array().map(|channel| f32::from(channel) / 255.0);
-        let tool_length = sculpt_tool_length(strength);
-        let tool_rotation = Quat::from_rotation_arc(Vec3::Z, normal);
+        let direction = normal;
+        let base_rotation = Quat::from_rotation_arc(Vec3::Z, direction);
+        let tool_rotation = if tip == SculptTip::Knife {
+            let fallback_axis = camera
+                .view_direction()
+                .cross(camera.view_up())
+                .normalize_or_zero();
+            orient_tool_axis(
+                base_rotation,
+                direction,
+                axis_world.unwrap_or(fallback_axis),
+            )
+        } else {
+            base_rotation
+        };
+        let tool_width = radius_world;
+        let target_height = sculpt_cursor_height(mode, strength, radius_world);
+        let tool_length = animate_sculpt_cursor_height(ui.ctx(), target_height);
         let tool_model = Mat4::from_scale_rotation_translation(
-            Vec3::new(radius_world, radius_world, tool_length),
+            Vec3::new(tool_width, radius_world, tool_length),
             tool_rotation,
-            hit.point + normal * 0.02,
+            hit.point + direction * 0.02,
         );
         self.publish_sculpt_cursor(Some(live_viewport::SculptCursor {
             target_index: hit.layer_index,
@@ -789,18 +681,23 @@ impl OccluViewApp {
                 radius: radius_world,
                 normal: normal.to_array(),
                 intensity: sculpt_surface_light_intensity(strength),
+                axis: axis_world.map_or([0.0; 3], |axis| axis.to_array()),
+                tip: tip.kernel_stamp(),
                 color: color_rgba,
-                tip: shape as u32,
                 visible: 1,
-                padding: [0; 2],
+                edge_style: if mode == BrushMode::Relax {
+                    SculptFeedbackStyle::Dashed as u32
+                } else {
+                    SculptFeedbackStyle::Solid as u32
+                },
+                ..SculptBrushUniform::hidden()
             },
             tool: SculptToolUniform {
                 model: tool_model.to_cols_array(),
                 color: color_rgba,
                 opacity: 0.20 + 0.12 * strength,
                 shape: shape as u32,
-                visible: 1,
-                padding: 0,
+                action,
             },
         }));
 
@@ -815,16 +712,17 @@ impl OccluViewApp {
                 radius_px,
                 color.gamma_multiply(0.025 + intensity * 0.035),
             );
-            canvas.circle_stroke(
-                pointer,
-                radius_px,
-                egui::Stroke::new(1.0_f32, color.gamma_multiply(0.58 + intensity * 0.18)),
-            );
-            canvas.circle_stroke(
-                pointer,
-                (radius_px - 2.0).max(1.0),
-                egui::Stroke::new(1.0_f32, color.gamma_multiply(0.16)),
-            );
+            let edge_color = color.gamma_multiply(0.58 + intensity * 0.18);
+            if mode == BrushMode::Relax {
+                paint_dashed_cursor_edge(canvas, pointer, radius_px, edge_color);
+            } else {
+                canvas.circle_stroke(pointer, radius_px, egui::Stroke::new(1.0_f32, edge_color));
+                canvas.circle_stroke(
+                    pointer,
+                    (radius_px - 2.0).max(1.0),
+                    egui::Stroke::new(1.0_f32, color.gamma_multiply(0.16)),
+                );
+            }
             canvas.circle_filled(pointer, 1.5, color.gamma_multiply(0.62));
         }
     }
@@ -837,6 +735,22 @@ impl OccluViewApp {
             viewport.set_sculpt_cursor(cursor);
         }
     }
+}
+
+fn orient_tool_axis(base: Quat, surface_normal: Vec3, requested_axis: Vec3) -> Quat {
+    let target =
+        (requested_axis - surface_normal * requested_axis.dot(surface_normal)).normalize_or_zero();
+    let current = (base * Vec3::Y).normalize_or_zero();
+    if !target.is_finite()
+        || target.length_squared() <= f32::EPSILON
+        || current.length_squared() <= f32::EPSILON
+    {
+        return base;
+    }
+    let angle = surface_normal
+        .dot(current.cross(target))
+        .atan2(current.dot(target));
+    Quat::from_axis_angle(surface_normal, angle) * base
 }
 
 fn sculpt_face_normal(
@@ -919,13 +833,95 @@ fn sculpt_target(
         })
 }
 
-/// Quiet semantic colors: build, carve, and smooth remain distinguishable
-/// without introducing a saturated blue accent.
-fn sculpt_cursor_color(kind: SculptToolKind, shift: bool) -> egui::Color32 {
-    match (kind, shift) {
-        (SculptToolKind::AddRemove, false) => egui::Color32::from_rgb(255, 145, 58),
-        (SculptToolKind::AddRemove, true) => egui::Color32::from_rgb(74, 177, 255),
-        (SculptToolKind::Smooth, _) => egui::Color32::from_rgb(178, 126, 255),
+/// Keep the four surface operations visually distinct.
+const SCULPT_CURSOR_TRANSITION_SEC: f32 = 0.07;
+const SCULPT_IRON_HEIGHT_SHARE: f32 = 0.22;
+
+fn sculpt_cursor_color(mode: BrushMode) -> egui::Color32 {
+    match mode {
+        BrushMode::Add => egui::Color32::from_rgb(67, 203, 119),
+        BrushMode::Remove => egui::Color32::from_rgb(240, 86, 86),
+        BrushMode::Relax => egui::Color32::from_rgb(78, 155, 255),
+        BrushMode::Smooth => egui::Color32::from_rgb(178, 126, 255),
+    }
+}
+
+fn sculpt_cursor_height(mode: BrushMode, strength: f32, radius: f32) -> f32 {
+    if matches!(mode, BrushMode::Add | BrushMode::Remove) {
+        sculpt_tool_length(strength)
+    } else {
+        (radius * SCULPT_IRON_HEIGHT_SHARE).max(0.05)
+    }
+}
+
+fn animate_sculpt_cursor_height(context: &egui::Context, target: f32) -> f32 {
+    context.animate_value_with_time(
+        egui::Id::new("sculpt-cursor-height"),
+        target,
+        SCULPT_CURSOR_TRANSITION_SEC,
+    )
+}
+
+fn animate_sculpt_cursor_color(context: &egui::Context, target: egui::Color32) -> egui::Color32 {
+    let rgba = target.to_array().map(|channel| f32::from(channel) / 255.0);
+    let red = context.animate_value_with_time(
+        egui::Id::new("sculpt-cursor-red"),
+        rgba[0],
+        SCULPT_CURSOR_TRANSITION_SEC,
+    );
+    let green = context.animate_value_with_time(
+        egui::Id::new("sculpt-cursor-green"),
+        rgba[1],
+        SCULPT_CURSOR_TRANSITION_SEC,
+    );
+    let blue = context.animate_value_with_time(
+        egui::Id::new("sculpt-cursor-blue"),
+        rgba[2],
+        SCULPT_CURSOR_TRANSITION_SEC,
+    );
+    egui::Color32::from(egui::Rgba::from_rgba_unmultiplied(red, green, blue, 1.0))
+}
+
+fn animate_sculpt_cursor_action(context: &egui::Context, mode: BrushMode) -> [f32; 2] {
+    let target = sculpt_cursor_action(mode);
+    [
+        context.animate_value_with_time(
+            egui::Id::new("sculpt-cursor-invert"),
+            target[0],
+            SCULPT_CURSOR_TRANSITION_SEC,
+        ),
+        context.animate_value_with_time(
+            egui::Id::new("sculpt-cursor-flat"),
+            target[1],
+            SCULPT_CURSOR_TRANSITION_SEC,
+        ),
+    ]
+}
+
+fn sculpt_cursor_action(mode: BrushMode) -> [f32; 2] {
+    match mode {
+        BrushMode::Add => [0.0, 0.0],
+        BrushMode::Remove => [1.0, 0.0],
+        BrushMode::Relax | BrushMode::Smooth => [0.0, 1.0],
+    }
+}
+
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "24 fixed segments are exactly representable"
+)]
+fn paint_dashed_cursor_edge(
+    painter: &egui::Painter,
+    center: egui::Pos2,
+    radius: f32,
+    color: egui::Color32,
+) {
+    const DASH_COUNT: usize = 24;
+    for dash in 0..DASH_COUNT {
+        let start = (dash as f32 + 0.12) * TAU / DASH_COUNT as f32;
+        let end = (dash as f32 + 0.68) * TAU / DASH_COUNT as f32;
+        let point = |angle: f32| center + egui::vec2(radius * angle.cos(), radius * angle.sin());
+        painter.line_segment([point(start), point(end)], egui::Stroke::new(1.0, color));
     }
 }
 

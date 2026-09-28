@@ -3,10 +3,13 @@
 
 [graph]
 all-features = true
-# Both shipped platforms. Scanning only Windows left the Linux-only
-# dependency trees (x11rb, wayland, the xdg-portal file dialogs) outside
-# every license and advisory check.
-targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]
+# Match every platform built or cross-compiled by CI.
+targets = [
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-gnu",
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+]
 
 [advisories]
 unmaintained = "workspace"
@@ -48,18 +51,213 @@ license-files = []
 
 [bans]
 # One version per crate by default — duplicates must be justified.
-multiple-versions = "warn"
+multiple-versions = "deny"
+multiple-versions-include-dev = true
 # Deny wildcard dependencies (we want reproducible builds).
 wildcards = "deny"
 # Internal path dependencies carry no version requirement (every crate is
 # publish = false), which the wildcard ban would otherwise flag.
 allow-wildcard-paths = true
 highlight = "all"
-# Allow specific known duplicates (none by default — keep this list empty).
+# Keep exact exceptions for dependency-version constraints with no workspace fix.
 allow = []
 deny = []
-skip = []
 skip-tree = []
+
+[[bans.skip]]
+name = "bit-set"
+version = "=0.8.0"
+reason = "proptest 1.11 uses 0.8 while wgpu 30 uses 0.10 through naga"
+
+[[bans.skip]]
+name = "bit-vec"
+version = "=0.8.0"
+reason = "proptest 1.11 uses 0.8 while wgpu 30 uses 0.9 through naga"
+
+[[bans.skip]]
+name = "accesskit_consumer"
+version = "=0.35.0"
+reason = "accesskit-winit 0.32.2 requires separate consumer API versions for its Windows, Unix, and macOS backends"
+
+[[bans.skip]]
+name = "accesskit_consumer"
+version = "=0.36.0"
+reason = "accesskit-winit 0.32.2 requires separate consumer API versions for its Windows, Unix, and macOS backends"
+
+[[bans.skip]]
+name = "bitflags"
+version = "=1.3.2"
+reason = "winit 0.30's macOS core-graphics stack requires bitflags 1 beside current bitflags 2"
+
+[[bans.skip]]
+name = "block-buffer"
+version = "=0.10.4"
+reason = "minisign's scrypt stack requires digest 0.10; sha2 and md-5 use digest 0.11"
+
+[[bans.skip]]
+name = "block2"
+version = "=0.5.1"
+reason = "winit 0.30 requires block2 0.5 while rfd 0.17 uses 0.6 through dispatch2"
+
+[[bans.skip]]
+name = "calloop"
+version = "=0.13.0"
+reason = "winit 0.30 requires the calloop 0.13 Wayland stack beside egui's 0.14 stack"
+
+[[bans.skip]]
+name = "calloop-wayland-source"
+version = "=0.3.0"
+reason = "winit 0.30 requires 0.3 beside the 0.4 source used by egui's Wayland stack"
+
+[[bans.skip]]
+name = "cipher"
+version = "=0.4.4"
+reason = "minisign's scrypt stack requires cipher 0.4 while blowfish requires 0.5"
+
+[[bans.skip]]
+name = "cpufeatures"
+version = "=0.2.17"
+reason = "minisign's scrypt stack retains sha2 0.10 and cpufeatures 0.2 beside workspace sha2 0.11"
+
+[[bans.skip]]
+name = "crypto-common"
+version = "=0.1.7"
+reason = "minisign's scrypt stack uses crypto-common 0.1 while blowfish and sha2 use 0.2"
+
+[[bans.skip]]
+name = "digest"
+version = "=0.10.7"
+reason = "minisign's scrypt stack requires digest 0.10 beside workspace digest 0.11"
+
+[[bans.skip]]
+name = "getrandom"
+version = "=0.2.17"
+reason = "ring requires getrandom 0.2 while current UI, test, and signing stacks use newer APIs"
+
+[[bans.skip]]
+name = "getrandom"
+version = "=0.3.4"
+reason = "ahash and proptest require getrandom 0.3 beside signing and tempfile users of 0.4"
+
+[[bans.skip]]
+name = "hashbrown"
+version = "=0.16.1"
+reason = "gpu-allocator 0.28, selected by pinned wgpu 30, requires hashbrown 0.16 beside indexmap 0.17"
+
+[[bans.skip]]
+name = "inout"
+version = "=0.1.4"
+reason = "minisign's scrypt cipher stack requires inout 0.1 while blowfish requires 0.2"
+
+[[bans.skip]]
+name = "itertools"
+version = "=0.14.0"
+reason = "earcutr 0.5 requires itertools 0.14 while egui 0.36 requires 0.15"
+
+[[bans.skip]]
+name = "linux-raw-sys"
+version = "=0.4.15"
+reason = "winit 0.30's calloop stack retains rustix 0.38 beside current rustix 1"
+
+[[bans.skip]]
+name = "objc2"
+version = "=0.5.2"
+reason = "winit 0.30's macOS backend uses objc2 0.5 beside the objc2 0.6 stack used by rfd"
+
+[[bans.skip]]
+name = "objc2-app-kit"
+version = "=0.2.2"
+reason = "winit 0.30 needs AppKit 0.2 while arboard and rfd use AppKit 0.3"
+
+[[bans.skip]]
+name = "objc2-foundation"
+version = "=0.2.2"
+reason = "winit 0.30 needs Foundation 0.2 while arboard and rfd use Foundation 0.3"
+
+[[bans.skip]]
+name = "pollster"
+version = "=0.4.0"
+reason = "rfd 0.17's XDG portal backend requires pollster 0.4 while app and eframe use 1"
+
+[[bans.skip]]
+name = "quick-error"
+version = "=1.2.3"
+reason = "proptest 1.11's rusty-fork uses quick-error 1 while the image TIFF stack uses 2"
+
+[[bans.skip]]
+name = "rustc-hash"
+version = "=1.1.0"
+reason = "wgpu 30's naga stack requires rustc-hash 1 beside fluent-bundle's version 2"
+
+[[bans.skip]]
+name = "rustix"
+version = "=0.38.44"
+reason = "winit 0.30's calloop stack retains rustix 0.38 beside current Wayland and tempfile users of 1"
+
+[[bans.skip]]
+name = "sha2"
+version = "=0.10.9"
+reason = "minisign's scrypt stack requires sha2 0.10 while workspace crates use 0.11"
+
+[[bans.skip]]
+name = "smithay-client-toolkit"
+version = "=0.19.2"
+reason = "winit 0.30 requires toolkit 0.19 beside toolkit 0.20 used by egui's clipboard stack"
+
+[[bans.skip]]
+name = "syn"
+version = "=3.0.6"
+reason = "thiserror-impl 2.0.21 uses syn 3 while the other active derive macros use syn 2"
+
+[[bans.skip]]
+name = "thiserror"
+version = "=1.0.69"
+reason = "calloop and smithay-client-toolkit 0.19 require thiserror 1 while workspace crates use 2"
+
+[[bans.skip]]
+name = "thiserror-impl"
+version = "=1.0.69"
+reason = "calloop and smithay-client-toolkit 0.19 require thiserror-impl 1 while workspace crates use 2"
+
+[[bans.skip]]
+name = "windows-sys"
+version = "=0.52.0"
+reason = "glutin 0.32, ring, and winit 0.30 require windows-sys 0.52 beside current 0.61"
+
+[[bans.skip]]
+name = "windows-sys"
+version = "=0.59.0"
+reason = "minisign's password prompt and rustix 0.38 retain windows-sys 0.59 beside current 0.61"
+
+[[bans.skip]]
+name = "windows-sys"
+version = "=0.60.2"
+reason = "arboard 3.6 retains windows-sys 0.60 beside current 0.61"
+
+[[bans.skip]]
+name = "windows-targets"
+version = "=0.52.6"
+reason = "windows-sys 0.52 and 0.59 require targets 0.52 beside arboard's 0.53"
+
+[[bans.skip]]
+name = "windows_x86_64_gnu"
+version = "=0.52.6"
+reason = "windows-targets 0.52 requires the 0.52 GNU import library beside 0.53"
+
+[[bans.skip]]
+name = "windows_x86_64_msvc"
+version = "=0.52.6"
+reason = "windows-targets 0.52 requires the 0.52 MSVC import library beside 0.53"
+
+[[bans.skip]]
+name = "zune-core"
+version = "=0.4.12"
+reason = "tiff 0.10 uses zune-core 0.4 beside the image crate's current 0.5 JPEG stack"
+
+[[bans.skip]]
+name = "zune-jpeg"
+version = "=0.4.21"
+reason = "tiff 0.10 uses zune-jpeg 0.4 beside image's current zune-jpeg 0.5"
 
 [sources]
 # Only crates.io is allowed by default.

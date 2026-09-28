@@ -1,7 +1,7 @@
 //! The shipped update agent must refuse plain HTTP.
 //!
 //! SECURITY.md tells a reader the product makes two ordinary HTTPS GETs and
-//! nothing else. `ureq` follows five redirects by default, so a legitimate HTTPS
+//! nothing else. `ureq` follows redirects, so a legitimate HTTPS
 //! host answering with an `http://` Location would be followed down — inside the
 //! signature boundary, but outside the promise made to the reader.
 //!

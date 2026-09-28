@@ -34,11 +34,10 @@ impl OccluViewApp {
                     &self.ui.locale,
                 );
                 if self.begin_contacts_from_layer(scene, request.layer_id) {
-                    self.ui.status_message = Some(
-                        self.ui
-                            .locale
-                            .tr_with("contact-opened", &[("label", &label)]),
-                    );
+                    self.ui.status_message = Some(self.ui.locale.tr_with(
+                        crate::i18n::message_id!("contact-opened"),
+                        &[("label", &label)],
+                    ));
                 }
             }
             crate::layer_actions::LayerContextAction::HideContacts
@@ -46,7 +45,11 @@ impl OccluViewApp {
             {
                 let ctx = self.ui.repaint_ctx.clone();
                 self.close_contacts(&ctx);
-                self.ui.status_message = Some(self.ui.locale.tr("contact-closed"));
+                self.ui.status_message = Some(
+                    self.ui
+                        .locale
+                        .tr(crate::i18n::message_id!("contact-closed")),
+                );
             }
             _ => {}
         }
@@ -56,7 +59,11 @@ impl OccluViewApp {
     pub(super) fn begin_contacts_from_layer(&mut self, scene: &Scene, layer: SceneMeshId) -> bool {
         let Some(antagonist) = crate::contact::antagonist_for(scene, layer) else {
             // The scene may have changed since the menu was drawn.
-            self.ui.status_message = Some(self.ui.locale.tr("contact-status-needs-second"));
+            self.ui.status_message = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("contact-status-needs-second")),
+            );
             return false;
         };
         // Contact and deviation overlays are mutually exclusive.
@@ -376,13 +383,15 @@ impl OccluViewApp {
             .iter()
             .map(|entry| {
                 let field = self.tools.contacts.field_for(entry.id());
+                let mut uniform = super::app_render_contact::scene_mesh_uniform_with_contacts(
+                    entry,
+                    field.map(|_| &scale),
+                    field_width(field),
+                );
+                uniform.opacity = self.displayed_opacity(entry.id(), uniform.opacity);
                 occluview_render::PreparedSceneSource {
                     mesh: &entry.mesh,
-                    uniform: super::app_render_contact::scene_mesh_uniform_with_contacts(
-                        entry,
-                        field.map(|_| &scale),
-                        field_width(field),
-                    ),
+                    uniform,
                     visible: entry.visible,
                     wireframe: entry.wireframe,
                     contact: field.map(contact_paint),
@@ -402,13 +411,15 @@ impl OccluViewApp {
             .iter()
             .map(|entry| {
                 let field = self.tools.contacts.field_for(entry.id());
+                let mut uniform = super::app_render_contact::scene_mesh_uniform_with_contacts(
+                    entry,
+                    field.map(|_| &scale),
+                    field_width(field),
+                );
+                uniform.opacity = self.displayed_opacity(entry.id(), uniform.opacity);
                 occluview_render::PreparedSceneUpdate {
                     topology: occluview_render::PreparedSceneTopology::from_mesh(&entry.mesh),
-                    uniform: super::app_render_contact::scene_mesh_uniform_with_contacts(
-                        entry,
-                        field.map(|_| &scale),
-                        field_width(field),
-                    ),
+                    uniform,
                     visible: entry.visible,
                     wireframe: entry.wireframe,
                     contact: field.map(contact_paint),

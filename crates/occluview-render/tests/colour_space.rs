@@ -13,7 +13,7 @@
 
 mod common;
 
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 use occluview_core::{Mesh, MeshBuilder, MeshTexture, Vertex};
 use occluview_render::{
     GpuCamera, GpuMeshUniform, GpuTexture, Offscreen, RenderDeadline, ThumbnailSpec,
@@ -37,8 +37,8 @@ fn test_render_deadline() -> RenderDeadline {
 }
 
 fn camera_looking_at_origin() -> GpuCamera {
-    let view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 2.0), Vec3::ZERO, Vec3::Y);
-    let proj = Mat4::perspective_rh(45.0_f32.to_radians(), 1.0, 0.1, 100.0);
+    let view = glam::camera::rh::view::look_at_mat4(Vec3::new(0.0, 0.0, 2.0), Vec3::ZERO, Vec3::Y);
+    let proj = glam::camera::rh::proj::directx::perspective(45.0_f32.to_radians(), 1.0, 0.1, 100.0);
     GpuCamera::new(
         view,
         proj,
@@ -259,9 +259,8 @@ fn a_colour_reaches_the_screen_the_same_way_through_a_texture_or_a_vertex() {
             textured.is_some() && vertex.is_some(),
             "both paths should render something for {value}"
         );
-        let (Some(textured), Some(vertex)) = (textured, vertex) else {
-            return;
-        };
+        let textured = textured.expect("the textured triangle produced a pixel");
+        let vertex = vertex.expect("the vertex-coloured triangle produced a pixel");
         for channel in 0..3 {
             let difference = i32::from(textured[channel]) - i32::from(vertex[channel]);
             assert!(
@@ -346,9 +345,7 @@ fn a_layer_tint_reaches_the_screen_as_the_value_it_holds() {
     ] {
         let rendered = brightest_lit_pixel(&render_tinted_white(tint));
         assert!(rendered.is_some(), "the tinted triangle should render");
-        let Some(rendered) = rendered else {
-            return;
-        };
+        let rendered = rendered.expect("the tinted triangle produced a pixel");
         for channel in 0..3 {
             let expected = (tint[channel] * 255.0).round();
             let difference = f32::from(rendered[channel]) - expected;

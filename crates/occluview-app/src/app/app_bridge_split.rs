@@ -29,19 +29,32 @@ struct BridgeSectionInput<'a> {
 impl OccluViewApp {
     pub(super) fn begin_bridge_split_from_layer(&mut self, scene: &Scene, layer_id: SceneMeshId) {
         if self.document.edit_mode.has_active_session() {
-            self.ui.status_message = Some(self.ui.locale.tr("edit-session-busy"));
+            self.ui.status_message = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("edit-session-busy")),
+            );
             return;
         }
         if self.tools.bridge_split.session().mode() != BridgeSplitMode::Off {
-            self.ui.status_message = Some(self.ui.locale.tr("bridge-active"));
+            self.ui.status_message =
+                Some(self.ui.locale.tr(crate::i18n::message_id!("bridge-active")));
             return;
         }
         let Some(entry) = scene.meshes().iter().find(|entry| entry.id() == layer_id) else {
-            self.ui.status_message = Some(self.ui.locale.tr("bridge-target-gone"));
+            self.ui.status_message = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("bridge-target-gone")),
+            );
             return;
         };
         if !entry.visible || entry.mesh.is_point_cloud() || entry.mesh.triangle_count() == 0 {
-            self.ui.status_message = Some(self.ui.locale.tr("bridge-needs-mesh"));
+            self.ui.status_message = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("bridge-needs-mesh")),
+            );
             return;
         }
 
@@ -79,7 +92,11 @@ impl OccluViewApp {
         }
         self.tools.bridge_split_section.reset();
         self.render.invalidation.overlay_tools_changed();
-        self.ui.status_message = Some(self.ui.locale.tr("bridge-place-disc"));
+        self.ui.status_message = Some(
+            self.ui
+                .locale
+                .tr(crate::i18n::message_id!("bridge-place-disc")),
+        );
         self.ui.repaint_ctx.request_repaint();
     }
 
@@ -93,22 +110,42 @@ impl OccluViewApp {
             return false;
         }
         let Some(scene) = self.document.scene.clone() else {
-            self.cancel_bridge_split(&self.ui.locale.tr("bridge-canceled-scene"));
+            self.cancel_bridge_split(
+                &self
+                    .ui
+                    .locale
+                    .tr(crate::i18n::message_id!("bridge-canceled-scene")),
+            );
             return false;
         };
         let Some(camera) = self.render.camera else {
-            self.cancel_bridge_split(&self.ui.locale.tr("bridge-canceled-camera"));
+            self.cancel_bridge_split(
+                &self
+                    .ui
+                    .locale
+                    .tr(crate::i18n::message_id!("bridge-canceled-camera")),
+            );
             return false;
         };
         let Some(entry) = live_bridge_entry(&scene, self.tools.bridge_split.session().target())
         else {
-            self.cancel_bridge_split(&self.ui.locale.tr("bridge-canceled-changed"));
+            self.cancel_bridge_split(
+                &self
+                    .ui
+                    .locale
+                    .tr(crate::i18n::message_id!("bridge-canceled-changed")),
+            );
             return false;
         };
 
         self.poll_bridge_split_result(entry, ctx);
         if self.consume_bridge_split_escape(ctx) {
-            self.cancel_bridge_split(&self.ui.locale.tr("bridge-canceled"));
+            self.cancel_bridge_split(
+                &self
+                    .ui
+                    .locale
+                    .tr(crate::i18n::message_id!("bridge-canceled")),
+            );
             return true;
         }
 
@@ -218,7 +255,7 @@ impl OccluViewApp {
             frame_context.scene,
             self.tools.bridge_split_section.section_plane(),
         );
-        let color_for = super::app_cut_measure::contour_tint(frame_context.scene);
+        let color_for = super::app_cut::contour_tint(frame_context.scene);
         if let Some(section) = section.as_deref() {
             crate::cut_overlay::paint_section_contour(
                 ui.painter(),
@@ -296,7 +333,12 @@ impl OccluViewApp {
             }
             Some(BridgeSplitPanelAction::Apply) => self.apply_bridge_split_preview(scene, ctx),
             Some(BridgeSplitPanelAction::Cancel) => {
-                self.cancel_bridge_split(&self.ui.locale.tr("bridge-canceled"));
+                self.cancel_bridge_split(
+                    &self
+                        .ui
+                        .locale
+                        .tr(crate::i18n::message_id!("bridge-canceled")),
+                );
                 return true;
             }
             None => {}
@@ -317,7 +359,11 @@ impl OccluViewApp {
 
     fn submit_bridge_preview(&mut self, entry: &SceneMesh) {
         if self.tools.bridge_split.submit_current_request(entry) {
-            self.ui.status_message = Some(self.ui.locale.tr("bridge-calculating"));
+            self.ui.status_message = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("bridge-calculating")),
+            );
             self.ui.repaint_ctx.request_repaint();
         }
     }
@@ -360,7 +406,7 @@ impl OccluViewApp {
         // Same question, same answer: see `OccluViewApp::viewport_pointer`.
         // Not a second copy: the gizmo's avoid-rect has to come from the call
         // that painted the gizmo, as the cut tool's own comment warns.
-        let super::app_cut_measure::ViewportPointer {
+        let super::app_cut::ViewportPointer {
             pointer,
             over_section_panel,
             over_viewport,
@@ -424,7 +470,12 @@ impl OccluViewApp {
         };
         let surface_result = !preview.result.report.parts_closed;
         let Some(entry) = live_bridge_entry(scene, Some(preview.guard.target)) else {
-            self.cancel_bridge_split(&self.ui.locale.tr("bridge-canceled-changed"));
+            self.cancel_bridge_split(
+                &self
+                    .ui
+                    .locale
+                    .tr(crate::i18n::message_id!("bridge-canceled-changed")),
+            );
             return;
         };
         let Some(token) = self.document.edit_mode.begin_scene_edit(
@@ -432,14 +483,23 @@ impl OccluViewApp {
             entry.id(),
             EditModeCommand::BridgeSplit,
         ) else {
-            self.ui.status_message = Some(self.ui.locale.tr("bridge-unavailable"));
+            self.ui.status_message = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("bridge-unavailable")),
+            );
             return;
         };
         let undoable = self.document.edit_mode.last_edit_undoable();
         let applied = apply_preview_to_scene(scene, preview.guard.target, &preview.result);
         let Ok(applied) = applied else {
             let _ = self.document.edit_mode.finish_layer_edit_noop(token);
-            self.cancel_bridge_split(&self.ui.locale.tr("bridge-preview-stale"));
+            self.cancel_bridge_split(
+                &self
+                    .ui
+                    .locale
+                    .tr(crate::i18n::message_id!("bridge-preview-stale")),
+            );
             return;
         };
         if self
@@ -448,7 +508,11 @@ impl OccluViewApp {
             .finish_scene_edit_success(token, &applied.scene)
             != BusyFinish::Applied
         {
-            self.ui.status_message = Some(self.ui.locale.tr("bridge-not-applied"));
+            self.ui.status_message = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("bridge-not-applied")),
+            );
             return;
         }
         let source_layer_id = applied.source_layer_id;
@@ -460,11 +524,17 @@ impl OccluViewApp {
         self.tools.bridge_split_disc.disarm();
         self.tools.bridge_split_section.reset();
         self.ui.status_message = Some(if surface_result {
-            self.ui.locale.tr("bridge-complete-surface")
+            self.ui
+                .locale
+                .tr(crate::i18n::message_id!("bridge-complete-surface"))
         } else if undoable {
-            self.ui.locale.tr("bridge-complete")
+            self.ui
+                .locale
+                .tr(crate::i18n::message_id!("bridge-complete"))
         } else {
-            self.ui.locale.tr("bridge-complete-locked")
+            self.ui
+                .locale
+                .tr(crate::i18n::message_id!("bridge-complete-locked"))
         });
         ctx.request_repaint();
     }
@@ -518,11 +588,11 @@ fn bridge_surface_sample(
     let (origin, direction) = viewport_ray(camera, viewport_rect, pointer)?;
     let hit = scene.pick_layer_ray_hit(origin, direction, layer_id)?;
     let entry = scene.meshes().get(hit.layer_index)?;
-    let normal = super::app_cut_measure::triangle_world_normal(entry, hit.triangle_index)?;
+    let normal = super::app_cut::triangle_world_normal(entry, hit.triangle_index)?;
     Some(SurfaceSample {
         point: hit.point,
         normal,
-        arch_frame: super::app_cut_measure::world_arch_frame(entry),
+        arch_frame: super::app_cut::world_arch_frame(entry),
     })
 }
 

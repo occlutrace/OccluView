@@ -27,19 +27,28 @@ impl OccluViewApp {
             return;
         }
         let mut close = false;
+        let close_label = self.ui.locale.tr(crate::i18n::message_id!("help-close"));
         let modal_response = show_information_modal(
             ctx,
             egui::Id::new("occluview-third-party-notices-v2"),
             egui::vec2(560.0, 420.0),
+            &close_label,
             |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
-                        egui::RichText::new(self.ui.locale.tr("about-licenses"))
-                            .strong()
-                            .color(ui_theme::text()),
+                        egui::RichText::new(
+                            self.ui
+                                .locale
+                                .tr(crate::i18n::message_id!("about-licenses")),
+                        )
+                        .strong()
+                        .color(ui_theme::text()),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button(self.ui.locale.tr("help-close")).clicked() {
+                        if ui
+                            .button(self.ui.locale.tr(crate::i18n::message_id!("help-close")))
+                            .clicked()
+                        {
                             close = true;
                         }
                     });

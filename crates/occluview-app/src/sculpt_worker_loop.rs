@@ -5,6 +5,8 @@ use super::{
     SculptSession, WorkerState,
 };
 
+// One command loop: each arm is a complete command and they read in order.
+#[allow(clippy::too_many_lines)]
 pub(super) fn run_worker(
     mut session: SculptSession,
     queue: Arc<SculptCommandQueue>,
@@ -19,17 +21,22 @@ pub(super) fn run_worker(
         }
         match command {
             SculptCommand::Apply {
-                stroke_id,
+                stroke_id: _,
                 stroke,
                 mode,
+                tip,
+                axis,
             } => {
-                let Some(outcome) =
-                    pool.install(|| session.apply_dab_cancellable(stroke, mode, &state.stopping))
-                else {
+                state.begin_geometry_update();
+                let Some(outcome) = pool.install(|| {
+                    session.apply_dab_cancellable(stroke, mode, &state.stopping, tip, axis)
+                }) else {
+                    state.finish_geometry_update();
                     queue.mark_idle();
                     break;
                 };
                 if state.stopping.load(Ordering::Acquire) {
+                    state.finish_geometry_update();
                     queue.mark_idle();
                     break;
                 }
@@ -58,33 +65,35 @@ pub(super) fn run_worker(
                             );
                             SculptFailure::InvalidVertexIndex
                         }
-                        DabFailure::TopologyRebuild { detail } => {
-                            SculptFailure::TopologyRebuild { detail }
-                        }
                     };
                     state.set_error(failure);
+                    state.finish_geometry_update();
                     queue.mark_idle();
                     break;
                 }
-                if let Some(rebuild) = outcome.rebuild {
-                    state.record_rebuild(stroke_id, rebuild);
+                if let Some(delta) = outcome.topology_delta {
+                    state.record_topology(delta);
                 } else {
                     state.record_touched(outcome.touched, outcome.dirty_triangles);
                 }
+                state.finish_geometry_update();
                 if state.has_error() {
                     queue.mark_idle();
                     break;
                 }
             }
-            SculptCommand::Finish {
-                stroke_id: _stroke_id,
-            } => {
+            SculptCommand::Finish => {
+                state.begin_geometry_update();
+                session.session.finish_stroke();
                 let dirty = session.dirty_stroke;
                 session.dirty_stroke = false;
+                let topology_dirty = session.topology_dirty_stroke;
+                session.topology_dirty_stroke = false;
                 let start_mesh = session.stroke_start_mesh.take();
                 if dirty {
                     let Some(before) = start_mesh else {
                         state.set_error(SculptFailure::MissingUndoBaseline);
+                        state.finish_geometry_update();
                         queue.mark_idle();
                         // This is a terminal worker invariant failure. Do
                         // not consume later commands after publishing the
@@ -94,25 +103,49 @@ pub(super) fn run_worker(
                     };
                     let Ok(shadow) = session.shadow.read() else {
                         state.set_error(SculptFailure::ShadowPoisoned);
+                        state.finish_geometry_update();
                         queue.mark_idle();
                         break;
                     };
                     let vertices = shadow.clone();
-                    // `base_mesh` already tracks any mid-stroke rebuild, so the
-                    // lengths match whether or not the stroke densified. Undo
-                    // restores `before`, which still has the pre-stroke
-                    // topology — coarse triangles and all.
-                    let mesh = session.base_mesh.with_sculpted_vertices(vertices);
-                    if let Some(mesh) = mesh {
-                        if !state.push_completion(SculptCompletion { before, mesh }) {
+                    let mesh = if topology_dirty {
+                        occluview_core::mesh_from_sculpt_session_like(
+                            &session.base_mesh,
+                            &session.session,
+                        )
+                        .map(Arc::new)
+                        .map_err(|error| SculptFailure::TopologyRebuild {
+                            detail: error.to_string(),
+                        })
+                    } else {
+                        session
+                            .base_mesh
+                            .with_sculpted_vertices(vertices)
+                            .map(Arc::new)
+                            .ok_or(SculptFailure::VertexCountChanged)
+                    };
+                    let mesh = match mesh {
+                        Ok(mesh) => mesh,
+                        Err(failure) => {
+                            state.set_error(failure);
+                            state.finish_geometry_update();
                             queue.mark_idle();
                             break;
                         }
-                    } else {
-                        state.set_error(SculptFailure::VertexCountChanged);
+                    };
+                    mesh.warm_bvh();
+                    session.base_mesh = Arc::clone(&mesh);
+                    session.topology = occluview_render::PreparedSceneTopology::from_mesh(&mesh);
+                    session.topology_id = mesh.topology_id();
+                    state
+                        .reset_pick_geometry(Arc::clone(&mesh), session.session.indices().to_vec());
+                    state.finish_geometry_update();
+                    if !state.push_completion(SculptCompletion { before, mesh }) {
                         queue.mark_idle();
                         break;
                     }
+                } else {
+                    state.finish_geometry_update();
                 }
             }
         }

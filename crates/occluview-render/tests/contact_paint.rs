@@ -18,7 +18,7 @@
 
 mod common;
 
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 use occluview_core::{Mesh, MeshBuilder, Vertex};
 use occluview_render::{
     ContactFieldTexels, ContactPaintSource, GpuCamera, GpuMeshUniform, Offscreen, PreparedScene,
@@ -101,8 +101,8 @@ fn viewport_spec() -> ViewportSpec {
 
 fn orthographic_camera() -> GpuCamera {
     GpuCamera::new(
-        Mat4::look_at_rh(Vec3::new(0.0, 0.0, 2.0), Vec3::ZERO, Vec3::Y),
-        Mat4::orthographic_rh(-1.0, 1.0, -1.0, 1.0, 0.1, 10.0),
+        glam::camera::rh::view::look_at_mat4(Vec3::new(0.0, 0.0, 2.0), Vec3::ZERO, Vec3::Y),
+        glam::camera::rh::proj::directx::orthographic(-1.0, 1.0, -1.0, 1.0, 0.1, 10.0),
         Vec3::Z,
         Vec3::new(0.0, 0.0, 2.0),
     )

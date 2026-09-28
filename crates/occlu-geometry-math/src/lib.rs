@@ -8,7 +8,84 @@
 
 #![forbid(unsafe_code)]
 
-use glam::Vec3;
+use glam::{DVec3, Vec2, Vec3};
+
+mod sculpt_field;
+pub use sculpt_field::{
+    ball_weight, cylinder_weight, knife_weight, stamp_weight, TipStamp, CYLINDER_PLATEAU,
+    KNIFE_AXIS_MIN_LENGTH, KNIFE_CROSS_RADIUS_SHARE,
+};
+
+/// Average a coincident-position normal run. A zero output means that member
+/// keeps its source direction. Large runs use bounded directional clusters.
+pub fn average_duplicate_normal_group(
+    member_count: usize,
+    source_normal: impl Fn(usize) -> Vec3 + Copy,
+    out: &mut [Vec3],
+) {
+    if member_count > MAX_PAIRWISE_DUPLICATE_GROUP {
+        average_duplicate_normal_clusters(member_count, source_normal, out);
+        return;
+    }
+
+    for (slot, output) in out.iter_mut().take(member_count).enumerate() {
+        let current = source_normal(slot);
+        if current.length_squared() <= f32::EPSILON {
+            continue;
+        }
+        let mut normal = Vec3::ZERO;
+        for neighbor in 0..member_count {
+            let candidate = source_normal(neighbor);
+            if candidate.length_squared() > f32::EPSILON
+                && candidate.dot(current) >= DUPLICATE_NORMAL_DOT
+            {
+                normal += candidate;
+            }
+        }
+        if normal.length_squared() > f32::EPSILON {
+            *output = normal.normalize();
+        }
+    }
+}
+
+fn average_duplicate_normal_clusters(
+    member_count: usize,
+    source_normal: impl Fn(usize) -> Vec3 + Copy,
+    out: &mut [Vec3],
+) {
+    let mut sums: Vec<Vec3> = Vec::new();
+    let mut assigned: Vec<Option<usize>> = vec![None; member_count];
+
+    for (slot, assignment) in assigned.iter_mut().enumerate() {
+        let current = source_normal(slot);
+        if current.length_squared() <= f32::EPSILON {
+            continue;
+        }
+        let existing = sums
+            .iter()
+            .position(|sum| sum.normalize_or_zero().dot(current) >= DUPLICATE_NORMAL_DOT);
+        if let Some(cluster) = existing {
+            sums[cluster] += current;
+            *assignment = Some(cluster);
+        } else {
+            if sums.len() == MAX_DUPLICATE_CLUSTERS {
+                return;
+            }
+            sums.push(current);
+            *assignment = Some(sums.len() - 1);
+        }
+    }
+
+    for (slot, cluster) in assigned.iter().enumerate() {
+        let Some(cluster) = *cluster else { continue };
+        let mean = sums[cluster].normalize_or_zero();
+        if mean.length_squared() > f32::EPSILON {
+            if let Some(output) = out.get_mut(slot) {
+                *output = mean;
+            }
+        }
+    }
+}
 
 /// Squared sine of the smallest angle a facet may have and still contribute a
 /// normal. Scale-free: the test compares twice the facet's area against its own
@@ -28,6 +105,20 @@ pub const DEGENERATE_AREA_SIN: f32 = 1e-10;
 #[must_use]
 pub fn facet_contributes_normal(longest_edge_sq: f32, face_normal_length_sq: f32) -> bool {
     face_normal_length_sq > longest_edge_sq * longest_edge_sq * DEGENERATE_AREA_SIN
+}
+
+/// Closest parameter on segment `a -> b` to `point`, and squared distance to
+/// that point. A degenerate segment yields parameter zero.
+#[must_use]
+pub fn closest_param_on_segment_2d(point: Vec2, a: Vec2, b: Vec2) -> (f32, f32) {
+    let along = b - a;
+    let length_sq = along.length_squared();
+    let t = if length_sq <= f32::EPSILON {
+        0.0
+    } else {
+        ((point - a).dot(along) / length_sq).clamp(0.0, 1.0)
+    };
+    (t, point.distance_squared(a + along * t))
 }
 
 /// Above this many vertices sharing one position, normal agreement is judged
@@ -130,6 +221,88 @@ pub fn accumulate_smooth_normals(
     normals
 }
 
+/// Which part of a triangle contains its closest point: the open face, an edge
+/// (edge `k` joins corner `k` to corner `(k + 1) % 3`), or a corner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClosestTriangleFeature {
+    /// The closest point lies inside the triangle face.
+    Face,
+    /// The closest point lies on the indexed edge.
+    Edge(u8),
+    /// The closest point is the indexed corner.
+    Corner(u8),
+}
+
+/// Closest point on a triangle to `point`, and the feature containing it.
+///
+/// Ericson's region test handles the face, the three edges, and the three
+/// corners without branching on a projection that may fall outside.
+#[must_use]
+pub fn closest_feature_on_triangle(
+    point: DVec3,
+    a: DVec3,
+    b: DVec3,
+    c: DVec3,
+) -> (DVec3, ClosestTriangleFeature) {
+    use ClosestTriangleFeature::{Corner, Edge, Face};
+
+    let ab = b - a;
+    let ac = c - a;
+    let ap = point - a;
+    let d1 = ab.dot(ap);
+    let d2 = ac.dot(ap);
+    if d1 <= 0.0 && d2 <= 0.0 {
+        return (a, Corner(0));
+    }
+    let bp = point - b;
+    let d3 = ab.dot(bp);
+    let d4 = ac.dot(bp);
+    let vc = d1 * d4 - d3 * d2;
+    if d3 >= 0.0 && d4 <= d3 {
+        return (b, Corner(1));
+    }
+    if vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 {
+        let denominator = d1 - d3;
+        if denominator.abs() > f64::EPSILON {
+            return (a + ab * (d1 / denominator), Edge(0));
+        }
+        return (a, Corner(0));
+    }
+    let cp = point - c;
+    let d5 = ab.dot(cp);
+    let d6 = ac.dot(cp);
+    if d6 >= 0.0 && d5 <= d6 {
+        return (c, Corner(2));
+    }
+    let vb = d5 * d2 - d1 * d6;
+    if vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0 {
+        let denominator = d2 - d6;
+        if denominator.abs() > f64::EPSILON {
+            return (a + ac * (d2 / denominator), Edge(2));
+        }
+        return (a, Corner(0));
+    }
+    let va = d3 * d6 - d5 * d4;
+    if va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0 {
+        let denominator = (d4 - d3) + (d5 - d6);
+        if denominator.abs() > f64::EPSILON {
+            return (b + (c - b) * ((d4 - d3) / denominator), Edge(1));
+        }
+        return (b, Corner(1));
+    }
+    let total = va + vb + vc;
+    if total.abs() <= f64::EPSILON {
+        return (a, Corner(0));
+    }
+    (a + ab * (vb / total) + ac * (vc / total), Face)
+}
+
+/// Closest point on a triangle to `point`, using the shared feature query.
+#[must_use]
+pub fn closest_point_on_triangle(point: DVec3, a: DVec3, b: DVec3, c: DVec3) -> DVec3 {
+    closest_feature_on_triangle(point, a, b, c).0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -186,6 +359,30 @@ mod tests {
             !facet_contributes_normal(2.0, 1e-12),
             "a sliver far below the gate must not contribute"
         );
+    }
+
+    #[test]
+    fn closest_segment_parameter_clamps_and_handles_degenerate_segments() {
+        let (middle_t, middle_distance_sq) = closest_param_on_segment_2d(
+            Vec2::new(3.0, 4.0),
+            Vec2::new(0.0, 0.0),
+            Vec2::new(10.0, 0.0),
+        );
+        assert!((middle_t - 0.3).abs() < f32::EPSILON);
+        assert!((middle_distance_sq - 16.0).abs() < f32::EPSILON);
+
+        let (end_t, end_distance_sq) =
+            closest_param_on_segment_2d(Vec2::new(-2.0, 0.0), Vec2::ZERO, Vec2::X);
+        assert!(end_t.abs() < f32::EPSILON);
+        assert!((end_distance_sq - 4.0).abs() < f32::EPSILON);
+
+        let (point_t, point_distance_sq) = closest_param_on_segment_2d(
+            Vec2::new(4.0, 6.0),
+            Vec2::new(1.0, 2.0),
+            Vec2::new(1.0, 2.0),
+        );
+        assert!(point_t.abs() < f32::EPSILON);
+        assert!((point_distance_sq - 25.0).abs() < f32::EPSILON);
     }
 
     #[test]

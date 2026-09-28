@@ -49,7 +49,11 @@ pub(super) fn apply_layer_mesh_edit_action_with_status(
         None
     };
     if request.action == LayerContextAction::CloseHoles && selection.is_none() {
-        app.ui.status_message = Some(app.ui.locale.tr("edit-select-faces-first"));
+        app.ui.status_message = Some(
+            app.ui
+                .locale
+                .tr(crate::i18n::message_id!("edit-select-faces-first")),
+        );
         return LayerContextApply::default();
     }
 
@@ -280,46 +284,65 @@ fn close_holes_status(
         // Pre-cleaning healed the jagged cut line (dropped needle/lone
         // triangles, welded seam vertices) before capping — the operator sees
         // why the socket closed cleanly instead of leaving nick rims.
-        segments.push(locale.tr_plural("holes-seg-healed", &[], &[("n", healed)]));
+        segments.push(locale.tr_plural(
+            crate::i18n::message_id!("holes-seg-healed"),
+            &[],
+            &[("n", healed)],
+        ));
     }
     if border > 0 {
-        segments.push(locale.tr("holes-seg-border"));
+        segments.push(locale.tr(crate::i18n::message_id!("holes-seg-border")));
     }
     if oversize > 0 {
         segments.push(match close_holes_limit_mm {
             Some(limit_mm) => locale.tr_with(
-                "holes-seg-oversize-limit",
+                crate::i18n::message_id!("holes-seg-oversize-limit"),
                 &[
                     ("n", &oversize.to_string()),
                     ("limit", &format!("{limit_mm:.0}")),
                 ],
             ),
-            None => locale.tr_plural("holes-seg-oversize", &[], &[("n", oversize)]),
+            None => locale.tr_plural(
+                crate::i18n::message_id!("holes-seg-oversize"),
+                &[],
+                &[("n", oversize)],
+            ),
         });
     }
     if damaged > 0 {
-        segments.push(locale.tr_plural("holes-seg-damaged", &[], &[("n", damaged)]));
+        segments.push(locale.tr_plural(
+            crate::i18n::message_id!("holes-seg-damaged"),
+            &[],
+            &[("n", damaged)],
+        ));
     }
 
     if !changed {
         return if segments.is_empty() {
-            locale.tr_with("holes-nothing", &[("layer", layer_label)])
+            locale.tr_with(
+                crate::i18n::message_id!("holes-nothing"),
+                &[("layer", layer_label)],
+            )
         } else {
             locale.tr_with(
-                "holes-partial",
+                crate::i18n::message_id!("holes-partial"),
                 &[("segments", &segments.join(", ")), ("layer", layer_label)],
             )
         };
     }
-    let closed = locale.tr_plural("holes-closed", &[], &[("filled", filled)]);
+    let closed = locale.tr_plural(
+        crate::i18n::message_id!("holes-closed"),
+        &[],
+        &[("filled", filled)],
+    );
     if segments.is_empty() {
         locale.tr_with(
-            "holes-closed-detail",
+            crate::i18n::message_id!("holes-closed-detail"),
             &[("closed", &closed), ("layer", layer_label)],
         )
     } else {
         locale.tr_with(
-            "holes-closed-segments",
+            crate::i18n::message_id!("holes-closed-segments"),
             &[
                 ("closed", &closed),
                 ("segments", &segments.join(", ")),
@@ -331,7 +354,10 @@ fn close_holes_status(
 
 /// Status for a whole-mesh op (other than Close Holes) that changed nothing.
 fn layer_edit_noop_status(layer_label: &str, locale: &crate::i18n::LocaleManager) -> String {
-    locale.tr_with("edit-no-changes", &[("layer", layer_label)])
+    locale.tr_with(
+        crate::i18n::message_id!("edit-no-changes"),
+        &[("layer", layer_label)],
+    )
 }
 
 pub(super) fn layer_edit_status(
@@ -342,15 +368,17 @@ pub(super) fn layer_edit_status(
 ) -> String {
     // Action labels render through the `batchedit-*` catalog keys.
     let action_key = match action {
-        LayerContextAction::InvertNormals => "batchedit-invert",
-        LayerContextAction::DeleteSelectedFaces => "batchedit-delete",
-        LayerContextAction::CropToSelectedFaces => "batchedit-crop",
-        LayerContextAction::CutSelectionToNewLayer => "batchedit-cut",
-        LayerContextAction::SeparateSelectedComponents => "batchedit-separate",
-        _ => "batchedit-edited",
+        LayerContextAction::InvertNormals => crate::i18n::message_id!("batchedit-invert"),
+        LayerContextAction::DeleteSelectedFaces => crate::i18n::message_id!("batchedit-delete"),
+        LayerContextAction::CropToSelectedFaces => crate::i18n::message_id!("batchedit-crop"),
+        LayerContextAction::CutSelectionToNewLayer => crate::i18n::message_id!("batchedit-cut"),
+        LayerContextAction::SeparateSelectedComponents => {
+            crate::i18n::message_id!("batchedit-separate")
+        }
+        _ => crate::i18n::message_id!("batchedit-edited"),
     };
     locale.tr_with(
-        "edit-applied-status",
+        crate::i18n::message_id!("edit-applied-status"),
         &[("action", &locale.tr(action_key)), ("layer", layer_label)],
     )
 }
@@ -361,12 +389,14 @@ pub(crate) fn batch_action_label(
     locale: &crate::i18n::LocaleManager,
 ) -> String {
     let key = match action {
-        LayerContextAction::CloseHoles => "batch-close-holes",
-        LayerContextAction::DeleteSelectedFaces => "batch-delete",
-        LayerContextAction::CropToSelectedFaces => "batch-crop",
-        LayerContextAction::CutSelectionToNewLayer => "batch-cut",
-        LayerContextAction::SeparateSelectedComponents => "batch-separate",
-        _ => "batch-edited",
+        LayerContextAction::CloseHoles => crate::i18n::message_id!("batch-close-holes"),
+        LayerContextAction::DeleteSelectedFaces => crate::i18n::message_id!("batch-delete"),
+        LayerContextAction::CropToSelectedFaces => crate::i18n::message_id!("batch-crop"),
+        LayerContextAction::CutSelectionToNewLayer => crate::i18n::message_id!("batch-cut"),
+        LayerContextAction::SeparateSelectedComponents => {
+            crate::i18n::message_id!("batch-separate")
+        }
+        _ => crate::i18n::message_id!("batch-edited"),
     };
     locale.tr(key)
 }

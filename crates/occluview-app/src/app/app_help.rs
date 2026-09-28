@@ -6,7 +6,9 @@
 
 use super::information_dialog::InformationDialog;
 use super::OccluViewApp;
-use crate::interaction_hints::{contextual_line, contextual_line_key, HintContext, ALL_SECTIONS};
+use crate::interaction_hints::{
+    contextual_line, contextual_line_key, ContextualHint, HintContext, ALL_SECTIONS,
+};
 
 use crate::modal_surface::show_information_modal;
 use crate::ui_theme;
@@ -24,75 +26,39 @@ impl OccluViewApp {
         }
 
         let mut close = false;
+        let close_label = self.ui.locale.tr(crate::i18n::message_id!("help-close"));
         let modal_response = show_information_modal(
             ctx,
             egui::Id::new("occluview-keyboard-mouse-dialog-v1"),
             egui::vec2(700.0, 570.0),
+            &close_label,
             |ui| {
                 ui.set_width(668.0_f32.min(ui.available_width()));
                 ui.label(
-                    egui::RichText::new(self.ui.locale.text("help-title"))
-                        .size(18.0)
-                        .strong()
-                        .color(ui_theme::text()),
+                    egui::RichText::new(
+                        self.ui.locale.text(crate::i18n::message_id!("help-title")),
+                    )
+                    .size(18.0)
+                    .strong()
+                    .color(ui_theme::text()),
                 );
                 ui.add_space(2.0);
                 ui.label(
-                    egui::RichText::new(self.ui.locale.text("help-subtitle"))
-                        .size(11.5)
-                        .color(ui_theme::text_weak()),
+                    egui::RichText::new(
+                        self.ui
+                            .locale
+                            .text(crate::i18n::message_id!("help-subtitle")),
+                    )
+                    .size(11.5)
+                    .color(ui_theme::text_weak()),
                 );
                 ui.add_space(8.0);
 
-                egui::ScrollArea::vertical()
-                    .id_salt("occluview-keyboard-mouse-sections")
-                    .max_height(438.0)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        for section in ALL_SECTIONS {
-                            ui.add_space(6.0);
-                            ui.label(
-                                egui::RichText::new(self.ui.locale.text(section.key))
-                                    .size(12.5)
-                                    .strong()
-                                    .color(ui_theme::text()),
-                            );
-                            ui.separator();
-                            for row in section.rows {
-                                let row_width = ui.available_width();
-                                ui.allocate_ui_with_layout(
-                                    egui::vec2(row_width, HELP_ROW_HEIGHT),
-                                    egui::Layout::left_to_right(egui::Align::Center),
-                                    |ui| {
-                                        let gesture_width =
-                                            HELP_GESTURE_WIDTH.min(row_width.max(0.0));
-                                        ui.add_sized(
-                                            egui::vec2(gesture_width, HELP_ROW_HEIGHT),
-                                            egui::Label::new(
-                                                egui::RichText::new(
-                                                    crate::i18n::platform_shortcut_text(
-                                                        row.gesture,
-                                                    ),
-                                                )
-                                                .strong()
-                                                .color(ui_theme::text()),
-                                            )
-                                            .truncate(),
-                                        );
-                                        ui.add_space(12.0);
-                                        ui.add(
-                                            egui::Label::new(
-                                                egui::RichText::new(self.ui.locale.text(row.key))
-                                                    .color(ui_theme::text_weak()),
-                                            )
-                                            .truncate(),
-                                        );
-                                    },
-                                );
-                            }
-                        }
-                    });
+                draw_help_sections(
+                    ui,
+                    &self.ui.locale,
+                    self.persistence.settings.scroll_behavior,
+                );
 
                 ui.add_space(8.0);
                 ui.separator();
@@ -100,7 +66,10 @@ impl OccluViewApp {
                     egui::vec2(ui.available_width(), 30.0),
                     egui::Layout::right_to_left(egui::Align::Center),
                     |ui| {
-                        if ui.button(self.ui.locale.text("help-close")).clicked() {
+                        if ui
+                            .button(self.ui.locale.text(crate::i18n::message_id!("help-close")))
+                            .clicked()
+                        {
                             close = true;
                         }
                     },
@@ -135,15 +104,71 @@ impl OccluViewApp {
     }
 }
 
+fn draw_help_sections(
+    ui: &mut egui::Ui,
+    locale: &LocaleManager,
+    scroll_behavior: crate::app_settings::ScrollBehavior,
+) {
+    egui::ScrollArea::vertical()
+        .id_salt("occluview-keyboard-mouse-sections")
+        .max_height(438.0)
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            for section in ALL_SECTIONS {
+                ui.add_space(6.0);
+                ui.label(
+                    egui::RichText::new(locale.text(section.key))
+                        .size(12.5)
+                        .strong()
+                        .color(ui_theme::text()),
+                );
+                ui.separator();
+                for row in section.rows {
+                    let row_width = ui.available_width();
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(row_width, HELP_ROW_HEIGHT),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            let gesture_width = HELP_GESTURE_WIDTH.min(row_width.max(0.0));
+                            ui.add_sized(
+                                egui::vec2(gesture_width, HELP_ROW_HEIGHT),
+                                egui::Label::new(
+                                    egui::RichText::new(crate::i18n::platform_shortcut_text(
+                                        row.gesture,
+                                    ))
+                                    .strong()
+                                    .color(ui_theme::text()),
+                                )
+                                .truncate(),
+                            );
+                            ui.add_space(12.0);
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(
+                                        locale.text(row.action_key(scroll_behavior)),
+                                    )
+                                    .color(ui_theme::text_weak()),
+                                )
+                                .truncate(),
+                            );
+                        },
+                    );
+                }
+            }
+        });
+}
+
 pub(super) fn render_contextual_hint(
     ui: &mut egui::Ui,
     _rect: egui::Rect,
-    context: HintContext,
+    hint: ContextualHint,
     ink: egui::Color32,
     locale: &LocaleManager,
 ) {
-    let line = crate::i18n::platform_shortcut_text(contextual_line(context));
-    let localized = locale.text(contextual_line_key(context));
+    let line =
+        crate::i18n::platform_shortcut_text(contextual_line(hint.context, hint.scroll_behavior));
+    let localized = locale.text(contextual_line_key(hint.context, hint.scroll_behavior));
     let response =
         ui.add(egui::Label::new(egui::RichText::new(localized).color(ink).size(11.5)).truncate());
     response.on_hover_text(line);

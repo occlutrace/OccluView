@@ -8,7 +8,9 @@ use crate::camera::GpuCamera;
 use crate::clipping::ClipPlane;
 use crate::gpu::{camera_bind_layout, GpuMesh};
 use crate::mesh_uniform::GpuMeshUniform;
-use crate::sculpt_cursor::{SculptBrushUniform, SculptToolShape, SculptToolUniform};
+use crate::sculpt_cursor::{
+    SculptBrushUniform, SculptToolShape, SculptToolUniform, SCULPT_FEEDBACK_SHADER_SRC,
+};
 use occluview_core::Vertex;
 use std::sync::{
     atomic::{AtomicU32, Ordering},
@@ -60,7 +62,6 @@ pub(crate) struct SculptSurfaceFeedbackBindings<'a> {
 
 const SHADER_SRC: &str = include_str!("../shaders/mesh.wgsl");
 const CAP_SHADER_SRC: &str = include_str!("../shaders/cap.wgsl");
-const SCULPT_FEEDBACK_SHADER_SRC: &str = include_str!("../shaders/sculpt_feedback.wgsl");
 const SCULPT_TOOL_SHADER_SRC: &str = include_str!("../shaders/sculpt_tool.wgsl");
 const POINT_SPLAT_VERTEX_COUNT: u32 = 6;
 const DEFAULT_POINT_SPLAT_VIEWPORT: [f32; 2] = [1024.0, 768.0];
@@ -157,6 +158,9 @@ pub struct Renderer {
     sculpt_tool_cylinder_buffer: wgpu::Buffer,
     sculpt_tool_cylinder_vertex_bytes: u64,
     sculpt_tool_cylinder_index_count: u32,
+    sculpt_tool_knife_buffer: wgpu::Buffer,
+    sculpt_tool_knife_vertex_bytes: u64,
+    sculpt_tool_knife_index_count: u32,
     point_splat_viewport_width_bits: AtomicU32,
     point_splat_viewport_height_bits: AtomicU32,
     /// Cached disabled clip-plane buffer + bind group. Bound at group 3 for
@@ -413,7 +417,7 @@ impl Renderer {
     }
 
     /// Draw the translucent Sculpt tool volume. It is intentionally
-    /// depth-independent, matching the reference cursor: the volume remains
+    /// depth-independent: the volume remains
     /// visible while it hovers over a dense scan and cannot affect the depth
     /// buffer or any authoritative picking result.
     pub fn draw_sculpt_tool(
@@ -426,22 +430,23 @@ impl Renderer {
         rpass.set_bind_group(0, camera_bg, &[]);
         rpass.set_bind_group(1, &self.sculpt_tool_bind_group, &[]);
         rpass.set_bind_group(2, clip_bg, &[]);
-        // The shader treats an invalid shape as Cone. The CPU writes only the
-        // two enum tags, so this selection is fail-safe rather than a panic.
-        let (buffer, vertex_bytes, index_count) =
-            if self.sculpt_tool_shape() == SculptToolShape::Cylinder as u32 {
-                (
-                    &self.sculpt_tool_cylinder_buffer,
-                    self.sculpt_tool_cylinder_vertex_bytes,
-                    self.sculpt_tool_cylinder_index_count,
-                )
-            } else {
-                (
-                    &self.sculpt_tool_cone_buffer,
-                    self.sculpt_tool_cone_vertex_bytes,
-                    self.sculpt_tool_cone_index_count,
-                )
-            };
+        let (buffer, vertex_bytes, index_count) = match self.sculpt_tool_shape() {
+            shape if shape == SculptToolShape::Cylinder as u32 => (
+                &self.sculpt_tool_cylinder_buffer,
+                self.sculpt_tool_cylinder_vertex_bytes,
+                self.sculpt_tool_cylinder_index_count,
+            ),
+            shape if shape == SculptToolShape::Knife as u32 => (
+                &self.sculpt_tool_knife_buffer,
+                self.sculpt_tool_knife_vertex_bytes,
+                self.sculpt_tool_knife_index_count,
+            ),
+            _ => (
+                &self.sculpt_tool_cone_buffer,
+                self.sculpt_tool_cone_vertex_bytes,
+                self.sculpt_tool_cone_index_count,
+            ),
+        };
         if index_count == 0 {
             return;
         }
@@ -509,6 +514,21 @@ impl Renderer {
     /// Access the queue (for buffer writes by callers).
     pub fn queue(&self) -> &wgpu::Queue {
         &self.queue
+    }
+
+    /// Submit staged queue writes and wait for that submission to complete.
+    /// Earlier work on the same queue completes before this returns.
+    ///
+    /// # Errors
+    /// Returns the device polling error if the queue cannot complete.
+    pub fn wait_for_queue_idle(&self) -> Result<(), wgpu::PollError> {
+        let submission = self.queue.submit(std::iter::empty());
+        self.device
+            .poll(wgpu::PollType::Wait {
+                submission_index: Some(submission),
+                timeout: None,
+            })
+            .map(|_| ())
     }
 
     /// Take the most recent wgpu uncaptured error, if any, clearing it.

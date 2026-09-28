@@ -30,14 +30,16 @@ diagnostic-logs = []
 occluview-core    = { workspace = true }
 occluview-render  = { workspace = true }
 occluview-formats = { workspace = true }
+occluview-i18n    = { workspace = true }
 occluview-thumbnail = { workspace = true }
+occlu-geometry-math = { workspace = true }
 tracing           = { workspace = true }
 thiserror         = { workspace = true }
 pollster          = { workspace = true }
 glam              = { workspace = true }
 
 [target.'cfg(windows)'.dependencies.windows]
-version = "0.62"
+version = "0.62.2"
 features = [
     "Win32_Foundation",
     "Win32_Storage_FileSystem",
@@ -59,9 +61,12 @@ features = [
 # microsoft/windows-rs#3038). An explicit `windows-core` dependency of the
 # same version makes those paths resolve.
 [target.'cfg(windows)'.dependencies.windows-core]
-version = "0.62"
+version = "0.62.2"
 
 [dev-dependencies]
+roxmltree = { workspace = true }
+serde_yaml_ng = { workspace = true }
+serde_json = { workspace = true }
 
 [package.metadata.cargo-machete]
 ignored = ["windows-core"] # referenced by generated windows-rs macro code

@@ -49,9 +49,9 @@ impl OccluViewApp {
             .map_or(STRIP_FIRST_WIDTH_PX, |rect| rect.width());
         let origin = self.ruler_options_origin(viewport_rect, width);
         let locale = &self.ui.locale;
-        let title = locale.tr("measure-line-angle");
-        let hint = locale.tr("measure-line-angle-hint");
-        let shift_note = locale.tr("measure-line-angle-shift");
+        let title = locale.tr(crate::i18n::message_id!("measure-line-angle"));
+        let hint = locale.tr(crate::i18n::message_id!("measure-line-angle-hint"));
+        let shift_note = locale.tr(crate::i18n::message_id!("measure-line-angle-shift"));
         let mut chosen = None;
         egui::Area::new(id)
             .order(egui::Order::Foreground)

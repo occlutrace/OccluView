@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/occlutrace/OccluView/releases/tag/v1.2.0"><img src="https://img.shields.io/badge/latest%20release-v1.2.0-1f6feb?style=for-the-badge&logo=github&logoColor=white" alt="Latest published release: v1.2.0"></a>
+  <a href="https://github.com/occlutrace/OccluView/releases/latest"><img src="https://img.shields.io/github/v/release/occlutrace/OccluView?style=for-the-badge&logo=github&logoColor=white" alt="Latest published release"></a>
   <a href="https://github.com/occlutrace/OccluView/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/occlutrace/OccluView/ci.yml?branch=main&style=for-the-badge&label=build" alt="Build status"></a>
 </p>
 
@@ -90,6 +90,13 @@ matching settings or the exclusion markings, or returning to Automatic, clears
 it until a new matching result is available. Manual alignment remains
 available when the automatic pair is not appropriate.
 
+When Best fit finds more than one equally plausible pose, it refuses to confirm
+the alignment. Mark the corresponding area or move the scans closer, then try
+again.
+
+Point-pair placement supplies a starting pose. It remains unverified until
+surface refinement passes, and the deviation map stays unavailable until then.
+
 ## Mesh Editing
 
 <p align="center">
@@ -108,8 +115,16 @@ Mesh Editing keeps the common dental CAD operations in one palette:
 </p>
 
 Sculpting uses the same editor session. Add/Remove and Smooth are separate
-brush modes, while the size and force controls stay compact and readable in the
-panel instead of consuming the whole viewport.
+brush modes, and each works through a ball, knife, or cylinder tip: the ball
+stamps a round footprint, the knife a narrow blade along the stroke direction,
+and the cylinder a flat footprint for levelling one face. The size, force and
+tip controls stay compact and readable in the panel instead of consuming the
+whole viewport.
+
+The surface repaints itself under the brush: the emissive footprint follows the
+tip you chose, so the mark on the scan is the shape the next dab will stamp.
+Hold **Ctrl+Shift** (**⌘+Shift** on macOS) while dragging in Add/Remove to
+gently even small surface detail without changing the broader form.
 
 ## Mesh Repair
 
@@ -147,8 +162,8 @@ Press **F1** — or open **Settings → Keyboard shortcuts** — for the complet
 - Toolbar tools: **C** Cut View, **M** Ruler, **T** Thickness, **A** Align, and
   **E** Mesh Editing.
 - Orbit with right-drag; pan with middle-drag or LMB+RMB drag. A mouse wheel
-  zooms toward the pointer. On a Mac trackpad, two-finger scroll pans and
-  pinch zooms.
+  zooms toward the pointer. On macOS, smooth scroll pans by default; choose
+  **Settings → Scroll** to make it zoom. Pinch zooms.
   Recenter on a surface with middle-click or double-click.
 - In Mesh Editing, **Ctrl+A** (**⌘+A** on macOS) selects all; **Delete** or **Backspace**
   removes; **Ctrl+Z**, **Ctrl+Y**, or **Ctrl+Shift+Z** (the ⌘ equivalents on macOS)
@@ -157,6 +172,8 @@ Press **F1** — or open **Settings → Keyboard shortcuts** — for the complet
   changed.
 - In Sculpt, **1** chooses Add/Remove and **2** chooses Smooth. **Shift+wheel** changes Sculpt brush size; **Ctrl+wheel** (**⌘+wheel** on macOS) changes intensity.
   Holding **Shift** during a drag removes or strengthens the active brush mode.
+  In Add/Remove, hold **Ctrl+Shift** (**⌘+Shift** on macOS) while dragging to
+  gently even surface detail.
 - In Ruler, after the first point, a click on a drawn ruler line ends the
   ruler on that line (for example the Korkhaus arch length from the incisal
   point to the Pont premolar line). The end goes where you click along the

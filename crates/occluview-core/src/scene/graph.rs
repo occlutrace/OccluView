@@ -65,6 +65,25 @@ impl Scene {
         &mut self.meshes
     }
 
+    /// Estimate memory reserved for this scene's layers and rendering.
+    ///
+    /// A shared mesh referenced by multiple layers is counted for every layer.
+    /// The estimate includes CPU storage, lazy picking trees, GPU buffers and
+    /// textures, and the optional wireframe buffer for every mesh.
+    #[must_use]
+    pub fn estimated_memory_bytes(&self) -> u64 {
+        let entries = self
+            .meshes
+            .capacity()
+            .saturating_mul(size_of::<SceneMesh>());
+        let entry_bytes = u64::try_from(entries).unwrap_or(u64::MAX);
+        self.meshes.iter().fold(entry_bytes, |total, mesh| {
+            total
+                .saturating_add(mesh.estimated_memory_bytes())
+                .saturating_add(mesh.mesh.estimated_gpu_memory_bytes(true))
+        })
+    }
+
     /// Number of visible meshes.
     #[inline]
     #[must_use]

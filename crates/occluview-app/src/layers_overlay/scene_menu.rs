@@ -41,46 +41,41 @@ pub(crate) fn show_scene_context_menu(
 
     ui.add_space(4.0);
     ui.label(
-        egui::RichText::new(locale.tr("scene-menu-title"))
+        egui::RichText::new(locale.tr(crate::i18n::message_id!("scene-menu-title")))
             .color(ui_theme::text_weak())
             .size(11.0),
     );
     ui.add_space(2.0);
     ui.separator();
 
-    // Each entry keeps its English wording beside the catalog key it renders.
     let entries = [
         (
             AppIcon::Export,
-            "Save scene as…",
-            "scene-menu-save",
+            crate::i18n::message_id!("scene-menu-save"),
             has_layers,
             SceneContextAction::SaveScene,
         ),
         (
             AppIcon::Export,
-            "Save each layer…",
-            "scene-menu-save-each",
+            crate::i18n::message_id!("scene-menu-save-each"),
             has_layers,
             SceneContextAction::SaveEachLayer,
         ),
         (
             AppIcon::FlipNormals,
-            "Reset positions",
-            "scene-menu-reset",
+            crate::i18n::message_id!("scene-menu-reset"),
             any_moved,
             SceneContextAction::ResetPositions,
         ),
         (
             AppIcon::FitView,
-            "Fit view",
-            "scene-menu-fit",
+            crate::i18n::message_id!("scene-menu-fit"),
             has_layers,
             SceneContextAction::FitView,
         ),
     ];
 
-    for (position, (icon, _label, key, enabled, action)) in entries.into_iter().enumerate() {
+    for (position, (icon, key, enabled, action)) in entries.into_iter().enumerate() {
         // The saving pair and the view pair are different kinds of action.
         if position == 2 {
             ui.separator();

@@ -1,9 +1,9 @@
 //! The mesh data model.
 //!
 //! A [`Mesh`] is the unit of geometry that flows from a format loader, through
-//! the scene graph, into the renderer. It is GPU- and I/O-agnostic on purpose:
-//! `occluview-render` owns the GPU buffers, `occluview-formats` owns the
-//! readers/writers.
+//! the scene graph, into the renderer. It is GPU-API- and I/O-agnostic: the
+//! renderer owns the GPU buffers, formats owns the readers and writers, and
+//! this model provides byte estimates for the storage layout shared with it.
 //!
 //! ## Layout
 //!
@@ -50,7 +50,7 @@ pub use edit_adapter::{
     fill_holes_in_mesh, fill_selected_holes_in_mesh, invert_mesh_orientation,
     mesh_edit_buffers_from_mesh, mesh_from_edit_buffers_like, mesh_from_sculpt_session_like,
     repair_mesh_in_mesh, selected_connected_components_in_mesh, CoreMeshEditResult,
-    CoreMeshRepairResult,
+    CoreMeshRepairResult, SculptSessionBuffers,
 };
 pub use principal_axis::PrincipalFrame;
 pub use texture::MeshTexture;
@@ -79,10 +79,14 @@ pub enum MeshKind {
 /// triangles whose bounds may have moved since that tree was built.
 #[derive(Clone, Copy, Debug)]
 pub struct LiveRayPick<'a> {
-    /// Current vertex positions, with the same length and indexing as the mesh.
+    /// Current vertex positions. The live topology may append rows.
     pub vertices: &'a [Vertex],
-    /// Triangle indices whose live bounds must be checked directly.
+    /// Triangle indices whose live bounds must be checked directly, sorted
+    /// and deduplicated.
     pub dirty_triangles: &'a [usize],
+    /// Current dense index prefix when the topology changed during the stroke.
+    /// `None` keeps the mesh's original indices.
+    pub indices: Option<&'a [u32]>,
     /// Ray origin in mesh-local coordinates.
     pub origin: Vec3,
     /// Ray direction in mesh-local coordinates.
@@ -101,9 +105,18 @@ impl<'a> LiveRayPick<'a> {
         Self {
             vertices,
             dirty_triangles,
+            indices: None,
             origin,
             direction,
         }
+    }
+
+    /// Use a live topology while the cached tree continues to cover unchanged
+    /// face slots from the source mesh.
+    #[must_use]
+    pub const fn with_indices(mut self, indices: &'a [u32]) -> Self {
+        self.indices = Some(indices);
+        self
     }
 }
 
@@ -354,6 +367,66 @@ impl Mesh {
         self.texture.as_ref()
     }
 
+    /// Estimate CPU bytes for this mesh's owned geometry, image, and picking tree.
+    ///
+    /// Vec capacities are used because their unused slots are still allocated.
+    /// The estimate reserves for the picking tree before its lazy build and
+    /// includes the tree builder's live bounds array.
+    #[must_use]
+    pub fn estimated_memory_bytes(&self) -> u64 {
+        let vertex_bytes = self.vertices.capacity().saturating_mul(size_of::<Vertex>());
+        let index_bytes = self.indices.capacity().saturating_mul(size_of::<u32>());
+        let texture_bytes = self
+            .texture
+            .as_ref()
+            .map_or(0, |texture| texture.rgba.capacity());
+        let estimated_bvh_bytes = if self.kind == MeshKind::TriangleMesh && !self.indices.is_empty()
+        {
+            TriangleBvh::estimated_peak_memory_bytes_for_triangle_count(self.triangle_count())
+        } else {
+            0
+        };
+        let actual_bvh_bytes = self
+            .bvh
+            .get()
+            .map_or(0, TriangleBvh::estimated_memory_bytes);
+        let bvh_bytes = estimated_bvh_bytes.max(actual_bvh_bytes);
+        u64::try_from(vertex_bytes)
+            .unwrap_or(u64::MAX)
+            .saturating_add(u64::try_from(index_bytes).unwrap_or(u64::MAX))
+            .saturating_add(u64::try_from(texture_bytes).unwrap_or(u64::MAX))
+            .saturating_add(bvh_bytes)
+    }
+
+    /// Estimate GPU-resident bytes for this mesh's geometry and image.
+    ///
+    /// The optional wireframe allocation is counted when requested. Render
+    /// buffers use the same power-of-two capacity rule as the uploader.
+    #[must_use]
+    pub fn estimated_gpu_memory_bytes(&self, include_wireframe: bool) -> u64 {
+        let vertex_bytes = self.vertices.len().saturating_mul(size_of::<Vertex>());
+        let index_bytes = self.indices.len().saturating_mul(size_of::<u32>());
+        let mut total = Self::gpu_buffer_capacity_bytes(vertex_bytes)
+            .saturating_add(Self::gpu_buffer_capacity_bytes(index_bytes));
+        if include_wireframe && self.kind == MeshKind::TriangleMesh && !self.indices.is_empty() {
+            let wireframe_bytes = index_bytes.saturating_mul(2);
+            total = total.saturating_add(Self::gpu_buffer_capacity_bytes(wireframe_bytes));
+        }
+        if let Some(texture) = &self.texture {
+            total = total.saturating_add(u64::try_from(texture.rgba.len()).unwrap_or(u64::MAX));
+        }
+        total
+    }
+
+    /// Return the capacity used for a renderer geometry buffer of this byte length.
+    #[must_use]
+    pub fn gpu_buffer_capacity_bytes(required: usize) -> u64 {
+        u64::try_from(required.max(4))
+            .unwrap_or(u64::MAX)
+            .checked_next_power_of_two()
+            .unwrap_or(u64::MAX)
+    }
+
     /// Attach a decoded texture image (e.g. from a glTF `image`). Used by
     /// loaders after constructing the mesh.
     #[inline]
@@ -428,15 +501,17 @@ impl Mesh {
     {
         if self.kind != MeshKind::TriangleMesh
             || self.indices.is_empty()
-            || query.vertices.len() != self.vertices.len()
+            || query.vertices.len() < self.vertices.len()
+            || query.indices.is_some_and(|indices| indices.len() % 3 != 0)
         {
             return None;
         }
         let bvh = self.bvh.get()?;
+        let indices = query.indices.unwrap_or(&self.indices);
         bvh.pick_with_dirty_vertices(
             DirtyVertexRay {
                 vertices: query.vertices,
-                indices: &self.indices,
+                indices,
                 query,
             },
             keep,
@@ -453,11 +528,23 @@ impl Mesh {
         vertices: &[Vertex],
         triangle: usize,
     ) -> Option<Vec3> {
-        if vertices.len() != self.vertices.len() {
+        self.triangle_normal_local_with_geometry(vertices, &self.indices, triangle)
+    }
+
+    /// Return a triangle normal from live vertices and indices whose topology
+    /// may include appended or rewired rows.
+    #[must_use]
+    pub fn triangle_normal_local_with_geometry(
+        &self,
+        vertices: &[Vertex],
+        indices: &[u32],
+        triangle: usize,
+    ) -> Option<Vec3> {
+        if vertices.len() < self.vertices.len() || !indices.len().is_multiple_of(3) {
             return None;
         }
         let base = triangle.checked_mul(3)?;
-        let corners = self.indices.get(base..base.checked_add(3)?)?;
+        let corners = indices.get(base..base.checked_add(3)?)?;
         let [a, b, c] = corners else {
             return None;
         };
@@ -468,6 +555,28 @@ impl Mesh {
             .cross(Vec3::from_array(c.position) - Vec3::from_array(a.position))
             .normalize_or_zero();
         (normal.length_squared() > f32::EPSILON && normal.is_finite()).then_some(normal)
+    }
+
+    /// Build a mesh snapshot from the current sculpt geometry, including a
+    /// changed triangle list. The source supplies the stable name and texture
+    /// policy; the snapshot owns fresh geometry identities and caches.
+    #[must_use]
+    pub fn with_sculpted_geometry(&self, vertices: Vec<Vertex>, indices: Vec<u32>) -> Option<Self> {
+        if indices.is_empty()
+            || !indices.len().is_multiple_of(3)
+            || indices
+                .iter()
+                .any(|&index| index as usize >= vertices.len())
+        {
+            return None;
+        }
+        let mut mesh = Self::new(self.name.clone(), vertices, indices).ok()?;
+        if mesh.has_uvs {
+            if let Some(texture) = self.texture.as_ref() {
+                mesh.set_texture(texture.clone());
+            }
+        }
+        Some(mesh)
     }
 
     /// Force the picking BVH to build now (e.g. on a background thread when a

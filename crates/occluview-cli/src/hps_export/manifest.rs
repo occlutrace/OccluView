@@ -33,9 +33,20 @@ impl ManifestArtifact {
         Self {
             format,
             path,
-            sha256: format!("{:x}", Sha256::digest(bytes)),
+            sha256: digest_hex(&Sha256::digest(bytes)),
         }
     }
+}
+
+fn digest_hex(digest: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+
+    let mut encoded = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        encoded.push(HEX[usize::from(*byte >> 4)] as char);
+        encoded.push(HEX[usize::from(*byte & 0x0f)] as char);
+    }
+    encoded
 }
 
 #[cfg(test)]
