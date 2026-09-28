@@ -297,6 +297,14 @@ fn split_and_collapse_keep_rows_and_exact_history() {
     assert!(!journal.collapsed.is_empty(), "exercise a real collapse");
     session.topo_journal = journal;
     assert_rows(&session);
+    let base_groups = session.topology.base_group_count();
+    assert!(
+        (base_groups..session.topology.group_count() as u32).any(|group| session
+            .topology
+            .incident_triangles_or_empty(group)
+            .is_empty()),
+        "the stroke leaves an appended group without live faces"
+    );
     let after = (
         session.verts.clone(),
         session.tris.clone(),
@@ -432,7 +440,7 @@ fn add_and_remove_move_the_surface_by_the_brush_dose() {
     let mut raised = grid_session(8, 0.5, 0.0);
     assert!(!raised.dab(&dab).is_empty());
     let lift = raised.group_v(raised.topology.group_of(center)).z;
-    assert!((0.04..=0.14).contains(&lift), "the center lift is {lift}");
+    assert!((0.20..=0.28).contains(&lift), "the center lift is {lift}");
 
     let mut lowered = grid_session(8, 0.5, 0.0);
     let remove = Dab {
@@ -441,7 +449,101 @@ fn add_and_remove_move_the_surface_by_the_brush_dose() {
     };
     assert!(!lowered.dab(&remove).is_empty());
     let cut = lowered.group_v(lowered.topology.group_of(center)).z;
-    assert!((-0.14..=-0.04).contains(&cut), "the center cut is {cut}");
+    assert!((-0.28..=-0.20).contains(&cut), "the center cut is {cut}");
+}
+
+#[test]
+fn add_uses_the_camera_depth_axis_from_a_tilted_view() {
+    let mut session = grid_session(8, 0.5, 0.0);
+    let view = DVec3::new(0.6, 0.0, -0.8);
+    let dab = Dab {
+        view,
+        ..centered_dab(2.0, BrushMode::Deposit, 1.0)
+    };
+    let center = grid_vertex(8, 0, 0);
+    let before = session.v(center);
+    let moved = session.dab(&dab);
+    let delta = session.group_v(session.topology.group_of(center)) - before;
+    assert!(!moved.is_empty());
+    assert!(
+        delta.x < -0.1 && delta.z > 0.1,
+        "camera-depth move was {delta:?}"
+    );
+    assert!(
+        delta.normalize().dot(-view.normalize()) > 0.99,
+        "the lift was not parallel to the view axis: {delta:?}"
+    );
+}
+
+#[test]
+fn add_strength_scales_the_dab_dose_linearly() {
+    let center = grid_vertex(8, 0, 0);
+    let mut half = grid_session(8, 0.5, 0.0);
+    let mut full = grid_session(8, 0.5, 0.0);
+    let dab = centered_dab(2.0, BrushMode::Deposit, 0.5);
+    let _ = half.dab(&dab);
+    let _ = full.dab(&Dab {
+        strength: 1.0,
+        ..dab
+    });
+    let half_lift = half.group_v(half.topology.group_of(center)).z;
+    let full_lift = full.group_v(full.topology.group_of(center)).z;
+    let ratio = full_lift / half_lift;
+    assert!(
+        (1.8..=2.2).contains(&ratio),
+        "strength 0.5 lifted {half_lift} and strength 1.0 lifted {full_lift} ({ratio}x)"
+    );
+}
+
+#[test]
+fn gentle_relax_moves_a_cusp_far_less_than_smooth() {
+    let center = grid_vertex(6, 0, 0);
+    let mut smooth = grid_session(6, 0.5, 2.0);
+    let mut relax = grid_session(6, 0.5, 2.0);
+    let smooth_start = smooth.group_v(smooth.topology.group_of(center));
+    let relax_start = relax.group_v(relax.topology.group_of(center));
+    let smooth_dab = centered_dab(2.5, BrushMode::Smooth, 1.0);
+    let relax_dab = centered_dab(2.5, BrushMode::Relax, 1.0);
+    for _ in 0..8 {
+        let _ = smooth.dab(&smooth_dab);
+        let _ = relax.dab(&relax_dab);
+    }
+    let smooth_move = (smooth.group_v(smooth.topology.group_of(center)) - smooth_start).length();
+    let relax_move = (relax.group_v(relax.topology.group_of(center)) - relax_start).length();
+    assert!(smooth_move > 0.1, "Smooth moved the cusp {smooth_move} mm");
+    assert!(
+        relax_move < smooth_move * 0.2,
+        "Relax moved the cusp {relax_move} mm; Smooth moved it {smooth_move} mm"
+    );
+}
+
+#[test]
+fn appended_group_without_overlay_rows_has_no_base_neighbors_or_faces() {
+    let verts = [0.0_f32, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
+    let mut topology = SurfaceTopology::new(&verts, &[0, 1, 2]);
+    let appended = topology.append_group(3);
+    topology.set_neighbors(0, Vec::new());
+    topology.set_incident(0, Vec::new());
+
+    assert!(topology.neighbors(appended).is_empty());
+    assert!(topology.incident_triangles(appended).is_empty());
+}
+
+#[test]
+fn raycast_interpolates_the_display_normals_across_a_face() {
+    let verts = vec![
+        0.0_f32, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, -1.0, 1.0,
+    ];
+    let mut session = SculptSession::new(verts, vec![0, 1, 2, 1, 0, 3]);
+    let (hit, normal) = session
+        .raycast(DVec3::new(0.2, 0.2, 1.0), -DVec3::Z)
+        .expect("the ray hits the front face");
+    let expected =
+        (session.display_n(0) * 0.6 + session.display_n(1) * 0.2 + session.display_n(2) * 0.2)
+            .normalize_or_zero();
+    assert!((hit - DVec3::new(0.2, 0.2, 0.0)).length() < 1e-12);
+    assert!((normal - expected).length() < 1e-12);
+    assert!(normal.y > 0.1, "the shading normal was {normal:?}");
 }
 
 #[test]

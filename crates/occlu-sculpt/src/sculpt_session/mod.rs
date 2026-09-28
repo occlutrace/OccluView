@@ -157,14 +157,16 @@ pub use kernel::{TopoJournal, TopoSlice};
 /// Brush modes. The discriminants are part of the wire contract.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BrushMode {
-    /// Add material along the surface normal under the brush.
+    /// Add material along the camera-depth axis.
     Deposit = 0,
-    /// Remove material against the surface normal under the brush.
+    /// Remove material against the camera-depth axis.
     Erode = 1,
     /// Explicit local relaxation, a few passes per dab.
     Smooth = 2,
     /// Level toward the selection plane.
     Flatten = 3,
+    /// Gently even small surface detail while preserving the broad form.
+    Relax = 4,
 }
 
 impl BrushMode {
@@ -175,6 +177,7 @@ impl BrushMode {
             1 => Some(BrushMode::Erode),
             2 => Some(BrushMode::Smooth),
             3 => Some(BrushMode::Flatten),
+            4 => Some(BrushMode::Relax),
             _ => None,
         }
     }
@@ -191,7 +194,8 @@ pub struct Dab {
     pub radius: f64,
     /// 0..1; the default Deposit strength ships at 0.8.
     pub strength: f64,
-    /// Unit view direction, from the camera into the scene.
+    /// Unit view direction from the camera into the scene; Add and Remove
+    /// displace along its depth axis.
     pub view: DVec3,
     /// The operation this dab performs.
     pub mode: BrushMode,
@@ -456,7 +460,6 @@ pub struct SculptSession {
     normal_scratch: Vec<(f32, Option<DVec3>)>,
     #[cfg(feature = "parallel")]
     budget_scratch: Vec<f32>,
-    percentile_scratch: Vec<f32>,
     dab_exposure: f64,
     /// Welded groups the session opened with. The per-stroke growth ceiling
     /// resets on every `start_stroke`, so it cannot bound a SESSION; this is the

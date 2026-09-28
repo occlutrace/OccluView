@@ -8,8 +8,8 @@ use crate::clipping::ClipPlane;
 use crate::error::RenderError;
 use crate::gpu::GpuMesh;
 use crate::sculpt_cursor::{
-    cone_geometry, cylinder_geometry, knife_geometry, vertex_layout as sculpt_tool_vertex_layout,
-    SculptBrushUniform, SculptToolUniform,
+    cylinder_geometry, vertex_layout as sculpt_tool_vertex_layout, SculptBrushUniform,
+    SculptToolUniform,
 };
 use std::{
     borrow::Cow,
@@ -490,8 +490,8 @@ impl Renderer {
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(SCULPT_TOOL_SHADER_SRC)),
         });
         // The tool volume remains depth-independent at the semantic level:
-        // it never writes depth and always passes the depth test, so the
-        // reference cursor stays readable over dense surfaces. It still has
+        // it never writes depth and always passes the depth test, so it stays
+        // readable over dense surfaces. It still has
         // to declare the live pass's depth format because eframe places this
         // draw in the same Depth24PlusStencil8 render pass.
         let sculpt_tool_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -777,30 +777,28 @@ impl Renderer {
             }],
         });
 
-        let (cone_vertices, cone_indices) = cone_geometry();
+        let (tool_vertices, tool_indices) = cylinder_geometry();
         let (sculpt_tool_cone_buffer, sculpt_tool_cone_vertex_bytes) = upload_sculpt_tool_buffer(
             &device,
             &queue,
             "occluview sculpt cone buffer",
-            &cone_vertices,
-            &cone_indices,
+            &tool_vertices,
+            &tool_indices,
         );
-        let (cylinder_vertices, cylinder_indices) = cylinder_geometry();
         let (sculpt_tool_cylinder_buffer, sculpt_tool_cylinder_vertex_bytes) =
             upload_sculpt_tool_buffer(
                 &device,
                 &queue,
                 "occluview sculpt cylinder buffer",
-                &cylinder_vertices,
-                &cylinder_indices,
+                &tool_vertices,
+                &tool_indices,
             );
-        let (knife_vertices, knife_indices) = knife_geometry();
         let (sculpt_tool_knife_buffer, sculpt_tool_knife_vertex_bytes) = upload_sculpt_tool_buffer(
             &device,
             &queue,
             "occluview sculpt knife buffer",
-            &knife_vertices,
-            &knife_indices,
+            &tool_vertices,
+            &tool_indices,
         );
 
         Ok(Self {
@@ -826,14 +824,13 @@ impl Renderer {
             sculpt_tool_shape: AtomicU32::new(0),
             sculpt_tool_cone_buffer,
             sculpt_tool_cone_vertex_bytes,
-            sculpt_tool_cone_index_count: u32::try_from(cone_indices.len()).unwrap_or(u32::MAX),
+            sculpt_tool_cone_index_count: u32::try_from(tool_indices.len()).unwrap_or(u32::MAX),
             sculpt_tool_cylinder_buffer,
             sculpt_tool_cylinder_vertex_bytes,
-            sculpt_tool_cylinder_index_count: u32::try_from(cylinder_indices.len())
-                .unwrap_or(u32::MAX),
+            sculpt_tool_cylinder_index_count: u32::try_from(tool_indices.len()).unwrap_or(u32::MAX),
             sculpt_tool_knife_buffer,
             sculpt_tool_knife_vertex_bytes,
-            sculpt_tool_knife_index_count: u32::try_from(knife_indices.len()).unwrap_or(u32::MAX),
+            sculpt_tool_knife_index_count: u32::try_from(tool_indices.len()).unwrap_or(u32::MAX),
             point_splat_viewport_width_bits: AtomicU32::new(
                 DEFAULT_POINT_SPLAT_VIEWPORT[0].to_bits(),
             ),

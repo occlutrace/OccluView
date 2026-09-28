@@ -2,7 +2,7 @@
 //! shortest path) and the incremental maintenance every dab performs (ray
 //! buckets, brush grid, step budget, dirty-region normals). The dab-shape
 //! solvers live beside this file: clay, flatten and the preserve skirt in
-//! `dabs`, Smooth in `smooth`.
+//! `dabs`, Smooth in `smooth`, and shape-preserving Relax in `relax`.
 
 use super::*;
 use occlu_geometry_math::closest_point_on_triangle;
@@ -18,16 +18,16 @@ mod path;
 use path::compounded_share;
 mod remesh;
 pub(super) use remesh::input_spacing_mm;
+mod relax;
 mod smooth;
 #[cfg(test)]
 mod tests;
 
 pub use topology_journal::{TopoJournal, TopoSlice};
 
-/// Add/Remove displacement per fully weighted dab, as a fraction of brush
-/// radius. The small per-dab dose accumulates along the swept stroke; local
-/// step budgets, wall reserve, and exposure constrain the final displacement.
-const ADD_REMOVE_GAIN: f64 = 0.045;
+/// Add/Remove displacement per fully weighted dab as a fraction of brush
+/// radius. Face and layer guards constrain the final displacement.
+const ADD_REMOVE_GAIN: f64 = 0.12;
 /// Auto-smooth rim-taper width as a fraction of the radius.
 const AUTOSMOOTH_RIM_TAPER: f64 = 0.35;
 /// Taubin auto-smooth pairs per Add/Remove dab.
@@ -81,6 +81,7 @@ impl SculptSession {
             BrushMode::Deposit => self.dab_clay(dab, &region_points, facing, 1.0),
             BrushMode::Erode => self.dab_clay(dab, &region_points, facing, -1.0),
             BrushMode::Flatten => self.dab_flatten(dab, &region_points, facing),
+            BrushMode::Relax => self.dab_relax(dab, &region_points, facing),
         }
         self.region_points = region_points;
         // Every mode's field is committed through `commit_even_layer`, which

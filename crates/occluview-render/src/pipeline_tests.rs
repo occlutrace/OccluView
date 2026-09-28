@@ -211,8 +211,7 @@ fn draw_sculpt_into_a_live_shaped_pass(renderer: &crate::Renderer) {
         color: [0.2, 0.8, 1.0, 1.0],
         opacity: 0.5,
         shape: SculptToolShape::Cone as u32,
-        visible: 1,
-        padding: 0,
+        action: [0.0; 2],
     });
     let camera_bg = renderer.camera_bind_group();
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -255,6 +254,203 @@ fn draw_sculpt_into_a_live_shaped_pass(renderer: &crate::Renderer) {
         None,
         "Sculpt's live volume draw must not submit an incompatible depth pipeline"
     );
+}
+
+#[test]
+#[allow(clippy::expect_used)]
+fn sculpt_tool_actions_render_distinct_body_profiles() {
+    let renderer = pollster::block_on(crate::Renderer::new_headless(
+        wgpu::TextureFormat::Rgba8Unorm,
+    ))
+    .expect("a headless renderer");
+    let add = render_sculpt_tool_profile(&renderer, [0.0, 0.0]);
+    let remove = render_sculpt_tool_profile(&renderer, [1.0, 0.0]);
+    let iron = render_sculpt_tool_profile(&renderer, [0.0, 1.0]);
+
+    assert!(
+        different_pixels(&add, &remove) > 16,
+        "Add and Remove bodies match"
+    );
+    assert!(
+        different_pixels(&add, &iron) > 16,
+        "Add and iron bodies match"
+    );
+    assert!(
+        different_pixels(&remove, &iron) > 16,
+        "Remove and iron bodies match"
+    );
+}
+
+#[allow(clippy::expect_used)]
+fn render_sculpt_tool_profile(renderer: &crate::Renderer, action: [f32; 2]) -> Vec<[u8; 4]> {
+    use crate::{GpuCamera, SculptToolShape, SculptToolUniform};
+    use glam::{Mat4, Vec3};
+    let target = SculptProfileTarget::new(renderer);
+
+    let device = renderer.device();
+    let eye = Vec3::new(3.0, 0.0, 0.4);
+    let camera = GpuCamera::new(
+        glam::camera::rh::view::look_at_mat4(eye, Vec3::new(0.0, 0.0, 0.4), Vec3::Y),
+        glam::camera::rh::proj::directx::orthographic(-1.2, 1.2, -1.2, 1.2, 0.1, 10.0),
+        Vec3::new(1.0, 1.0, 2.0),
+        eye,
+    );
+    renderer.set_camera(&camera);
+    renderer.set_sculpt_tool(&SculptToolUniform {
+        model: Mat4::from_scale(Vec3::new(0.55, 0.55, 0.8)).to_cols_array(),
+        color: [0.9, 0.9, 0.9, 1.0],
+        opacity: 0.8,
+        shape: SculptToolShape::Cone as u32,
+        action,
+    });
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("sculpt profile readback encoder"),
+    });
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("sculpt profile readback pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &target.color_view,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &target.depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(0),
+                    store: wgpu::StoreOp::Store,
+                }),
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        renderer.draw_sculpt_tool(
+            &mut pass,
+            &renderer.camera_bind_group(),
+            renderer.disabled_clip_bind_group(),
+        );
+    }
+    encoder.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture: &target.color,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &target.readback,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(SCULPT_PROFILE_BYTES_PER_ROW),
+                rows_per_image: Some(SCULPT_PROFILE_HEIGHT),
+            },
+        },
+        wgpu::Extent3d {
+            width: SCULPT_PROFILE_WIDTH,
+            height: SCULPT_PROFILE_HEIGHT,
+            depth_or_array_layers: 1,
+        },
+    );
+    renderer.queue().submit(std::iter::once(encoder.finish()));
+    read_sculpt_profile_pixels(device, &target.readback)
+}
+
+const SCULPT_PROFILE_WIDTH: u32 = 64;
+const SCULPT_PROFILE_HEIGHT: u32 = 64;
+const SCULPT_PROFILE_BYTES_PER_ROW: u32 = SCULPT_PROFILE_WIDTH * 4;
+
+struct SculptProfileTarget {
+    color: wgpu::Texture,
+    color_view: wgpu::TextureView,
+    depth_view: wgpu::TextureView,
+    readback: wgpu::Buffer,
+}
+
+impl SculptProfileTarget {
+    fn new(renderer: &crate::Renderer) -> Self {
+        let device = renderer.device();
+        let size = wgpu::Extent3d {
+            width: SCULPT_PROFILE_WIDTH,
+            height: SCULPT_PROFILE_HEIGHT,
+            depth_or_array_layers: 1,
+        };
+        let color = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("sculpt profile readback target"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let depth = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("sculpt profile readback depth"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: renderer.depth_format(),
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let color_view = color.create_view(&wgpu::TextureViewDescriptor::default());
+        let depth_view = depth.create_view(&wgpu::TextureViewDescriptor::default());
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("sculpt profile pixels"),
+            size: u64::from(SCULPT_PROFILE_BYTES_PER_ROW) * u64::from(SCULPT_PROFILE_HEIGHT),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        Self {
+            color,
+            color_view,
+            depth_view,
+            readback,
+        }
+    }
+}
+
+#[allow(clippy::expect_used)]
+fn read_sculpt_profile_pixels(device: &wgpu::Device, readback: &wgpu::Buffer) -> Vec<[u8; 4]> {
+    use std::sync::mpsc;
+
+    let slice = readback.slice(..);
+    let (map_tx, map_rx) = mpsc::sync_channel(1);
+    slice.map_async(wgpu::MapMode::Read, move |result| {
+        let _ = map_tx.send(result);
+    });
+    device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .expect("wait for sculpt profile pixels");
+    map_rx
+        .recv()
+        .expect("sculpt profile readback callback")
+        .expect("sculpt profile readback maps");
+    let mapped = slice
+        .get_mapped_range()
+        .expect("mapped sculpt profile pixels");
+    let pixels = bytemuck::cast_slice(&mapped).to_vec();
+    drop(mapped);
+    readback.unmap();
+    pixels
+}
+
+fn different_pixels(left: &[[u8; 4]], right: &[[u8; 4]]) -> usize {
+    left.iter()
+        .zip(right)
+        .filter(|(a, b)| a[..3] != b[..3])
+        .count()
 }
 
 /// The live egui viewport always has a depth/stencil attachment, and eframe

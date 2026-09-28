@@ -172,59 +172,6 @@ impl SculptSession {
         }
     }
 
-    /// The single gain a clay dab spends its anti-inversion budget as.
-    ///
-    /// One budget for the whole footprint, so the falloff — not the local
-    /// triangle size — decides the dab's shape. The per-vertex clamp remains as
-    /// the last line of defence, but it does not decide the profile: a mesh
-    /// whose shortest incident edge varies inside one footprint would
-    /// otherwise make each vertex deliver a different fraction of the falloff.
-    ///
-    /// The budget is the median of the moving vertices' step budgets, so a
-    /// single fine band under the brush cannot throttle the whole dab while a
-    /// uniformly fine mesh still scales its dose down and keeps the profile.
-    pub(super) fn dab_step_gain(&mut self, weighted: &[(u32, f64)], amplitude: f64) -> f64 {
-        let mut peak = 0.0f64;
-        for &(_, weight) in weighted {
-            peak = peak.max(weight);
-        }
-        // A swept step's weight counts dabs. Apply the budget to each dab share
-        // so the dose per millimetre does not depend on pointer speed.
-        peak = peak.min(1.0) * amplitude;
-        if peak <= 0.0 || !peak.is_finite() {
-            return 1.0;
-        }
-        // Budgets ratchet up-only (see `refresh_step_budget`), so deformed
-        // edges never shrink the median mid-stroke: the dose stays put while
-        // each vertex stays individually clamped below.
-        let mut edges = std::mem::take(&mut self.percentile_scratch);
-        edges.clear();
-        edges.extend(
-            weighted
-                .iter()
-                .map(|&(group, _)| self.step_budget[group as usize]),
-        );
-        let gain = (|| {
-            if edges.is_empty() {
-                return 1.0;
-            }
-            let slot = (edges.len() - 1) / 2;
-            let (_, edge, _) = edges.select_nth_unstable_by(slot, f32::total_cmp);
-            let budget = *edge as f64 * MAX_STEP_FRACTION_OF_TRIANGLE;
-            if !budget.is_finite() || budget <= 0.0 || budget >= peak {
-                return 1.0;
-            }
-            let permille = ((budget / peak) * 1000.0).round().clamp(0.0, 1000.0) as u32;
-            diag::bump(|diag| {
-                diag.gain_scaled_dabs += 1;
-                diag.gain_min_permille = diag.gain_min_permille.min(permille);
-            });
-            budget / peak
-        })();
-        self.percentile_scratch = edges;
-        gain
-    }
-
     pub(super) fn clamp_step_at(&self, group: u32, here: DVec3, proposed: DVec3) -> DVec3 {
         self.clamp_step_scaled(group, here, proposed, 1.0)
     }

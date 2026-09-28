@@ -23,10 +23,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub(crate) enum BrushMode {
     /// Relax the surface: iron out grain and even the tessellation.
     Smooth,
-    /// Build material along the surface normal under the brush.
+    /// Add material along the camera-depth axis.
     Add,
-    /// Carve material away against the surface normal.
+    /// Remove material against the camera-depth axis.
     Remove,
+    /// Even small surface detail while preserving the broad form.
+    Relax,
 }
 
 /// One brush dab in the layer's mesh-local space.
@@ -373,6 +375,7 @@ fn kernel_mode(mode: BrushMode) -> KernelMode {
         BrushMode::Smooth => KernelMode::Smooth,
         BrushMode::Add => KernelMode::Deposit,
         BrushMode::Remove => KernelMode::Erode,
+        BrushMode::Relax => KernelMode::Relax,
     }
 }
 

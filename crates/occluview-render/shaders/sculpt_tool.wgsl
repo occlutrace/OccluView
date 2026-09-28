@@ -1,8 +1,8 @@
 // Translucent, display-only Sculpt tool volume.
 //
-// The canonical geometry is an open cone or cylinder. Its transform, color,
-// and opacity come from SculptToolUniform; it never writes depth and never
-// participates in picking or mesh editing.
+// The display geometry is an open cylinder. The vertex shader shapes it for
+// the active tip and modifier state; it never writes depth or participates in
+// picking or mesh editing.
 
 struct Camera {
     view: mat4x4<f32>,
@@ -18,8 +18,7 @@ struct SculptToolUniform {
     color: vec4<f32>,
     opacity: f32,
     shape: u32,
-    visible: u32,
-    _padding: u32,
+    action: vec2<f32>,
 }
 
 struct ClipPlane {
@@ -46,11 +45,32 @@ struct VertexOut {
 
 @vertex
 fn vs_main(in: VertexIn) -> VertexOut {
-    let world = tool.model * vec4<f32>(in.position, 1.0);
+    var profile_radius = 1.0;
+    var cylinder = 0.0;
+    if tool.shape == 1u {
+        cylinder = 1.0;
+    } else if tool.shape == 2u {
+        profile_radius = 0.45;
+    }
+    let invert = clamp(tool.action.x, 0.0, 1.0);
+    let flat = clamp(tool.action.y, 0.0, 1.0);
+    let z = in.position.z;
+    let rising = profile_radius * (1.0 - z);
+    let pressing = profile_radius * z;
+    let cone = mix(rising, pressing, invert);
+    let radius = mix(mix(cone, 1.0, cylinder), mix(profile_radius, 1.0, cylinder), flat);
+    let cone_slope = mix(-profile_radius, profile_radius, invert);
+    let slope = mix(mix(cone_slope, 0.0, cylinder), 0.0, flat);
+    let radial = normalize(in.position.xy);
+    let shaped = vec3<f32>(radial * radius, z);
+    let width_scale = max(length(tool.model[0].xyz), 0.000001);
+    let height_scale = max(length(tool.model[2].xyz), 0.000001);
+    let shaped_normal = vec3<f32>(radial, -slope * width_scale / height_scale);
+    let world = tool.model * vec4<f32>(shaped, 1.0);
     var out: VertexOut;
     out.clip_pos = camera.projection * camera.view * world;
     out.world_pos = world.xyz;
-    out.normal = (tool.model * vec4<f32>(in.normal, 0.0)).xyz;
+    out.normal = (tool.model * vec4<f32>(shaped_normal, 0.0)).xyz;
     return out;
 }
 
@@ -59,7 +79,7 @@ fn fs_main(
     in: VertexOut,
     @builtin(front_facing) front_facing: bool,
 ) -> @location(0) vec4<f32> {
-    if tool.visible == 0u {
+    if tool.opacity <= 0.0 {
         discard;
     }
     if clip.enabled != 0u && dot(in.world_pos, clip.normal) - clip.distance < 0.0 {
