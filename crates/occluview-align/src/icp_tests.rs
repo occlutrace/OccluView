@@ -155,13 +155,16 @@ fn trustworthy_report() -> IcpReport {
         rms: 0.02,
         geometric_rms: 0.02,
         median_abs: 0.01,
-        p95_abs: 0.05,
+        p95_abs: 0.03571,
         weak_rot_axes: [false; 3],
         weak_trans_axes: [false; 3],
         effective_matching_ratio: 0.8,
         // The solver ranks candidates by this and `icp_step` refuses a step
         // that lowers it. It is not a gate input, so any benign value will do.
         seated_fraction: 0.25,
+        verified_coverage: 0.8,
+        verified_median_mm: 0.02,
+        verified_stability: 0.1,
     }
 }
 
@@ -183,7 +186,7 @@ fn the_median_limit_holds_at_both_ends_of_the_radius_slider() {
     let noisy_seating = IcpReport {
         geometric_rms: 0.03,
         median_abs: 0.03,
-        p95_abs: 0.08,
+        p95_abs: 0.03571,
         ..trustworthy_report()
     };
 
@@ -250,7 +253,7 @@ fn two_different_jaws_are_not_authorized_as_an_alignment() {
     let seated = IcpReport {
         geometric_rms: 0.02,
         median_abs: 0.01,
-        p95_abs: 0.05,
+        p95_abs: 0.03571,
         ..trustworthy_report()
     };
     assert!(
@@ -288,8 +291,8 @@ fn a_partial_model_on_a_full_scan_is_still_authorized() {
 ///
 /// The median bounds the typical vertex only; a fit that slid onto a
 /// neighbouring surface keeps most of the sampled patch in place and pushes the
-/// rest away. Without the p95 ceiling such a pose was authorized on its median
-/// alone.
+/// rest away. Without the p95 ceiling, a small median lets the distant tail
+/// through.
 #[test]
 fn a_small_median_does_not_authorize_a_far_tail() {
     let far_tail = IcpReport {
@@ -299,7 +302,67 @@ fn a_small_median_does_not_authorize_a_far_tail() {
     };
     assert!(
         !far_tail.is_trustworthy_refinement_for(&settings()),
-        "a 3 mm worst-fifth against a 2 mm radius must be refused: {far_tail:?}"
+        "a 3 mm worst-fifth against the 0.04 mm scan-agreement limit must be refused: {far_tail:?}"
+    );
+}
+
+#[test]
+fn the_p95_limit_separates_correct_and_wrong_cases_in_the_labelled_corpus() {
+    let correct = IcpReport {
+        p95_abs: 0.03571,
+        ..trustworthy_report()
+    };
+    let wrong = IcpReport {
+        median_abs: 0.01633,
+        p95_abs: 0.04463,
+        ..trustworthy_report()
+    };
+
+    for radius in [0.2_f64, 2.0, 10.0] {
+        let bounded = RefineSettings {
+            influence_radius_mm: radius,
+            ..settings()
+        };
+        assert!(
+            correct.is_trustworthy_refinement_for(&bounded),
+            "the highest p95 among correct selected cases remains eligible at {radius} mm"
+        );
+        assert!(
+            !wrong.is_trustworthy_refinement_for(&bounded),
+            "the lowest p95 among wrong accepted selected cases fails at {radius} mm"
+        );
+    }
+}
+
+#[test]
+fn scanner_noise_with_a_bounded_residual_tail_is_authorized() {
+    let noisy_rescan = IcpReport {
+        inlier_ratio: 0.573_511_7,
+        coverage: 0.716_889_6,
+        rms: 0.039_109_2,
+        geometric_rms: 0.039_308,
+        median_abs: 0.030_810_1,
+        p95_abs: 0.069_800_8,
+        verified_coverage: 0.716_311_3,
+        verified_median_mm: 0.039_964_3,
+        verified_stability: 0.074_424_8,
+        ..trustworthy_report()
+    };
+    assert!(
+        noisy_rescan.is_trustworthy_refinement_for(&settings()),
+        "a noisy correct seating whose residual tail stays within the measured \
+         p95-to-median ratio must pass: {noisy_rescan:?}"
+    );
+
+    let wrong_crop = IcpReport {
+        median_abs: 0.018_87,
+        p95_abs: 0.044_02,
+        ..trustworthy_report()
+    };
+    assert!(
+        !wrong_crop.is_trustworthy_refinement_for(&settings()),
+        "the lowest-p95 wrong crop in the selected corpus must remain refused: \
+         {wrong_crop:?}"
     );
 }
 

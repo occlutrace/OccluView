@@ -21,6 +21,7 @@ use crate::preview_menu::dib::pack_clipboard_dib;
 use crate::preview_menu::icons::PreviewMenuIcon;
 use crate::preview_menu::{PreviewMenuCommand, PreviewMenuEntry, PREVIEW_MENU_LAYOUT};
 use crate::preview_scene::PreviewSceneState;
+use occluview_i18n::LocalizedCatalog;
 use std::mem::size_of;
 use std::path::PathBuf;
 use windows::core::{w, HSTRING, PCWSTR, PWSTR};
@@ -68,6 +69,7 @@ impl PreviewHandler {
             .as_ref()
             .is_some_and(PreviewSceneState::is_wireframe);
         let icon_px = menu_icon_size_px(hwnd);
+        let locale = LocalizedCatalog::for_system();
 
         // SAFETY: creates a fresh, unowned popup menu we destroy below.
         let Ok(menu) = (unsafe { CreatePopupMenu() }) else {
@@ -100,8 +102,10 @@ impl PreviewHandler {
                         icons.push(bitmap);
                     }
 
-                    let mut label: Vec<u16> = command
-                        .label()
+                    let label_text = locale
+                        .text(command.label_key())
+                        .unwrap_or_else(|| format!("⟦{}⟧", command.label_key()));
+                    let mut label: Vec<u16> = label_text
                         .encode_utf16()
                         .chain(std::iter::once(0))
                         .collect();

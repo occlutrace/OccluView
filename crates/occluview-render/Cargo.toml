@@ -21,7 +21,9 @@ thiserror      = { workspace = true }
 tracing        = { workspace = true }
 glam           = { workspace = true }
 occluview-core = { workspace = true }
+occlu-geometry-math = { workspace = true }
 
 [dev-dependencies]
 image     = { workspace = true }
 pollster  = { workspace = true }
+naga      = { workspace = true }

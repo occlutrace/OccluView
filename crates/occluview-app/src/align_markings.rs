@@ -79,32 +79,32 @@ impl MaskCommand {
     ];
 
     /// Catalog key for the button label.
-    pub(crate) fn label_key(self) -> &'static str {
+    pub(crate) fn label_key(self) -> crate::i18n::MessageId {
         match self {
-            Self::FitEverywhere => "align-mask-fit-everywhere",
-            Self::FitNowhere => "align-mask-fit-nowhere",
-            Self::InvertMarkings => "align-mask-invert",
-            Self::MarkAutomatic => "align-mask-automatic",
+            Self::FitEverywhere => crate::i18n::message_id!("align-mask-fit-everywhere"),
+            Self::FitNowhere => crate::i18n::message_id!("align-mask-fit-nowhere"),
+            Self::InvertMarkings => crate::i18n::message_id!("align-mask-invert"),
+            Self::MarkAutomatic => crate::i18n::message_id!("align-mask-automatic"),
         }
     }
 
     /// Catalog key for the one-line hint.
-    pub(crate) fn hint_key(self) -> &'static str {
+    pub(crate) fn hint_key(self) -> crate::i18n::MessageId {
         match self {
-            Self::FitEverywhere => "align-mask-fit-everywhere-hint",
-            Self::FitNowhere => "align-mask-fit-nowhere-hint",
-            Self::InvertMarkings => "align-mask-invert-hint",
-            Self::MarkAutomatic => "align-mask-automatic-hint",
+            Self::FitEverywhere => crate::i18n::message_id!("align-mask-fit-everywhere-hint"),
+            Self::FitNowhere => crate::i18n::message_id!("align-mask-fit-nowhere-hint"),
+            Self::InvertMarkings => crate::i18n::message_id!("align-mask-invert-hint"),
+            Self::MarkAutomatic => crate::i18n::message_id!("align-mask-automatic-hint"),
         }
     }
 
     /// Catalog key for the after-report status line.
-    pub(crate) fn report_key(self) -> &'static str {
+    pub(crate) fn report_key(self) -> crate::i18n::MessageId {
         match self {
-            Self::FitEverywhere => "align-mask-fit-everywhere-report",
-            Self::FitNowhere => "align-mask-fit-nowhere-report",
-            Self::InvertMarkings => "align-mask-invert-report",
-            Self::MarkAutomatic => "align-mask-automatic-report",
+            Self::FitEverywhere => crate::i18n::message_id!("align-mask-fit-everywhere-report"),
+            Self::FitNowhere => crate::i18n::message_id!("align-mask-fit-nowhere-report"),
+            Self::InvertMarkings => crate::i18n::message_id!("align-mask-invert-report"),
+            Self::MarkAutomatic => crate::i18n::message_id!("align-mask-automatic-report"),
         }
     }
 
@@ -113,12 +113,12 @@ impl MaskCommand {
     /// The Mesh selection can narrow a command to one surface, and a report
     /// that said "whole mesh marked" would then be read as both arches when
     /// only one was touched.
-    pub(crate) fn report_one_key(self) -> &'static str {
+    pub(crate) fn report_one_key(self) -> crate::i18n::MessageId {
         match self {
-            Self::FitEverywhere => "align-mask-fit-everywhere-report-one",
-            Self::FitNowhere => "align-mask-fit-nowhere-report-one",
-            Self::InvertMarkings => "align-mask-invert-report-one",
-            Self::MarkAutomatic => "align-mask-automatic-report-one",
+            Self::FitEverywhere => crate::i18n::message_id!("align-mask-fit-everywhere-report-one"),
+            Self::FitNowhere => crate::i18n::message_id!("align-mask-fit-nowhere-report-one"),
+            Self::InvertMarkings => crate::i18n::message_id!("align-mask-invert-report-one"),
+            Self::MarkAutomatic => crate::i18n::message_id!("align-mask-automatic-report-one"),
         }
     }
 }

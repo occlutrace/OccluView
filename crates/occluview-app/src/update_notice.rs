@@ -381,14 +381,14 @@ fn draw_available(
     );
     ui.label(
         egui::RichText::new(locale.text_with(
-            "update-available-body",
+            crate::i18n::message_id!("update-available-body"),
             Some(&args(&[("version", &update.version.to_string())])),
         ))
         .strong(),
     );
     ui.label(
         egui::RichText::new(locale.text_with(
-            "update-current-version",
+            crate::i18n::message_id!("update-current-version"),
             Some(&args(&[("version", env!("CARGO_PKG_VERSION"))])),
         ))
         .weak()
@@ -403,23 +403,29 @@ fn draw_available(
     ui.add_space(6.0);
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         if update.downloadable() {
-            if ui.button(locale.text("update-download")).clicked() {
+            if ui
+                .button(locale.text(crate::i18n::message_id!("update-download")))
+                .clicked()
+            {
                 *start_download = Some(update.clone());
             }
         } else {
             // The release exists but publishes no installer for this
             // platform: point at the release page instead of a download.
             ui.hyperlink_to(
-                locale.text("update-open-release"),
+                locale.text(crate::i18n::message_id!("update-open-release")),
                 "https://github.com/occlutrace/OccluView/releases/latest",
             );
         }
-        if ui.button(locale.text("update-later")).clicked() {
+        if ui
+            .button(locale.text(crate::i18n::message_id!("update-later")))
+            .clicked()
+        {
             *next_phase = Some(Phase::Dismissed);
         }
         if ui
-            .button(locale.text("update-skip"))
-            .on_hover_text(locale.text("update-skip-tooltip"))
+            .button(locale.text(crate::i18n::message_id!("update-skip")))
+            .on_hover_text(locale.text(crate::i18n::message_id!("update-skip-tooltip")))
             .clicked()
         {
             store_skipped_version(&update.version.to_string());
@@ -437,7 +443,7 @@ fn draw_downloading(
 ) {
     ui.label(
         egui::RichText::new(locale.tr_with(
-            "update-downloading",
+            crate::i18n::message_id!("update-downloading"),
             &[("version", &update.version.to_string())],
         ))
         .strong(),
@@ -462,7 +468,7 @@ fn draw_ready(
 ) {
     ui.label(
         egui::RichText::new(locale.tr_with(
-            "update-ready-title",
+            crate::i18n::message_id!("update-ready-title"),
             &[("version", &update.version.to_string())],
         ))
         .strong(),
@@ -470,14 +476,17 @@ fn draw_ready(
     // The handoff wording is platform-specific:
     // `update-ready-hint-windows` / `update-ready-hint-other`.
     let handoff_hint = if cfg!(target_os = "windows") {
-        locale.tr("update-ready-hint-windows")
+        locale.tr(crate::i18n::message_id!("update-ready-hint-windows"))
     } else {
-        locale.tr("update-ready-hint-other")
+        locale.tr(crate::i18n::message_id!("update-ready-hint-other"))
     };
     ui.label(egui::RichText::new(handoff_hint).weak().size(11.0));
     ui.add_space(6.0);
     ui.horizontal(|ui| {
-        if ui.button(locale.tr("update-install-close")).clicked() {
+        if ui
+            .button(locale.tr(crate::i18n::message_id!("update-install-close")))
+            .clicked()
+        {
             // Verified again here, not only at download time: what was
             // checked and what is about to reach a privileged installer are
             // separated by this click.
@@ -486,7 +495,10 @@ fn draw_ready(
                 Err(error) => *next_phase = Some(Phase::Failed(error.to_string())),
             }
         }
-        if ui.button(locale.tr("update-later")).clicked() {
+        if ui
+            .button(locale.tr(crate::i18n::message_id!("update-later")))
+            .clicked()
+        {
             *next_phase = Some(Phase::Dismissed);
         }
     });
@@ -498,13 +510,18 @@ fn draw_failed(
     message: &str,
     next_phase: &mut Option<Phase>,
 ) {
-    ui.label(egui::RichText::new(locale.tr("update-failed-title")).strong());
+    ui.label(
+        egui::RichText::new(locale.tr(crate::i18n::message_id!("update-failed-title"))).strong(),
+    );
     // Verbatim by design: the message is raw OS/IO error text (and
     // upstream release notes render the same way). Routing either
     // through the catalogs would corrupt diagnostics.
     ui.label(egui::RichText::new(message).weak().size(11.0));
     ui.add_space(6.0);
-    if ui.button(locale.tr("update-dismiss")).clicked() {
+    if ui
+        .button(locale.tr(crate::i18n::message_id!("update-dismiss")))
+        .clicked()
+    {
         *next_phase = Some(Phase::Dismissed);
     }
 }
@@ -539,7 +556,7 @@ mod settings_status_tests {
             "repaint callback receives the worker wakeup: {delay:?}"
         );
         let Ok(delay) = delay else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         assert!(
             delay <= WORKER_POLL_INTERVAL,

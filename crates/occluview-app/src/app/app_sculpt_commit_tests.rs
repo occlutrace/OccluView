@@ -14,9 +14,10 @@
 use super::*;
 use crate::app::app_align_display::AlignOverlay;
 use crate::app::app_test_support::test_app;
+use crate::sculpt_kernel::BrushSession;
 use crate::sculpt_tool::SculptSession;
 use glam::{Affine3A, Vec3};
-use occluview_core::{mesh_edit_buffers_from_mesh, BrushSession, Mesh, Scene, SceneMesh, Vertex};
+use occluview_core::{mesh_edit_buffers_from_mesh, Mesh, Scene, SceneMesh, Vertex};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
@@ -65,6 +66,7 @@ fn worker_for(mesh: &Mesh, layer_id: SceneMeshId) -> SculptWorker {
         world_to_local: Affine3A::IDENTITY,
         local_per_world: 1.0,
         dirty_stroke: false,
+        topology_dirty_stroke: false,
         stroke_start_mesh: None,
     })
 }
@@ -170,7 +172,9 @@ fn every_terminal_failure_exit_raises_the_dialog_and_disarms() {
         app.ui.status_message.is_some(),
         "the status line says so too"
     );
-    let detail = app.ui.locale.text("sculpt-failure-worker-state-poisoned");
+    let detail = app.ui.locale.text(crate::i18n::message_id!(
+        "sculpt-failure-worker-state-poisoned"
+    ));
     assert!(
         app.ui
             .app_error
@@ -209,7 +213,10 @@ fn every_terminal_failure_exit_raises_the_dialog_and_disarms() {
     pump_until_failure_is_shown(&mut app);
     assert_eq!(app.tools.sculpt.armed, None);
     assert!(app.tools.sculpt.worker.is_none());
-    let detail = app.ui.locale.text("sculpt-failure-shadow-poisoned");
+    let detail = app
+        .ui
+        .locale
+        .text(crate::i18n::message_id!("sculpt-failure-shadow-poisoned"));
     assert!(
         app.ui
             .app_error
@@ -266,13 +273,19 @@ fn a_sculpt_commit_revokes_the_alignment_measured_against_the_old_mesh() {
         app.tools.align.rejected.is_empty(),
         "the outlier marks index pairs of a fit that no longer describes this scan"
     );
-    let reason = app.ui.locale.tr("align-status-scan-changed");
+    let reason = app
+        .ui
+        .locale
+        .tr(crate::i18n::message_id!("align-status-scan-changed"));
     assert_eq!(
         app.tools.align.status.as_deref(),
         Some(
             app.ui
                 .locale
-                .tr_with("align-status-remeasure", &[("reason", &reason)])
+                .tr_with(
+                    crate::i18n::message_id!("align-status-remeasure"),
+                    &[("reason", &reason)]
+                )
                 .as_str()
         ),
         "and the operator is told to measure again"

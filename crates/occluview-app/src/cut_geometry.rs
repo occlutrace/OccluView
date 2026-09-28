@@ -9,7 +9,7 @@ use crate::cut_manipulator::{
     MAX_DISC_RADIUS_MM, MIN_DISC_RADIUS_MM, RADIUS_WHEEL_STEP, RIM_GRAB_RADIUS_PX,
 };
 use eframe::egui::Pos2;
-use glam::{Quat, Vec3};
+use glam::{Quat, Vec2, Vec3};
 
 /// Blend range from the camera-aligned axial fallback into the surface-driven
 /// orientation (the local-normal fallback path only). A range, rather than one
@@ -302,17 +302,11 @@ fn arcball_sphere_vec(
 /// squared pixel distance from `p` to that closest point. A degenerate segment
 /// (`a == b`) yields `t = 0`. All inputs are 2D panel pixels.
 pub(crate) fn closest_param_on_segment(point: Pos2, a: Pos2, b: Pos2) -> (f32, f32) {
-    let ab = b - a;
-    let len_sq = ab.x * ab.x + ab.y * ab.y;
-    let t = if len_sq <= f32::EPSILON {
-        0.0
-    } else {
-        let ap = point - a;
-        ((ap.x * ab.x + ap.y * ab.y) / len_sq).clamp(0.0, 1.0)
-    };
-    let closest = a + ab * t;
-    let diff = point - closest;
-    (t, diff.x * diff.x + diff.y * diff.y)
+    occlu_geometry_math::closest_param_on_segment_2d(
+        Vec2::new(point.x, point.y),
+        Vec2::new(a.x, a.y),
+        Vec2::new(b.x, b.y),
+    )
 }
 
 /// Magnet-snap a panel-space `click` to the nearest point on any world-space

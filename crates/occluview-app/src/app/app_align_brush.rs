@@ -74,7 +74,12 @@ impl OccluViewApp {
             // measured, so a map drawn before them is stale — drop it rather
             // than recompute it behind the operator's hand.
             if self.tools.align.markings.close_stroke() {
-                self.invalidate_deviation_map(&self.ui.locale.tr("align-status-markings-changed"));
+                self.invalidate_deviation_map(
+                    &self
+                        .ui
+                        .locale
+                        .tr(crate::i18n::message_id!("align-status-markings-changed")),
+                );
                 // The release frame still reads as a click. An armed brush owns
                 // it, or one dab would also drop an alignment arrow.
                 return true;
@@ -121,7 +126,8 @@ impl OccluViewApp {
                 .filter_map(|side| self.side_layer(*side).map(|layer| (*side, layer)))
                 .collect();
             if named.is_empty() {
-                self.tools.align.status = Some(self.ui.locale.tr("brush-no-mesh"));
+                self.tools.align.status =
+                    Some(self.ui.locale.tr(crate::i18n::message_id!("brush-no-mesh")));
                 return true;
             }
             for (side, layer_id) in named {
@@ -199,7 +205,7 @@ impl OccluViewApp {
             return false;
         }
         self.tools.align.status = Some(self.ui.locale.tr_with(
-            "align-brush-size-status",
+            crate::i18n::message_id!("align-brush-size-status"),
             &[(
                 "size",
                 &format!("{:.1}", self.tools.align.brush.radius_mm()),
@@ -289,9 +295,11 @@ impl OccluViewApp {
             // "Mark automatic" is the only command that can decline, and it
             // declines for one reason the operator can act on.
             self.tools.align.status = Some(if command == MaskCommand::MarkAutomatic {
-                self.ui.locale.tr("align-status-place-arrow-first")
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("align-status-place-arrow-first"))
             } else {
-                self.ui.locale.tr("brush-no-mesh")
+                self.ui.locale.tr(crate::i18n::message_id!("brush-no-mesh"))
             });
             return;
         }
@@ -312,8 +320,17 @@ impl OccluViewApp {
                 .iter()
                 .any(|(_, outcome)| outcome.marked == 0 && outcome.vertex_count > 0);
         if emptied {
-            self.tools.align.status = Some(self.ui.locale.tr("align-mask-automatic-empty"));
-            self.invalidate_deviation_map(&self.ui.locale.tr("align-mask-automatic-empty"));
+            self.tools.align.status = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("align-mask-automatic-empty")),
+            );
+            self.invalidate_deviation_map(
+                &self
+                    .ui
+                    .locale
+                    .tr(crate::i18n::message_id!("align-mask-automatic-empty")),
+            );
             return;
         }
         let sides: Vec<AlignSide> = reached.iter().map(|(side, _)| *side).collect();
@@ -336,8 +353,14 @@ impl OccluViewApp {
         };
         let name = self.align_roles().map_or_else(
             || match side {
-                AlignSide::Moving => self.ui.locale.tr("align-brush-moving"),
-                AlignSide::Fixed => self.ui.locale.tr("align-brush-fixed"),
+                AlignSide::Moving => self
+                    .ui
+                    .locale
+                    .tr(crate::i18n::message_id!("align-brush-moving")),
+                AlignSide::Fixed => self
+                    .ui
+                    .locale
+                    .tr(crate::i18n::message_id!("align-brush-fixed")),
             },
             |roles| roles.side_name(*side),
         );
@@ -452,7 +475,8 @@ impl OccluViewApp {
         if !reached {
             // Silence here reads as a broken brush; the operator's actual
             // problem is that no mesh has been named.
-            self.tools.align.status = Some(self.ui.locale.tr("brush-no-mesh"));
+            self.tools.align.status =
+                Some(self.ui.locale.tr(crate::i18n::message_id!("brush-no-mesh")));
         }
     }
 
@@ -644,7 +668,7 @@ mod tests {
     #[test]
     fn every_command_can_report_one_named_scan() {
         for command in MaskCommand::ALL {
-            assert!(!command.report_one_key().is_empty());
+            assert!(!command.report_one_key().as_str().is_empty());
             assert_ne!(command.report_one_key(), command.report_key());
         }
     }

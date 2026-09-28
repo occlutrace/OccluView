@@ -13,8 +13,8 @@ use glam::DVec3;
 use kdtree::{distance::squared_euclidean, KdTree};
 
 use crate::pairs::{fit_pairs, horn_fit, FitBounds};
-use crate::surface::{feature_voxel_key, FeaturePoint, FEATURE_VOXEL_MM};
 use crate::{CancelFlag, Rigid, SurfaceIndex};
+use occluview_surface_query::{feature_voxel_key, FeaturePoint, FEATURE_VOXEL_MM};
 
 const FEATURE_RADIUS_MM: f64 = FEATURE_VOXEL_MM * 5.0;
 const FEATURE_RADIUS_SQ: f64 = FEATURE_RADIUS_MM * FEATURE_RADIUS_MM;

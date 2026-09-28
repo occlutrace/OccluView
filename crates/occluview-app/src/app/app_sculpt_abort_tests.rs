@@ -8,13 +8,11 @@
 
 use super::*;
 use crate::app::app_test_support::test_app;
+use crate::sculpt_kernel::{BrushMode, BrushSession, BrushStroke};
 use crate::sculpt_tool::{SculptSession, StrokeState};
 use crate::sculpt_worker::SculptWorker;
 use glam::{Affine3A, Vec3};
-use occluview_core::{
-    mesh_edit_buffers_from_mesh, BrushMode, BrushSession, BrushStroke, Mesh, Scene, SceneMesh,
-    SceneMeshId, Vertex,
-};
+use occluview_core::{mesh_edit_buffers_from_mesh, Mesh, Scene, SceneMesh, SceneMeshId, Vertex};
 use occluview_render::PreparedSceneTopology;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
@@ -71,6 +69,7 @@ fn worker_for(mesh: &Mesh, layer_id: SceneMeshId) -> SculptWorker {
         world_to_local: Affine3A::IDENTITY,
         local_per_world: 1.0,
         dirty_stroke: false,
+        topology_dirty_stroke: false,
         stroke_start_mesh: None,
     })
 }
@@ -135,6 +134,7 @@ fn start_stroke(app: &mut OccluViewApp, base: &Mesh) {
         layer_id,
         last_dab_local: None,
         hold_seconds: 0.0,
+        last_axis: None,
     });
 }
 
@@ -166,6 +166,13 @@ fn layer_id_of(app: &OccluViewApp) -> SceneMeshId {
         .expect("the session names its layer")
 }
 
+fn sculpt_shadow_len(app: &OccluViewApp) -> usize {
+    let worker = app.tools.sculpt.worker.as_ref().expect("sculpt worker");
+    let shadow = worker.shadow();
+    let len = shadow.read().expect("display shadow").len();
+    len
+}
+
 #[test]
 fn aborting_a_densified_stroke_leaves_no_partial_geometry_in_the_document() {
     let (mut app, layer_id) = app_sculpting("sculpt-abort-after-densify", coarse_ridge_mesh());
@@ -180,17 +187,16 @@ fn aborting_a_densified_stroke_leaves_no_partial_geometry_in_the_document() {
         app.tools.sculpt.stroke.is_some(),
         "the stroke is still open; nothing has been released"
     );
-    let densified = layer_mesh(&app, layer_id);
     assert!(
-        densified.vertices().len() > committed_vertices,
+        sculpt_shadow_len(&app) > committed_vertices,
         "the fixture must densify: {} -> {} vertices",
         committed_vertices,
-        densified.vertices().len()
+        sculpt_shadow_len(&app)
     );
-    assert_ne!(
-        densified.topology_id(),
+    assert_eq!(
+        layer_mesh(&app, layer_id).topology_id(),
         committed_topology,
-        "the densified mesh carries a fresh topology identity"
+        "the committed document keeps its topology until the stroke finishes"
     );
 
     app.abort_sculpt_stroke();
@@ -219,6 +225,10 @@ fn aborting_a_densified_stroke_leaves_no_partial_geometry_in_the_document() {
         app.document.edit_mode.undo_len(),
         0,
         "and it leaves no history step behind"
+    );
+    assert!(
+        app.tools.sculpt.worker.is_none(),
+        "abort drops the live preview"
     );
 }
 
@@ -252,7 +262,7 @@ fn aborting_a_densified_second_stroke_keeps_the_first_stroke_result() {
     start_stroke(&mut app, &second_base);
     lay_dab_mid_stroke(&mut app, densifying_stroke(), BrushMode::Smooth);
     assert!(
-        layer_mesh(&app, layer_id).vertices().len() > second_base.vertices().len(),
+        sculpt_shadow_len(&app) > second_base.vertices().len(),
         "the second stroke densified the layer"
     );
     assert!(
@@ -364,8 +374,8 @@ fn a_worker_failure_after_densification_leaves_no_partial_geometry() {
     start_stroke(&mut app, &committed);
     lay_dab_mid_stroke(&mut app, densifying_stroke(), BrushMode::Smooth);
     assert!(
-        layer_mesh(&app, layer_id).vertices().len() > committed_vertices,
-        "the densified preview is in the document"
+        sculpt_shadow_len(&app) > committed_vertices,
+        "the live preview has densified"
     );
 
     app.fail_sculpt_session(

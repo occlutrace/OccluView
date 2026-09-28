@@ -202,6 +202,7 @@ fn an_active_stroke_stops_sampling_when_pointer_leaves_viewport() {
         layer_id,
         last_dab_local: None,
         hold_seconds: 0.0,
+        last_axis: None,
     });
     app.document.unsaved_sculpt_stroke = true;
 
@@ -238,10 +239,9 @@ fn an_active_stroke_stops_sampling_when_pointer_leaves_viewport() {
         app.tools.sculpt.stroke.is_some(),
         "leaving the viewport must pause the drag, not end it"
     );
-    let worker_pending =
-        app.tools.sculpt.worker.as_ref().is_some_and(|worker| {
-            worker.has_pending_sparse_update() || worker.has_pending_rebuild()
-        });
+    let worker_pending = app.tools.sculpt.worker.as_ref().is_some_and(|worker| {
+        worker.has_pending_sparse_update() || worker.has_pending_topology_delta()
+    });
     assert!(
         !worker_pending,
         "no dab may be committed while the pointer is outside the viewport"
@@ -308,7 +308,11 @@ fn sculpt_cursor_waits_for_a_warm_pick_before_sampling() {
     );
     assert_eq!(
         app.ui.status_message,
-        Some(app.ui.locale.tr("sculpt-preparing")),
+        Some(
+            app.ui
+                .locale
+                .tr(crate::i18n::message_id!("sculpt-preparing"))
+        ),
         "the operator is told the brush is still preparing rather than getting a dead press"
     );
 }

@@ -7,9 +7,9 @@ use crate::Rigid;
 use super::icp_overlap::{
     reciprocal_coverage_ok, reciprocal_evidence, reciprocal_evidence_is_usable, ReciprocalSummary,
 };
+use super::icp_solve::{accumulate, apply_step, correspondences, summarize, trim, Correspondence};
 use super::{
-    accumulate, apply_step, correspondences, forward_coverage_is_sufficient,
-    minimum_forward_matches, summarize, trim, Correspondence, FitRejection, Level, Summary,
+    forward_coverage_is_sufficient, minimum_forward_matches, FitRejection, Level, Summary,
     BACKTRACK_SCALES, MIN_CORRESPONDENCES, MIN_TRIAL_COVERAGE_FRACTION, STALL_IMPROVEMENT,
 };
 

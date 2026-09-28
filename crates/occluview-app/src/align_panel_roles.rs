@@ -35,9 +35,9 @@ impl AlignRoles {
         let moving = shorten(&self.moving);
         let fixed = shorten(&self.fixed);
         let key = if self.implied {
-            "align-pair-guessed"
+            crate::i18n::message_id!("align-pair-guessed")
         } else {
-            "align-pair-decided"
+            crate::i18n::message_id!("align-pair-decided")
         };
         locale.tr_with(key, &[("moving", &moving), ("fixed", &fixed)])
     }
@@ -45,9 +45,9 @@ impl AlignRoles {
     /// What the row explains on hover.
     pub(crate) fn hint(&self, locale: &crate::i18n::LocaleManager) -> String {
         let key = if self.implied {
-            "align-pair-hint-guessed"
+            crate::i18n::message_id!("align-pair-hint-guessed")
         } else {
-            "align-pair-hint-decided"
+            crate::i18n::message_id!("align-pair-hint-decided")
         };
         locale.tr_with(
             key,
@@ -117,11 +117,11 @@ pub(crate) fn show(
             ui,
             button_width,
             Some(AppIcon::Redo),
-            &locale.tr("align-pair-swap"),
+            &locale.tr(crate::i18n::message_id!("align-pair-swap")),
             enabled,
             false,
         )
-        .on_hover_text(locale.tr("align-pair-swap-hint"))
+        .on_hover_text(locale.tr(crate::i18n::message_id!("align-pair-swap-hint")))
         .clicked();
     });
     ui.add_space(2.0);

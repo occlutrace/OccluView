@@ -56,7 +56,7 @@ pub(crate) fn show_panel(
     let default_pos = viewport_rect.right_top() + egui::vec2(-PANEL_WIDTH - 16.0, 16.0);
     let mut action = None;
     let mut open = true;
-    egui::Window::new(locale.tr("bridge-panel-title"))
+    egui::Window::new(locale.tr(crate::i18n::message_id!("bridge-panel-title")))
         .id(egui::Id::new("occluview_bridge_split"))
         .default_pos(default_pos)
         .constrain_to(viewport_rect)
@@ -86,7 +86,7 @@ pub(crate) fn show_panel(
                     &mut kerf,
                     MIN_BRIDGE_SPLIT_KERF_MM..=MAX_BRIDGE_SPLIT_KERF_MM,
                 )
-                .text(locale.tr("bridge-kerf").as_str())
+                .text(locale.tr(crate::i18n::message_id!("bridge-kerf")).as_str())
                 .suffix(" mm")
                 .step_by(0.01),
             );
@@ -100,7 +100,11 @@ pub(crate) fn show_panel(
                     &mut diameter_mm,
                     (MIN_DISC_RADIUS_MM * 2.0)..=(MAX_DISC_RADIUS_MM * 2.0),
                 )
-                .text(locale.tr("bridge-disc-size").as_str())
+                .text(
+                    locale
+                        .tr(crate::i18n::message_id!("bridge-disc-size"))
+                        .as_str(),
+                )
                 .suffix(" mm")
                 .step_by(0.25),
             );
@@ -109,12 +113,15 @@ pub(crate) fn show_panel(
             }
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                if ui.button(locale.tr("bridge-cancel")).clicked() {
+                if ui
+                    .button(locale.tr(crate::i18n::message_id!("bridge-cancel")))
+                    .clicked()
+                {
                     action = Some(BridgeSplitPanelAction::Cancel);
                 }
                 let apply = ui.add_enabled(
                     state.can_apply,
-                    egui::Button::new(locale.tr("bridge-apply")),
+                    egui::Button::new(locale.tr(crate::i18n::message_id!("bridge-apply"))),
                 );
                 if apply.clicked() {
                     action = Some(BridgeSplitPanelAction::Apply);
@@ -230,10 +237,10 @@ fn plane_basis(normal: Vec3) -> (Vec3, Vec3) {
 
 fn status_label(mode: BridgeSplitMode, locale: &crate::i18n::LocaleManager) -> String {
     let key = match mode {
-        BridgeSplitMode::Following => "bridge-mode-place",
-        BridgeSplitMode::PlantedPending => "bridge-mode-calculating",
-        BridgeSplitMode::PlantedReady => "bridge-mode-ready",
-        BridgeSplitMode::Failed => "bridge-mode-failed",
+        BridgeSplitMode::Following => crate::i18n::message_id!("bridge-mode-place"),
+        BridgeSplitMode::PlantedPending => crate::i18n::message_id!("bridge-mode-calculating"),
+        BridgeSplitMode::PlantedReady => crate::i18n::message_id!("bridge-mode-ready"),
+        BridgeSplitMode::Failed => crate::i18n::message_id!("bridge-mode-failed"),
         BridgeSplitMode::Off => return String::new(),
     };
     locale.tr(key)
@@ -242,13 +249,17 @@ fn status_label(mode: BridgeSplitMode, locale: &crate::i18n::LocaleManager) -> S
 fn error_label(error: &BridgeSplitToolError, locale: &crate::i18n::LocaleManager) -> String {
     match error {
         BridgeSplitToolError::Kernel(error) => match error {
-            occluview_core::BridgeSplitError::NoIntersection => locale.tr("bridge-err-miss"),
-            occluview_core::BridgeSplitError::TangentContact => locale.tr("bridge-err-tangent"),
+            occluview_core::BridgeSplitError::NoIntersection => {
+                locale.tr(crate::i18n::message_id!("bridge-err-miss"))
+            }
+            occluview_core::BridgeSplitError::TangentContact => {
+                locale.tr(crate::i18n::message_id!("bridge-err-tangent"))
+            }
             occluview_core::BridgeSplitError::DiscTooSmall {
                 disc_radius_mm,
                 required_radius_mm,
             } => locale.tr_with(
-                "bridge-err-small",
+                crate::i18n::message_id!("bridge-err-small"),
                 &[
                     ("have", &format!("{:.1}", disc_radius_mm * 2.0)),
                     ("need", &format!("{:.1}", required_radius_mm * 2.0)),
@@ -258,7 +269,7 @@ fn error_label(error: &BridgeSplitToolError, locale: &crate::i18n::LocaleManager
                 required_radius_mm,
                 max_radius_mm,
             } => locale.tr_with(
-                "bridge-err-limit",
+                crate::i18n::message_id!("bridge-err-limit"),
                 &[
                     ("need", &format!("{:.1}", required_radius_mm * 2.0)),
                     ("max", &format!("{:.1}", max_radius_mm * 2.0)),
@@ -267,27 +278,34 @@ fn error_label(error: &BridgeSplitToolError, locale: &crate::i18n::LocaleManager
             occluview_core::BridgeSplitError::OpenOrNonManifold { .. }
             | occluview_core::BridgeSplitError::DisconnectedInput { .. }
             | occluview_core::BridgeSplitError::DegenerateInput { .. } => {
-                locale.tr("bridge-err-no-result")
+                locale.tr(crate::i18n::message_id!("bridge-err-no-result"))
             }
             occluview_core::BridgeSplitError::DamagedCutRim { .. }
             | occluview_core::BridgeSplitError::CapFailed { .. } => {
-                locale.tr("bridge-err-invalid-cut")
+                locale.tr(crate::i18n::message_id!("bridge-err-invalid-cut"))
             }
-            occluview_core::BridgeSplitError::InvalidOutput { side, .. } => {
-                locale.tr_with("bridge-err-invalid-side", &[("side", side)])
-            }
+            occluview_core::BridgeSplitError::InvalidOutput { side, .. } => locale.tr_with(
+                crate::i18n::message_id!("bridge-err-invalid-side"),
+                &[("side", side)],
+            ),
             occluview_core::BridgeSplitError::SeparationViolation { .. } => {
-                locale.tr("bridge-err-gap")
+                locale.tr(crate::i18n::message_id!("bridge-err-gap"))
             }
-            occluview_core::BridgeSplitError::EmptyInput => locale.tr("bridge-err-empty"),
+            occluview_core::BridgeSplitError::EmptyInput => {
+                locale.tr(crate::i18n::message_id!("bridge-err-empty"))
+            }
             occluview_core::BridgeSplitError::InvalidRequest { .. }
-            | occluview_core::BridgeSplitError::Mesh(_) => locale.tr("bridge-err-invalid"),
+            | occluview_core::BridgeSplitError::Mesh(_) => {
+                locale.tr(crate::i18n::message_id!("bridge-err-invalid"))
+            }
         },
         BridgeSplitToolError::InvalidTransform { .. }
         | BridgeSplitToolError::Conversion { .. }
         | BridgeSplitToolError::Core { .. }
         | BridgeSplitToolError::RobustCsg { .. }
-        | BridgeSplitToolError::WorkerStopped => locale.tr("bridge-err-unusable"),
+        | BridgeSplitToolError::WorkerStopped => {
+            locale.tr(crate::i18n::message_id!("bridge-err-unusable"))
+        }
     }
 }
 

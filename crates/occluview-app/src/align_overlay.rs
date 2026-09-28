@@ -314,11 +314,11 @@ fn no_data_key(ui: &mut egui::Ui, locale: &crate::i18n::LocaleManager) {
             egui::Color32::from_rgb(grey[0], grey[1], grey[2]),
         );
         ui.label(
-            egui::RichText::new(locale.tr("align-map-not-measured"))
+            egui::RichText::new(locale.tr(crate::i18n::message_id!("align-map-not-measured")))
                 .size(10.0)
                 .color(ui_theme::text_muted()),
         )
-        .on_hover_text(locale.tr("align-map-not-measured-hint"));
+        .on_hover_text(locale.tr(crate::i18n::message_id!("align-map-not-measured-hint")));
     });
 }
 

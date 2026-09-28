@@ -10,7 +10,7 @@
 //! through the same pipeline.
 //!
 #![cfg_attr(not(test), deny(unsafe_code))]
-#![cfg_attr(test, allow(clippy::expect_used))]
+#![cfg_attr(test, allow(clippy::expect_used, clippy::panic))]
 // The COM class (`com.rs`) is `unsafe` by definition (FFI + raw pointers across
 // the COM ABI). Its module-level `#![allow(unsafe_code)]` overrides this gate
 // under `cfg(windows)` only; the platform-agnostic code stays panic-free and
@@ -20,8 +20,6 @@
 #[cfg(any(windows, test))]
 mod deferred_source;
 pub mod error;
-#[cfg(test)]
-mod installer_contract_tests;
 mod offscreen_factory;
 #[cfg(any(windows, test))]
 mod preview_canvas;
@@ -33,8 +31,6 @@ mod shell_contract;
 mod shell_contract_tests;
 #[cfg(any(test, all(windows, feature = "diagnostic-logs")))]
 mod shell_diagnostics;
-#[cfg(test)]
-mod shell_preview_tests;
 #[cfg(any(windows, test))]
 mod stream_read {
     #[allow(unused_imports)]

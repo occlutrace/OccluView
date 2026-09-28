@@ -1,6 +1,9 @@
 use super::*;
 use occlu_mesh_edit::{FaceSelection, MeshEditOptions, MeshTopology};
-use std::{mem::size_of, ptr::addr_of};
+use std::{
+    mem::{size_of, size_of_val},
+    ptr::addr_of,
+};
 
 fn v(x: f32, y: f32, z: f32) -> Vertex {
     Vertex::at(Vec3::new(x, y, z))
@@ -17,6 +20,50 @@ fn valid_mesh_constructs() {
     assert_eq!(mesh.triangle_count(), 1);
     assert_eq!(mesh.name(), Some("tri"));
     assert!(!mesh.has_vertex_colors());
+}
+
+#[test]
+fn mesh_memory_estimate_reserves_a_lazy_ray_pick_tree() {
+    let mesh = Mesh::new(
+        Some("tri".into()),
+        vec![v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0), v(0.0, 1.0, 0.0)],
+        vec![0, 1, 2],
+    )
+    .expect("valid mesh");
+    let owned_geometry_bytes = size_of_val(mesh.vertices()) + size_of_val(mesh.indices());
+    let cold_estimate = mesh.estimated_memory_bytes();
+    assert!(
+        cold_estimate > u64::try_from(owned_geometry_bytes).expect("geometry bytes"),
+        "the cold scene estimate reserves the future BVH and its build bounds"
+    );
+
+    mesh.warm_bvh();
+
+    assert!(
+        mesh.estimated_memory_bytes() >= cold_estimate,
+        "warming the tree does not move memory past the import reservation"
+    );
+}
+
+#[test]
+fn renderer_memory_estimate_covers_geometry_wireframe_and_texture_uploads() {
+    let mut mesh = Mesh::new(
+        Some("tri".into()),
+        vec![v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0), v(0.0, 1.0, 0.0)],
+        vec![0, 1, 2],
+    )
+    .expect("valid mesh");
+
+    assert_eq!(mesh.estimated_gpu_memory_bytes(false), 144);
+    assert_eq!(
+        mesh.estimated_gpu_memory_bytes(true) - mesh.estimated_gpu_memory_bytes(false),
+        32,
+        "one triangle reserves the uploader's 32-byte wireframe index buffer"
+    );
+
+    mesh.set_texture(MeshTexture::new(3, 2, vec![128; 3 * 2 * 4]));
+    assert_eq!(mesh.estimated_gpu_memory_bytes(false), 168);
+    assert_eq!(mesh.estimated_gpu_memory_bytes(true), 200);
 }
 
 #[test]

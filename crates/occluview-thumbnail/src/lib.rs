@@ -1,7 +1,7 @@
 //! Platform-neutral thumbnail loading, rendering, caching, and fallback APIs.
 
 #![cfg_attr(not(test), deny(unsafe_code))]
-#![cfg_attr(test, allow(clippy::expect_used))]
+#![cfg_attr(test, allow(clippy::expect_used, clippy::panic))]
 
 pub mod error;
 pub mod fast_thumb;

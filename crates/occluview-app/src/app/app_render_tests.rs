@@ -1,4 +1,9 @@
-#![allow(clippy::expect_used, clippy::float_cmp, clippy::panic)]
+#![allow(
+    clippy::expect_used,
+    clippy::float_cmp,
+    clippy::panic,
+    clippy::print_stderr
+)]
 
 /// A deviation map must reach the screen unlit and in its own measured colors,
 /// while the brush's paint must keep the scan's own material underneath.
@@ -319,10 +324,11 @@ fn the_offscreen_viewport_replays_overlay_vertices_after_scene_upload() {
         // with a working software adapter fails loudly here instead of
         // counting a vacuous pass.
         assert!(
-            std::env::var_os("OCCLUVIEW_REQUIRE_GPU_TESTS").is_none(),
+            std::env::var_os("OCCLUVIEW_REQUIRE_GPU_TESTS").is_none_or(|value| value == "0"),
             "OCCLUVIEW_REQUIRE_GPU_TESTS is set, so a wgpu adapter is required, \
              but the offscreen path produced no frame: the overlay replay is untested"
         );
+        eprintln!("skipped: no wgpu adapter is available for the offscreen overlay replay");
         return;
     };
 

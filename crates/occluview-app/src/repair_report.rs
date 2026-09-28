@@ -49,56 +49,56 @@ pub(crate) struct ReportLine {
 pub(crate) fn report_lines(report: &RepairReport, locale: &LocaleManager) -> Vec<ReportLine> {
     // (icon, count, catalog key) in pipeline order. Zero counts are filtered
     // out; digits over 999 are grouped for readability ("1 240").
-    let passes: [(LineIcon, usize, &str); 10] = [
+    let passes: [(LineIcon, usize, crate::i18n::MessageId); 10] = [
         (
             LineIcon::Fixed,
             report.welded_vertices,
-            "repair-line-welded",
+            crate::i18n::message_id!("repair-line-welded"),
         ),
         (
             LineIcon::Removed,
             report.removed_degenerate_triangles,
-            "repair-line-slivers",
+            crate::i18n::message_id!("repair-line-slivers"),
         ),
         (
             LineIcon::Removed,
             report.removed_duplicate_triangles,
-            "repair-line-duplicate-faces",
+            crate::i18n::message_id!("repair-line-duplicate-faces"),
         ),
         (
             LineIcon::Fixed,
             report.split_nonmanifold_edges,
-            "repair-line-nonmanifold",
+            crate::i18n::message_id!("repair-line-nonmanifold"),
         ),
         (
             LineIcon::Fixed,
             report.split_bowtie_vertices,
-            "repair-line-bowtie",
+            crate::i18n::message_id!("repair-line-bowtie"),
         ),
         (
             LineIcon::Fixed,
             report.reoriented_triangles,
-            "repair-line-reoriented",
+            crate::i18n::message_id!("repair-line-reoriented"),
         ),
         (
             LineIcon::Fixed,
             report.flipped_components,
-            "repair-line-flipped",
+            crate::i18n::message_id!("repair-line-flipped"),
         ),
         (
             LineIcon::Removed,
             report.removed_debris_components,
-            "repair-line-debris",
+            crate::i18n::message_id!("repair-line-debris"),
         ),
         (
             LineIcon::Closed,
             report.filled_holes,
-            "repair-line-pinholes",
+            crate::i18n::message_id!("repair-line-pinholes"),
         ),
         (
             LineIcon::Removed,
             report.removed_unreferenced_vertices,
-            "repair-line-unused",
+            crate::i18n::message_id!("repair-line-unused"),
         ),
     ];
     passes
@@ -122,7 +122,7 @@ pub(crate) fn open_rims_line(report: &RepairReport, locale: &LocaleManager) -> O
     let rims = report.open_rims_left;
     (rims > 0).then(|| {
         locale.tr_plural(
-            "repair-open-rims",
+            crate::i18n::message_id!("repair-open-rims"),
             &[("grouped", &group_thousands(rims))],
             &[("count", rims)],
         )
@@ -136,7 +136,7 @@ pub(crate) fn skipped_rims_line(report: &RepairReport, locale: &LocaleManager) -
     let count = report.warnings.len();
     (count > 0).then(|| {
         locale.tr_plural(
-            "repair-skipped-rims",
+            crate::i18n::message_id!("repair-skipped-rims"),
             &[("grouped", &group_thousands(count))],
             &[("count", count)],
         )
@@ -240,12 +240,14 @@ const REPAIR_MODAL_BODY_MAX_HEIGHT: f32 = 230.0;
 /// viewport edge.
 fn show_repair_modal<T>(
     ctx: &egui::Context,
+    close_label: &str,
     add_contents: impl FnOnce(&mut egui::Ui) -> T,
 ) -> egui::ModalResponse<T> {
     show_information_modal(
         ctx,
         egui::Id::new(REPAIR_MODAL_ID),
         REPAIR_MODAL_DEFAULT_SIZE,
+        close_label,
         add_contents,
     )
 }
@@ -326,14 +328,15 @@ impl RepairReportDialog {
         let mut close_clicked = false;
         let mut copy_clicked = false;
 
-        let modal_response = show_repair_modal(ctx, |ui| {
+        let close_label = locale.tr(crate::i18n::message_id!("help-close"));
+        let modal_response = show_repair_modal(ctx, &close_label, |ui| {
             ui.set_width(REPAIR_MODAL_CONTENT_WIDTH.min(ui.available_width()));
 
             ui.horizontal(|ui| {
                 gutter_icon(ui, LineIcon::Fixed);
                 ui.vertical(|ui| {
                     ui.label(
-                        egui::RichText::new(locale.tr("repair-title"))
+                        egui::RichText::new(locale.tr(crate::i18n::message_id!("repair-title")))
                             .size(14.0)
                             .strong()
                             .color(ui_theme::text()),
@@ -377,8 +380,12 @@ impl RepairReportDialog {
                                 ui.horizontal(|ui| {
                                     gutter_icon(ui, LineIcon::Fixed);
                                     ui.label(
-                                        egui::RichText::new(locale.tr("repair-clean-headline"))
-                                            .color(ui_theme::text()),
+                                        egui::RichText::new(
+                                            locale.tr(crate::i18n::message_id!(
+                                                "repair-clean-headline"
+                                            )),
+                                        )
+                                        .color(ui_theme::text()),
                                     );
                                 });
                             }
@@ -403,12 +410,15 @@ impl RepairReportDialog {
             ui.separator();
             ui.add_space(6.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button(locale.tr("help-close")).clicked() {
+                if ui
+                    .button(locale.tr(crate::i18n::message_id!("help-close")))
+                    .clicked()
+                {
                     close_clicked = true;
                 }
                 if ui
-                    .button(locale.tr("repair-copy-details"))
-                    .on_hover_text(locale.tr("repair-copy-tooltip"))
+                    .button(locale.tr(crate::i18n::message_id!("repair-copy-details")))
+                    .on_hover_text(locale.tr(crate::i18n::message_id!("repair-copy-tooltip")))
                     .clicked()
                 {
                     copy_clicked = true;
@@ -741,7 +751,7 @@ mod tests {
         let rect = ctx.memory(|memory| memory.area_rect(egui::Id::new(REPAIR_MODAL_ID)));
         assert!(rect.is_some(), "Repair Mesh report should render an area");
         let Some(rect) = rect else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         assert!(
             screen.contains_rect(rect),

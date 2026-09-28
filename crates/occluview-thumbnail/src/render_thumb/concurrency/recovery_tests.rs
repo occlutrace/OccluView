@@ -158,16 +158,14 @@ mod poison_recovery_tests {
 
 mod renderer_pool_recovery_tests {
     use super::{ThumbnailError, ThumbnailRendererPool};
-    use occluview_render::{AdapterPolicy, RenderDeadline};
+    use occluview_render::{AdapterPolicy, RenderDeadline, RenderError};
     use std::time::{Duration, Instant};
 
     fn refuses(
         _deadline: RenderDeadline,
         _adapter_policy: AdapterPolicy,
     ) -> Result<occluview_render::Offscreen, ThumbnailError> {
-        Err(ThumbnailError::Render(
-            occluview_render::RenderError::NoAdapter,
-        ))
+        Err(ThumbnailError::Render(RenderError::NoAdapter))
     }
 
     fn panics(
@@ -240,12 +238,23 @@ mod renderer_pool_recovery_tests {
     /// hands exactly that device to the next file in the folder.
     #[test]
     #[allow(clippy::expect_used)]
+    #[allow(clippy::print_stderr)]
     fn a_panicking_render_retires_its_device_instead_of_reusing_it() {
         let _guard = crate::acquire_render_test_guard();
         let pool = ThumbnailRendererPool::new(1);
-        let Ok(renderer) = pool.checkout_renderer_within(Duration::from_secs(20)) else {
-            // No adapter here; there is no device to retire.
-            return;
+        let renderer = match pool.checkout_renderer_within(Duration::from_secs(20)) {
+            Ok(renderer) => renderer,
+            Err(ThumbnailError::Render(RenderError::NoAdapter)) => {
+                assert!(
+                    std::env::var_os("OCCLUVIEW_REQUIRE_GPU_TESTS")
+                        .is_none_or(|value| value == "0"),
+                    "OCCLUVIEW_REQUIRE_GPU_TESTS is set, so a wgpu adapter is required to \
+                     exercise renderer retirement"
+                );
+                eprintln!("skipped: no wgpu adapter is available for renderer retirement");
+                return;
+            }
+            Err(error) => panic!("renderer checkout failed before the panic test: {error}"),
         };
         drop(super::ThumbnailRendererLease::new(&pool, renderer));
 

@@ -8,7 +8,8 @@
 //!
 //! The table is a compiled artifact so the two evaluations share their numbers
 //! by construction; this test fails when either evaluation changes on its own.
-//! The renderer's offscreen test checks the WGSL against the same expectation.
+//! The renderer's offscreen test separately checks WGSL paint against fixed
+//! sRGB values; it does not consume this table.
 
 #![allow(
     clippy::unwrap_used,

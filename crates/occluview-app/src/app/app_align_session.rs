@@ -16,9 +16,13 @@ impl OccluViewApp {
         let restored = self.restore_session_poses();
         self.disarm_align_tool(ctx);
         self.ui.status_message = Some(if restored {
-            self.ui.locale.tr("align-session-canceled")
+            self.ui
+                .locale
+                .tr(crate::i18n::message_id!("align-session-canceled"))
         } else {
-            self.ui.locale.tr("align-session-closed")
+            self.ui
+                .locale
+                .tr(crate::i18n::message_id!("align-session-closed"))
         });
     }
 
@@ -35,9 +39,18 @@ impl OccluViewApp {
             .is_some_and(crate::align_worker::AlignWorker::is_busy);
         self.disarm_align_tool(ctx);
         self.ui.status_message = Some(match (running, moved) {
-            (true, _) => self.ui.locale.tr("align-session-closed-running"),
-            (false, true) => self.ui.locale.tr("align-session-kept"),
-            (false, false) => self.ui.locale.tr("align-session-closed"),
+            (true, _) => self
+                .ui
+                .locale
+                .tr(crate::i18n::message_id!("align-session-closed-running")),
+            (false, true) => self
+                .ui
+                .locale
+                .tr(crate::i18n::message_id!("align-session-kept")),
+            (false, false) => self
+                .ui
+                .locale
+                .tr(crate::i18n::message_id!("align-session-closed")),
         });
     }
 
@@ -54,6 +67,30 @@ impl OccluViewApp {
             self.session_pose_of(entry.id())
                 .is_none_or(|pose| entry.transform != pose)
         })
+    }
+
+    /// Enrol layers that arrived while the session is open, at the pose they
+    /// arrived with.
+    ///
+    /// The session records every scan's pose when it opens; a scan added later
+    /// had no entry, so Cancel left it wherever a fit had put it while
+    /// reporting that every scan was back. Called on every scene install; a
+    /// layer already enrolled keeps its original entry.
+    pub(super) fn enrol_align_arrivals(&mut self) {
+        if !self.tools.align.tool.is_armed() {
+            return;
+        }
+        let Some(scene) = self.document.scene.clone() else {
+            return;
+        };
+        for entry in scene.meshes() {
+            if self.session_pose_of(entry.id()).is_none() {
+                self.tools
+                    .align
+                    .session_poses
+                    .push((entry.id(), entry.transform));
+            }
+        }
     }
 
     /// The pose a layer had when the session opened, if it was there.

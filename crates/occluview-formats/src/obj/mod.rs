@@ -47,11 +47,80 @@ pub fn read(bytes: &[u8]) -> Result<Mesh, FormatError> {
     read_shaded(bytes, crate::MeshShading::Reconstructed)
 }
 
+pub(crate) fn estimate_peak_bytes(bytes: &[u8]) -> u64 {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+    };
+    let mut positions = 0_u64;
+    let mut normals = 0_u64;
+    let mut texcoords = 0_u64;
+    let mut face_corners = 0_u64;
+    let mut triangle_count = 0_u64;
+    let mut has_faces = false;
+
+    for line in text.trim_start_matches('\u{feff}').lines() {
+        let mut tokens = line
+            .split('#')
+            .next()
+            .unwrap_or_default()
+            .split_ascii_whitespace();
+        match tokens.next() {
+            Some("v") => positions = positions.saturating_add(1),
+            Some("vn") => normals = normals.saturating_add(1),
+            Some("vt") => texcoords = texcoords.saturating_add(1),
+            Some("f") => {
+                has_faces = true;
+                let corners = u64::try_from(tokens.count()).unwrap_or(u64::MAX);
+                face_corners = face_corners.saturating_add(corners);
+                triangle_count = triangle_count.saturating_add(corners.saturating_sub(2));
+            }
+            _ => {}
+        }
+    }
+
+    let output_vertices = if has_faces { face_corners } else { positions };
+    let parser_bytes = positions
+        .saturating_mul(16)
+        .saturating_add(normals.saturating_mul(12))
+        .saturating_add(texcoords.saturating_mul(8))
+        .saturating_add(face_corners.saturating_mul(4))
+        .saturating_add(output_vertices.saturating_mul(36))
+        .saturating_add(triangle_count.saturating_mul(12));
+    u64::try_from(bytes.len())
+        .unwrap_or(u64::MAX)
+        .saturating_add(parser_bytes.saturating_mul(2))
+}
+
+pub(crate) fn may_have_uvs(bytes: &[u8]) -> bool {
+    std::str::from_utf8(bytes).is_ok_and(|text| {
+        text.trim_start_matches('\u{feff}').lines().any(|line| {
+            line.split('#')
+                .next()
+                .unwrap_or_default()
+                .split_ascii_whitespace()
+                .next()
+                == Some("vt")
+        })
+    })
+}
+
 /// As [`read`], choosing how vertex normals are produced.
 ///
 /// # Errors
 /// See [`read`].
 pub fn read_shaded(bytes: &[u8], shading: crate::MeshShading) -> Result<Mesh, FormatError> {
+    crate::memory::check_estimate(crate::memory::estimate_file_peak_bytes(
+        crate::probe::FormatKind::Obj,
+        bytes,
+        0,
+    )?)?;
+    read_admitted(bytes, shading)
+}
+
+pub(crate) fn read_admitted(
+    bytes: &[u8],
+    shading: crate::MeshShading,
+) -> Result<Mesh, FormatError> {
     // OBJ is text; reject non-UTF-8 early with a clean error.
     let text = std::str::from_utf8(bytes).map_err(|_| FormatError::Malformed {
         format: "OBJ",

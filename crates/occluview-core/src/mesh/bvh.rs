@@ -23,6 +23,7 @@ pub(crate) struct BvhHit {
     pub(crate) distance: f32,
 }
 
+#[derive(Clone, Copy)]
 pub(super) struct DirtyVertexRay<'a> {
     pub(super) vertices: &'a [Vertex],
     pub(super) indices: &'a [u32],
@@ -50,6 +51,23 @@ pub(crate) struct TriangleBvh {
 }
 
 impl TriangleBvh {
+    pub(crate) fn estimated_memory_bytes(&self) -> u64 {
+        let node_bytes = self.nodes.capacity().saturating_mul(size_of::<Node>());
+        let order_bytes = self.order.capacity().saturating_mul(size_of::<u32>());
+        u64::try_from(node_bytes.saturating_add(order_bytes)).unwrap_or(u64::MAX)
+    }
+
+    pub(crate) fn estimated_peak_memory_bytes_for_triangle_count(triangle_count: usize) -> u64 {
+        let node_capacity = triangle_count.max(1).saturating_mul(2);
+        let node_bytes = node_capacity.saturating_mul(size_of::<Node>());
+        let order_bytes = triangle_count.saturating_mul(size_of::<u32>());
+        let bounds_bytes = triangle_count.saturating_mul(size_of::<TriBounds>());
+        u64::try_from(node_bytes)
+            .unwrap_or(u64::MAX)
+            .saturating_add(u64::try_from(order_bytes).unwrap_or(u64::MAX))
+            .saturating_add(u64::try_from(bounds_bytes).unwrap_or(u64::MAX))
+    }
+
     /// Build over `indices` (triangle list) and `vertices` (local positions).
     pub(crate) fn build(vertices: &[Vertex], indices: &[u32]) -> Self {
         let triangle_count = indices.len() / 3;
@@ -131,7 +149,21 @@ impl TriangleBvh {
     where
         K: Fn(Vec3) -> bool,
     {
-        let direction = direction.normalize_or_zero();
+        self.pick_excluding(
+            DirtyVertexRay {
+                vertices,
+                indices,
+                query: LiveRayPick::new(vertices, &[], origin, direction).with_indices(indices),
+            },
+            keep,
+        )
+    }
+
+    fn pick_excluding<K>(&self, ray: DirtyVertexRay<'_>, keep: K) -> Option<BvhHit>
+    where
+        K: Fn(Vec3) -> bool,
+    {
+        let direction = ray.query.direction.normalize_or_zero();
         if self.nodes.is_empty() || direction.length_squared() <= f32::EPSILON {
             return None;
         }
@@ -148,7 +180,7 @@ impl TriangleBvh {
         while depth > 0 {
             depth -= 1;
             let node = self.nodes[stack[depth] as usize];
-            let Some(entry) = ray_aabb(origin, inv_dir, node.min, node.max) else {
+            let Some(entry) = ray_aabb(ray.query.origin, inv_dir, node.min, node.max) else {
                 continue;
             };
             if best.as_ref().is_some_and(|hit| entry > hit.distance) {
@@ -158,11 +190,30 @@ impl TriangleBvh {
                 let start = node.left_or_start as usize;
                 let end = start + node.right_or_count as usize;
                 for &triangle in &self.order[start..end] {
+                    if ray
+                        .query
+                        .dirty_triangles
+                        .binary_search(&(triangle as usize))
+                        .is_ok()
+                    {
+                        continue;
+                    }
                     let base = triangle as usize * 3;
-                    let a = position(vertices, indices[base]);
-                    let b = position(vertices, indices[base + 1]);
-                    let c = position(vertices, indices[base + 2]);
-                    if let Some((distance, point)) = ray_triangle(origin, direction, a, b, c) {
+                    let Some(corners) = ray.indices.get(base..base + 3) else {
+                        continue;
+                    };
+                    if corners
+                        .iter()
+                        .any(|&vertex| vertex as usize >= ray.vertices.len())
+                    {
+                        continue;
+                    }
+                    let a = position(ray.vertices, corners[0]);
+                    let b = position(ray.vertices, corners[1]);
+                    let c = position(ray.vertices, corners[2]);
+                    if let Some((distance, point)) =
+                        ray_triangle(ray.query.origin, direction, a, b, c)
+                    {
                         let nearer = best.as_ref().is_none_or(|hit| distance < hit.distance);
                         if nearer && keep(point) {
                             best = Some(BvhHit {
@@ -194,13 +245,7 @@ impl TriangleBvh {
     where
         K: Fn(Vec3) -> bool,
     {
-        let mut best = self.pick(
-            ray.vertices,
-            ray.indices,
-            ray.query.origin,
-            ray.query.direction,
-            &keep,
-        );
+        let mut best = self.pick_excluding(ray, &keep);
         let direction = ray.query.direction.normalize_or_zero();
         if direction.length_squared() <= f32::EPSILON {
             return best;
@@ -212,6 +257,12 @@ impl TriangleBvh {
             let Some(corners) = ray.indices.get(base..base + 3) else {
                 continue;
             };
+            if corners
+                .iter()
+                .any(|&vertex| vertex as usize >= ray.vertices.len())
+            {
+                continue;
+            }
             let a = position(ray.vertices, corners[0]);
             let b = position(ray.vertices, corners[1]);
             let c = position(ray.vertices, corners[2]);

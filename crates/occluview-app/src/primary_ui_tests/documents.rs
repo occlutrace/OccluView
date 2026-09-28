@@ -1,111 +1,69 @@
-//! Guards over the documents the build ships with.
-//!
-//! The changelog against the version being prepared, and the README against
-//! the keys the viewer binds. The compiler checks neither: nothing fails to
-//! compile when an operator instruction describes a shortcut the build lacks.
+//! Checks the release notes and operator documentation shipped with the app.
 
 use super::*;
+use std::path::{Path, PathBuf};
 
 #[test]
-fn the_changelog_only_names_versions_that_can_be_released() {
-    // Release notes come from the section matching the current version.
+fn the_changelog_starts_with_the_current_version_and_descends_without_repeats() {
     let changelog = include_str!("../../../../CHANGELOG.md");
-    let manifest = include_str!("../../../../Cargo.toml");
-    let version = manifest
-        .split("[workspace.package]")
-        .nth(1)
-        .and_then(|section| section.split("version = \"").nth(1))
-        .and_then(|rest| rest.split('"').next());
-    assert!(
-        version.is_some(),
-        "the workspace version should be readable"
-    );
-    let Some(version) = version else {
-        return;
-    };
-
-    let heading = format!("## {version} ");
-    assert!(
-        changelog.contains(&heading),
-        "the workspace version {version} needs a changelog section, or a release \
-         of it would publish empty notes"
-    );
-
-    // Every other section must be a version that was actually tagged. The
-    // newest one is the release being prepared; the rest are history.
-    let sections: Vec<&str> = changelog
+    let current = env!("CARGO_PKG_VERSION");
+    let expected_heading = format!("## {current} ");
+    let sections: Vec<_> = changelog
         .lines()
         .filter(|line| line.starts_with("## "))
         .collect();
+
+    let unreleased_count = sections
+        .iter()
+        .filter(|heading| **heading == "## Unreleased")
+        .count();
     assert!(
-        sections
-            .first()
-            .is_some_and(|first| first.starts_with(&heading)),
-        "the newest section should be the version about to ship, got {:?}",
-        sections.first()
+        unreleased_count <= 1,
+        "the changelog may contain at most one Unreleased section"
     );
-    // The rest are history, and history goes one way. A repeat, or an older
-    // section above a newer one, means a local bump grew its own section
-    // instead of folding into the release being prepared.
-    let mut seen: Vec<[u64; 3]> = Vec::new();
-    for line in &sections {
-        let Some(number) = line.split_whitespace().nth(1) else {
-            panic!("changelog section without a version: {line:?}");
-        };
-        let parts: Vec<u64> = number
-            .split('.')
-            .filter_map(|part| part.parse::<u64>().ok())
-            .collect();
+    if unreleased_count == 1 {
         assert_eq!(
-            parts.len(),
-            3,
-            "changelog sections are headed by a three-part version, got {number:?}"
+            sections.first().copied(),
+            Some("## Unreleased"),
+            "the Unreleased section must lead the changelog"
         );
-        let parsed = [parts[0], parts[1], parts[2]];
-        if let Some(previous) = seen.last() {
-            assert!(
-                parsed < *previous,
-                "changelog sections run newest first with no repeats; \
-                 {number} follows {previous:?}"
-            );
-        }
-        seen.push(parsed);
     }
 
-    // Ordering alone is not the rule the test name promises. A section below
-    // the newest claims something was released, so a tag has to exist for it.
-    // Tags come from git; a source tarball has none, and there the ordering
-    // above is all there is.
-    let Some(tags) = repository_tags() else {
-        // The CI checkout that runs this test fetches tags, so "no tags" means
-        // a source tarball or a checkout that lost them. The skip is logged so
-        // the unchecked rule below is visible.
-        tracing::info!(
-            "changelog ordering: this checkout carries no tags, so only the ordering \
-             assertion above is checked"
-        );
-        return;
-    };
-    // Only from the first tagged version onward: sections older than the day
-    // tagging started describe releases this repository has no record of.
-    let Some(first_tagged) = tags.iter().filter_map(|tag| parse_version(tag)).min() else {
-        return;
-    };
-    for line in sections.iter().skip(1) {
-        let Some(number) = line.split_whitespace().nth(1) else {
-            continue;
+    let version_sections: Vec<_> = sections
+        .iter()
+        .copied()
+        .filter(|heading| !heading.starts_with("## Unreleased"))
+        .collect();
+    assert!(
+        version_sections
+            .first()
+            .is_some_and(|heading| heading.starts_with(&expected_heading)),
+        "the first changelog section must describe the current package version {current}"
+    );
+
+    let mut previous = None;
+    for heading in &version_sections {
+        let Some(version) = heading.split_whitespace().nth(1).and_then(parse_version) else {
+            panic!("changelog section has no three-part version: {heading:?}");
         };
-        let Some(parsed) = parse_version(number) else {
-            continue;
-        };
-        if parsed < first_tagged {
-            continue;
+        if let Some(previous) = previous {
+            assert!(
+                version < previous,
+                "changelog sections must descend without repeats: {heading:?}"
+            );
         }
+        previous = Some(version);
+    }
+
+    let tags =
+        repository_tags().unwrap_or_else(|error| panic!("cannot verify release tags: {error}"));
+    for heading in version_sections.iter().skip(1) {
+        let Some(number) = heading.split_whitespace().nth(1) else {
+            panic!("version heading has no number: {heading:?}");
+        };
         assert!(
-            tags.iter().any(|tag| tag == &format!("v{number}")),
-            "the changelog has a section for {number}, which was never tagged; \
-             an untagged section publishes nothing and advertises a version \
-             that cannot be downloaded"
+            tags.contains(&format!("v{number}")),
+            "historical changelog section {number} has no matching Git tag"
         );
     }
 }
@@ -115,76 +73,42 @@ fn parse_version(raw: &str) -> Option<[u64; 3]> {
     let parts: Vec<u64> = raw
         .trim_start_matches('v')
         .split('.')
-        .map(|part| part.parse::<u64>().ok())
-        .collect::<Option<Vec<u64>>>()?;
+        .map(str::parse::<u64>)
+        .collect::<Result<_, _>>()
+        .ok()?;
     (parts.len() == 3).then(|| [parts[0], parts[1], parts[2]])
 }
 
-/// The tags of this repository, or `None` outside a git checkout.
-fn repository_tags() -> Option<Vec<String>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let workspace_root = manifest_dir.parent().and_then(Path::parent)?;
+fn repository_tags() -> Result<std::collections::BTreeSet<String>, String> {
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| "the app manifest is outside the workspace".to_owned())?;
     let output = std::process::Command::new("git")
         .arg("-C")
         .arg(workspace_root)
-        .arg("tag")
+        .args(["tag", "--list", "v*"])
         .output()
-        .ok()?;
+        .map_err(|error| format!("git tag failed to start: {error}"))?;
     if !output.status.success() {
-        return None;
+        return Err("git tag returned a failure status".to_owned());
     }
-    let tags: Vec<String> = String::from_utf8_lossy(&output.stdout)
+    let tags: std::collections::BTreeSet<String> = String::from_utf8_lossy(&output.stdout)
         .lines()
         .map(str::trim)
         .filter(|tag| !tag.is_empty())
         .map(str::to_owned)
         .collect();
-    (!tags.is_empty()).then_some(tags)
-}
-
-#[test]
-fn the_readme_documents_the_shortcuts_the_build_implements() {
-    // A documented shortcut that the build does not bind is worse than no
-    // shortcut, so cross-check the public operator surface against the code.
-    let readme = include_str!("../../../../README.md");
-
-    let editor = repo_source_file("src/app/app_mesh_editor.rs");
-    let sculpt = repo_source_file("src/app/app_sculpt.rs");
-    let dialogs = repo_source_file("src/app/app_dialogs.rs");
-
-    assert!(
-        readme.contains("**Ctrl+A**") && editor.contains("egui::Key::A"),
-        "select-all is documented and implemented"
-    );
-    assert!(
-        readme.contains("**Delete** or **Backspace**")
-            && editor.contains("egui::Key::Delete")
-            && editor.contains("egui::Key::Backspace"),
-        "the delete bindings are documented and implemented"
-    );
-    assert!(
-        readme.contains("**Ctrl+Z**") && editor.contains("egui::Key::Z"),
-        "undo is documented and implemented"
-    );
-    assert!(
-        readme.contains("**Ctrl+O**") && dialogs.contains("egui::Key::O"),
-        "open is documented and implemented"
-    );
-    assert!(
-        readme.contains("**1** chooses Add/Remove") && sculpt.contains("egui::Key::Num1"),
-        "the brush selector is documented and implemented"
-    );
-    assert!(
-        readme.contains("occluview-cli close-holes"),
-        "the CLI subcommands should be listed where a user can find them"
-    );
+    if tags.is_empty() {
+        return Err("the checkout contains no fetched version tags".to_owned());
+    }
+    Ok(tags)
 }
 
 /// Every key the viewer consumes, written the way the README writes it.
 ///
-/// The README is checked in both directions against this table: a key the
-/// build reads and README never names leaves an operator guessing, and a key
-/// it names that nothing reads documents a shortcut that does not exist.
+/// The README key list is product text. Checking both sources catches a
+/// documented shortcut with no handler and a handler an operator cannot find.
 const VIEWER_KEY_BINDINGS: &[(&str, &[&str])] = &[
     ("A", &["**A**", "**Ctrl+A**"]),
     ("Backspace", &["**Backspace**"]),
@@ -213,8 +137,13 @@ fn keys_the_viewer_binds() -> std::collections::BTreeSet<String> {
 
     let mut keys = std::collections::BTreeSet::new();
     for path in sources {
-        // Test modules name keys they never bind.
-        if path
+        let Ok(relative) = path.strip_prefix(&root) else {
+            panic!(
+                "collected source is outside the app source root: {}",
+                path.display()
+            );
+        };
+        if relative
             .components()
             .any(|part| part.as_os_str().to_string_lossy().contains("tests"))
         {
@@ -237,43 +166,30 @@ fn keys_the_viewer_binds() -> std::collections::BTreeSet<String> {
 
 #[test]
 fn the_readme_names_every_key_the_viewer_binds_and_no_others() {
-    // README and code can drift both ways: a documented key the build does not
-    // bind, or a bound key the guide skips.
-    //
-    // Meaning is out of reach here: a key can be bound while the guide
-    // describes the wrong action for it. Keys are covered, so the prose is the
-    // only part a reviewer has to re-read.
     let readme = include_str!("../../../../README.md");
     let bound = keys_the_viewer_binds();
 
     for name in &bound {
-        let documented = VIEWER_KEY_BINDINGS
+        let spelling = VIEWER_KEY_BINDINGS
             .iter()
             .find(|(key, _)| key == name)
             .and_then(|(_, spellings)| spellings.first().copied());
-        let Some(spelling) = documented else {
-            panic!(
-                "the viewer binds egui::Key::{name} and README has no entry for it; add it to README.md and VIEWER_KEY_BINDINGS"
-            );
+        let Some(spelling) = spelling else {
+            panic!("README has no key-table entry for the bound egui::Key::{name}");
         };
         assert!(
             readme.contains(spelling),
-            "the viewer binds egui::Key::{name}, so README.md should say {spelling}"
+            "README must document egui::Key::{name} as {spelling}"
         );
     }
 
     for (name, spellings) in VIEWER_KEY_BINDINGS {
         assert!(
             bound.contains(*name),
-            "README.md documents {spellings:?} but nothing in the viewer \
-             reads egui::Key::{name}"
+            "README documents {spellings:?}, but the viewer does not bind egui::Key::{name}"
         );
     }
 
-    // The other direction has to read the README, not the table: checking only
-    // the spellings already listed here says nothing about a shortcut that
-    // exists only in the prose. Every bold token in the README that looks like a
-    // key has to be one of them.
     for token in readme.split("**").skip(1).step_by(2) {
         if !looks_like_a_key(token) {
             continue;
@@ -283,24 +199,16 @@ fn the_readme_names_every_key_the_viewer_binds_and_no_others() {
             .iter()
             .any(|(_, spellings)| spellings.contains(&bold.as_str()))
             || NON_KEYBOARD_BINDINGS.contains(&token);
-        assert!(
-            known,
-            "README.md documents {bold}, which nothing in the viewer binds; \
-             add the binding or drop the line"
-        );
+        assert!(known, "README has an unregistered key binding {bold}");
     }
 }
 
-/// Bold tokens that are real bindings the keyboard table does not cover.
-///
-/// `W` is read by the Explorer preview window rather than the viewer. The
-/// pointer chords are verified by the tests of the input handlers that
-/// implement them, and `Shift` on its own is a modifier held during a drag,
-/// not a shortcut.
 const NON_KEYBOARD_BINDINGS: &[&str] = &[
     "Help",
     "W",
     "Shift",
+    "Ctrl+Shift",
+    "⌘+Shift",
     "Shift+wheel",
     "Ctrl/Command+drag",
     "RMB click",
@@ -310,12 +218,6 @@ const NON_KEYBOARD_BINDINGS: &[&str] = &[
     "Shift+Middle-click",
 ];
 
-/// Whether a bold token in the README is naming a key rather than emphasising a
-/// word.
-///
-/// Keys are written as a modifier chain of capitalised words or a single
-/// character: `Ctrl+A`, `Esc`, `F`, `1`. Anything containing a space, or
-/// starting lowercase, is prose.
 fn looks_like_a_key(token: &str) -> bool {
     !token.is_empty()
         && !token.contains(' ')

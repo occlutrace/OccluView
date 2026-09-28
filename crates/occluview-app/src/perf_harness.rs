@@ -1,18 +1,21 @@
-//! Reproducible performance harness (synthetic inputs only, no new deps).
+//! Reproducible performance harness for synthetic and opt-in local scan inputs.
 //!
 //! Run: `cargo test -p occluview-app --lib perf_harness -- --ignored --nocapture`
 //!
-//! Cases print wall times, assert functional outcomes, and trip only on
-//! order-of-magnitude regressions (generous ceiling, same convention as the
-//! structural perf harness). Plain `cargo test` skips them.
+//! Cases print wall times and assert functional outcomes. Synthetic cases use
+//! generous ceilings; the full-arch case checks its measured dab budget. Plain
+//! `cargo test` skips these ignored cases.
 //!
-//! Fixtures are generated in code (no patient data, no downloads):
+//! Synthetic fixtures are generated in code. The optional full-arch case reads
+//! a caller-specified local scan and keeps it out of the repository.
 //!
 //! | area | fixture | status here |
 //! |---|---|---|
-//! | sculpt small dab | 2-triangle quad, Add brush | executable below |
-//! | sculpt large dab | 150x150 grid (~22k verts), Add brush | executable below |
-//! | session prepare | same grid through `BrushSession::prepare` | executable below |
+//! | sculpt small dab | 2-triangle quad, ball Add brush | executable below |
+//! | sculpt large dab | 150x150 grid (~22k verts), ball Add brush | executable below |
+//! | sculpt knife dab | same grid, knife Add brush on a bearing | executable below |
+//! | sculpt full-arch remesh | local scan near 1M vertices, 8 mm stress brush | `OCCLUVIEW_SCULPT_PERF_SCAN` |
+//! | session prepare | same grid through the sculpt session's prepare | executable below |
 //! | repair | duplicate-face tetrahedron | executable below |
 //! | alignment | representative scan pair + index build | inventory: no
 //! redistributable fixtures in-repo; run against local scans when available |
@@ -28,12 +31,14 @@
     clippy::print_stdout
 )]
 
+use crate::sculpt_kernel::{BrushMode, BrushSession, BrushStroke};
 use crate::sculpt_tool::{mean_uniform_scale, SculptSession};
 use glam::Affine3A;
-use occluview_core::{
-    mesh_edit_buffers_from_mesh, BrushMode, BrushSession, BrushStroke, Mesh, SceneMesh, Vertex,
+use occluview_core::{mesh_edit_buffers_from_mesh, Mesh, SceneMesh, SculptSessionBuffers, Vertex};
+use occluview_render::{
+    GpuMeshUniform, Offscreen, PreparedSceneSource, PreparedSceneTopology, SculptTopologyDelta,
 };
-use occluview_render::PreparedSceneTopology;
+use std::mem::size_of_val;
 use std::sync::Arc;
 use std::sync::RwLock;
 use std::time::Instant;
@@ -87,6 +92,8 @@ fn grid_mesh(rows: usize, cols: usize, spacing_mm: f32) -> Mesh {
 
 fn session_for(mesh: &Mesh) -> SculptSession {
     let entry = SceneMesh::new(mesh.clone());
+    // The live-remesh kernel prepares its own welded topology, spatial grid,
+    // step budgets and area weights from the mesh's edit buffers.
     let brush = BrushSession::prepare(&mesh_edit_buffers_from_mesh(mesh)).expect("prepare");
     SculptSession {
         layer_id: entry.id(),
@@ -98,6 +105,7 @@ fn session_for(mesh: &Mesh) -> SculptSession {
         world_to_local: Affine3A::IDENTITY,
         local_per_world: mean_uniform_scale(&Affine3A::IDENTITY),
         dirty_stroke: false,
+        topology_dirty_stroke: false,
         stroke_start_mesh: None,
     }
 }
@@ -119,8 +127,8 @@ fn perf_sculpt_small_dab() {
     let stroke = dab([0.0, 0.0, 0.0], 2.0);
     let first = session.apply_dab(stroke, BrushMode::Add);
     assert!(
-        !first.touched.is_empty(),
-        "the small dab must touch vertices"
+        !first.touched.is_empty() || first.topology_delta.is_some(),
+        "the small dab must change the surface"
     );
     let start = Instant::now();
     let iterations = 50;
@@ -143,8 +151,8 @@ fn perf_sculpt_large_dab() {
     let stroke = dab([75.0, 75.0, 0.0], 10.0);
     let first = session.apply_dab(stroke, BrushMode::Add);
     assert!(
-        !first.touched.is_empty(),
-        "the large dab must touch vertices"
+        !first.touched.is_empty() || first.topology_delta.is_some(),
+        "the large dab must change the surface"
     );
     let start = Instant::now();
     let iterations = 5;
@@ -157,6 +165,288 @@ fn perf_sculpt_large_dab() {
         mesh.vertices().len()
     );
     assert_perf_ceiling(elapsed, "perf_sculpt_large_dab");
+}
+
+#[test]
+#[ignore = "perf harness: run with --ignored --nocapture"]
+fn perf_sculpt_knife_dab() {
+    let mesh = grid_mesh(150, 150, 1.0);
+    let mut session = session_for(&mesh);
+    let stroke = dab([75.0, 75.0, 0.0], 10.0);
+    let _ = session.apply_dab_tipped(
+        stroke,
+        BrushMode::Add,
+        crate::sculpt_tool::SculptTip::Knife,
+        Some([1.0, 0.0, 0.0]),
+    );
+    let start = Instant::now();
+    let iterations = 5;
+    for _ in 0..iterations {
+        session.apply_dab_tipped(
+            stroke,
+            BrushMode::Add,
+            crate::sculpt_tool::SculptTip::Knife,
+            Some([1.0, 0.0, 0.0]),
+        );
+    }
+    let elapsed = start.elapsed();
+    println!(
+        "perf sculpt-knife-dab: {iterations} dabs on {} verts took {elapsed:?}",
+        mesh.vertices().len()
+    );
+    assert_perf_ceiling(elapsed, "perf_sculpt_knife_dab");
+}
+
+#[test]
+#[ignore = "private scan measurement: run with OCCLUVIEW_SCULPT_PERF_SCAN"]
+fn perf_sculpt_private_scan_remesh() {
+    let mesh = private_scan_mesh();
+    let (center, view) = upper_surface_sample(&mesh);
+    let mut session = session_for(&mesh);
+    let offscreen = pollster::block_on(Offscreen::new()).expect("create headless renderer");
+    let source = PreparedSceneSource {
+        mesh: &mesh,
+        uniform: GpuMeshUniform::identity(),
+        visible: true,
+        wireframe: false,
+        contact: None,
+    };
+    let mut prepared = offscreen.prepare_scene(&[source]);
+    let brush_radius_mm = 8.0;
+    let mut stroke = dab(center, brush_radius_mm);
+    stroke.view_dir = view;
+    let full_layer_bytes = mesh_payload_bytes(&mesh);
+    let mut topology_changes = 0;
+    let mut steady_remesh_dabs = Vec::new();
+    let mut steady_full_dabs = Vec::new();
+    for index in 0..8 {
+        let started = Instant::now();
+        let outcome = session.apply_dab(stroke, BrushMode::Smooth);
+        let kernel_cpu_delta = started.elapsed();
+        if index > 0 && outcome.topology_delta.is_some() {
+            steady_remesh_dabs.push(kernel_cpu_delta);
+        }
+        let mut stats = None;
+        let update_started = Instant::now();
+        if let Some(delta) = outcome.topology_delta.as_ref() {
+            topology_changes += 1;
+            stats = Some(
+                prepared
+                    .write_entry_sculpt_delta(offscreen.renderer(), &session.topology, delta)
+                    .expect("the prepared entry accepts the local topology delta"),
+            );
+        } else {
+            let shadow = session.shadow.read().expect("shadow lock");
+            if !outcome.touched.is_empty() {
+                assert!(prepared.write_entry_vertices_sparse(
+                    offscreen.renderer(),
+                    &session.topology,
+                    &shadow,
+                    &outcome.touched,
+                ));
+            }
+        }
+        let buffer_update = update_started.elapsed();
+        let completion_started = Instant::now();
+        offscreen
+            .renderer()
+            .wait_for_queue_idle()
+            .expect("the upload submission completes");
+        let gpu_completion = completion_started.elapsed();
+        let full_dab = started.elapsed();
+        if index > 0 && outcome.topology_delta.is_some() {
+            steady_full_dabs.push(full_dab);
+        }
+        if let (Some(delta), Some(stats)) = (outcome.topology_delta.as_ref(), stats) {
+            println!(
+                "UPPER remesh dab {index}: kernel+CPU={kernel_cpu_delta:?}, CPU buffer update + GPU upload enqueue={buffer_update:?}, GPU completion wait={gpu_completion:?}, full dab={full_dab:?}, bytes written={}, bytes copied={}, buffers grown={}, updated vertices={}, appended vertices={}, changed faces={}",
+                stats.bytes_written,
+                stats.bytes_copied,
+                stats.buffers_grown,
+                delta.updated_vertices.len(),
+                delta.appended_vertices.len(),
+                stats.faces_written
+            );
+            assert_local_delta_budget(full_layer_bytes, delta, stats, 5);
+        } else {
+            println!(
+                "UPPER dab {index}: kernel+CPU={kernel_cpu_delta:?}, sparse CPU buffer update + GPU upload enqueue={buffer_update:?}, GPU completion wait={gpu_completion:?}, full dab={full_dab:?}, touched vertices={}",
+                outcome.touched.len()
+            );
+        }
+        println!(
+            "scan state after dab {index}: vertices={}, indices={}",
+            session.shadow.read().expect("shadow lock").len(),
+            session.session.sculpt_indices().len()
+        );
+    }
+    assert!(topology_changes > 0, "the scan stroke must remesh");
+    assert!(
+        !steady_remesh_dabs.is_empty(),
+        "the scan stroke must contain a warmed remeshing dab"
+    );
+    assert_eq!(steady_remesh_dabs.len(), steady_full_dabs.len());
+    steady_remesh_dabs.sort_unstable();
+    let median = steady_remesh_dabs[steady_remesh_dabs.len() / 2];
+    let maximum = steady_remesh_dabs[steady_remesh_dabs.len() - 1];
+    // A regression ceiling from measurement, not a frame target: on UPPER.stl
+    // (978 585 vertices) a warmed 8 mm Smooth dab measured a 27-30 ms median
+    // and up to 38 ms end to end on the 12-core reference box, while redoing
+    // whole-mesh work costs 400 ms or more. The ceiling fails that regression
+    // with room for machine noise.
+    let budget = std::time::Duration::from_millis(60);
+    steady_full_dabs.sort_unstable();
+    let full_median = steady_full_dabs[steady_full_dabs.len() / 2];
+    let full_maximum = steady_full_dabs[steady_full_dabs.len() - 1];
+    println!(
+        "UPPER 8 mm smooth remesh dabs: kernel median={median:?}, kernel maximum={maximum:?}, end-to-end median={full_median:?}, end-to-end maximum={full_maximum:?}, per-dab budget={budget:?}"
+    );
+    assert!(
+        full_maximum < budget,
+        "a warmed 8 mm remesh dab took {full_maximum:?} end to end, above {budget:?}"
+    );
+}
+
+#[test]
+#[ignore = "private scan acceptance: run with OCCLUVIEW_SCULPT_PERF_SCAN"]
+fn perf_sculpt_private_scan_knife_stroke_completes() {
+    let mesh = private_scan_mesh();
+    let (center, view) = upper_surface_sample(&mesh);
+    let mut session = session_for(&mesh);
+    let mut stroke = dab(center, 8.0);
+    stroke.view_dir = view;
+    let mut changed = false;
+
+    for dab_index in 0..8 {
+        stroke.center[0] += 0.5;
+        let outcome = session.apply_dab_tipped(
+            stroke,
+            BrushMode::Add,
+            crate::sculpt_tool::SculptTip::Knife,
+            Some([1.0, 0.0, 0.0]),
+        );
+        assert!(outcome.failure.is_none(), "knife dab {dab_index} completes");
+        changed |= !outcome.touched.is_empty() || outcome.topology_delta.is_some();
+        println!(
+            "UPPER knife dab {dab_index}: updated vertices={}, appended vertices={}, changed faces={}",
+            outcome
+                .topology_delta
+                .as_ref()
+                .map_or(outcome.touched.len(), |delta| delta.updated_vertices.len()),
+            outcome
+                .topology_delta
+                .as_ref()
+                .map_or(0, |delta| delta.appended_vertices.len()),
+            outcome
+                .topology_delta
+                .as_ref()
+                .map_or(0, |delta| delta.face_updates.len())
+        );
+    }
+
+    assert!(changed, "the knife stroke changes the live surface");
+}
+
+#[test]
+#[ignore = "perf harness: run with --ignored --nocapture"]
+fn perf_sculpt_near_million_remesh_stays_within_local_upload_budget() {
+    let mesh = grid_mesh(1_000, 1_000, 4.0);
+    let mut session = session_for(&mesh);
+    let offscreen = pollster::block_on(Offscreen::new()).expect("create headless renderer");
+    let source = PreparedSceneSource {
+        mesh: &mesh,
+        uniform: GpuMeshUniform::identity(),
+        visible: true,
+        wireframe: false,
+        contact: None,
+    };
+    let mut prepared = offscreen.prepare_scene(&[source]);
+    let full_layer_bytes = mesh_payload_bytes(&mesh);
+    let stroke = dab([1_998.0, 1_998.0, 0.0], 8.0);
+    let mut remeshed_dabs = 0;
+
+    for dab_index in 0..4 {
+        let started = Instant::now();
+        let outcome = session.apply_dab(stroke, BrushMode::Smooth);
+        let kernel_cpu_delta = started.elapsed();
+        let delta = outcome
+            .topology_delta
+            .as_ref()
+            .expect("the coarse synthetic surface remeshes under the brush");
+        let update_started = Instant::now();
+        let stats = prepared
+            .write_entry_sculpt_delta(offscreen.renderer(), &session.topology, delta)
+            .expect("the prepared entry accepts the local topology delta");
+        let buffer_update = update_started.elapsed();
+        let completion_started = Instant::now();
+        offscreen
+            .renderer()
+            .wait_for_queue_idle()
+            .expect("the upload submission completes");
+        let gpu_completion = completion_started.elapsed();
+        let full_dab = started.elapsed();
+        println!(
+            "near-1M remesh dab {dab_index}: kernel+CPU={kernel_cpu_delta:?}, CPU buffer update + GPU upload enqueue={buffer_update:?}, GPU completion wait={gpu_completion:?}, full dab={full_dab:?}, bytes written={}, bytes copied={}, buffers grown={}, changed faces={}",
+            stats.bytes_written,
+            stats.bytes_copied,
+            stats.buffers_grown,
+            stats.faces_written
+        );
+        assert_local_delta_budget(full_layer_bytes, delta, stats, 1);
+        remeshed_dabs += 1;
+    }
+
+    assert_eq!(remeshed_dabs, 4);
+}
+
+fn mesh_payload_bytes(mesh: &Mesh) -> u64 {
+    let bytes = size_of_val(mesh.vertices()).saturating_add(size_of_val(mesh.indices()));
+    u64::try_from(bytes).unwrap_or(u64::MAX)
+}
+
+fn private_scan_mesh() -> Mesh {
+    let path = std::env::var_os("OCCLUVIEW_SCULPT_PERF_SCAN")
+        .expect("set OCCLUVIEW_SCULPT_PERF_SCAN to a local scan path");
+    occluview_formats::read_file(std::path::Path::new(&path)).expect("read perf scan")
+}
+
+fn assert_local_delta_budget(
+    full_layer_bytes: u64,
+    delta: &SculptTopologyDelta,
+    stats: occluview_render::SculptBufferUpdateStats,
+    budget_percent: u64,
+) {
+    let local_bytes = stats.bytes_written.saturating_add(stats.bytes_copied);
+    let budget = full_layer_bytes.saturating_mul(budget_percent) / 100;
+    assert!(
+        local_bytes < budget,
+        "one remesh wrote or copied {local_bytes} bytes against a {budget_percent}-percent local budget of {budget}"
+    );
+    assert!(
+        !delta.appended_vertices.is_empty() || !delta.face_updates.is_empty(),
+        "a topology delta carries changed geometry"
+    );
+}
+
+fn upper_surface_sample(mesh: &Mesh) -> ([f32; 3], [f32; 3]) {
+    use glam::Vec3;
+    let vertices = mesh.vertices();
+    let mut best: Option<(f32, [f32; 3], [f32; 3])> = None;
+    for face in mesh.indices().as_chunks::<3>().0 {
+        let a = Vec3::from_array(vertices[face[0] as usize].position);
+        let b = Vec3::from_array(vertices[face[1] as usize].position);
+        let c = Vec3::from_array(vertices[face[2] as usize].position);
+        let normal = (b - a).cross(c - a).normalize_or_zero();
+        if normal.z < 0.5 {
+            continue;
+        }
+        let point = (a + b + c) / 3.0;
+        if best.as_ref().is_none_or(|(height, _, _)| point.z > *height) {
+            best = Some((point.z, point.to_array(), (-normal).to_array()));
+        }
+    }
+    best.map(|(_, center, view)| (center, view))
+        .expect("the scan contains an upward-facing triangle")
 }
 
 #[test]

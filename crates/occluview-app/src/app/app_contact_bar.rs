@@ -31,6 +31,7 @@ const LEGEND_STEPS: usize = 96;
 const MODE_BUTTON_WIDTH: f32 = 88.0;
 /// Width of the load slider, including its label.
 const SLIDER_WIDTH: f32 = 196.0;
+const LOAD_VALUE_WIDTH: f32 = 52.0;
 /// Height of one control row. Matches `align_panel`'s chip so the bar reads as
 /// the same family, and keeps the strip exactly `BAR_HEIGHT` tall.
 const CHIP_HEIGHT: f32 = 26.0;
@@ -179,16 +180,20 @@ impl OccluViewApp {
     /// What the bar calls the reading it is showing.
     fn contact_bar_title(&self) -> String {
         let Some(pair) = self.tools.contacts.pair() else {
-            return self.ui.locale.tr("contact-title");
+            return self.ui.locale.tr(crate::i18n::message_id!("contact-title"));
         };
-        let subject = self
-            .layer_display_name(pair.subject)
-            .unwrap_or_else(|| self.ui.locale.tr("contact-unknown-layer"));
-        let against = self
-            .layer_display_name(pair.antagonist)
-            .unwrap_or_else(|| self.ui.locale.tr("contact-unknown-layer"));
+        let subject = self.layer_display_name(pair.subject).unwrap_or_else(|| {
+            self.ui
+                .locale
+                .tr(crate::i18n::message_id!("contact-unknown-layer"))
+        });
+        let against = self.layer_display_name(pair.antagonist).unwrap_or_else(|| {
+            self.ui
+                .locale
+                .tr(crate::i18n::message_id!("contact-unknown-layer"))
+        });
         self.ui.locale.tr_with(
-            "contact-against",
+            crate::i18n::message_id!("contact-against"),
             &[("subject", &subject), ("antagonist", &against)],
         )
     }
@@ -301,6 +306,12 @@ fn paint_strip(
                     egui::vec2(CLOSE_BUTTON_WIDTH, CHIP_HEIGHT),
                     egui::Sense::click(),
                 );
+                crate::accessibility::button(
+                    &close_response,
+                    &locale.tr(crate::i18n::message_id!("contact-close-hint")),
+                    true,
+                    None,
+                );
                 crate::icons::paint(
                     ui.painter(),
                     close_rect.shrink(5.0),
@@ -312,7 +323,7 @@ fn paint_strip(
                     },
                 );
                 if close_response
-                    .on_hover_text(locale.tr("contact-close-hint"))
+                    .on_hover_text(locale.tr(crate::i18n::message_id!("contact-close-hint")))
                     .clicked()
                 {
                     request.close = true;
@@ -323,7 +334,7 @@ fn paint_strip(
                         ui,
                         78.0,
                         None,
-                        &locale.tr("contact-retry"),
+                        &locale.tr(crate::i18n::message_id!("contact-retry")),
                         !view.busy,
                         false,
                     )
@@ -406,31 +417,48 @@ fn paint_load(
         egui::vec2(width, CHIP_HEIGHT),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
-            // Slider ignores add_sized's requested track width. Reserve the
-            // value editor explicitly, or it grows into the Details action.
-            ui.spacing_mut().slider_width = if show_value {
-                (width - 110.0).max(24.0)
-            } else {
-                (width - 50.0).max(24.0)
-            };
             // Label first, then the control: the same order every settings row
             // uses, so "heavy at" reads as the name of the slider rather than a
             // caption that drifted to the wrong side of it.
-            ui.label(
-                egui::RichText::new(locale.tr("contact-load-label"))
+            let label = locale.tr(crate::i18n::message_id!("contact-load-label"));
+            let label_response = ui.label(
+                egui::RichText::new(label.clone())
                     .size(10.5)
                     .color(ui_theme::text_weak()),
             );
+            let item_spacing = ui.spacing().item_spacing.x;
+            let value_width = if show_value { LOAD_VALUE_WIDTH } else { 0.0 };
+            let slider_width = (width
+                - label_response.rect.width()
+                - item_spacing * if show_value { 2.0 } else { 1.0 }
+                - value_width)
+                .max(24.0);
+            ui.spacing_mut().slider_width = slider_width;
             let slider = ui
                 .add_sized(
-                    egui::vec2(width - 52.0, 18.0),
-                    egui::Slider::new(load_mm, LOAD_MIN_MM..=LOAD_MAX_MM)
-                        .suffix(locale.tr("contact-load-suffix"))
-                        .fixed_decimals(2)
-                        .show_value(show_value),
+                    egui::vec2(slider_width, 18.0),
+                    egui::Slider::new(load_mm, LOAD_MIN_MM..=LOAD_MAX_MM).show_value(false),
                 )
-                .on_hover_text(locale.tr("contact-load-hint"));
-            if slider.changed() {
+                .labelled_by(label_response.id)
+                .on_hover_text(locale.tr(crate::i18n::message_id!("contact-load-hint")));
+            crate::accessibility::slider(&slider, &label, true, *load_mm);
+            let value_changed = if show_value {
+                let value = ui
+                    .add_sized(
+                        egui::vec2(LOAD_VALUE_WIDTH, 18.0),
+                        egui::DragValue::new(load_mm)
+                            .speed(0.01)
+                            .range(LOAD_MIN_MM..=LOAD_MAX_MM)
+                            .fixed_decimals(2)
+                            .suffix(locale.tr(crate::i18n::message_id!("contact-load-suffix"))),
+                    )
+                    .labelled_by(label_response.id);
+                crate::accessibility::spin_button(&value, &label, true);
+                value.changed()
+            } else {
+                false
+            };
+            if slider.changed() || value_changed {
                 request.load_mm = Some(*load_mm);
             }
         },
@@ -443,9 +471,16 @@ fn paint_details_toggle(
     open: bool,
     request: &mut ContactBarRequest,
 ) {
-    if crate::align_panel::chip(ui, 92.0, None, &locale.tr("contact-details"), true, open)
-        .on_hover_text(locale.tr("contact-details-hint"))
-        .clicked()
+    if crate::align_panel::chip(
+        ui,
+        92.0,
+        None,
+        &locale.tr(crate::i18n::message_id!("contact-details")),
+        true,
+        open,
+    )
+    .on_hover_text(locale.tr(crate::i18n::message_id!("contact-details-hint")))
+    .clicked()
     {
         request.open_details = true;
     }
@@ -475,9 +510,12 @@ fn paint_legend(
         egui::vec2(width, LEGEND_HEIGHT + LEGEND_LABEL_HEIGHT),
         egui::Sense::hover(),
     );
-    let gap_label = locale.tr_with("contact-legend-gap", &[("mm", &format!("{far:.2}"))]);
+    let gap_label = locale.tr_with(
+        crate::i18n::message_id!("contact-legend-gap"),
+        &[("mm", &format!("{far:.2}"))],
+    );
     let bite_label = locale.tr_with(
-        "contact-legend-deepest",
+        crate::i18n::message_id!("contact-legend-deepest"),
         &[("mm", &format!("{:.2}", -deepest))],
     );
     response.on_hover_text(format!("{gap_label}\n{bite_label}"));
@@ -568,11 +606,11 @@ impl OccluViewApp {
                     ui,
                     ui.available_width(),
                     None,
-                    &locale.tr("contact-flatten"),
+                    &locale.tr(crate::i18n::message_id!("contact-flatten")),
                     !busy,
                     flatten,
                 )
-                .on_hover_text(locale.tr("contact-flatten-hint"))
+                .on_hover_text(locale.tr(crate::i18n::message_id!("contact-flatten-hint")))
                 .clicked()
                 {
                     toggle = Some(!flatten);
@@ -600,7 +638,12 @@ impl OccluViewApp {
                     egui::Color32::from_rgba_unmultiplied(red, green, blue, alpha.max(90)),
                 );
                 if ui
-                    .add(egui::Button::new(locale.tr("contact-details-close")).frame(false))
+                    .add(
+                        egui::Button::new(
+                            locale.tr(crate::i18n::message_id!("contact-details-close")),
+                        )
+                        .frame(false),
+                    )
                     .clicked()
                 {
                     close = true;
@@ -643,11 +686,11 @@ fn paint_antagonist_picker(
     }
     let mut pick = None;
     ui.label(
-        egui::RichText::new(locale.tr("contact-antagonist-pick"))
+        egui::RichText::new(locale.tr(crate::i18n::message_id!("contact-antagonist-pick")))
             .size(11.0)
             .color(ui_theme::text_muted()),
     )
-    .on_hover_text(locale.tr("contact-antagonist-pick-hint"));
+    .on_hover_text(locale.tr(crate::i18n::message_id!("contact-antagonist-pick-hint")));
     for (id, name) in candidates {
         if crate::align_panel::chip(
             ui,
@@ -676,16 +719,22 @@ struct DetailsContent {
 }
 
 /// The extra sentence a status earns.
-fn status_hint_key(status: ContactStatus) -> &'static str {
+fn status_hint_key(status: ContactStatus) -> crate::i18n::MessageId {
     match status {
-        ContactStatus::Measuring => "contact-status-measuring-hint",
+        ContactStatus::Measuring => crate::i18n::message_id!("contact-status-measuring-hint"),
         // A held drag defers measurement until the pose is stable.
-        ContactStatus::Remeasuring => "contact-status-remeasuring-hint",
-        ContactStatus::NeedsSecond => "contact-status-needs-second-hint",
-        ContactStatus::SubjectUnusable => "contact-status-subject-unusable-hint",
-        ContactStatus::AntagonistUnusable => "contact-status-antagonist-unusable-hint",
-        ContactStatus::NoOverlap => "contact-status-no-overlap-hint",
-        ContactStatus::Failed(_) => "contact-status-failed-hint",
+        ContactStatus::Remeasuring => {
+            crate::i18n::message_id!("contact-status-remeasuring-hint")
+        }
+        ContactStatus::NeedsSecond => crate::i18n::message_id!("contact-status-needs-second-hint"),
+        ContactStatus::SubjectUnusable => {
+            crate::i18n::message_id!("contact-status-subject-unusable-hint")
+        }
+        ContactStatus::AntagonistUnusable => {
+            crate::i18n::message_id!("contact-status-antagonist-unusable-hint")
+        }
+        ContactStatus::NoOverlap => crate::i18n::message_id!("contact-status-no-overlap-hint"),
+        ContactStatus::Failed(_) => crate::i18n::message_id!("contact-status-failed-hint"),
     }
 }
 
@@ -706,16 +755,19 @@ fn paint_stats(
     };
     let rows = [
         (
-            "contact-stats-area",
+            crate::i18n::message_id!("contact-stats-area"),
             format!("{:.1} mm²", stats.contact_area_mm2),
         ),
-        ("contact-stats-contacts", stats.contacts.to_string()),
         (
-            "contact-stats-deepest",
+            crate::i18n::message_id!("contact-stats-contacts"),
+            stats.contacts.to_string(),
+        ),
+        (
+            crate::i18n::message_id!("contact-stats-deepest"),
             occluview_contact::format_contact_value_in(stats.deepest_mm, depth_unit),
         ),
         (
-            "contact-stats-balance",
+            crate::i18n::message_id!("contact-stats-balance"),
             format!(
                 "{:.1} / {:.1} mm²",
                 stats.minus_x_area_mm2, stats.plus_x_area_mm2
@@ -734,8 +786,10 @@ fn paint_stats(
                 );
                 // "Area each side" is a mid-line split, not a contact count;
                 // this hover is where an operator finds that meaning.
-                if key == "contact-stats-balance" {
-                    label.on_hover_text(locale.tr("contact-stats-balance-hover"));
+                if key == crate::i18n::message_id!("contact-stats-balance") {
+                    label.on_hover_text(
+                        locale.tr(crate::i18n::message_id!("contact-stats-balance-hover")),
+                    );
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(egui::RichText::new(value).size(11.5));

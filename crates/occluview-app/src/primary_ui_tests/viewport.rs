@@ -19,7 +19,7 @@ fn source_collector_ignores_generated_target_directories() {
 
     assert!(collected.is_ok(), "source collection failed: {collected:?}");
     let Ok(files) = collected else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert!(files.iter().any(|path| path.ends_with("kept.rs")));
     assert!(!files.iter().any(|path| path.ends_with("generated.rs")));

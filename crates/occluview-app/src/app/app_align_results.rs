@@ -37,7 +37,10 @@ impl OccluViewApp {
             self.tools.align.tool.fixed_layer(),
             changed_layers,
         ) {
-            let reason = self.ui.locale.tr("align-status-visibility-changed");
+            let reason = self
+                .ui
+                .locale
+                .tr(crate::i18n::message_id!("align-status-visibility-changed"));
             self.invalidate_deviation_map(&reason);
         }
     }
@@ -61,7 +64,10 @@ impl OccluViewApp {
             self.tools.align.tool.fixed_layer(),
             changed_layers,
         ) {
-            let reason = self.ui.locale.tr("align-status-scan-changed");
+            let reason = self
+                .ui
+                .locale
+                .tr(crate::i18n::message_id!("align-status-scan-changed"));
             self.forget_align_fit(&reason);
         }
     }
@@ -84,7 +90,11 @@ impl OccluViewApp {
             if self.tools.align.overlay == AlignOverlay::Map {
                 self.clear_deviation_overlay();
             }
-            self.tools.align.status = Some(self.ui.locale.tr("align-status-worker-unavailable"));
+            self.tools.align.status = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("align-status-worker-unavailable")),
+            );
             ctx.request_repaint();
             return;
         }
@@ -117,18 +127,35 @@ impl OccluViewApp {
         match completion.outcome {
             AlignOutcome::Aligned { pose, rejected } => {
                 if !self.commit_align_pose(pose) {
-                    self.tools.align.status = Some(self.ui.locale.tr("align-status-pose-refused"));
+                    self.tools.align.status = Some(
+                        self.ui
+                            .locale
+                            .tr(crate::i18n::message_id!("align-status-pose-refused")),
+                    );
                     return;
                 }
                 // A point fit changes the pose and invalidates any previous
                 // map; refinement performs the next measurement.
-                self.forget_align_fit(&self.ui.locale.tr("align-status-aligned-points"));
+                self.forget_align_fit(
+                    &self
+                        .ui
+                        .locale
+                        .tr(crate::i18n::message_id!("align-status-aligned-points")),
+                );
                 self.tools.align.rejected = rejected;
-                self.tools.align.status = Some(self.ui.locale.tr("align-status-aligned"));
+                self.tools.align.status = Some(
+                    self.ui
+                        .locale
+                        .tr(crate::i18n::message_id!("align-status-aligned")),
+                );
             }
             AlignOutcome::Refined { pose } => {
                 if !self.commit_align_pose(pose) {
-                    self.tools.align.status = Some(self.ui.locale.tr("align-status-pose-refused"));
+                    self.tools.align.status = Some(
+                        self.ui
+                            .locale
+                            .tr(crate::i18n::message_id!("align-status-pose-refused")),
+                    );
                     return;
                 }
                 // `commit_align_pose` invalidates derived alignment state while
@@ -148,12 +175,20 @@ impl OccluViewApp {
                 if self.tools.contacts.is_open() {
                     let ctx = self.ui.repaint_ctx.clone();
                     self.close_contacts(&ctx);
-                    self.tools.align.status = Some(self.ui.locale.tr("align-status-refined"));
+                    self.tools.align.status = Some(
+                        self.ui
+                            .locale
+                            .tr(crate::i18n::message_id!("align-status-refined")),
+                    );
                     self.measure_if_shown();
                     return;
                 }
                 self.tools.align.settings.show_deviation = true;
-                self.tools.align.status = Some(self.ui.locale.tr("align-status-refined"));
+                self.tools.align.status = Some(
+                    self.ui
+                        .locale
+                        .tr(crate::i18n::message_id!("align-status-refined")),
+                );
                 self.measure_if_shown();
             }
             AlignOutcome::Measured {
@@ -203,7 +238,11 @@ impl OccluViewApp {
         // The brush owns the per-vertex colour channel while it is open.
         // (The caller repaints after every outcome, so no repaint here.)
         if self.tools.align.brush.is_armed() {
-            self.tools.align.status = Some(self.ui.locale.tr("align-status-measure-dropped"));
+            self.tools.align.status = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("align-status-measure-dropped")),
+            );
             return;
         }
         // Keep the legend in sync with the scale used for colouring.
@@ -215,7 +254,11 @@ impl OccluViewApp {
             self.tools.align.settings.show_deviation = false;
             self.clear_deviation_overlay();
             self.tools.align.stats = Some(stats);
-            self.tools.align.status = Some(self.ui.locale.tr("align-status-no-summary"));
+            self.tools.align.status = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("align-status-no-summary")),
+            );
             return;
         };
         // Keep this presentation-side guard even though the worker rejects the
@@ -224,7 +267,11 @@ impl OccluViewApp {
         if seen.is_none() {
             self.tools.align.settings.show_deviation = false;
             self.clear_deviation_overlay();
-            self.tools.align.status = Some(self.ui.locale.tr("align-fail-unobservable"));
+            self.tools.align.status = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("align-fail-unobservable")),
+            );
             return;
         }
         self.tools.align.stats = Some(stats);
@@ -236,10 +283,18 @@ impl OccluViewApp {
             self.tools.align.refined_match_ready = false;
             self.tools.align.settings.show_deviation = false;
             self.clear_deviation_overlay();
-            self.tools.align.status = Some(self.ui.locale.tr("align-status-measure-unavailable"));
+            self.tools.align.status = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("align-status-measure-unavailable")),
+            );
             return;
         }
-        self.tools.align.status = Some(self.ui.locale.tr("align-status-measured"));
+        self.tools.align.status = Some(
+            self.ui
+                .locale
+                .tr(crate::i18n::message_id!("align-status-measured")),
+        );
     }
 
     /// Measure again after a pose change, but only if the map is on screen.
@@ -275,11 +330,10 @@ impl OccluViewApp {
             return;
         }
         self.clear_deviation_overlay();
-        self.tools.align.status = Some(
-            self.ui
-                .locale
-                .tr_with("align-status-remeasure", &[("reason", reason)]),
-        );
+        self.tools.align.status = Some(self.ui.locale.tr_with(
+            crate::i18n::message_id!("align-status-remeasure"),
+            &[("reason", reason)],
+        ));
     }
 
     /// Throw away every alignment job in flight, queued, or already finished and
@@ -324,7 +378,11 @@ impl OccluViewApp {
         }
         if entering_automatic {
             if had_derived_overlay {
-                self.tools.align.status = Some(self.ui.locale.tr("align-status-map-elsewhere"));
+                self.tools.align.status = Some(
+                    self.ui
+                        .locale
+                        .tr(crate::i18n::message_id!("align-status-map-elsewhere")),
+                );
             }
             return;
         }
@@ -335,9 +393,17 @@ impl OccluViewApp {
             self.tools.align.rejected.clear();
         }
         if had_derived_overlay {
-            self.tools.align.status = Some(self.ui.locale.tr("align-status-map-elsewhere"));
+            self.tools.align.status = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("align-status-map-elsewhere")),
+            );
         } else if dropped_arrows {
-            self.tools.align.status = Some(self.ui.locale.tr("align-status-arrows-cleared"));
+            self.tools.align.status = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("align-status-arrows-cleared")),
+            );
         }
     }
 
@@ -400,33 +466,50 @@ impl OccluViewApp {
 
 /// Catalog coordinates for a typed align failure, resolved here at the
 /// presentation boundary.
-fn align_failure_parts(failure: AlignFailure) -> (&'static str, String, String) {
+fn align_failure_parts(failure: AlignFailure) -> (crate::i18n::MessageId, String, String) {
     match failure {
-        AlignFailure::FixedSurfaceMissing => {
-            ("align-fail-no-surface-fixed", String::new(), String::new())
-        }
-        AlignFailure::MovingSurfaceMissing => {
-            ("align-fail-no-surface-moving", String::new(), String::new())
-        }
-        AlignFailure::MeasurementDropped => ("align-fail-recolor", String::new(), String::new()),
-        AlignFailure::MeasurementUnobservable => {
-            ("align-fail-unobservable", String::new(), String::new())
-        }
+        AlignFailure::FixedSurfaceMissing => (
+            crate::i18n::message_id!("align-fail-no-surface-fixed"),
+            String::new(),
+            String::new(),
+        ),
+        AlignFailure::MovingSurfaceMissing => (
+            crate::i18n::message_id!("align-fail-no-surface-moving"),
+            String::new(),
+            String::new(),
+        ),
+        AlignFailure::MeasurementDropped => (
+            crate::i18n::message_id!("align-fail-recolor"),
+            String::new(),
+            String::new(),
+        ),
+        AlignFailure::MeasurementUnobservable => (
+            crate::i18n::message_id!("align-fail-unobservable"),
+            String::new(),
+            String::new(),
+        ),
         AlignFailure::Fit(rejection) => fit_rejection_parts(rejection),
     }
 }
 
-fn fit_rejection_parts(rejection: FitRejection) -> (&'static str, String, String) {
+fn fit_rejection_parts(rejection: FitRejection) -> (crate::i18n::MessageId, String, String) {
     let key = match rejection {
-        FitRejection::TooFewPairs { .. } => "align-reject-toofew",
-        FitRejection::Unpaired { .. } => "align-reject-unpaired",
-        FitRejection::Degenerate { .. } => "align-reject-degenerate-plain",
-        FitRejection::UnitMismatch { .. } => "align-reject-unit",
-        FitRejection::Apart { .. } => "align-reject-apart",
-        FitRejection::Runaway { .. } => "align-reject-runaway",
-        FitRejection::NoImprovement => "align-reject-no-improvement",
-        FitRejection::Ambiguous => "align-reject-ambiguous",
-        FitRejection::NonFinite => "align-reject-nonfinite",
+        FitRejection::TooFewPairs { .. } => crate::i18n::message_id!("align-reject-toofew"),
+        FitRejection::Unpaired { .. } => crate::i18n::message_id!("align-reject-unpaired"),
+        FitRejection::Degenerate { .. } => {
+            crate::i18n::message_id!("align-reject-degenerate-plain")
+        }
+        FitRejection::UnitMismatch { .. } => crate::i18n::message_id!("align-reject-unit"),
+        FitRejection::Apart { .. } => crate::i18n::message_id!("align-reject-apart"),
+        FitRejection::Runaway { .. } => crate::i18n::message_id!("align-reject-runaway"),
+        FitRejection::NoImprovement => {
+            crate::i18n::message_id!("align-reject-no-improvement")
+        }
+        FitRejection::Ambiguous => crate::i18n::message_id!("align-reject-ambiguous"),
+        FitRejection::NonFinite => crate::i18n::message_id!("align-reject-nonfinite"),
+        FitRejection::Inconsistent { .. } => {
+            crate::i18n::message_id!("align-reject-inconsistent")
+        }
     };
     (key, String::new(), String::new())
 }
@@ -469,12 +552,8 @@ mod tests {
 
     /// Typed failures map to their catalog keys at the presentation boundary.
     ///
-    /// The keys are resolved at render time from a variable, so the scanner
-    /// that checks literal `.tr("key")` call sites cannot see them, and the
-    /// pair is what has to be checked: the helper's answer against the key this
-    /// table names, and that key against the catalog the renderer resolves
-    /// through. Without the second half, renaming a key in the catalogs and in
-    /// both of those places reaches the operator as a `⟦key⟧` marker.
+    /// The generated message type rejects unknown keys at compile time. This
+    /// table checks that each typed failure selects its intended message.
     #[test]
     fn typed_failures_resolve_to_their_catalog_keys() {
         use super::align_failure_parts;
@@ -551,13 +630,14 @@ mod tests {
         ];
         let embedded = crate::i18n::catalog::embedded_en_keys();
         for (failure, key) in cases {
+            let (actual, first, second) = align_failure_parts(failure);
             assert_eq!(
-                align_failure_parts(failure),
+                (actual.as_str(), first, second),
                 (key, String::new(), String::new()),
                 "the typed failure must resolve to its own catalog key"
             );
             assert!(
-                embedded.contains(key),
+                embedded.contains(actual.as_str()),
                 "the typed failure key {key} must exist in the English catalog"
             );
         }

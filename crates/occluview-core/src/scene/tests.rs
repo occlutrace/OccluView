@@ -79,6 +79,48 @@ fn scene_public_surface_stays_reexported_from_core_root_and_scene_module() {
 }
 
 #[test]
+fn scene_memory_estimate_includes_each_layers_mesh_texture_and_overlay() {
+    let first_mesh = textured_tri();
+    let first_mesh_bytes = first_mesh.estimated_memory_bytes();
+    let second_mesh = tri();
+    let second_mesh_bytes = second_mesh.estimated_memory_bytes();
+    let mut scene = Scene::new();
+    scene.add(SceneMesh::new(first_mesh).with_overlay(
+        OverlayKind::Paint,
+        Some(Arc::new(vec![[255, 0, 0, 128]; 3])),
+    ));
+    scene.add(SceneMesh::new(second_mesh));
+
+    assert!(
+        scene.estimated_memory_bytes() >= first_mesh_bytes + second_mesh_bytes + 12,
+        "textures, layer overlays, and every retained layer are included"
+    );
+}
+
+#[test]
+fn scene_memory_estimate_includes_render_residency_for_each_layer() {
+    let mesh = Mesh::new(
+        None,
+        vec![
+            Vertex::at(Vec3::ZERO),
+            Vertex::at(Vec3::new(1.0, 0.0, 0.0)),
+            Vertex::at(Vec3::new(0.0, 1.0, 0.0)),
+        ],
+        [0, 1, 2].repeat(64),
+    )
+    .expect("valid mesh");
+    let mesh_bytes = mesh.estimated_memory_bytes();
+    let renderer_bytes = mesh.estimated_gpu_memory_bytes(true);
+    let mut scene = Scene::new();
+    scene.add(SceneMesh::new(mesh));
+
+    assert!(
+        scene.estimated_memory_bytes() >= mesh_bytes + renderer_bytes,
+        "scene admission reserves GPU geometry and the wireframe buffer"
+    );
+}
+
+#[test]
 fn empty_scene_has_no_meshes() {
     let s = Scene::new();
     assert_eq!(s.meshes().len(), 0);
@@ -179,7 +221,7 @@ fn pick_ray_hits_visible_triangle_surface() {
 
     assert!(hit.is_some(), "expected surface hit");
     let Some(hit) = hit else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert!(
         (hit - Vec3::new(0.25, 0.25, 0.0)).length() < 1e-5,
@@ -197,7 +239,7 @@ fn pick_ray_returns_nearest_visible_hit() {
 
     assert!(hit.is_some(), "expected nearest hit");
     let Some(hit) = hit else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert!((hit.z - 5.0).abs() < 1e-5, "hit={hit}");
 }
@@ -216,7 +258,7 @@ fn pick_ray_hit_reports_layer_identity_and_triangle_index() {
 
     assert!(hit.is_some(), "expected editable face hit");
     let Some(hit) = hit else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert_eq!(hit.layer_index, layer_index);
     assert_eq!(hit.layer_id, layer_id);
@@ -273,7 +315,7 @@ fn pick_ray_ignores_hidden_meshes() {
 
     assert!(hit.is_some(), "expected visible hit");
     let Some(hit) = hit else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert!(hit.z.abs() < 1e-5, "hit={hit}");
 }

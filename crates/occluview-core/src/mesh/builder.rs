@@ -26,11 +26,13 @@ pub struct MeshBuilder {
 /// header whose declared count is reserved as twelve-byte elements (38), and a
 /// glTF where two thousand primitives each re-emit the same accessor (six
 /// thousand, which asked the allocator for 19 GB from a 3 MB file).
-const MESH_BYTES_PER_INPUT_BYTE: u64 = 12;
 const BYTES_PER_VERTEX: u64 = 36;
 const BYTES_PER_INDEX: u64 = 4;
 
 impl MeshBuilder {
+    /// Maximum geometry bytes a reader may build per input byte.
+    pub const MAX_GEOMETRY_BYTES_PER_INPUT_BYTE: u64 = 12;
+
     /// Construct an empty builder.
     #[inline]
     #[must_use]
@@ -66,7 +68,7 @@ impl MeshBuilder {
     #[must_use]
     pub const fn from_input_of(mut self, input_bytes: usize) -> Self {
         self.mesh_byte_budget =
-            Some((input_bytes as u64).saturating_mul(MESH_BYTES_PER_INPUT_BYTE));
+            Some((input_bytes as u64).saturating_mul(Self::MAX_GEOMETRY_BYTES_PER_INPUT_BYTE));
         self
     }
 
@@ -148,7 +150,8 @@ impl MeshBuilder {
         if self.outgrew_source {
             return Err(CoreError::MeshOutgrewItsSource {
                 mesh_bytes: self.mesh_bytes(),
-                input_bytes: self.mesh_byte_budget.unwrap_or(0) / MESH_BYTES_PER_INPUT_BYTE,
+                input_bytes: self.mesh_byte_budget.unwrap_or(0)
+                    / Self::MAX_GEOMETRY_BYTES_PER_INPUT_BYTE,
             });
         }
         if self.force_point_cloud {
@@ -167,7 +170,8 @@ impl MeshBuilder {
         if self.outgrew_source {
             return Err(CoreError::MeshOutgrewItsSource {
                 mesh_bytes: self.mesh_bytes(),
-                input_bytes: self.mesh_byte_budget.unwrap_or(0) / MESH_BYTES_PER_INPUT_BYTE,
+                input_bytes: self.mesh_byte_budget.unwrap_or(0)
+                    / Self::MAX_GEOMETRY_BYTES_PER_INPUT_BYTE,
             });
         }
         if self.force_point_cloud {
@@ -179,7 +183,7 @@ impl MeshBuilder {
 
 #[cfg(test)]
 mod tests {
-    use super::{MeshBuilder, MESH_BYTES_PER_INPUT_BYTE};
+    use super::MeshBuilder;
     use crate::error::CoreError;
     use crate::mesh::Vertex;
     use glam::Vec3;
@@ -221,7 +225,7 @@ mod tests {
         assert_eq!(mesh.vertices().len(), vertices);
         let realistic_ratio = 4;
         assert!(
-            MESH_BYTES_PER_INPUT_BYTE > realistic_ratio,
+            MeshBuilder::MAX_GEOMETRY_BYTES_PER_INPUT_BYTE > realistic_ratio,
             "the budget must sit above what a real scan reaches"
         );
     }

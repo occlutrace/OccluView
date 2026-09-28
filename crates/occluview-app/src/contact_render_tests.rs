@@ -12,13 +12,12 @@
 //! therefore loose clinical sanity checks rather than exact values, and the
 //! render is written to `target/contact-verify/` for inspection.
 //!
-//! The fixtures are the local scan corpus. A checkout without them skips the
-//! test with a log line instead of failing: an absent corpus is not a defect in
-//! the viewer.
+//! The fixture-backed tests are ignored in ordinary runs and run through
+//! `scripts/validate-release-private.sh` with the private scan corpus.
 
 #![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
 
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 use occluview_align::Soup;
 use occluview_contact::{
     compute_contact_field, ContactReading, ContactReadingKind, ContactScale, ContactSettings,
@@ -27,7 +26,7 @@ use occluview_contact::{
 use occluview_core::{Mesh, MeshBuilder, SceneMesh, Vertex};
 use occluview_render::{
     AdapterPolicy, ContactFieldTexels, ContactPaintSource, GpuCamera, GpuMeshUniform, Offscreen,
-    PreparedScene, PreparedSceneSource, RenderDeadline, ViewportSpec,
+    PreparedScene, PreparedSceneSource, RenderDeadline, RenderError, ViewportSpec,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -44,33 +43,20 @@ const OUTPUT_DIR: &str = "contact-verify";
 ///
 /// The corpus is local scans, not a repository asset: a checkout has no
 /// articulated pair in it, and shipping one would be shipping a patient's case.
-/// So the directory is chosen at run time and the test skips with a warning when
-/// it is unset.
+/// So the directory is chosen at run time and required when an ignored test is
+/// explicitly run.
 ///
 /// The directory holds either a single pair (`upper.*` and `lower.*`) or
 /// subdirectories each holding one, named after the case.
 const FIXTURE_DIR_ENV: &str = "OCCLUVIEW_CONTACT_FIXTURES";
 
-/// Whether this run is a release gate rather than an ordinary test run.
-///
-/// This module is the only end-to-end check of a real reading — the numbers the
-/// panel shows as a clinical measurement. The tests that assert
-/// `subject_measured > 0`, `contact_area_mm2 > 0` and "only measured vertices
-/// may be painted" return early without a corpus, including on CI, so a release
-/// gate sets this to turn an absent corpus into a failure.
-fn fixtures_are_required() -> bool {
-    std::env::var_os("OCCLUVIEW_CONTACT_FIXTURES_REQUIRED").is_some_and(|value| value != "0")
-}
-
 /// Every available `(case, upper, lower)` triple, found in the fixture
 /// directory at run time.
 fn available_fixtures() -> Vec<(String, PathBuf, PathBuf)> {
-    let Some(dir) = std::env::var_os(FIXTURE_DIR_ENV).map(PathBuf::from) else {
-        return Vec::new();
-    };
-    if !dir.is_dir() {
-        return Vec::new();
-    }
+    let dir = std::env::var_os(FIXTURE_DIR_ENV)
+        .map(PathBuf::from)
+        .expect("set OCCLUVIEW_CONTACT_FIXTURES before running ignored contact tests");
+    assert!(dir.is_dir(), "{FIXTURE_DIR_ENV} must name a directory");
 
     // A directory holding the two meshes directly is the one-pair case.
     if let Some(pair) = pair_in(&dir, "case") {
@@ -78,12 +64,13 @@ fn available_fixtures() -> Vec<(String, PathBuf, PathBuf)> {
     }
     // Otherwise every subdirectory holding them is a case.
     let mut cases = Vec::new();
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return Vec::new();
-    };
+    let entries = std::fs::read_dir(&dir).expect("contact fixture directory must be readable");
     let mut directories: Vec<PathBuf> = entries
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
+        .map(|entry| {
+            entry
+                .expect("contact fixture directory entries must be readable")
+                .path()
+        })
         .filter(|path| path.is_dir())
         .collect();
     directories.sort();
@@ -96,6 +83,10 @@ fn available_fixtures() -> Vec<(String, PathBuf, PathBuf)> {
             cases.push(pair);
         }
     }
+    assert!(
+        !cases.is_empty(),
+        "{FIXTURE_DIR_ENV} must contain an upper/lower pair"
+    );
     cases
 }
 
@@ -105,10 +96,13 @@ fn available_fixtures() -> Vec<(String, PathBuf, PathBuf)> {
 /// loader probes the format from the file itself rather than from its name.
 fn pair_in(dir: &Path, name: &str) -> Option<(String, PathBuf, PathBuf)> {
     let read = |stem: &str| -> Option<PathBuf> {
-        let entries = std::fs::read_dir(dir).ok()?;
+        let entries = std::fs::read_dir(dir).expect("contact case directory must be readable");
         let mut matches: Vec<PathBuf> = entries
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
+            .map(|entry| {
+                entry
+                    .expect("contact case directory entries must be readable")
+                    .path()
+            })
             .filter(|path| {
                 path.file_stem()
                     .is_some_and(|candidate| candidate.eq_ignore_ascii_case(stem))
@@ -162,12 +156,17 @@ fn mesh_from(positions: &[f32], indices: &[u32]) -> Option<Mesh> {
 /// than as a flat field of colour.
 fn occlusal_camera(center: Vec3, radius: f32) -> GpuCamera {
     let eye = center + Vec3::new(0.18, -0.14, -0.97).normalize() * radius * 2.4;
-    let view = Mat4::look_at_rh(eye, center, Vec3::Y);
-    let proj = Mat4::perspective_rh(45.0_f32.to_radians(), 1.0, radius * 0.05, radius * 40.0);
+    let view = glam::camera::rh::view::look_at_mat4(eye, center, Vec3::Y);
+    let proj = glam::camera::rh::proj::directx::perspective(
+        45.0_f32.to_radians(),
+        1.0,
+        radius * 0.05,
+        radius * 40.0,
+    );
     GpuCamera::new(view, proj, Vec3::new(0.25, -0.5, -0.83), eye)
 }
 
-/// The frame the harness writes, or `None` when no GPU adapter is available.
+/// Render one acceptance frame, preserving any adapter or rendering error.
 ///
 /// Both arches are drawn, each wearing its own reading, because that is what the
 /// viewer shows: the field is measured in both directions and the operator reads
@@ -178,15 +177,14 @@ fn render_frame(
     subject_signed_mm: &[f32],
     antagonist: &Mesh,
     antagonist_signed_mm: &[f32],
-) -> Option<Vec<u8>> {
-    let subject_texels = packed(subject_signed_mm)?;
-    let antagonist_texels = packed(antagonist_signed_mm)?;
+) -> Result<Vec<u8>, RenderError> {
+    let subject_texels = packed(subject_signed_mm);
+    let antagonist_texels = packed(antagonist_signed_mm);
 
     let offscreen = pollster::block_on(Offscreen::new_with_adapter_policy(
         AdapterPolicy::HardwareThenFallback,
         RenderDeadline::after(Duration::from_secs(60)),
-    ))
-    .ok()?;
+    ))?;
     let renderer = offscreen.renderer();
 
     let scale = ContactScale::new(&TIGHTNESS, TIGHTNESS.load_mm);
@@ -239,25 +237,19 @@ fn render_frame(
         },
         RenderDeadline::after(Duration::from_secs(60)),
     ))
-    .ok()
 }
 
 /// Pack one field into the texture the vertex stage decodes.
-fn packed(signed_mm: &[f32]) -> Option<ContactFieldTexels> {
+fn packed(signed_mm: &[f32]) -> ContactFieldTexels {
     let packed = occluview_contact::pack_field_texels(signed_mm, FIELD_TEXTURE_WIDTH);
     ContactFieldTexels::new(packed.rgba, packed.width, packed.height)
+        .expect("a packed contact field has non-zero dimensions and complete texels")
 }
 
 /// Measure one pair, check the reading clinically, and write the render.
 fn run_case(id: &str, upper: PathBuf, lower: PathBuf) {
-    let Some(upper_entry) = load(&upper) else {
-        tracing::warn!(case = id, "upper scan failed to load; skipping");
-        return;
-    };
-    let Some(lower_entry) = load(&lower) else {
-        tracing::warn!(case = id, "lower scan failed to load; skipping");
-        return;
-    };
+    let upper_entry = load(&upper).unwrap_or_else(|| panic!("{id}: upper scan failed to load"));
+    let lower_entry = load(&lower).unwrap_or_else(|| panic!("{id}: lower scan failed to load"));
     let (subject_positions, subject_indices) = soup(&upper_entry.mesh);
     let (antagonist_positions, antagonist_indices) = soup(&lower_entry.mesh);
     assert!(
@@ -296,16 +288,11 @@ fn run_case(id: &str, upper: PathBuf, lower: PathBuf) {
     let flattened = measure(true);
 
     check_clinical_sanity(id, &field, &subject_positions, &antagonist_positions);
-    let (Some(subject_mesh), Some(antagonist_mesh)) = (
-        mesh_from(&subject_positions, &subject_indices),
-        mesh_from(&antagonist_positions, &antagonist_indices),
-    ) else {
-        tracing::warn!(case = id, "the meshes could not be rebuilt");
-        return;
-    };
-    let Some(dir) = prepare_output_dir(id) else {
-        return;
-    };
+    let subject_mesh = mesh_from(&subject_positions, &subject_indices)
+        .unwrap_or_else(|| panic!("{id}: upper scan could not be rebuilt for rendering"));
+    let antagonist_mesh = mesh_from(&antagonist_positions, &antagonist_indices)
+        .unwrap_or_else(|| panic!("{id}: lower scan could not be rebuilt for rendering"));
+    let dir = prepare_output_dir(id);
     write_renders(
         &dir,
         id,
@@ -325,27 +312,22 @@ fn write_renders(
     readings: &[(&str, &occluview_contact::ContactField)],
 ) {
     for (suffix, measured) in readings {
-        let Some(frame) = render_frame(
+        let frame = match render_frame(
             subject,
             &measured.subject_signed_mm,
             antagonist,
             &measured.antagonist_signed_mm,
-        ) else {
-            tracing::warn!(case = id, "no GPU adapter available; render skipped");
-            return;
+        ) {
+            Ok(frame) => frame,
+            Err(error) => panic!("{id}: contact render failed: {error}"),
         };
         let png = dir.join(format!("{id}{suffix}.png"));
-        let Some(image) = image::RgbaImage::from_raw(u32::from(SIZE_PX), u32::from(SIZE_PX), frame)
-        else {
-            tracing::warn!(
-                case = id,
-                "the frame did not come back at the expected size"
-            );
-            return;
-        };
-        if image.save(&png).is_ok() {
-            tracing::info!(case = id, path = %png.display(), "contact render written");
-        }
+        let image = image::RgbaImage::from_raw(u32::from(SIZE_PX), u32::from(SIZE_PX), frame)
+            .expect("contact render dimensions match the requested viewport");
+        image
+            .save(&png)
+            .unwrap_or_else(|error| panic!("{id}: save contact render: {error}"));
+        tracing::info!(case = id, path = %png.display(), "contact render written");
     }
 }
 
@@ -373,14 +355,12 @@ fn extents(subject: &[f32], antagonist: &[f32]) -> f64 {
     (span[0] * span[0] + span[1] * span[1] + span[2] * span[2]).sqrt()
 }
 
-/// Create the render directory, or `None` when it cannot be created.
-fn prepare_output_dir(case: &str) -> Option<PathBuf> {
+/// Create the render directory or fail with the case name and filesystem error.
+fn prepare_output_dir(case: &str) -> PathBuf {
     let dir = output_dir();
-    if std::fs::create_dir_all(&dir).is_err() {
-        tracing::warn!(case, "cannot create the render directory; skipping write");
-        return None;
-    }
-    Some(dir)
+    std::fs::create_dir_all(&dir)
+        .unwrap_or_else(|error| panic!("{case}: create contact render directory: {error}"));
+    dir
 }
 
 /// Where the renders go: the workspace target directory, never the repository.
@@ -400,27 +380,14 @@ fn output_dir() -> PathBuf {
 /// that happens: a bare tooth surface with no marks on it, which is the correct
 /// answer, rather than noise or a false contact.
 #[test]
+#[ignore = "requires private upper/lower STL scans and a GPU; run scripts/validate-release-private.sh with OCCLUVIEW_ALIGN_FIXTURES=/path/to/corpus"]
 fn a_pair_that_cannot_meet_paints_nothing() {
-    let Some((id, upper, lower)) = available_fixtures().into_iter().next() else {
-        // A skip is acceptable in a developer run but not in a release gate:
-        // the gate proves the reading is right, and "no corpus" would make it
-        // report success for having checked nothing.
-        assert!(
-            !fixtures_are_required(),
-            "{} is set, so the corpus is required, but no pair was found in {}",
-            "OCCLUVIEW_CONTACT_FIXTURES_REQUIRED",
-            FIXTURE_DIR_ENV
-        );
-        tracing::warn!(
-            env = FIXTURE_DIR_ENV,
-            "no corpus; the empty-state render is skipped"
-        );
-        return;
-    };
-    let (Some(upper_entry), Some(lower_entry)) = (load(&upper), load(&lower)) else {
-        tracing::warn!(case = id, "a scan failed to load; skipping");
-        return;
-    };
+    let (id, upper, lower) = available_fixtures()
+        .into_iter()
+        .next()
+        .expect("fixture validation guarantees a contact pair");
+    let upper_entry = load(&upper).unwrap_or_else(|| panic!("{id}: upper scan failed to load"));
+    let lower_entry = load(&lower).unwrap_or_else(|| panic!("{id}: lower scan failed to load"));
     let (subject_positions, subject_indices) = soup(&upper_entry.mesh);
     let (mut antagonist_positions, antagonist_indices) = soup(&lower_entry.mesh);
     // Move the antagonist far enough away that nothing can be measured. A fixed
@@ -466,15 +433,11 @@ fn a_pair_that_cannot_meet_paints_nothing() {
         "{id}: every value is the no-contact sentinel, which paints nothing"
     );
 
-    let Some(subject_mesh) = mesh_from(&subject_positions, &subject_indices) else {
-        return;
-    };
-    let Some(antagonist_mesh) = mesh_from(&antagonist_positions, &antagonist_indices) else {
-        return;
-    };
-    let Some(dir) = prepare_output_dir("no-overlap") else {
-        return;
-    };
+    let subject_mesh = mesh_from(&subject_positions, &subject_indices)
+        .expect("the upper scan rebuilds for the empty-state render");
+    let antagonist_mesh = mesh_from(&antagonist_positions, &antagonist_indices)
+        .expect("the lower scan rebuilds for the empty-state render");
+    let dir = prepare_output_dir("no-overlap");
     write_renders(
         &dir,
         "no-overlap",
@@ -486,21 +449,9 @@ fn a_pair_that_cannot_meet_paints_nothing() {
 
 /// The acceptance run. Every pair in the local corpus, measured and painted.
 #[test]
+#[ignore = "requires private upper/lower STL scans and a GPU; run scripts/validate-release-private.sh with OCCLUVIEW_ALIGN_FIXTURES=/path/to/corpus"]
 fn real_scan_pairs_measure_and_render_a_readable_contact_map() {
     let fixtures = available_fixtures();
-    if fixtures.is_empty() {
-        assert!(
-            !fixtures_are_required(),
-            "OCCLUVIEW_CONTACT_FIXTURES_REQUIRED is set, so this test is a release gate, but \
-             no corpus was found in {FIXTURE_DIR_ENV}"
-        );
-        tracing::warn!(
-            env = FIXTURE_DIR_ENV,
-            "no articulated scan corpus; set the variable to a directory of upper/lower \
-             pairs (or case subdirectories) and re-run this test"
-        );
-        return;
-    }
     for (id, upper, lower) in fixtures {
         run_case(&id, upper, lower);
     }

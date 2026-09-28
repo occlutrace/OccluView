@@ -23,7 +23,7 @@ fn dirty_tetrahedron() -> Option<Mesh> {
 #[test]
 fn repair_layer_action_repairs_defects_and_records_single_undo() {
     let Some(mesh) = dirty_tetrahedron() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
     scene.add(SceneMesh::new(mesh));
@@ -31,7 +31,7 @@ fn repair_layer_action_repairs_defects_and_records_single_undo() {
     let mut edit_mode = EditModeController::new(4, 1_000_000);
     let Some(token) = edit_mode.begin_layer_edit(&scene.meshes()[0], EditModeCommand::RepairMesh)
     else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
 
     let repair_request = request(&scene, 0, LayerContextAction::RepairMesh);
@@ -41,7 +41,7 @@ fn repair_layer_action_repairs_defects_and_records_single_undo() {
         "duplicate-face tetrahedron must come back repaired"
     );
     let Ok(LayerRepairOutcome::Repaired(report)) = outcome else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
 
     assert_eq!(report.removed_duplicate_triangles, 1);
@@ -58,7 +58,7 @@ fn repair_layer_action_repairs_defects_and_records_single_undo() {
 #[test]
 fn repair_layer_noop_pushes_no_undo_and_preserves_redo() {
     let (Some(dirty), Some(clean)) = (dirty_tetrahedron(), clean_tetrahedron()) else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
     scene.add(SceneMesh::new(dirty));
@@ -69,7 +69,7 @@ fn repair_layer_noop_pushes_no_undo_and_preserves_redo() {
     // Build a redo entry: repair the defective layer, then undo it.
     let Some(token) = edit_mode.begin_layer_edit(&scene.meshes()[0], EditModeCommand::RepairMesh)
     else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let repair_request = request(&scene, 0, LayerContextAction::RepairMesh);
     let outcome = apply_layer_repair_action(&mut scene, repair_request);
@@ -85,7 +85,7 @@ fn repair_layer_noop_pushes_no_undo_and_preserves_redo() {
     // recorded, and the redo history survives unchanged.
     let Some(token) = edit_mode.begin_layer_edit(&scene.meshes()[1], EditModeCommand::RepairMesh)
     else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let noop_request = request(&scene, 1, LayerContextAction::RepairMesh);
     let outcome = apply_layer_repair_action(&mut scene, noop_request);
@@ -94,7 +94,7 @@ fn repair_layer_noop_pushes_no_undo_and_preserves_redo() {
         "clean tetrahedron must come back untouched"
     );
     let Ok(LayerRepairOutcome::Clean(report)) = outcome else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     assert!(!report.changed_content());
     assert_eq!(scene.meshes()[1].mesh.triangle_count(), 4);
@@ -106,7 +106,7 @@ fn repair_layer_noop_pushes_no_undo_and_preserves_redo() {
 #[test]
 fn repair_layer_action_ignores_stale_layer_identity_without_mutating_scene() {
     let Some(mesh) = dirty_tetrahedron() else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
     scene.add(SceneMesh::new(mesh));

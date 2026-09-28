@@ -35,10 +35,10 @@ const RULER_LINE_SNAP_PX: f32 = 6.0;
 const SQUARE_TOLERANCE_DEG: f64 = 0.05;
 
 /// Catalog key naming a [`RulerLineAngle`] choice.
-pub(crate) const fn ruler_line_angle_key(angle: RulerLineAngle) -> &'static str {
+pub(crate) const fn ruler_line_angle_key(angle: RulerLineAngle) -> crate::i18n::MessageId {
     match angle {
-        RulerLineAngle::Free => "measure-line-angle-free",
-        RulerLineAngle::Perpendicular => "measure-line-angle-right",
+        RulerLineAngle::Free => crate::i18n::message_id!("measure-line-angle-free"),
+        RulerLineAngle::Perpendicular => crate::i18n::message_id!("measure-line-angle-right"),
     }
 }
 
@@ -189,23 +189,14 @@ fn ruler_line_under(
         if depth_a <= 0.0 || depth_b <= 0.0 {
             continue;
         }
-        let distance = distance_to_segment(pointer, a, b);
+        let distance = crate::cut_geometry::closest_param_on_segment(pointer, a, b)
+            .1
+            .sqrt();
         if distance <= RULER_LINE_SNAP_PX && closest.is_none_or(|(best, _)| distance < best) {
             closest = Some((distance, index));
         }
     }
     closest.map(|(_, index)| index)
-}
-
-fn distance_to_segment(point: egui::Pos2, a: egui::Pos2, b: egui::Pos2) -> f32 {
-    let along = b - a;
-    let length_sq = along.length_sq();
-    let t = if length_sq > f32::EPSILON {
-        ((point - a).dot(along) / length_sq).clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
-    point.distance(a + along * t)
 }
 
 /// A ruler ending on a line, projected: its two ends and its base's two ends.
@@ -482,6 +473,7 @@ pub(crate) fn toolbar_toggle(ui: &mut egui::Ui, control: ToolbarToggle<'_>) -> e
         );
         crate::icons::paint(painter, close_rect, AppIcon::Close, ink);
     }
+    crate::accessibility::button(&response, label, enabled, Some(active));
     response
         .on_hover_text(tooltip)
         .on_disabled_hover_text(tooltip)
