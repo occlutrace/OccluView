@@ -18,6 +18,14 @@ const MIN_PAIRS: usize = 2;
 /// rotation about that line is free.
 const COLLINEAR_FRACTION: f64 = 1e-6;
 
+/// The picks must also stand this far off their best-fit line (RMS, mm). The
+/// turn about that line is set by the click error divided by this spread: an
+/// arrow lands within about 0.3 mm of the intended point, so 2 mm holds the
+/// turn to roughly 8 degrees, inside what a surface refine starting from it
+/// recovers. Three cusps in a row, 0.1 mm off a line, turned the scan 56
+/// degrees on 0.05 mm of click noise while the fit reported 0.004 mm.
+const MIN_OFF_LINE_SPREAD_MM: f64 = 2.0;
+
 /// Accepted ratio of median fixed pair distances to median moving pair
 /// distances. Values outside this band indicate inconsistent units.
 const UNIT_RATIO_LOW: f64 = 0.5;
@@ -43,10 +51,9 @@ const MIN_OVERLAP_MM: f64 = 1.0;
 /// vector always clears it on at least one axis.
 const WEAK_AXIS_SHARE: f64 = 0.5;
 
-/// Cyclic Jacobi sweeps used to diagonalize the 4x4 Horn matrix, and power
-/// iterations used to find the dominant spread direction. Both are fixed
-/// counts rather than convergence-timed, so a result cannot drift between
-/// runs.
+/// Fixed cyclic Jacobi sweeps diagonalize the 4x4 Horn matrix; fixed power
+/// iterations find the dominant spread direction. The counts do not depend on
+/// convergence, so a result cannot drift between runs.
 const JACOBI_SWEEPS: usize = 24;
 /// Power iterations for the dominant spread direction.
 const POWER_ITERATIONS: usize = 32;
@@ -67,7 +74,7 @@ pub struct PairFit {
     pub unit_ratio: f64,
 }
 
-/// Why a fit was refused. Each variant carries what the operator needs to act.
+/// Why a fit is refused. Each variant carries what the operator needs to act.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FitRejection {
     /// Fewer complete pairs than any fit can use.
@@ -115,10 +122,17 @@ pub enum FitRejection {
     /// The surface had enough correspondences, but no trustworthy improvement
     /// over the current placement could be accepted.
     NoImprovement,
-    /// More than one coarse surface candidate was equally plausible.
+    /// More than one coarse surface candidate is equally plausible.
     Ambiguous,
-    /// A supplied point or normal was not finite.
+    /// A supplied point or normal is not finite.
     NonFinite,
+    /// Two clicked normals cannot both face the fixed surface after their roll
+    /// estimates are averaged. `error_mm` converts the worst angular mismatch
+    /// to the lateral displacement it implies over the pair spacing.
+    Inconsistent {
+        /// Equivalent lateral displacement, in millimetres.
+        error_mm: f64,
+    },
 }
 
 /// Every axis undetermined — the report for a configuration that constrains
@@ -173,6 +187,10 @@ impl FitBounds {
 /// and how big they are; a fit that does not leave them overlapping is refused
 /// as [`FitRejection::Apart`].
 ///
+/// A successful result is a placement candidate. Its pair residuals are
+/// diagnostics; surface refinement and its trust gate decide whether a pose
+/// may authorize a deviation map.
+///
 /// # Errors
 ///
 /// Returns the [`FitRejection`] describing why no trustworthy pose exists.
@@ -222,8 +240,7 @@ pub fn fit_pairs(
     let mut rejected: Vec<u32> = Vec::new();
     let mut rigid = horn_fit(moving, fixed, &keep)?;
     while keep.len() > 3 {
-        let residuals = residuals_of(&rigid, moving, fixed, &keep);
-        let Some(worst) = worst_outlier(&residuals) else {
+        let Some(worst) = worst_outlier(moving, fixed, &keep) else {
             break;
         };
         let dropped = keep.remove(worst);
@@ -255,10 +272,11 @@ fn finish(
     #[allow(clippy::cast_precision_loss)]
     let count = residuals.len().max(1) as f64;
     let sum_squares: f64 = residuals.iter().map(|value| value * value).sum();
+    let max_pair_err = residuals.iter().copied().fold(0.0, f64::max);
     Ok(PairFit {
         rigid,
         pair_rms: (sum_squares / count).sqrt(),
-        max_pair_err: residuals.iter().copied().fold(0.0, f64::max),
+        max_pair_err,
         rejected,
         unit_ratio,
     })
@@ -328,7 +346,9 @@ fn line_degeneracy(points: &[DVec3], keep: &[usize], centroid: DVec3) -> Option<
                 .length_squared()
         })
         .sum();
-    if perpendicular > total * COLLINEAR_FRACTION {
+    #[allow(clippy::cast_precision_loss)]
+    let off_line_rms = (perpendicular / keep.len().max(1) as f64).sqrt();
+    if perpendicular > total * COLLINEAR_FRACTION && off_line_rms >= MIN_OFF_LINE_SPREAD_MM {
         return None;
     }
     let weak_axes = [
@@ -486,18 +506,34 @@ fn two_pair_frame(
     {
         return Err(ALL_AXES_WEAK);
     }
-    let moving_frame = frame_from(moving[0], moving[1], moving_normals[0])?;
-    let fixed_frame = frame_from(fixed[0], fixed[1], fixed_normals[0])?;
-    let rotation = DQuat::from_mat3(&(fixed_frame * moving_frame.transpose()));
+    // Each clicked normal gives the turn about the segment on its own. Both
+    // are measurements of one quantity: a single one carries its click's
+    // error into the pose unchecked, and a normal 2 degrees off turned the
+    // scan 14 degrees where it leant toward the segment.
+    let estimate = |index: usize| -> Option<DQuat> {
+        let moving_frame = frame_from(moving[0], moving[1], moving_normals[index]).ok()?;
+        let fixed_frame = frame_from(fixed[0], fixed[1], fixed_normals[index]).ok()?;
+        Some(DQuat::from_mat3(&(fixed_frame * moving_frame.transpose())).normalize())
+    };
+    let rotation = match (estimate(0), estimate(1)) {
+        (Some(first), Some(second)) => first.slerp(second, 0.5),
+        (Some(only), None) | (None, Some(only)) => only,
+        (None, None) => return Err(ALL_AXES_WEAK),
+    };
     let moving_centroid = (moving[0] + moving[1]) * 0.5;
     let fixed_centroid = (fixed[0] + fixed[1]) * 0.5;
     let rigid = Rigid::new(rotation, fixed_centroid - rotation * moving_centroid);
-    if rigid
-        .apply_normal(moving_normals[1])
-        .dot(fixed_normals[1].normalize_or_zero())
-        < 0.0
-    {
-        return Err(ALL_AXES_WEAK);
+    for index in 0..MIN_PAIRS {
+        let alignment = rigid
+            .apply_normal(moving_normals[index].normalize_or_zero())
+            .dot(fixed_normals[index].normalize_or_zero());
+        if alignment <= 0.0 {
+            let angular_error = alignment.clamp(-1.0, 1.0).acos();
+            let segment_length = moving[0].distance(moving[1]);
+            return Err(FitRejection::Inconsistent {
+                error_mm: 2.0 * segment_length * (angular_error * 0.5).sin(),
+            });
+        }
     }
     Ok(rigid)
 }
@@ -547,19 +583,40 @@ fn residuals_of(rigid: &Rigid, moving: &[DVec3], fixed: &[DVec3], keep: &[usize]
         .collect()
 }
 
-/// Position within `residuals` of the pair worth dropping, if any.
-fn worst_outlier(residuals: &[f64]) -> Option<usize> {
-    let (position, value) = residuals.iter().enumerate().fold(
-        None::<(usize, f64)>,
-        |best, (index, &value)| match best {
-            Some((_, current)) if current >= value => best,
-            _ => Some((index, value)),
-        },
-    )?;
-    let mut sorted = residuals.to_vec();
-    sorted.sort_by(f64::total_cmp);
-    let median = sorted.get(sorted.len() / 2).copied().unwrap_or(0.0);
-    (value > TRIM_FLOOR_MM && value > median * TRIM_MEDIAN_FACTOR).then_some(position)
+/// Position within `keep` of the pair worth dropping, if any.
+///
+/// Leave-one-out: each pair in turn is left out, the rest are fitted, and the
+/// pair whose removal leaves the most self-consistent set is the candidate.
+/// It is dropped when the pose that set agrees on misses it by more than
+/// [`TRIM_MEDIAN_FACTOR`] times that set's own residual (and more than
+/// [`TRIM_FLOOR_MM`]). Judging the candidate by the fit that contains it
+/// cannot work with few pairs: one wrong arrow among four drags the fit until
+/// every residual looks alike, so the candidate stays in the set.
+fn worst_outlier(moving: &[DVec3], fixed: &[DVec3], keep: &[usize]) -> Option<usize> {
+    let mut best: Option<(usize, f64, f64)> = None;
+    for position in 0..keep.len() {
+        let rest: Vec<usize> = keep
+            .iter()
+            .enumerate()
+            .filter(|(other, _)| *other != position)
+            .map(|(_, &index)| index)
+            .collect();
+        let Ok(rigid) = horn_fit(moving, fixed, &rest) else {
+            continue;
+        };
+        let residuals = residuals_of(&rigid, moving, fixed, &rest);
+        #[allow(clippy::cast_precision_loss)]
+        let rest_rms = (residuals.iter().map(|value| value * value).sum::<f64>()
+            / residuals.len() as f64)
+            .sqrt();
+        let index = keep[position];
+        let miss = (rigid.apply(moving[index]) - fixed[index]).length();
+        if best.is_none_or(|(_, rms, _)| rest_rms < rms) {
+            best = Some((position, rest_rms, miss));
+        }
+    }
+    let (position, rest_rms, miss) = best?;
+    (miss > TRIM_FLOOR_MM && miss > rest_rms * TRIM_MEDIAN_FACTOR).then_some(position)
 }
 
 /// Median fixed pairwise distance over median moving pairwise distance.

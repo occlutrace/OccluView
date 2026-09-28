@@ -3,9 +3,33 @@
 This file records user-visible changes. Internal refactors and test-only work
 remain in the Git history.
 
-## 1.2.1 - 2026-09-21
+## Unreleased
+
+- Sculpt Add/Remove follows camera depth and scales with strength. Ctrl+Shift
+  gently evens surface detail, with cursor color, body, and outline matching the
+  active operation.
+
+## 1.2.1 - 2026-09-27
+
+### Accessibility
+
+- Screen readers receive localized names, roles, selected states, and disabled
+  states for the viewer controls, including the layer tint palette.
 
 ### Viewer
+
+- Imports estimate scene, picking-tree, and renderer memory against the viewer's
+  2 GiB budget. Size messages identify binary amounts as GiB.
+- Best fit refuses equally plausible surface matches and tells you to mark the
+  matching area or move the scans closer before trying again.
+- Point-pair placement remains provisional until surface refinement passes;
+  deviation maps require a verified pose.
+- Sculpt remeshing updates the live surface locally during a stroke. The brush
+  stays visible while hovering, and Ball, Knife and Cylinder use matching tip
+  glyphs and cursor shapes.
+- Sculpt keeps sharp crease shading while welding the surface for continuous
+  brush strokes.
+- Default-size Smooth strokes remain responsive on full-arch scans.
 
 - Best fit matching accepts a scan of part of a jaw against a scan of the whole
   jaw again. Two different jaws are still refused.
@@ -55,7 +79,15 @@ remain in the Git history.
   half a gigabyte of file data in memory. A file larger than 1 GB is refused
   with a message that gives both sizes.
 
+### Windows
+
+- Explorer preview menu labels follow the Windows UI language in English,
+  German, Spanish, French, Italian, Brazilian Portuguese, and Russian.
+
 ### macOS
+
+- Settings choose whether trackpad scrolling pans or zooms the viewport;
+  keyboard and mouse help follows that choice.
 
 - OccluView runs natively on Apple Silicon Macs with macOS 14 or later, as a
   `.dmg` with the app and a `.pkg` installer. Downloads are offered once the

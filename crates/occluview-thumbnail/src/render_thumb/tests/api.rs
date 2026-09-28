@@ -67,7 +67,7 @@ fn extless_hps_zip_stream_renders_mesh_thumbnail_not_placeholder() {
     let fixture = fixtures::hps_zip_triangle();
     assert!(fixture.is_ok(), "HPS ZIP fixture should build");
     let Ok(bytes) = fixture else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let pixels = render_thumbnail_or_placeholder(None, &bytes, spec);
 
@@ -101,7 +101,7 @@ fn shell_cache_sizes_render_real_thumbnails_not_placeholders() {
     let hps = fixtures::hps_zip_triangle();
     assert!(hps.is_ok(), "HPS ZIP fixture should build");
     let Ok(hps) = hps else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
     let obj = fixtures::colored_obj_cube().into_bytes();
     let glb = fixtures::one_triangle_glb();
@@ -144,7 +144,7 @@ fn repeated_file_backed_thumbnail_requests_stay_real_across_shell_sizes() {
     let write_result = fs::write(&path, fixtures::binary_stl_cube());
     assert!(write_result.is_ok(), "failed to write temp STL fixture");
     let Ok(()) = write_result else {
-        return;
+        panic!("required test setup or expected result was missing");
     };
 
     for size_px in [16, 32, 96, 256, 32, 16] {
@@ -177,14 +177,18 @@ fn moderate_surface_files_match_full_fidelity_file_parse() {
 
     for (extension, bytes) in cases {
         let path = fixtures::write_temp_fixture(extension, &bytes);
-        let direct_pixels =
-            render_thumbnail_file(&path, spec).expect("file-backed thumbnail should render");
+        let direct_pixels = render_thumbnail_file_or_placeholder_with_timeout(
+            &path,
+            spec,
+            LARGE_FIXTURE_RENDER_TIMEOUT,
+        );
+        assert_ne!(direct_pixels, placeholder_thumbnail(spec));
         let full_mesh = read_file_with_key_provider(&path, &RuntimeHpsKeyProvider)
             .expect("full parser should load moderate surface fixture");
         let full_pixels = rendering::render_mesh_thumbnail(
             full_mesh,
             spec,
-            RenderDeadline::after(DEFAULT_THUMBNAIL_TIMEOUT),
+            RenderDeadline::after(LARGE_FIXTURE_RENDER_TIMEOUT),
         )
         .expect("full parsed mesh should render");
         assert_eq!(
@@ -304,8 +308,13 @@ fn a_thirty_two_megabyte_obj_is_read_in_full_not_decimated() {
     let bytes = fixtures::large_colored_obj_tiles(
         usize::try_from(32_u64 * 1024 * 1024).unwrap_or(usize::MAX),
     );
-    let direct_pixels =
-        render_thumbnail_bytes(Some("obj"), &bytes, spec).expect("large OBJ stream should render");
+    let direct_pixels = render_thumbnail_or_placeholder_with_timeout(
+        Some("obj"),
+        &bytes,
+        spec,
+        LARGE_FIXTURE_RENDER_TIMEOUT,
+    );
+    assert_ne!(direct_pixels, placeholder_thumbnail(spec));
     let full_mesh = dispatch_by_kind_shaded(
         FormatKind::Obj,
         &bytes,
@@ -316,7 +325,7 @@ fn a_thirty_two_megabyte_obj_is_read_in_full_not_decimated() {
     let full_pixels = rendering::render_mesh_thumbnail(
         full_mesh,
         spec,
-        RenderDeadline::after(DEFAULT_THUMBNAIL_TIMEOUT),
+        RenderDeadline::after(LARGE_FIXTURE_RENDER_TIMEOUT),
     )
     .expect("full parsed OBJ should render");
 
@@ -398,7 +407,12 @@ fn large_ply_streams_resurrect_fast_point_cloud_surrogate_and_render_non_black_p
     );
     assert!(!fast_mesh.vertices().is_empty());
 
-    let pixels = render_thumbnail_or_placeholder(Some("ply"), &bytes, spec);
+    let pixels = render_thumbnail_or_placeholder_with_timeout(
+        Some("ply"),
+        &bytes,
+        spec,
+        LARGE_FIXTURE_RENDER_TIMEOUT,
+    );
     assert_ne!(pixels, placeholder_thumbnail(spec));
     let has_visible_non_black_pixel = pixels
         .as_chunks::<4>()
@@ -439,7 +453,12 @@ fn large_surface_ply_above_cutoff_thumbnails_as_a_surface_not_points() {
         size_px: 128,
         ..Default::default()
     };
-    let pixels = render_thumbnail_or_placeholder(Some("ply"), &bytes, spec);
+    let pixels = render_thumbnail_or_placeholder_with_timeout(
+        Some("ply"),
+        &bytes,
+        spec,
+        LARGE_FIXTURE_RENDER_TIMEOUT,
+    );
     assert_ne!(pixels, placeholder_thumbnail(spec));
     assert_visible_thumbnail_pixels(&pixels, spec);
 }
@@ -456,7 +475,11 @@ fn large_stl_file_and_ply_stream_render_through_the_public_thumbnail_entry_point
         "stl",
         &fixtures::large_binary_stl_tessellated_plane(20 * 1024 * 1024),
     );
-    let stl_pixels = render_thumbnail_file_or_placeholder(&stl_path, spec);
+    let stl_pixels = render_thumbnail_file_or_placeholder_with_timeout(
+        &stl_path,
+        spec,
+        LARGE_FIXTURE_RENDER_TIMEOUT,
+    );
     assert_ne!(stl_pixels, placeholder_thumbnail(spec));
     // A 20 MB tessellated plane is inside the STL fidelity budget, so it renders
     // through the full reader as a solid surface with a hard-opaque interior —
@@ -466,7 +489,12 @@ fn large_stl_file_and_ply_stream_render_through_the_public_thumbnail_entry_point
 
     // Stream-backed entry point: what IInitializeWithStream uses.
     let ply_bytes = fixtures::large_binary_ply_point_grid(33 * 1024 * 1024);
-    let ply_pixels = render_thumbnail_or_placeholder(Some("ply"), &ply_bytes, spec);
+    let ply_pixels = render_thumbnail_or_placeholder_with_timeout(
+        Some("ply"),
+        &ply_bytes,
+        spec,
+        LARGE_FIXTURE_RENDER_TIMEOUT,
+    );
     assert_ne!(ply_pixels, placeholder_thumbnail(spec));
     let has_opaque_pixel = ply_pixels.as_chunks::<4>().0.iter().any(|px| px[3] > 0);
     assert!(

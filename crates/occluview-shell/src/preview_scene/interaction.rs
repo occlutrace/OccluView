@@ -175,7 +175,7 @@ mod tests {
         let state = PreviewSceneState::from_bytes(Some("stl"), &binary_stl_triangle());
         assert!(state.is_ok(), "preview state should load a simple STL");
         let Ok(mut state) = state else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         state.camera.orbit_pivot = Vec3::new(999.0, 999.0, 999.0);
 
@@ -192,7 +192,7 @@ mod tests {
         let state = PreviewSceneState::from_bytes(Some("stl"), &binary_stl_triangle());
         assert!(state.is_ok(), "preview state should load a simple STL");
         let Ok(mut state) = state else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
 
         assert!(state.orbit_drag_delta(Vec2::new(28.0, 22.0), [320, 180]));
@@ -205,7 +205,7 @@ mod tests {
         let state = PreviewSceneState::from_bytes(Some("stl"), &binary_stl_triangle());
         assert!(state.is_ok(), "preview state should load a simple STL");
         let Ok(mut state) = state else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
 
         assert!(
@@ -221,7 +221,7 @@ mod tests {
             let state = PreviewSceneState::from_bytes(Some("stl"), &binary_stl_triangle());
             assert!(state.is_ok(), "preview state should load a simple STL");
             let Ok(mut state) = state else {
-                return;
+                panic!("required test setup or expected result was missing");
             };
 
             let before = state.camera;
@@ -233,7 +233,7 @@ mod tests {
                 "drag should map to a main-viewer orbit delta"
             );
             let Some(orbit_delta) = orbit_delta else {
-                return;
+                panic!("required test setup or expected result was missing");
             };
 
             let mut reference = before;
@@ -437,7 +437,7 @@ mod tests {
         let state = PreviewSceneState::from_bytes(Some("stl"), &binary_stl_preview_smoke_mesh());
         assert!(state.is_ok(), "preview state should load an asymmetric STL");
         let Ok(mut state) = state else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
 
         let initial = state

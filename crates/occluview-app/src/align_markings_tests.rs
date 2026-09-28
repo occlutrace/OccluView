@@ -561,8 +561,8 @@ fn every_command_is_reachable_from_the_brush_window() {
     // missing there would have no button.
     assert_eq!(MaskCommand::ALL.len(), 4);
     for command in MaskCommand::ALL {
-        assert!(!command.label_key().is_empty());
-        assert!(!command.hint_key().is_empty());
-        assert!(!command.report_key().is_empty());
+        assert!(!command.label_key().as_str().is_empty());
+        assert!(!command.hint_key().as_str().is_empty());
+        assert!(!command.report_key().as_str().is_empty());
     }
 }

@@ -1,19 +1,9 @@
 # OccluView — Cargo workspace root.
 #
-# Workspace layering:
-#   geometry-math ← (nothing; shared constants + trivial pure math)
-#   mesh-edit     → geometry-math
-#   hps           → geometry-math (no other OccluView crates)
-#   align         ← (nothing OccluView; plain slices in, plain values out)
-#   core          → mesh-edit + geometry-math (+ optional robust-csg bridge fallback)
-#   formats       → core + hps
-#   render        → core
-#   thumbnail     → core + render + formats
-#   shell         → core + render + formats + thumbnail
-#   app           → core + formats + render + align + update (+ shell on Windows for installer refresh)
-#   cli           → core + formats + render + thumbnail
-#   update        → (nothing)
-# Cycles are P0. Never add an upward dependency.
+# Workspace layering is declared in [workspace.metadata.layer-ranks], from
+# shared leaves upward. A crate may depend only on a lower-ranked crate; the
+# workspace test checks Cargo's dependency graph against these ranks.
+# Cycles are P0; never add an upward dependency.
 #
 # License: Apache-2.0 (NOTICE + LICENSE).
 
@@ -21,8 +11,11 @@
 resolver = "2"
 members = [
     "crates/occlu-geometry-math",
+    "crates/occluview-i18n",
     "crates/occlu-mesh-edit",
+    "crates/occlu-sculpt",
     "crates/occluview-robust-csg",
+    "crates/occluview-surface-query",
     "crates/occluview-align",
     "crates/occluview-contact",
     "crates/occluview-core",
@@ -42,7 +35,9 @@ exclude = ["fuzz"]
 # opt-in unless the full workspace is requested.
 default-members = [
     "crates/occlu-mesh-edit",
+    "crates/occlu-sculpt",
     "crates/occluview-align",
+    "crates/occluview-surface-query",
     "crates/occluview-contact",
     "crates/occluview-core",
     "crates/occluview-hps",
@@ -53,6 +48,29 @@ default-members = [
     "crates/occluview-app",
     "crates/occluview-cli",
 ]
+
+[workspace.metadata.layer-ranks]
+# Shared leaf libraries.
+occlu-geometry-math = 0
+occluview-i18n = 0
+occluview-robust-csg = 0
+occluview-update = 0
+# Geometry kernels and the shared surface query.
+occlu-mesh-edit = 1
+occlu-sculpt = 1
+occluview-surface-query = 1
+occluview-hps = 1
+# Query consumers and scene services.
+occluview-align = 2
+occluview-contact = 2
+occluview-core = 2
+occluview-formats = 3
+occluview-render = 3
+occluview-thumbnail = 4
+# User-facing entry points.
+occluview-shell = 5
+occluview-app = 5
+occluview-cli = 5
 
 # Workspace-wide package metadata. Crates override only what they need.
 [workspace.package]
@@ -70,8 +88,11 @@ publish = false              # we are not on crates.io yet
 [workspace.dependencies]
 # Internal crates.
 occlu-geometry-math = { path = "crates/occlu-geometry-math" }
+occluview-i18n = { path = "crates/occluview-i18n" }
 occlu-mesh-edit  = { path = "crates/occlu-mesh-edit" }
+occlu-sculpt     = { path = "crates/occlu-sculpt" }
 occluview-robust-csg = { path = "crates/occluview-robust-csg" }
+occluview-surface-query = { path = "crates/occluview-surface-query" }
 occluview-align   = { path = "crates/occluview-align" }
 occluview-contact = { path = "crates/occluview-contact" }
 occluview-core    = { path = "crates/occluview-core" }
@@ -83,32 +104,37 @@ occluview-shell   = { path = "crates/occluview-shell" }
 occluview-update  = { path = "crates/occluview-update" }
 
 # Math / numerics.
-glam    = "0.29"            # permissive (MIT OR Apache-2.0)
-bytemuck = { version = "1.18", features = ["derive"] }
+glam    = "0.33.11"         # permissive (MIT OR Apache-2.0)
+bytemuck = { version = "1.25.2", features = ["derive"] }
 
 # HPS package compatibility. Parser dependencies are
 # isolated to the product-neutral occluview-hps leaf crate.
 adler2   = "2.0.1"
 blowfish = { version = "0.10.0", features = ["zeroize"] }
 md-5     = "0.11.0"
-sha2     = "0.10"
+sha2     = "0.11.0"
 zeroize  = { version = "1.9.0", features = ["derive"] }
 
 # Parallelism / async.
-rayon   = "1.10"
+rayon   = "1.12.0"
 
 # Error handling.
-thiserror = "1.0"
+thiserror = "2.0.21"
 anyhow    = "1.0"           # binaries only
-manifold-csg = "0.3.3"      # robust native CSG fallback for pathological CAD meshes
+manifold-csg = "0.4.1"      # Native CSG fallback for meshes outside the primary boolean path.
 earcutr = "0.5.0"           # constrained planar triangulation for caps with inner rims
 
 # Serialization (glTF JSON parsing).
 serde      = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
+# Read-only validation for product-owned platform configuration in tests.
+roxmltree = "0.21.1"
+serde_yaml_ng = "0.10.0"
+naga = { version = "=30.0.1", features = ["wgsl-in"] }
+
 # Async runtime for offscreen render in the GUI app.
-pollster   = "0.4"
+pollster   = "1.0.1"
 
 # Image encode/decode: PNG for golden tests + thumbnail output, JPEG for glTF
 # texture images (dental GLBs commonly embed JPEG textures). The <0.25.10 bound
@@ -118,7 +144,7 @@ image      = { version = ">=0.25.5, <0.25.10", default-features = false, feature
 
 # ZIP package container support for HPS archives. Keep features
 # narrow: ordinary scanner packages use stored/deflated entries.
-zip        = { version = "2.4.2", default-features = false, features = ["deflate"] }
+zip        = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 # Logging.
 tracing            = "0.1"
@@ -129,7 +155,7 @@ wgpu = "=30.0.1"             # pinned; bumps need tests and a changelog entry
 
 # Windowing / GUI.
 egui    = "=0.36.1"
-eframe  = { version = "=0.36.1", default-features = false, features = ["wgpu", "default_fonts", "links"] }
+eframe  = { version = "=0.36.1", default-features = false, features = ["accesskit", "wgpu", "default_fonts", "links"] }
 
 # Localization (OccluView i18n foundation). Pure-Rust Fluent stack:
 # named variables, per-locale plural/select, build-time validatable catalogs.
@@ -142,7 +168,7 @@ sys-locale     = "0.3"
 fluent-syntax        = "0.12"
 epaint_default_fonts = "0.36"
 skrifa               = "0.44"
-rfd     = { version = "0.14", default-features = false, features = ["xdg-portal", "async-std"] }
+rfd     = { version = "0.17.2", default-features = false, features = ["xdg-portal", "wayland"] }
 
 # Linux window activation. The app uses the system Wayland connection exposed
 # by winit to forward startup/handoff activation tokens to its existing surface.
@@ -154,7 +180,7 @@ wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 # `crates/occluview-app/Cargo.toml` and `crates/occluview-formats/Cargo.toml`.
 
 # Testing.
-proptest = "1.5"
+proptest = "1.11.0"
 
 # Workspace lints — applied to every crate via `lints.workspace = true`.
 [workspace.lints.rust]

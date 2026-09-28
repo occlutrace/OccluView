@@ -13,18 +13,21 @@
 //! they had not moved it.
 
 use super::{
-    combine_loaded_scene, egui, load_error_dialog, load_status_message, mpsc,
-    read_files_with_key_provider, single_instance, AppErrorAction, AppErrorDialog, Instant,
+    combine_loaded_scene, egui, load_error_dialog, load_failure_summary, load_status_message, mpsc,
+    read_files_with_memory_budget, single_instance, AppErrorAction, AppErrorDialog, Instant,
     LoadQueueCameraReset, OccluViewApp, PathBuf, PendingReplaceOpen, PendingSceneLoad, Result,
-    RuntimeHpsKeyProvider, Scene, SceneLoadMode, SceneLoadRequest, TryRecvError,
-    FOREGROUND_PULSE_DURATION,
+    Scene, SceneLoadMode, SceneLoadRequest, TryRecvError, FOREGROUND_PULSE_DURATION,
 };
 use crate::scene_loading::{queue_request_while_active, replace_result_requires_guard};
+use occluview_formats::hps::RuntimeHpsKeyProvider;
 
 /// Load one or more mesh files into a scene.
-pub(super) fn load_scene(paths: &[PathBuf]) -> Result<Scene> {
-    read_files_with_key_provider(paths, &RuntimeHpsKeyProvider)
-        .map_err(|(path, e)| anyhow::anyhow!("{}: {}", path.display(), e))
+pub(super) fn load_scene(paths: &[PathBuf], retained_scene_bytes: u64) -> Result<Scene> {
+    read_files_with_memory_budget(paths, &RuntimeHpsKeyProvider, retained_scene_bytes).map_err(
+        |(path, error)| {
+            anyhow::Error::new(error).context(format!("{}: format reader failed", path.display()))
+        },
+    )
 }
 
 /// The failure text with every path of the request removed.
@@ -122,7 +125,11 @@ impl OccluViewApp {
                 source,
                 requested_at: Instant::now(),
             });
-            self.ui.status_message = Some(self.ui.locale.tr("edit-session-busy"));
+            self.ui.status_message = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("edit-session-busy")),
+            );
             return;
         }
         // This request is the newest, so a Replace still queued behind a decode
@@ -171,7 +178,7 @@ impl OccluViewApp {
             queue_request_while_active(active, &mut self.document.queued_loads, request);
             if mode == SceneLoadMode::Append {
                 self.ui.status_message = Some(self.ui.locale.tr_plural(
-                    "load-queued",
+                    crate::i18n::message_id!("load-queued"),
                     &[],
                     &[("count", paths.len())],
                 ));
@@ -193,30 +200,42 @@ impl OccluViewApp {
             dirty_at_request,
         } = request;
         let load_paths = paths.clone();
+        let retained_scene_bytes = self
+            .document
+            .scene
+            .as_deref()
+            .map_or(0, Scene::estimated_memory_bytes);
         let started_at = Instant::now();
         let (sender, receiver) = mpsc::channel();
         let repaint_ctx = self.ui.repaint_ctx.clone();
         let spawn_result = std::thread::Builder::new()
             .name("scene-load".to_string())
             .spawn(move || {
-                let result = load_scene(&load_paths);
+                let result = load_scene(&load_paths, retained_scene_bytes);
                 let _ = sender.send(result);
                 repaint_ctx.request_repaint();
             });
         if let Err(error) = spawn_result {
             let append = mode == SceneLoadMode::Append;
             self.ui.status_message = Some(if append {
-                self.ui.locale.tr("load-add-failed-start")
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("load-add-failed-start"))
             } else {
-                self.ui.locale.tr("load-open-failed-start")
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("load-open-failed-start"))
             });
             self.ui.app_error = Some(AppErrorDialog {
                 title: self.ui.locale.tr(if append {
-                    "error-add-title"
+                    crate::i18n::message_id!("error-add-title")
                 } else {
-                    "error-open-title"
+                    crate::i18n::message_id!("error-open-title")
                 }),
-                summary: self.ui.locale.tr("load-loader-failed-summary"),
+                summary: self
+                    .ui
+                    .locale
+                    .tr(crate::i18n::message_id!("load-loader-failed-summary")),
                 details: format!("Loader thread start failed\n\n{error:#}"),
                 action: AppErrorAction::None,
             });
@@ -254,7 +273,11 @@ impl OccluViewApp {
                     return;
                 }
                 let startup_token = self.platform.pending_raise_token.take();
-                self.ui.status_message = Some(self.ui.locale.tr("load-open-failed-stopped"));
+                self.ui.status_message = Some(
+                    self.ui
+                        .locale
+                        .tr(crate::i18n::message_id!("load-open-failed-stopped")),
+                );
                 tracing::error!(source, "scene loader disconnected");
                 if source == "startup" || source == "single-instance" {
                     single_instance::complete_startup_notification(startup_token.as_deref());
@@ -346,7 +369,11 @@ impl OccluViewApp {
             .as_ref()
             .is_some_and(|parked| parked.requested_at > pending.requested_at);
         if newer_request_parked {
-            self.ui.status_message = Some(self.ui.locale.tr("load-superseded-parked-open"));
+            self.ui.status_message = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("load-superseded-parked-open")),
+            );
             return;
         }
         self.ui.pending_replace_open = Some(PendingReplaceOpen {
@@ -445,15 +472,7 @@ impl OccluViewApp {
                         self.reset_camera_to_home();
                     }
                 }
-                self.ui.status_message = Some(if append {
-                    self.ui
-                        .locale
-                        .tr_with("load-action-failed-add", &[("detail", &format!("{e:#}"))])
-                } else {
-                    self.ui
-                        .locale
-                        .tr_with("load-action-failed-open", &[("detail", &format!("{e:#}"))])
-                });
+                self.ui.status_message = Some(load_failure_summary(&self.ui.locale, action, &e));
                 self.ui.app_error = Some(load_error_dialog(
                     &self.ui.locale,
                     action,
@@ -616,21 +635,23 @@ impl OccluViewApp {
         let size = scene.bbox().size();
         let extent = size.max_element();
         let suggestion = match occluview_formats::units::recommend_glb_scale(extent) {
-            occluview_formats::units::GlbScaleRecommendation::MetersToMillimeters => {
-                self.ui.locale.tr("load-units-suggest-meters")
-            }
-            occluview_formats::units::GlbScaleRecommendation::KeepAsMillimeters => {
-                self.ui.locale.tr("load-units-suggest-millimeters")
-            }
-            occluview_formats::units::GlbScaleRecommendation::Unclear => {
-                self.ui.locale.tr("load-units-unclear")
-            }
-        };
-        Some(
-            self.ui
+            occluview_formats::units::GlbScaleRecommendation::MetersToMillimeters => self
+                .ui
                 .locale
-                .tr_with("load-units-ambiguous", &[("suggestion", &suggestion)]),
-        )
+                .tr(crate::i18n::message_id!("load-units-suggest-meters")),
+            occluview_formats::units::GlbScaleRecommendation::KeepAsMillimeters => self
+                .ui
+                .locale
+                .tr(crate::i18n::message_id!("load-units-suggest-millimeters")),
+            occluview_formats::units::GlbScaleRecommendation::Unclear => self
+                .ui
+                .locale
+                .tr(crate::i18n::message_id!("load-units-unclear")),
+        };
+        Some(self.ui.locale.tr_with(
+            crate::i18n::message_id!("load-units-ambiguous"),
+            &[("suggestion", &suggestion)],
+        ))
     }
 }
 

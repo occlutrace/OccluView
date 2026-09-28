@@ -14,7 +14,7 @@ use eframe::egui;
 use crate::icons::AppIcon;
 
 use crate::sculpt_tool::{
-    size_to_radius_mm, SculptToolKind, SCULPT_INTENSITY_DEFAULT, SCULPT_SIZE_DEFAULT,
+    size_to_radius_mm, SculptTip, SculptToolKind, SCULPT_INTENSITY_DEFAULT, SCULPT_SIZE_DEFAULT,
 };
 
 #[path = "mesh_editor_groups.rs"]
@@ -153,6 +153,20 @@ fn sculpt_size_id() -> egui::Id {
     egui::Id::new("occluview_sculpt_size")
 }
 
+fn sculpt_tip_id() -> egui::Id {
+    egui::Id::new("occluview_sculpt_tip")
+}
+
+/// The brush tip the Sculpt panel is offering.
+pub(crate) fn sculpt_tip(ctx: &egui::Context) -> SculptTip {
+    ctx.data(|data| data.get_temp::<SculptTip>(sculpt_tip_id()))
+        .unwrap_or_default()
+}
+
+pub(crate) fn set_sculpt_tip(ctx: &egui::Context, tip: SculptTip) {
+    ctx.data_mut(|data| data.insert_temp(sculpt_tip_id(), tip));
+}
+
 fn sculpt_intensity_id() -> egui::Id {
     egui::Id::new("occluview_sculpt_intensity")
 }
@@ -198,7 +212,7 @@ pub(crate) fn show(
 ) -> Option<MeshEditorAction> {
     let width = window_width(viewport_rect);
     let mut action = None;
-    egui::Window::new(locale.text("meshedit-window-title"))
+    egui::Window::new(locale.text(crate::i18n::message_id!("meshedit-window-title")))
         .id(egui::Id::new("occluview_mesh_editor_window"))
         .default_pos(default_pos(viewport_rect))
         .constrain_to(viewport_rect)
@@ -229,7 +243,11 @@ fn window_action(
     // Done/Cancel can still resolve or abort the pending sculpt.
     let ops_enabled = !state.busy && !state.sculpt_pending;
 
-    groups::header(ui, &locale.tr("meshedit-header-edit"), AppIcon::EditMesh);
+    groups::header(
+        ui,
+        &locale.tr(crate::i18n::message_id!("meshedit-header-edit")),
+        AppIcon::EditMesh,
+    );
     let mut action = groups::tab_strip(ui, &state, locale);
     ui.add_space(4.0);
     match state.active_tab {

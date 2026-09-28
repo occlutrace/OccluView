@@ -79,7 +79,12 @@ fn parse_json(bytes: &[u8]) -> Value {
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    let digest = Sha256::digest(bytes);
+    let mut encoded = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        let _ = std::fmt::Write::write_fmt(&mut encoded, format_args!("{byte:02x}"));
+    }
+    encoded
 }
 
 fn encode_base64(bytes: &[u8]) -> String {

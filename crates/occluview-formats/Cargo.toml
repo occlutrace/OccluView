@@ -2,7 +2,7 @@
 # Layering: depends on occluview-core and occluview-hps.
 [package]
 name = "occluview-formats"
-description = "3D file format readers for OccluView: STL, PLY, OBJ, and GLB."
+description = "3D file format import and export for OccluView: read STL, PLY, OBJ, OFF, GLB, and HPS; write STL, PLY, OBJ, and GLB."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -35,13 +35,13 @@ image          = { workspace = true }
 # `MoveFileExW`, so replacing an existing export is published through one
 # rename and reports its collision codes as themselves.
 [target.'cfg(windows)'.dependencies.windows]
-version = "0.62"
+version = "0.62.2"
 features = ["Win32_Storage_FileSystem"]
 
 [dev-dependencies]
 zip            = { workspace = true }
 proptest = { workspace = true }
-tempfile = "3"
+tempfile = "3.27.0"
 # The production reader accepts only PNG/JPEG. Enable BMP in tests solely to
 # prove that the byte-level allowlist still refuses a valid, decodable BMP.
 image = { workspace = true, features = ["bmp"] }

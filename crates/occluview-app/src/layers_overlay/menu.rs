@@ -96,24 +96,21 @@ fn show_material_actions(
         target,
         LayerMenuButton::new(
             AppIcon::Palette,
-            "Next tint",
-            "layer-menu-next-tint",
+            crate::i18n::message_id!("layer-menu-next-tint"),
             true,
             LayerContextAction::NextTint,
         ),
         context_request,
         locale,
     );
-    let (colors_label, colors_key, colors_icon) = if target.show_vertex_colors {
+    let (colors_key, colors_icon) = if target.show_vertex_colors {
         (
-            "Hide scan colors",
-            "layer-menu-hide-colors",
+            crate::i18n::message_id!("layer-menu-hide-colors"),
             AppIcon::ScanColors,
         )
     } else {
         (
-            "Show scan colors",
-            "layer-menu-show-colors",
+            crate::i18n::message_id!("layer-menu-show-colors"),
             AppIcon::ScanColorsOff,
         )
     };
@@ -122,25 +119,23 @@ fn show_material_actions(
         target,
         LayerMenuButton::new(
             colors_icon,
-            colors_label,
             colors_key,
             target.has_color_data,
             LayerContextAction::ToggleShowVertexColors,
-        ),
+        )
+        .selected(target.show_vertex_colors),
         context_request,
         locale,
     );
     if target.has_texture {
-        let (texture_label, texture_key, texture_icon) = if target.show_texture {
+        let (texture_key, texture_icon) = if target.show_texture {
             (
-                "Disable texture",
-                "layer-menu-disable-texture",
+                crate::i18n::message_id!("layer-menu-disable-texture"),
                 AppIcon::Texture,
             )
         } else {
             (
-                "Show texture",
-                "layer-menu-show-texture",
+                crate::i18n::message_id!("layer-menu-show-texture"),
                 AppIcon::TextureOff,
             )
         };
@@ -149,11 +144,11 @@ fn show_material_actions(
             target,
             LayerMenuButton::new(
                 texture_icon,
-                texture_label,
                 texture_key,
                 true,
                 LayerContextAction::ToggleShowTexture,
-            ),
+            )
+            .selected(target.show_texture),
             context_request,
             locale,
         );
@@ -171,8 +166,7 @@ fn show_mesh_edit_actions(
         target,
         LayerMenuButton::new(
             AppIcon::EditMesh,
-            "Mesh Editing",
-            "layer-menu-mesh-editing",
+            crate::i18n::message_id!("layer-menu-mesh-editing"),
             target.face_editable,
             LayerContextAction::EditMesh,
         ),
@@ -184,8 +178,7 @@ fn show_mesh_edit_actions(
         target,
         LayerMenuButton::new(
             AppIcon::BridgeSplit,
-            "Split bridge...",
-            "layer-menu-split-bridge",
+            crate::i18n::message_id!("layer-menu-split-bridge"),
             target.visible && target.face_editable,
             LayerContextAction::BridgeSplit,
         ),
@@ -197,8 +190,7 @@ fn show_mesh_edit_actions(
         target,
         LayerMenuButton::new(
             AppIcon::Repair,
-            "Mesh Repair",
-            "layer-menu-repair",
+            crate::i18n::message_id!("layer-menu-repair"),
             target.face_editable,
             LayerContextAction::RepairMesh,
         ),
@@ -210,8 +202,7 @@ fn show_mesh_edit_actions(
         target,
         LayerMenuButton::new(
             AppIcon::FlipNormals,
-            "Flip normals",
-            "layer-menu-flip-normals",
+            crate::i18n::message_id!("layer-menu-flip-normals"),
             target.face_editable,
             LayerContextAction::InvertNormals,
         ),
@@ -223,8 +214,7 @@ fn show_mesh_edit_actions(
         target,
         LayerMenuButton::new(
             AppIcon::Export,
-            "Export layer...",
-            "layer-menu-export",
+            crate::i18n::message_id!("layer-menu-export"),
             target.can_export,
             LayerContextAction::ExportLayer,
         ),
@@ -248,11 +238,11 @@ fn show_contact_actions(
             target,
             LayerMenuButton::new(
                 AppIcon::Contacts,
-                "Hide contacts",
-                "layer-menu-hide-contacts",
+                crate::i18n::message_id!("layer-menu-hide-contacts"),
                 true,
                 LayerContextAction::HideContacts,
-            ),
+            )
+            .selected(true),
             context_request,
             locale,
         );
@@ -268,8 +258,7 @@ fn show_contact_actions(
         target,
         LayerMenuButton::new(
             AppIcon::Contacts,
-            "Show contacts",
-            "layer-menu-contacts",
+            crate::i18n::message_id!("layer-menu-contacts"),
             target.can_read_contacts,
             LayerContextAction::Contacts,
         ),
@@ -277,7 +266,8 @@ fn show_contact_actions(
         locale,
     );
     if !target.can_read_contacts {
-        response.on_hover_text(locale.tr("layer-menu-contacts-unavailable"));
+        response
+            .on_hover_text(locale.tr(crate::i18n::message_id!("layer-menu-contacts-unavailable")));
     }
 }
 
@@ -287,26 +277,21 @@ fn show_layer_actions(
     context_request: &mut Option<LayerContextRequest>,
     locale: &crate::i18n::LocaleManager,
 ) {
-    let wireframe_label = if target.wireframe {
-        "Hide wireframe"
-    } else {
-        "Wireframe overlay"
-    };
     let wireframe_key = if target.wireframe {
-        "layer-menu-hide-wireframe"
+        crate::i18n::message_id!("layer-menu-hide-wireframe")
     } else {
-        "layer-menu-show-wireframe"
+        crate::i18n::message_id!("layer-menu-show-wireframe")
     };
     layer_menu_button(
         ui,
         target,
         LayerMenuButton::new(
             AppIcon::Wireframe,
-            wireframe_label,
             wireframe_key,
             true,
             LayerContextAction::ToggleWireframe,
-        ),
+        )
+        .selected(target.wireframe),
         context_request,
         locale,
     );
@@ -315,8 +300,7 @@ fn show_layer_actions(
         target,
         LayerMenuButton::new(
             AppIcon::Trash,
-            "Remove layer",
-            "layer-menu-remove",
+            crate::i18n::message_id!("layer-menu-remove"),
             true,
             LayerContextAction::Remove,
         ),
@@ -325,44 +309,51 @@ fn show_layer_actions(
     );
 }
 
-struct LayerMenuButton<'a> {
+struct LayerMenuButton {
     icon: AppIcon,
-    /// English wording of the entry, kept beside its catalog key as the
-    /// reference text. Rendering uses `key`.
-    #[allow(dead_code)]
-    label: &'a str,
     /// Catalog key rendering the localized label.
-    key: &'static str,
+    key: crate::i18n::MessageId,
     enabled: bool,
     action: LayerContextAction,
+    selected: Option<bool>,
 }
 
-impl<'a> LayerMenuButton<'a> {
+impl LayerMenuButton {
     const fn new(
         icon: AppIcon,
-        label: &'a str,
-        key: &'static str,
+        key: crate::i18n::MessageId,
         enabled: bool,
         action: LayerContextAction,
     ) -> Self {
         Self {
             icon,
-            label,
             key,
             enabled,
             action,
+            selected: None,
         }
+    }
+
+    fn selected(mut self, selected: bool) -> Self {
+        self.selected = Some(selected);
+        self
     }
 }
 
 fn layer_menu_button(
     ui: &mut egui::Ui,
     target: &LayerContextMenuTarget,
-    button: LayerMenuButton<'_>,
+    button: LayerMenuButton,
     context_request: &mut Option<LayerContextRequest>,
     locale: &crate::i18n::LocaleManager,
 ) -> egui::Response {
-    let response = menu_item(ui, button.icon, &locale.tr(button.key), button.enabled);
+    let response = menu_item_state(
+        ui,
+        button.icon,
+        &locale.tr(button.key),
+        button.enabled,
+        button.selected,
+    );
     if response.clicked() {
         *context_request = Some(LayerContextRequest {
             index: target.index,
@@ -383,6 +374,16 @@ pub(super) fn menu_item(
     icon: AppIcon,
     label: &str,
     enabled: bool,
+) -> egui::Response {
+    menu_item_state(ui, icon, label, enabled, None)
+}
+
+fn menu_item_state(
+    ui: &mut egui::Ui,
+    icon: AppIcon,
+    label: &str,
+    enabled: bool,
+    selected: Option<bool>,
 ) -> egui::Response {
     const ROW_H: f32 = 22.0;
     const PAD_L: f32 = 6.0;
@@ -421,6 +422,7 @@ pub(super) fn menu_item(
         egui::FontId::proportional(12.5),
         fg,
     );
+    crate::accessibility::button(&response, label, enabled, selected);
     response
 }
 

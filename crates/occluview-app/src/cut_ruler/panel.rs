@@ -339,14 +339,14 @@ fn draw_section_header(
             ui.spacing_mut().item_spacing.x = 4.0;
             let lines = ui.selectable_label(
                 matches!(current.mode, SectionDisplay::Lines),
-                locale.tr("cut-lines").as_str(),
+                locale.tr(crate::i18n::message_id!("cut-lines")).as_str(),
             );
             if lines.clicked() {
                 out.mode = SectionDisplay::Lines;
             }
             let mesh = ui.selectable_label(
                 matches!(current.mode, SectionDisplay::Mesh),
-                locale.tr("cut-mesh").as_str(),
+                locale.tr(crate::i18n::message_id!("cut-mesh")).as_str(),
             );
             if mesh.clicked() {
                 out.mode = SectionDisplay::Mesh;
@@ -355,44 +355,32 @@ fn draw_section_header(
             let dist = ui
                 .selectable_label(
                     matches!(current.measure_mode, SliceMeasureMode::Distance),
-                    locale.tr("cut-dist").as_str(),
+                    locale.tr(crate::i18n::message_id!("cut-dist")).as_str(),
                 )
-                .on_hover_text(locale.tr("cut-dist-hint"));
+                .on_hover_text(locale.tr(crate::i18n::message_id!("cut-dist-hint")));
             if dist.clicked() {
                 out.measure_mode = SliceMeasureMode::Distance;
             }
             let thick = ui
                 .selectable_label(
                     matches!(current.measure_mode, SliceMeasureMode::Thickness),
-                    locale.tr("cut-thick").as_str(),
+                    locale.tr(crate::i18n::message_id!("cut-thick")).as_str(),
                 )
-                .on_hover_text(locale.tr("cut-thick-hint"));
+                .on_hover_text(locale.tr(crate::i18n::message_id!("cut-thick-hint")));
             if thick.clicked() {
                 out.measure_mode = SliceMeasureMode::Thickness;
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let (close_rect, close) =
-                    ui.allocate_exact_size(egui::vec2(24.0, 20.0), egui::Sense::click());
-                let close_hovered = close.hovered();
-                crate::icons::paint(
-                    ui.painter(),
-                    close_rect,
-                    crate::icons::AppIcon::Close,
-                    if close_hovered {
-                        ui_theme::text()
-                    } else {
-                        ui_theme::text_weak()
-                    },
-                );
-                let close_clicked = close
-                    .on_hover_text(locale.tr("cut-close-section"))
-                    .clicked();
+                let (close_hovered, close_clicked) = draw_close_button(ui, locale);
                 if close_clicked {
                     out.command = SectionPanelCommand::Close;
                 }
                 let snap = ui
-                    .selectable_label(current.magnet, locale.tr("cut-snap").as_str())
-                    .on_hover_text(locale.tr("cut-snap-hint"));
+                    .selectable_label(
+                        current.magnet,
+                        locale.tr(crate::i18n::message_id!("cut-snap")).as_str(),
+                    )
+                    .on_hover_text(locale.tr(crate::i18n::message_id!("cut-snap-hint")));
                 if snap.clicked() {
                     out.magnet = !current.magnet;
                 }
@@ -409,6 +397,25 @@ fn draw_section_header(
         },
     );
     out
+}
+
+fn draw_close_button(ui: &mut egui::Ui, locale: &crate::i18n::LocaleManager) -> (bool, bool) {
+    let (close_rect, close) = ui.allocate_exact_size(egui::vec2(24.0, 20.0), egui::Sense::click());
+    let label = locale.tr(crate::i18n::message_id!("cut-close-section"));
+    crate::accessibility::button(&close, &label, true, None);
+    let close_hovered = close.hovered();
+    crate::icons::paint(
+        ui.painter(),
+        close_rect,
+        crate::icons::AppIcon::Close,
+        if close_hovered {
+            ui_theme::text()
+        } else {
+            ui_theme::text_weak()
+        },
+    );
+    let close_clicked = close.on_hover_text(label).clicked();
+    (close_hovered, close_clicked)
 }
 
 /// Handle one frame of pointer interaction inside the section image: pan on a
@@ -616,7 +623,7 @@ fn draw_empty_state(
     painter.text(
         image_rect.center(),
         egui::Align2::CENTER_CENTER,
-        locale.tr("cut-empty"),
+        locale.tr(crate::i18n::message_id!("cut-empty")),
         egui::FontId::proportional(12.0),
         ui_theme::text_muted(),
     );
@@ -631,8 +638,8 @@ fn draw_section_footer(
     locale: &crate::i18n::LocaleManager,
 ) {
     let hint = match measure_mode {
-        SliceMeasureMode::Distance => locale.tr("cut-footer-distance"),
-        SliceMeasureMode::Thickness => locale.tr("cut-footer-thickness"),
+        SliceMeasureMode::Distance => locale.tr(crate::i18n::message_id!("cut-footer-distance")),
+        SliceMeasureMode::Thickness => locale.tr(crate::i18n::message_id!("cut-footer-thickness")),
     };
     painter.text(
         egui::pos2(panel_rect.center().x, panel_rect.bottom() - PANEL_PAD_PX),

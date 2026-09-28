@@ -1,6 +1,10 @@
 use super::*;
 use crate::app::app_dialogs::{recent_files_popup_id, show_recent_files_popup};
 use crate::app::app_settings_panel::show_settings_toolbar_toggle;
+#[cfg(target_os = "macos")]
+use crate::app::app_settings_panel::SettingsAction;
+#[cfg(target_os = "macos")]
+use crate::app_settings::ScrollBehavior;
 use crate::app_settings::Settings;
 use crate::i18n::os::OsLocaleSource;
 use crate::i18n::preference::UiLanguagePreference;
@@ -109,6 +113,36 @@ fn run_toolbar_frame_at_with_settings(
     })
 }
 
+#[cfg(target_os = "macos")]
+fn run_app_settings_frame(
+    ctx: &egui::Context,
+    events: Vec<egui::Event>,
+    screen: egui::Rect,
+    app: &mut OccluViewApp,
+) -> anyhow::Result<(egui::Rect, egui::FullOutput)> {
+    let input = egui::RawInput {
+        screen_rect: Some(screen),
+        safe_area_insets: Some(egui::SafeAreaInsets(egui::Margin::same(4).into())),
+        events,
+        ..Default::default()
+    };
+    let mut trigger = None;
+    let mut output = ctx.run_ui(input, |ui| {
+        egui::Panel::top("app-settings-test-toolbar")
+            .exact_size(30.0)
+            .show(ui, |ui| {
+                let response = show_settings_toolbar_toggle(ui, true, &app.ui.locale);
+                trigger = Some(response.rect);
+                app.show_settings_popup(&response);
+            });
+    });
+    output.textures_delta.clear();
+    Ok((
+        trigger.ok_or_else(|| anyhow::anyhow!("the app Settings trigger should render"))?,
+        output,
+    ))
+}
+
 fn pointer_button(pos: egui::Pos2, pressed: bool) -> egui::Event {
     egui::Event::PointerButton {
         pos,
@@ -133,6 +167,34 @@ fn click(ctx: &egui::Context, position: egui::Pos2) -> anyhow::Result<ToolbarFra
             pointer_button(position, false),
         ],
     )
+}
+
+#[cfg(target_os = "macos")]
+fn click_app_settings(
+    ctx: &egui::Context,
+    screen: egui::Rect,
+    app: &mut OccluViewApp,
+    position: egui::Pos2,
+) -> anyhow::Result<()> {
+    let _ = run_app_settings_frame(
+        ctx,
+        vec![
+            egui::Event::PointerMoved(position),
+            pointer_button(position, true),
+        ],
+        screen,
+        app,
+    )?;
+    let _ = run_app_settings_frame(
+        ctx,
+        vec![
+            egui::Event::PointerMoved(position),
+            pointer_button(position, false),
+        ],
+        screen,
+        app,
+    )?;
+    Ok(())
 }
 
 fn tall_test_screen() -> egui::Rect {
@@ -272,7 +334,7 @@ fn responsive_information_modal_frame(
             ..Default::default()
         },
         |ui| {
-            show_information_modal(ui.ctx(), id, egui::vec2(560.0, 420.0), |ui| {
+            show_information_modal(ui.ctx(), id, egui::vec2(560.0, 420.0), "Close", |ui| {
                 ui.set_width(304.0_f32.min(ui.available_width()));
                 ui.set_min_height(180.0_f32.min(ui.available_height()));
             });
@@ -312,6 +374,159 @@ fn settings_show_no_text_about_the_save_format() -> anyhow::Result<()> {
         direct_control_center(&panel.output, "Remember export folder").is_ok(),
         "the folder-memory row must still render without the format text"
     );
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_settings_offer_a_selectable_smooth_scroll_action() -> anyhow::Result<()> {
+    let ctx = egui::Context::default();
+    let locale = crate::i18n::LocaleManager::for_tests();
+    let settings = Settings::default();
+    let run = |events| {
+        run_toolbar_frame_at_with_settings(&ctx, events, &locale, tall_test_screen(), &settings)
+    };
+
+    let initial = run(Vec::new())?;
+    let trigger = initial.settings_trigger.center();
+    let _ = run(vec![
+        egui::Event::PointerMoved(trigger),
+        pointer_button(trigger, true),
+    ])?;
+    let _ = run(vec![
+        egui::Event::PointerMoved(trigger),
+        pointer_button(trigger, false),
+    ])?;
+    let popup = popup_rect(&ctx, settings_popup_id())?;
+    let scroll_position = popup.center();
+    let _ = run(vec![
+        egui::Event::PointerMoved(scroll_position),
+        egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -1_000.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        },
+    ])?;
+    let visible = run(Vec::new())?;
+    let rendered_text = visible
+        .output
+        .shapes
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::epaint::Shape::Text(text) => Some(text.galley.text().to_owned()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        direct_control_center(&visible.output, "Scroll").is_ok(),
+        "Settings did not render the scroll label; visible text: {rendered_text:?}"
+    );
+    assert!(direct_control_center(&visible.output, "Pan").is_ok());
+    let zoom = direct_control_center(&visible.output, "Zoom")?;
+
+    let _ = run(vec![
+        egui::Event::PointerMoved(zoom),
+        pointer_button(zoom, true),
+    ])?;
+    let selected = run(vec![
+        egui::Event::PointerMoved(zoom),
+        pointer_button(zoom, false),
+    ])?;
+    assert_eq!(
+        selected.action,
+        Some(SettingsAction::SetScrollBehavior(ScrollBehavior::Zoom))
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn camera_after_saved_scroll(settings: &Settings) -> (bool, occluview_core::Camera) {
+    let ctx = egui::Context::default();
+    let viewport = egui::Rect::from_min_size(egui::pos2(100.0, 80.0), egui::vec2(800.0, 600.0));
+    let input = egui::RawInput {
+        screen_rect: Some(viewport),
+        events: vec![
+            egui::Event::PointerMoved(viewport.center()),
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, 40.0),
+                phase: egui::TouchPhase::Move,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+        ..Default::default()
+    };
+    let mut camera = occluview_core::Camera::default();
+    let mut changed = false;
+    ctx.run_ui(input, |ui| {
+        changed = super::super::app_viewport::update_camera_from_scroll(
+            &mut camera,
+            ui.ctx(),
+            viewport,
+            settings,
+        );
+    })
+    .drop_without_applying_deltas();
+    (changed, camera)
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn selected_scroll_action_persists_and_drives_viewport_zoom() -> anyhow::Result<()> {
+    let ctx = egui::Context::default();
+    let screen = tall_test_screen();
+    let mut app = OccluViewApp::new_for_tests(ctx.clone());
+    let (trigger, _) = run_app_settings_frame(&ctx, Vec::new(), screen, &mut app)?;
+    click_app_settings(&ctx, screen, &mut app, trigger.center())?;
+
+    let popup = popup_rect(&ctx, settings_popup_id())?;
+    let _ = run_app_settings_frame(
+        &ctx,
+        vec![
+            egui::Event::PointerMoved(popup.center()),
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, -1_000.0),
+                phase: egui::TouchPhase::Move,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+        screen,
+        &mut app,
+    )?;
+    let (_, visible) = run_app_settings_frame(&ctx, Vec::new(), screen, &mut app)?;
+    let zoom = direct_control_center(&visible, "Zoom")?;
+    click_app_settings(&ctx, screen, &mut app, zoom)?;
+
+    assert_eq!(
+        app.persistence.settings.scroll_behavior,
+        ScrollBehavior::Zoom
+    );
+    assert!(app
+        .persistence
+        .settings_persistence
+        .should_attempt(std::time::Instant::now()));
+    let saved = serde_json::to_vec(&app.persistence.settings)?;
+    let loaded: Settings = serde_json::from_slice(&saved)?;
+    assert_eq!(loaded.scroll_behavior, ScrollBehavior::Zoom);
+
+    let initial = occluview_core::Camera::default();
+    let (changed, zoomed) = camera_after_saved_scroll(&loaded);
+    assert!(changed);
+    assert_eq!(zoomed.target, initial.target);
+    assert!(zoomed.orthographic_height < initial.orthographic_height);
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn non_macos_settings_hide_the_smooth_scroll_action() -> anyhow::Result<()> {
+    let ctx = egui::Context::default();
+    let initial = run_toolbar_frame(&ctx, Vec::new())?;
+    let _ = click(&ctx, initial.settings_trigger.center())?;
+    let visible = run_toolbar_frame(&ctx, Vec::new())?;
+    assert!(direct_control_center(&visible.output, "Scroll").is_err());
     Ok(())
 }
 
@@ -388,7 +603,10 @@ fn system_language_fallback_is_visible_for_an_unavailable_system_catalog() -> an
     let ctx = egui::Context::default();
     ctx.all_styles_mut(|style| style.animation_time = 0.0);
     let manager = locale_from_system_languages(&["ja-JP"]);
-    let expected_notice = manager.tr_with("settings-language-catalog-fallback", &[("tag", "ja")]);
+    let expected_notice = manager.tr_with(
+        crate::i18n::message_id!("settings-language-catalog-fallback"),
+        &[("tag", "ja")],
+    );
 
     let initial = run_tall_toolbar_frame_in(&ctx, Vec::new(), &manager)?;
     let _ = click_tall_in(&ctx, &manager, initial.settings_trigger.center())?;
@@ -408,7 +626,10 @@ fn explicit_language_hides_an_unrelated_system_fallback() -> anyhow::Result<()> 
     ctx.all_styles_mut(|style| style.animation_time = 0.0);
     let mut manager = locale_from_system_languages(&["ja-JP"]);
     manager.set_preference(UiLanguagePreference::Explicit("de"));
-    let unrelated_notice = manager.tr_with("settings-language-catalog-fallback", &[("tag", "ja")]);
+    let unrelated_notice = manager.tr_with(
+        crate::i18n::message_id!("settings-language-catalog-fallback"),
+        &[("tag", "ja")],
+    );
 
     let initial = run_tall_toolbar_frame_in(&ctx, Vec::new(), &manager)?;
     let _ = click_tall_in(&ctx, &manager, initial.settings_trigger.center())?;
@@ -427,7 +648,10 @@ fn explicit_language_fallback_is_visible_for_an_unavailable_catalog() -> anyhow:
     ctx.all_styles_mut(|style| style.animation_time = 0.0);
     let mut manager = locale_from_system_languages(&["de-DE"]);
     manager.set_preference(UiLanguagePreference::Explicit("ja"));
-    let expected_notice = manager.tr_with("settings-language-catalog-fallback", &[("tag", "ja")]);
+    let expected_notice = manager.tr_with(
+        crate::i18n::message_id!("settings-language-catalog-fallback"),
+        &[("tag", "ja")],
+    );
 
     let initial = run_tall_toolbar_frame_in(&ctx, Vec::new(), &manager)?;
     let _ = click_tall_in(&ctx, &manager, initial.settings_trigger.center())?;
@@ -600,7 +824,7 @@ fn scrollable_information_modal_stays_near_its_declared_size() -> anyhow::Result
                 ..Default::default()
             },
             |ui| {
-                show_information_modal(ui.ctx(), id, egui::vec2(560.0, 420.0), |ui| {
+                show_information_modal(ui.ctx(), id, egui::vec2(560.0, 420.0), "Close", |ui| {
                     egui::ScrollArea::both()
                         .auto_shrink([false, false])
                         .show_rows(ui, 14.0, 2_000, |ui, rows| {
@@ -636,7 +860,7 @@ fn about_modal_does_not_cycle_through_repeated_sizing_passes() -> anyhow::Result
                 ..Default::default()
             },
             |ui| {
-                show_information_modal(ui.ctx(), id, egui::vec2(320.0, 240.0), |ui| {
+                show_information_modal(ui.ctx(), id, egui::vec2(320.0, 240.0), "Close", |ui| {
                     ui.set_width(304.0_f32.min(ui.available_width()));
                     ui.vertical_centered(|ui| {
                         ui.label("OccluView");

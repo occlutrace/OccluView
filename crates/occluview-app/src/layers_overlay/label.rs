@@ -26,7 +26,10 @@ pub(crate) fn layer_label(
     if let Some(name) = entry.mesh.name().filter(|name| !name.is_empty()) {
         return name.to_owned();
     }
-    locale.tr_with("layer-unnamed", &[("n", &(index + 1).to_string())])
+    locale.tr_with(
+        crate::i18n::message_id!("layer-unnamed"),
+        &[("n", &(index + 1).to_string())],
+    )
 }
 
 /// ASCII fallback stem for default export filenames. Not localized: a
@@ -58,7 +61,7 @@ mod tests {
         let named_mesh_result = Mesh::new(Some("Upper arch".into()), vec![], vec![]);
         assert!(named_mesh_result.is_ok(), "named mesh should construct");
         let Ok(named_mesh) = named_mesh_result else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         let named = SceneMesh::new(named_mesh);
         let unnamed = SceneMesh::new(Mesh::empty());
@@ -76,7 +79,7 @@ mod tests {
         let named_mesh_result = Mesh::new(Some("Part B".into()), vec![], vec![]);
         assert!(named_mesh_result.is_ok(), "named mesh should construct");
         let Ok(named_mesh) = named_mesh_result else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
         let named = SceneMesh::new(named_mesh);
         let placeholder = vec![PathBuf::new()];

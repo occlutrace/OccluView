@@ -95,7 +95,7 @@ mod tests {
         ]);
 
         let Some(entry) = recent.entries().first() else {
-            return;
+            panic!("required test setup or expected result was missing");
         };
 
         assert_eq!(recent_scene_label(entry), "upper.stl +1");

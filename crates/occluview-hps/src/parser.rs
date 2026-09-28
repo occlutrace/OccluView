@@ -9,7 +9,9 @@ use std::mem::size_of;
 use std::path::Path;
 use zeroize::Zeroizing;
 
+/// Largest uncompressed entry the HPS reader may retain while decoding.
 const MAX_PACKAGE_ENTRY_BYTES: u64 = 256 * 1024 * 1024;
+/// Largest total uncompressed HPS package accepted by the reader.
 const MAX_PACKAGE_UNCOMPRESSED_BYTES: u64 = 512 * 1024 * 1024;
 
 /// Decode raw HPS XML or a dental HPS package without a CE key.
@@ -53,6 +55,32 @@ pub fn read_with_key_provider<P: HpsKeyProvider + ?Sized>(
         "CA" | "CB" | "CC" | "CE" => read_hps_xml(text, schema, key_provider),
         other => Err(malformed(format!("schema {other:?} is not supported")).into()),
     }
+}
+
+/// Return the accepted aggregate uncompressed size for a package input.
+///
+/// The central directory is inspected without extracting entries, allowing a
+/// caller to reserve memory before the HPS payload is decoded.
+///
+/// # Errors
+/// Returns [`HpsError`] when the package directory is invalid or its aggregate
+/// uncompressed size exceeds the parser limit.
+pub fn package_uncompressed_size(bytes: &[u8]) -> Result<Option<u64>, HpsError> {
+    if !bytes.starts_with(&[0x50, 0x4B, 0x03, 0x04]) {
+        return Ok(None);
+    }
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
+        .map_err(|error| malformed(format!("HPS package open failed: {error}")))?;
+    let mut total = 0_u64;
+    for index in 0..archive.len() {
+        let entry = archive
+            .by_index_raw(index)
+            .map_err(|error| malformed(format!("HPS package entry open failed: {error}")))?;
+        if !entry.is_dir() {
+            total = checked_aggregate_uncompressed_size(total, entry.size())?;
+        }
+    }
+    Ok(Some(total))
 }
 
 fn read_package<P: HpsKeyProvider + ?Sized>(

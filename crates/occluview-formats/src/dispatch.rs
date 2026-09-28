@@ -5,79 +5,19 @@
 
 use crate::error::FormatError;
 use crate::hps::HpsKeyProvider;
+use crate::memory::{check_estimate, estimate_file_peak_bytes};
 use crate::probe::FormatKind;
+#[cfg(test)]
+pub(crate) use crate::read::import_batches;
+pub use crate::read::{
+    read_file, read_file_bytes, read_file_bytes_with_limit, read_file_loaded_with_key_provider,
+    read_file_shaded, read_file_with_key_provider, read_files, read_files_with_key_provider,
+    read_files_with_memory_budget, FileBytes, IMPORT_BATCH_BUDGET_BYTES, IMPORT_PARALLELISM,
+    MAX_IMPORT_BYTES,
+};
 use crate::units::{policy_for, UnitInterpretation};
-use occluview_core::{Mesh, Scene, SceneMesh};
-use rayon::prelude::*;
-use std::io::Read;
-use std::path::{Path, PathBuf};
 
-/// Largest single file the viewer will read into memory.
-///
-/// The number comes from the corpus, not from a round figure: the largest real
-/// scan in the test corpus is a 41 MB intraoral OBJ, and dental
-/// packages with embedded textures reach a few hundred MB. A gigabyte is
-/// therefore ~25x the largest known scan — far enough that no real scan is
-/// refused, close enough that a mistaken pick (a video, a disk image, a
-/// multi-gigabyte CBCT export) fails in the reader instead of in the
-/// allocator. It is also above the shell thumbnail's own 512 MiB file cap, so
-/// the viewer never refuses a file the Explorer preview is willing to render.
-pub const MAX_IMPORT_BYTES: u64 = 1 << 30;
-
-/// Bytes of file data that may be in flight while a multi-file import parses.
-///
-/// `MAX_IMPORT_BYTES` bounds one file; a folder of them is the other half of
-/// the same problem. Two arch scans of 250 MB each parse together; a single
-/// gigabyte file parses alone, because a batch always accepts its first file.
-pub const IMPORT_BATCH_BUDGET_BYTES: u64 = 512 << 20;
-
-/// Files parsed at once during a multi-file import.
-///
-/// The cores are shared with the renderer and with whatever else the operator
-/// is doing, and parsing is memory-hungry rather than CPU-hungry, so two is the
-/// point where a second file is worth it and more are not.
-pub const IMPORT_PARALLELISM: usize = 2;
-
-/// Owned file bytes. Parsing must not depend on a file that another process
-/// may replace or truncate while the import is in progress.
-pub struct FileBytes {
-    extension: String,
-    bytes: Vec<u8>,
-}
-
-impl FileBytes {
-    /// Return the normalized lowercase extension used for dispatch.
-    #[must_use]
-    pub fn extension(&self) -> &str {
-        &self.extension
-    }
-
-    /// Borrow the file contents as a byte slice.
-    #[must_use]
-    pub fn as_slice(&self) -> &[u8] {
-        &self.bytes
-    }
-
-    /// Dispatch the loaded bytes through the canonical format readers.
-    ///
-    /// # Errors
-    /// See [`dispatch_by_extension`].
-    pub fn dispatch(&self) -> Result<Mesh, FormatError> {
-        self.dispatch_with_key_provider(&crate::hps::NoHpsKeyProvider)
-    }
-
-    /// Dispatch the loaded bytes through the canonical format readers with an
-    /// HPS key provider.
-    ///
-    /// # Errors
-    /// See [`dispatch_by_extension_with_key_provider`].
-    pub fn dispatch_with_key_provider(
-        &self,
-        key_provider: &dyn HpsKeyProvider,
-    ) -> Result<Mesh, FormatError> {
-        dispatch_by_extension_with_key_provider(self.extension(), self.as_slice(), key_provider)
-    }
-}
+use occluview_core::Mesh;
 
 /// Read `bytes` as the format indicated by `kind`, returning a [`Mesh`].
 ///
@@ -144,10 +84,20 @@ pub fn dispatch_by_kind_loaded(
     key_provider: &dyn HpsKeyProvider,
     shading: crate::MeshShading,
 ) -> Result<LoadedMesh, FormatError> {
+    check_estimate(estimate_file_peak_bytes(kind, bytes, 0)?)?;
+    dispatch_by_kind_loaded_admitted(kind, bytes, key_provider, shading)
+}
+
+pub(crate) fn dispatch_by_kind_loaded_admitted(
+    kind: FormatKind,
+    bytes: &[u8],
+    key_provider: &dyn HpsKeyProvider,
+    shading: crate::MeshShading,
+) -> Result<LoadedMesh, FormatError> {
     let mesh = match kind {
-        FormatKind::Stl => crate::stl::read_shaded(bytes, shading),
-        FormatKind::Ply => crate::ply::read_shaded(bytes, shading),
-        FormatKind::Obj => crate::obj::read_shaded(bytes, shading),
+        FormatKind::Stl => crate::stl::read_admitted(bytes, shading),
+        FormatKind::Ply => crate::ply::read_admitted(bytes, shading),
+        FormatKind::Obj => crate::obj::read_admitted(bytes, shading),
         // `.gltf` is JSON, and `probe` maps both extensions to this kind, but
         // the GLB reader only accepts the binary container and would answer
         // "not a glTF file: bad signature" for a file that is a glTF. Defer
@@ -157,8 +107,8 @@ pub fn dispatch_by_kind_loaded(
             format: "glTF",
             reason: ".gltf (JSON) is not read; export .glb".to_string(),
         }),
-        FormatKind::Gltf => crate::gltf::read(bytes),
-        FormatKind::Off => crate::off::read(bytes),
+        FormatKind::Gltf => crate::gltf::read_admitted(bytes),
+        FormatKind::Off => crate::off::read_admitted(bytes),
         // 3MF is recognized but has no reader.
         FormatKind::Threemf => Err(FormatError::Malformed {
             format: "occluview-formats",
@@ -232,6 +182,25 @@ pub fn dispatch_by_extension_loaded(
     key_provider: &dyn HpsKeyProvider,
     shading: crate::MeshShading,
 ) -> Result<LoadedMesh, FormatError> {
+    dispatch_by_extension_loaded_inner(extension, bytes, key_provider, shading, false)
+}
+
+pub(crate) fn dispatch_by_extension_loaded_with_companion_budget(
+    extension: &str,
+    bytes: &[u8],
+    key_provider: &dyn HpsKeyProvider,
+    shading: crate::MeshShading,
+) -> Result<LoadedMesh, FormatError> {
+    dispatch_by_extension_loaded_inner(extension, bytes, key_provider, shading, true)
+}
+
+fn dispatch_by_extension_loaded_inner(
+    extension: &str,
+    bytes: &[u8],
+    key_provider: &dyn HpsKeyProvider,
+    shading: crate::MeshShading,
+    includes_companions: bool,
+) -> Result<LoadedMesh, FormatError> {
     // The BOM is stripped by `probe` (for signature matching) and by each text
     // reader (PLY, ASCII STL), not here. Stripping it in front of the whole
     // format layer would remove three bytes from every container, including a
@@ -241,247 +210,25 @@ pub fn dispatch_by_extension_loaded(
     // Magic-first: if the bytes declare a format, honor it over the extension.
     // `probe` falls back to the extension when the magic is ambiguous (e.g.
     // binary STL with a zero header), so this is safe.
-    let kind = match crate::probe::probe(Some(extension), bytes) {
-        Ok(kind) => kind,
-        // probe only fails when neither magic nor extension match; surface that.
-        Err(e) => match e {
-            FormatError::Unsupported { .. } => {
-                // probe rejected the extension too — preserve the original
-                // "unsupported extension" error.
-                return Err(FormatError::Unsupported {
-                    extension: extension.to_string(),
-                });
-            }
-            other => return Err(other),
-        },
+    let kind = probe_kind(extension, bytes)?;
+    let file_estimate = estimate_file_peak_bytes(kind, bytes, 0)?;
+    let companion_estimate = if includes_companions {
+        crate::memory::estimate_companion_peak_bytes(kind, bytes)
+    } else {
+        0
     };
-    dispatch_by_kind_loaded(kind, bytes, key_provider, shading)
+    check_estimate(file_estimate.saturating_add(companion_estimate))?;
+    dispatch_by_kind_loaded_admitted(kind, bytes, key_provider, shading)
 }
 
-fn normalized_extension(path: &Path) -> Result<String, FormatError> {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .map(str::to_ascii_lowercase)
-        .ok_or(FormatError::Unsupported {
-            extension: String::new(),
-        })
-}
-
-/// Read a file into owned bytes, refusing anything above [`MAX_IMPORT_BYTES`].
-///
-/// A concurrent truncation during the read may yield a parse error, but a
-/// later truncation cannot invalidate this buffer.
-///
-/// # Errors
-/// - [`FormatError::Io`] if the file cannot be opened or read.
-/// - [`FormatError::TooLarge`] if the file exceeds the limit.
-/// - [`FormatError::Unsupported`] when the file has no UTF-8 extension.
-pub fn read_file_bytes(path: &Path) -> Result<FileBytes, FormatError> {
-    read_file_bytes_with_limit(path, MAX_IMPORT_BYTES)
-}
-
-/// As [`read_file_bytes`], with a caller-chosen limit.
-///
-/// The thumbnail host passes its own, smaller budget: it runs inside Explorer,
-/// where an over-large read costs more than a missing preview.
-///
-/// The size is checked twice. The metadata check refuses the ordinary case
-/// before a byte is read; the length check after the read covers a file that
-/// grew between the two, which is the window a hostile or merely busy writer
-/// would use.
-///
-/// # Errors
-/// See [`read_file_bytes`].
-pub fn read_file_bytes_with_limit(path: &Path, limit: u64) -> Result<FileBytes, FormatError> {
-    let extension = normalized_extension(path)?;
-    let file = std::fs::File::open(path).map_err(FormatError::Io)?;
-    let metadata = file.metadata().map_err(FormatError::Io)?;
-    if metadata.len() > limit {
-        return Err(FormatError::TooLarge {
-            bytes: metadata.len(),
-            limit,
-        });
+pub(crate) fn probe_kind(extension: &str, bytes: &[u8]) -> Result<FormatKind, FormatError> {
+    match crate::probe::probe(Some(extension), bytes) {
+        Ok(kind) => Ok(kind),
+        Err(FormatError::Unsupported { .. }) => Err(FormatError::Unsupported {
+            extension: extension.to_string(),
+        }),
+        Err(error) => Err(error),
     }
-    let capacity = usize::try_from(metadata.len()).unwrap_or(0);
-    let mut bytes = Vec::with_capacity(capacity);
-    let mut reader = file.take(limit.saturating_add(1));
-    reader.read_to_end(&mut bytes).map_err(FormatError::Io)?;
-    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > limit {
-        return Err(FormatError::TooLarge {
-            bytes: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
-            limit,
-        });
-    }
-    Ok(FileBytes { extension, bytes })
-}
-
-/// Group files into the batches a multi-file import parses together.
-///
-/// A batch takes files while it has room for their bytes and has not reached
-/// the concurrency limit. The first file always joins, so a file larger than
-/// the budget is parsed on its own rather than refused: the per-file limit is
-/// what decides whether it may be read at all.
-fn import_batches(sizes: &[u64], budget: u64, parallelism: usize) -> Vec<std::ops::Range<usize>> {
-    let parallelism = parallelism.max(1);
-    let mut batches = Vec::new();
-    let mut start = 0;
-    let mut bytes = 0_u64;
-    for (index, size) in sizes.iter().enumerate() {
-        let is_first = index == start;
-        let full = index - start >= parallelism;
-        let over_budget = !is_first && bytes.saturating_add(*size) > budget;
-        if full || over_budget {
-            batches.push(start..index);
-            start = index;
-            bytes = 0;
-        }
-        bytes = bytes.saturating_add(*size);
-    }
-    if start < sizes.len() {
-        batches.push(start..sizes.len());
-    }
-    batches
-}
-
-/// Read owned file bytes, then dispatch by extension.
-///
-/// # Errors
-/// - [`FormatError::Io`] if the file cannot be read.
-/// - See [`dispatch_by_extension`] for parse errors.
-pub fn read_file(path: &Path) -> Result<Mesh, FormatError> {
-    read_file_with_key_provider(path, &crate::hps::NoHpsKeyProvider)
-}
-
-/// Read a file with an HPS key provider.
-///
-/// # Errors
-/// See [`read_file`].
-pub fn read_file_with_key_provider(
-    path: &Path,
-    key_provider: &dyn HpsKeyProvider,
-) -> Result<Mesh, FormatError> {
-    read_file_loaded_with_key_provider(path, key_provider).map(|loaded| loaded.mesh)
-}
-
-/// As [`read_file_with_key_provider`], additionally reporting the probed
-/// kind and its import-unit interpretation.
-///
-/// # Errors
-/// See [`read_file`].
-pub fn read_file_loaded_with_key_provider(
-    path: &Path,
-    key_provider: &dyn HpsKeyProvider,
-) -> Result<LoadedMesh, FormatError> {
-    let bytes = read_file_bytes(path)?;
-    let mut loaded = dispatch_by_extension_loaded(
-        bytes.extension(),
-        bytes.as_slice(),
-        key_provider,
-        crate::MeshShading::Reconstructed,
-    )?;
-    // A PLY from another tool, and any OBJ, names its image beside the file;
-    // the reader sees bytes only, so finding it is this layer's job.
-    crate::companions::attach(
-        &mut loaded.mesh,
-        path,
-        crate::companions::LocateKind::for_kind(loaded.kind),
-        bytes.as_slice(),
-    );
-    Ok(loaded)
-}
-
-/// As [`read_file_with_key_provider`], choosing how vertex normals are
-/// produced.
-///
-/// # Errors
-/// See [`FormatError`].
-pub fn read_file_shaded(
-    path: &Path,
-    key_provider: &dyn HpsKeyProvider,
-    shading: crate::MeshShading,
-) -> Result<Mesh, FormatError> {
-    let bytes = read_file_bytes(path)?;
-    // The probed format decides the companion lookup, exactly as it decides
-    // which reader runs.
-    let kind =
-        crate::probe::probe(Some(bytes.extension()), bytes.as_slice()).unwrap_or(FormatKind::Ply);
-    let mut mesh =
-        dispatch_by_extension_shaded(bytes.extension(), bytes.as_slice(), key_provider, shading)?;
-    crate::companions::attach(
-        &mut mesh,
-        path,
-        crate::companions::LocateKind::for_kind(kind),
-        bytes.as_slice(),
-    );
-    Ok(mesh)
-}
-
-/// Read multiple files into a [`Scene`], wrapping each [`Mesh`] in a
-/// [`SceneMesh`]. The canonical dental use case is loading an upper + lower
-/// arch pair as a two-mesh scene.
-///
-/// Each mesh is placed at the origin with an identity transform; the caller
-/// (app / thumbnail framer) repositions them as needed via `SceneMesh`'s
-/// transform field, or just relies on `Scene::bbox()` to frame the union.
-///
-/// Every layer carries its import-unit interpretation
-/// ([`SceneMesh::import_units`]); coordinates themselves are untouched —
-/// normalization to millimeters happens exactly once, at the point a policy
-/// applies a non-unity scale, and no v1 policy does yet.
-///
-/// **Fail-fast:** returns the first `(path, error)` pair encountered. The
-/// caller decides whether to abort or offer "skip + continue" — for v1 we
-/// abort, which keeps the error path simple and predictable.
-///
-/// # Errors
-/// - The `Err` variant carries the path that failed and its [`FormatError`].
-pub fn read_files(paths: &[PathBuf]) -> Result<Scene, (PathBuf, FormatError)> {
-    read_files_with_key_provider(paths, &crate::hps::NoHpsKeyProvider)
-}
-
-/// Read multiple files into a [`Scene`], using an HPS key provider.
-///
-/// # Errors
-/// See [`read_files`].
-pub fn read_files_with_key_provider(
-    paths: &[PathBuf],
-    key_provider: &dyn HpsKeyProvider,
-) -> Result<Scene, (PathBuf, FormatError)> {
-    let mut scene = Scene::new();
-    if let [path] = paths {
-        let loaded = read_file_loaded_with_key_provider(path, key_provider)
-            .map_err(|e| (path.clone(), e))?;
-        scene.add(SceneMesh::new(loaded.mesh).with_import_units(loaded.units));
-        return Ok(scene);
-    }
-
-    // Sizes first, so the batch plan knows what it is about to hold. A file
-    // whose metadata cannot be read gets size zero and its own real error from
-    // the read below.
-    let sizes = paths
-        .iter()
-        .map(|path| {
-            std::fs::metadata(path)
-                .map_or(0, |metadata| metadata.len())
-                .min(MAX_IMPORT_BYTES)
-        })
-        .collect::<Vec<_>>();
-
-    for batch in import_batches(&sizes, IMPORT_BATCH_BUDGET_BYTES, IMPORT_PARALLELISM) {
-        let meshes = paths[batch]
-            .par_iter()
-            .map(|path| {
-                read_file_loaded_with_key_provider(path, key_provider)
-                    .map_err(|e| (path.clone(), e))
-            })
-            .collect::<Vec<_>>();
-
-        for result in meshes {
-            let loaded = result?;
-            scene.add(SceneMesh::new(loaded.mesh).with_import_units(loaded.units));
-        }
-    }
-    Ok(scene)
 }
 
 /// True when `bytes` starts an object, which is how a `.gltf` (JSON) file
@@ -512,7 +259,9 @@ fn strip_utf8_bom(bytes: &[u8]) -> &[u8] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SCENE_IMPORT_MEMORY_BUDGET_BYTES;
     use std::io::Write;
+    use std::path::{Path, PathBuf};
 
     /// A minimal valid binary STL: 1 triangle in the XY plane, normal +Z.
     fn one_triangle_binary_stl() -> Vec<u8> {
@@ -747,6 +496,32 @@ mod tests {
     fn unknown_extension_is_unsupported() {
         let res = dispatch_by_extension("xyz", &[0u8; 4]);
         assert!(matches!(res, Err(FormatError::Unsupported { .. })));
+    }
+
+    #[test]
+    fn refuses_a_ply_header_that_claims_more_vertices_than_the_scene_budget() {
+        let bytes = b"ply\nformat ascii 1.0\nelement vertex 1000000000\nproperty float x\nproperty float y\nproperty float z\nelement face 0\nproperty list uchar int vertex_indices\nend_header\n";
+
+        let error = dispatch_by_extension("ply", bytes)
+            .expect_err("the count must be checked before a vertex buffer is built");
+
+        assert!(matches!(error, FormatError::MemoryBudgetExceeded { .. }));
+    }
+
+    #[test]
+    fn scene_admission_includes_memory_retained_by_existing_layers() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("tri.stl");
+        std::fs::write(&path, one_triangle_binary_stl()).expect("write STL");
+
+        let error = read_files_with_memory_budget(
+            std::slice::from_ref(&path),
+            &crate::hps::NoHpsKeyProvider,
+            SCENE_IMPORT_MEMORY_BUDGET_BYTES - 1,
+        )
+        .expect_err("the existing scene and source buffer exceed the budget");
+
+        assert!(matches!(error.1, FormatError::MemoryBudgetExceeded { .. }));
     }
 
     #[test]

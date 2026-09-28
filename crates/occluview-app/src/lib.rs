@@ -23,6 +23,9 @@
 //! and `single_instance`, `jump_list` and `update_notice` handle the desktop
 //! integration around all of it.
 
+// Test setup failures must fail the test instead of passing through an early return.
+#![cfg_attr(test, allow(clippy::panic))]
+
 pub mod invalidation;
 mod startup;
 
@@ -31,9 +34,10 @@ pub use startup::{
 };
 
 use anyhow::{Context, Result};
-use occluview_formats::{hps::RuntimeHpsKeyProvider, read_files_with_key_provider};
+use occluview_formats::read_files_with_memory_budget;
 use std::path::PathBuf;
 
+mod accessibility;
 mod align_brush;
 mod align_drag;
 mod align_geometry;
@@ -88,6 +92,7 @@ mod recent_files;
 mod repair_report;
 mod scale_bar;
 mod scene_loading;
+mod sculpt_kernel;
 mod sculpt_tool;
 mod sculpt_worker;
 mod section_view;

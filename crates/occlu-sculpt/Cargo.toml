@@ -1,0 +1,24 @@
+[package]
+name = "occlu-sculpt"
+description = "Surface sculpting kernel: brush dabs, live remeshing and stroke sessions for dental scan meshes."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+
+[dependencies]
+glam = { workspace = true }
+occlu-geometry-math = { workspace = true }
+rayon = { workspace = true, optional = true }
+
+[features]
+default = ["parallel"]
+# Parallel remesh upkeep and sparse fairing rows. Off uses single-threaded loops.
+parallel = ["dep:rayon"]
+
+[lints]
+workspace = true

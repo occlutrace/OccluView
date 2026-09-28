@@ -1,0 +1,21 @@
+# occluview-surface-query — shared triangle-surface queries and job cancellation.
+[package]
+name = "occluview-surface-query"
+description = "Shared triangle-surface indexing and cooperative cancellation."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+glam = { workspace = true }
+occlu-geometry-math = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
