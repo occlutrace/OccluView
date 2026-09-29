@@ -606,7 +606,7 @@ mod tests {
         // delivers the primary press and the pointer's move in one batch: the
         // press lands on the surface, then the pointer is already 60 px away by
         // the end of the same frame. The frame's current pointer position is
-        // therefore NOT where the button went down, and neither `hover_pos` nor
+        // therefore not where the button went down, and neither `hover_pos` nor
         // `interact_pointer_pos` can be used to anchor the turn.
         frame(vec![
             egui::Event::ModifiersChanged(modifiers),
