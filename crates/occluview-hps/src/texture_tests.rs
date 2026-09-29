@@ -640,7 +640,7 @@ fn a_swapped_atlas_is_corrected_at_every_brightness() {
 #[test]
 fn the_swap_sample_covers_every_column_not_just_the_first() {
     // 4096x4096 where only the first column is blue and everything else is warm
-    // gingiva: the population is overwhelmingly warm, so it must NOT be swapped.
+    // gingiva: the population is overwhelmingly warm, so it must not be swapped.
     let width = 4096u32;
     let height = 4096u32;
     let mut pixels = vec![[200, 140, 80, 255]; (width * height) as usize];
