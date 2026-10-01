@@ -9,7 +9,7 @@ use occluview_core::SceneMeshId;
 
 use super::app_align_display::AlignOverlay;
 use super::SceneContext;
-use crate::align_worker::{AlignCompletion, AlignFailure, AlignOutcome, AlignWorker};
+use crate::align::align_worker::{AlignCompletion, AlignFailure, AlignOutcome, AlignWorker};
 use crate::edit_mode::EditModeCommand;
 
 fn change_affects_pair(
@@ -534,7 +534,7 @@ mod tests {
     #[test]
     fn typed_failures_resolve_to_their_catalog_keys() {
         use super::align_failure_parts;
-        use crate::align_worker::AlignFailure;
+        use crate::align::align_worker::AlignFailure;
         use occluview_align::FitRejection;
 
         let cases = [

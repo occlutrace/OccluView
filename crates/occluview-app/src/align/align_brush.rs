@@ -28,7 +28,7 @@ const DEFAULT_AUTO_RADIUS_MM: f32 = 3.0;
 /// How much one wheel notch changes the radius.
 const WHEEL_STEP_MM: f32 = 0.25;
 
-use crate::align_markings::AlignSide;
+use crate::align::align_markings::AlignSide;
 
 /// Which scan(s) the Brush tool acts on.
 ///
@@ -194,7 +194,7 @@ mod tests {
         AlignBrush, BrushTarget, DEFAULT_AUTO_RADIUS_MM, DEFAULT_RADIUS_MM, MAX_RADIUS_MM,
         MIN_RADIUS_MM,
     };
-    use crate::align_markings::AlignSide;
+    use crate::align::align_markings::AlignSide;
 
     #[test]
     fn a_new_brush_is_closed_at_a_usable_size_and_aims_both_scans() {

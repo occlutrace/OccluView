@@ -12,7 +12,7 @@
 #![allow(clippy::expect_used, clippy::float_cmp, clippy::unwrap_used)]
 
 use super::*;
-use crate::align_tool::AlignPoint;
+use crate::align::align_tool::AlignPoint;
 use crate::app::app_test_support::{named_scene, push_named_layer, test_app};
 use crate::viewer::pick_scene_hit;
 use occluview_core::{Mesh, Vertex};

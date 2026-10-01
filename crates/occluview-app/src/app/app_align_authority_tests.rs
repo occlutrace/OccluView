@@ -6,7 +6,7 @@
 #![allow(clippy::expect_used, clippy::float_cmp, clippy::unwrap_used)]
 
 use super::*;
-use crate::align_worker::{AlignOutcome, AlignWorker};
+use crate::align::align_worker::{AlignOutcome, AlignWorker};
 use crate::app::app_test_support::{named_scene, push_named_layer, test_app};
 use crate::app::OccluViewApp;
 use glam::Vec3;
@@ -51,7 +51,7 @@ fn manual_pose_changes_preserve_point_pairs_across_repeated_tab_trips() {
             .tools
             .align
             .tool
-            .click(crate::align_tool::AlignPoint {
+            .click(crate::align::align_tool::AlignPoint {
                 layer: moving_id,
                 local: moving,
                 normal: Vec3::Z,
@@ -60,7 +60,7 @@ fn manual_pose_changes_preserve_point_pairs_across_repeated_tab_trips() {
             .tools
             .align
             .tool
-            .click(crate::align_tool::AlignPoint {
+            .click(crate::align::align_tool::AlignPoint {
                 layer: fixed_id,
                 local: fixed,
                 normal: Vec3::Z,
@@ -69,7 +69,7 @@ fn manual_pose_changes_preserve_point_pairs_across_repeated_tab_trips() {
     assert_eq!(app.workspace.scenes[0].tools.align.tool.pairs().len(), 2);
     let pairs = app.workspace.scenes[0].tools.align.tool.pairs().to_vec();
 
-    app.workspace.scenes[0].tools.align.tab = crate::align_panel::AlignTab::Manually;
+    app.workspace.scenes[0].tools.align.tab = crate::align::align_panel::AlignTab::Manually;
     app.active_context()
         .expect("live test scene")
         .settle_align_tab_change();
@@ -90,9 +90,9 @@ fn manual_pose_changes_preserve_point_pairs_across_repeated_tab_trips() {
     app.workspace.scenes[0].document.scene = Some(Arc::new(scene));
 
     for tab in [
-        crate::align_panel::AlignTab::Automatically,
-        crate::align_panel::AlignTab::Manually,
-        crate::align_panel::AlignTab::Automatically,
+        crate::align::align_panel::AlignTab::Automatically,
+        crate::align::align_panel::AlignTab::Manually,
+        crate::align::align_panel::AlignTab::Automatically,
     ] {
         app.workspace.scenes[0].tools.align.tab = tab;
         app.active_context()
@@ -120,7 +120,7 @@ fn a_failed_align_worker_recovers_without_disabling_the_coarse_fit() {
             .tools
             .align
             .tool
-            .click(crate::align_tool::AlignPoint {
+            .click(crate::align::align_tool::AlignPoint {
                 layer: moving_id,
                 local: moving,
                 normal: Vec3::Z,
@@ -129,7 +129,7 @@ fn a_failed_align_worker_recovers_without_disabling_the_coarse_fit() {
             .tools
             .align
             .tool
-            .click(crate::align_tool::AlignPoint {
+            .click(crate::align::align_tool::AlignPoint {
                 layer: fixed_id,
                 local: fixed,
                 normal: Vec3::Z,
@@ -739,7 +739,7 @@ fn returning_to_automatic_does_not_measure_implicitly() {
             .apply_deviation_colors(colors),
         "a map is up to be dropped"
     );
-    app.workspace.scenes[0].tools.align.tab = crate::align_panel::AlignTab::Automatically;
+    app.workspace.scenes[0].tools.align.tab = crate::align::align_panel::AlignTab::Automatically;
 
     app.active_context()
         .expect("live test scene")

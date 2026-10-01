@@ -25,7 +25,7 @@ use occluview_core::{SceneMesh, SceneMeshId};
 use super::app_align::layer_of;
 use super::app_align_display::AlignOverlay;
 use super::SceneContext;
-use crate::align_markings::{AlignSide, AutoKeep, MarkedMesh, MarkedOn, MaskCommand};
+use crate::align::align_markings::{AlignSide, AutoKeep, MarkedMesh, MarkedOn, MaskCommand};
 use crate::viewer::pick_layer_hit;
 
 /// The identity a mask painted on this layer has to match later.
@@ -37,7 +37,7 @@ fn marked_on(entry: &SceneMesh) -> MarkedOn {
 }
 
 fn resize_align_brush_from_wheel(
-    brush: &mut crate::align_brush::AlignBrush,
+    brush: &mut crate::align::align_brush::AlignBrush,
     ctx: &egui::Context,
 ) -> bool {
     // Some platforms turn a shifted wheel into horizontal scroll, so read
@@ -237,7 +237,7 @@ impl SceneContext<'_> {
         // The viewport camera is orthographic, so a millimetre maps to a fixed
         // number of pixels regardless of depth.
         let mm_per_pixel =
-            crate::align_drag::mm_per_pixel(camera.orthographic_height, viewport_rect.height());
+            crate::align::align_drag::mm_per_pixel(camera.orthographic_height, viewport_rect.height());
         let radius_px = self.tools.align.brush.radius_mm() / mm_per_pixel;
         if !radius_px.is_finite() || radius_px < 2.0 {
             return;
@@ -373,7 +373,7 @@ impl SceneContext<'_> {
         command: MaskCommand,
         side: AlignSide,
         entry: &SceneMesh,
-    ) -> Option<crate::align_markings::MaskCommandOutcome> {
+    ) -> Option<crate::align::align_markings::MaskCommandOutcome> {
         let pose = Rigid::from_affine(&entry.transform)?;
         // "Mark automatic" keeps a disc at each arrow end, and the arrows only
         // touch the surface they were clicked on.
@@ -602,7 +602,7 @@ fn region_color(
     vertex: usize,
 ) -> [u8; 4] {
     if mask.and_then(|mask| mask.get(vertex).copied()) == Some(occluview_align::EXCLUDED) {
-        return crate::align_markings::MARKED_OUT_COLOR;
+        return crate::align::align_markings::MARKED_OUT_COLOR;
     }
     let mut color = vertices
         .get(vertex)
@@ -616,8 +616,8 @@ mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
 
     use super::region_color;
-    use crate::align_brush::{AlignBrush, BrushTarget};
-    use crate::align_markings::{MaskCommand, MARKED_OUT_COLOR};
+    use crate::align::align_brush::{AlignBrush, BrushTarget};
+    use crate::align::align_markings::{MaskCommand, MARKED_OUT_COLOR};
     use glam::Vec3;
     use occluview_core::Vertex;
 
@@ -747,7 +747,7 @@ mod tests {
     #[test]
     #[allow(clippy::too_many_lines)]
     fn a_stroke_drops_the_map_instead_of_recomputing_it() {
-        use crate::align_markings::{AlignSide, MarkedMesh};
+        use crate::align::align_markings::{AlignSide, MarkedMesh};
         use crate::app::app_align_display::AlignOverlay;
         use crate::app::app_test_support::{named_scene, push_named_layer, test_app};
         use glam::DVec3;

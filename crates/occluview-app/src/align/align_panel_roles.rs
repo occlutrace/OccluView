@@ -9,7 +9,7 @@
 
 use eframe::egui;
 
-use crate::align_markings::AlignSide;
+use crate::align::align_markings::AlignSide;
 use crate::ui::icons::AppIcon;
 use crate::ui::ui_theme;
 
@@ -97,7 +97,7 @@ pub(crate) fn show(
         let text_width =
             (ui.available_width() - button_width - ui.spacing().item_spacing.x).max(0.0);
         ui.allocate_ui(
-            egui::vec2(text_width, crate::align_panel::CHIP_HEIGHT),
+            egui::vec2(text_width, crate::align::align_panel::CHIP_HEIGHT),
             |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
@@ -113,7 +113,7 @@ pub(crate) fn show(
                 });
             },
         );
-        swap = crate::align_panel::chip(
+        swap = crate::align::align_panel::chip(
             ui,
             button_width,
             Some(AppIcon::Redo),

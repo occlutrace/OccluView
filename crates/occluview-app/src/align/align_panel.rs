@@ -9,11 +9,11 @@
 
 use eframe::egui;
 
-use crate::align_drag::DragConstraint;
-use crate::align_tool::AlignTool;
-use crate::align_worker::AlignSettings;
+use crate::align::align_drag::DragConstraint;
+use crate::align::align_tool::AlignTool;
+use crate::align::align_worker::AlignSettings;
 use crate::ui::icons::AppIcon;
-use crate::{align_panel_map, ui::ui_theme};
+use crate::{align::align_panel_map, ui::ui_theme};
 
 /// Fixed window width, matching the mesh editor so the two read as one family.
 const WINDOW_WIDTH: f32 = 320.0;
@@ -94,7 +94,7 @@ pub(crate) struct AlignPanelView<'a> {
     /// Whether a landed Best fit matching result authorizes a heatmap.
     pub(crate) refined_match_ready: bool,
     /// Which scan moves onto which, once both are named.
-    pub(crate) roles: Option<crate::align_panel_roles::AlignRoles>,
+    pub(crate) roles: Option<crate::align::align_panel_roles::AlignRoles>,
     /// Whether a job is in flight.
     pub(crate) busy: bool,
     /// Whether the worker stopped and cannot accept another job.
@@ -278,7 +278,7 @@ fn automatically(
     enabled: bool,
     locale: &crate::i18n::LocaleManager,
 ) -> Option<AlignPanelAction> {
-    let mut action = if crate::align_panel_roles::show(ui, view.roles.as_ref(), enabled, locale) {
+    let mut action = if crate::align::align_panel_roles::show(ui, view.roles.as_ref(), enabled, locale) {
         Some(AlignPanelAction::SwapRoles)
     } else {
         None
@@ -288,9 +288,9 @@ fn automatically(
     prompt(ui, view.tool, locale);
     action = action.or(back(ui, view.tool, enabled, locale));
     ui.add_space(2.0);
-    crate::align_panel_settings::matching(ui, view.settings, enabled, locale);
+    crate::align::align_panel_settings::matching(ui, view.settings, enabled, locale);
     ui.separator();
-    crate::align_panel_settings::exclude(ui, view.excluding, enabled, locale);
+    crate::align::align_panel_settings::exclude(ui, view.excluding, enabled, locale);
     action.or(align_panel_map::show(
         ui,
         view.settings,

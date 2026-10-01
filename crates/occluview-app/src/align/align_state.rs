@@ -8,13 +8,13 @@
 //! `impl OccluViewApp` blocks in `app_align*.rs` and `align_*.rs` that access
 //! the fields through `self.align.<field>`.
 
-use crate::align_brush::AlignBrush;
-use crate::align_drag::DragConstraint;
-use crate::align_geometry::{AlignGeometry, PaintedVertices};
-use crate::align_markings::AlignMarkings;
-use crate::align_panel::AlignTab;
-use crate::align_tool::AlignTool;
-use crate::align_worker::{AlignSettings, AlignWorker};
+use crate::align::align_brush::AlignBrush;
+use crate::align::align_drag::DragConstraint;
+use crate::align::align_geometry::{AlignGeometry, PaintedVertices};
+use crate::align::align_markings::AlignMarkings;
+use crate::align::align_panel::AlignTab;
+use crate::align::align_tool::AlignTool;
+use crate::align::align_worker::{AlignSettings, AlignWorker};
 use crate::app::app_align_display::AlignOverlay;
 use crate::app::app_align_drag::AlignDrag;
 use glam::Affine3A;

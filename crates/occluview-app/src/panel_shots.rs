@@ -7,11 +7,11 @@
 
 #![allow(clippy::expect_used)]
 
-use crate::align_brush::AlignBrush;
-use crate::align_drag::DragConstraint;
-use crate::align_panel::{AlignPanelView, AlignTab};
-use crate::align_tool::{AlignPoint, AlignTool};
-use crate::align_worker::AlignSettings;
+use crate::align::align_brush::AlignBrush;
+use crate::align::align_drag::DragConstraint;
+use crate::align::align_panel::{AlignPanelView, AlignTab};
+use crate::align::align_tool::{AlignPoint, AlignTool};
+use crate::align::align_worker::AlignSettings;
 use crate::mesh_editor_overlay::{EditorTab, MeshEditorPanelState};
 use crate::sculpt_tool::SculptToolKind;
 use eframe::egui;
@@ -78,17 +78,17 @@ fn render_align(name: &str, tab: AlignTab, refined: bool, brush_open: bool) {
         let mut excluding = brush_open;
         let mut drop_pending = false;
         let mut open_tab = tab;
-        let roles = Some(crate::align_panel_roles::AlignRoles {
+        let roles = Some(crate::align::align_panel_roles::AlignRoles {
             moving: "upper-arch-scan.stl".to_owned(),
             fixed: "lower-arch-scan.stl".to_owned(),
             implied: false,
         });
-        let brush_roles = Some(crate::align_panel_roles::AlignRoles {
+        let brush_roles = Some(crate::align::align_panel_roles::AlignRoles {
             moving: "upper-arch-scan.stl".to_owned(),
             fixed: "lower-arch-scan.stl".to_owned(),
             implied: false,
         });
-        let _ = crate::align_panel::show(
+        let _ = crate::align::align_panel::show(
             ctx,
             SCREEN,
             egui::Id::new("panel-shot-scene"),
@@ -114,10 +114,10 @@ fn render_align(name: &str, tab: AlignTab, refined: bool, brush_open: bool) {
         if brush_open {
             let mut brush = AlignBrush::default();
             brush.set_armed(true);
-            let _ = crate::align_panel_brush::show(
+            let _ = crate::align::align_panel_brush::show(
                 ctx,
                 egui::Id::new("panel-shot-scene"),
-                crate::align_panel_brush::BrushPanelView {
+                crate::align::align_panel_brush::BrushPanelView {
                     viewport_rect: SCREEN,
                     brush: &mut brush,
                     roles: brush_roles.as_ref(),
