@@ -61,6 +61,23 @@ pub(crate) fn sample_vertices(soup: Soup<'_>, budget: usize) -> Vec<u32> {
 }
 
 /// Area-weighted vertex normals computed from triangle winding.
+///
+/// This is deliberately not `occlu_geometry_math::accumulate_smooth_normals`,
+/// and the two differences are the reason the implementations are separate
+/// rather than duplicated:
+///
+/// - It accumulates in `DVec3`. The result becomes the deviation normal, which
+///   the fit consumes in the same precision as the positions behind it; the
+///   shared helper is `f32` because its consumer is the renderer.
+/// - Every finite facet contributes, with no `DEGENERATE_AREA_SIN` floor. A
+///   sliver the shared helper drops still carries a direction here, so a vertex
+///   that only ever touches slivers keeps that direction instead of the zero
+///   normal the shared rule leaves for the caller's fallback.
+///
+/// Merging either way would change the deviated result, so a merge is a
+/// numerical decision and not a clean-up. The soup's exclusion mask and index
+/// range are checked here as well; the shared helper takes a `position` closure
+/// and has no mask.
 #[must_use]
 pub(crate) fn vertex_normals(soup: Soup<'_>) -> Vec<DVec3> {
     let count = soup.vertex_count();
