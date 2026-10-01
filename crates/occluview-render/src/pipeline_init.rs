@@ -488,11 +488,11 @@ impl Renderer {
             label: Some("occluview sculpt tool shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(SCULPT_TOOL_SHADER_SRC)),
         });
-        // The tool volume remains depth-independent at the semantic level:
-        // it never writes depth and always passes the depth test, so it stays
-        // readable over dense surfaces. It still has
-        // to declare the live pass's depth format because eframe places this
-        // draw in the same Depth24PlusStencil8 render pass.
+        // The tool volume is depth-tested like any solid — a fragment behind the
+        // surface already drawn is rejected — but it never writes depth, so it
+        // cannot occlude what is drawn after it or affect picking. It still has to
+        // declare the live pass's depth format because eframe places this draw in
+        // the same Depth24PlusStencil8 render pass.
         let sculpt_tool_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("occluview sculpt tool volume pipeline"),
             layout: Some(&sculpt_tool_pipeline_layout),
