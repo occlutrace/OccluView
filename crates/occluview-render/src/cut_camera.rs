@@ -188,28 +188,30 @@ mod tests {
         Aabb::from_min_max(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0))
     }
 
+    /// The bbox variant stands the eye four half-diagonals along the plane
+    /// normal. `+Z` is the ordinary case and `+Y` is the one where a `+Y` up
+    /// vector would be parallel to the view, so a construction change — or a NaN
+    /// out of the degenerate basis — has to fail here.
     #[test]
-    fn cut_camera_for_z_normal_looks_along_z() {
-        let plane = ClipPlane::new([0.0, 0.0, 1.0], 0.0);
-        let cam = cut_view_camera(&plane, unit_bbox());
-        // The eye should be offset in +Z from the center (origin).
-        // We can't directly inspect GpuCamera's view matrix fields (they're
-        // arrays), but the construction must not panic and must produce a
-        // valid camera. The real validation is the golden test.
-        let _ = cam;
+    fn cut_camera_eye_stands_off_along_the_normal() {
+        let bbox = unit_bbox();
+        let half_diag = bbox.half_diagonal().max(1.0);
+        for normal in [Vec3::Z, Vec3::Y] {
+            let plane = ClipPlane::new(normal.to_array(), 0.0);
+            let cam = cut_view_camera(&plane, bbox);
+            let expected = bbox.center() + normal * half_diag * 4.0;
+            let eye = Vec3::from_array(cam.camera_pos);
+            assert!(
+                (eye - expected).length() < 1.0e-4,
+                "eye {eye} should sit at {expected} for normal {normal}"
+            );
+        }
     }
 
     #[test]
     fn cut_camera_empty_bbox_does_not_panic() {
         let plane = ClipPlane::new([0.0, 1.0, 0.0], 0.0);
         let _ = cut_view_camera(&plane, Aabb::EMPTY);
-    }
-
-    #[test]
-    fn cut_camera_vertical_normal_uses_z_up() {
-        // normal = +Y: the degenerate case where +Y up would be parallel.
-        let plane = ClipPlane::new([0.0, 1.0, 0.0], 0.0);
-        let _ = cut_view_camera(&plane, unit_bbox());
     }
 
     #[test]
