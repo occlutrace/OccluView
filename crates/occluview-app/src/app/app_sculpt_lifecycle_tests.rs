@@ -265,6 +265,10 @@ fn wait_for_topology_delta_and_sparse_update(app: &OccluViewApp) {
 /// The frame applies the append and face patch before sparse writes, then the
 /// final committed mesh receives a new topology identity at stroke completion.
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "Keep the complete gesture and its state assertions in one regression scenario."
+)]
 fn topology_deltas_flush_before_sparse_writes_and_commit_at_finish() {
     let (mut app, layer_id) = app_with_a_live_stroke("sculpt-delta-before-sparse");
     let initial_topology = layer_mesh(&app, layer_id).topology_id();
