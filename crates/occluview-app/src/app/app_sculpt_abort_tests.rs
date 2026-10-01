@@ -14,6 +14,7 @@ use crate::sculpt_worker::SculptWorker;
 use glam::{Affine3A, Vec3};
 use occluview_core::{mesh_edit_buffers_from_mesh, Mesh, Scene, SceneMesh, SceneMeshId, Vertex};
 use occluview_render::PreparedSceneTopology;
+use std::collections::VecDeque;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
@@ -132,9 +133,13 @@ fn start_stroke(app: &mut OccluViewApp, base: &Mesh) {
     app.tools.sculpt.worker = Some(worker_for(base, layer_id));
     app.tools.sculpt.stroke = Some(StrokeState {
         layer_id,
-        last_dab_local: None,
+        last_pointer: [0.0, 0.0],
+        input_pointer: [0.0, 0.0],
+        last_ray: None,
         hold_seconds: 0.0,
-        last_axis: None,
+        path_break_pending: false,
+        release_pending: false,
+        retained_samples: VecDeque::new(),
     });
 }
 

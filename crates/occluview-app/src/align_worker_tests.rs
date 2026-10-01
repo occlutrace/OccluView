@@ -13,6 +13,7 @@ use super::{
     color_map, matching_inputs_changed, AlignSettings, MeasureKey, SurfaceKey, WORKING_MAX_MM,
     WORKING_MIN_MM, WORKING_SCALE_MIN_MM,
 };
+use eframe::egui;
 use occluview_align::{
     deviation_colors, DeviationMap, Orientation, RampMode, RampSettings, Validity,
 };
@@ -406,6 +407,8 @@ fn a_real_third_of_a_millimetre_shows_a_transition_the_legend_agrees_with() {
     }
 }
 
+/// The precise refusal can vary with the optimizer's coarse-seed path; the
+/// worker contract is that rank-deficient evidence never authorizes a pose.
 #[test]
 fn worker_does_not_authorize_a_rank_deficient_refinement() {
     let mut job = measure_job(0);
@@ -415,12 +418,10 @@ fn worker_does_not_authorize_a_rank_deficient_refinement() {
 
     let outcome = super::execute(&job, &cancel, &mut cache);
 
-    assert!(matches!(
-        outcome,
-        super::AlignOutcome::Failed {
-            rejection: super::AlignFailure::Fit(occluview_align::FitRejection::NoImprovement)
-        }
-    ));
+    assert!(
+        matches!(outcome, super::AlignOutcome::Failed { .. }),
+        "rank-deficient evidence must not authorize a refined pose"
+    );
 }
 
 /// A display-only edit re-colours the map already measured; it does not
@@ -670,6 +671,29 @@ fn a_job_of_the_current_generation_comes_back() {
     ));
 }
 
+/// Publishing a result wakes the UI independently of the busy flag. The
+/// busy guard ends immediately after publication, which can race the frame's
+/// last `is_busy` check.
+#[test]
+fn a_published_result_requests_a_ui_frame() {
+    let ctx = egui::Context::default();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    ctx.set_request_repaint_callback(move |_| {
+        let _ = sender.send(());
+    });
+    let worker = super::AlignWorker::spawn_with_repaint(ctx);
+    let generation = worker.generation();
+    assert!(worker.submit(observable_measure_job(generation)));
+
+    assert!(
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .is_ok(),
+        "the completion path must wake the UI after publishing"
+    );
+    assert!(worker.has_pending_output());
+}
+
 #[test]
 fn a_line_measurement_with_a_summary_is_rejected_as_unobservable() {
     let cancel = occluview_align::CancelFlag::new();
@@ -689,7 +713,12 @@ fn a_line_measurement_with_a_summary_is_rejected_as_unobservable() {
 /// turning every later Align action into a silent no-op.
 #[test]
 fn a_worker_lock_failure_is_observable() {
-    let worker = super::AlignWorker::spawn();
+    let ctx = egui::Context::default();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    ctx.set_request_repaint_callback(move |_| {
+        let _ = sender.send(());
+    });
+    let worker = super::AlignWorker::spawn_with_repaint(ctx);
     let queue = std::sync::Arc::clone(&worker.queue);
     let _ = std::thread::spawn(move || {
         let _guard = queue.state.lock().expect("queue lock before poisoning");
@@ -700,13 +729,19 @@ fn a_worker_lock_failure_is_observable() {
 
     for _ in 0..60 {
         if worker.has_failed() {
-            return;
+            break;
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     assert!(
         worker.has_failed(),
         "a dead Align worker must be visible to the UI"
+    );
+    assert!(
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .is_ok(),
+        "a terminal worker failure must wake the UI after `busy` clears"
     );
 }
 

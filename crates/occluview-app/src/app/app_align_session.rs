@@ -10,9 +10,9 @@ use glam::Affine3A;
 impl OccluViewApp {
     /// Close the tool and put every scan back where the session found it.
     pub(super) fn cancel_align_session(&mut self, ctx: &egui::Context) {
-        // Drop an active drag before restoring session poses so Cancel cannot
-        // record the discarded gesture as an undo step.
-        self.abandon_align_drag();
+        // Cancel throws the open gesture away; restore_session_poses records
+        // the whole cancellation as its single, undoable history step.
+        self.discard_align_drag();
         let restored = self.restore_session_poses();
         self.disarm_align_tool(ctx);
         self.ui.status_message = Some(if restored {

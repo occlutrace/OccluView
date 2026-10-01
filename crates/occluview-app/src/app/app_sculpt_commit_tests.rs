@@ -15,7 +15,7 @@ use super::*;
 use crate::app::app_align_display::AlignOverlay;
 use crate::app::app_test_support::test_app;
 use crate::sculpt_kernel::BrushSession;
-use crate::sculpt_tool::SculptSession;
+use crate::sculpt_tool::{PendingSculptPress, SculptSession, SculptTip};
 use glam::{Affine3A, Vec3};
 use occluview_core::{mesh_edit_buffers_from_mesh, Mesh, Scene, SceneMesh, Vertex};
 use std::sync::{Arc, RwLock};
@@ -48,6 +48,15 @@ fn a_stroke_that_moves_geometry() -> BrushStroke {
     BrushStroke {
         center: [0.0, 0.0, 4.0],
         radius_mm: 3.0,
+        strength: 1.0,
+        view_dir: [0.0, 0.0, -1.0],
+    }
+}
+
+fn densifying_stroke() -> BrushStroke {
+    BrushStroke {
+        center: [0.0, 0.0, 4.0],
+        radius_mm: 3.5,
         strength: 1.0,
         view_dir: [0.0, 0.0, -1.0],
     }
@@ -128,6 +137,36 @@ fn pump_sculpt_worker(app: &mut OccluViewApp) {
             "the sculpt worker never settled on its stroke"
         );
         std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+fn queued_ray_press(layer_id: SceneMeshId, topology_id: u64, pointer_x: f32) -> PendingSculptPress {
+    let step = BrushRayStep {
+        origin: [0.0, 0.0, 20.0],
+        direction: [0.0, 0.0, -1.0],
+        near_mm: 0.0,
+        far_mm: 100.0,
+        clip_plane: None,
+        radius_mm: 3.5,
+        strength: 1.0,
+        mode: BrushMode::Add,
+        tip: SculptTip::Ball,
+        axis: None,
+        hold: false,
+        preserve_skirt: false,
+    };
+    PendingSculptPress {
+        layer_id,
+        topology_id,
+        world_to_local: Affine3A::IDENTITY,
+        local_per_world: 1.0,
+        press_pointer: [pointer_x, 200.0],
+        latest_pointer: [pointer_x, 200.0],
+        start_step: step.clone(),
+        latest_step: step,
+        moved: false,
+        break_before_latest: false,
+        released: true,
     }
 }
 
@@ -226,6 +265,58 @@ fn every_terminal_failure_exit_raises_the_dialog_and_disarms() {
             .contains(&detail),
         "the dialog has to carry the typed reason"
     );
+}
+
+#[test]
+fn two_queued_clicks_survive_the_first_remesh_as_separate_undo_units() {
+    let (mut app, layer_id) = app_with_a_sculpt_worker("sculpt-queued-remesh-clicks");
+    let old_topology = layer_mesh(&app, layer_id).topology_id();
+    app.tools
+        .sculpt
+        .queue_pending_press(queued_ray_press(layer_id, old_topology, 120.0));
+    app.tools
+        .sculpt
+        .queue_pending_press(queued_ray_press(layer_id, old_topology, 180.0));
+
+    // The first in-flight stroke changes topology while both accepted presses
+    // are still queued against the old mesh identity.
+    {
+        let worker = app.tools.sculpt.worker.as_ref().expect("worker");
+        assert!(worker.try_apply(densifying_stroke(), BrushMode::Smooth));
+        assert!(worker.finish_stroke());
+    }
+    pump_sculpt_worker(&mut app);
+    assert_eq!(app.document.edit_mode.undo_len(), 1);
+    let remeshed_topology = layer_mesh(&app, layer_id).topology_id();
+    assert_ne!(remeshed_topology, old_topology);
+    assert_eq!(app.tools.sculpt.pending_presses.len(), 2);
+    assert!(app.tools.sculpt.pending_presses.iter().all(|pending| {
+        pending.topology_id == remeshed_topology && pending.layer_id == layer_id
+    }));
+
+    let ctx = egui::Context::default();
+    let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 400.0));
+    for expected_undo_units in [2, 3] {
+        ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(viewport),
+                ..Default::default()
+            },
+            |ui| {
+                let response = ui.allocate_rect(viewport, egui::Sense::click_and_drag());
+                assert!(app.handle_sculpt_drag(ui.ctx(), &response, false));
+            },
+        )
+        .drop_without_applying_deltas();
+        pump_sculpt_worker(&mut app);
+        assert_eq!(
+            app.document.edit_mode.undo_len(),
+            expected_undo_units,
+            "each queued click has its own completed history boundary"
+        );
+    }
+    assert!(app.tools.sculpt.pending_presses.is_empty());
+    assert!(app.ui.app_error.is_none());
 }
 
 /// A committed sculpt replaces the layer's surface in place, so it is the one

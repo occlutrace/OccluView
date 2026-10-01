@@ -13,9 +13,7 @@ use eframe::egui;
 
 use crate::icons::AppIcon;
 
-use crate::sculpt_tool::{
-    size_to_radius_mm, SculptTip, SculptToolKind, SCULPT_INTENSITY_DEFAULT, SCULPT_SIZE_DEFAULT,
-};
+use crate::sculpt_tool::{SculptTip, SculptToolKind};
 
 #[path = "mesh_editor_groups.rs"]
 mod groups;
@@ -149,10 +147,6 @@ pub(super) fn close_holes_limit_enabled(ctx: &egui::Context) -> bool {
         .unwrap_or(false)
 }
 
-fn sculpt_size_id() -> egui::Id {
-    egui::Id::new("occluview_sculpt_size")
-}
-
 fn sculpt_tip_id() -> egui::Id {
     egui::Id::new("occluview_sculpt_tip")
 }
@@ -167,40 +161,79 @@ pub(crate) fn set_sculpt_tip(ctx: &egui::Context, tip: SculptTip) {
     ctx.data_mut(|data| data.insert_temp(sculpt_tip_id(), tip));
 }
 
-fn sculpt_intensity_id() -> egui::Id {
-    egui::Id::new("occluview_sculpt_intensity")
+fn sculpt_radius_share_id() -> egui::Id {
+    egui::Id::new("occluview_sculpt_radius_share")
 }
 
-/// Brush size slider, 0..100 feel units (not mm). Lives in egui memory (like
-/// the Close Holes limit) so it survives while the editor is open without
-/// becoming a global preference.
-pub(crate) fn sculpt_size(ctx: &egui::Context) -> f32 {
-    ctx.data(|data| data.get_temp::<f32>(sculpt_size_id()))
-        .unwrap_or(SCULPT_SIZE_DEFAULT)
+fn sculpt_strength_id(kind: SculptToolKind) -> egui::Id {
+    egui::Id::new(("occluview_sculpt_strength", kind))
 }
 
-pub(crate) fn set_sculpt_size(ctx: &egui::Context, size: f32) {
-    ctx.data_mut(|data| data.insert_temp(sculpt_size_id(), size));
+fn radius_share(tip: SculptTip, radius_mm: f32) -> f32 {
+    let (min, max) = tip.radius_range_mm();
+    ((radius_mm.clamp(min, max) - min) / (max - min)).clamp(0.0, 1.0)
 }
 
-/// Brush intensity slider, 0..100 feel units.
-pub(crate) fn sculpt_intensity(ctx: &egui::Context) -> f32 {
-    ctx.data(|data| data.get_temp::<f32>(sculpt_intensity_id()))
-        .unwrap_or(SCULPT_INTENSITY_DEFAULT)
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    reason = "Catalog arithmetic uses decimal f64; the UI stores the nearest representable f32 radius."
+)]
+fn radius_for_share(tip: SculptTip, share: f32) -> f32 {
+    let (min, max) = tip.radius_range_mm();
+    let catalog_decimal = |value: f32| (f64::from(value) * 1_000_000.0).round() / 1_000_000.0;
+    let min = catalog_decimal(min);
+    let max = catalog_decimal(max);
+    let step = catalog_decimal(SculptTip::radius_step_mm());
+    let share = f64::from(share.clamp(0.0, 1.0));
+    let raw = min + share * (max - min);
+    let steps = ((raw - min) / step).round();
+    (min + steps * step).clamp(min, max) as f32
 }
 
-pub(crate) fn set_sculpt_intensity(ctx: &egui::Context, intensity: f32) {
-    ctx.data_mut(|data| data.insert_temp(sculpt_intensity_id(), intensity));
+/// Normalized size shared by the catalog tips and persisted without converting
+/// through another tip's coarser physical step grid.
+pub(crate) fn sculpt_radius_share(ctx: &egui::Context) -> f32 {
+    ctx.data(|data| data.get_temp::<f32>(sculpt_radius_share_id()))
+        .filter(|share| share.is_finite())
+        .map_or_else(
+            || radius_share(SculptTip::Ball, SculptTip::Ball.default_radius_mm()),
+            |share| share.clamp(0.0, 1.0),
+        )
 }
 
-/// The brush radius in mm the current size slider maps to.
-pub(crate) fn sculpt_radius_mm(ctx: &egui::Context) -> f32 {
-    size_to_radius_mm(sculpt_size(ctx))
+pub(crate) fn set_sculpt_radius_share(ctx: &egui::Context, share: f32) {
+    let share = if share.is_finite() {
+        share.clamp(0.0, 1.0)
+    } else {
+        radius_share(SculptTip::Ball, SculptTip::Ball.default_radius_mm())
+    };
+    ctx.data_mut(|data| data.insert_temp(sculpt_radius_share_id(), share));
 }
 
-/// The 0..1 kernel strength the current intensity slider maps to.
-pub(crate) fn sculpt_intensity01(ctx: &egui::Context) -> f32 {
-    (sculpt_intensity(ctx) / 100.0).clamp(0.0, 1.0)
+/// The radius is a normalized share of the selected tip's range. Switching
+/// tips preserves the operator's size choice rather than reusing millimetres.
+pub(crate) fn sculpt_radius_mm(ctx: &egui::Context, tip: SculptTip) -> f32 {
+    radius_for_share(tip, sculpt_radius_share(ctx))
+}
+
+pub(crate) fn set_sculpt_radius_mm(ctx: &egui::Context, tip: SculptTip, radius_mm: f32) {
+    set_sculpt_radius_share(ctx, radius_share(tip, radius_mm));
+}
+
+/// Per-mode kernel strength, with the donor's Add and Smooth defaults.
+pub(crate) fn sculpt_strength(ctx: &egui::Context, kind: SculptToolKind) -> f32 {
+    let (min, max) = kind.strength_range();
+    ctx.data(|data| data.get_temp::<f32>(sculpt_strength_id(kind)))
+        .unwrap_or_else(|| kind.default_strength())
+        .clamp(min, max)
+}
+
+pub(crate) fn set_sculpt_strength(ctx: &egui::Context, kind: SculptToolKind, strength: f32) {
+    let (min, max) = kind.strength_range();
+    ctx.data_mut(|data| {
+        data.insert_temp(sculpt_strength_id(kind), strength.clamp(min, max));
+    });
 }
 
 /// Show the movable mesh editor window; returns the requested action, if any.

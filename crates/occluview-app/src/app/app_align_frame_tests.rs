@@ -13,7 +13,7 @@
 
 use super::*;
 use crate::align_tool::AlignPoint;
-use crate::app::app_test_support::{push_named_layer, test_app};
+use crate::app::app_test_support::{named_scene, push_named_layer, test_app};
 use crate::viewer::pick_scene_hit;
 use occluview_core::{Mesh, Vertex};
 use std::sync::Arc;
@@ -252,4 +252,65 @@ fn removing_a_named_layer_revokes_refined_authority() {
         "outlier marks indexing the departed pair must go"
     );
     assert!(!app.tools.align.settings.show_deviation);
+}
+
+/// An accepted fit must wake an otherwise idle native egui loop immediately.
+/// The panel captures `busy` before dispatching its button action, so a worker
+/// submission cannot rely on that same frame's busy repaint check.
+#[test]
+fn accepted_point_fit_requests_a_repaint_for_the_idle_loop() {
+    let mut app = test_app("align-accepted-job-repaints");
+    let ctx = app.ui.repaint_ctx.clone();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    // Install the integration callback before anything requests a repaint.
+    // egui suppresses duplicate callbacks while a repaint is already pending;
+    // registering it after arm_align_tool's repaint tests the wrong contract.
+    ctx.set_request_repaint_callback(move |_| {
+        let _ = sender.send(());
+    });
+
+    let mut scene = named_scene("lower", 0.0);
+    let lower_id = scene.meshes()[0].id();
+    let upper_id = push_named_layer(&mut scene, "upper", 5.0);
+    app.document.scene = Some(Arc::new(scene));
+    // Set up the alignment model directly: arm_align_tool also repaints, so
+    // calling it here would leave the idle-loop callback already scheduled.
+    app.tools.align.tool.arm();
+    app.tools.align.tool.imply_pair(&[lower_id, upper_id]);
+
+    let moving_id = app.tools.align.tool.moving_layer().expect("moving scan");
+    let fixed_id = app.tools.align.tool.fixed_layer().expect("fixed scan");
+    for offset in [0.1, 0.3] {
+        app.tools.align.tool.click(AlignPoint {
+            layer: moving_id,
+            local: Vec3::new(offset, 0.2, 0.0),
+            normal: Vec3::Z,
+        });
+        app.tools.align.tool.click(AlignPoint {
+            layer: fixed_id,
+            local: Vec3::new(5.1 + offset, 0.2, 0.0),
+            normal: Vec3::Z,
+        });
+    }
+    assert!(app.tools.align.tool.can_align());
+    app.run_align_fit();
+
+    assert!(
+        ctx.has_requested_repaint(),
+        "an accepted fit leaves an immediate repaint scheduled"
+    );
+    assert!(
+        app.tools
+            .align
+            .worker
+            .as_ref()
+            .is_some_and(|worker| worker.is_busy() || worker.has_pending_output()),
+        "the fit must cross the worker submission boundary"
+    );
+    assert!(
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .is_ok(),
+        "accepting a background fit must schedule a frame without pointer input"
+    );
 }

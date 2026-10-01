@@ -4,24 +4,28 @@
 //! bounded command queue and the worker-side [`SculptSession`]; the UI only
 //! submits the newest brush samples and drains sparse GPU updates/completions.
 
-use crate::sculpt_kernel::{BrushMode, BrushStroke};
-use crate::sculpt_tool::{DabFailure, SculptPickState, SculptSession, SculptTip};
-use glam::Affine3A;
+use crate::sculpt_kernel::BrushRayStep;
+#[cfg(test)]
+use crate::sculpt_kernel::{BrushMode, BrushStroke, DabDose};
+#[cfg(test)]
+use crate::sculpt_tool::SculptTip;
+use crate::sculpt_tool::{DabFailure, DabOutcome, SculptPickState, SculptSession};
+use glam::{Affine3A, DVec3, Vec3};
 use occluview_core::{Mesh, SceneMeshId, Vertex};
 use occluview_render::{PreparedSceneTopology, SculptTopologyDelta};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock, TryLockError};
 use std::thread::{self, JoinHandle};
+use std::time::Instant;
 
 #[path = "sculpt_worker_loop.rs"]
 mod worker_loop;
 use worker_loop::{panic_message, run_worker};
 
 const APPLY_QUEUE_CAPACITY_PER_STROKE: usize = 4;
-/// A burst of pointer samples must not turn into unbounded memory or latency.
-/// Finish markers are retained when this limit is reached; the oldest queued
-/// Apply is the only command eligible for coalescing/eviction.
+/// Bound on total queued commands. One slot is reserved for Finish so accepted
+/// ray samples can never block their own stroke boundary.
 const MAX_QUEUED_COMMANDS: usize = 64;
 /// The UI drains completions once per frame. Keep only a small producer-side
 /// backlog so a slow frame rate applies backpressure to the kernel thread.
@@ -32,13 +36,55 @@ const MAX_PENDING_TOUCHES: usize = 250_000;
 /// fresh dynamic pick mesh and starts a new bounded dirty window.
 const MAX_DYNAMIC_PICK_TRIANGLES: usize = 100_000;
 
+// Queue coalescing must preserve exact captured brush settings; an epsilon
+// could change the operation or its user-selected strength.
+#[allow(clippy::float_cmp)]
+pub(crate) fn same_brush_and_visibility(a: &BrushRayStep, b: &BrushRayStep) -> bool {
+    a.mode == b.mode
+        && a.tip == b.tip
+        && a.radius_mm == b.radius_mm
+        && a.strength == b.strength
+        && a.axis == b.axis
+        && a.preserve_skirt == b.preserve_skirt
+        && a.near_mm == b.near_mm
+        && a.far_mm == b.far_mm
+        && a.clip_plane == b.clip_plane
+}
+
+// Keep the established sub-millimetre tolerance for coalescing stationary rays;
+// exact equality is reserved for captured brush parameters above.
+pub(crate) fn same_ray(a: &BrushRayStep, b: &BrushRayStep) -> bool {
+    let a_origin = Vec3::from_array(a.origin);
+    let b_origin = Vec3::from_array(b.origin);
+    let a_direction = Vec3::from_array(a.direction).normalize_or_zero();
+    let b_direction = Vec3::from_array(b.direction).normalize_or_zero();
+    a_origin.distance_squared(b_origin) <= 1e-6 && a_direction.dot(b_direction) >= 1.0 - 1e-6
+}
+
 enum SculptCommand {
+    RayStep {
+        stroke_id: u64,
+        step: BrushRayStep,
+        /// The first pointer sample is retained when later samples arrive
+        /// before the worker starts it, so a quick press still has a dab.
+        first: bool,
+    },
+    BreakPath {
+        stroke_id: u64,
+    },
+    PrimeWallRegion {
+        center: DVec3,
+        radius_mm: f64,
+        budget: usize,
+    },
+    #[cfg(test)]
     Apply {
         stroke_id: u64,
         stroke: BrushStroke,
         mode: BrushMode,
         tip: SculptTip,
         axis: Option<[f32; 3]>,
+        dose: DabDose,
     },
     Finish,
 }
@@ -55,6 +101,8 @@ struct SculptCommandQueue {
     wake: Condvar,
     active: AtomicBool,
     error: Arc<Mutex<Option<SculptFailure>>>,
+    #[cfg(test)]
+    pause_pop: AtomicBool,
 }
 
 impl SculptCommandQueue {
@@ -74,6 +122,8 @@ impl SculptCommandQueue {
             wake: Condvar::new(),
             active: AtomicBool::new(false),
             error,
+            #[cfg(test)]
+            pause_pop: AtomicBool::new(false),
         }
     }
 
@@ -81,16 +131,166 @@ impl SculptCommandQueue {
         set_worker_error(&self.error, SculptFailure::WorkerStatePoisoned);
     }
 
-    /// Keep each stroke's Apply backlog bounded by replacing its oldest queued
-    /// dab when the worker is busy. The stroke id is essential: a global cap
-    /// would evict all dabs between two Finish markers when the operator makes
-    /// two quick strokes, leaving the second stroke with no geometry to apply.
+    /// Submit one physical pointer sample. The first sample is pinned until
+    /// the worker starts the stroke; compatible queued travel samples
+    /// coalesce to the newest ray, while parameter changes and distinct dwell
+    /// samples retain FIFO order.
+    fn push_ray_step(&self, step: BrushRayStep) -> bool {
+        let Ok(mut state) = self.state.lock() else {
+            self.report_failure();
+            return false;
+        };
+        if state.shutdown {
+            return false;
+        }
+        let Some(stroke_id) = state.open_stroke else {
+            if state.commands.len() >= MAX_QUEUED_COMMANDS - 1 {
+                return false;
+            }
+            state.next_stroke_id = state.next_stroke_id.wrapping_add(1);
+            let stroke_id = state.next_stroke_id;
+            state.open_stroke = Some(stroke_id);
+            state.commands.push_back(SculptCommand::RayStep {
+                stroke_id,
+                step,
+                first: true,
+            });
+            self.wake.notify_one();
+            return true;
+        };
+
+        let last_for_stroke = state.commands.iter().rposition(|command| match command {
+            SculptCommand::RayStep {
+                stroke_id: queued_id,
+                ..
+            }
+            | SculptCommand::BreakPath {
+                stroke_id: queued_id,
+            } => *queued_id == stroke_id,
+            _ => false,
+        });
+        let last_command_is_ray =
+            last_for_stroke.is_some_and(|position| position + 1 == state.commands.len());
+        if let Some(position) = last_for_stroke.filter(|_| last_command_is_ray) {
+            if let Some(SculptCommand::RayStep {
+                step: previous,
+                first,
+                ..
+            }) = state.commands.get_mut(position)
+            {
+                if !*first
+                    && same_brush_and_visibility(previous, &step)
+                    && !previous.hold
+                    && !step.hold
+                {
+                    *previous = step;
+                    self.wake.notify_one();
+                    return true;
+                }
+                if !*first
+                    && same_brush_and_visibility(previous, &step)
+                    && same_ray(previous, &step)
+                    && previous.hold
+                    && step.hold
+                {
+                    *previous = step;
+                    self.wake.notify_one();
+                    return true;
+                }
+            }
+        }
+        let queued = state
+            .commands
+            .iter()
+            .filter(|command| {
+                matches!(command, SculptCommand::RayStep { stroke_id: queued_id, .. } if *queued_id == stroke_id)
+            })
+            .count();
+        if queued >= APPLY_QUEUE_CAPACITY_PER_STROKE
+            || state.commands.len() >= MAX_QUEUED_COMMANDS - 1
+        {
+            return false;
+        }
+        state.commands.push_back(SculptCommand::RayStep {
+            stroke_id,
+            step,
+            first: false,
+        });
+        self.wake.notify_one();
+        true
+    }
+
+    fn push_break_path(&self) -> bool {
+        let Ok(mut state) = self.state.lock() else {
+            self.report_failure();
+            return false;
+        };
+        if state.shutdown {
+            return false;
+        }
+        let Some(stroke_id) = state.open_stroke else {
+            return true;
+        };
+        if matches!(
+            state.commands.back(),
+            Some(SculptCommand::BreakPath { stroke_id: queued_id }) if *queued_id == stroke_id
+        ) {
+            return true;
+        }
+        if state.commands.len() >= MAX_QUEUED_COMMANDS - 1 {
+            return false;
+        }
+        state
+            .commands
+            .push_back(SculptCommand::BreakPath { stroke_id });
+        self.wake.notify_one();
+        true
+    }
+
+    fn push_prime_wall_region(&self, center: DVec3, radius_mm: f64, budget: usize) -> bool {
+        let Ok(mut state) = self.state.lock() else {
+            self.report_failure();
+            return false;
+        };
+        if state.shutdown || state.open_stroke.is_some() {
+            return false;
+        }
+        if let Some(command) = state
+            .commands
+            .iter_mut()
+            .rev()
+            .find(|command| matches!(command, SculptCommand::PrimeWallRegion { .. }))
+        {
+            *command = SculptCommand::PrimeWallRegion {
+                center,
+                radius_mm,
+                budget,
+            };
+            self.wake.notify_one();
+            return true;
+        }
+        if state.commands.len() >= MAX_QUEUED_COMMANDS - 1 {
+            return false;
+        }
+        state.commands.push_back(SculptCommand::PrimeWallRegion {
+            center,
+            radius_mm,
+            budget,
+        });
+        self.wake.notify_one();
+        true
+    }
+
+    /// Test-only point-dab path used by legacy adapter and lifecycle fixtures.
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
     fn push_apply(
         &self,
         stroke: BrushStroke,
         mode: BrushMode,
         tip: SculptTip,
         axis: Option<[f32; 3]>,
+        dose: DabDose,
     ) -> bool {
         let Ok(mut state) = self.state.lock() else {
             self.report_failure();
@@ -115,24 +315,9 @@ impl SculptCommandQueue {
                 })
                 .count()
         });
-        if queued_applies >= APPLY_QUEUE_CAPACITY_PER_STROKE {
-            let Some(stroke_id) = open_stroke else {
-                return false;
-            };
-            let Some(position) = state.commands.iter().position(|command| {
-                matches!(
-                    command,
-                    SculptCommand::Apply {
-                        stroke_id: queued_id,
-                        ..
-                    } if *queued_id == stroke_id
-                )
-            }) else {
-                return false;
-            };
-            let _ = state.commands.remove(position);
-        }
-        if !make_room_for_apply(&mut state) {
+        if queued_applies >= APPLY_QUEUE_CAPACITY_PER_STROKE
+            || state.commands.len() >= MAX_QUEUED_COMMANDS - 1
+        {
             return false;
         }
         let stroke_id = if let Some(stroke_id) = open_stroke {
@@ -149,6 +334,7 @@ impl SculptCommandQueue {
             axis,
             stroke,
             mode,
+            dose,
         });
         self.wake.notify_one();
         true
@@ -162,13 +348,13 @@ impl SculptCommandQueue {
         if state.shutdown {
             return false;
         }
-        if !make_room_for_apply(&mut state) {
+        if state.open_stroke.is_none() {
+            return true;
+        }
+        if state.commands.len() >= MAX_QUEUED_COMMANDS {
             return false;
         }
-        let _stroke_id = state.open_stroke.take().unwrap_or_else(|| {
-            state.next_stroke_id = state.next_stroke_id.wrapping_add(1);
-            state.next_stroke_id
-        });
+        let _stroke_id = state.open_stroke.take();
         state.commands.push_back(SculptCommand::Finish);
         self.wake.notify_one();
         true
@@ -180,12 +366,22 @@ impl SculptCommandQueue {
             return None;
         };
         loop {
+            if state.shutdown {
+                return None;
+            }
+            #[cfg(test)]
+            if self.pause_pop.load(Ordering::Acquire) {
+                state = if let Ok(state) = self.wake.wait(state) {
+                    state
+                } else {
+                    self.report_failure();
+                    return None;
+                };
+                continue;
+            }
             if let Some(command) = state.commands.pop_front() {
                 self.active.store(true, Ordering::Release);
                 return Some(command);
-            }
-            if state.shutdown {
-                return None;
             }
             state = if let Ok(state) = self.wake.wait(state) {
                 state
@@ -211,6 +407,12 @@ impl SculptCommandQueue {
         self.active.store(false, Ordering::Release);
     }
 
+    #[cfg(test)]
+    fn set_paused_for_tests(&self, paused: bool) {
+        self.pause_pop.store(paused, Ordering::Release);
+        self.wake.notify_all();
+    }
+
     fn is_empty(&self) -> bool {
         // Fail active on contention: a skipped drain retries on the repaint
         // this returns, while a false quiet would stall the worker's output.
@@ -218,25 +420,6 @@ impl SculptCommandQueue {
             .try_lock()
             .is_ok_and(|state| state.commands.is_empty() && !self.active.load(Ordering::Acquire))
     }
-}
-
-/// Make one slot available without ever removing a stroke boundary. Dropping
-/// the oldest sample is the lossy backpressure policy: the worker still sees
-/// an ordered, finite stroke and the newest pointer position replaces stale
-/// input, while the queue can never grow with mouse frequency.
-fn make_room_for_apply(state: &mut QueueState) -> bool {
-    if state.commands.len() < MAX_QUEUED_COMMANDS {
-        return true;
-    }
-    let Some(position) = state
-        .commands
-        .iter()
-        .position(|command| matches!(command, SculptCommand::Apply { .. }))
-    else {
-        return false;
-    };
-    let _ = state.commands.remove(position);
-    true
 }
 
 struct WorkerState {
@@ -263,6 +446,40 @@ struct WorkerState {
     /// set on a production worker.
     #[cfg(test)]
     panic_on_next_command: AtomicBool,
+    #[cfg(test)]
+    input_trace: Mutex<Vec<SculptWorkerInput>>,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum SculptWorkerInput {
+    Ray {
+        mode: BrushMode,
+        hold: bool,
+        preserve_skirt: bool,
+        elapsed_ms: f64,
+    },
+    BreakPath,
+    Finish,
+}
+
+/// Dose timing belongs to applied dabs, not raw pointer events. The clock is
+/// kept for the life of one prepared worker, including Finish/path breaks.
+#[derive(Default)]
+pub(crate) struct DabDispatchClock {
+    last_dispatch_started_at: Option<Instant>,
+}
+
+impl DabDispatchClock {
+    pub(crate) fn next_elapsed_ms(&mut self, now: Instant) -> f64 {
+        let elapsed_ms = self
+            .last_dispatch_started_at
+            .map_or(occlu_sculpt::DWELL_FULL_DOSE_MS, |last| {
+                now.saturating_duration_since(last).as_secs_f64() * 1000.0
+            });
+        self.last_dispatch_started_at = Some(now);
+        elapsed_ms.min(occlu_sculpt::DWELL_FULL_DOSE_MS)
+    }
 }
 
 type SculptOutputSnapshot = (
@@ -314,6 +531,13 @@ impl WorkerState {
 
     fn finish_geometry_update(&self) {
         self.geometry_revision.fetch_add(1, Ordering::Release);
+    }
+
+    #[cfg(test)]
+    fn record_input(&self, input: SculptWorkerInput) {
+        if let Ok(mut trace) = self.input_trace.lock() {
+            trace.push(input);
+        }
     }
 
     fn reset_pick_geometry(&self, mesh: Arc<Mesh>, indices: Vec<u32>) {
@@ -617,6 +841,8 @@ pub(crate) struct SculptWorker {
     pub(crate) local_per_world: f32,
     state: Arc<WorkerState>,
     queue: Arc<SculptCommandQueue>,
+    /// Avoid sending repeated hover-prime commands for the same local patch.
+    last_wall_prime: Mutex<Option<(DVec3, f64)>>,
     worker_thread: Option<JoinHandle<()>>,
 }
 
@@ -649,6 +875,8 @@ impl SculptWorker {
             error: Arc::clone(&error),
             #[cfg(test)]
             panic_on_next_command: AtomicBool::new(false),
+            #[cfg(test)]
+            input_trace: Mutex::new(Vec::new()),
         });
         let queue = Arc::new(SculptCommandQueue::with_error(error));
         let worker_queue = Arc::clone(&queue);
@@ -704,6 +932,7 @@ impl SculptWorker {
             local_per_world,
             state,
             queue,
+            last_wall_prime: Mutex::new(None),
             worker_thread,
         }
     }
@@ -731,19 +960,68 @@ impl SculptWorker {
     /// Test-only shorthand for a ball dab with no stroke bearing.
     #[cfg(test)]
     pub(crate) fn try_apply(&self, stroke: BrushStroke, mode: BrushMode) -> bool {
-        self.queue.push_apply(stroke, mode, SculptTip::Ball, None)
+        self.queue
+            .push_apply(stroke, mode, SculptTip::Ball, None, DabDose::FULL)
     }
 
-    /// Submit one dab with the operator's tip and stroke bearing. The tip and
-    /// the axis travel with the command because both can change mid-stroke.
-    pub(crate) fn try_apply_tipped(
+    /// Submit one transformed viewport ray sample. Queued movement coalesces
+    /// to the latest endpoint while the kernel traces from its last processed
+    /// ray; a false return leaves the caller's sample unconsumed.
+    pub(crate) fn try_apply_ray_step(&self, step: BrushRayStep) -> bool {
+        let accepted = self.queue.push_ray_step(step);
+        if accepted {
+            if let Ok(mut last_prime) = self.last_wall_prime.lock() {
+                *last_prime = None;
+            }
+        }
+        accepted
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_queue_paused_for_tests(&self, paused: bool) {
+        self.queue.set_paused_for_tests(paused);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn take_input_trace_for_tests(&self) -> Vec<SculptWorkerInput> {
+        self.state
+            .input_trace
+            .lock()
+            .map_or_else(|_| Vec::new(), |mut trace| std::mem::take(&mut *trace))
+    }
+
+    /// Queue an ordered ray-path reset before the next physical sample.
+    pub(crate) fn try_break_ray_path(&self) -> bool {
+        self.queue.push_break_path()
+    }
+
+    /// Warm a bounded local opposite-wall cache from the idle hover cursor.
+    pub(crate) fn try_prime_wall_region(
         &self,
-        stroke: BrushStroke,
-        mode: BrushMode,
-        tip: SculptTip,
-        axis: Option<[f32; 3]>,
+        center: DVec3,
+        radius_mm: f64,
+        budget: usize,
     ) -> bool {
-        self.queue.push_apply(stroke, mode, tip, axis)
+        if !center.is_finite() || !radius_mm.is_finite() || radius_mm <= 0.0 || budget == 0 {
+            return false;
+        }
+        if !self.is_quiescent() {
+            return false;
+        }
+        let Ok(mut last_prime) = self.last_wall_prime.lock() else {
+            return false;
+        };
+        if last_prime.is_some_and(|(previous, previous_radius)| {
+            previous.distance_squared(center) <= (radius_mm * 0.5).powi(2)
+                && (previous_radius - radius_mm).abs() <= radius_mm * 0.1
+        }) {
+            return true;
+        }
+        let accepted = self.queue.push_prime_wall_region(center, radius_mm, budget);
+        if accepted {
+            *last_prime = Some((center, radius_mm));
+        }
+        accepted
     }
 
     pub(crate) fn finish_stroke(&self) -> bool {
@@ -784,19 +1062,20 @@ impl SculptWorker {
     /// for that frame keeps the UI non-blocking and retries on repaint.
     pub(crate) fn pick_local_ray(
         &self,
-        origin: glam::Vec3,
-        direction: glam::Vec3,
-    ) -> Option<(usize, glam::Vec3)> {
+        origin: Vec3,
+        direction: Vec3,
+        keep: impl Fn(Vec3) -> bool,
+    ) -> Option<(usize, Vec3)> {
         let pick = self.state.pick.try_read().ok()?;
         let shadow = pick.shadow.try_read().ok()?;
         pick.mesh.pick_ray_local_with_vertices(
             occluview_core::LiveRayPick::new(&shadow, &pick.dirty_triangles, origin, direction)
                 .with_indices(&pick.indices),
-            |_| true,
+            keep,
         )
     }
 
-    pub(crate) fn local_triangle_normal(&self, triangle: usize) -> Option<glam::Vec3> {
+    pub(crate) fn local_triangle_normal(&self, triangle: usize) -> Option<Vec3> {
         let pick = self.state.pick.try_read().ok()?;
         let shadow = pick.shadow.try_read().ok()?;
         pick.mesh

@@ -50,13 +50,17 @@ pub(crate) struct AlignState {
     /// caches downstream hearing about it.
     pub(crate) markings: AlignMarkings,
     pub(crate) drag: Option<AlignDrag>,
-    /// Where the primary button went down, captured on the frame it happened.
-    ///
-    /// egui keeps ONE `press_origin` for every button: a secondary press during
-    /// the gesture overwrites it and a secondary release clears it, so by the
-    /// time egui promotes the primary press to a drag that value can belong to
-    /// another button or be gone. This record is ours and cannot be displaced.
-    pub(crate) drag_press_origin: Option<egui::Pos2>,
+    /// Last primary-pointer location in an open manual drag. egui may deliver
+    /// the release in the same frame as the move, and its final pointer state
+    /// alone no longer contains the motion path.
+    pub(crate) drag_last_pointer_pos: Option<egui::Pos2>,
+    /// Modifiers last seen while the primary drag was open. egui exposes the
+    /// final modifiers for a whole `RawInput` batch, so event replay needs this
+    /// preceding state to classify moves before a mid-frame modifier change.
+    pub(crate) drag_modifiers: Option<egui::Modifiers>,
+    /// Set only after a pointer segment changes the live pose. A click on the
+    /// surface alone must not revoke an otherwise valid alignment result.
+    pub(crate) drag_pose_changed: bool,
     pub(crate) constraint: DragConstraint,
     pub(crate) brush: AlignBrush,
     /// What the per-vertex colours on the moving scan currently mean.
