@@ -1,7 +1,7 @@
 //! Embedded Fluent catalogs, per-message English fallback, contract
 //! validation, and pseudo-localization.
 //!
-//! Catalogs live in `crates/occluview-app/i18n/*.ftl`, are compiled by the
+//! Catalogs live in `crates/occluview-i18n/i18n/*.ftl`, are compiled by the
 //! shared i18n crate, and are validated against `en` at test time:
 //! parse errors, junk, duplicate keys, key/attribute/variable drift, and
 //! unused keys all fail. At runtime a missing message, attribute, variable,

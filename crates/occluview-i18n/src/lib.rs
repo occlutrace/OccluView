@@ -12,13 +12,13 @@ pub const EMBEDDED_TAGS: &[&str] = &["en", "ru", "de", "es", "fr", "it", "pt-BR"
 
 /// Fluent source shared by the app and shell, in [`EMBEDDED_TAGS`] order.
 pub const EMBEDDED_SOURCES: &[(&str, &str)] = &[
-    ("en", include_str!("../../occluview-app/i18n/en.ftl")),
-    ("ru", include_str!("../../occluview-app/i18n/ru.ftl")),
-    ("de", include_str!("../../occluview-app/i18n/de.ftl")),
-    ("es", include_str!("../../occluview-app/i18n/es.ftl")),
-    ("fr", include_str!("../../occluview-app/i18n/fr.ftl")),
-    ("it", include_str!("../../occluview-app/i18n/it.ftl")),
-    ("pt-BR", include_str!("../../occluview-app/i18n/pt-BR.ftl")),
+    ("en", include_str!("../i18n/en.ftl")),
+    ("ru", include_str!("../i18n/ru.ftl")),
+    ("de", include_str!("../i18n/de.ftl")),
+    ("es", include_str!("../i18n/es.ftl")),
+    ("fr", include_str!("../i18n/fr.ftl")),
+    ("it", include_str!("../i18n/it.ftl")),
+    ("pt-BR", include_str!("../i18n/pt-BR.ftl")),
 ];
 
 /// Return the embedded Fluent source for a canonical catalog tag.

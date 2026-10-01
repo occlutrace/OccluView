@@ -21,16 +21,20 @@ mod versioninfo {
     include!("../../build/windows_resource_helpers.rs");
 }
 
+/// Fluent catalogs owned by `occluview-i18n`, relative to this crate's root.
+/// The app reads them here to build its key-parity gate and message-id macro.
+const CATALOGS: &str = "../occluview-i18n/i18n";
+
 fn main() -> Result<(), Box<dyn Error>> {
     // A change to the shared helpers must rebuild this script.
     println!("cargo:rerun-if-changed=../../build/windows_resource_helpers.rs");
 
     println!("cargo:rerun-if-changed=assets/windows/occluview.ico");
-    println!("cargo:rerun-if-changed=i18n");
+    println!("cargo:rerun-if-changed={CATALOGS}");
 
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?);
-    // i18n contract gate: every `i18n/*.ftl` catalog must carry exactly
-    // the `en` key set. Test-time validation covers variables, variant
+    // i18n contract gate: every `occluview-i18n/i18n/*.ftl` catalog must carry
+    // exactly the `en` key set. Test-time validation covers variables, variant
     // names and plurals; this fails the BUILD on drift so a broken or
     // half-added catalog never ships in any binary.
     check_i18n_key_parity(&manifest_dir)?;
@@ -64,7 +68,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 fn generate_message_id_macro(manifest_dir: &Path) -> Result<(), Box<dyn Error>> {
-    let catalog_path = manifest_dir.join("i18n/en.ftl");
+    let catalog_path = manifest_dir.join(CATALOGS).join("en.ftl");
     let source = fs::read_to_string(&catalog_path)?;
     let resource = fluent_syntax::parser::parse(source.as_str()).map_err(|(_, errors)| {
         let details = errors
@@ -114,12 +118,12 @@ fn render_macro(ids: &BTreeSet<String>) -> String {
     )
 }
 
-/// Fail the build when any `i18n/*.ftl` catalog drifts from the `en` key
-/// set (missing/extra keys). Only top-level `key =` lines count:
+/// Fail the build when any `occluview-i18n/i18n/*.ftl` catalog drifts from the
+/// `en` key set (missing/extra keys). Only top-level `key =` lines count:
 /// comments, indented continuations and select syntax never start at
 /// column zero with a key-shaped head.
 fn check_i18n_key_parity(manifest_dir: &Path) -> Result<(), Box<dyn Error>> {
-    let dir = manifest_dir.join("i18n");
+    let dir = manifest_dir.join(CATALOGS);
     let mut catalogs: Vec<(String, BTreeSet<String>)> = Vec::new();
     let mut entries = fs::read_dir(&dir)
         .map_err(|error| format!("cannot read {}: {error}", dir.display()))?
@@ -141,9 +145,9 @@ fn check_i18n_key_parity(manifest_dir: &Path) -> Result<(), Box<dyn Error>> {
     let baseline = catalogs
         .iter()
         .find(|(tag, _)| tag == "en")
-        .ok_or("i18n/en.ftl is missing")?;
+        .ok_or("occluview-i18n/i18n/en.ftl is missing")?;
     if baseline.1.is_empty() {
-        return Err("i18n/en.ftl carries no keys".into());
+        return Err("occluview-i18n/i18n/en.ftl carries no keys".into());
     }
     let mut problems = Vec::new();
     for (tag, keys) in &catalogs {
@@ -162,7 +166,7 @@ fn check_i18n_key_parity(manifest_dir: &Path) -> Result<(), Box<dyn Error>> {
     } else {
         problems.sort();
         Err(format!(
-            "i18n catalog key drift vs en (see also the test-time contract):\n{}",
+            "occluview-i18n/i18n catalog key drift vs en (see also the test-time contract):\n{}",
             problems.join("\n")
         )
         .into())
