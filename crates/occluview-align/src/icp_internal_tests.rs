@@ -11,14 +11,20 @@
     clippy::cast_sign_loss
 )]
 
-use super::icp_overlap::ReciprocalSummary;
+use super::icp_overlap::{
+    common_support_coverage, directional_forward_evidence_is_sufficient,
+    reciprocal_evidence_is_usable, ReciprocalSummary,
+};
+use super::icp_search::principal_frame_matches;
+use super::icp_solve::correspondences;
+use super::icp_unique::principal_axes;
 use super::{
     coarse_candidate_is_better, coarse_candidates_are_ambiguous, correspondences_at_radius,
     forward_coverage_is_sufficient, influence_radius_ladder, level_samples_are_usable, run_level,
     sample_vertices, vertex_normals, weak_axes_from_normal_matrix, CoarseCandidate, Level, Summary,
 };
 use crate::{CancelFlag, FitRejection, RefineSettings, Soup, SurfaceIndex};
-use glam::{DQuat, DVec3};
+use glam::{DMat3, DQuat, DVec3};
 
 fn flat_sheet() -> (Vec<f32>, Vec<u32>) {
     let positions = vec![
@@ -33,13 +39,16 @@ fn flat_sheet() -> (Vec<f32>, Vec<u32>) {
 }
 
 /// A coarse candidate for the comparator tests: only the evidence the decision
-/// reads is filled in.
+/// reads is filled in. By default, common support follows forward coverage, as
+/// it does when the moving surface is smaller or has no reciprocal surface.
+/// Fixed-small fixtures override it with their smaller-side reciprocal support.
 fn candidate(rms: f64, coverage: f64, reciprocal_coverage: Option<f64>) -> CoarseCandidate {
     CoarseCandidate {
         rigid: crate::Rigid::default(),
         summary: Summary {
             inliers: 400,
             inlier_ratio: 0.9,
+            support_coverage: coverage,
             coverage,
             rms,
             geometric_rms: rms,
@@ -64,29 +73,34 @@ fn candidate(rms: f64, coverage: f64, reciprocal_coverage: Option<f64>) -> Coars
 /// candidate at 1% coverage. The operator's own start has to survive that.
 #[test]
 fn a_lower_residual_cannot_discard_the_coverage_it_does_not_explain() {
-    let start = candidate(0.35, 1.0, Some(0.80));
-    let distractor = candidate(0.05, 0.012, Some(0.05));
+    let mut start = candidate(0.35, 1.0, Some(0.80));
+    start.summary.support_coverage = 0.80;
+    let mut distractor = candidate(0.05, 0.012, Some(0.05));
+    distractor.summary.support_coverage = 0.05;
 
     assert!(
         !coarse_candidate_is_better(&distractor, &start),
         "a 1.2%-coverage patch must not displace a start that explains the whole scan"
     );
     // The same residual wins when it still explains the surface.
-    let tight = candidate(0.05, 0.99, Some(0.80));
+    let mut tight = candidate(0.05, 0.99, Some(0.80));
+    tight.summary.support_coverage = 0.80;
     assert!(
         coarse_candidate_is_better(&tight, &start),
         "a better residual at the same coverage is a real improvement"
     );
     // Or when it recovers materially more of the fixed surface: this is the
     // partial-crop case the seed search exists for.
-    let wider = candidate(0.05, 0.50, Some(0.95));
+    let mut wider = candidate(0.05, 0.50, Some(0.95));
+    wider.summary.support_coverage = 0.95;
     assert!(
         coarse_candidate_is_better(&wider, &start),
         "recovering more of the fixed surface justifies a coverage loss"
     );
     // A lower residual that loses coverage and explains no more of the fixed
     // surface is the failure this guard exists for.
-    let narrower = candidate(0.05, 0.50, Some(0.70));
+    let mut narrower = candidate(0.05, 0.50, Some(0.70));
+    narrower.summary.support_coverage = 0.70;
     assert!(
         !coarse_candidate_is_better(&narrower, &start),
         "a coverage loss with no fixed-surface gain must keep the incumbent"
@@ -123,8 +137,16 @@ fn a_residual_win_near_the_search_floor_cannot_shrink_coverage_by_half() {
         !coarse_candidate_is_better(&cloud_patch, &cloud_start),
         "an absent fixed surface must not authorize a coverage loss"
     );
-    // A point-cloud candidate that keeps its coverage still wins on residual.
-    let cloud_tight = candidate(0.05, 0.95, None);
+    // A five-point support loss is outside the comparator's two-point tie
+    // band, so it cannot win on residual alone.
+    let cloud_outside_tie = candidate(0.05, 0.95, None);
+    assert!(
+        !coarse_candidate_is_better(&cloud_outside_tie, &cloud_start),
+        "a point cloud below the common-support tie band cannot win on residual alone"
+    );
+    // A point-cloud candidate within the support tie band still wins on
+    // residual while retaining at least 90% of the incumbent support.
+    let cloud_tight = candidate(0.05, 0.99, None);
     assert!(
         coarse_candidate_is_better(&cloud_tight, &cloud_start),
         "a point cloud can still improve on residual when it explains as much"
@@ -132,7 +154,81 @@ fn a_residual_win_near_the_search_floor_cannot_shrink_coverage_by_half() {
 }
 
 #[test]
-fn rank_deficient_nonzero_residual_is_not_reported_as_refined() {
+fn coarse_ranking_compares_common_support_when_the_fixed_scan_is_smaller() {
+    let mut incumbent = candidate(1.01, 0.60, Some(0.50));
+    incumbent.summary.support_coverage = 0.50;
+    incumbent.summary.seated_fraction = 0.90;
+
+    let mut improved_small_side = candidate(1.0, 0.05, Some(0.80));
+    improved_small_side.summary.support_coverage = 0.80;
+    improved_small_side.summary.seated_fraction = 0.0;
+
+    assert!(
+        coarse_candidate_is_better(&improved_small_side, &incumbent),
+        "a fixed-small crop's common support must be compared on that crop, even when the whole-moving directional coverage is lower"
+    );
+}
+
+#[test]
+fn open_border_correspondences_are_rejected_only_for_a_smaller_fixed_surface() {
+    let small_positions = vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
+    let large_positions = vec![0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 2.0, 0.0];
+    let indices = vec![0, 1, 2];
+    let small_soup = Soup {
+        positions: &small_positions,
+        indices: &indices,
+        mask: None,
+    };
+    let large_soup = Soup {
+        positions: &large_positions,
+        indices: &indices,
+        mask: None,
+    };
+    let small_surface = SurfaceIndex::build(small_soup).expect("small triangle indexes");
+    let large_surface = SurfaceIndex::build(large_soup).expect("large triangle indexes");
+    let settings = RefineSettings::default();
+    let cancel = CancelFlag::new();
+    let sample = [0];
+
+    let large_normals = vertex_normals(large_soup);
+    let fixed_small_samples = small_surface.representative_samples(8);
+    let fixed_small_level = Level {
+        moving: large_soup,
+        normals: &large_normals,
+        fixed: &small_surface,
+        moving_surface: Some(&large_surface),
+        fixed_samples: &fixed_small_samples,
+        samples: &sample,
+        settings: &settings,
+        cancel: &cancel,
+        start: crate::Rigid::IDENTITY,
+    };
+    assert!(
+        correspondences(&fixed_small_level, crate::Rigid::IDENTITY, 1.0)[0].is_none(),
+        "a full moving surface must not solve against the artificial open edge of a smaller fixed fragment"
+    );
+
+    let small_normals = vertex_normals(small_soup);
+    let fixed_large_samples = large_surface.representative_samples(8);
+    let fixed_large_level = Level {
+        moving: small_soup,
+        normals: &small_normals,
+        fixed: &large_surface,
+        moving_surface: Some(&small_surface),
+        fixed_samples: &fixed_large_samples,
+        samples: &sample,
+        settings: &settings,
+        cancel: &cancel,
+        start: crate::Rigid::IDENTITY,
+    };
+    assert!(
+        correspondences(&fixed_large_level, crate::Rigid::IDENTITY, 1.0)[0].is_some(),
+        "the existing solve must keep border correspondences when the fixed surface is equal or larger"
+    );
+}
+
+#[test]
+fn rank_deficient_nonzero_residual_retains_weak_axis_evidence() {
     let (positions, indices) = flat_sheet();
     let moving = Soup {
         positions: &positions,
@@ -159,10 +255,22 @@ fn rank_deficient_nonzero_residual_is_not_reported_as_refined() {
 
     let outcome = run_level(&level);
 
-    assert!(
-        matches!(outcome, Err(FitRejection::NoImprovement)),
-        "rank-deficient nonzero residual must not authorize a heatmap"
-    );
+    match outcome {
+        Ok(outcome) => {
+            assert!(outcome.summary.rms > 0.0);
+            assert!(
+                outcome
+                    .summary
+                    .weak_rot_axes
+                    .into_iter()
+                    .chain(outcome.summary.weak_trans_axes)
+                    .any(|weak| weak),
+                "the plane's nonzero residual must remain marked as rank deficient"
+            );
+        }
+        Err(FitRejection::NoImprovement) => {}
+        Err(rejection) => panic!("unexpected rank-deficient fit rejection: {rejection:?}"),
+    }
 }
 
 #[test]
@@ -248,6 +356,102 @@ fn a_large_scan_cannot_be_registered_from_a_tiny_accidental_patch() {
     assert!(!forward_coverage_is_sufficient(6, 40_000));
     assert!(forward_coverage_is_sufficient(400, 40_000));
     assert!(forward_coverage_is_sufficient(6, 400));
+}
+
+#[test]
+fn common_support_uses_the_smaller_surface_in_either_role() {
+    let (small_positions, indices) = flat_sheet();
+    let large_positions: Vec<f32> = small_positions.iter().map(|value| value * 2.0).collect();
+    let small_soup = Soup {
+        positions: &small_positions,
+        indices: &indices,
+        mask: None,
+    };
+    let large_soup = Soup {
+        positions: &large_positions,
+        indices: &indices,
+        mask: None,
+    };
+    let small_surface = SurfaceIndex::build(small_soup).expect("small surface");
+    let large_surface = SurfaceIndex::build(large_soup).expect("large surface");
+    let small_surface_samples = small_surface.representative_samples(64);
+    let large_surface_samples = large_surface.representative_samples(64);
+    let moving_samples: [u32; 0] = [];
+    let settings = RefineSettings::default();
+    let cancel = CancelFlag::new();
+    let small_moving = Level {
+        moving: small_soup,
+        normals: &[],
+        fixed: &large_surface,
+        moving_surface: Some(&small_surface),
+        fixed_samples: &large_surface_samples,
+        samples: &moving_samples,
+        settings: &settings,
+        cancel: &cancel,
+        start: crate::Rigid::IDENTITY,
+    };
+    let sparse_reverse = Some(ReciprocalSummary {
+        matched: 6,
+        coverage: 0.003,
+        geometric_rms: 0.001,
+    });
+
+    assert_eq!(
+        small_surface.surface_area_mm2() * 4.0,
+        large_surface.surface_area_mm2()
+    );
+    assert!(directional_forward_evidence_is_sufficient(
+        &small_moving,
+        6,
+        400
+    ));
+    assert!(!directional_forward_evidence_is_sufficient(
+        &small_moving,
+        6,
+        40_000
+    ));
+    assert!(
+        reciprocal_evidence_is_usable(&small_moving, sparse_reverse),
+        "a sparse reverse sample of the larger full scan cannot veto a supported fragment"
+    );
+    assert_eq!(
+        common_support_coverage(&small_moving, 0.8, sparse_reverse),
+        0.8
+    );
+
+    let small_fixed = Level {
+        moving: large_soup,
+        normals: &[],
+        fixed: &small_surface,
+        moving_surface: Some(&large_surface),
+        fixed_samples: &small_surface_samples,
+        samples: &moving_samples,
+        settings: &settings,
+        cancel: &cancel,
+        start: crate::Rigid::IDENTITY,
+    };
+    assert!(directional_forward_evidence_is_sufficient(
+        &small_fixed,
+        6,
+        40_000
+    ));
+    assert!(
+        !reciprocal_evidence_is_usable(&small_fixed, sparse_reverse),
+        "a large moving scan needs usable support measured on the smaller fixed surface"
+    );
+    let supported_reverse = Some(ReciprocalSummary {
+        matched: 32,
+        coverage: 0.8,
+        geometric_rms: 0.001,
+    });
+    assert!(reciprocal_evidence_is_usable(
+        &small_fixed,
+        supported_reverse
+    ));
+    assert_eq!(
+        common_support_coverage(&small_fixed, 0.08, supported_reverse),
+        0.8
+    );
 }
 
 #[test]
@@ -446,4 +650,53 @@ fn dome_for_level(n: usize, step: f32) -> (Vec<f32>, Vec<u32>) {
         }
     }
     (positions, indices)
+}
+
+/// The principal-frame hypotheses have to contain the true rotation, whatever
+/// the axis, because nothing downstream can recover a turn the hypotheses miss.
+#[test]
+fn principal_frame_matches_contain_the_true_rotation() {
+    let (positions, _) = dome_for_level(12, 1.0);
+    let points: Vec<DVec3> = positions
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|point| {
+            DVec3::new(
+                f64::from(point[0]),
+                f64::from(point[1]),
+                f64::from(point[2]),
+            )
+        })
+        .collect();
+    let true_rotation =
+        DQuat::from_axis_angle(DVec3::new(0.31, 0.9, 0.29).normalize(), 0.8).normalize();
+    let centre = DVec3::new(4.0, 5.0, 6.0);
+    let posed: Vec<DVec3> = points
+        .iter()
+        .map(|point| true_rotation * (*point - centre) + centre)
+        .collect();
+
+    let (_, moving_axes) = principal_axes(&points).expect("a frame for the source points");
+    let (_, fixed_axes) = principal_axes(&posed).expect("a frame for the posed points");
+    let matches = principal_frame_matches(moving_axes, fixed_axes);
+
+    let identity = DMat3::IDENTITY;
+    let closest = matches
+        .iter()
+        .map(|rotation| {
+            let error = DMat3::from_quat(*rotation) * DMat3::from_quat(true_rotation).transpose();
+            (error - identity)
+                .to_cols_array()
+                .iter()
+                .fold(0.0_f64, |worst, value| worst.max(value.abs()))
+        })
+        .fold(f64::INFINITY, f64::min);
+    // The axes come from a fixed-count power iteration, so they carry a
+    // sub-millidegree error that the local refine absorbs. A hypothesis set
+    // that missed the turn would sit tens of degrees away.
+    assert!(
+        closest < 0.005,
+        "no hypothesis matched the true rotation; the closest was {closest} off"
+    );
 }

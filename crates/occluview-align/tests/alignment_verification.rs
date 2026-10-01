@@ -128,6 +128,21 @@ fn deterministic_noise(mesh: &mut Mesh, amplitude_mm: f64) {
     }
 }
 
+/// Lift one local patch of `mesh` by `mm` along z, the change a rescan after
+/// treatment carries where the operator has worked.
+fn lift_patch(mesh: &mut Mesh, min: DVec3, max: DVec3, mm: f64) {
+    for point in mesh.positions.as_chunks_mut::<3>().0 {
+        let local = DVec3::new(
+            f64::from(point[0]),
+            f64::from(point[1]),
+            f64::from(point[2]),
+        );
+        if local.x >= min.x && local.x <= max.x && local.y >= min.y && local.y <= max.y {
+            point[2] += mm as f32;
+        }
+    }
+}
+
 fn settings() -> RefineSettings {
     RefineSettings::default()
 }
@@ -182,6 +197,56 @@ fn a_noisy_displaced_rescan_is_trustworthy() {
     assert!(
         max_error < 0.05,
         "rescan remains {max_error:.4} mm from truth"
+    );
+}
+
+/// An operated patch makes a rescan's trimmed residual tail heavy. The pose is
+/// still decided by the surface that did not change, so the public trust gate
+/// must authorize it: this is the pre-/post-treatment pair an operator seats to
+/// compare a case, and refusing it would refuse the whole workflow.
+#[test]
+fn a_changed_region_does_not_refuse_an_otherwise_seated_rescan() {
+    let fixed = arch(48, 0.5, DVec3::ZERO, ArchShape::Upper);
+    let fixed_index = SurfaceIndex::build(fixed.soup()).expect("fixed arch index");
+    let acquisition = Rigid::new(
+        DQuat::from_axis_angle(DVec3::new(0.3, 0.5, 0.8).normalize(), 0.01),
+        DVec3::new(0.24, -0.16, 0.12),
+    );
+    let mut moving = fixed.clone();
+    moving.transform(acquisition);
+    deterministic_noise(&mut moving, 0.006);
+    // A quarter of the arch lifted 0.2 mm: intentionally different surface,
+    // three quarters unchanged, which is what the fit must decide on.
+    lift_patch(
+        &mut moving,
+        DVec3::new(0.0, 0.0, f64::MIN),
+        DVec3::new(12.0, 24.0, f64::MAX),
+        0.2,
+    );
+
+    let report = refine(
+        moving.soup(),
+        &fixed_index,
+        Rigid::IDENTITY,
+        &settings(),
+        &CancelFlag::new(),
+    )
+    .expect("a rescan with an operated patch has one supported seating");
+
+    assert!(
+        report.is_trustworthy_refinement_for(&settings()),
+        "the unchanged region of a changed pair must authorize the pose: {report:?}"
+    );
+    // The untrimmed median limit the gate and the verification rule share.
+    assert!(
+        report.verified_median_mm < 0.05,
+        "the unchanged region seats: verified median {:.4} mm",
+        report.verified_median_mm
+    );
+    assert!(
+        report.verified_coverage > 0.5,
+        "most of the surface still has a counterpart: {:.3}",
+        report.verified_coverage
     );
 }
 

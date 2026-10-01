@@ -21,6 +21,7 @@ use glam::{DQuat, DVec3};
 use crate::sample::{sample_vertices, vertex_at};
 use crate::{Rigid, Soup, SurfaceIndex};
 
+use super::icp_overlap::{common_support_coverage, reciprocal_evidence};
 use super::icp_verify::{verify_with_budget, Verification, VerificationInput};
 use super::{run_level, Level, RefineSettings, SurfaceSample, COARSE_BUDGET};
 use crate::CancelFlag;
@@ -93,7 +94,8 @@ pub(crate) fn rivalry(context: &RivalContext<'_>, pose: Rigid) -> Rivalry {
         },
         COARSE_BUDGET,
     );
-    if !base.median_mm.is_finite() {
+    let base_support = support_coverage(context, pose, base.coverage);
+    if !base.median_mm.is_finite() || !base_support.is_finite() {
         return Rivalry::Unique;
     }
     let local = RefineSettings {
@@ -135,8 +137,9 @@ pub(crate) fn rivalry(context: &RivalContext<'_>, pose: Rigid) -> Rivalry {
             },
             COARSE_BUDGET,
         );
+        let checked_support = support_coverage(context, rival, checked.coverage);
         if !checked.median_mm.is_finite()
-            || checked.coverage < base.coverage * RIVAL_MIN_COVERAGE_SHARE
+            || checked_support < base_support * RIVAL_MIN_COVERAGE_SHARE
         {
             continue;
         }
@@ -151,6 +154,24 @@ pub(crate) fn rivalry(context: &RivalContext<'_>, pose: Rigid) -> Rivalry {
         Some((rival, _)) if rival.median_mm <= base.median_mm * RIVAL_MARGIN => Rivalry::Ambiguous,
         _ => Rivalry::Unique,
     }
+}
+
+/// Compare rival verification on the smaller indexed surface, while the
+/// public verification fields continue to describe the moving scan.
+fn support_coverage(context: &RivalContext<'_>, pose: Rigid, forward_coverage: f64) -> f64 {
+    let level = Level {
+        moving: context.moving,
+        normals: context.normals,
+        fixed: context.fixed,
+        moving_surface: context.moving_surface,
+        fixed_samples: context.fixed_samples,
+        samples: &[],
+        settings: context.settings,
+        cancel: context.cancel,
+        start: pose,
+    };
+    let reciprocal = reciprocal_evidence(&level, pose, context.settings.influence_radius_mm);
+    common_support_coverage(&level, forward_coverage, reciprocal)
 }
 
 /// The turns tried: a quarter, half and three-quarter turn about each
@@ -172,7 +193,7 @@ fn separation(samples: &[u32], moving: Soup<'_>, pose: Rigid, rival: Rigid) -> f
 }
 
 /// Centroid and unit principal axes (descending spread) of `points`.
-fn principal_axes(points: &[DVec3]) -> Option<(DVec3, [DVec3; 3])> {
+pub(super) fn principal_axes(points: &[DVec3]) -> Option<(DVec3, [DVec3; 3])> {
     if points.len() < 3 {
         return None;
     }

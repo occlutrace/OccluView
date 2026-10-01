@@ -443,6 +443,211 @@ fn read_binary_stl(path: &Path) -> (Vec<f32>, Vec<u32>) {
     })
 }
 
+/// Keep the triangles whose centroids fall inside a central x-band. The STL
+/// reader emits one independent vertex triplet per triangle, so this makes a
+/// real, open-edged fragment without changing its scan coordinates.
+fn crop_stl_x_band(
+    positions: &[f32],
+    indices: &[u32],
+    width_fraction: f64,
+) -> (Vec<f32>, Vec<u32>) {
+    let min_x = positions
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|point| point[0])
+        .fold(f32::INFINITY, f32::min);
+    let max_x = positions
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|point| point[0])
+        .fold(f32::NEG_INFINITY, f32::max);
+    let centre = f64::from(f32::midpoint(min_x, max_x));
+    let half_width = f64::from(max_x - min_x) * width_fraction * 0.5;
+    let mut cropped_positions = Vec::new();
+    let mut cropped_indices = Vec::new();
+    for triangle in indices.as_chunks::<3>().0 {
+        let points = [0_usize, 1, 2].map(|corner| {
+            let raw = triangle[corner];
+            let vertex = raw as usize;
+            [
+                positions[vertex * 3],
+                positions[vertex * 3 + 1],
+                positions[vertex * 3 + 2],
+            ]
+        });
+        let x = points.iter().map(|point| f64::from(point[0])).sum::<f64>() / 3.0;
+        if (x - centre).abs() > half_width {
+            continue;
+        }
+        let base = u32::try_from(cropped_positions.len() / 3).expect("crop fits u32");
+        cropped_positions.extend(points.into_iter().flatten());
+        cropped_indices.extend_from_slice(&[base, base + 1, base + 2]);
+    }
+    (cropped_positions, cropped_indices)
+}
+
+fn move_vertices_by_inverse_truth(positions: &mut [f32], truth: Rigid) {
+    let inverse = truth.inverse();
+    for point in positions.as_chunks_mut::<3>().0 {
+        let moved = inverse.apply(DVec3::new(
+            f64::from(point[0]),
+            f64::from(point[1]),
+            f64::from(point[2]),
+        ));
+        point[0] = moved.x as f32;
+        point[1] = moved.y as f32;
+        point[2] = moved.z as f32;
+    }
+}
+
+fn real_pose_error(report: Rigid, truth: Rigid, min_x: f32, max_x: f32) -> f64 {
+    [min_x, f32::midpoint(min_x, max_x), max_x]
+        .into_iter()
+        .map(|x| {
+            let probe = DVec3::new(f64::from(x), 0.0, 0.0);
+            report.apply(probe).distance(truth.apply(probe))
+        })
+        .fold(0.0_f64, f64::max)
+}
+
+struct LowerCropFixture {
+    full_positions: Vec<f32>,
+    indices: Vec<u32>,
+    crop_positions: Vec<f32>,
+    crop_indices: Vec<u32>,
+    full_index: SurfaceIndex,
+    fixed_crop_index: SurfaceIndex,
+    truth: Rigid,
+    min_x: f32,
+    max_x: f32,
+}
+
+fn lower_crop_fixture() -> LowerCropFixture {
+    let path = fixtures()
+        .into_iter()
+        .find(|path| path.file_name().is_some_and(|name| name == "LOWER.stl"))
+        .or_else(|| fixtures().into_iter().next())
+        .expect("fixture helper returns a non-empty corpus");
+    let (fixed_positions, indices) = read_binary_stl(&path);
+    let fixed = Soup {
+        positions: &fixed_positions,
+        indices: &indices,
+        mask: None,
+    };
+    let full_index = SurfaceIndex::build(fixed).expect("real mesh must index");
+    let (mut crop_positions, crop_indices) = crop_stl_x_band(&fixed_positions, &indices, 0.08);
+    assert!(
+        crop_indices.len() >= 3 * 64,
+        "the real crop needs surface support"
+    );
+    let truth = Rigid::new(
+        DQuat::from_axis_angle(DVec3::new(0.3, 0.5, 0.8).normalize(), 0.06),
+        DVec3::new(5.0, -4.0, 2.5),
+    );
+    let min_x = fixed_positions
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|point| point[0])
+        .fold(f32::INFINITY, f32::min);
+    let max_x = fixed_positions
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|point| point[0])
+        .fold(f32::NEG_INFINITY, f32::max);
+    move_vertices_by_inverse_truth(&mut crop_positions, truth);
+    let (fixed_crop_positions, fixed_crop_indices) =
+        crop_stl_x_band(&fixed_positions, &indices, 0.08);
+    let fixed_crop = Soup {
+        positions: &fixed_crop_positions,
+        indices: &fixed_crop_indices,
+        mask: None,
+    };
+    let fixed_crop_index = SurfaceIndex::build(fixed_crop).expect("real fixed crop must index");
+    LowerCropFixture {
+        full_positions: fixed_positions,
+        indices,
+        crop_positions,
+        crop_indices,
+        full_index,
+        fixed_crop_index,
+        truth,
+        min_x,
+        max_x,
+    }
+}
+
+/// A real cropped fragment exercises open-border behavior at the default
+/// matching ratio with the crop in the moving role.
+#[test]
+#[ignore = "requires private full-arch STL scans; run scripts/validate-release-private.sh with OCCLUVIEW_ALIGN_FIXTURES=/path/to/corpus"]
+fn a_real_small_moving_crop_recovers_pose_at_default_ratio_when_fixtures_are_present() {
+    let fixture = lower_crop_fixture();
+    let moving = Soup {
+        positions: &fixture.crop_positions,
+        indices: &fixture.crop_indices,
+        mask: None,
+    };
+    let settings = RefineSettings::default();
+    let report = refine(
+        moving,
+        &fixture.full_index,
+        Rigid::IDENTITY,
+        &settings,
+        &CancelFlag::new(),
+    )
+    .expect("the small moving crop must align against the full fixed scan");
+    let error = real_pose_error(report.rigid, fixture.truth, fixture.min_x, fixture.max_x);
+    assert!(
+        error < 0.1,
+        "small moving crop pose error is {error:.3} mm: {report:?}"
+    );
+    assert!(
+        report.is_trustworthy_refinement_for(&settings),
+        "small-moving registration must pass the owner trust gate: {report:?}"
+    );
+    assert!(report.support_coverage >= 0.05);
+    assert!(report.verified_support_coverage >= 0.05);
+}
+
+/// The same known pose with the crop in the fixed role prevents a directional
+/// moving-coverage threshold from standing in for common overlap.
+#[test]
+#[ignore = "requires private full-arch STL scans; run scripts/validate-release-private.sh with OCCLUVIEW_ALIGN_FIXTURES=/path/to/corpus"]
+fn a_real_small_fixed_crop_recovers_pose_at_default_ratio_when_fixtures_are_present() {
+    let fixture = lower_crop_fixture();
+    let mut moving_positions = fixture.full_positions.clone();
+    move_vertices_by_inverse_truth(&mut moving_positions, fixture.truth);
+    let moving = Soup {
+        positions: &moving_positions,
+        indices: &fixture.indices,
+        mask: None,
+    };
+    let settings = RefineSettings::default();
+    let report = refine(
+        moving,
+        &fixture.fixed_crop_index,
+        Rigid::IDENTITY,
+        &settings,
+        &CancelFlag::new(),
+    )
+    .expect("the full moving scan must align against the small fixed crop");
+    let error = real_pose_error(report.rigid, fixture.truth, fixture.min_x, fixture.max_x);
+    assert!(
+        error < 0.1,
+        "small fixed crop pose error is {error:.3} mm: {report:?}"
+    );
+    assert!(
+        report.is_trustworthy_refinement_for(&settings),
+        "small-fixed registration must pass the owner trust gate: {report:?}"
+    );
+    assert!(report.support_coverage >= 0.05);
+    assert!(report.verified_support_coverage >= 0.05);
+}
+
 #[test]
 fn binary_stl_reader_rejects_truncated_body_before_reserving_vertices() {
     let mut bytes = vec![0; 84];
@@ -515,11 +720,9 @@ fn a_real_scan_recovers_from_a_ballpark_placement_when_fixtures_are_present() {
 /// The upper and lower jaw have no single correct joint pose: only their
 /// occlusal surfaces relate, and several positions explain them equally well.
 /// The solver refuses such a pair as `Ambiguous` rather than picking one and
-/// painting a heatmap that would look authoritative. This test covers that
-/// refusal.
-#[test]
-#[ignore = "requires private upper/lower STL scans; run scripts/validate-release-private.sh with OCCLUVIEW_ALIGN_FIXTURES=/path/to/corpus"]
-fn two_different_arches_are_refused_rather_than_guessed_when_fixtures_are_present() {
+/// painting a heatmap that would look authoritative. The per-offset ignored
+/// cases below exercise that refusal at six different starts.
+fn assert_different_arches_are_refused_at(shift_mm: f64) {
     let (fixed_path, moving_path) = fixture_pair();
     let (fixed_positions, fixed_indices) = read_binary_stl(&fixed_path);
     let fixed_soup = Soup {
@@ -534,52 +737,85 @@ fn two_different_arches_are_refused_rather_than_guessed_when_fixtures_are_presen
         indices: &moving_indices,
         mask: None,
     };
-    for shift_mm in [0.0_f64, 2.0, 5.0, 10.0, 20.0, 40.0] {
-        let start = Rigid::new(
-            DQuat::from_axis_angle(DVec3::new(0.3, 0.5, 0.8).normalize(), 0.02),
-            DVec3::new(0.0, 0.0, shift_mm),
-        );
-        let outcome = refine(
-            moving,
-            &index,
-            start,
-            &RefineSettings::default(),
-            &CancelFlag::new(),
-        );
-        match outcome {
-            Ok(report) => {
-                // A pose here is a confident answer to a question with no
-                // answer. The two jaws relate only where their occlusal
-                // surfaces meet, and several positions explain that equally
-                // well; a heatmap over one of them would look authoritative
-                // and mean nothing.
-                //
-                // A refusal is the correct outcome; what is checked here is
-                // that the pose is not reported as a fit. `is_trustworthy`
-                // is the gate the worker applies before the operator is told
-                // anything, so a report it rejects is still a refusal from
-                // the operator's side.
-                assert!(
-                    !report.is_trustworthy_refinement_for(&RefineSettings::default()),
-                    "two different jaws must not be reported as an alignment at \
+    let start = Rigid::new(
+        DQuat::from_axis_angle(DVec3::new(0.3, 0.5, 0.8).normalize(), 0.02),
+        DVec3::new(0.0, 0.0, shift_mm),
+    );
+    let outcome = refine(
+        moving,
+        &index,
+        start,
+        &RefineSettings::default(),
+        &CancelFlag::new(),
+    );
+    match outcome {
+        Ok(report) => {
+            // A pose here is a confident answer to a question with no
+            // answer. The two jaws relate only where their occlusal
+            // surfaces meet, and several positions explain that equally
+            // well; a heatmap over one of them would look authoritative
+            // and mean nothing.
+            //
+            // A refusal is the correct outcome; what is checked here is
+            // that the pose is not reported as a fit. `is_trustworthy`
+            // is the gate the worker applies before the operator is told
+            // anything, so a report it rejects is still a refusal from
+            // the operator's side.
+            assert!(
+                !report.is_trustworthy_refinement_for(&RefineSettings::default()),
+                "two different jaws must not be reported as an alignment at \
                      {shift_mm} mm apart: rms={:.4} median={:.4} coverage={:.4}",
-                    report.rms,
-                    report.median_abs,
-                    report.coverage
-                );
-                println!(
-                    "apart {shift_mm:>5.1} mm -> accepted pose refused to the operator \
+                report.rms,
+                report.median_abs,
+                report.coverage
+            );
+            println!(
+                "apart {shift_mm:>5.1} mm -> accepted pose refused to the operator \
                      (rms={:.4} med={:.4}), as it should be",
-                    report.rms, report.median_abs
-                );
-            }
-            Err(FitRejection::Ambiguous) => {
-                println!("apart {shift_mm:>5.1} mm -> refused as ambiguous, as it should be");
-            }
-            Err(other) => println!("apart {shift_mm:>5.1} mm -> refused {other:?}"),
+                report.rms, report.median_abs
+            );
         }
+        Err(FitRejection::Ambiguous) => {
+            println!("apart {shift_mm:>5.1} mm -> refused as ambiguous, as it should be");
+        }
+        Err(other) => println!("apart {shift_mm:>5.1} mm -> refused {other:?}"),
     }
 }
+
+macro_rules! unrelated_arch_refusal_case {
+    ($name:ident, $shift_mm:expr) => {
+        #[test]
+        #[ignore = "requires private upper/lower STL scans; run scripts/validate-release-private.sh with OCCLUVIEW_ALIGN_FIXTURES=/path/to/corpus"]
+        fn $name() {
+            assert_different_arches_are_refused_at($shift_mm);
+        }
+    };
+}
+
+unrelated_arch_refusal_case!(
+    unrelated_arches_are_refused_at_zero_offset_when_fixtures_are_present,
+    0.0
+);
+unrelated_arch_refusal_case!(
+    unrelated_arches_are_refused_at_2_mm_when_fixtures_are_present,
+    2.0
+);
+unrelated_arch_refusal_case!(
+    unrelated_arches_are_refused_at_5_mm_when_fixtures_are_present,
+    5.0
+);
+unrelated_arch_refusal_case!(
+    unrelated_arches_are_refused_at_10_mm_when_fixtures_are_present,
+    10.0
+);
+unrelated_arch_refusal_case!(
+    unrelated_arches_are_refused_at_20_mm_when_fixtures_are_present,
+    20.0
+);
+unrelated_arch_refusal_case!(
+    unrelated_arches_are_refused_at_40_mm_when_fixtures_are_present,
+    40.0
+);
 
 /// A required release corpus cannot turn a missing private fixture into a skip.
 #[test]
@@ -626,7 +862,7 @@ fn a_required_single_arch_corpus_fails_the_two_arch_gate() {
     let output = Command::new(std::env::current_exe().expect("integration test binary path"))
         .args([
             "--exact",
-            "two_different_arches_are_refused_rather_than_guessed_when_fixtures_are_present",
+            "unrelated_arches_are_refused_at_zero_offset_when_fixtures_are_present",
             "--ignored",
             "--nocapture",
         ])

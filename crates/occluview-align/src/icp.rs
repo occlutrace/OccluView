@@ -17,11 +17,12 @@ mod feature_seed;
 
 #[path = "icp_overlap.rs"]
 mod icp_overlap;
+use icp_overlap::{common_support_coverage, reciprocal_evidence};
 #[path = "icp_step.rs"]
 mod icp_step;
 #[path = "icp_verify.rs"]
 mod icp_verify;
-use icp_verify::{verification_holds, verify, Verification};
+use icp_verify::{unchanged_region_confirms, verification_holds, verify, Verification};
 #[path = "icp_unique.rs"]
 mod icp_unique;
 use icp_unique::{rivalry, RivalContext, Rivalry};
@@ -134,13 +135,20 @@ const SEATED_BAND_RADIUS_FRACTION: f64 = 0.1;
 const MIN_SEATED_BAND_MM: f64 = 0.2;
 const MAX_SEATED_BAND_MM: f64 = 1.0;
 
-/// Point-to-plane p95 floor, in millimetres. Correct cases in the selected real
-/// and crop corpus reach 0.03571 mm; the lowest wrong case above this floor has
-/// a p95-to-median ratio of 2.3328. Higher measured noise may raise the limit
-/// only while the upper tail stays within that measured ratio.
+/// Maximum point-to-plane p95 residual, in millimetres. Correct cases in the
+/// selected real and crop corpus reach 0.04 mm; a case whose whole surface does
+/// not confirm a seating must stay under it.
 const MAX_REFINEMENT_P95_MM: f64 = 0.04;
-/// Maximum p95-to-median ratio for a measured residual distribution.
+/// Maximum p95-to-median ratio for a measured residual distribution whose
+/// unchanged region is not confirmed.
 const MAX_REFINEMENT_P95_TO_MEDIAN_RATIO: f64 = 2.3;
+
+/// Share of the moving surface a changed pair has to explain before its heavy
+/// trimmed tail is read as an operated region. The measured pre- and
+/// post-treatment pair explains 0.947 (a synthetic arch with one patch changed
+/// explains 0.956), while the worst measured wrong basin that keeps a
+/// scanner-noise median and a heavy tail explains 0.737.
+const MIN_CHANGED_PAIR_COVERAGE: f64 = 0.90;
 
 /// Huber cut as a multiple of the median absolute residual — the usual 95%
 /// efficiency constant for a normal error model.
@@ -253,6 +261,9 @@ pub struct IcpReport {
     pub inlier_ratio: f64,
     /// Sampled vertices that found any fixed surface at all.
     pub coverage: f64,
+    /// Fraction of the physically smaller indexed surface supported by the
+    /// solver's correspondences. `coverage` remains the moving-to-fixed share.
+    pub support_coverage: f64,
     /// Root-mean-square point-to-plane residual, in millimetres.
     pub rms: f64,
     /// Root-mean-square Euclidean distance to the matched fixed surface, in
@@ -261,7 +272,10 @@ pub struct IcpReport {
     pub geometric_rms: f64,
     /// Median absolute residual, in millimetres.
     pub median_abs: f64,
-    /// 95th-percentile absolute residual, in millimetres.
+    /// 95th-percentile absolute residual, in millimetres. Gated only while the
+    /// whole surface does not itself confirm a seating, because a rescan of a
+    /// treated arch is heavier here than a wrong basin and the two cannot be
+    /// told apart by the trimmed tail alone.
     pub p95_abs: f64,
     /// Per world axis, whether rotation about it is undetermined.
     pub weak_rot_axes: [bool; 3],
@@ -285,6 +299,9 @@ pub struct IcpReport {
     /// pose: nothing trimmed, the operator's reach, and vertices whose nearest
     /// fixed point is the fixed scan's open border left out.
     pub verified_coverage: f64,
+    /// Untrimmed common support on the physically smaller indexed surface.
+    /// For moving-to-fixed coverage, see [`Self::verified_coverage`].
+    pub verified_support_coverage: f64,
     /// Median distance from those vertices to their counterpart, in
     /// millimetres. Independent of the solve's matching ratio; comparison of
     /// rival poses reads it alongside the solve median for verification because
@@ -318,28 +335,41 @@ impl IcpReport {
     /// that it found the intended surface. The geometric RMS floor rejects a
     /// stationary but still-apart local patch before the application can mark
     /// it as refined and paint a misleading map.
+    ///
+    /// A near-complete overlap whose untrimmed median meets scan tolerance
+    /// may contain an intentionally changed patch, so it bypasses the trimmed
+    /// residual tail limit. Partial overlap keeps that limit; convergence alone
+    /// never authorizes a refinement.
     #[must_use]
     pub fn is_trustworthy_refinement_for(&self, settings: &RefineSettings) -> bool {
         let radius = settings.influence_radius_mm.abs();
         let limit = radius * MAX_REFINEMENT_GEOMETRIC_RMS_FRACTION;
         let median_limit = (radius * MAX_REFINEMENT_MEDIAN_FRACTION)
             .clamp(MIN_REFINEMENT_MEDIAN_MM, MAX_REFINEMENT_MEDIAN_MM);
-        // No seated-fraction floor distinguishes the measured partial fit
-        // (0.05 seats over 0.08 coverage, with a 0.000 mm median) from the false
-        // partial fit (0.072 seated): a minimum high enough to reject the false
-        // pose also rejects the correct one. The two-jaw accident remains
-        // refused by the median (0.42 mm against the 0.30 mm ceiling), so
-        // `seated_fraction` ranks candidates without authorizing them.
         self.is_trustworthy_refinement_with_limit(limit)
             && self.median_abs.is_finite()
             && self.median_abs <= median_limit
+    }
+
+    /// Whether the untrimmed evidence explains a changed pair rather than a
+    /// wrong basin.
+    ///
+    /// Two measured conditions: the whole surface agrees within scanner
+    /// tolerance and the overlap is near-complete.
+    fn explains_a_changed_surface(&self) -> bool {
+        unchanged_region_confirms(self.verified_median_mm)
+            && self.verified_coverage.is_finite()
+            && self.verified_coverage >= MIN_CHANGED_PAIR_COVERAGE
     }
 
     fn is_trustworthy_refinement_with_limit(&self, geometric_rms_limit: f64) -> bool {
         self.converged
             && self.inliers >= u32::try_from(MIN_CORRESPONDENCES).unwrap_or(u32::MAX)
             && self.coverage.is_finite()
-            && self.coverage >= MIN_REFINEMENT_COVERAGE_FRACTION
+            && self.support_coverage.is_finite()
+            && self.support_coverage >= MIN_REFINEMENT_COVERAGE_FRACTION
+            && self.verified_support_coverage.is_finite()
+            && self.verified_support_coverage >= MIN_REFINEMENT_COVERAGE_FRACTION
             && self.inlier_ratio.is_finite()
             && self.inlier_ratio > 0.0
             && self.rms.is_finite()
@@ -352,8 +382,10 @@ impl IcpReport {
             && self.median_abs.is_finite()
             && self.p95_abs.is_finite()
             && self.p95_abs >= 0.0
-            && self.p95_abs
-                <= MAX_REFINEMENT_P95_MM.max(self.median_abs * MAX_REFINEMENT_P95_TO_MEDIAN_RATIO)
+            && (self.explains_a_changed_surface()
+                || self.p95_abs
+                    <= MAX_REFINEMENT_P95_MM
+                        .max(self.median_abs * MAX_REFINEMENT_P95_TO_MEDIAN_RATIO))
             && !self.weak_rot_axes.into_iter().any(|weak| weak)
             && !self.weak_trans_axes.into_iter().any(|weak| weak)
             && verification_holds(
@@ -363,6 +395,7 @@ impl IcpReport {
                     stability: self.verified_stability,
                 },
                 self.median_abs,
+                self.verified_support_coverage,
             )
     }
 }
@@ -532,7 +565,13 @@ fn finalize_refinement(
         state.pose,
         context.settings,
     );
-    if verification_holds(&verification, state.summary.median_abs) {
+    let mut verified_support_coverage =
+        measure_verified_support_coverage(&context.rivalry, state.pose, verification.coverage);
+    if verification_holds(
+        &verification,
+        state.summary.median_abs,
+        verified_support_coverage,
+    ) {
         match rivalry(&context.rivalry, state.pose) {
             Rivalry::Unique => {}
             Rivalry::Ambiguous => return Err(FitRejection::Ambiguous),
@@ -546,8 +585,16 @@ fn finalize_refinement(
                     state.pose,
                     context.settings,
                 );
-                if verification_holds(&verification, state.summary.median_abs)
-                    && !matches!(rivalry(&context.rivalry, state.pose), Rivalry::Unique)
+                verified_support_coverage = measure_verified_support_coverage(
+                    &context.rivalry,
+                    state.pose,
+                    verification.coverage,
+                );
+                if verification_holds(
+                    &verification,
+                    state.summary.median_abs,
+                    verified_support_coverage,
+                ) && !matches!(rivalry(&context.rivalry, state.pose), Rivalry::Unique)
                 {
                     return Err(FitRejection::Ambiguous);
                 }
@@ -557,8 +604,30 @@ fn finalize_refinement(
     Ok(report_from_state(
         state,
         verification,
+        verified_support_coverage,
         context.matching_ratio,
     ))
+}
+
+/// Measure untrimmed overlap on whichever indexed surface has less area.
+fn measure_verified_support_coverage(
+    context: &RivalContext<'_>,
+    pose: Rigid,
+    forward_coverage: f64,
+) -> f64 {
+    let level = Level {
+        moving: context.moving,
+        normals: context.normals,
+        fixed: context.fixed,
+        moving_surface: context.moving_surface,
+        fixed_samples: context.fixed_samples,
+        samples: &[],
+        settings: context.settings,
+        cancel: context.cancel,
+        start: pose,
+    };
+    let reciprocal = reciprocal_evidence(&level, pose, context.settings.influence_radius_mm);
+    common_support_coverage(&level, forward_coverage, reciprocal)
 }
 
 /// Refine the one better basin discovered by the final competition pass.
@@ -603,6 +672,7 @@ fn ensure_movement_bound(
 fn report_from_state(
     state: LevelOutcome,
     verification: Verification,
+    verified_support_coverage: f64,
     matching_ratio: f64,
 ) -> IcpReport {
     IcpReport {
@@ -612,6 +682,7 @@ fn report_from_state(
         inliers: state.summary.inliers,
         inlier_ratio: state.summary.inlier_ratio,
         coverage: state.summary.coverage,
+        support_coverage: state.summary.support_coverage,
         rms: state.summary.rms,
         geometric_rms: state.summary.geometric_rms,
         median_abs: state.summary.median_abs,
@@ -621,6 +692,7 @@ fn report_from_state(
         effective_matching_ratio: matching_ratio,
         seated_fraction: state.summary.seated_fraction,
         verified_coverage: verification.coverage,
+        verified_support_coverage,
         verified_median_mm: verification.median_mm,
         verified_stability: verification.stability,
     }
@@ -758,6 +830,7 @@ fn idle_report(start: Rigid) -> IcpReport {
         inliers: 0,
         inlier_ratio: 0.0,
         coverage: 0.0,
+        support_coverage: 0.0,
         rms: 0.0,
         geometric_rms: 0.0,
         median_abs: 0.0,
@@ -767,6 +840,7 @@ fn idle_report(start: Rigid) -> IcpReport {
         effective_matching_ratio: 0.0,
         seated_fraction: 0.0,
         verified_coverage: Verification::NONE.coverage,
+        verified_support_coverage: 0.0,
         verified_median_mm: Verification::NONE.median_mm,
         verified_stability: Verification::NONE.stability,
     }
@@ -831,6 +905,9 @@ fn minimum_forward_matches(sampled: usize) -> usize {
 struct Summary {
     inliers: u32,
     inlier_ratio: f64,
+    /// Share of the physically smaller indexed surface represented by this
+    /// pose's correspondence set.
+    support_coverage: f64,
     coverage: f64,
     rms: f64,
     /// RMS Euclidean point-to-surface distance that gates a trial pose.
