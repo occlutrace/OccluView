@@ -1,3 +1,7 @@
+//! Asserts that the dependency graph respects `[workspace.metadata.layer-ranks]`.
+
+#![allow(clippy::expect_used)] // a missing workspace field is a test failure
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::process::Command;
