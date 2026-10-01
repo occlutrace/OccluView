@@ -59,6 +59,40 @@ pub(crate) fn read_admitted(bytes: &[u8]) -> Result<Mesh, FormatError> {
     reader::read_doc(&doc, bin_chunk)
 }
 
+/// A channel the reader decodes into the built mesh.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum DecodedChannel {
+    Position,
+    Normal,
+    Color,
+    TexCoord,
+    Index,
+}
+
+/// Bytes one element of `channel` occupies once decoded.
+///
+/// These are the sizes of the types `accessor.rs` returns — `Vec3` for a
+/// position or a normal, `[u8; 4]` for a colour, `[f32; 2]` for a texcoord, `u32`
+/// for an index — and not the sizes the file stores. A `FLOAT` `VEC4` colour
+/// arrives as sixteen bytes and is decoded to four, so four is the correct
+/// number here; the bytes it arrived in are counted by `source_bytes` instead.
+/// Deriving each from the decoded type keeps the estimate from drifting away
+/// from what the reader actually builds.
+fn decoded_element_bytes(channel: DecodedChannel) -> usize {
+    match channel {
+        DecodedChannel::Position | DecodedChannel::Normal => size_of::<[f32; 3]>(),
+        DecodedChannel::Color => size_of::<[u8; 4]>(),
+        DecodedChannel::TexCoord => size_of::<[f32; 2]>(),
+        DecodedChannel::Index => size_of::<u32>(),
+    }
+}
+
+/// Peak bytes the GLB reader may hold while it builds its mesh.
+///
+/// The model is the source bytes, slack for the JSON and BIN views, and the
+/// decoded footprint of the largest single primitive. It is the number
+/// `check_estimate` weighs against the import budget, so it must not under-count
+/// what the reader materialises; see [`decoded_element_bytes`].
 pub(crate) fn estimate_peak_bytes(bytes: &[u8], reserved_bytes: u64) -> Result<u64, FormatError> {
     if !bytes.starts_with(b"glTF") {
         return Ok(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
@@ -84,21 +118,24 @@ pub(crate) fn estimate_peak_bytes(bytes: &[u8], reserved_bytes: u64) -> Result<u
             .flat_map(|mesh| &mesh.primitives)
             .fold(0_u64, |largest, primitive| {
                 let stream_bytes = [
-                    (primitive.attributes.position, 12_u64),
-                    (primitive.attributes.normal, 12_u64),
-                    (primitive.attributes.color_0, 4_u64),
-                    (primitive.attributes.texcoord_0, 8_u64),
-                    (primitive.indices, 4_u64),
+                    (primitive.attributes.position, DecodedChannel::Position),
+                    (primitive.attributes.normal, DecodedChannel::Normal),
+                    (primitive.attributes.color_0, DecodedChannel::Color),
+                    (primitive.attributes.texcoord_0, DecodedChannel::TexCoord),
+                    (primitive.indices, DecodedChannel::Index),
                 ]
                 .into_iter()
-                .fold(0_u64, |total, (accessor, stride)| {
+                .fold(0_u64, |total, (accessor, channel)| {
                     accessor
                         .and_then(|index| doc.accessors.get(index))
                         .map_or(total, |accessor| {
                             total.saturating_add(
                                 u64::try_from(accessor.count)
                                     .unwrap_or(u64::MAX)
-                                    .saturating_mul(stride),
+                                    .saturating_mul(
+                                        u64::try_from(decoded_element_bytes(channel))
+                                            .unwrap_or(u64::MAX),
+                                    ),
                             )
                         })
                 });
