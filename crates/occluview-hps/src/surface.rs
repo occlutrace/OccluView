@@ -123,13 +123,9 @@ impl DecodedSurface {
         uvs: Option<Vec<[f32; 2]>>,
         texture: Option<DecodedTexture>,
     ) -> Result<Self, HpsError> {
-        if positions
-            .iter()
-            .flatten()
-            .any(|component| !component.is_finite())
-        {
-            return Err(bad_container("surface positions must be finite"));
-        }
+        require_finite(positions.iter().flatten(), || {
+            bad_container("surface positions must be finite")
+        })?;
         if !indices.len().is_multiple_of(3) {
             return Err(bad_container(
                 "surface index count must contain complete triangles",
@@ -153,9 +149,9 @@ impl DecodedSurface {
             if uvs.len() != positions.len() {
                 return Err(texture_malformed("UV count does not match position count"));
             }
-            if uvs.iter().flatten().any(|component| !component.is_finite()) {
-                return Err(texture_malformed("UV coordinates must be finite"));
-            }
+            require_finite(uvs.iter().flatten(), || {
+                texture_malformed("UV coordinates must be finite")
+            })?;
         }
 
         Ok(Self {
@@ -180,13 +176,9 @@ impl DecodedSurface {
                 "vertex normal count does not match position count",
             ));
         }
-        if normals
-            .iter()
-            .flatten()
-            .any(|component| !component.is_finite())
-        {
-            return Err(bad_container("surface normals must be finite"));
-        }
+        require_finite(normals.iter().flatten(), || {
+            bad_container("surface normals must be finite")
+        })?;
         self.normals = Some(normals);
         Ok(self)
     }
@@ -207,14 +199,9 @@ impl DecodedSurface {
                 "corner UV count does not match triangle corner count",
             ));
         }
-        if corner_uvs
-            .iter()
-            .flatten()
-            .flatten()
-            .any(|component| !component.is_finite())
-        {
-            return Err(texture_malformed("corner UV coordinates must be finite"));
-        }
+        require_finite(corner_uvs.iter().flatten().flatten(), || {
+            texture_malformed("corner UV coordinates must be finite")
+        })?;
         self.corner_uvs = Some(corner_uvs);
         Ok(self)
     }
@@ -286,6 +273,22 @@ fn texture_malformed(reason: impl Into<String>) -> HpsError {
     HpsError::TextureMalformed {
         reason: reason.into(),
     }
+}
+
+/// Refuse a channel that holds a coordinate which is not finite.
+///
+/// `error` carries the taxonomy instead of the helper choosing one: a position or
+/// a normal that is not finite is a container fault and a UV coordinate that is
+/// not finite is a texture fault, and the two stay distinguishable because the
+/// caller names which it is.
+fn require_finite<'a>(
+    values: impl IntoIterator<Item = &'a f32>,
+    error: impl FnOnce() -> HpsError,
+) -> Result<(), HpsError> {
+    if values.into_iter().any(|component| !component.is_finite()) {
+        return Err(error());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
