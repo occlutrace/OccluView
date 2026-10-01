@@ -7,6 +7,7 @@ mod scene_menu;
 
 use crate::layer_actions::LayerContextRequest;
 use crate::ui_theme;
+pub(crate) use color::color32_from_tint;
 use eframe::egui;
 pub(crate) use layout::{
     layer_overlay_desired_height, layer_overlay_rect, LAYER_OVERLAY_BOTTOM_RESERVE_PX,
@@ -88,11 +89,15 @@ pub(crate) enum LayerOverlaySceneAction {
 }
 
 /// Source identity for a layer drag. The app tracks the pointer and decides
-/// which viewport or tab is the destination.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// which viewport or tab is the destination. The label and tint are captured
+/// here because only the row knows them; the drag preview would otherwise have
+/// to rebuild them from the source scene every frame.
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct LayerDragSource {
     pub(crate) scene_id: u64,
     pub(crate) layer_id: SceneMeshId,
+    pub(crate) label: String,
+    pub(crate) tint: [f32; 4],
 }
 
 /// What the layer rows and the viewport menu need to offer the contact reading.
@@ -218,6 +223,8 @@ pub(crate) fn show(
                                     drag_started = scene_tabs.map(|tabs| LayerDragSource {
                                         scene_id: tabs.active_scene_id,
                                         layer_id: entry.id(),
+                                        label: label.clone(),
+                                        tint: entry.tint,
                                     });
                                 }
                             }
