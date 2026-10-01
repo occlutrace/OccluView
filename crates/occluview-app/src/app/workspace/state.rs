@@ -1,6 +1,6 @@
 //! Owners of scene content and the workspace that coordinates their views.
 
-use super::commands::{LayerDragPayload, WorkspaceCommand};
+use super::commands::{LayerDragPayload, LayerDropTarget, WorkspaceCommand};
 use super::history::{WorkspaceHistory, WorkspaceHistoryHandle};
 use super::id::{IdAllocator, PaneId, SceneId, SceneKey};
 use super::input::{InputArbiter, PaneTarget};
@@ -76,6 +76,10 @@ pub(in crate::app) struct WorkspaceState {
     pub(in crate::app) saved_split: Option<WorkspaceLayout>,
     pub(in crate::app) commands: VecDeque<WorkspaceCommand>,
     pub(in crate::app) layer_drag: Option<LayerDragPayload>,
+    /// Destination the live layer drag resolved to last frame. Kept so the
+    /// drop highlight can fade and can keep a target across a small outward
+    /// movement instead of flickering on and off at the edge band.
+    pub(in crate::app) layer_drop_target: Option<LayerDropTarget>,
     pub(in crate::app) scene_tab_rects: Vec<(SceneKey, egui::Rect)>,
     pub(in crate::app) scene_create_rect: Option<egui::Rect>,
     pub(in crate::app) pending_drop: Option<Vec<std::path::PathBuf>>,
@@ -105,6 +109,7 @@ impl WorkspaceState {
             saved_split: None,
             commands: VecDeque::new(),
             layer_drag: None,
+            layer_drop_target: None,
             scene_tab_rects: Vec::new(),
             scene_create_rect: None,
             pending_drop: None,

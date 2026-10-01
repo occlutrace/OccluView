@@ -3,6 +3,7 @@
 use super::id::{PaneId, SceneKey};
 use super::input::PaneTarget;
 use super::layout::WorkspaceLayout;
+use eframe::egui;
 use occluview_core::SceneMeshId;
 use std::collections::HashSet;
 
@@ -58,10 +59,41 @@ pub(crate) enum LayerIdsError {
 }
 
 /// Opaque drag data: geometry remains owned by its source scene until commit.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// The label and tint are display-only, captured when the drag starts so the
+/// ghost does not have to reach back into the source scene every frame.
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct LayerDragPayload {
     pub(crate) source: SceneKey,
     pub(crate) layer: SceneMeshId,
+    pub(crate) label: String,
+    pub(crate) tint: [f32; 4],
+}
+
+/// Where a layer drag would land if the primary button were released now.
+/// The preview and the drop resolve this through the same function, so the
+/// highlight can never name a destination the release does not use.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum LayerDropTarget {
+    /// An existing scene tab in the workspace footer.
+    SceneTab { key: SceneKey, rect: egui::Rect },
+    /// The footer's create-scene button.
+    NewScene { rect: egui::Rect },
+    /// An existing pane's canvas.
+    Pane { key: SceneKey, rect: egui::Rect },
+    /// The edge band that creates a pane on release.
+    Edge { side: SplitSide, rect: egui::Rect },
+}
+
+impl LayerDropTarget {
+    /// Rectangle the drop highlight is painted in.
+    pub(crate) fn rect(self) -> egui::Rect {
+        match self {
+            Self::SceneTab { rect, .. }
+            | Self::NewScene { rect }
+            | Self::Pane { rect, .. }
+            | Self::Edge { rect, .. } => rect,
+        }
+    }
 }
 
 /// One user intent. The coordinator validates live keys and commits mutations.

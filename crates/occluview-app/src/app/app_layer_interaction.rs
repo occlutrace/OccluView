@@ -207,6 +207,8 @@ impl SceneContext<'_> {
                     *self.layer_drag = Some(LayerDragPayload {
                         source: self.scene_key,
                         layer: source.layer_id,
+                        label: source.label,
+                        tint: source.tint,
                     });
                 }
             }

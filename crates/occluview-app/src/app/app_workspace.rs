@@ -2,7 +2,7 @@
 
 use super::app_loading::native_drop_paths;
 use super::workspace::commands::{
-    LayerDragPayload, LayerIds, SplitSide, TransferDestination, WorkspaceCommand,
+    LayerDragPayload, LayerDropTarget, LayerIds, SplitSide, TransferDestination, WorkspaceCommand,
 };
 use super::workspace::id::{PaneId, SceneKey};
 use super::workspace::input::{GestureKind, PaneTarget, PointerButtons, PressResult};
@@ -15,6 +15,9 @@ const PANE_HEADER_HEIGHT: f32 = 30.0;
 const DIVIDER_WIDTH: f32 = 8.0;
 const MIN_PANE_WIDTH: f32 = 320.0;
 const EDGE_DROP_ZONE_WIDTH: f32 = 56.0;
+/// A resolved edge target survives this far past its band, so a hand that
+/// drifts a few pixels back inward does not make the highlight flash off.
+const EDGE_DROP_ZONE_RELEASE_MARGIN: f32 = 40.0;
 
 #[derive(Clone)]
 struct VisiblePane {
@@ -968,86 +971,146 @@ impl OccluViewApp {
         }
     }
 
+    /// Resolve where a live layer drag would land. The preview and the release
+    /// both call this, so the highlight can never name a destination the drop
+    /// does not use.
+    fn resolve_layer_drop_target(
+        &self,
+        ctx: &egui::Context,
+        pointer: egui::Pos2,
+        frame: &WorkspaceInputFrame<'_>,
+        payload: &LayerDragPayload,
+    ) -> Option<LayerDropTarget> {
+        if let Some((key, rect)) = self
+            .workspace
+            .scene_tab_rects
+            .iter()
+            .find(|(key, rect)| *key != payload.source && rect.contains(pointer))
+        {
+            return Some(LayerDropTarget::SceneTab {
+                key: *key,
+                rect: *rect,
+            });
+        }
+        // The footer's plus is an explicit create target with the same
+        // right-side default as clicking it, and it takes priority over the
+        // pane canvas below it.
+        if self.workspace.scenes.len() < 2 {
+            if let Some(rect) = self
+                .workspace
+                .scene_create_rect
+                .filter(|rect| rect.contains(pointer))
+            {
+                return Some(LayerDropTarget::NewScene { rect });
+            }
+        }
+        // Pane headers and the Layers panel float above the canvases, so a
+        // pointer on them is not over a pane even when it is geometrically
+        // inside one. Dropping back onto the source is a cancellation, which
+        // is what `None` means here.
+        if self.pointer_over_workspace_chrome(pointer, frame.panes)
+            || self.pointer_over_layers_panel(ctx, pointer, frame.workspace_rect)
+        {
+            return None;
+        }
+        if let Some(pane) = frame
+            .panes
+            .iter()
+            .find(|pane| pane.key != payload.source && pane.canvas.contains(pointer))
+        {
+            return Some(LayerDropTarget::Pane {
+                key: pane.key,
+                rect: pane.canvas,
+            });
+        }
+        if self.workspace.scenes.len() >= 2 || !frame.workspace_rect.contains(pointer) {
+            return None;
+        }
+        let band = |side: SplitSide| match side {
+            SplitSide::Left => Rect::from_min_max(
+                frame.workspace_rect.min,
+                pos2(
+                    frame.workspace_rect.left() + EDGE_DROP_ZONE_WIDTH,
+                    frame.workspace_rect.bottom(),
+                ),
+            ),
+            SplitSide::Right => Rect::from_min_max(
+                pos2(
+                    frame.workspace_rect.right() - EDGE_DROP_ZONE_WIDTH,
+                    frame.workspace_rect.top(),
+                ),
+                frame.workspace_rect.max,
+            ),
+        };
+        for side in [SplitSide::Left, SplitSide::Right] {
+            let rect = band(side);
+            if rect.contains(pointer) {
+                return Some(LayerDropTarget::Edge { side, rect });
+            }
+        }
+        match self.workspace.layer_drop_target {
+            Some(LayerDropTarget::Edge { side, rect })
+                if rect.expand(EDGE_DROP_ZONE_RELEASE_MARGIN).contains(pointer) =>
+            {
+                Some(LayerDropTarget::Edge { side, rect })
+            }
+            _ => None,
+        }
+    }
+
     fn finish_layer_drag(&mut self, ctx: &egui::Context, frame: &WorkspaceInputFrame<'_>) {
-        let released =
-            ctx.input(|input| input.pointer.button_released(egui::PointerButton::Primary));
-        if !released {
+        if self.workspace.layer_drag.is_none() {
             return;
         }
-        let Some(payload) = self.workspace.layer_drag.take() else {
+        let (released, held) = ctx.input(|input| {
+            (
+                input.pointer.button_released(egui::PointerButton::Primary),
+                input.pointer.primary_down(),
+            )
+        });
+        if !released {
+            // A drag whose primary button is no longer down can never be
+            // completed: the window lost focus, another widget consumed the
+            // release, or a different button armed the drag. Clear it instead
+            // of tracking the pointer until the next primary release.
+            if !held {
+                self.workspace.layer_drag = None;
+                self.workspace.layer_drop_target = None;
+            }
             return;
-        };
+        }
+        if frame.modal_open || self.ui.modal_dialog_open() {
+            return;
+        }
         let Some(pointer) = ctx.input(|input| {
             input
                 .pointer
                 .interact_pos()
                 .or_else(|| input.pointer.hover_pos())
         }) else {
+            // No pointer position on the release frame: keep the drag so the
+            // next frame can resolve it. The dead-man above clears it if the
+            // button is already up by then.
             return;
         };
-        if frame.modal_open
-            || self.ui.modal_dialog_open()
-            || ctx
-                .layer_id_at(pointer)
-                .is_some_and(|layer| layer != frame.central_layer)
-        {
-            return;
-        }
-
-        if let Some((destination, _)) = self
-            .workspace
-            .scene_tab_rects
-            .iter()
-            .find(|(key, rect)| *key != payload.source && rect.contains(pointer))
-        {
-            self.queue_layer_transfer(payload, TransferDestination::Existing(*destination));
-            return;
-        }
-
-        // The footer's plus is an explicit create target with the same
-        // right-side default as clicking it. It takes priority over the broad
-        // panel hit area below.
-        if self.workspace.scenes.len() < 2
-            && self
-                .workspace
-                .scene_create_rect
-                .is_some_and(|rect| rect.contains(pointer))
-        {
-            self.create_scene_for_layer_transfer(payload, SplitSide::Right);
-            return;
-        }
-
-        if let Some(destination) = frame
-            .panes
-            .iter()
-            .find(|pane| pane.key != payload.source && pane.canvas.contains(pointer))
-        {
-            self.queue_layer_transfer(payload, TransferDestination::Existing(destination.key));
-            return;
-        }
-        // Dropping back onto the source panel or pane is a cancellation. It
-        // must not accidentally count as an edge split just because the Layers
-        // panel sits against that edge.
-        if self.pointer_over_workspace_chrome(pointer, frame.panes)
-            || self.pointer_over_layers_panel(ctx, pointer, frame.workspace_rect)
-            || !frame.workspace_rect.contains(pointer)
-        {
-            return;
-        }
-        if self.workspace.scenes.len() >= 2 {
-            return;
-        }
-        let side = if pointer.x <= frame.workspace_rect.left() + EDGE_DROP_ZONE_WIDTH {
-            Some(SplitSide::Left)
-        } else if pointer.x >= frame.workspace_rect.right() - EDGE_DROP_ZONE_WIDTH {
-            Some(SplitSide::Right)
-        } else {
-            None
-        };
-        let Some(side) = side else {
+        let Some(payload) = self.workspace.layer_drag.clone() else {
             return;
         };
-        self.create_scene_for_layer_transfer(payload, side);
+        let target = self.resolve_layer_drop_target(ctx, pointer, frame, &payload);
+        self.workspace.layer_drag = None;
+        self.workspace.layer_drop_target = None;
+        match target {
+            Some(LayerDropTarget::SceneTab { key, .. } | LayerDropTarget::Pane { key, .. }) => {
+                self.queue_layer_transfer(payload, TransferDestination::Existing(key));
+            }
+            Some(LayerDropTarget::NewScene { .. }) => {
+                self.create_scene_for_layer_transfer(payload, SplitSide::Right);
+            }
+            Some(LayerDropTarget::Edge { side, .. }) => {
+                self.create_scene_for_layer_transfer(payload, side);
+            }
+            None => {}
+        }
     }
 
     fn create_scene_for_layer_transfer(&mut self, payload: LayerDragPayload, side: SplitSide) {
@@ -1077,82 +1140,90 @@ impl OccluViewApp {
             });
     }
 
-    fn show_layer_drag_preview(&self, ui: &mut egui::Ui, frame: &WorkspaceInputFrame<'_>) {
-        let Some(payload) = self.workspace.layer_drag else {
-            return;
+    fn show_layer_drag_preview(&mut self, ui: &mut egui::Ui, frame: &WorkspaceInputFrame<'_>) {
+        let ctx = ui.ctx().clone();
+        let payload = self.workspace.layer_drag.clone();
+        let pointer = ctx.input(|input| input.pointer.hover_pos());
+        let target = match (&payload, pointer) {
+            (Some(payload), Some(pointer)) if !frame.modal_open && !self.ui.modal_dialog_open() => {
+                self.resolve_layer_drop_target(&ctx, pointer, frame, payload)
+            }
+            _ => None,
         };
-        let Some(pointer) = ui.ctx().input(|input| input.pointer.hover_pos()) else {
-            return;
-        };
-        if frame.modal_open
-            || self.ui.modal_dialog_open()
-            || ui
-                .ctx()
-                .layer_id_at(pointer)
-                .is_some_and(|layer| layer != frame.central_layer)
-        {
-            return;
+        // One id drives the fade in and out, so a target that appears and
+        // clears within a frame still reads as a transition rather than a
+        // flash. The last painted rectangle outlives its target for as long as
+        // the fade takes.
+        let alpha = ctx.animate_bool_with_time(
+            egui::Id::new("layer-drop-highlight"),
+            target.is_some(),
+            0.14,
+        );
+        if target.is_some() || alpha > 0.002 {
+            ctx.request_repaint();
         }
-        let color = crate::ui_theme::accent().gamma_multiply(0.17);
-        let stroke = egui::Stroke::new(2.0, crate::ui_theme::accent());
-
-        let target = self
-            .workspace
-            .scene_tab_rects
-            .iter()
-            .find(|(key, rect)| *key != payload.source && rect.contains(pointer))
-            .map(|(_, rect)| *rect)
-            .or_else(|| {
-                if self.workspace.scenes.len() < 2 {
-                    self.workspace
-                        .scene_create_rect
-                        .filter(|rect| rect.contains(pointer))
-                } else {
-                    None
-                }
-            })
-            .or_else(|| {
-                if self.pointer_over_workspace_chrome(pointer, frame.panes)
-                    || self.pointer_over_layers_panel(ui.ctx(), pointer, frame.workspace_rect)
-                {
-                    return None;
-                }
-                frame
-                    .panes
-                    .iter()
-                    .find(|pane| pane.key != payload.source && pane.canvas.contains(pointer))
-                    .map(|pane| pane.canvas)
-                    .or_else(|| {
-                        if self.workspace.scenes.len() >= 2
-                            || !frame.workspace_rect.contains(pointer)
-                        {
-                            return None;
-                        }
-                        if pointer.x <= frame.workspace_rect.left() + EDGE_DROP_ZONE_WIDTH {
-                            Some(Rect::from_min_max(
-                                frame.workspace_rect.min,
-                                pos2(
-                                    frame.workspace_rect.center().x,
-                                    frame.workspace_rect.bottom(),
-                                ),
-                            ))
-                        } else if pointer.x >= frame.workspace_rect.right() - EDGE_DROP_ZONE_WIDTH {
-                            Some(Rect::from_min_max(
-                                pos2(frame.workspace_rect.center().x, frame.workspace_rect.top()),
-                                frame.workspace_rect.max,
-                            ))
-                        } else {
-                            None
-                        }
-                    })
-            });
+        let painted = target.or(self.workspace.layer_drop_target);
+        self.workspace.layer_drop_target = if target.is_none() && alpha <= 0.002 {
+            None
+        } else {
+            painted
+        };
+        if let Some(rect) = painted.map(LayerDropTarget::rect) {
+            if alpha > 0.002 {
+                let accent = crate::ui_theme::accent();
+                ui.painter()
+                    .rect_filled(rect, 3.0, accent.gamma_multiply(0.12 * alpha));
+                ui.painter().rect_stroke(
+                    rect,
+                    3.0,
+                    egui::Stroke::new(1.0, accent.gamma_multiply(alpha)),
+                    egui::StrokeKind::Inside,
+                );
+            }
+        }
+        let (Some(payload), Some(pointer)) = (payload, pointer) else {
+            return;
+        };
         if let Some(target) = target {
-            ui.painter().rect_filled(target, 3.0, color);
-            ui.painter()
-                .rect_stroke(target, 3.0, stroke, egui::StrokeKind::Inside);
-            self.paint_layer_drop_label(ui.painter(), target, pointer, frame.workspace_rect);
-            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+            self.paint_layer_drop_label(ui.painter(), target.rect(), pointer, frame.workspace_rect);
         }
+        ctx.set_cursor_icon(if target.is_some() {
+            egui::CursorIcon::Grabbing
+        } else {
+            egui::CursorIcon::NotAllowed
+        });
+        Self::paint_layer_drag_ghost(ui.painter(), pointer, &payload, target.is_some());
+    }
+
+    /// Translucent chip under the pointer for the layer being dragged. It dims
+    /// when the pointer is not over a drop target, so the outcome of the
+    /// release is visible before the button comes up.
+    fn paint_layer_drag_ghost(
+        painter: &egui::Painter,
+        at: egui::Pos2,
+        payload: &LayerDragPayload,
+        accepted: bool,
+    ) {
+        let galley = painter.layout_no_wrap(
+            payload.label.clone(),
+            egui::FontId::proportional(12.0),
+            crate::ui_theme::text(),
+        );
+        let rect = Rect::from_min_size(at + vec2(12.0, 14.0), galley.size() + vec2(22.0, 12.0));
+        let tint = crate::layers_overlay::color32_from_tint(payload.tint);
+        let (fill, stroke) = if accepted {
+            (tint.gamma_multiply(0.85), crate::ui_theme::accent())
+        } else {
+            (tint.gamma_multiply(0.35), crate::ui_theme::hairline())
+        };
+        painter.rect_filled(rect, 6.0, fill);
+        painter.rect_stroke(
+            rect,
+            6.0,
+            egui::Stroke::new(1.0, stroke),
+            egui::StrokeKind::Inside,
+        );
+        painter.galley(rect.min + vec2(11.0, 6.0), galley, crate::ui_theme::text());
     }
 
     fn paint_layer_drop_label(
@@ -1162,7 +1233,7 @@ impl OccluViewApp {
         drop_position: egui::Pos2,
         workspace_rect: Rect,
     ) {
-        if target.height() <= 80.0 || target.width() <= 120.0 {
+        if target.height() <= 60.0 {
             return;
         }
         let label = self.ui.locale.tr(if self.workspace.scenes.len() < 2 {
