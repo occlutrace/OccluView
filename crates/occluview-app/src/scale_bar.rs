@@ -1,5 +1,7 @@
 //! Scale-bar math for rendered mesh views.
 
+use crate::i18n::catalog::NumberFormat;
+
 /// A screen-space scale bar chosen for a mesh view.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ScaleBar {
@@ -36,11 +38,19 @@ impl ScaleBar {
 
     /// Label text for the UI, in the operator's chosen unit.
     #[must_use]
-    pub fn label(self, unit: crate::app_settings::UnitDisplay) -> String {
+    pub fn label(
+        self,
+        unit: crate::app_settings::UnitDisplay,
+        number_format: NumberFormat,
+    ) -> String {
         match unit {
-            crate::app_settings::UnitDisplay::Millimeters => format!("{:.0} mm", self.length_mm),
+            crate::app_settings::UnitDisplay::Millimeters => {
+                let mm = number_format.decimal(f64::from(self.length_mm), 0);
+                format!("{mm} mm")
+            }
             crate::app_settings::UnitDisplay::Inches => {
-                format!("{:.2} in", f64::from(self.length_mm) / 25.4)
+                let inches = number_format.decimal(f64::from(self.length_mm) / 25.4, 2);
+                format!("{inches} in")
             }
         }
     }
@@ -93,11 +103,17 @@ mod tests {
         assert_eq!(bar.length_mm, 20.0);
         assert!((bar.width_px - 128.0).abs() < 0.01);
         assert_eq!(
-            bar.label(crate::app_settings::UnitDisplay::Millimeters),
+            bar.label(
+                crate::app_settings::UnitDisplay::Millimeters,
+                NumberFormat::for_tag("en"),
+            ),
             "20 mm"
         );
         assert_eq!(
-            bar.label(crate::app_settings::UnitDisplay::Inches),
+            bar.label(
+                crate::app_settings::UnitDisplay::Inches,
+                NumberFormat::for_tag("en"),
+            ),
             "0.79 in"
         );
     }
@@ -116,7 +132,10 @@ mod tests {
         assert_eq!(bar.length_mm, 1.0);
         assert!((bar.width_px - 128.0).abs() < 0.01);
         assert_eq!(
-            bar.label(crate::app_settings::UnitDisplay::Millimeters),
+            bar.label(
+                crate::app_settings::UnitDisplay::Millimeters,
+                NumberFormat::for_tag("en"),
+            ),
             "1 mm"
         );
     }
@@ -128,7 +147,10 @@ mod tests {
         assert_eq!(bar.length_mm, 100.0);
         assert!((bar.width_px - 102.4).abs() < 0.01);
         assert_eq!(
-            bar.label(crate::app_settings::UnitDisplay::Millimeters),
+            bar.label(
+                crate::app_settings::UnitDisplay::Millimeters,
+                NumberFormat::for_tag("en"),
+            ),
             "100 mm"
         );
     }

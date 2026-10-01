@@ -469,7 +469,11 @@ fn inactive_scene_keeps_its_ruler_visible_without_consuming_escape() {
             assert!(ctx.input(|input| input.key_pressed(egui::Key::Escape)));
         },
     );
-    let expected = crate::measure_tool::format_length(1.0, app.persistence.settings.unit_display);
+    let expected = crate::measure_tool::format_length(
+        1.0,
+        app.persistence.settings.unit_display,
+        crate::i18n::catalog::NumberFormat::for_tag("en"),
+    );
     assert!(
         output.shapes.iter().any(|shape| matches!(&shape.shape,
         egui::epaint::Shape::Text(text) if text.galley.text().contains(&expected))),

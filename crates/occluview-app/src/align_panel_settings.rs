@@ -38,12 +38,15 @@ pub(crate) fn matching(
                 settings.matching_ratio,
             );
             slider.on_hover_text(locale.tr(crate::i18n::message_id!("align-matching-parts-hint")));
+            let number_format = locale.number_format();
             let value = ui.add_enabled(
                 enabled,
                 egui::DragValue::new(&mut settings.matching_ratio)
                     .range(range)
                     .speed(0.01)
-                    .custom_formatter(|value, _| format!("{:.0}%", value * 100.0)),
+                    .custom_formatter(move |value, _| {
+                        format!("{}%", number_format.decimal(value * 100.0, 0))
+                    }),
             );
             crate::accessibility::spin_button(
                 &value,

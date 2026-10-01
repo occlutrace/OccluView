@@ -529,6 +529,7 @@ fn paint_legend(
 ) {
     let law = scale.law();
     let far = law.paint_far_mm;
+    let number_format = locale.number_format();
     // Read the ramp's own deepest stop instead of recomputing it: the ramp
     // clamps its tail at the probe's reach, and a recomputed
     // `load x clamp / load_mm` would print 1.36 mm at the top of the slider,
@@ -541,11 +542,11 @@ fn paint_legend(
     );
     let gap_label = locale.tr_with(
         crate::i18n::message_id!("contact-legend-gap"),
-        &[("mm", &format!("{far:.2}"))],
+        &[("mm", &number_format.decimal(far, 2))],
     );
     let bite_label = locale.tr_with(
         crate::i18n::message_id!("contact-legend-deepest"),
-        &[("mm", &format!("{:.2}", -deepest))],
+        &[("mm", &number_format.decimal(-deepest, 2))],
     );
     response.on_hover_text(format!("{gap_label}\n{bite_label}"));
     let ramp = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), LEGEND_HEIGHT));
@@ -806,10 +807,11 @@ fn paint_stats(
         UnitDisplay::Millimeters => occluview_contact::ContactLengthUnit::Millimeters,
         UnitDisplay::Inches => occluview_contact::ContactLengthUnit::Inches,
     };
+    let number_format = locale.number_format();
     let rows = [
         (
             crate::i18n::message_id!("contact-stats-area"),
-            format!("{:.1} mm²", stats.contact_area_mm2),
+            format!("{} mm²", number_format.decimal(stats.contact_area_mm2, 1)),
         ),
         (
             crate::i18n::message_id!("contact-stats-contacts"),
@@ -822,8 +824,9 @@ fn paint_stats(
         (
             crate::i18n::message_id!("contact-stats-balance"),
             format!(
-                "{:.1} / {:.1} mm²",
-                stats.minus_x_area_mm2, stats.plus_x_area_mm2
+                "{} / {} mm²",
+                number_format.decimal(stats.minus_x_area_mm2, 1),
+                number_format.decimal(stats.plus_x_area_mm2, 1)
             ),
         ),
     ];

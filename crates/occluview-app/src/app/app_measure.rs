@@ -325,9 +325,11 @@ impl SceneContext<'_> {
         let Some(ruler) = self.tools.measure.ruler_segment(ruler_index) else {
             return;
         };
+        let number_format = self.ui.locale.number_format();
         let length = measure_tool::format_length(
             ruler.distance_mm(),
             self.persistence.settings.unit_display,
+            number_format,
         );
         let message = match ruler.foot {
             Some(foot) if foot.perpendicular => self.ui.locale.tr_with(
@@ -337,7 +339,9 @@ impl SceneContext<'_> {
             Some(foot) if foot.angle_deg.is_some() => {
                 let angle = foot
                     .angle_deg
-                    .map_or_else(String::new, measure_tool::format_angle);
+                    .map_or_else(String::new, |degrees| {
+                        measure_tool::format_angle(degrees, number_format)
+                    });
                 self.ui.locale.tr_with(
                     crate::i18n::message_id!("measure-to-line"),
                     &[("len", length.as_str()), ("angle", angle.as_str())],
@@ -369,6 +373,7 @@ impl SceneContext<'_> {
                             measure_tool::format_length(
                                 f64::from(thickness_mm),
                                 self.persistence.settings.unit_display,
+                                self.ui.locale.number_format(),
                             )
                             .as_str(),
                         )],

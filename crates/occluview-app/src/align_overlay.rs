@@ -11,6 +11,7 @@ use occluview_core::{Camera, Scene, SceneMeshId};
 
 use crate::align_tool::AlignTool;
 use crate::align_worker::AlignSettings;
+use crate::i18n::catalog::NumberFormat;
 use crate::measure_draw;
 use crate::ui_theme;
 use crate::viewer::project_world_to_viewport;
@@ -169,18 +170,27 @@ pub(crate) fn legend_value_mm(step: usize, steps: usize, mode: RampMode, scale_m
 }
 
 /// The number written under each end of the legend bar, in millimetres.
-fn legend_bounds(mode: RampMode, scale_mm: f64) -> (String, String) {
+fn legend_bounds(mode: RampMode, scale_mm: f64, number_format: NumberFormat) -> (String, String) {
     match mode {
         // A zero maximum still has a hot side: everything past exact zero. The
         // right label says so instead of repeating "0.00 mm", which would
         // claim the bar has no range at all.
-        RampMode::Magnitude if scale_mm <= 0.0 => ("0.00 mm".to_owned(), "> 0.00 mm".to_owned()),
+        RampMode::Magnitude if scale_mm <= 0.0 => (
+            format!("{} mm", number_format.decimal(0.0, 2)),
+            format!("> {} mm", number_format.decimal(0.0, 2)),
+        ),
         // The ramp clamps every value at the upper stop, so the hot end also
         // represents all deviations above that stop. Showing the inequality
         // prevents an operator from reading a saturated red patch as exactly
         // the endpoint.
-        RampMode::Magnitude => ("0.00 mm".to_owned(), format!("≥ {scale_mm:.2} mm")),
-        RampMode::Signed => (format!("−{scale_mm:.2} mm"), format!("+{scale_mm:.2} mm")),
+        RampMode::Magnitude => (
+            format!("{} mm", number_format.decimal(0.0, 2)),
+            format!("≥ {} mm", number_format.decimal(scale_mm, 2)),
+        ),
+        RampMode::Signed => (
+            format!("−{} mm", number_format.decimal(scale_mm, 2)),
+            format!("+{} mm", number_format.decimal(scale_mm, 2)),
+        ),
     }
 }
 
@@ -278,9 +288,10 @@ pub(crate) fn paint_legend(
                     .color(ui_theme::text_muted()),
             );
         };
-        let (mut low, high) = legend_bounds(settings.ramp_mode, settings.scale_mm);
+        let number_format = locale.number_format();
+        let (mut low, high) = legend_bounds(settings.ramp_mode, settings.scale_mm, number_format);
         if settings.ramp_mode == RampMode::Magnitude {
-            low = format!("≤ {:.2} mm", settings.min_display_mm);
+            low = format!("≤ {} mm", number_format.decimal(settings.min_display_mm, 2));
         }
         label(ui, low);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -318,7 +329,7 @@ fn no_data_key(ui: &mut egui::Ui, locale: &crate::i18n::LocaleManager) {
 
 #[cfg(test)]
 mod tests {
-    use super::{legend_bounds, legend_color_at, legend_value_mm, LEGEND_STEPS};
+    use super::{legend_bounds, legend_color_at, legend_value_mm, NumberFormat, LEGEND_STEPS};
     use occluview_align::{ramp_color, RampMode, RampSettings};
 
     fn ramp(mode: RampMode, scale_mm: f64) -> RampSettings {
@@ -376,7 +387,7 @@ mod tests {
             "every non-zero deviation is past a zero maximum and must read hot"
         );
         assert_eq!(
-            legend_bounds(RampMode::Magnitude, 0.0),
+            legend_bounds(RampMode::Magnitude, 0.0, NumberFormat::for_tag("en")),
             ("0.00 mm".to_owned(), "> 0.00 mm".to_owned()),
             "the open end has to be labelled as such"
         );
@@ -491,12 +502,12 @@ mod tests {
     #[test]
     fn the_bounds_name_the_scale_the_bar_was_drawn_over() {
         assert_eq!(
-            legend_bounds(RampMode::Magnitude, 0.5),
+            legend_bounds(RampMode::Magnitude, 0.5, NumberFormat::for_tag("en")),
             ("0.00 mm".to_owned(), "≥ 0.50 mm".to_owned()),
             "a magnitude bar starts at nothing, never at a negative distance"
         );
         assert_eq!(
-            legend_bounds(RampMode::Signed, 0.5),
+            legend_bounds(RampMode::Signed, 0.5, NumberFormat::for_tag("en")),
             ("−0.50 mm".to_owned(), "+0.50 mm".to_owned())
         );
     }

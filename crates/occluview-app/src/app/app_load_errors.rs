@@ -24,7 +24,7 @@ fn too_large_summary(locale: &crate::i18n::LocaleManager, error: &Error) -> Opti
     Some(locale.tr_with(
         crate::i18n::message_id!("load-file-too-large"),
         &[
-            ("size", &format!("{:.1}", gibibytes(*bytes))),
+            ("size", &locale.number_format().decimal(gibibytes(*bytes), 1)),
             ("limit", &format!("{}", *limit >> 30)),
         ],
     ))
@@ -93,8 +93,8 @@ fn memory_budget_summary(locale: &crate::i18n::LocaleManager, error: &Error) -> 
     Some(locale.tr_with(
         crate::i18n::message_id!("load-memory-budget-exceeded"),
         &[
-            ("size", &format!("{size_gib:.1}")),
-            ("limit", &format!("{:.1}", gibibytes(*limit))),
+            ("size", &locale.number_format().decimal(size_gib, 1)),
+            ("limit", &locale.number_format().decimal(gibibytes(*limit), 1)),
         ],
     ))
 }

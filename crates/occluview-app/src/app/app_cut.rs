@@ -366,6 +366,7 @@ impl SceneContext<'_> {
                             measure_tool::format_length(
                                 f64::from(probe.thickness_mm),
                                 self.persistence.settings.unit_display,
+                                self.ui.locale.number_format(),
                             )
                             .as_str(),
                         )],

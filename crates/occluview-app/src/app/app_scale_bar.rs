@@ -14,6 +14,7 @@ pub(super) fn paint_scale_bar(
     camera: &Camera,
     unit: UnitDisplay,
     background: ViewportBackground,
+    locale: &crate::i18n::LocaleManager,
 ) {
     let mm_per_px =
         crate::align_drag::mm_per_pixel(camera.orthographic_height, image_rect.height());
@@ -48,7 +49,7 @@ pub(super) fn paint_scale_bar(
     painter.text(
         egui::pos2(x0, y - 22.0),
         egui::Align2::LEFT_TOP,
-        bar.label(unit),
+        bar.label(unit, locale.number_format()),
         egui::FontId::proportional(13.0),
         crate::ui_theme::viewport_ink(viewport_is_dark),
     );

@@ -487,8 +487,9 @@ fn sculpt_settings_row(
     let (strength_min, strength_max) = kind.strength_range();
     let mut radius = super::sculpt_radius_mm(&ctx, scene_key, tip);
     let mut strength = super::sculpt_strength(&ctx, scene_key, kind);
-    let radius_label = format!("{radius:.2} mm");
-    let strength_label = format!("{:.0}%", strength * 100.0);
+    let number_format = locale.number_format();
+    let radius_label = format!("{} mm", number_format.decimal(f64::from(radius), 2));
+    let strength_label = format!("{}%", number_format.decimal(f64::from(strength * 100.0), 0));
     sculpt_slider_row(
         ui,
         enabled,

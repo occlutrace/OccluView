@@ -22,7 +22,7 @@ use unic_langid::LanguageIdentifier;
 
 #[cfg(test)]
 use super::tags::FALLBACK_TAG;
-pub(crate) use occluview_i18n::{args, plural_args, Catalog, EMBEDDED_TAGS};
+pub(crate) use occluview_i18n::{args, plural_args, Catalog, NumberFormat, EMBEDDED_TAGS};
 
 /// Pseudo-locale tag for layout testing. Never user-selectable.
 #[cfg(test)]
@@ -624,5 +624,62 @@ mod tests {
             }
         }
         assert!(failures.is_empty(), "pseudo gaps:\n{}", failures.join("\n"));
+    }
+
+    /// The `en` keys no tracked Rust source names as a quoted literal.
+    ///
+    /// `message_id!` only rejects a key a source actually writes; a key no
+    /// source mentions is never resolved and never missed.
+    fn unreferenced_english_keys(keys: &BTreeSet<String>, sources: &[String]) -> Vec<String> {
+        let sources = sources.join("\n");
+        keys.iter()
+            .filter(|key| !sources.contains(&format!("\"{key}\"")))
+            .cloned()
+            .collect()
+    }
+
+    /// Walk the tracked workspace sources so a dead `en` key fails the suite.
+    #[test]
+    fn every_english_key_is_referenced_by_a_tracked_source() {
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let workspace_root = manifest_dir.parent().and_then(std::path::Path::parent);
+        assert!(
+            workspace_root.is_some(),
+            "app crate should live under the workspace crates directory"
+        );
+        let Some(workspace_root) = workspace_root else {
+            return;
+        };
+        let mut files = Vec::new();
+        let walked = crate::primary_ui_tests::collect_rust_source_files(
+            &workspace_root.join("crates"),
+            &mut files,
+        );
+        assert!(walked.is_ok(), "source scan failed: {walked:?}");
+        assert!(
+            files.len() > 100,
+            "walked only {} files; the scan is not seeing the workspace",
+            files.len()
+        );
+        let sources: Vec<String> = files
+            .iter()
+            .filter_map(|path| std::fs::read_to_string(path).ok())
+            .collect();
+        let unused = unreferenced_english_keys(&embedded_en_keys(), &sources);
+        assert!(
+            unused.is_empty(),
+            "English catalog keys no source references:\n{}",
+            unused.join("\n")
+        );
+    }
+
+    #[test]
+    fn the_unused_key_check_flags_a_key_no_source_names() {
+        let keys = BTreeSet::from(["only-in-the-catalog".to_owned()]);
+        let sources = vec!["message_id!(\"some-other-key\")".to_owned()];
+        assert_eq!(
+            unreferenced_english_keys(&keys, &sources),
+            vec!["only-in-the-catalog".to_owned()]
+        );
     }
 }

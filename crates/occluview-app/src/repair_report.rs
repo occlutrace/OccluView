@@ -48,7 +48,8 @@ pub(crate) struct ReportLine {
 #[must_use]
 pub(crate) fn report_lines(report: &RepairReport, locale: &LocaleManager) -> Vec<ReportLine> {
     // (icon, count, catalog key) in pipeline order. Zero counts are filtered
-    // out; digits over 999 are grouped for readability ("1 240").
+    // out; digits over 999 are grouped in the catalog's separator.
+    let number_format = locale.number_format();
     let passes: [(LineIcon, usize, crate::i18n::MessageId); 10] = [
         (
             LineIcon::Fixed,
@@ -108,7 +109,7 @@ pub(crate) fn report_lines(report: &RepairReport, locale: &LocaleManager) -> Vec
             icon,
             text: locale.tr_plural(
                 key,
-                &[("grouped", &group_thousands(count))],
+                &[("grouped", &number_format.grouped(count))],
                 &[("count", count)],
             ),
         })
@@ -123,7 +124,7 @@ pub(crate) fn open_rims_line(report: &RepairReport, locale: &LocaleManager) -> O
     (rims > 0).then(|| {
         locale.tr_plural(
             crate::i18n::message_id!("repair-open-rims"),
-            &[("grouped", &group_thousands(rims))],
+            &[("grouped", &locale.number_format().grouped(rims))],
             &[("count", rims)],
         )
     })
@@ -137,7 +138,7 @@ pub(crate) fn skipped_rims_line(report: &RepairReport, locale: &LocaleManager) -
     (count > 0).then(|| {
         locale.tr_plural(
             crate::i18n::message_id!("repair-skipped-rims"),
-            &[("grouped", &group_thousands(count))],
+            &[("grouped", &locale.number_format().grouped(count))],
             &[("count", count)],
         )
     })
@@ -156,6 +157,7 @@ pub(crate) fn copy_details(
 ) -> String {
     use std::fmt::Write as _;
 
+    let number_format = locale.number_format();
     let mut out = String::new();
     let _ = writeln!(
         out,
@@ -172,8 +174,8 @@ pub(crate) fn copy_details(
         locale.tr_with(
             crate::i18n::message_id!("repair-copy-before"),
             &[
-                ("vertices", &group_thousands(report.input_vertices)),
-                ("triangles", &group_thousands(report.input_triangles)),
+                ("vertices", &number_format.grouped(report.input_vertices)),
+                ("triangles", &number_format.grouped(report.input_triangles)),
             ],
         )
     );
@@ -183,8 +185,8 @@ pub(crate) fn copy_details(
         locale.tr_with(
             crate::i18n::message_id!("repair-copy-after"),
             &[
-                ("vertices", &group_thousands(report.output_vertices)),
-                ("triangles", &group_thousands(report.output_triangles)),
+                ("vertices", &number_format.grouped(report.output_vertices)),
+                ("triangles", &number_format.grouped(report.output_triangles)),
             ],
         )
     );
@@ -254,24 +256,7 @@ pub(crate) fn copy_details(
         .max()
         .unwrap_or(0);
     for (label, (_, count)) in labels.iter().zip(rows) {
-        let _ = writeln!(out, "{label:<width$}  {}", group_thousands(count));
-    }
-    out
-}
-
-/// Group digits into thousands with a plain space ("1240" -> "1 240"). Locale
-/// neutral and copy-paste friendly; small counts pass through unchanged.
-#[must_use]
-fn group_thousands(n: usize) -> String {
-    let digits = n.to_string();
-    let bytes = digits.as_bytes();
-    let len = bytes.len();
-    let mut out = String::with_capacity(len + len / 3);
-    for (i, byte) in bytes.iter().enumerate() {
-        if i > 0 && (len - i).is_multiple_of(3) {
-            out.push(' ');
-        }
-        out.push(char::from(*byte));
+        let _ = writeln!(out, "{label:<width$}  {}", number_format.grouped(count));
     }
     out
 }
@@ -611,22 +596,13 @@ mod tests {
     }
 
     #[test]
-    fn group_thousands_inserts_spaces_only_past_a_thousand() {
-        assert_eq!(group_thousands(0), "0");
-        assert_eq!(group_thousands(7), "7");
-        assert_eq!(group_thousands(86), "86");
-        assert_eq!(group_thousands(1_240), "1 240");
-        assert_eq!(group_thousands(1_000_000), "1 000 000");
-    }
-
-    #[test]
     fn report_lines_suppress_zeros_and_group_digits() {
         let lines = report_lines(&multi_report(), &english());
         let text: Vec<&str> = lines.iter().map(|line| line.text.as_str()).collect();
         assert_eq!(
             text,
             vec![
-                "Welded \u{2068}1 240\u{2069} duplicate vertices",
+                "Welded \u{2068}1,240\u{2069} duplicate vertices",
                 "Removed \u{2068}86\u{2069} sliver faces",
                 "Removed \u{2068}12\u{2069} duplicate faces",
                 "Fixed \u{2068}3\u{2069} non-manifold edges",
@@ -748,13 +724,13 @@ mod tests {
         );
         assert!(
             details.contains(
-                "Before: \u{2068}10 000\u{2069} vertices, \u{2068}20 000\u{2069} triangles"
+                "Before: \u{2068}10,000\u{2069} vertices, \u{2068}20,000\u{2069} triangles"
             ),
             "{details}"
         );
         assert!(
             details.contains(
-                "After:  \u{2068}8 760\u{2069} vertices, \u{2068}19 900\u{2069} triangles"
+                "After:  \u{2068}8,760\u{2069} vertices, \u{2068}19,900\u{2069} triangles"
             ),
             "{details}"
         );
@@ -781,7 +757,7 @@ mod tests {
         );
         assert!(!details.contains("Welded duplicate vertices"), "{details}");
         // The counts keep their grouping in every language.
-        assert!(details.contains("10 000"), "{details}");
+        assert!(details.contains("10\u{00A0}000"), "{details}");
     }
 
     #[test]

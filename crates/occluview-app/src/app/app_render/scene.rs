@@ -256,6 +256,7 @@ impl SceneContext<'_> {
                 camera,
                 self.persistence.settings.unit_display,
                 self.persistence.settings.viewport_background,
+                &self.ui.locale,
             );
         }
         if let Some(camera) = self.render.camera.as_ref() {

@@ -18,6 +18,7 @@
 use glam::{Vec3, Vec3A};
 use occluview_core::SceneMesh;
 
+use crate::i18n::catalog::NumberFormat;
 use crate::measure_ruler::{self, LinePlacement, RulerEnd, RulerMeasurement, RulerSegment};
 
 /// Ignore intersections closer than this to the probe origin (mm), so the probe
@@ -314,9 +315,9 @@ fn line_end(base: usize, placement: LinePlacement) -> Option<RulerEnd> {
 
 /// `73.4°`: the angle between two rulers, one decimal. Non-finite input reads
 /// as `n/a`.
-pub(crate) fn format_angle(degrees: f64) -> String {
+pub(crate) fn format_angle(degrees: f64, number_format: NumberFormat) -> String {
     if degrees.is_finite() {
-        format!("{degrees:.1}°")
+        format!("{}°", number_format.decimal(degrees, 1))
     } else {
         "n/a".to_string()
     }
@@ -346,9 +347,9 @@ pub(crate) fn measure_menu_enabled(has_pickable_layer: bool, edit_session_active
 
 /// `12.34 mm` labels (two decimals). Non-finite input (poisoned geometry)
 /// reads as `n/a` — never a `NaN mm` label.
-pub(crate) fn format_mm(mm: f64) -> String {
+pub(crate) fn format_mm(mm: f64, number_format: NumberFormat) -> String {
     if mm.is_finite() {
-        format!("{mm:.2} mm")
+        format!("{} mm", number_format.decimal(mm, 2))
     } else {
         "n/a".to_string()
     }
@@ -356,12 +357,16 @@ pub(crate) fn format_mm(mm: f64) -> String {
 
 /// A measurement readout in the operator's chosen unit. Non-finite input keeps
 /// the mm path's `n/a` label in both units.
-pub(crate) fn format_length(mm: f64, unit: crate::app_settings::UnitDisplay) -> String {
+pub(crate) fn format_length(
+    mm: f64,
+    unit: crate::app_settings::UnitDisplay,
+    number_format: NumberFormat,
+) -> String {
     match unit {
-        crate::app_settings::UnitDisplay::Millimeters => format_mm(mm),
+        crate::app_settings::UnitDisplay::Millimeters => format_mm(mm, number_format),
         crate::app_settings::UnitDisplay::Inches => {
             if mm.is_finite() {
-                format!("{:.3} in", mm / 25.4)
+                format!("{} in", number_format.decimal(mm / 25.4, 3))
             } else {
                 "n/a".to_string()
             }
@@ -533,7 +538,7 @@ mod tests {
         let p = Vec3::new(7.5, -2.0, 1.0);
         tool.place_ruler_point(p);
         let distance = tool.place_ruler_point(p).expect("completed pair");
-        assert_eq!(format_mm(distance), "0.00 mm");
+        assert_eq!(format_mm(distance, NumberFormat::for_tag("en")), "0.00 mm");
     }
 
     #[test]
@@ -777,9 +782,10 @@ mod tests {
 
     #[test]
     fn format_angle_is_one_decimal_and_never_nan() {
-        assert_eq!(format_angle(73.44), "73.4°");
-        assert_eq!(format_angle(90.0), "90.0°");
-        assert_eq!(format_angle(f64::NAN), "n/a");
+        let english = NumberFormat::for_tag("en");
+        assert_eq!(format_angle(73.44, english), "73.4°");
+        assert_eq!(format_angle(90.0, english), "90.0°");
+        assert_eq!(format_angle(f64::NAN, english), "n/a");
     }
 
     #[test]
@@ -791,10 +797,17 @@ mod tests {
 
     #[test]
     fn format_mm_is_two_decimals_and_never_nan() {
-        assert_eq!(format_mm(12.344), "12.34 mm");
-        assert_eq!(format_mm(0.0), "0.00 mm");
-        assert!(!format_mm(f64::NAN).contains("NaN"));
-        assert!(!format_mm(f64::INFINITY).contains("inf"));
+        let english = NumberFormat::for_tag("en");
+        assert_eq!(format_mm(12.344, english), "12.34 mm");
+        assert_eq!(format_mm(0.0, english), "0.00 mm");
+        assert!(!format_mm(f64::NAN, english).contains("NaN"));
+        assert!(!format_mm(f64::INFINITY, english).contains("inf"));
+    }
+
+    #[test]
+    fn a_reading_uses_the_catalog_decimal_separator() {
+        assert_eq!(format_mm(0.05, NumberFormat::for_tag("de")), "0,05 mm");
+        assert_eq!(format_mm(0.05, NumberFormat::for_tag("ru")), "0,05 mm");
     }
 
     /// Cube corners + outward-wound faces spanning `[min, max]^3`, with smooth

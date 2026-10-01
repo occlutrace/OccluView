@@ -186,6 +186,13 @@ impl LocaleManager {
         self.render_tag_for(self.snapshot.auto_resolved)
     }
 
+    /// Decimal and grouping separators of the catalog on screen.
+    ///
+    /// An unavailable locale renders English, so its numbers do too.
+    pub(crate) fn number_format(&self) -> catalog::NumberFormat {
+        self.active_catalog().number_format()
+    }
+
     /// Native window title in the active catalog.
     pub(crate) fn window_title(&self) -> String {
         self.text(NATIVE_TITLE_KEY)
