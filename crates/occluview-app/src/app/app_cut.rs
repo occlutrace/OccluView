@@ -558,7 +558,7 @@ mod viewport_ownership_tests {
         app.workspace.scenes[0]
             .tools
             .contacts
-            .open(crate::contact::ContactPair {
+            .open(crate::contact::contact::ContactPair {
                 subject,
                 antagonist,
             });

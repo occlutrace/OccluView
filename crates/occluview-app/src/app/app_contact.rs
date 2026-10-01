@@ -6,11 +6,11 @@ use occluview_render::{ContactFieldTexels, ContactPaintSource};
 use std::sync::Arc;
 
 use super::SceneContext;
-use crate::contact::{
+use crate::contact::contact::{
     can_read_contacts, contact_job_keys, ContactLayerField, ContactPair, ContactRequest,
     ContactState, ContactStatus, CONTACT_FIELD_TEXTURE_WIDTH,
 };
-use crate::contact_worker::{ContactFailure, ContactJob, ContactOutcome};
+use crate::contact::contact_worker::{ContactFailure, ContactJob, ContactOutcome};
 
 impl SceneContext<'_> {
     /// Apply a contact action from the layer context menu.
@@ -57,7 +57,7 @@ impl SceneContext<'_> {
 
     /// Open a contact reading on `layer` against the nearest eligible layer.
     pub(super) fn begin_contacts_from_layer(&mut self, scene: &Scene, layer: SceneMeshId) -> bool {
-        let Some(antagonist) = crate::contact::antagonist_for(scene, layer) else {
+        let Some(antagonist) = crate::contact::contact::antagonist_for(scene, layer) else {
             // The scene may have changed since the menu was drawn.
             self.scene_ui.status_message = Some(
                 self.ui
@@ -472,7 +472,7 @@ fn field_width(field: Option<&ContactLayerField>) -> u32 {
 /// `texture_limit` is the granted `max_texture_dimension_2d`, not the request
 /// ceiling; see `RenderState::granted_texture_dimension`.
 fn pack(values: &[f32], texture_limit: u32) -> Option<Arc<ContactFieldTexels>> {
-    let width = crate::contact::contact_field_width(values.len(), texture_limit)?;
+    let width = crate::contact::contact::contact_field_width(values.len(), texture_limit)?;
     let packed = occluview_contact::pack_field_texels(values, width);
     ContactFieldTexels::new(packed.rgba, packed.width, packed.height).map(Arc::new)
 }

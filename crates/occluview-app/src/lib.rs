@@ -49,9 +49,6 @@ mod app_settings;
 mod bridge_split;
 mod bridge_split_overlay;
 mod contact;
-#[cfg(test)]
-mod contact_render_tests;
-mod contact_worker;
 mod cut;
 mod desktop;
 mod edit_mode;

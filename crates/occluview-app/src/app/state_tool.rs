@@ -52,7 +52,7 @@ pub(super) struct ToolState {
     /// its own worker. Independent of `align`: a reading runs over
     /// its own pair and takes its roles as arguments, so nothing here can pick
     /// up whichever scans the alignment happened to be looking at.
-    pub(super) contacts: crate::contact::ContactState,
+    pub(super) contacts: crate::contact::contact::ContactState,
     /// Which mesh-editor tab is showing (selection/repair vs sculpt).
     pub(super) editor_tab: EditorTab,
 }
@@ -67,7 +67,7 @@ impl ToolState {
             measure: MeasureTool::default(),
             sculpt: SculptTool::default(),
             align: AlignState::default(),
-            contacts: crate::contact::ContactState::default(),
+            contacts: crate::contact::contact::ContactState::default(),
             editor_tab: EditorTab::default(),
         }
     }
