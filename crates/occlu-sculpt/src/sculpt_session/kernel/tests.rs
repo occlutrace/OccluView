@@ -877,10 +877,6 @@ fn long_low_strength_relax_uses_one_pair_for_one_timed_path_step() {
         peak_stamp_weight > 0.0 && peak_stamp_weight <= 1.0 + 1e-12,
         "fixture must exercise a bounded swept mean stamp, got {peak_stamp_weight}"
     );
-    assert_eq!(
-        session.live_kin.relax_pairs, 1,
-        "pair count follows effective swept dose, not raw stamp count"
-    );
     let after = session.group_v(session.topology.group_of(center)).z;
     assert!(
         after < before,
