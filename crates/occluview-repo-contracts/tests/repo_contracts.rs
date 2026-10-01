@@ -679,6 +679,32 @@ fn shell_pin_report_handles_carriage_returns_in_python_fields() {
     let _ = std::fs::remove_dir_all(&temp);
 }
 
+/// The package names declared by `[workspace] members`, in declaration order.
+///
+/// Each member is a crate directory, so its package name is the final path
+/// component. Deriving the list from the manifest keeps the lockfile check
+/// exhaustive whenever a crate is added, renamed, or removed.
+fn workspace_member_packages(cargo_toml: &str) -> Vec<&str> {
+    let workspace = cargo_toml
+        .split_once("[workspace]")
+        .map(|(_, workspace)| workspace)
+        .expect("Cargo.toml declares a [workspace] section");
+    let open = workspace
+        .find("\nmembers = [")
+        .expect("Cargo.toml declares [workspace] members");
+    let members = &workspace[open + "\nmembers = [".len()..];
+    let close = members
+        .find(']')
+        .expect("[workspace] members is a closed array");
+    members[..close]
+        .split('"')
+        .skip(1)
+        .step_by(2)
+        .filter(|member| !member.is_empty())
+        .map(|member| member.rsplit_once('/').map_or(member, |(_, name)| name))
+        .collect()
+}
+
 #[test]
 fn release_version_is_kept_in_sync_across_workspace_lockfile_and_installer() {
     let cargo_toml = repo_file("Cargo.toml");
@@ -703,27 +729,12 @@ fn release_version_is_kept_in_sync_across_workspace_lockfile_and_installer() {
         "WiX ProductVersion fallback must match Cargo workspace version"
     );
 
-    for package in [
-        "occluview-geometry-math",
-        "occluview-mesh-edit",
-        "occluview-sculpt",
-        "occluview-align",
-        "occluview-contact",
-        "occluview-core",
-        "occluview-edit",
-        "occluview-formats",
-        "occluview-hps",
-        "occluview-i18n",
-        "occluview-render",
-        "occluview-repo-contracts",
-        "occluview-robust-csg",
-        "occluview-shell",
-        "occluview-surface-query",
-        "occluview-thumbnail",
-        "occluview-update",
-        "occluview-app",
-        "occluview-cli",
-    ] {
+    let members = workspace_member_packages(&cargo_toml);
+    assert!(
+        !members.is_empty(),
+        "the workspace manifest declares at least one member"
+    );
+    for package in members {
         assert_eq!(
             cargo_lock_package_version(&cargo_lock, package),
             Some(version),
