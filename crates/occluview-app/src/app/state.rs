@@ -107,7 +107,7 @@ impl OccluViewApp {
         startup: StartupHandles,
     ) -> Self {
         repaint_ctx.options_mut(|options| options.zoom_with_keyboard = false);
-        let state_dir = crate::app_paths::app_state_dir();
+        let state_dir = crate::desktop::app_paths::app_state_dir();
         let (locale, locale_snapshot) = crate::i18n::LocaleManager::startup(
             state_dir.as_deref(),
             &crate::i18n::os::SystemLocaleSource,

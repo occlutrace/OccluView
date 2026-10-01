@@ -6,7 +6,7 @@
 //! the dead-code lint is answered here rather than at each item.
 #![cfg_attr(not(windows), allow(dead_code))]
 
-use crate::recent_files::{RecentEntry, RecentFiles};
+use crate::desktop::recent_files::{RecentEntry, RecentFiles};
 use std::path::Path;
 
 /// A custom Jump List destination for one recent scene.

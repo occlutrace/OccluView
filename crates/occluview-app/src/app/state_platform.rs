@@ -16,7 +16,7 @@
 //! requests feed the loading pipeline, the raise target feeds window
 //! activation.
 
-use super::single_instance;
+use crate::desktop::single_instance;
 use eframe::egui;
 
 /// Everything the bootstrap hands the app about how this process was started:

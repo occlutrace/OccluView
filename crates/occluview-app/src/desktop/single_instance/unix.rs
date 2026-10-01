@@ -64,7 +64,7 @@ fn lock_file_path() -> Option<PathBuf> {
     std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .map(|base| base.join("occluview").join(LOCK_FILE_NAME))
-        .or_else(|| crate::app_paths::app_state_dir().map(|base| base.join(LOCK_FILE_NAME)))
+        .or_else(|| crate::desktop::app_paths::app_state_dir().map(|base| base.join(LOCK_FILE_NAME)))
 }
 
 fn acquire_lock_file(lock_path: PathBuf) -> Result<SingleInstance> {

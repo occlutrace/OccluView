@@ -21,7 +21,7 @@ fn schedule_worker_poll(ctx: &egui::Context) {
 
 /// Path of the "skip this version" marker; one semver string, plain text.
 fn skipped_version_path() -> Option<PathBuf> {
-    crate::app_paths::app_state_dir().map(|dir| dir.join("skipped-update"))
+    crate::desktop::app_paths::app_state_dir().map(|dir| dir.join("skipped-update"))
 }
 
 fn load_skipped_version() -> Option<String> {
@@ -106,7 +106,7 @@ pub(crate) struct UpdateNotice {
 /// was verified and the file handed to a privileged installer need not be the
 /// same file.
 fn update_download_dir() -> Option<PathBuf> {
-    crate::app_paths::app_state_dir().map(|dir| dir.join("updates"))
+    crate::desktop::app_paths::app_state_dir().map(|dir| dir.join("updates"))
 }
 
 impl UpdateNotice {

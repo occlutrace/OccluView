@@ -3,9 +3,10 @@
 
 use super::{
     combine_loaded_scene, egui, load_error_dialog, load_failure_summary, load_status_message,
-    single_instance, AppErrorAction, AppErrorDialog, LoadQueueCameraReset, PathBuf,
-    PendingReplaceOpen, Scene, SceneContext, SceneLoadMode, FOREGROUND_PULSE_DURATION,
+    AppErrorAction, AppErrorDialog, LoadQueueCameraReset, PathBuf, PendingReplaceOpen, Scene,
+    SceneContext, SceneLoadMode, FOREGROUND_PULSE_DURATION,
 };
+use crate::desktop::single_instance;
 use crate::scene_loading::{
     replace_result_requires_guard, DecodedSceneLoad, PendingSceneLoad, SceneLoadRequest,
 };
