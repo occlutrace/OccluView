@@ -4,8 +4,8 @@ use occluview_core::SceneMeshId;
 use occluview_edit::scene::SceneSection;
 
 use super::model::{CutRuler, SliceBasis, SliceCam, SlicePlaneMap};
-use crate::cut_geometry::snap_to_contour;
-use crate::{probe_section, ui::ui_theme};
+use crate::cut::cut_geometry::snap_to_contour;
+use crate::{cut::probe_section, ui::ui_theme};
 
 /// The section image stays square so both axes use the same mm-per-pixel scale.
 const MAX_IMAGE_SIDE_PX: f32 = 300.0;

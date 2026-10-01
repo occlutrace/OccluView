@@ -1,6 +1,6 @@
 //! The pointer-and-camera arithmetic both disc tools build a frame from.
 //!
-//! Cut View and Bridge Split drive the same [`crate::cut_manipulator`] with the
+//! Cut View and Bridge Split drive the same [`crate::cut::cut_manipulator`] with the
 //! same gestures over the same Section panel. Sharing this arithmetic keeps the
 //! two tools from disagreeing about what the wheel does over one panel.
 
@@ -68,7 +68,7 @@ pub(super) fn disc_view_geometry(
 pub(super) fn disc_screen_placement(
     camera: &occluview_core::Camera,
     viewport_rect: egui::Rect,
-    pose: Option<crate::cut_manipulator::DiscPose>,
+    pose: Option<crate::cut::cut_manipulator::DiscPose>,
 ) -> (Option<egui::Pos2>, f32) {
     let center = pose.and_then(|disc| {
         project_world_to_viewport(camera, viewport_rect, disc.center).map(|(screen, _)| screen)

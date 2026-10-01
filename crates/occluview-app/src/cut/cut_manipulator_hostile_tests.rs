@@ -8,8 +8,8 @@
 
 #![allow(clippy::float_cmp, clippy::expect_used, clippy::unnecessary_wraps)]
 
-use crate::cut_geometry::{follow_plane_normal, scale_radius};
-use crate::cut_manipulator::{
+use crate::cut::cut_geometry::{follow_plane_normal, scale_radius};
+use crate::cut::cut_manipulator::{
     CutFrameInput, CutManipulator, SurfaceSample, MAX_DISC_RADIUS_MM, MIN_DISC_RADIUS_MM,
 };
 use eframe::egui::pos2;

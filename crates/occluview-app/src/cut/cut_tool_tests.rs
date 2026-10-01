@@ -1,7 +1,7 @@
 #![allow(clippy::float_cmp, clippy::expect_used)]
 use super::*;
-use crate::cut_manipulator::SurfaceSample;
-use crate::cut_ruler::{SectionDisplay, SliceCam, SliceMeasureMode};
+use crate::cut::cut_manipulator::SurfaceSample;
+use crate::cut::cut_ruler::{SectionDisplay, SliceCam, SliceMeasureMode};
 
 fn bbox() -> Aabb {
     Aabb::from_min_max(Vec3::new(10.0, 20.0, 30.0), Vec3::new(50.0, 80.0, 90.0))

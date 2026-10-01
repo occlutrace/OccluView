@@ -1,4 +1,4 @@
-//! Tests for [`crate::cut_geometry`]. A `#[path]` child module of
+//! Tests for [`crate::cut::cut_geometry`]. A `#[path]` child module of
 //! `cut_geometry`, so private helpers stay reachable via `super::*`.
 
 #![allow(clippy::float_cmp, clippy::expect_used)]

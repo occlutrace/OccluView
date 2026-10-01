@@ -1,10 +1,10 @@
 //! Stateless geometry for the cut disc: follow orientation, normal smoothing,
 //! radius scaling, the handle hit-test, and the translate / push-pull / arcball
-//! transforms. Kept apart from the [`crate::cut_manipulator`] state machine;
+//! transforms. Kept apart from the [`crate::cut::cut_manipulator`] state machine;
 //! every function here is a pure function of its inputs, unit-tested in
 //! `cut_geometry_tests.rs`.
 
-use crate::cut_manipulator::{
+use crate::cut::cut_manipulator::{
     ArchFrame, CutCursor, CutFrameInput, DiscDrag, DiscPose, CENTER_GRAB_RADIUS_PX,
     MAX_DISC_RADIUS_MM, MIN_DISC_RADIUS_MM, RADIUS_WHEEL_STEP, RIM_GRAB_RADIUS_PX,
 };

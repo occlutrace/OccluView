@@ -4,9 +4,9 @@
 
 use super::{egui, pick_scene_hit, Scene, SceneContext};
 use crate::app_settings::RulerLineAngle;
+use crate::cut::probe_section;
 use crate::measure_overlay;
 use crate::measure_tool::{self, MeasureMode, ThicknessProbe, ThicknessReading};
-use crate::probe_section;
 use occluview_core::ScenePickHit;
 
 impl SceneContext<'_> {
@@ -120,7 +120,7 @@ impl SceneContext<'_> {
         // Section panel owns its own pointer, so treat it as chrome, never as bare
         // viewport (no crosshair/re-probe bleeding into the panel).
         if self.tools.cut_view.is_active()
-            && crate::cut_ruler::section_panel_contains(viewport_rect, pos)
+            && crate::cut::cut_ruler::section_panel_contains(viewport_rect, pos)
         {
             return false;
         }
@@ -419,7 +419,7 @@ impl SceneContext<'_> {
                     .render
                     .camera
                     .map_or(pose.center + pose.plane_normal, occluview_core::Camera::eye);
-                let keep_positive = crate::cut_geometry::camera_keep_side(&pose, eye);
+                let keep_positive = crate::cut::cut_geometry::camera_keep_side(&pose, eye);
                 let seed = probe_section::SliceProbe {
                     entry: probe.entry,
                     exit,
