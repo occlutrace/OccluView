@@ -46,9 +46,6 @@ impl Default for LiveTrace {
 /// counters and spread are the call union.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct LiveKinematics {
-    /// Test-only count proving the swept Relax dose law on a real pointer path.
-    #[cfg(test)]
-    pub relax_pairs: u32,
     /// The pose this pointer call applied, for the published live line.
     pub mode: u32,
     pub radius: f32,
