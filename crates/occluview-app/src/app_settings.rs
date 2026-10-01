@@ -343,7 +343,7 @@ impl Settings {
         Ok(settings)
     }
     fn path() -> Option<PathBuf> {
-        crate::app_paths::app_state_dir().map(|dir| dir.join(SETTINGS_FILE))
+        crate::desktop::app_paths::app_state_dir().map(|dir| dir.join(SETTINGS_FILE))
     }
 
     pub(crate) fn load() -> Self {

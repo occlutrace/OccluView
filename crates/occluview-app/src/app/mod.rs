@@ -15,7 +15,7 @@ use super::viewer::{
     pick_scene_point, render_extent_change_requires_rerender, viewport_orbit_drag_active,
     viewport_pan_drag_active, zoom_factor_from_scroll, AxisGizmoInput,
 };
-use super::{single_instance, Context, PathBuf, Result};
+use super::{Context, PathBuf, Result};
 use crate::scale_bar::ScaleBar;
 #[cfg(test)]
 use crate::scene_loading::{PendingSceneLoad, SceneLoadRequest};
