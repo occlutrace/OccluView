@@ -5,7 +5,7 @@
 //! packed onto every dab reply: flags, refusals, journal deltas, a footprint
 //! optional audit of the triangles the brush just touched, and the clay
 //! kinematics that actually moved vertices. The footprint audit runs only for
-//! explicit browser diagnostics; scalar production counters stay cheap. The
+//! explicit operator diagnostics; scalar production counters stay cheap. The
 //! live-topology words report the cycle each dab ran. Camera-back and edge-on
 //! counts remain useful because those faces stay indexed even when a one-sided
 //! draw hides them.
@@ -13,7 +13,7 @@
 use super::*;
 use crate::hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
-/// Packed live dab evidence. Wire order is shared with the browser decoder.
+/// Packed live dab evidence. Native operator diagnostics consume this wire order.
 #[derive(Clone, Copy, Debug)]
 pub struct LiveTrace {
     /// Packed integer evidence words.
@@ -29,9 +29,9 @@ impl LiveTrace {
     pub const FLOATS: usize = 24;
 }
 
-/// Packed into every live dab so a consumer cannot pair its own engine
-/// version with a stale kernel. Bump it when the clay or remesh law changes.
-pub const SCULPT_LIVE_KERNEL: u32 = 516;
+/// Native OccluView trace version, independent of the donor's Cut Engine
+/// version. Bump it when this crate's brush or remesh law changes.
+pub const SCULPT_LIVE_KERNEL: u32 = 520;
 
 impl Default for LiveTrace {
     fn default() -> Self {
@@ -42,10 +42,13 @@ impl Default for LiveTrace {
     }
 }
 
-/// Accumulators for one pointer call (up to two spaced dabs). Pose fields
-/// are the last dab; counters and spread are the call union.
+/// Accumulators for one pointer call. Pose fields are the last applied dab;
+/// counters and spread are the call union.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct LiveKinematics {
+    /// Test-only count proving the swept Relax dose law on a real pointer path.
+    #[cfg(test)]
+    pub relax_pairs: u32,
     /// The pose this pointer call applied, for the published live line.
     pub mode: u32,
     pub radius: f32,
@@ -56,6 +59,7 @@ pub(crate) struct LiveKinematics {
     pub keep_candidates: u32,
     pub weighted: u32,
     pub proposals: u32,
+    /// `nx/ny/nz` carry the local sheet push direction for Add/Remove.
     pub local_normal: bool,
     pub hit_sheet: bool,
     pub nx: f32,
@@ -64,9 +68,11 @@ pub(crate) struct LiveKinematics {
     pub facing: f32,
     pub amplitude: f32,
     pub gain: f32,
+    /// Sheet-share range/mean in legacy front-facing diagnostic slots.
     pub front_min: f32,
     pub front_max: f32,
     pub front_mean: f32,
+    /// Fraction of weighted groups with full sheet share, retained in its wire slot.
     pub toward_frac: f32,
     pub cx: f32,
     pub cy: f32,

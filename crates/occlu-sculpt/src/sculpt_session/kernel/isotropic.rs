@@ -7,10 +7,9 @@ use super::remesh::LocalSurface;
 use super::*;
 use crate::RemeshPolicy;
 
-/// Relaxation passes per ordinary dab.
+/// Relaxation passes per swept step. Brush time, not travel length, sets the
+/// deformation dose, so respace gets a fixed pair budget per call.
 const LIVE_RESPACE_PASSES: usize = 2;
-/// Maximum passes for a swept step, which represents multiple dab intervals.
-const MAX_LIVE_RESPACE_PASSES: usize = 8;
 /// Stop the cycle when the largest accepted move is below two percent of the
 /// target spacing.
 const LIVE_RESPACE_SETTLED_SHARE: f64 = 0.02;
@@ -100,10 +99,8 @@ impl SculptSession {
         } else {
             0.0
         };
-        let passes = (LIVE_RESPACE_PASSES * self.step_dabs()).min(MAX_LIVE_RESPACE_PASSES);
-        let mut moved_groups = Vec::with_capacity(groups.len());
         let mut star = LocalSurface::new();
-        for _pass in 0..passes {
+        for _pass in 0..LIVE_RESPACE_PASSES {
             let mut steps: Vec<(u32, DVec3)> = Vec::with_capacity(groups.len());
             {
                 let surface = LiveSpacing { session: &*self };
@@ -140,7 +137,6 @@ impl SculptSession {
             }
             let mut largest_pull = 0.0f64;
             let mut pass_moved = 0usize;
-            moved_groups.clear();
             for (group, target) in steps {
                 let here = self.group_v(group);
                 let target = self.clamp_step_at(group, here, target);
@@ -200,13 +196,15 @@ impl SculptSession {
                     self.set_group_material(journal, group, material);
                 }
                 pass_moved += 1;
-                moved_groups.push(group);
                 largest_pull = largest_pull.max(step);
             }
             if pass_moved == 0 || largest_pull <= settled_scale {
                 break;
             }
-            let touched = self.collect_normal_scope(&moved_groups);
+            // The dab may have changed normals for stationary groups before
+            // this pass too. Refresh the complete respace footprint before
+            // the next pass derives its tangential directions.
+            let touched = self.collect_normal_scope(&groups);
             self.refresh_brush_scope_normals(&touched);
             self.normal_scope = touched;
         }
