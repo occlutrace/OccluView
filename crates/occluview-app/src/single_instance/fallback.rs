@@ -21,7 +21,8 @@ pub(super) fn write_disk_open_request(request: &OpenRequest) -> Result<()> {
 pub(super) fn spawn_disk_fallback_listener(
     sender: mpsc::Sender<OpenRequest>,
     repaint_ctx: egui::Context,
-) {
+    listener_alive: std::sync::Weak<()>,
+) -> thread::JoinHandle<()> {
     thread::spawn(move || loop {
         let mut delivered = false;
         for request in take_open_requests() {
@@ -33,8 +34,16 @@ pub(super) fn spawn_disk_fallback_listener(
         if delivered {
             super::request_open_handoff_repaint(&repaint_ctx);
         }
+        // A failed `send` only reports a dead receiver when there is a
+        // request to deliver. Without this check an idle listener drop
+        // leaves the 20 Hz `read_dir` loop running for the rest of the
+        // process, so exit when the listener is gone regardless of
+        // whether anything was delivered.
+        if listener_alive.upgrade().is_none() {
+            return;
+        }
         thread::sleep(FALLBACK_POLL_INTERVAL);
-    });
+    })
 }
 
 fn take_open_requests() -> Vec<OpenRequest> {
@@ -87,4 +96,45 @@ fn unique_request_file_name() -> String {
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_nanos());
     format!("{nanos}-{pid}.open")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    /// The disk poller must stop once its listener is gone, even when no
+    /// request was ever delivered. `send` only reports a dead receiver when
+    /// there is something to send, so an idle drop used to leak the 20 Hz
+    /// `read_dir` loop for the rest of the process.
+    #[test]
+    fn disk_fallback_listener_exits_when_listener_is_dropped() {
+        // Isolate the poller's request directory so the test exercises the
+        // idle path deterministically: no request file may be present.
+        let state_dir =
+            std::env::temp_dir().join(format!("occluview-fallback-exit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&state_dir);
+        assert!(std::fs::create_dir_all(&state_dir).is_ok());
+        std::env::set_var(crate::app_paths::TEST_STATE_DIR_ENV, &state_dir);
+
+        let (sender, receiver) = mpsc::channel::<OpenRequest>();
+        let listener_alive = std::sync::Arc::new(());
+        let poller = spawn_disk_fallback_listener(
+            sender,
+            egui::Context::default(),
+            std::sync::Arc::downgrade(&listener_alive),
+        );
+        drop(receiver);
+        drop(listener_alive);
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !poller.is_finished() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            poller.is_finished(),
+            "disk fallback poller did not exit within 5 s of its listener being dropped"
+        );
+        assert!(poller.join().is_ok(), "disk fallback poller panicked");
+    }
 }

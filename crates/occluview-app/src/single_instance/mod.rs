@@ -123,6 +123,11 @@ pub(crate) fn write_open_request(request: &OpenRequest) -> Result<()> {
 
 pub(crate) struct OpenRequestListener {
     receiver: Receiver<OpenRequest>,
+    /// Liveness token for the disk fallback poller (`fallback.rs`). The
+    /// poller can only observe the receiver through a failed `send`, which
+    /// never happens while it is idle, so it watches this token instead to
+    /// stop its 20 Hz loop when the listener goes away.
+    _listener_alive: std::sync::Arc<()>,
 }
 
 impl OpenRequestListener {
@@ -138,17 +143,31 @@ impl OpenRequestListener {
     #[cfg(test)]
     pub(crate) fn for_tests_with_sender() -> (Self, mpsc::Sender<OpenRequest>) {
         let (sender, receiver) = mpsc::channel();
-        (Self { receiver }, sender)
+        (
+            Self {
+                receiver,
+                _listener_alive: std::sync::Arc::new(()),
+            },
+            sender,
+        )
     }
 
     pub(crate) fn spawn(repaint_ctx: egui::Context) -> Self {
         let (sender, receiver) = mpsc::channel();
+        let listener_alive = std::sync::Arc::new(());
         #[cfg(windows)]
         windows::spawn_pipe_listener(sender.clone(), repaint_ctx.clone());
         #[cfg(all(not(windows), not(target_os = "macos")))]
         unix::spawn_socket_listener(sender.clone(), repaint_ctx.clone());
-        fallback::spawn_disk_fallback_listener(sender, repaint_ctx);
-        Self { receiver }
+        fallback::spawn_disk_fallback_listener(
+            sender,
+            repaint_ctx,
+            std::sync::Arc::downgrade(&listener_alive),
+        );
+        Self {
+            receiver,
+            _listener_alive: listener_alive,
+        }
     }
 
     pub(crate) fn take_requests(&self) -> Vec<OpenRequest> {
