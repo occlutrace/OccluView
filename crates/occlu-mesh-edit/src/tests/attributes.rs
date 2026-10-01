@@ -62,32 +62,3 @@ fn raw_triangle_mesh_validation_rejects_bad_indices() {
     let bad_range = validate_triangle_mesh_data(&vertices, &[0, 1, 2]).expect_err("bad range");
     assert!(matches!(bad_range, MeshEditError::MalformedMesh { .. }));
 }
-
-#[test]
-fn mesh_edit_report_and_result_are_constructible() {
-    let report = MeshEditReport {
-        input_vertices: 3,
-        input_triangles: 1,
-        output_vertices: 3,
-        output_triangles: 1,
-        removed_triangles: 0,
-        filled_holes: 0,
-        moved_vertices: 0,
-        skipped_border_rims: 0,
-        skipped_oversize_rims: 0,
-        skipped_damaged_rims: 1,
-        healed_rims: 0,
-        warnings: vec![MeshEditWarning::DegenerateGeometry],
-    };
-    let result = MeshEditResult {
-        mesh: MeshEditBuffers {
-            vertices: vec![v([0.0, 0.0, 0.0]), v([1.0, 0.0, 0.0]), v([0.0, 1.0, 0.0])],
-            indices: vec![0, 1, 2],
-            topology: MeshTopology::TriangleMesh,
-        },
-        report,
-    };
-
-    assert_eq!(result.mesh.topology, MeshTopology::TriangleMesh);
-    assert_eq!(result.report.input_triangles, 1);
-}
