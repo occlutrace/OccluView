@@ -25,6 +25,12 @@ impl SculptSession {
         self.rollback_factor.push(1.0);
         self.group_area.push(0.0);
         self.denoise_amount.push(0.0);
+        self.reference_wall_mm.push(f32::NAN);
+        self.reference_wall_at.push([0.0; 3]);
+        self.sheet_axis.push([0.0; 3]);
+        self.sheet_axis_mark.push(u32::MAX);
+        self.stroke_normal.push([0.0; 3]);
+        self.stroke_normal_mark.push(u32::MAX);
         debug_assert_eq!(self.group_stamp.len(), self.topology.group_count());
     }
 

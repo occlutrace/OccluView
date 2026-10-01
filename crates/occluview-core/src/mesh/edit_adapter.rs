@@ -25,6 +25,12 @@ pub struct CoreMeshRepairResult {
     pub report: RepairReport,
 }
 
+#[derive(Clone, Copy)]
+enum RebuildNormalPolicy {
+    RepairForEditing,
+    PreserveSculptSession,
+}
+
 fn edit_vertex_from_vertex(vertex: &Vertex) -> EditVertex {
     EditVertex {
         position: vertex.position,
@@ -110,13 +116,16 @@ pub fn mesh_from_sculpt_session_like<S: SculptSessionBuffers + ?Sized>(
     source: &Mesh,
     session: &S,
 ) -> Result<Mesh, CoreError> {
-    mesh_from_edit_buffers_like(
+    rebuild_mesh_from_edit_buffers(
         source,
         MeshEditBuffers {
             vertices: session.sculpt_vertices().to_vec(),
             indices: session.sculpt_indices().to_vec(),
             topology: MeshTopology::TriangleMesh,
         },
+        source.name().map(str::to_owned),
+        false,
+        RebuildNormalPolicy::PreserveSculptSession,
     )
 }
 
@@ -125,7 +134,13 @@ pub(super) fn mesh_from_edit_buffers_named_like(
     buffers: MeshEditBuffers,
     name: Option<String>,
 ) -> Result<Mesh, CoreError> {
-    rebuild_mesh_from_edit_buffers(source, buffers, name, false)
+    rebuild_mesh_from_edit_buffers(
+        source,
+        buffers,
+        name,
+        false,
+        RebuildNormalPolicy::RepairForEditing,
+    )
 }
 
 pub(super) fn mesh_from_edit_buffers_named_preserving_texture(
@@ -133,7 +148,13 @@ pub(super) fn mesh_from_edit_buffers_named_preserving_texture(
     buffers: MeshEditBuffers,
     name: Option<String>,
 ) -> Result<Mesh, CoreError> {
-    rebuild_mesh_from_edit_buffers(source, buffers, name, true)
+    rebuild_mesh_from_edit_buffers(
+        source,
+        buffers,
+        name,
+        true,
+        RebuildNormalPolicy::RepairForEditing,
+    )
 }
 
 fn rebuild_mesh_from_edit_buffers(
@@ -141,6 +162,7 @@ fn rebuild_mesh_from_edit_buffers(
     buffers: MeshEditBuffers,
     name: Option<String>,
     preserve_source_texture: bool,
+    normal_policy: RebuildNormalPolicy,
 ) -> Result<Mesh, CoreError> {
     let texture = source_texture(source);
     let has_uvs = mesh_has_uvs(&buffers);
@@ -165,7 +187,14 @@ fn rebuild_mesh_from_edit_buffers(
                 .iter()
                 .map(vertex_from_edit_vertex)
                 .collect();
-            Mesh::new(name, vertices, buffers.indices)?
+            match normal_policy {
+                RebuildNormalPolicy::RepairForEditing => {
+                    Mesh::new(name, vertices, buffers.indices)?
+                }
+                RebuildNormalPolicy::PreserveSculptSession => {
+                    Mesh::new_preserving_sculpt_normals(name, vertices, buffers.indices)?
+                }
+            }
         }
     };
 

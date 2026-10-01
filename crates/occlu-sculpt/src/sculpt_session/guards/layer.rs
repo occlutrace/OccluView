@@ -138,26 +138,20 @@ impl SculptSession {
                 !Self::triangle_editable_after_move_measured(pre, now)
             }
             BrushMode::Deposit => {
-                // A lift along the footprint normal may fold or hide a face
-                // near the silhouette; the camera test below refuses exactly
-                // that. Repeated growth legitimately elongates triangles until
-                // the live remesh retessellates them, so an opening-mesh
-                // quality limit is not an Add limit.
+                // Repeated growth legitimately elongates triangles until the
+                // live remesh retessellates them, so an opening-mesh quality
+                // limit is not an Add limit. Keep face winding and its
+                // paintable area independent of the current camera.
                 let reference =
                     TriangleMeasure::new(corners.map(|group| self.reference_group_v(group)));
                 if now.area + tolerance < (reference.area * MIN_SESSION_AREA_RATIO).min(pre.area) {
                     return true;
                 }
-                let camera = self.camera_context();
-                if camera.is_none() && !Self::triangle_editable_after_move_measured(pre, now) {
-                    return true;
-                }
-                Self::triangle_hides_from_camera_measured(pre, now, camera)
+                now.area + 1e-18 < LIVE_PAINTABLE_AREA && now.area + 1e-18 < pre.area
             }
             BrushMode::Erode => {
-                // Removal can compress the remaining wall. Keep the stronger
-                // live shape and immutable apply floors in addition to the
-                // camera-coverage test. An already-damaged opening face must
+                // Removal can compress the remaining wall. Keep the live
+                // shape and immutable apply floors. An already-damaged opening face must
                 // remain editable: the immutable floor applies only while the
                 // pre-dab face still satisfies it; otherwise the live
                 // non-worsening predicate is the authority.
@@ -171,7 +165,7 @@ impl SculptSession {
                 {
                     return true;
                 }
-                Self::triangle_hides_from_camera_measured(pre, now, self.camera_context())
+                false
             }
             BrushMode::Flatten => self.triangle_is_unsafe(triangle, mode),
         }

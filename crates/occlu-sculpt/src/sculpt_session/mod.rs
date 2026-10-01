@@ -12,6 +12,14 @@ use std::collections::BinaryHeap;
 
 pub use crate::TipStamp;
 
+/// Brush time one full dab dose stands for, in milliseconds. Every call uses
+/// this interval whether its ray rests or travels; elapsed time is capped
+/// against it so a delayed sample cannot release a burst.
+pub const DWELL_FULL_DOSE_MS: f64 = 120.0;
+
+/// The same full-dose interval in seconds, for callers that pace in seconds.
+pub const DWELL_FULL_DOSE_SECONDS: f64 = DWELL_FULL_DOSE_MS / 1000.0;
+
 mod grid;
 mod guards;
 mod history;
@@ -19,9 +27,13 @@ mod kernel;
 mod live_trace;
 mod material;
 mod ray_buckets;
+mod sdf;
 mod session;
+mod sheet;
 pub(crate) use kernel::PAR_FLOOR;
 use ray_buckets::TriBuckets;
+use sdf::SdfProbe;
+use sheet::SpineSample;
 /// The counters live in a thread-local block rather than on the session: the
 /// per-vertex clamp runs inside immutable-borrow regions (`clamp_step_at`
 /// takes `&self`) and the parallel build needs the session itself to stay
@@ -122,7 +134,7 @@ impl DabDiagnostics {
         }
     }
 
-    /// Flat wire order, shared with the browser report.
+    /// Flat wire order, shared with the operator report.
     pub fn encode(self) -> [u32; 10] {
         [
             self.seed_missing,
@@ -143,6 +155,7 @@ pub(crate) use live_trace::LiveKinematics;
 pub use live_trace::{LiveTrace, SCULPT_LIVE_KERNEL};
 pub use session::StrokeRecord;
 mod stroke;
+pub use stroke::tip_dab_spacing_mm;
 mod visible_ray;
 pub use visible_ray::SculptRayConstraints;
 mod warm_up;
@@ -157,9 +170,9 @@ pub use kernel::{TopoJournal, TopoSlice};
 /// Brush modes. The discriminants are part of the wire contract.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BrushMode {
-    /// Add material along the camera-depth axis.
+    /// Add material along the selected sheet axis.
     Deposit = 0,
-    /// Remove material against the camera-depth axis.
+    /// Remove material against the selected sheet axis.
     Erode = 1,
     /// Explicit local relaxation, a few passes per dab.
     Smooth = 2,
@@ -183,19 +196,19 @@ impl BrushMode {
     }
 }
 
-/// One dab's inputs. `view` = camera forward (world→scene), orienting the
-/// clay displacement relative to the selected sheet. Camera math stays outside
-/// the geometry kernel.
+/// One dab's inputs. `view` picks the hit and the side of the selected sheet
+/// the operator works from. It does not orient brush weights or displacement.
 #[derive(Clone, Copy)]
 pub struct Dab {
     /// Mesh-local dab centre, millimetres.
     pub center: DVec3,
     /// Falloff radius in mesh-local millimetres.
     pub radius: f64,
-    /// 0..1; the default Deposit strength ships at 0.8.
+    /// 0..1; the default Deposit strength ships at 0.8. Brush time scales the
+    /// effect independently through [`SculptSession::set_dab_elapsed_ms`].
     pub strength: f64,
-    /// Unit view direction from the camera into the scene; Add and Remove
-    /// displace along its depth axis.
+    /// Ray direction from the camera into the scene; used for picking and the
+    /// clicked-side sign of Add and Remove.
     pub view: DVec3,
     /// The operation this dab performs.
     pub mode: BrushMode,
@@ -253,7 +266,8 @@ impl Ord for RegionQueueEntry {
 
 /// What one pointer segment produced.
 pub struct StrokePathResult {
-    /// Where the pointer ray landed on the edited surface, with its normal.
+    /// Where the pointer ray landed on the edited surface, with its welded
+    /// brush normal. Public `raycast` methods retain split display normals.
     pub hit: Option<(DVec3, DVec3)>,
     /// Vertices whose position or normal changed, sorted and deduplicated.
     pub moved: Vec<u32>,
@@ -278,21 +292,6 @@ fn smoothstep(edge: f64, t: f64) -> f64 {
     }
     let s = (t / edge).clamp(0.0, 1.0);
     s * s * (3.0 - 2.0 * s)
-}
-
-/// Front-face weight for sculpt brushes. `normal` follows the clicked sheet's
-/// orientation, including on inward-wound meshes. The silhouette stays active;
-/// the reverse-facing side fades to zero.
-fn frontface_weight(normal: DVec3, view: DVec3) -> f64 {
-    // Camera looks along `view`. A front-facing vertex has n·v < 0.
-    // Keep full weight through the silhouette, then fade across the backface
-    // range defined by the 0.25 cosine limit.
-    let facing_cam = -normal.dot(view);
-    if facing_cam >= 0.0 {
-        1.0
-    } else {
-        ((facing_cam + 0.25) / 0.25).clamp(0.0, 1.0)
-    }
 }
 
 /// Which way "front" points for this dab, decided ONCE from the triangle the
@@ -375,6 +374,17 @@ pub struct SculptSession {
     /// leaves the point where it is; a remesh slide or merge carries it along
     /// the opening surface (see `material.rs`).
     reference_verts: Vec<f32>,
+    /// Frozen geometry for opposing-wall probes. `reference_verts` can follow
+    /// a remeshed material point; this snapshot is the session-opening shell.
+    opening_verts: Vec<f32>,
+    opening_tris: Vec<u32>,
+    wall_probe: Option<SdfProbe>,
+    /// Memoized opposing-wall thickness and the material pose each reading
+    /// belongs to. NaN means the group has not been probed yet.
+    reference_wall_mm: Vec<f32>,
+    reference_wall_at: Vec<[f32; 3]>,
+    /// The sheet-axis orientation used by this dab's Remove wall guard.
+    wall_facing: Option<f64>,
     /// Stroke stamp of each vertex's first material move, so the journal keeps
     /// exactly one before-image per vertex and stroke.
     material_mark: Vec<u32>,
@@ -420,6 +430,17 @@ pub struct SculptSession {
     stroke_indices: Vec<u32>,
     stroke_positions: Vec<f32>,
     stroke_path: Option<StrokePathState>,
+    /// Step spine and per-group sheet axes are transient brush state. Axis
+    /// marks fence the one step that assigned each cached value.
+    spine: Vec<SpineSample>,
+    sheet_axis: Vec<[f32; 3]>,
+    sheet_axis_mark: Vec<u32>,
+    sheet_axis_epoch: u32,
+    /// Each group's shading normal when the current stroke first touched it.
+    /// A topology split inherits this value from its edge parents.
+    stroke_normal: Vec<[f32; 3]>,
+    stroke_normal_mark: Vec<u32>,
+    sheet_votes: Vec<(DVec3, DVec3, f64)>,
     /// The path the current step sweeps, from the previous step's end to this
     /// pointer ray. Empty for a press or a hold, which stamp once at the dab
     /// centre.
@@ -460,7 +481,8 @@ pub struct SculptSession {
     normal_scratch: Vec<(f32, Option<DVec3>)>,
     #[cfg(feature = "parallel")]
     budget_scratch: Vec<f32>,
-    dab_exposure: f64,
+    /// Dabs of brush time the current call stands for.
+    dab_dose: f64,
     /// Welded groups the session opened with. The per-stroke growth ceiling
     /// resets on every `start_stroke`, so it cannot bound a SESSION; this is the
     /// baseline the session-wide ceiling measures against.

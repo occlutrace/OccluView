@@ -782,3 +782,135 @@ fn reading_the_box_caches_it() {
     let _ = cold.bbox();
     assert!(cold.bbox_is_cached(), "bbox() should fill the cache");
 }
+
+/// A sculpt commit rebuilds the layer from the session's own buffers, so a
+/// stroke that remeshed keeps every row the display already showed: appended
+/// vertices, rows an edit left unreferenced, and the exact triangle list. A
+/// weld or a dropped row here would move the surface at the stroke's end,
+/// which is the tear this pins.
+#[test]
+fn a_sculpt_commit_keeps_the_sessions_rows_and_indices() {
+    use occlu_mesh_edit::EditVertex;
+
+    struct Session {
+        vertices: Vec<EditVertex>,
+        indices: Vec<u32>,
+    }
+
+    impl SculptSessionBuffers for Session {
+        fn sculpt_vertices(&self) -> &[EditVertex] {
+            &self.vertices
+        }
+
+        fn sculpt_indices(&self) -> &[u32] {
+            &self.indices
+        }
+    }
+
+    let source = Mesh::new(
+        Some("sculpt-commit".into()),
+        vec![v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0), v(0.0, 1.0, 0.0)],
+        vec![0, 1, 2],
+    )
+    .expect("valid source");
+
+    // Two coincident rows survive as two rows, which a positional weld would
+    // collapse, and the extra rows are unreferenced.
+    let session = Session {
+        vertices: vec![
+            EditVertex::at([0.0, 0.0, 0.0]),
+            EditVertex::at([1.0, 0.0, 0.0]),
+            EditVertex::at([0.0, 1.0, 0.0]),
+            EditVertex::at([0.5, 0.0, 0.0]),
+            EditVertex::at([0.5, 0.0, 0.0]),
+        ],
+        indices: vec![0, 1, 2],
+    };
+
+    let rebuilt =
+        mesh_from_sculpt_session_like(&source, &session).expect("a session commit rebuilds");
+    assert_eq!(rebuilt.vertices().len(), 5);
+    assert_eq!(rebuilt.indices(), &[0, 1, 2]);
+    assert_eq!(
+        rebuilt.vertices()[3].position,
+        rebuilt.vertices()[4].position
+    );
+}
+
+#[test]
+fn sculpt_commit_preserves_authored_vertex_rows_at_coincident_positions() {
+    use occlu_mesh_edit::EditVertex;
+
+    struct Session {
+        vertices: Vec<EditVertex>,
+        indices: Vec<u32>,
+    }
+
+    impl SculptSessionBuffers for Session {
+        fn sculpt_vertices(&self) -> &[EditVertex] {
+            &self.vertices
+        }
+
+        fn sculpt_indices(&self) -> &[u32] {
+            &self.indices
+        }
+    }
+
+    let authored = vec![
+        Vertex::at(Vec3::ZERO)
+            .with_normal(Vec3::Z)
+            .with_color([20, 30, 40, 255])
+            .with_uv([0.1, 0.2]),
+        Vertex::at(Vec3::ZERO)
+            .with_normal(Vec3::new(0.0, 0.2, 1.0).normalize())
+            .with_color([90, 80, 70, 255])
+            .with_uv([0.9, 0.8]),
+        Vertex::at(Vec3::X)
+            .with_normal(Vec3::Z)
+            .with_color([1, 2, 3, 255])
+            .with_uv([1.0, 0.0]),
+        Vertex::at(Vec3::Y)
+            .with_normal(Vec3::NEG_Z)
+            .with_color([4, 5, 6, 255])
+            .with_uv([0.0, 1.0]),
+    ];
+    let indices = vec![0, 2, 3, 1, 3, 2];
+    let mut source = Mesh::new_for_preview(
+        Some("sculpt authored rows".into()),
+        authored.clone(),
+        indices.clone(),
+    )
+    .expect("valid source preserves imported normals");
+    source.set_texture(MeshTexture::new(1, 1, vec![12, 34, 56, 255]));
+
+    let generic = Mesh::new(None, authored.clone(), indices.clone())
+        .expect("generic mesh repair remains available");
+    assert_eq!(generic.vertices()[0].normal, generic.vertices()[1].normal);
+    assert_ne!(generic.vertices()[0].normal, authored[0].normal);
+    assert_ne!(generic.vertices()[1].normal, authored[1].normal);
+
+    let session = Session {
+        vertices: authored
+            .iter()
+            .map(|vertex| EditVertex {
+                position: vertex.position,
+                normal: vertex.normal,
+                color: vertex.color,
+                uv: vertex.uv,
+            })
+            .collect(),
+        indices: indices.clone(),
+    };
+    let rebuilt = mesh_from_sculpt_session_like(&source, &session)
+        .expect("sculpt commit preserves the kernel's rows");
+
+    assert_eq!(rebuilt.vertices(), authored);
+    assert_eq!(rebuilt.indices(), indices);
+    assert_eq!(rebuilt.name(), source.name());
+    assert_eq!(
+        rebuilt.texture().map(|texture| &texture.rgba),
+        source.texture().map(|texture| &texture.rgba)
+    );
+    assert_ne!(rebuilt.topology_id(), source.topology_id());
+    assert_ne!(rebuilt.geometry_id(), source.geometry_id());
+}

@@ -360,6 +360,8 @@ impl SculptSession {
         // Splits never cross sheets: the child inherits the edge component
         // (the candidate gate below already proved both endpoints share it).
         self.sheet_component[group as usize] = self.sheet_component[a_group as usize];
+        self.inherit_stroke_normal(group, a_group, b_group);
+        self.inherit_wall_reading(group, a_group, b_group);
         // The record must sit at the vertex's true chronological position:
         // the split rewires faces onto this group immediately, so an event
         // pushed later would replay the rewires before the vertex exists.

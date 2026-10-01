@@ -25,7 +25,8 @@ pub struct SculptRayConstraints<'a> {
     pub near: f64,
     /// Farthest permitted distance along the ray.
     pub far: f64,
-    /// Visible halfspaces, each `[nx, ny, nz, d]` with `n·p <= d` in view space.
+    /// Visible halfspaces in mesh-local coordinates. Each `[nx, ny, nz, d]`
+    /// contains points where `n·p + d >= 0`, using the renderer's keep-side sign.
     pub clip_planes: &'a [[f64; 4]],
 }
 impl Default for SculptRayConstraints<'_> {

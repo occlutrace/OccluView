@@ -70,18 +70,11 @@ impl SculptSession {
     /// span 3 mm on one mesh and 0.3 mm on another — so the skirt would
     /// otherwise have no stable physical width. Each skirt vertex
     /// continues its discoverer's own magnitude (`(1-alpha) * parent`), so
-    /// the falloff has no step at the boundary; masked groups are barriers
-    /// (operator-locked: neither moved nor walked through) and back-facing
-    /// groups stay culled, exactly like the interior law. Skirt vertices
-    /// join `weighted`, so the plane, the  the knot, the budget and
-    /// the wall reserve all treat them as ordinary dab members.
-    fn extend_preserve_skirt(
-        &self,
-        weighted: &mut Vec<(u32, f64)>,
-        view: DVec3,
-        facing: f64,
-        radius: f64,
-    ) {
+    /// the falloff has no step at the boundary.
+    /// Groups on the reverse sheet remain excluded, exactly like the interior
+    /// law. Skirt vertices join `weighted`, so the shape operator and layer
+    /// guard treat them as ordinary dab members.
+    fn extend_preserve_skirt(&mut self, weighted: &mut Vec<(u32, f64)>, radius: f64) {
         if !self.preserve_skirt || weighted.is_empty() || !(radius > 0.0) {
             return;
         }
@@ -148,9 +141,18 @@ impl SculptSession {
                 if best.get(&neighbor).is_some_and(|&(d, _)| ndist >= d) {
                     continue;
                 }
-                let front = frontface_weight(self.group_n(neighbor) * facing, view);
-                if front > 0.0 {
-                    weighted.push((neighbor, share * front));
+                // The footprint owns its assigned spine axis. A group beyond
+                // it borrows the axis from the neighbor which reached it.
+                if self.sheet_axis_mark[neighbor as usize] != self.sheet_axis_epoch {
+                    self.sheet_axis[neighbor as usize] = self
+                        .sheet_axis_of(group)
+                        .to_array()
+                        .map(|component| component as f32);
+                    self.sheet_axis_mark[neighbor as usize] = self.sheet_axis_epoch;
+                }
+                let sheet = self.sheet_share(neighbor);
+                if sheet > 0.0 {
+                    weighted.push((neighbor, share * sheet));
                 }
                 best.insert(neighbor, (ndist, share));
                 frontier.push(std::cmp::Reverse(SkirtFrontier {
@@ -162,39 +164,32 @@ impl SculptSession {
         }
     }
 
-    /// Add/Remove moves along the camera-depth axis with a signed layer. Taubin filters
-    /// only that new displacement before the whole field is committed; a
-    /// rejected layer cannot keep smoothing or pulling the old surface back.
+    /// Add/Remove moves along each group's transported sheet axis. Taubin
+    /// filters only that new displacement before the whole field is committed.
     // the clay field, its denoise and its commit are one operator.
     #[allow(clippy::too_many_lines)]
     pub(super) fn dab_clay(&mut self, dab: &Dab, region: &[SurfacePoint], facing: f64, sign: f64) {
         let strength = dab.strength.clamp(0.0, 1.0);
         let mut weighted = std::mem::take(&mut self.weights);
-        Self::weigh_region_into(region, &mut weighted, |point| {
-            self.weight(point, dab, facing)
-        });
-        self.extend_preserve_skirt(&mut weighted, dab.view, facing, dab.radius);
-        // A swept step's weights count dabs; the densest point of the trail
-        // bounds how much dose the denoise below may carry.
-        let dab_peak = weighted.iter().map(|&(_, w)| w).fold(1.0f64, f64::max);
-        // One depth axis keeps every point in the field aligned with the view,
-        // including when a dab spans tilted faces. The layer guard still
-        // refuses a face that turns edge-on or loses too much area.
+        Self::weigh_region_into(region, &mut weighted, |point| self.weight(point, dab));
+        self.extend_preserve_skirt(&mut weighted, dab.radius);
+        if !(self.dab_dose > 0.0) {
+            self.weights = weighted;
+            return;
+        }
+        // The densest point of this step bounds how much dose the denoise may
+        // carry after averaging the stamp along travel.
+        let dab_peak = weighted.iter().map(|&(_, w)| w).fold(0.0f64, f64::max);
         let knife = self.brush_tip == TipStamp::Knife;
-        let view = dab.view.normalize_or_zero();
-        let push = if view.is_finite() && view.length_squared() > 1e-24 {
-            -view
-        } else {
-            self.brush_normal(&weighted, dab.view, facing)
-        };
         let hit_n = self
             .hit_triangle
             .and_then(|triangle| self.triangle_normal(triangle))
             .unwrap_or(DVec3::ZERO);
-        // The dose scales with brush radius and stays small per dab because a
-        // drag accumulates arc-length-spaced dabs.
-        let amplitude = (dab.radius * ADD_REMOVE_GAIN * strength * self.dab_exposure).max(0.0);
-        if push.length() <= 1e-12 || amplitude <= 0.0 {
+        // One call lays its share of 120 ms of brush time. Travel averaging is
+        // in the per-group weights, so the same elapsed interval is applied
+        // once across the swept path.
+        let amplitude = layer_depth(dab.radius, strength) * self.dab_dose;
+        if amplitude <= 0.0 {
             self.weights = weighted;
             return;
         }
@@ -214,44 +209,47 @@ impl SculptSession {
         } else {
             BrushMode::Deposit
         };
+        if erode {
+            self.wall_facing = Some(facing);
+        }
         let mut proposals = std::mem::take(&mut self.proposals);
         proposals.clear();
-        let mut front_min = 1.0f64;
-        let mut front_max = 0.0f64;
-        let mut front_sum = 0.0f64;
-        let mut toward = 0.0f64;
+        let mut sheet_min = 1.0f64;
+        let mut sheet_max = 0.0f64;
+        let mut sheet_sum = 0.0f64;
+        let mut sheet_full = 0.0f64;
         let mut spread = 0.0f64;
         for &(group, weight) in &weighted {
             let here = self.group_v(group);
-            let signed = self.group_n(group) * facing;
-            let facing_w = self.facing_weight(group, dab.view, facing, dab.mode);
-            front_min = front_min.min(facing_w);
-            front_max = front_max.max(facing_w);
-            front_sum += facing_w;
-            if signed.length() > 1e-12
-                && view.length() > 1e-12
-                && signed.normalize_or_zero().dot(view) <= 0.0
-            {
-                toward += 1.0;
+            let push = self.sheet_push(group, facing);
+            if push.length_squared() <= 1e-24 {
+                continue;
             }
-            if push.length() > 1e-12 && signed.length() > 1e-12 {
-                let aligned = signed.normalize_or_zero().dot(push).clamp(-1.0, 1.0);
+            let sheet = self.sheet_share(group);
+            sheet_min = sheet_min.min(sheet);
+            sheet_max = sheet_max.max(sheet);
+            sheet_sum += sheet;
+            if sheet >= 1.0 - 1e-12 {
+                sheet_full += 1.0;
+            }
+            let signed = self.group_n(group) * facing;
+            if signed.length() > 1e-12 {
+                let aligned = signed
+                    .normalize_or_zero()
+                    .dot(push.normalize_or_zero())
+                    .clamp(-1.0, 1.0);
                 spread = spread.max(aligned.acos().to_degrees());
             }
-            let dir = push;
             // Safety sees the complete displacement field after denoise.
-            let target = here + (dir * (sign * weight * amplitude * tip_gain));
+            let target = here + (push * (sign * weight * amplitude * tip_gain));
             let clamped = if knife {
-                // Each dab-equivalent of a swept step takes the tearing clamp
-                // on its own share, exactly as consecutive dabs did.
-                let dabs = weight.max(1.0);
                 let share = crate::clamp_dab_displacement(
                     &GroupKnot { session: &*self },
                     group,
                     1.0,
-                    (target - here) * (1.0 / dabs),
+                    target - here,
                 );
-                self.clamp_step_scaled(group, here, here + share * dabs, dabs)
+                self.clamp_step_at(group, here, here + share)
             } else {
                 // A per-vertex tangent or neighbour clamp changes the common
                 // direction and creates a different layer at every edge size.
@@ -263,34 +261,35 @@ impl SculptSession {
             }
         }
         let count = weighted.len() as f64;
-        self.live_kin.local_normal = false;
-        self.live_kin.hit_sheet = false;
-        self.live_kin.nx = push.x as f32;
-        self.live_kin.ny = push.y as f32;
-        self.live_kin.nz = push.z as f32;
+        let pointer_push = self.pointer_sheet_axis() * facing;
+        self.live_kin.local_normal = true;
+        self.live_kin.hit_sheet = self.hit_triangle.is_some();
+        self.live_kin.nx = pointer_push.x as f32;
+        self.live_kin.ny = pointer_push.y as f32;
+        self.live_kin.nz = pointer_push.z as f32;
         self.live_kin.facing = facing as f32;
         self.live_kin.amplitude = amplitude as f32;
         self.live_kin.gain = 1.0;
         self.live_kin.weighted = weighted.len() as u32;
         self.live_kin.proposals = proposals.len() as u32;
-        self.live_kin.front_min = if count > 0.0 { front_min as f32 } else { 0.0 };
-        self.live_kin.front_max = front_max as f32;
+        self.live_kin.front_min = if count > 0.0 { sheet_min as f32 } else { 0.0 };
+        self.live_kin.front_max = sheet_max as f32;
         self.live_kin.front_mean = if count > 0.0 {
-            (front_sum / count) as f32
+            (sheet_sum / count) as f32
         } else {
             0.0
         };
         self.live_kin.toward_frac = if count > 0.0 {
-            (toward / count) as f32
+            (sheet_full / count) as f32
         } else {
             0.0
         };
         self.live_kin.cx = dab.center.x as f32;
         self.live_kin.cy = dab.center.y as f32;
         self.live_kin.cz = dab.center.z as f32;
-        self.live_kin.vx = view.x as f32;
-        self.live_kin.vy = view.y as f32;
-        self.live_kin.vz = view.z as f32;
+        self.live_kin.vx = dab.view.x as f32;
+        self.live_kin.vy = dab.view.y as f32;
+        self.live_kin.vz = dab.view.z as f32;
         self.live_kin.hn_x = hit_n.x as f32;
         self.live_kin.hn_y = hit_n.y as f32;
         self.live_kin.hn_z = hit_n.z as f32;
@@ -299,17 +298,9 @@ impl SculptSession {
             .unwrap_or(0.0) as f32;
         self.live_kin.flood_mm = dab.radius as f32;
         self.live_kin.n_spread_deg = self.live_kin.n_spread_deg.max(spread as f32);
-        // Radial post-smoothing widens the knife's narrow trail and can erase
-        // its depth. Ball and cylinder retain clay denoise; the knife keeps
-        // its travel-aligned analytic footprint.
-        if self.brush_tip == TipStamp::Knife {
-            self.commit_even_layer(&proposals, mode);
-            self.proposals = proposals;
-            self.weights = weighted;
-            return;
-        }
-        // Skirt members can lie outside the original flood. Capture them
-        // before staging, so all field samples have a fixed zero displacement.
+        // Skirt proposals can lie outside the ray footprint. Add them to the
+        // immutable dab snapshot before any tip-specific early return so
+        // maintenance refreshes their normals and spatial rows as well.
         for &(group, _) in &proposals {
             if self.snapshot_stamp[group as usize] != self.snapshot_generation {
                 let p = self.group_v(group);
@@ -318,8 +309,22 @@ impl SculptSession {
                 self.dab_groups.push(group);
             }
         }
+        // Radial post-smoothing widens the knife's narrow trail and can erase
+        // its depth. Ball and cylinder retain clay denoise; the knife keeps
+        // its travel-aligned analytic footprint.
+        if self.brush_tip == TipStamp::Knife {
+            if erode {
+                for (group, target) in &mut proposals {
+                    *target = self.guard_remove_wall(*group, self.group_v(*group), *target);
+                }
+            }
+            self.commit_even_layer(&proposals, mode);
+            self.proposals = proposals;
+            self.weights = weighted;
+            return;
+        }
         // Filter the new layer across the plateau and taper at the rim.
-        // Masks and facing bound both the lift and its denoise support.
+        // The sheet law bounds both the lift and its denoise support.
         weighted.clear();
         Self::weigh_region_into(region, &mut weighted, |point| {
             // The denoise plateau stays radial (ball) whatever the tip: it
@@ -330,10 +335,9 @@ impl SculptSession {
                 return 0.0;
             }
             let t = f.sqrt(); // t = 1 - distance/radius
-            smoothstep(AUTOSMOOTH_RIM_TAPER, t)
-                * self.facing_weight(point.group, dab.view, facing, dab.mode)
+            smoothstep(AUTOSMOOTH_RIM_TAPER, t) * self.sheet_share(point.group)
         });
-        // Denoise the scalar dose along the dab's constant push direction.
+        // Denoise the scalar dose along each group's local sheet axis.
         // Applying each pass after collecting its values keeps the field
         // independent of iteration order, and the live surface stays untouched
         // until the guarded commit. Untouched snapshot groups contribute zero
@@ -343,7 +347,8 @@ impl SculptSession {
             amount[self.dab_groups[index] as usize] = 0.0;
         }
         for &(group, target) in &proposals {
-            amount[group as usize] = (target - self.pre_group(group)).dot(push) * sign;
+            amount[group as usize] =
+                (target - self.pre_group(group)).dot(self.sheet_push(group, facing)) * sign;
         }
         // Denoise may redistribute this dab's dose, but cannot turn Add into
         // Remove or amplify it past its budget.
@@ -381,7 +386,11 @@ impl SculptSession {
         for index in 0..self.dab_groups.len() {
             let group = self.dab_groups[index];
             let here = self.pre_group(group);
-            let target = here + (push * (sign * amount[group as usize]));
+            let mut target =
+                here + self.sheet_push(group, facing) * (sign * amount[group as usize]);
+            if erode {
+                target = self.guard_remove_wall(group, here, target);
+            }
             if (target - here).length() > 1e-15 {
                 proposals.push((group, target));
             }
@@ -393,76 +402,58 @@ impl SculptSession {
         self.weights = weighted;
     }
 
-    /// Flatten (Minus): level the selection toward its own plane — the
-    /// weighted centroid along the camera-oriented brush normal. A bump
-    /// sinks, a dent rises, an already-flat patch stays bit-exact. Like a
-    /// carve it can thin a wall, so every proposal passes the same step
-    /// budget and wall reserve; like every dab it cannot tear, so the knot
-    /// clamp binds first. No denoise tail: levelling is the finish.
-    pub(super) fn dab_flatten(&mut self, dab: &Dab, region: &[SurfacePoint], facing: f64) {
+    /// Flatten (Minus): level the selection toward its own plane along the
+    /// weighted sheet axis. No denoise tail: levelling is the finish.
+    pub(super) fn dab_flatten(&mut self, dab: &Dab, region: &[SurfacePoint]) {
         let strength = dab.strength.clamp(0.0, 1.0);
         let mut weighted = std::mem::take(&mut self.weights);
-        Self::weigh_region_into(region, &mut weighted, |point| {
-            self.weight(point, dab, facing)
-        });
-        self.extend_preserve_skirt(&mut weighted, dab.view, facing, dab.radius);
+        Self::weigh_region_into(region, &mut weighted, |point| self.weight(point, dab));
+        self.extend_preserve_skirt(&mut weighted, dab.radius);
         let mut centroid = DVec3::ZERO;
         let mut total = 0.0f64;
         for &(group, weight) in &weighted {
             centroid += self.group_v(group) * weight;
             total += weight;
         }
-        let normal = self.brush_normal(&weighted, dab.view, facing);
+        let normal = self.brush_normal(&weighted);
         if total <= 1e-12 || normal.length() <= 1e-12 {
             self.weights = weighted;
             return;
         }
         let point = centroid * (1.0 / total);
-        let mut gap = 0.0f64;
-        for &(group, _) in &weighted {
-            gap = gap.max((point - self.group_v(group)).dot(normal).abs());
-        }
-        // The dose is absolute here too: the per-vertex clamp below is the
-        // only thing that bounds a move, and the flatten gap is already the
-        // local depth the operator asked for.
+        // Time compounds as repeated partial travel toward the same plane.
+        // The per-vertex clamp below bounds each call, and path-mean weights
+        // distribute one interval over the swept segment.
         let mut proposals = std::mem::take(&mut self.proposals);
         proposals.clear();
         // Phase one reads only: the surface adapter borrows the session
         // shared, so budgets and walls (which need it mutable) wait for
         // phase two. One adapter serves both laws: the surface the
         // projector flattens is the surface the knot refuses to tear.
-        let swept = self.path_active();
-        let displacements: Vec<(u32, DVec3, f64)> = {
+        let displacements: Vec<(u32, DVec3)> = {
             let surface = GroupKnot { session: &*self };
             let mut out = Vec::with_capacity(weighted.len());
             for &(group, weight) in &weighted {
-                // A swept step's weight counts dabs, each levelling `strength`
-                // of the remaining way: compound them instead of multiplying,
-                // which would overshoot through the plane. The fold clamps stay
-                // one dab's: a flatten levels its whole swath to one plane and
-                // commits without the layer guard.
-                let (share, dabs) = if swept && strength > 0.0 {
-                    (compounded_share(weight, strength) / strength, 1.0)
+                // Compound the stamp-weighted time share so partial calls
+                // reach the same plane fraction as their total brush time.
+                let share = if strength > 0.0 {
+                    compounded_share(weight * self.dab_dose, strength) / strength
                 } else {
-                    (weight, 1.0)
+                    0.0
                 };
                 let displacement =
                     crate::flatten_displacement(&surface, group, share, strength, point, normal);
                 // Weight 1.0 — flatten already applied it, and held vertices
                 // never reach this list.
-                let displacement = crate::clamp_dab_displacement(
-                    &surface,
-                    group,
-                    1.0,
-                    displacement * (1.0 / dabs),
-                ) * dabs;
-                out.push((group, displacement, dabs));
+                let displacement =
+                    crate::clamp_dab_displacement(&surface, group, 1.0, displacement);
+                out.push((group, displacement));
             }
             out
         };
-        for (group, displacement, dabs) in displacements {
+        for (group, displacement) in displacements {
             let here = self.group_v(group);
-            let target = self.clamp_step_scaled(group, here, here + displacement, dabs);
+            let target = self.clamp_step_at(group, here, here + displacement);
             if (target - here).length() > 1e-15 {
                 proposals.push((group, target));
             }
