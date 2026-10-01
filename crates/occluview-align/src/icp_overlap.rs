@@ -243,9 +243,6 @@ pub(super) fn reciprocal_evidence(
         .map(|sample| {
             let local = inverse.apply(sample.point);
             let hit = moving_surface.nearest(local, influence_radius_mm)?;
-            if hit.on_border {
-                return None;
-            }
             let transformed_normal = pose.apply_normal(hit.normal);
             let agreement = sample.normal.dot(transformed_normal);
             let accepted = match level.settings.orientation {

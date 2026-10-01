@@ -150,10 +150,11 @@ fn only_the_settings_that_change_the_distances_change_the_key() {
 
 /// The window opens on the working range, and it opens there every time.
 ///
-/// Dentistry works to a tenth of a millimetre. A map whose ends are five
-/// millimetres apart cannot show a fit that is either good or bad in that
-/// regime, and a range that follows the measurement leaves it as soon as two
-/// meshes are only roughly placed, painting the arch as a red and blue mosaic.
+/// Dentistry works to a tenth of a millimetre, so the map is 0 to 100 um: a
+/// 10 um gap already reads as a real mismatch instead of sitting in the cool
+/// half of a 50-200 um band. A range that follows the measurement leaves the
+/// working one as soon as two meshes are only roughly placed, painting the arch
+/// as a red and blue mosaic.
 ///
 /// The magnitude ramp is continuous across the whole working range. Tolerance
 /// is a measurement/statistics setting, not a hidden colour plateau, so small
@@ -166,7 +167,7 @@ fn the_window_opens_on_the_working_range() {
         "the display maximum must open at the tightest standard range, got {}",
         settings.scale_mm
     );
-    assert_eq!(settings.min_display_mm, 0.05);
+    assert_eq!(settings.min_display_mm, 0.0);
     assert!(
         (settings.tolerance_mm - WORKING_MIN_MM).abs() < f64::EPSILON,
         "the nominal band must open at the one that goes with it, got {}",

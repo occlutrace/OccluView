@@ -257,16 +257,16 @@ fn the_working_ramp_is_continuous_from_zero_to_tenth_and_clamps_above_it() {
 }
 
 #[test]
-fn a_display_minimum_keeps_subthreshold_differences_cool_and_two_tenths_hot() {
+fn a_display_minimum_keeps_subthreshold_differences_cool_and_the_ceiling_hot() {
     let ramp = RampSettings {
-        min_mm: 0.05,
-        scale_mm: 0.20,
+        min_mm: 0.02,
+        scale_mm: 0.10,
         ..RampSettings::default()
     };
-    assert_eq!(ramp_color(0.0, &ramp), ramp_color(0.05, &ramp));
-    assert_ne!(ramp_color(0.10, &ramp), ramp_color(0.05, &ramp));
-    assert_eq!(ramp_color(0.20, &ramp), [252, 30, 18, 255]);
-    assert_eq!(ramp_color(-0.20, &ramp), ramp_color(0.20, &ramp));
+    assert_eq!(ramp_color(0.0, &ramp), ramp_color(0.02, &ramp));
+    assert_ne!(ramp_color(0.06, &ramp), ramp_color(0.02, &ramp));
+    assert_eq!(ramp_color(0.10, &ramp), [252, 30, 18, 255]);
+    assert_eq!(ramp_color(-0.10, &ramp), ramp_color(0.10, &ramp));
 }
 
 #[test]

@@ -23,10 +23,13 @@ use occluview_align::{
 };
 use rayon::prelude::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
-/// Initial display maximum, in millimetres.
-pub(crate) const WORKING_MAX_MM: f64 = 0.20;
-/// Initial cool end of the displayed heatmap range.
-pub(crate) const WORKING_MIN_DISPLAY_MM: f64 = 0.05;
+/// Initial display maximum, in millimetres: the hot end of the clinical
+/// deviation bar is 100 um, so a 10 um gap already reads as a real mismatch
+/// rather than the low end of a wide band.
+pub(crate) const WORKING_MAX_MM: f64 = 0.10;
+/// Initial cool end of the displayed heatmap range. Zero, so the map starts at
+/// "no measurable gap" instead of hiding everything below 50 um.
+pub(crate) const WORKING_MIN_DISPLAY_MM: f64 = 0.0;
 /// Absolute zero of the operator-controlled deviation display range.
 pub(crate) const WORKING_SCALE_MIN_MM: f64 = 0.0;
 /// Initial nominal tolerance band, in millimetres.
@@ -64,8 +67,7 @@ impl Default for AlignSettings {
             influence_radius_mm: 2.0,
             matching_ratio: 0.8,
             orientation: Orientation::Match,
-            // Start at the tightest standard range; manual changes remain
-            // stable until the operator selects another range.
+            // Start at the clinical range: zero to 100 um.
             scale_mm: WORKING_MAX_MM,
             min_display_mm: WORKING_MIN_DISPLAY_MM,
             tolerance_mm: WORKING_MIN_MM,
