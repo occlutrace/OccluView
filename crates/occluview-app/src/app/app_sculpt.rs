@@ -6,15 +6,15 @@ use super::app_sculpt_stroke::{
 };
 use super::{egui, live_viewport, mesh_editor_overlay, SceneContext};
 use crate::app::workspace::id::SceneKey;
-use crate::sculpt_kernel::{BrushMode, BrushRayStep};
+use crate::sculpt::sculpt_kernel::{BrushMode, BrushRayStep};
 // Test-only re-export: sibling test modules build dabs through `super::`.
 #[cfg(test)]
-use crate::sculpt_kernel::BrushStroke;
-use crate::sculpt_tool::{
+use crate::sculpt::sculpt_kernel::BrushStroke;
+use crate::sculpt::sculpt_tool::{
     uniform_scene_scale, PendingSculptPress, RetainedSculptSample, SculptTip, SculptToolKind,
     StrokeState, HOLD_DAB_INTERVAL_SEC,
 };
-use crate::sculpt_worker::SculptWorker;
+use crate::sculpt::sculpt_worker::SculptWorker;
 use crate::viewer::viewport_ray;
 use glam::{Affine3A, DVec3, Mat4, Quat, Vec3};
 use occluview_core::{SceneMeshId, ScenePickHit};

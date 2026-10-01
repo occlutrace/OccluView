@@ -63,7 +63,7 @@ impl SceneContext<'_> {
         // that usually already covers the connector instead of the tiny minimum.
         let object_radius = {
             let world_diagonal = entry.mesh.bbox_cached().size().length()
-                * crate::sculpt_tool::mean_uniform_scale(&entry.transform);
+                * crate::sculpt::sculpt_tool::mean_uniform_scale(&entry.transform);
             (0.22 * world_diagonal).max(crate::cut_manipulator::DEFAULT_DISC_RADIUS_MM)
         };
 

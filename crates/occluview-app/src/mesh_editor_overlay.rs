@@ -14,7 +14,7 @@ use eframe::egui;
 use crate::app::workspace::id::SceneKey;
 use crate::ui::icons::AppIcon;
 
-use crate::sculpt_tool::{SculptTip, SculptToolKind};
+use crate::sculpt::sculpt_tool::{SculptTip, SculptToolKind};
 
 #[path = "mesh_editor_groups.rs"]
 mod groups;
@@ -337,7 +337,7 @@ mod tests {
         set_sculpt_tip, CLOSE_HOLES_LIMIT_DEFAULT_MM,
     };
     use crate::app::workspace::id::SceneKey;
-    use crate::sculpt_tool::{SculptTip, SculptToolKind};
+    use crate::sculpt::sculpt_tool::{SculptTip, SculptToolKind};
     use eframe::egui;
 
     #[test]

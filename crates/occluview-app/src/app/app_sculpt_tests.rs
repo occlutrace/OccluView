@@ -1,6 +1,6 @@
 use super::{collect_sculpt_pointer_events, SculptPointerEvent};
 use super::{sculpt_cursor_action, sculpt_cursor_color, sculpt_cursor_height, sculpt_target};
-use crate::sculpt_kernel::BrushMode;
+use crate::sculpt::sculpt_kernel::BrushMode;
 use eframe::egui;
 use glam::Vec3;
 use occluview_core::{Mesh, Scene, SceneMesh, Vertex};

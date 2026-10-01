@@ -17,7 +17,7 @@
 //!
 //! Everything above that sits in the `mod` list below: `app` and `viewer` hold
 //! the application state and the viewport, `scene_loading` brings files in,
-//! `align` registers one scan onto another, `edit_mode` and `sculpt_*` change
+//! `align` registers one scan onto another, `edit_mode` and `sculpt` change
 //! geometry, `cut_*` and `section_view` slice it, `measure_*` and
 //! `probe_section` measure it, `layer_*` and `mesh_editor_*` drive the panels,
 //! `ui` holds the shared theme, icons, chrome and accessibility layer, and
@@ -73,9 +73,7 @@ mod mesh_editor_overlay;
 mod probe_section;
 mod repair_report;
 mod scene_loading;
-mod sculpt_kernel;
-mod sculpt_tool;
-mod sculpt_worker;
+mod sculpt;
 mod section_view;
 mod ui;
 mod viewer;

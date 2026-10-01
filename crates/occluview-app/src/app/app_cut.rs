@@ -622,9 +622,9 @@ mod viewport_ownership_tests {
     }
 
     fn flat_sculpt_fixture() -> (OccluViewApp, Arc<occluview_core::Mesh>) {
-        use crate::sculpt_kernel::BrushSession;
-        use crate::sculpt_tool::{SculptSession, SculptToolKind};
-        use crate::sculpt_worker::SculptWorker;
+        use crate::sculpt::sculpt_kernel::BrushSession;
+        use crate::sculpt::sculpt_tool::{SculptSession, SculptToolKind};
+        use crate::sculpt::sculpt_worker::SculptWorker;
         use glam::{Affine3A, Quat};
         use occluview_core::{Mesh, SceneMesh, Vertex};
         use occluview_edit::mesh_edit_buffers_from_mesh;
@@ -693,7 +693,7 @@ mod viewport_ownership_tests {
     }
 
     fn drain_sculpt_worker(app: &mut OccluViewApp, ctx: &egui::Context) {
-        use crate::sculpt_worker::SculptWorker;
+        use crate::sculpt::sculpt_worker::SculptWorker;
         use std::time::{Duration, Instant};
 
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -733,7 +733,7 @@ mod viewport_ownership_tests {
         reason = "Keep the complete gesture and its state assertions in one regression scenario."
     )]
     fn sculpt_reentry_after_an_overlay_leaves_the_hidden_surface_untouched() {
-        use crate::sculpt_tool::SculptTip;
+        use crate::sculpt::sculpt_tool::SculptTip;
 
         let (mut app, base) = flat_sculpt_fixture();
         let ctx = egui::Context::default();

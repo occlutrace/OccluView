@@ -31,8 +31,8 @@
     clippy::print_stdout
 )]
 
-use crate::sculpt_kernel::{BrushMode, BrushSession, BrushStroke};
-use crate::sculpt_tool::{mean_uniform_scale, SculptSession};
+use crate::sculpt::sculpt_kernel::{BrushMode, BrushSession, BrushStroke};
+use crate::sculpt::sculpt_tool::{mean_uniform_scale, SculptSession};
 use glam::Affine3A;
 use occluview_core::{Mesh, SceneMesh, Vertex};
 use occluview_edit::{mesh_edit_buffers_from_mesh, SculptSessionBuffers};
@@ -177,7 +177,7 @@ fn perf_sculpt_knife_dab() {
     let _ = session.apply_dab_tipped(
         stroke,
         BrushMode::Add,
-        crate::sculpt_tool::SculptTip::Knife,
+        crate::sculpt::sculpt_tool::SculptTip::Knife,
         Some([1.0, 0.0, 0.0]),
     );
     let start = Instant::now();
@@ -186,7 +186,7 @@ fn perf_sculpt_knife_dab() {
         session.apply_dab_tipped(
             stroke,
             BrushMode::Add,
-            crate::sculpt_tool::SculptTip::Knife,
+            crate::sculpt::sculpt_tool::SculptTip::Knife,
             Some([1.0, 0.0, 0.0]),
         );
     }
@@ -323,7 +323,7 @@ fn perf_sculpt_private_scan_knife_stroke_completes() {
         let outcome = session.apply_dab_tipped(
             stroke,
             BrushMode::Add,
-            crate::sculpt_tool::SculptTip::Knife,
+            crate::sculpt::sculpt_tool::SculptTip::Knife,
             Some([1.0, 0.0, 0.0]),
         );
         assert!(outcome.failure.is_none(), "knife dab {dab_index} completes");
@@ -585,10 +585,10 @@ fn held_stroke(mesh: &Mesh, mode: BrushMode, before: &SurfaceEdges) -> HoldResul
                 stroke,
                 mode,
                 &std::sync::atomic::AtomicBool::new(false),
-                crate::sculpt_tool::SculptTip::Ball,
+                crate::sculpt::sculpt_tool::SculptTip::Ball,
                 None,
-                crate::sculpt_kernel::DabDose::dwell(
-                    crate::sculpt_tool::HOLD_DAB_INTERVAL_SEC * 1000.0,
+                crate::sculpt::sculpt_kernel::DabDose::dwell(
+                    crate::sculpt::sculpt_tool::HOLD_DAB_INTERVAL_SEC * 1000.0,
                 ),
             )
             .expect("an uncancelled dab returns an outcome");

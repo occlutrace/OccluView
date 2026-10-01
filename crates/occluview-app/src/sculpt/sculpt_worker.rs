@@ -4,12 +4,12 @@
 //! bounded command queue and the worker-side [`SculptSession`]; the UI only
 //! submits the newest brush samples and drains sparse GPU updates/completions.
 
-use crate::sculpt_kernel::BrushRayStep;
+use crate::sculpt::sculpt_kernel::BrushRayStep;
 #[cfg(test)]
-use crate::sculpt_kernel::{BrushMode, BrushStroke, DabDose};
+use crate::sculpt::sculpt_kernel::{BrushMode, BrushStroke, DabDose};
 #[cfg(test)]
-use crate::sculpt_tool::SculptTip;
-use crate::sculpt_tool::{DabFailure, DabOutcome, SculptPickState, SculptSession};
+use crate::sculpt::sculpt_tool::SculptTip;
+use crate::sculpt::sculpt_tool::{DabFailure, DabOutcome, SculptPickState, SculptSession};
 use glam::{Affine3A, DVec3, Vec3};
 use occluview_core::{Mesh, SceneMeshId, Vertex};
 use occluview_render::{PreparedSceneTopology, SculptTopologyDelta};
