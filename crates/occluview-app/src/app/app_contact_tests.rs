@@ -3,8 +3,10 @@
 use super::app_align_display::AlignOverlay;
 use super::*;
 use crate::app::app_test_support::test_app;
-use crate::contact::{ContactLayerField, ContactRequest};
-use crate::contact_worker::{ContactCompletion, ContactFailure, ContactOutcome, ContactWorker};
+use crate::contact::contact::{ContactLayerField, ContactRequest};
+use crate::contact::contact_worker::{
+    ContactCompletion, ContactFailure, ContactOutcome, ContactWorker,
+};
 use glam::Vec3;
 use occluview_contact::ContactStats;
 use occluview_core::{Mesh, Scene, SceneMesh, SceneMeshId, Vertex};
@@ -90,7 +92,7 @@ fn an_answer_for_a_superseded_reading_is_not_applied_to_the_current_one() {
 
     assert_eq!(
         app.workspace.scenes[0].tools.contacts.status(),
-        Some(crate::contact::ContactStatus::Measuring),
+        Some(crate::contact::contact::ContactStatus::Measuring),
         "the new reading is still measuring; a refusal that belongs to the \
          previous one must not write its sentence"
     );
@@ -138,7 +140,7 @@ fn an_answer_measured_before_the_scan_moved_is_not_applied() {
 
     assert_eq!(
         app.workspace.scenes[0].tools.contacts.status(),
-        Some(crate::contact::ContactStatus::Remeasuring),
+        Some(crate::contact::contact::ContactStatus::Remeasuring),
         "the reading is still held, and an answer from before the move must not \
          replace what the panel is saying"
     );
@@ -211,7 +213,7 @@ fn a_worker_that_dies_with_a_job_in_flight_releases_the_reading() {
     );
     assert_eq!(
         app.workspace.scenes[0].tools.contacts.status(),
-        Some(crate::contact::ContactStatus::Failed(
+        Some(crate::contact::contact::ContactStatus::Failed(
             ContactFailure::Worker
         )),
         "and it must say the reading failed"
@@ -311,7 +313,7 @@ fn showing_a_scan_again_clears_the_unusable_sentence() {
         .sync_contacts_with_scene(&ctx);
     assert_eq!(
         app.workspace.scenes[0].tools.contacts.status(),
-        Some(crate::contact::ContactStatus::AntagonistUnusable),
+        Some(crate::contact::contact::ContactStatus::AntagonistUnusable),
         "hiding the other scan explains why nothing is measured"
     );
 
@@ -328,7 +330,7 @@ fn showing_a_scan_again_clears_the_unusable_sentence() {
     assert!(
         !matches!(
             app.workspace.scenes[0].tools.contacts.status(),
-            Some(crate::contact::ContactStatus::AntagonistUnusable)
+            Some(crate::contact::contact::ContactStatus::AntagonistUnusable)
         ),
         "the sentence must not outlive the reason for it"
     );
