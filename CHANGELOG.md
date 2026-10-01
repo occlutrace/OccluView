@@ -5,6 +5,10 @@ remain in the Git history.
 
 ## Unreleased
 
+## 1.2.1 - 2026-09-30
+
+### Workspace, Sculpt and Align
+
 - Work with two independent scenes side by side. Move layers between scenes,
   import into a chosen scene, and undo transfers without mixing scene history.
 
@@ -27,8 +31,6 @@ remain in the Git history.
   region provides sufficient evidence for the alignment.
 - Best fit matching uses principal surface orientations to recover scans
   rotated around tilted axes.
-
-## 1.2.1 - 2026-09-27
 
 ### Accessibility
 
