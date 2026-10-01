@@ -632,7 +632,7 @@ impl OccluViewApp {
             GestureKind::Ruler
         } else if scene.document.edit_mode.lasso_armed()
             || (scene.document.edit_mode.has_active_session()
-                && scene.tools.editor_tab == crate::mesh_editor_overlay::EditorTab::EditMesh)
+                && scene.tools.editor_tab == super::mesh_editor_overlay::EditorTab::EditMesh)
         {
             GestureKind::Lasso
         } else {

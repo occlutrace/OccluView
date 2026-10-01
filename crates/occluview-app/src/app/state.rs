@@ -27,7 +27,7 @@ pub(super) fn restore_sculpt_preferences(
     if !settings.remember_sculpt_brush {
         settings.last_sculpt_tool = crate::sculpt::sculpt_tool::SculptToolKind::default();
         settings.last_sculpt_tip = crate::sculpt::sculpt_tool::SculptTip::default();
-        crate::mesh_editor_overlay::set_sculpt_tip(ctx, scene_key, settings.last_sculpt_tip);
+        super::mesh_editor_overlay::set_sculpt_tip(ctx, scene_key, settings.last_sculpt_tip);
         return;
     }
 
@@ -37,13 +37,13 @@ pub(super) fn restore_sculpt_preferences(
         crate::sculpt::sculpt_tool::SculptTip::Knife => 1,
         crate::sculpt::sculpt_tool::SculptTip::Cylinder => 2,
     };
-    crate::mesh_editor_overlay::set_sculpt_tip(ctx, scene_key, tip);
+    crate::mesh_editor::mesh_editor_overlay::set_sculpt_tip(ctx, scene_key, tip);
     if let Some(share) = settings.sculpt_radius_share {
-        crate::mesh_editor_overlay::set_sculpt_radius_share(ctx, scene_key, share);
+        crate::mesh_editor::mesh_editor_overlay::set_sculpt_radius_share(ctx, scene_key, share);
     } else {
         // Older settings only stored rounded millimetres. Seed the shared size
         // from the active tip's saved radius without passing through Ball.
-        crate::mesh_editor_overlay::set_sculpt_radius_mm(
+        crate::mesh_editor::mesh_editor_overlay::set_sculpt_radius_mm(
             ctx,
             scene_key,
             tip,
@@ -57,7 +57,7 @@ pub(super) fn restore_sculpt_preferences(
     .into_iter()
     .zip(settings.sculpt_strengths)
     {
-        crate::mesh_editor_overlay::set_sculpt_strength(ctx, scene_key, kind, strength);
+        super::mesh_editor_overlay::set_sculpt_strength(ctx, scene_key, kind, strength);
     }
 }
 
@@ -420,11 +420,11 @@ mod tests {
         restore_sculpt_preferences(&ctx, SceneKey::INITIAL, &mut settings);
 
         assert_eq!(
-            crate::mesh_editor_overlay::sculpt_tip(&ctx, SceneKey::INITIAL),
+            crate::mesh_editor::mesh_editor_overlay::sculpt_tip(&ctx, SceneKey::INITIAL),
             crate::sculpt::sculpt_tool::SculptTip::Knife
         );
         assert_eq!(
-            crate::mesh_editor_overlay::sculpt_radius_mm(
+            crate::mesh_editor::mesh_editor_overlay::sculpt_radius_mm(
                 &ctx,
                 SceneKey::INITIAL,
                 crate::sculpt::sculpt_tool::SculptTip::Knife
@@ -433,7 +433,7 @@ mod tests {
             "the exact normalized share takes precedence over the rounded snapshots"
         );
         assert_eq!(
-            crate::mesh_editor_overlay::sculpt_radius_mm(
+            crate::mesh_editor::mesh_editor_overlay::sculpt_radius_mm(
                 &ctx,
                 SceneKey::INITIAL,
                 crate::sculpt::sculpt_tool::SculptTip::Ball
@@ -441,7 +441,7 @@ mod tests {
             0.85
         );
         assert_eq!(
-            crate::mesh_editor_overlay::sculpt_strength(
+            crate::mesh_editor::mesh_editor_overlay::sculpt_strength(
                 &ctx,
                 SceneKey::INITIAL,
                 crate::sculpt::sculpt_tool::SculptToolKind::Smooth
@@ -455,7 +455,7 @@ mod tests {
         legacy_settings.sculpt_radii_mm = [0.75, 0.6, 0.5];
         restore_sculpt_preferences(&legacy_ctx, SceneKey::INITIAL, &mut legacy_settings);
         assert_eq!(
-            crate::mesh_editor_overlay::sculpt_radius_mm(
+            crate::mesh_editor::mesh_editor_overlay::sculpt_radius_mm(
                 &legacy_ctx,
                 SceneKey::INITIAL,
                 crate::sculpt::sculpt_tool::SculptTip::Knife
@@ -471,7 +471,7 @@ mod tests {
             crate::sculpt::sculpt_tool::SculptToolKind::AddRemove
         );
         assert_eq!(
-            crate::mesh_editor_overlay::sculpt_tip(&ctx, SceneKey::INITIAL),
+            crate::mesh_editor::mesh_editor_overlay::sculpt_tip(&ctx, SceneKey::INITIAL),
             crate::sculpt::sculpt_tool::SculptTip::Ball
         );
     }
