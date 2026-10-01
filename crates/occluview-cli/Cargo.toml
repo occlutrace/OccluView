@@ -29,6 +29,8 @@ anyhow            = { workspace = true }
 tracing-subscriber = { workspace = true }
 image             = { workspace = true }
 
+# Windows `rename` refuses an existing destination, so publishing a finished
+# thumbnail replaces it through `MoveFileExW` (Win32_Storage_FileSystem).
 [target.'cfg(windows)'.dependencies.windows]
 version = "0.62.2"
 features = ["Win32_Storage_FileSystem"]

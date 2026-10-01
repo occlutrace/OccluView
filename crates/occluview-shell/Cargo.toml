@@ -38,6 +38,15 @@ thiserror         = { workspace = true }
 pollster          = { workspace = true }
 glam              = { workspace = true }
 
+# The COM shell extension's own Win32 surface: Foundation raw handles, COM
+# class-factory and stream types (System::Com), the provider, known-folder and
+# shell-item APIs (UI::Shell), the property-system initializer interfaces and
+# registry access for COM registration, the preview child window and its
+# messages and input (UI::WindowsAndMessaging, UI::Input::KeyboardAndMouse),
+# its DIB paint surface (Graphics::Gdi) and per-window DPI (UI::HiDpi); the
+# file-attribute probe (Storage::FileSystem), the context menu's CF_DIB
+# clipboard copy (DataExchange, Memory, Ole) and the pinned module handle
+# (LibraryLoader) complete the set.
 [target.'cfg(windows)'.dependencies.windows]
 version = "0.62.2"
 features = [
