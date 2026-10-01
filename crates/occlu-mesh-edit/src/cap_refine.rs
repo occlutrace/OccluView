@@ -321,8 +321,7 @@ fn harmonic_interior(values: &mut [f32], rim_len: usize, triangles: &[[usize; 3]
     }
 }
 
-/// Attributes for a bisection midpoint: the average of its edge endpoints
-/// (or the deterministic neutral fallback).
+/// Attributes for a bisection midpoint: the average of its edge endpoints.
 fn midpoint_vertex(
     position: Vec3,
     attrs: &[EditVertex],
@@ -330,7 +329,6 @@ fn midpoint_vertex(
     policy: GeneratedVertexPolicy,
 ) -> EditVertex {
     match policy {
-        GeneratedVertexPolicy::NeutralFallback => EditVertex::at(position.to_array()),
         GeneratedVertexPolicy::InterpolateBoundary => {
             let mut color = [0u16; 4];
             let mut uv = [0.0f32; 2];
