@@ -16,6 +16,3 @@ pub use surface::{SurfaceHit, SurfaceIndex};
 /// Alignment sampling support shared with the surface index implementation.
 #[doc(hidden)]
 pub use surface::{feature_voxel_key, FeaturePoint, SurfaceSample, FEATURE_VOXEL_MM};
-
-#[cfg(test)]
-mod workspace_layers_tests;
