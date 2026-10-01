@@ -67,7 +67,10 @@ impl SculptSession {
     /// once it reaches groups whose factor already supplies that transition;
     /// disconnected and distant safe parts keep their full dose.
     fn taper_layer_factors(&mut self, seeds: &[u32]) {
-        const MAX_FACTOR_STEP: f32 = 1.0 / MAX_ROLLBACK_ITERS as f32;
+        /// Fall of the rollback field per welded edge. This is the slope the
+        /// taper was designed around, and it stays fixed: tying it to the wave
+        /// count would silently flatten the taper every time the budget changed.
+        const MAX_FACTOR_STEP: f32 = 0.125;
 
         self.rollback_epoch = self.rollback_epoch.wrapping_add(1);
         if self.rollback_epoch == 0 {

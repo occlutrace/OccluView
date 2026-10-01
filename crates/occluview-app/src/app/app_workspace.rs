@@ -1048,8 +1048,11 @@ impl OccluViewApp {
                 return Some(LayerDropTarget::Edge { side, rect });
             }
         }
-        match self.workspace.layer_drop_target {
-            Some(LayerDropTarget::Edge { side, rect })
+        match (
+            self.workspace.layer_drag.is_some(),
+            self.workspace.layer_drop_target,
+        ) {
+            (true, Some(LayerDropTarget::Edge { side, rect }))
                 if rect.expand(EDGE_DROP_ZONE_RELEASE_MARGIN).contains(pointer) =>
             {
                 Some(LayerDropTarget::Edge { side, rect })
@@ -1075,7 +1078,6 @@ impl OccluViewApp {
             // of tracking the pointer until the next primary release.
             if !held {
                 self.workspace.layer_drag = None;
-                self.workspace.layer_drop_target = None;
             }
             return;
         }
@@ -1097,8 +1099,10 @@ impl OccluViewApp {
             return;
         };
         let target = self.resolve_layer_drop_target(ctx, pointer, frame, &payload);
+        // The highlight is not cleared here: the preview keeps painting the last
+        // resolved target and lets it fade out, which is what a release should
+        // look like. Clearing it here made the mark disappear in one frame.
         self.workspace.layer_drag = None;
-        self.workspace.layer_drop_target = None;
         match target {
             Some(LayerDropTarget::SceneTab { key, .. } | LayerDropTarget::Pane { key, .. }) => {
                 self.queue_layer_transfer(payload, TransferDestination::Existing(key));
@@ -1168,15 +1172,25 @@ impl OccluViewApp {
         } else {
             painted
         };
-        if let Some(rect) = painted.map(LayerDropTarget::rect) {
+        if let Some(painted) = painted {
             if alpha > 0.002 {
                 let accent = crate::ui_theme::accent();
-                ui.painter()
-                    .rect_filled(rect, 3.0, accent.gamma_multiply(0.12 * alpha));
+                // A pane is a whole canvas, so tinting it reads as burning the
+                // view the operator is about to use. Mark it with its border
+                // instead and keep the tint for the narrow bands.
+                let (fill_share, stroke_width) = match painted {
+                    LayerDropTarget::Pane { .. } => (0.0, 2.0),
+                    _ => (0.12, 1.0),
+                };
+                let rect = painted.rect();
+                if fill_share > 0.0 {
+                    ui.painter()
+                        .rect_filled(rect, 3.0, accent.gamma_multiply(fill_share * alpha));
+                }
                 ui.painter().rect_stroke(
                     rect,
                     3.0,
-                    egui::Stroke::new(1.0, accent.gamma_multiply(alpha)),
+                    egui::Stroke::new(stroke_width, accent.gamma_multiply(alpha)),
                     egui::StrokeKind::Inside,
                 );
             }
@@ -1250,7 +1264,17 @@ impl OccluViewApp {
             egui::FontId::proportional(14.0),
             crate::ui_theme::text(),
         );
-        let label_rect = Rect::from_center_size(target.center(), galley.size() + vec2(24.0, 16.0));
+        // A drop band is narrower than this pill, so centring the pill on the
+        // band would hang it off the workspace, where the panel clips it. Shift
+        // it back inside before painting.
+        let wanted = Rect::from_center_size(target.center(), galley.size() + vec2(24.0, 16.0));
+        let shift = vec2(
+            (workspace_rect.left() - wanted.left()).max(0.0)
+                - (wanted.right() - workspace_rect.right()).max(0.0),
+            (workspace_rect.top() - wanted.top()).max(0.0)
+                - (wanted.bottom() - workspace_rect.bottom()).max(0.0),
+        );
+        let label_rect = wanted.translate(shift);
         painter.rect_filled(label_rect, 6.0, crate::ui_theme::panel_fill());
         painter.galley(
             label_rect.min + vec2(12.0, 8.0),
