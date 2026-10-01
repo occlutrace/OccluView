@@ -100,7 +100,7 @@ pub(crate) fn read_admitted(
 /// This is the standard three.js `STLLoader` heuristic and it is what the probe
 /// already trusts. It is checked here on the raw bytes so the binary decision
 /// never depends on stripping anything.
-fn binary_layout_matches(bytes: &[u8]) -> bool {
+pub(crate) fn binary_layout_matches(bytes: &[u8]) -> bool {
     const HEADER: usize = 80;
     const COUNT: usize = 4;
     const TRIANGLE: usize = 50;
