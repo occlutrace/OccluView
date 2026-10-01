@@ -153,9 +153,6 @@ impl SculptSession {
         {
             return false;
         }
-        if dab.mode == BrushMode::Erode {
-            self.ensure_wall_probe();
-        }
         let seed_is_current = self.hit_triangle.is_some_and(|triangle| {
             let Some([a, b, c]) = self.topology.triangle(triangle) else {
                 return false;

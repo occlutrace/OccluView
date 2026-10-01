@@ -174,6 +174,11 @@ impl SculptSession {
     /// Commit one continuous brush field with a local, edge-continuous safety
     /// scale. Unsafe face corners back off together, and the reduction tapers
     /// through their welded neighbours without scaling unrelated regions.
+    // The commit has to state the whole layer rule in one place: the factor
+    // seeding, the bounded rollback waves, the reset, and the outcome
+    // collection are one decision, and splitting them hides which guarantee
+    // each branch keeps.
+    #[allow(clippy::too_many_lines)]
     pub(in super::super) fn commit_even_layer(
         &mut self,
         proposals: &[(u32, DVec3)],
@@ -247,6 +252,9 @@ impl SculptSession {
                 }
             }
             if affected.is_empty() {
+                // No control of the rejecting faces is still moving, so another
+                // wave would repeat this one unchanged. Stop and let the
+                // commit below decide.
                 break;
             }
             self.taper_layer_factors(&affected);
@@ -254,8 +262,9 @@ impl SculptSession {
             self.collect_unsafe_layer_triangles(&triangles, mode, &mut unsafe_triangles);
         }
         if !unsafe_triangles.is_empty() {
-            // Restore the dab's moving controls together when the bounded
-            // active set cannot settle every rejecting face.
+            // The bounded active set ran out of waves while controls were still
+            // moving, so restoring the dab's moving controls together is what
+            // makes the rejecting faces exact identity again.
             for &(group, _) in proposals {
                 self.rollback_factor[group as usize] = 0.0;
             }

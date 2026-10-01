@@ -177,6 +177,11 @@ pub enum BrushMode {
     /// Explicit local relaxation, a few passes per dab.
     Smooth = 2,
     /// Level toward the selection plane.
+    ///
+    /// The reference kernel leaves 3 unassigned; the viewer assigns it to
+    /// Flatten because its own UI offers the mode. A payload never crosses
+    /// between the two kernels, so the discriminant is only read by this
+    /// crate's own encoder and decoder, which both name the same thing.
     Flatten = 3,
     /// Gently even small surface detail while preserving the broad form.
     Relax = 4,
