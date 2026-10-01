@@ -277,6 +277,36 @@
             <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.obj\shell\OccluView.Edit\command">
               <RegistryValue Type="string" Value="&quot;[INSTALLFOLDER]occluview.exe&quot; &quot;%1&quot;" />
             </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.OFF">
+              <RegistryValue Type="string" Value="OFF File" />
+              <RegistryValue Name="ThumbnailCutoff" Type="integer" Value="1" />
+              <RegistryValue Name="TypeOverlay" Type="string" Value="" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.OFF\ShellEx\$(var.ThumbnailProviderCategory)">
+              <RegistryValue Type="string" Value="$(var.ShellClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.OFF\ShellEx\$(var.PreviewHandlerCategory)">
+              <RegistryValue Type="string" Value="$(var.PreviewClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.OFF\DefaultIcon">
+              <RegistryValue Type="string" Value="[INSTALLFOLDER]occluview-3d.ico" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.OFF\shell\open\command">
+              <RegistryValue Type="string" Value="&quot;[INSTALLFOLDER]occluview.exe&quot; &quot;%1&quot;" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.off\ShellEx\$(var.ThumbnailProviderCategory)">
+              <RegistryValue Type="string" Value="$(var.ShellClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.off\ShellEx\$(var.PreviewHandlerCategory)">
+              <RegistryValue Type="string" Value="$(var.PreviewClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.off\shell\OccluView.Edit">
+              <RegistryValue Type="string" Value="Edit in OccluView" />
+              <RegistryValue Name="Icon" Type="string" Value="[INSTALLFOLDER]occluview.exe" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.off\shell\OccluView.Edit\command">
+              <RegistryValue Type="string" Value="&quot;[INSTALLFOLDER]occluview.exe&quot; &quot;%1&quot;" />
+            </RegistryKey>
             <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.GLB">
               <RegistryValue Type="string" Value="GLB File" />
               <RegistryValue Name="ThumbnailCutoff" Type="integer" Value="1" />
@@ -362,6 +392,7 @@
               <RegistryValue Name=".ply" Type="string" Value="" />
               <RegistryValue Name=".obj" Type="string" Value="" />
               <RegistryValue Name=".glb" Type="string" Value="" />
+              <RegistryValue Name=".off" Type="string" Value="" />
               <RegistryValue Name=".dcm" Type="string" Value="" />
               <RegistryValue Name=".hps" Type="string" Value="" />
             </RegistryKey>
@@ -405,6 +436,20 @@
               <RegistryValue Type="string" Value="$(var.ShellClsid)" />
             </RegistryKey>
             <RegistryKey Root="HKLM" Key="Software\Classes\.obj\ShellEx\$(var.PreviewHandlerCategory)">
+              <RegistryValue Type="string" Value="$(var.PreviewClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\.off">
+              <RegistryValue Type="string" Value="MeshFile.OFF" />
+              <RegistryValue Name="ThumbnailCutoff" Type="integer" Value="1" />
+              <RegistryValue Name="TypeOverlay" Type="string" Value="" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\.off\DefaultIcon">
+              <RegistryValue Type="string" Value="[INSTALLFOLDER]occluview-3d.ico" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\.off\ShellEx\$(var.ThumbnailProviderCategory)">
+              <RegistryValue Type="string" Value="$(var.ShellClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\.off\ShellEx\$(var.PreviewHandlerCategory)">
               <RegistryValue Type="string" Value="$(var.PreviewClsid)" />
             </RegistryKey>
             <RegistryKey Root="HKLM" Key="Software\Classes\.glb">
@@ -466,6 +511,9 @@
             <RegistryKey Root="HKLM" Key="Software\Classes\.glb\OpenWithProgids">
               <RegistryValue Name="MeshFile.GLB" Type="string" Value="" />
             </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\.off\OpenWithProgids">
+              <RegistryValue Name="MeshFile.OFF" Type="string" Value="" />
+            </RegistryKey>
             <RegistryKey Root="HKLM" Key="Software\Classes\.dcm\OpenWithProgids">
               <RegistryValue Name="MeshFile.HPS" Type="string" Value="" />
             </RegistryKey>
@@ -482,6 +530,9 @@
               <RegistryValue Type="string" Value="" />
             </RegistryKey>
             <RegistryKey Root="HKLM" Key="Software\Classes\.glb\OpenWithList\occluview.exe">
+              <RegistryValue Type="string" Value="" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\.off\OpenWithList\occluview.exe">
               <RegistryValue Type="string" Value="" />
             </RegistryKey>
             <RegistryKey Root="HKLM" Key="Software\Classes\.dcm\OpenWithList\occluview.exe">
@@ -503,6 +554,7 @@
               <RegistryValue Name=".ply" Type="string" Value="MeshFile.PLY" />
               <RegistryValue Name=".obj" Type="string" Value="MeshFile.OBJ" />
               <RegistryValue Name=".glb" Type="string" Value="MeshFile.GLB" />
+              <RegistryValue Name=".off" Type="string" Value="MeshFile.OFF" />
               <RegistryValue Name=".dcm" Type="string" Value="MeshFile.HPS" />
               <RegistryValue Name=".hps" Type="string" Value="MeshFile.HPS" />
             </RegistryKey>

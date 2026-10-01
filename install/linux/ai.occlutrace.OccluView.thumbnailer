@@ -1,4 +1,4 @@
 [Thumbnailer Entry]
 TryExec=occluview-cli
 Exec=occluview-cli thumbnail %i -o %o --size %s
-MimeType=model/stl;model/obj;model/gltf-binary;application/x-ply;application/x-occluview-hps;
+MimeType=model/stl;model/obj;model/gltf-binary;application/x-ply;application/x-off;application/x-occluview-hps;

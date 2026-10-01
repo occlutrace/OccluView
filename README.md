@@ -59,7 +59,7 @@ deterministic software rasterizer (Lavapipe on Linux, WARP on Windows), so they
 run on those CI lanes. Apple Silicon has no equivalent adapter: macOS coverage
 comes from the viewer test suite, whose offscreen render tests run on Metal.
 
-Finder routes STL, PLY, OBJ, GLB, HPS, and the legacy `.dcm` HPS container to
+Finder routes STL, PLY, OBJ, GLB, OFF, HPS, and the legacy `.dcm` HPS container to
 the app. `.dcm` is declared as an alternate handler, so it stays reachable
 through **Open With** without taking medical DICOM files away from their own
 software; a real DICOM file is refused by its `DICM` signature.
@@ -139,7 +139,7 @@ reports that there was nothing to repair. `Copy details` preserves the full per-
 
 ## Files and results
 
-Open STL, PLY, OBJ, GLB, and HPS dental containers. Export the finished result
+Open STL, PLY, OBJ, GLB, OFF, and HPS dental containers. Export the finished result
 as STL, PLY, or OBJ.
 
 - `.hps` and `.dcm` are accepted as HPS dental containers; medical DICOM is not supported (a `DICM` signature is refused).

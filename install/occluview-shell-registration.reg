@@ -39,7 +39,7 @@ Windows Registry Editor Version 5.00
 ;       TypeOverlay = "" (no app-brand overlay on the rendered thumbnail)
 ;   HKCR\Applications\occluview.exe          (Open With / Default Apps discovery)
 ;       shell\open\command = "<APP_EXE_PATH>" "%1"
-;       SupportedTypes = .stl/.ply/.obj/.glb/.dcm/.hps
+;       SupportedTypes = .stl/.ply/.obj/.glb/.off/.dcm/.hps
 ;   HKCR\<ext>
 ;       (default) = MeshFile.<EXT> (fallback only; user defaults can override)
 ;       ThumbnailCutoff = 1
@@ -143,6 +143,26 @@ Windows Registry Editor Version 5.00
 @="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}"
 
 [HKEY_CLASSES_ROOT\SystemFileAssociations\.obj\ShellEx\{8895B1C6-B41F-4C1C-A562-0D564250836F}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}"
+
+[HKEY_CLASSES_ROOT\.off]
+@="MeshFile.OFF"
+"ThumbnailCutoff"=dword:00000001
+"TypeOverlay"=""
+
+[HKEY_CLASSES_ROOT\.off\DefaultIcon]
+@="<APP_DIR>\\occluview-3d.ico"
+
+[HKEY_CLASSES_ROOT\.off\ShellEx\{E357FCCD-A995-4576-B01F-234630154E96}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}"
+
+[HKEY_CLASSES_ROOT\.off\ShellEx\{8895B1C6-B41F-4C1C-A562-0D564250836F}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}"
+
+[HKEY_CLASSES_ROOT\SystemFileAssociations\.off\ShellEx\{E357FCCD-A995-4576-B01F-234630154E96}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}"
+
+[HKEY_CLASSES_ROOT\SystemFileAssociations\.off\ShellEx\{8895B1C6-B41F-4C1C-A562-0D564250836F}]
 @="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}"
 
 [HKEY_CLASSES_ROOT\.glb]
@@ -264,6 +284,27 @@ Windows Registry Editor Version 5.00
 [HKEY_CLASSES_ROOT\MeshFile.OBJ\shell\open\command]
 @="\"<APP_EXE_PATH>\" \"%1\""
 
+[HKEY_CLASSES_ROOT\MeshFile.OFF]
+@="OFF File"
+"ThumbnailCutoff"=dword:00000001
+"TypeOverlay"=""
+
+[HKEY_CLASSES_ROOT\MeshFile.OFF\ShellEx\{E357FCCD-A995-4576-B01F-234630154E96}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}"
+
+[HKEY_CLASSES_ROOT\MeshFile.OFF\ShellEx\{8895B1C6-B41F-4C1C-A562-0D564250836F}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}"
+
+[HKEY_CLASSES_ROOT\MeshFile.OFF\DefaultIcon]
+@="<APP_DIR>\\occluview-3d.ico"
+
+[HKEY_CLASSES_ROOT\MeshFile.OFF\shell]
+
+[HKEY_CLASSES_ROOT\MeshFile.OFF\shell\open]
+
+[HKEY_CLASSES_ROOT\MeshFile.OFF\shell\open\command]
+@="\"<APP_EXE_PATH>\" \"%1\""
+
 [HKEY_CLASSES_ROOT\MeshFile.GLB]
 @="GLB File"
 "ThumbnailCutoff"=dword:00000001
@@ -322,6 +363,7 @@ Windows Registry Editor Version 5.00
 ".ply"=""
 ".obj"=""
 ".glb"=""
+".off"=""
 ".dcm"=""
 ".hps"=""
 
@@ -336,6 +378,9 @@ Windows Registry Editor Version 5.00
 
 [HKEY_CLASSES_ROOT\.glb\OpenWithProgids]
 "MeshFile.GLB"=""
+
+[HKEY_CLASSES_ROOT\.off\OpenWithProgids]
+"MeshFile.OFF"=""
 
 [HKEY_CLASSES_ROOT\.dcm\OpenWithProgids]
 "MeshFile.HPS"=""
@@ -353,6 +398,9 @@ Windows Registry Editor Version 5.00
 @=""
 
 [HKEY_CLASSES_ROOT\.glb\OpenWithList\occluview.exe]
+@=""
+
+[HKEY_CLASSES_ROOT\.off\OpenWithList\occluview.exe]
 @=""
 
 [HKEY_CLASSES_ROOT\.dcm\OpenWithList\occluview.exe]
@@ -376,5 +424,6 @@ Windows Registry Editor Version 5.00
 ".ply"="MeshFile.PLY"
 ".obj"="MeshFile.OBJ"
 ".glb"="MeshFile.GLB"
+".off"="MeshFile.OFF"
 ".dcm"="MeshFile.HPS"
 ".hps"="MeshFile.HPS"

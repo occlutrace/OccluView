@@ -14,4 +14,4 @@ Keywords=dental;dentistry;scan;intraoral;occlusion;mesh;model;STL;PLY;OBJ;GLB;3D
 # the window is created, so file-manager launches can activate the viewer.
 StartupNotify=true
 StartupWMClass=ai.occlutrace.OccluView
-MimeType=model/stl;model/obj;model/gltf-binary;application/x-ply;application/x-occluview-hps;
+MimeType=model/stl;model/obj;model/gltf-binary;application/x-ply;application/x-off;application/x-occluview-hps;
