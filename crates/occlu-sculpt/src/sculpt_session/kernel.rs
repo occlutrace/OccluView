@@ -79,10 +79,12 @@ impl SculptSession {
             BrushMode::Relax => self.dab_relax(dab, &region_points),
         }
         self.region_points = region_points;
-        // Every mode's field is committed through `commit_even_layer`, which
-        // validates the same triangles against the same predicates and tapers
-        // or zeroes a rejecting face's corners continuously. No second rollback
-        // runs on top of it: a scalar pass over the whole region would also
+        // Smooth, Deposit, Erode and Relax commit their field through
+        // `commit_even_layer`, which validates the same triangles against
+        // the same predicates and tapers or zeroes a rejecting face's corners
+        // continuously. Flatten is the exception: `dab_flatten` writes group
+        // positions directly and has no layer rollback. No second rollback
+        // runs on top of the layer commit: a scalar pass over the whole region would also
         // touch vertices this dab never moved, so a pre-existing sliver
         // anywhere in the footprint could reset the dab's real work.
         //
