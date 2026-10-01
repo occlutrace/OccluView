@@ -11,11 +11,12 @@ use occluview_formats::FormatKind;
 use occluview_thumbnail::fast_thumb::{
     try_read_fast_thumbnail_mesh_for_kind, try_read_fast_thumbnail_mesh_from_file,
 };
+use occluview_thumbnail::fidelity::{
+    full_fidelity_file_bytes, full_fidelity_file_bytes_for_extension, FULL_FIDELITY_FILE_BYTES,
+};
 use occluview_thumbnail::thumbnail_format::infer_thumbnail_format;
 use std::path::Path;
 
-const PREVIEW_FULL_FIDELITY_SURFACE_FILE_BYTES: u64 = 32 * 1024 * 1024;
-const PREVIEW_FULL_FIDELITY_STL_FILE_BYTES: u64 = 128 * 1024 * 1024;
 const PREVIEW_FOV_RADIANS: f32 = 45.0_f32.to_radians();
 
 impl PreviewSceneState {
@@ -105,31 +106,19 @@ fn load_preview_mesh_from_bytes_kind(kind: FormatKind, bytes: &[u8]) -> Result<M
 }
 
 fn preview_prefers_full_fidelity_parse(path: &Path, byte_len: u64) -> bool {
-    let Some(extension) = path
+    let limit = path
         .extension()
         .and_then(|extension| extension.to_str())
         .map(str::to_ascii_lowercase)
-    else {
-        return false;
-    };
+        .map_or(FULL_FIDELITY_FILE_BYTES, |extension| {
+            full_fidelity_file_bytes_for_extension(&extension)
+        });
 
-    let byte_limit = match extension.as_str() {
-        "stl" => PREVIEW_FULL_FIDELITY_STL_FILE_BYTES,
-        "ply" | "obj" => PREVIEW_FULL_FIDELITY_SURFACE_FILE_BYTES,
-        _ => return true,
-    };
-
-    byte_len <= byte_limit
+    byte_len <= limit
 }
 
 fn preview_prefers_full_fidelity_kind(kind: FormatKind, byte_len: u64) -> bool {
-    let byte_limit = match kind {
-        FormatKind::Stl => PREVIEW_FULL_FIDELITY_STL_FILE_BYTES,
-        FormatKind::Obj | FormatKind::Ply => PREVIEW_FULL_FIDELITY_SURFACE_FILE_BYTES,
-        _ => return true,
-    };
-
-    byte_len <= byte_limit
+    byte_len <= full_fidelity_file_bytes(kind)
 }
 
 #[cfg(test)]
@@ -160,7 +149,7 @@ f 1 2 3
     fn preview_scene_uses_canonical_obj_mesh_inside_fidelity_budget() {
         let obj = valid_obj_tiles(2 * 1024 * 1024);
         assert!(
-            obj.len() as u64 <= PREVIEW_FULL_FIDELITY_SURFACE_FILE_BYTES,
+            obj.len() as u64 <= full_fidelity_file_bytes(FormatKind::Obj),
             "fixture should stay inside preview's full-fidelity OBJ budget"
         );
         let full_mesh =
