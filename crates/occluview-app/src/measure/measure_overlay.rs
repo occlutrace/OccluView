@@ -17,9 +17,9 @@ use occluview_core::Camera;
 
 use crate::app_settings::{RulerLineAngle, UnitDisplay};
 use crate::i18n::LocaleManager;
-use crate::measure_draw::{self, LABEL_LIFT_PX};
-use crate::measure_ruler::{self, LinePlacement, RulerSegment};
-use crate::measure_tool::{
+use crate::measure::measure_draw::{self, LABEL_LIFT_PX};
+use crate::measure::measure_ruler::{self, LinePlacement, RulerSegment};
+use crate::measure::measure_tool::{
     format_angle, format_length, MeasureTool, RulerAnchorRef, RulerEndpoint, ThicknessProbe,
     ThicknessReading,
 };
@@ -524,7 +524,7 @@ mod tests {
         clippy::panic
     )]
     use super::*;
-    use crate::measure_tool::MeasureMode;
+    use crate::measure::measure_tool::MeasureMode;
     use crate::viewer::viewport_ray;
     use glam::Vec3;
     use occluview_core::CameraProjection;

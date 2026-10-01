@@ -7,7 +7,7 @@ use super::{egui, pick_scene_hit, CutTool, Scene, SceneContext};
 use crate::cut::cut_manipulator::{ArchFrame, CutCursor, CutFrameInput, SurfaceSample};
 use crate::cut::cut_overlay;
 use crate::cut::section_view::SectionMainView;
-use crate::measure_tool::{self, ThicknessProbe, ThicknessReading};
+use crate::measure::measure_tool::{self, ThicknessProbe, ThicknessReading};
 use glam::{Vec3, Vec3A};
 use occluview_edit::scene::SceneSection;
 use std::sync::Arc;

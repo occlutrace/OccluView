@@ -159,7 +159,7 @@ fn arming_align_stands_the_other_tools_down() {
     app.workspace.scenes[0]
         .tools
         .measure
-        .arm(crate::measure_tool::MeasureMode::Ruler);
+        .arm(crate::measure::measure_tool::MeasureMode::Ruler);
     app.workspace.scenes[0].tools.cut_view.enable();
     assert!(
         app.workspace.scenes[0].tools.measure.is_active(),

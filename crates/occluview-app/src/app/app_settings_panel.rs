@@ -9,7 +9,7 @@ use crate::desktop::update_notice::UpdateCheckStatus;
 use crate::i18n::catalog::EMBEDDED_TAGS;
 use crate::i18n::preference::UiLanguagePreference;
 use crate::i18n::{endonym, LocaleManager};
-use crate::measure_overlay::ruler_line_angle_key;
+use crate::measure::measure_overlay::ruler_line_angle_key;
 use crate::ui::icons::AppIcon;
 use crate::ui::ui_theme;
 use eframe::egui;
@@ -32,9 +32,9 @@ pub(super) fn show_settings_toolbar_toggle(
     locale: &LocaleManager,
     compact: bool,
 ) -> egui::Response {
-    crate::measure_overlay::toolbar_toggle(
+    crate::measure::measure_overlay::toolbar_toggle(
         ui,
-        crate::measure_overlay::ToolbarToggle::new(
+        crate::measure::measure_overlay::ToolbarToggle::new(
             AppIcon::Settings,
             &locale.tr(crate::i18n::message_id!("toolbar-settings-label")),
             enabled,

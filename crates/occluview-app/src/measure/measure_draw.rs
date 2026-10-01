@@ -1,5 +1,5 @@
 //! Shared measurement drawing — the "ray" look reused by the main-viewport
-//! measure overlay ([`crate::measure_overlay`]) and the Section-panel ruler
+//! measure overlay ([`crate::measure::measure_overlay`]) and the Section-panel ruler
 //! ([`crate::cut::cut_ruler`]).
 //!
 //! Both surfaces draw the same primitives so a wall-thickness chord reads

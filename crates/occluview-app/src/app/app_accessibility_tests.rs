@@ -5,7 +5,7 @@ use crate::app::app_settings_panel::settings_popup_id;
 use crate::app::information_dialog::InformationDialog;
 use crate::contact::ContactMode;
 use crate::i18n::preference::UiLanguagePreference;
-use crate::measure_tool::MeasureMode;
+use crate::measure::measure_tool::MeasureMode;
 use crate::mesh_editor_overlay::EditorTab;
 use eframe::egui;
 use std::collections::{HashMap, HashSet};

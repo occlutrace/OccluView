@@ -1,13 +1,13 @@
 //! Viewport measurement tools: the ruler and the wall-thickness probe.
 //!
 //! State machine + geometry only, pure and unit-tested. Painting lives in
-//! [`crate::measure_overlay`], the input adapter in `app::app_viewport`, the
+//! [`crate::measure::measure_overlay`], the input adapter in `app::app_viewport`, the
 //! toolbar toggles in `app::app_dialogs`. Anchors are world-space points on the
 //! mesh surface: they re-project through the live camera every frame, so the
 //! drawn segment orbits/zooms/pans with the model (matching the dental CAD
 //! ruler behaviour). A ruler either joins two picked points or ends on an
 //! earlier ruler's line, at a place along it or at the foot of the
-//! perpendicular; the ruler geometry lives in [`crate::measure_ruler`].
+//! perpendicular; the ruler geometry lives in [`crate::measure::measure_ruler`].
 //!
 //! The thickness probe measures the wall directly: from the picked surface
 //! point it casts a ray inward (opposite the barycentric-interpolated surface
@@ -19,7 +19,7 @@ use glam::{Vec3, Vec3A};
 use occluview_core::SceneMesh;
 
 use crate::i18n::catalog::NumberFormat;
-use crate::measure_ruler::{self, LinePlacement, RulerEnd, RulerMeasurement, RulerSegment};
+use crate::measure::measure_ruler::{self, LinePlacement, RulerEnd, RulerMeasurement, RulerSegment};
 
 /// Ignore intersections closer than this to the probe origin (mm), so the probe
 /// never reports the entry triangle's edge-neighbors as an "exit".

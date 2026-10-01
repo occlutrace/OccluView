@@ -5,8 +5,8 @@ use super::app_settings_panel::{settings_popup_id, show_settings_toolbar_toggle}
 use super::information_dialog::InformationDialog;
 use super::{load_app_logo_color_image, status_overlay_rect, PathBuf, OPEN_DIALOG_EXTENSIONS};
 use super::{AppErrorAction, SceneContext};
-use crate::measure_overlay::{toolbar_toggle, ToolbarToggle};
-use crate::measure_tool::{self, MeasureMode};
+use crate::measure::measure_overlay::{toolbar_toggle, toolbar_toggle_width, ToolbarToggle};
+use crate::measure::measure_tool::{self, MeasureMode};
 use crate::ui::icons::AppIcon;
 use crate::ui::interaction_hints::ContextualHint;
 use crate::ui::ui_theme;
@@ -48,7 +48,7 @@ impl SceneContext<'_> {
         let controls_width: f32 = controls
             .iter()
             .map(|(key, active)| {
-                crate::measure_overlay::toolbar_toggle_width(ui, &self.ui.locale.tr(*key), *active)
+                toolbar_toggle_width(ui, &self.ui.locale.tr(*key), *active)
             })
             .sum();
         let scenes = ui.painter().layout_no_wrap(
