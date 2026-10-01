@@ -153,7 +153,6 @@ load-adding = { $count ->
 }
 load-open-failed-start = Échec d’ouverture : chargeur non démarré
 load-add-failed-start = Échec d’ajout : chargeur non démarré
-load-open-failed-stopped = Échec d’ouverture : chargeur arrêté
 load-loader-failed-summary = Le chargeur de scène n’a pas pu démarrer.
 load-file-too-large = Le fichier fait { $size } GiB, au-delà des { $limit } GiB lus d'un seul tenant
 load-memory-budget-exceeded = La scène actuelle et ces fichiers nécessitent environ { $size } GiB ; la limite d’importation est de { $limit } GiB. Fermez des calques ou chargez moins de fichiers.
@@ -576,16 +575,9 @@ align-arrow-removed = { $n ->
 }
 align-status-markings-changed = Marques changées
 align-status-place-arrow-first = Placer au moins une flèche avant de marquer
-align-status-arrows-cleared = Flèches retirées — à la main d’ici
 
 ## Unsaved-work guards and error dialog buttons — DRAFT.
 
-guard-close-title = Modifs de maillage non enregistrées
-guard-close-headline-one = 1 calque modifié non enregistré.
-guard-close-headline-many = Calques modifiés non enregistrés.
-guard-close-note = { $count } calques modifiés concernés.
-guard-close-detail = Enregistrer exporte chaque calque (PLY, STL ou OBJ) puis ferme.
-guard-close-destructive = Fermer sans enregistrer
 guard-replace-title = Édition en cours
 guard-replace-headline-session = Une session est active sur { $layer }.
 guard-replace-headline-one = 1 calque modifié non enregistré.

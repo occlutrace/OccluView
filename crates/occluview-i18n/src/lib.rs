@@ -29,6 +29,84 @@ pub fn embedded_source(tag: &str) -> Option<&'static str> {
         .find_map(|(known, source)| (*known == tag).then_some(*source))
 }
 
+/// The decimal and grouping separators one catalog writes.
+///
+/// Fluent's `NUMBER()` builtin rounds through `f64`'s own `Display`, which
+/// always writes `.` and never groups, so the separators an operator expects
+/// live here. Any tag without an embedded catalog takes the English pair,
+/// matching the per-message English fallback.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NumberFormat {
+    decimal: char,
+    grouping: char,
+}
+
+impl NumberFormat {
+    /// Separators for a catalog tag.
+    #[must_use]
+    pub fn for_tag(tag: &str) -> Self {
+        match tag {
+            // Russian groups with a no-break space, French with the narrower
+            // one; both keep a comma for the fraction.
+            "ru" => Self {
+                decimal: ',',
+                grouping: '\u{00A0}',
+            },
+            "fr" => Self {
+                decimal: ',',
+                grouping: '\u{202F}',
+            },
+            "de" | "es" | "it" | "pt-BR" => Self {
+                decimal: ',',
+                grouping: '.',
+            },
+            _ => Self {
+                decimal: '.',
+                grouping: ',',
+            },
+        }
+    }
+
+    /// Render `value` with exactly `fraction_digits` digits after this
+    /// format's decimal separator and its grouping in the integer part.
+    #[must_use]
+    pub fn decimal(&self, value: f64, fraction_digits: usize) -> String {
+        let rendered = format!("{value:.fraction_digits$}");
+        let (integer, fraction) = rendered.split_once('.').unwrap_or((rendered.as_str(), ""));
+        let mut out = self.group_digits(integer);
+        if !fraction.is_empty() {
+            out.push(self.decimal);
+            out.push_str(fraction);
+        }
+        out
+    }
+
+    /// Group an integer's digits with this format's grouping separator.
+    #[must_use]
+    pub fn grouped(&self, value: usize) -> String {
+        self.group_digits(&value.to_string())
+    }
+
+    fn group_digits(&self, digits: &str) -> String {
+        let (sign, digits) = if let Some(rest) = digits.strip_prefix('-') {
+            ("-", rest)
+        } else {
+            ("", digits)
+        };
+        let bytes = digits.as_bytes();
+        let len = bytes.len();
+        let mut out = String::with_capacity(len + len / 3 + sign.len());
+        out.push_str(sign);
+        for (index, byte) in bytes.iter().enumerate() {
+            if index > 0 && (len - index).is_multiple_of(3) {
+                out.push(self.grouping);
+            }
+            out.push(char::from(*byte));
+        }
+        out
+    }
+}
+
 /// One compiled Fluent catalog.
 pub struct Catalog {
     tag: &'static str,
@@ -75,6 +153,12 @@ impl Catalog {
     #[must_use]
     pub const fn tag(&self) -> &'static str {
         self.tag
+    }
+
+    /// The decimal and grouping separators this catalog's locale writes.
+    #[must_use]
+    pub fn number_format(&self) -> NumberFormat {
+        NumberFormat::for_tag(self.tag)
     }
 
     /// Format a message id (`key` or `key.attribute`).
@@ -178,4 +262,41 @@ fn join_errors<T: std::fmt::Display>(errors: &[T]) -> String {
         .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join("; ")
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
+
+    use super::*;
+
+    #[test]
+    fn decimal_separator_follows_the_catalog() {
+        for (tag, expected) in [("en", "0.05"), ("de", "0,05"), ("ru", "0,05")] {
+            assert_eq!(
+                NumberFormat::for_tag(tag).decimal(0.05, 2),
+                expected,
+                "tag {tag}"
+            );
+        }
+    }
+
+    #[test]
+    fn grouping_separator_follows_the_catalog() {
+        assert_eq!(NumberFormat::for_tag("en").grouped(1_240), "1,240");
+        assert_eq!(NumberFormat::for_tag("de").grouped(1_240), "1.240");
+        assert_eq!(NumberFormat::for_tag("ru").grouped(1_240), "1\u{00A0}240");
+        assert_eq!(NumberFormat::for_tag("en").grouped(86), "86");
+    }
+
+    #[test]
+    fn a_negative_value_keeps_its_sign_and_groups_its_digits() {
+        assert_eq!(NumberFormat::for_tag("de").decimal(-1234.5, 1), "-1.234,5");
+    }
+
+    #[test]
+    fn the_catalog_reports_its_own_separators() {
+        let catalog = Catalog::build("de").expect("de builds");
+        assert_eq!(catalog.number_format(), NumberFormat::for_tag("de"));
+    }
 }

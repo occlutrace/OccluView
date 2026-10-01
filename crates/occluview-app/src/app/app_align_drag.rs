@@ -552,6 +552,7 @@ impl SceneContext<'_> {
         // scan the operator grabbed, the fixed one included, so the status is
         // where an operator who grabbed the wrong arch by accident finds out.
         let moved_mm = f64::from((current.translation - drag.start.translation).length());
+        let number_format = self.ui.locale.number_format();
         let name = self
             .layer_display_name(drag.layer)
             .unwrap_or_else(|| self.ui.locale.tr(message_id!("align-status-one-scan")));
@@ -559,7 +560,7 @@ impl SceneContext<'_> {
         self.forget_align_fit(&self.ui.locale.tr(message_id!("align-status-moved-hand")));
         self.tools.align.status = Some(self.ui.locale.tr_with(
             message_id!("align-drag-moved"),
-            &[("name", &name), ("moved", &format!("{moved_mm:.2}"))],
+            &[("name", &name), ("moved", &number_format.decimal(moved_mm, 2))],
         ));
         true
     }

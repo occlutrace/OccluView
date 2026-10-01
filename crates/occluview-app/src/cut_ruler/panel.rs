@@ -271,7 +271,8 @@ where
     if !has_content {
         draw_empty_state(ui.painter(), image_rect, locale);
     }
-    ruler.draw(&ui.painter_at(image_rect), &draw_map);
+    let number_format = locale.number_format();
+    ruler.draw(&ui.painter_at(image_rect), &draw_map, number_format);
     draw_section_footer(ui.painter(), panel_rect, render.measure_mode, locale);
 
     out.consumed =

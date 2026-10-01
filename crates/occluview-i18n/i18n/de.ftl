@@ -153,7 +153,6 @@ load-adding = { $count ->
 }
 load-open-failed-start = Öffnen fehlgeschlagen: Loader startet nicht
 load-add-failed-start = Hinzufügen fehlgeschlagen: Loader startet nicht
-load-open-failed-stopped = Öffnen fehlgeschlagen: Loader angehalten
 load-loader-failed-summary = Szenen-Loader konnte nicht gestartet werden.
 load-file-too-large = Die Datei ist { $size } GiB groß — mehr als die { $limit } GiB, die das Programm am Stück liest
 load-memory-budget-exceeded = Die aktuelle Szene und diese Dateien benötigen etwa { $size } GiB; das Importlimit beträgt { $limit } GiB. Schließen Sie Ebenen oder laden Sie weniger Dateien.
@@ -576,16 +575,9 @@ align-arrow-removed = { $n ->
 }
 align-status-markings-changed = Markierungen geändert
 align-status-place-arrow-first = Erst mindestens einen Pfeil setzen, dann automatisch markieren
-align-status-arrows-cleared = Pfeile weg — ab hier von Hand
 
 ## Unsaved-work guards and error dialog buttons — DRAFT.
 
-guard-close-title = Ungespeicherte Netzänderungen
-guard-close-headline-one = 1 bearbeitete Ebene ist nicht gespeichert.
-guard-close-headline-many = Bearbeitete Ebenen sind nicht gespeichert.
-guard-close-note = { $count } bearbeitete Ebenen betroffen.
-guard-close-detail = Speichern exportiert jede bearbeitete Ebene (PLY, STL oder OBJ) und schließt dann.
-guard-close-destructive = Ohne Speichern schließen
 guard-replace-title = Bearbeitung läuft
 guard-replace-headline-session = Auf { $layer } läuft eine Bearbeitungssitzung.
 guard-replace-headline-one = 1 bearbeitete Ebene mit ungespeicherten Änderungen.

@@ -249,6 +249,7 @@ fn status_label(mode: BridgeSplitMode, locale: &crate::i18n::LocaleManager) -> S
 }
 
 fn error_label(error: &BridgeSplitToolError, locale: &crate::i18n::LocaleManager) -> String {
+    let number_format = locale.number_format();
     match error {
         BridgeSplitToolError::Kernel(error) => match error {
             occluview_edit::BridgeSplitError::NoIntersection => {
@@ -263,8 +264,8 @@ fn error_label(error: &BridgeSplitToolError, locale: &crate::i18n::LocaleManager
             } => locale.tr_with(
                 crate::i18n::message_id!("bridge-err-small"),
                 &[
-                    ("have", &format!("{:.1}", disc_radius_mm * 2.0)),
-                    ("need", &format!("{:.1}", required_radius_mm * 2.0)),
+                    ("have", &number_format.decimal(f64::from(*disc_radius_mm) * 2.0, 1)),
+                    ("need", &number_format.decimal(f64::from(*required_radius_mm) * 2.0, 1)),
                 ],
             ),
             occluview_edit::BridgeSplitError::DiscLimitExceeded {
@@ -273,8 +274,8 @@ fn error_label(error: &BridgeSplitToolError, locale: &crate::i18n::LocaleManager
             } => locale.tr_with(
                 crate::i18n::message_id!("bridge-err-limit"),
                 &[
-                    ("need", &format!("{:.1}", required_radius_mm * 2.0)),
-                    ("max", &format!("{:.1}", max_radius_mm * 2.0)),
+                    ("need", &number_format.decimal(f64::from(*required_radius_mm) * 2.0, 1)),
+                    ("max", &number_format.decimal(f64::from(*max_radius_mm) * 2.0, 1)),
                 ],
             ),
             occluview_edit::BridgeSplitError::OpenOrNonManifold { .. }

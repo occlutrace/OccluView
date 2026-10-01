@@ -70,6 +70,9 @@ remain in the Git history.
 - The Repair report's "Copy details" payload and the thickness probe's "open: no
   opposite wall" label now follow the interface language. Both were hardcoded
   English, so they stayed English in all seven languages.
+- Measurements, the deviation and contact legends, and grouped counts use the
+  interface language's decimal and grouping separators, so German and Russian
+  read "0,05 mm" instead of "0.05 mm".
 
 
 ## 1.2.1 - 2026-09-30

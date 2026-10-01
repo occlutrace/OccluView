@@ -204,12 +204,10 @@ impl SceneContext<'_> {
         if !resize_align_brush_from_wheel(&mut self.tools.align.brush, ctx) {
             return false;
         }
+        let radius_mm = f64::from(self.tools.align.brush.radius_mm());
         self.tools.align.status = Some(self.ui.locale.tr_with(
             crate::i18n::message_id!("align-brush-size-status"),
-            &[(
-                "size",
-                &format!("{:.1}", self.tools.align.brush.radius_mm()),
-            )],
+            &[("size", &self.ui.locale.number_format().decimal(radius_mm, 1))],
         ));
         ctx.request_repaint();
         true
