@@ -208,8 +208,9 @@ impl WaylandActivator {
         use wayland_client::Proxy;
         use wayland_protocols::xdg::activation::v1::client::xdg_activation_v1::XdgActivationV1;
 
-        // eframe/winit owns this connection. The system backend's foreign
-        // display mode borrows it and does not close or replace it on drop.
+        // SAFETY: eframe/winit owns this connection. The system backend's
+        // foreign display mode borrows it and does not close or replace it on
+        // drop.
         let backend = unsafe { Backend::from_foreign_display(display.as_ptr().cast()) };
         let connection = wayland_client::Connection::from_backend(backend);
         let (globals, event_queue) = registry_queue_init::<WaylandActivationState>(&connection)
@@ -219,9 +220,12 @@ impl WaylandActivator {
             .bind::<XdgActivationV1, _, _>(&queue_handle, 1..=1, ())
             .context("binding xdg_activation_v1")?;
 
-        let surface_id =
-            unsafe { ObjectId::from_ptr(WlSurface::interface(), surface.as_ptr().cast()) }
-                .context("importing the eframe Wayland surface")?;
+        // SAFETY: `surface` is the live winit Wayland surface; importing its
+        // id borrows the object without taking ownership.
+        let surface_id = unsafe {
+            ObjectId::from_ptr(WlSurface::interface(), surface.as_ptr().cast())
+        }
+        .context("importing the eframe Wayland surface")?;
         let surface = WlSurface::from_id(&connection, surface_id)
             .context("creating a Wayland surface proxy")?;
 

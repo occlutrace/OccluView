@@ -5,6 +5,10 @@
 //! preview handler, registration -- and the viewer needs only this one call;
 //! importing it would link all of it into the GUI binary.
 
+// `SHChangeNotify` is the one shell FFI call the viewer makes; this
+// module-level allow is the crate gate's only relaxation here.
+#![allow(unsafe_code)]
+
 /// Tell Explorer that file associations and shell handlers changed.
 #[cfg(windows)]
 pub(crate) fn notify_shell_associations_changed() {

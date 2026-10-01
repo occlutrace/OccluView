@@ -122,6 +122,7 @@ pub(super) fn delete_value_at(
     // SAFETY: `hkey` is open and `name_pcwstr` is either null for the default
     // value or points at a live HSTRING.
     let r = unsafe { RegDeleteValueW(hkey, name_pcwstr) };
+    // SAFETY: `hkey` was opened in this function and is owned here.
     let _ = unsafe { RegCloseKey(hkey) };
     if r.0 == ERROR_SUCCESS || r.0 == ERROR_FILE_NOT_FOUND {
         Ok(())
@@ -155,6 +156,7 @@ pub(super) fn delete_value_if_matches(
     } else {
         Ok(())
     };
+    // SAFETY: `hkey` was opened in this function and is owned here.
     let _ = unsafe { RegCloseKey(hkey) };
     result
 }
@@ -167,6 +169,7 @@ pub(super) fn key_default_matches(
         return Ok(false);
     };
     let current = query_string_value(hkey, None)?;
+    // SAFETY: `hkey` was opened in this function and is owned here.
     let _ = unsafe { RegCloseKey(hkey) };
     Ok(current.as_ref().is_some_and(|value| value == expected))
 }

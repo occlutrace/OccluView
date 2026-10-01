@@ -1,5 +1,11 @@
 //! Single-window handoff for file-association launches.
 
+// This module tree is the per-platform handoff FFI boundary: named mutex and
+// pipe (Windows), Wayland activation (Linux), AppKit launch callbacks (macOS).
+// Each `unsafe` call carries its own SAFETY note; the rest of the crate stays
+// behind `#![deny(unsafe_code)]`.
+#![allow(unsafe_code)]
+
 use anyhow::Result;
 use eframe::egui;
 use std::path::PathBuf;

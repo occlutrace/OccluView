@@ -17,6 +17,7 @@ pub(super) fn register_extension(ext: &str, our_clsid: &HSTRING) -> windows::cor
     let key_path = HSTRING::from(format!(".{ext}\\ShellEx\\{THUMBNAIL_PROVIDER_CATEGORY}"));
     let hk = create_key(&key_path)?;
     set_string(hk, None, our_clsid)?;
+    // SAFETY: `hk` is an open registry key created in this function and owned here.
     let _ = unsafe { RegCloseKey(hk) };
     Ok(())
 }
@@ -28,6 +29,7 @@ pub(super) fn register_preview_extension(
     let key_path = HSTRING::from(format!(".{ext}\\ShellEx\\{PREVIEW_HANDLER_CATEGORY}"));
     let hk = create_key(&key_path)?;
     set_string(hk, None, preview_clsid)?;
+    // SAFETY: `hk` is an open registry key created in this function and owned here.
     let _ = unsafe { RegCloseKey(hk) };
     Ok(())
 }
@@ -39,6 +41,7 @@ pub(super) fn register_system_extension(
     let key_path = system_file_association_shell_ex_key(ext, THUMBNAIL_PROVIDER_CATEGORY);
     let hk = create_key(&key_path)?;
     set_string(hk, None, our_clsid)?;
+    // SAFETY: `hk` is an open registry key created in this function and owned here.
     let _ = unsafe { RegCloseKey(hk) };
     Ok(())
 }
@@ -50,6 +53,7 @@ pub(super) fn register_system_preview_extension(
     let key_path = system_file_association_shell_ex_key(ext, PREVIEW_HANDLER_CATEGORY);
     let hk = create_key(&key_path)?;
     set_string(hk, None, preview_clsid)?;
+    // SAFETY: `hk` is an open registry key created in this function and owned here.
     let _ = unsafe { RegCloseKey(hk) };
     Ok(())
 }
@@ -88,6 +92,7 @@ pub(super) fn register_progid(ext: &str, app_path: &HSTRING) -> windows::core::R
     set_string(hk, None, &HSTRING::from(format_file_type_name(ext)))?;
     set_dword(hk, h!("ThumbnailCutoff"), 1)?;
     set_string(hk, Some(h!("TypeOverlay")), &HSTRING::new())?;
+    // SAFETY: `hk` is an open registry key created in this function and owned here.
     let _ = unsafe { RegCloseKey(hk) };
 
     let our_clsid = HSTRING::from(OCCLUVIEW_THUMBNAIL_CLSID);
@@ -101,6 +106,7 @@ pub(super) fn register_progid(ext: &str, app_path: &HSTRING) -> windows::core::R
     let hk = create_key(&icon_key)?;
     let icon_val = format_icon_value(app_path);
     set_string(hk, None, &icon_val)?;
+    // SAFETY: `hk` is an open registry key created in this function and owned here.
     let _ = unsafe { RegCloseKey(hk) };
 
     // shell\open\command: "<app.exe>" "%1"
@@ -108,6 +114,7 @@ pub(super) fn register_progid(ext: &str, app_path: &HSTRING) -> windows::core::R
     let hk = create_key(&cmd_key)?;
     let cmd_val = HSTRING::from(format!("\"{}\" \"%1\"", utf16_to_string(app_path)));
     set_string(hk, None, &cmd_val)?;
+    // SAFETY: `hk` is an open registry key created in this function and owned here.
     let _ = unsafe { RegCloseKey(hk) };
     Ok(())
 }
@@ -125,12 +132,14 @@ pub(super) fn register_extension_fallback(
     set_string(hk, None, &progid)?;
     set_dword(hk, h!("ThumbnailCutoff"), 1)?;
     set_string(hk, Some(h!("TypeOverlay")), &HSTRING::new())?;
+    // SAFETY: `hk` is an open registry key created in this function and owned here.
     let _ = unsafe { RegCloseKey(hk) };
 
     let icon_key = HSTRING::from(format!(".{ext}\\DefaultIcon"));
     let hk = create_key(&icon_key)?;
     let icon_val = format_icon_value(app_path);
     set_string(hk, None, &icon_val)?;
+    // SAFETY: `hk` is an open registry key created in this function and owned here.
     let _ = unsafe { RegCloseKey(hk) };
     Ok(())
 }
@@ -142,6 +151,7 @@ pub(super) fn register_progid_thumbnail_handler(
     let key_path = HSTRING::from(format!("{progid}\\ShellEx\\{THUMBNAIL_PROVIDER_CATEGORY}"));
     let hk = create_key(&key_path)?;
     set_string(hk, None, our_clsid)?;
+    // SAFETY: `hk` is an open registry key created in this function and owned here.
     let _ = unsafe { RegCloseKey(hk) };
     Ok(())
 }
@@ -153,6 +163,7 @@ pub(super) fn register_progid_preview_handler(
     let key_path = HSTRING::from(format!("{progid}\\ShellEx\\{PREVIEW_HANDLER_CATEGORY}"));
     let hk = create_key(&key_path)?;
     set_string(hk, None, preview_clsid)?;
+    // SAFETY: `hk` is an open registry key created in this function and owned here.
     let _ = unsafe { RegCloseKey(hk) };
     Ok(())
 }
@@ -196,6 +207,7 @@ pub(super) fn register_open_with(ext: &str) -> windows::core::Result<()> {
     let hk = create_key(&key_path)?;
     let empty = HSTRING::new();
     set_string(hk, Some(&progid), &empty)?;
+    // SAFETY: `hk` is an open registry key created in this function and owned here.
     let _ = unsafe { RegCloseKey(hk) };
     Ok(())
 }
@@ -288,6 +300,7 @@ fn delete_default_icon_if_occluview(subkey: &HSTRING) -> windows::core::Result<(
     } else {
         Ok(())
     };
+    // SAFETY: `hkey` was opened above and is owned here.
     let _ = unsafe { RegCloseKey(hkey) };
     result
 }

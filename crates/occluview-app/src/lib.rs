@@ -25,6 +25,10 @@
 
 // Test setup failures must fail the test instead of passing through an early return.
 #![cfg_attr(test, allow(clippy::panic))]
+// The platform FFI modules (`app_bootstrap`, `single_instance`, `jump_list`,
+// `shell_refresh`) opt in with their own `#![allow(unsafe_code)]`; everything
+// else in the crate must stay unsafe-free.
+#![deny(unsafe_code)]
 
 pub mod invalidation;
 mod startup;

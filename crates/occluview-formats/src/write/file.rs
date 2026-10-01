@@ -309,6 +309,8 @@ fn move_export_file(
     if replace_existing {
         flags |= MOVEFILE_REPLACE_EXISTING;
     }
+    // SAFETY: both paths are NUL-terminated wide strings that outlive the call,
+    // and `MoveFileExW` only reads them.
     unsafe {
         MoveFileExW(
             PCWSTR(temporary.as_ptr()),

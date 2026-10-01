@@ -31,12 +31,15 @@ pub(super) fn register_clsid(dll_path: &HSTRING) -> windows::core::Result<()> {
     // Top-level CLSID entry: friendly name.
     let hk = create_key(&clsid_key)?;
     set_string(hk, None, FRIENDLY_NAME_H)?;
+    // SAFETY: `hk` is an open registry key created in this function and owned here.
     let _ = unsafe { RegCloseKey(hk) };
 
     // InprocServer32: DLL path + ThreadingModel.
     let hk_inproc = create_key(&inproc_key)?;
     set_string(hk_inproc, None, dll_path)?;
     set_string(hk_inproc, Some(h!("ThreadingModel")), THREADING_MODEL_H)?;
+    // SAFETY: `hk_inproc` is an open registry key created in this function and
+    // owned here.
     let _ = unsafe { RegCloseKey(hk_inproc) };
     Ok(())
 }
@@ -48,11 +51,14 @@ pub(super) fn register_preview_handler_clsid(dll_path: &HSTRING) -> windows::cor
     let hk = create_key(&clsid_key)?;
     set_string(hk, None, PREVIEW_FRIENDLY_NAME_H)?;
     set_string(hk, Some(h!("AppID")), PREVHOST_APPID)?;
+    // SAFETY: `hk` is an open registry key created in this function and owned here.
     let _ = unsafe { RegCloseKey(hk) };
 
     let hk_inproc = create_key(&inproc_key)?;
     set_string(hk_inproc, None, dll_path)?;
     set_string(hk_inproc, Some(h!("ThreadingModel")), THREADING_MODEL_H)?;
+    // SAFETY: `hk_inproc` is an open registry key created in this function and
+    // owned here.
     let _ = unsafe { RegCloseKey(hk_inproc) };
     Ok(())
 }
@@ -83,6 +89,7 @@ pub(super) fn register_approved_shell_extension() -> windows::core::Result<()> {
         Some(&HSTRING::from(OCCLUVIEW_PREVIEW_CLSID)),
         PREVIEW_FRIENDLY_NAME_H,
     )?;
+    // SAFETY: `hk` is an open registry key created in this function and owned here.
     let _ = unsafe { RegCloseKey(hk) };
     Ok(())
 }
@@ -107,6 +114,7 @@ pub(super) fn register_preview_handlers_list() -> windows::core::Result<()> {
         Some(&HSTRING::from(OCCLUVIEW_PREVIEW_CLSID)),
         PREVIEW_FRIENDLY_NAME_H,
     )?;
+    // SAFETY: `hk` is an open registry key created in this function and owned here.
     let _ = unsafe { RegCloseKey(hk) };
     Ok(())
 }

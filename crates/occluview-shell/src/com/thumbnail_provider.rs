@@ -472,10 +472,10 @@ impl IInitializeWithFile_Impl for ThumbnailProvider_Impl {
             "thumbnail IInitializeWithFile",
             || Err(e_fail()),
             || {
-                // `to_string()` on a path with an unpaired surrogate returns
-                // E_FAIL, so such a file would get no thumbnail at all even
-                // though Explorer handed it over. An OS string carries the path
-                // unchanged.
+                // SAFETY: `to_string()` on a path with an unpaired surrogate
+                // returns E_FAIL, so such a file would get no thumbnail at all
+                // even though Explorer handed it over. An OS string carries the
+                // path unchanged.
                 let path = std::ffi::OsString::from_wide(unsafe { pszfilepath.as_wide() });
                 self.this.initialize_path(PathBuf::from(path));
                 Ok(())
@@ -498,6 +498,8 @@ impl IInitializeWithItem_Impl for ThumbnailProvider_Impl {
                 // allocated null-terminated UTF-16 path. We copy it into a Rust
                 // String before freeing the COM allocation.
                 let path_ptr = unsafe { item.GetDisplayName(SIGDN_FILESYSPATH)? };
+                // SAFETY: `path_ptr` is the CoTaskMem string GetDisplayName
+                // just returned.
                 let path_string = unsafe { path_ptr.to_string() }.map_err(|_| {
                     // SAFETY: freeing the COM-owned pointer returned by
                     // GetDisplayName.
