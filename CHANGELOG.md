@@ -5,9 +5,25 @@ remain in the Git history.
 
 ## Unreleased
 
-- Sculpt Add/Remove follows camera depth and scales with strength. Ctrl+Shift
-  gently evens surface detail, with cursor color, body, and outline matching the
-  active operation.
+- Sculpt Add and Remove follow the local surface instead of camera depth.
+  Brush size uses millimetres and keeps its relative size when switching tips.
+- Every Sculpt brush applies its dose by elapsed brush time, including moving
+  strokes. Smooth preserves rounded forms while reducing smaller bumps.
+- Sculpt strength and size wheel controls use proportional steps, and brush
+  preferences survive restarting the viewer. The surface footprint stays
+  visible on light models.
+- Sculpt commits preserve live surface normals across Undo and Redo.
+- Sculpt uses one surface path for clicks, travel and held strokes. Quick
+  clicks survive preparation, and crossing a panel pauses the brush path.
+- Ctrl-drag in manual alignment turns around the surface point you grabbed.
+  Point pairs remain available after manual movement and tab changes, and the
+  fit button recovers after worker failure.
+- Best fit accepts a small fragment against a full scan with the default
+  matching ratio, whether the fragment is the moving or fixed scan.
+- Best fit matching supports pre- and post-treatment scans when the unchanged
+  region provides sufficient evidence for the alignment.
+- Best fit matching uses principal surface orientations to recover scans
+  rotated around tilted axes.
 
 ## 1.2.1 - 2026-09-27
 
