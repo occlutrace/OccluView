@@ -1,11 +1,12 @@
 //! Repository-level contract primitives.
 //!
-//! The three functions here answer one question each about a file every release
-//! has to keep in step: the version in the workspace manifest, the version
-//! `Cargo.lock` records per package, and the `ProductVersion` fallback the `WiX`
-//! installer defines. They parse text, so the crate has no dependencies and the
-//! repository-contract tests can assert the three agree without building any
-//! OccluView crate.
+//! The functions here answer one question each about a file every release has to
+//! keep in step: the version in the workspace manifest, the version `Cargo.lock`
+//! records per package, the `ProductVersion` fallback the `WiX` installer
+//! defines, and the minimum supported Rust version the toolchain pins and the
+//! manifest and clippy declare. They parse text, so the crate has no
+//! dependencies and the repository-contract tests can assert the agreed values
+//! without building any OccluView crate.
 #![forbid(unsafe_code)]
 
 /// The `version` of `[workspace.package]` in a workspace `Cargo.toml`.
@@ -13,6 +14,26 @@
 pub fn workspace_package_version(cargo_toml: &str) -> Option<&str> {
     let section = cargo_toml.split("[workspace.package]").nth(1)?;
     toml_quoted_value(section, "version")
+}
+
+/// The `rust-version` of `[workspace.package]` in a workspace `Cargo.toml`.
+#[must_use]
+pub fn workspace_rust_version(cargo_toml: &str) -> Option<&str> {
+    let section = cargo_toml.split("[workspace.package]").nth(1)?;
+    toml_quoted_value(section, "rust-version")
+}
+
+/// The `channel` of `[toolchain]` in `rust-toolchain.toml`.
+#[must_use]
+pub fn toolchain_channel(toolchain: &str) -> Option<&str> {
+    let section = toolchain.split("[toolchain]").nth(1)?;
+    toml_quoted_value(section, "channel")
+}
+
+/// The `msrv` clippy reads from `clippy.toml`.
+#[must_use]
+pub fn clippy_msrv(clippy_toml: &str) -> Option<&str> {
+    toml_quoted_value(clippy_toml, "msrv")
 }
 
 /// The `version` `Cargo.lock` records for `package_name`.
