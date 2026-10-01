@@ -22,9 +22,6 @@ pub enum FormatKind {
 }
 
 /// Map a file extension (lowercase, no dot) to a [`FormatKind`].
-///
-/// # Errors
-/// Returns [`FormatError::Unsupported`] if the extension is unknown.
 #[must_use]
 pub fn by_extension(ext: &str) -> Option<FormatKind> {
     match ext {
@@ -72,7 +69,7 @@ pub fn probe(extension: Option<&str>, magic: &[u8]) -> Result<FormatKind, Format
     }
 
     // Binary STL: raw bytes, before any text consideration.
-    if looks_like_binary_stl(magic) {
+    if crate::stl::binary_layout_matches(magic) {
         return Ok(FormatKind::Stl);
     }
     let magic = text_magic;
@@ -179,26 +176,6 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 /// the count is plausible, this is almost certainly a binary STL (a PLY/OBJ/
 /// glTF accidentally matching the size formula is astronomically unlikely).
 /// This is the same heuristic three.js's `STLLoader` uses to disambiguate.
-#[must_use]
-fn looks_like_binary_stl(bytes: &[u8]) -> bool {
-    if bytes.len() < 84 {
-        return false;
-    }
-    let count_bytes: [u8; 4] = match bytes[80..84].try_into() {
-        Ok(arr) => arr,
-        Err(_) => return false, // unreachable given the length check above
-    };
-    let triangle_count = u32::from_le_bytes(count_bytes) as usize;
-    // Reject implausible counts: real dental scans are 0..~10M triangles; a
-    // garbage u32 from a non-STL file's bytes 80..84 would either overflow the
-    // size formula or be absurdly large.
-    if triangle_count > 200_000_000 {
-        return false;
-    }
-    let expected_len = 84 + triangle_count * 50;
-    bytes.len() == expected_len
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -290,23 +267,23 @@ mod tests {
     }
 
     #[test]
-    fn looks_like_binary_stl_size_formula() {
+    fn binary_layout_matches_size_formula() {
         // Exact-size match -> yes.
         let mut bytes = vec![0u8; 84];
         bytes[80..84].copy_from_slice(&3u32.to_le_bytes());
         bytes.extend(std::iter::repeat_n(0u8, 3 * 50));
-        assert!(looks_like_binary_stl(&bytes));
+        assert!(crate::stl::binary_layout_matches(&bytes));
 
         // Off-by-one size -> no.
         bytes.pop();
-        assert!(!looks_like_binary_stl(&bytes));
+        assert!(!crate::stl::binary_layout_matches(&bytes));
 
         // Too short -> no.
-        assert!(!looks_like_binary_stl(&[0u8; 10]));
+        assert!(!crate::stl::binary_layout_matches(&[0u8; 10]));
 
         // Absurd count (would imply >200M triangles) -> no.
         let mut bad = vec![0u8; 84];
         bad[80..84].copy_from_slice(&u32::MAX.to_le_bytes());
-        assert!(!looks_like_binary_stl(&bad));
+        assert!(!crate::stl::binary_layout_matches(&bad));
     }
 }
