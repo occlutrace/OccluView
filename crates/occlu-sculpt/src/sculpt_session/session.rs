@@ -364,7 +364,7 @@ impl SculptSession {
 
     fn refresh_all_display_normals(&mut self) {
         use glam::Vec3;
-        use occlu_geometry_math::{accumulate_smooth_normals, average_duplicate_normal_group};
+        use occluview_geometry_math::{accumulate_smooth_normals, average_duplicate_normal_group};
 
         let vertex_count = self.verts.len() / 3;
         let mut source_normals = accumulate_smooth_normals(vertex_count, &self.tris, |index| {
