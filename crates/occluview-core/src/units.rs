@@ -1,8 +1,10 @@
 //! Units of measure.
 //!
-//! OccluView works in **millimeters** internally. All public APIs use
-//! a unit newtype rather than a bare `f32`, so units cannot be silently
-//! confused. Conversion from format-native units lives in `occluview-formats`.
+//! OccluView works in **millimeters** internally. Most public APIs carry
+//! plain `f32` values in millimeters (e.g. `radius_mm`), with the unit
+//! carried in the name, not in the type. [`Millimeters`] is available where
+//! callers want the newtype, but it is not threaded through the codebase.
+//! Conversion from format-native units lives in `occluview-formats`.
 
 use core::fmt;
 use core::ops::{Add, Sub};
@@ -13,7 +15,7 @@ use core::ops::{Add, Sub};
 /// area is intentionally not provided (no dimension errors hiding in `f32`).
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(transparent)]
-pub struct Millimeters(pub f32);
+pub struct Millimeters(pub(crate) f32);
 
 impl Millimeters {
     /// The zero length.
