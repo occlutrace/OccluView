@@ -4,6 +4,8 @@ use crate::app::app_settings_panel::show_settings_toolbar_toggle;
 #[cfg(target_os = "macos")]
 use crate::app::app_settings_panel::SettingsAction;
 #[cfg(target_os = "macos")]
+use crate::app::OccluViewApp;
+#[cfg(target_os = "macos")]
 use crate::app_settings::ScrollBehavior;
 use crate::app_settings::Settings;
 use crate::i18n::os::OsLocaleSource;
@@ -84,7 +86,7 @@ fn run_toolbar_frame_at_with_settings(
             .exact_size(30.0)
             .show(ui, |ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let settings = show_settings_toolbar_toggle(ui, true, locale);
+                    let settings = show_settings_toolbar_toggle(ui, true, locale, false);
                     settings_trigger = Some(settings.rect);
                     action = show_settings_popup(
                         &settings,
@@ -131,9 +133,11 @@ fn run_app_settings_frame(
         egui::Panel::top("app-settings-test-toolbar")
             .exact_size(30.0)
             .show(ui, |ui| {
-                let response = show_settings_toolbar_toggle(ui, true, &app.ui.locale);
+                let response = show_settings_toolbar_toggle(ui, true, &app.ui.locale, false);
                 trigger = Some(response.rect);
-                app.show_settings_popup(&response);
+                app.active_context()
+                    .expect("live test scene")
+                    .show_settings_popup(&response);
             });
     });
     output.textures_delta.clear();

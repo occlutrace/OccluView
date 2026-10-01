@@ -1,3 +1,4 @@
+use crate::app::workspace::id::SceneKey;
 use anyhow::Result;
 use occluview_core::Scene;
 use std::path::PathBuf;
@@ -17,15 +18,20 @@ pub(crate) enum LoadQueueCameraReset {
 }
 
 pub(crate) struct SceneLoadRequest {
+    /// Fixed document identity captured when the user accepts the operation.
+    pub(crate) scene_key: SceneKey,
     pub(crate) paths: Vec<PathBuf>,
     pub(crate) source: &'static str,
     pub(crate) mode: SceneLoadMode,
     /// State at the authorization boundary, before this may wait in a queue.
     pub(crate) content_revision_at_request: u64,
     pub(crate) dirty_at_request: bool,
+    /// Ordering across requests that may wait behind the workspace decoder.
+    pub(crate) requested_at: Instant,
 }
 
 pub(crate) struct PendingSceneLoad {
+    pub(crate) scene_key: SceneKey,
     pub(crate) paths: Vec<PathBuf>,
     pub(crate) source: &'static str,
     pub(crate) mode: SceneLoadMode,
@@ -46,6 +52,13 @@ pub(crate) struct PendingSceneLoad {
     pub(crate) requested_at: Instant,
 }
 
+/// A worker result detached from the decoder slot. It remains reserved by the
+/// workspace until its target can commit it or its scene lifetime is retired.
+pub(crate) struct DecodedSceneLoad {
+    pub(crate) pending: PendingSceneLoad,
+    pub(crate) result: Result<Scene>,
+}
+
 /// A Replace authorization cannot cover edits made while queued or decoding.
 /// Reconfirm only when those edits are still at risk of being discarded.
 pub(crate) fn replace_result_requires_guard(
@@ -57,20 +70,6 @@ pub(crate) fn replace_result_requires_guard(
 ) -> bool {
     edit_busy_now
         || (dirty_now && (authorized_revision != current_revision || !dirty_at_authorization))
-}
-
-/// Keep one decoder alive at a time. A new Replace supersedes its result and
-/// every pending request; Append follows the current request in arrival order.
-pub(crate) fn queue_request_while_active(
-    active: &mut PendingSceneLoad,
-    queued: &mut std::collections::VecDeque<SceneLoadRequest>,
-    request: SceneLoadRequest,
-) {
-    if request.mode == SceneLoadMode::Replace {
-        active.superseded = true;
-        queued.clear();
-    }
-    queued.push_back(request);
 }
 
 pub(crate) fn combine_loaded_scene(
@@ -106,14 +105,19 @@ pub(crate) fn load_status_message(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used)]
     use super::*;
     use occluview_core::{Mesh, SceneMesh};
     use std::path::Path;
 
     #[test]
-    fn repeated_replace_keeps_one_active_decoder_and_only_the_latest_request() {
+    fn replace_supersedes_only_earlier_requests_for_its_scene() {
         let (sender, receiver) = std::sync::mpsc::channel();
-        let mut active = PendingSceneLoad {
+        let first_key = SceneKey::from_raw_for_test(1, 1).expect("test scene key");
+        let second_key = SceneKey::from_raw_for_test(2, 2).expect("test scene key");
+        let mut coordinator = crate::app::workspace::loading::LoadCoordinator::default();
+        coordinator.install_active(PendingSceneLoad {
+            scene_key: first_key,
             paths: vec![PathBuf::from("first.stl")],
             source: "test",
             mode: SceneLoadMode::Replace,
@@ -123,29 +127,51 @@ mod tests {
             content_revision_at_request: 0,
             dirty_at_request: false,
             requested_at: Instant::now(),
-        };
-        let mut queued = std::collections::VecDeque::new();
+        });
+        coordinator.enqueue(SceneLoadRequest {
+            scene_key: second_key,
+            paths: vec![PathBuf::from("other-scene.stl")],
+            source: "test",
+            mode: SceneLoadMode::Append,
+            content_revision_at_request: 0,
+            dirty_at_request: false,
+            requested_at: Instant::now(),
+        });
         for path in ["second.stl", "third.stl"] {
-            queue_request_while_active(
-                &mut active,
-                &mut queued,
-                SceneLoadRequest {
-                    paths: vec![PathBuf::from(path)],
-                    source: "test",
-                    mode: SceneLoadMode::Replace,
-                    content_revision_at_request: 0,
-                    dirty_at_request: false,
-                },
-            );
+            coordinator.enqueue(SceneLoadRequest {
+                scene_key: first_key,
+                paths: vec![PathBuf::from(path)],
+                source: "test",
+                mode: SceneLoadMode::Replace,
+                content_revision_at_request: 0,
+                dirty_at_request: false,
+                requested_at: Instant::now(),
+            });
         }
-        assert!(active.superseded);
-        assert_eq!(queued.len(), 1);
+        assert!(coordinator.active.as_ref().expect("active load").superseded);
+        assert_eq!(coordinator.queued_len(), 2);
         assert_eq!(
-            queued.front().map(|request| request.paths[0].as_path()),
+            coordinator
+                .queued
+                .front()
+                .map(|request| request.paths[0].as_path()),
+            Some(Path::new("other-scene.stl"))
+        );
+        assert_eq!(
+            coordinator
+                .queued
+                .back()
+                .map(|request| request.paths[0].as_path()),
             Some(Path::new("third.stl"))
         );
         assert!(sender.send(Ok(Scene::new())).is_ok());
-        assert!(active.receiver.try_recv().is_ok());
+        assert!(coordinator
+            .active
+            .as_ref()
+            .expect("active load")
+            .receiver
+            .try_recv()
+            .is_ok());
     }
 
     #[test]

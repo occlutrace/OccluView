@@ -6,7 +6,7 @@
 //! held selects the other choice for as long as it is held, and the strip
 //! lights the choice that is live, so the operator sees what a click will do.
 
-use super::{egui, layers_overlay, OccluViewApp};
+use super::{egui, SceneContext};
 use crate::app_settings::RulerLineAngle;
 use crate::icons::AppIcon;
 use crate::measure_overlay::ruler_line_angle_key;
@@ -24,7 +24,7 @@ const CHIP_PADDING_PX: f32 = 22.0;
 /// Glyph size plus the gap to the label, as `align_panel::chip` draws it.
 const CHIP_GLYPH_PX: f32 = 20.0;
 
-impl OccluViewApp {
+impl SceneContext<'_> {
     /// The choice a ruler ending on a line uses right now: the setting, or the
     /// other one while Shift is held.
     pub(super) fn ruler_line_angle(&self, ctx: &egui::Context) -> RulerLineAngle {
@@ -43,11 +43,11 @@ impl OccluViewApp {
             return;
         }
         let live = self.ruler_line_angle(ctx);
-        let id = egui::Id::new(STRIP_ID);
+        let id = egui::Id::new((STRIP_ID, self.scene_key));
         let width = ctx
             .memory(|memory| memory.area_rect(id))
             .map_or(STRIP_FIRST_WIDTH_PX, |rect| rect.width());
-        let origin = self.ruler_options_origin(viewport_rect, width);
+        let origin = self.ruler_options_origin(ctx, viewport_rect, width);
         let locale = &self.ui.locale;
         let title = locale.tr(crate::i18n::message_id!("measure-line-angle"));
         let hint = locale.tr(crate::i18n::message_id!("measure-line-angle-hint"));
@@ -117,18 +117,21 @@ impl OccluViewApp {
     /// Top-left corner for a strip `width` wide: centred over the viewport,
     /// clear of the Layers panel on the left and below the contact bar when
     /// that is open.
-    fn ruler_options_origin(&self, viewport_rect: egui::Rect, width: f32) -> egui::Pos2 {
-        let layer_count = self
-            .document
-            .scene
-            .as_ref()
-            .map_or(0, |scene| scene.meshes().len());
-        let layers_right = (layer_count > 0).then(|| {
-            layers_overlay::layer_overlay_rect(viewport_rect, layer_count).right() + STRIP_GAP_PX
-        });
+    fn ruler_options_origin(
+        &self,
+        ctx: &egui::Context,
+        viewport_rect: egui::Rect,
+        width: f32,
+    ) -> egui::Pos2 {
+        let layers = self.layers_panel_rect(ctx, viewport_rect);
+        let layers_right = layers
+            .intersects(viewport_rect)
+            .then_some(layers.right() + STRIP_GAP_PX);
         let top = if self.tools.contacts.is_open() {
-            super::app_contact_bar::contact_bar_rect(viewport_rect, layer_count).bottom()
-                + STRIP_GAP_PX
+            self.scene_contact_bar_rect(ctx, viewport_rect).bottom() + STRIP_GAP_PX
+        } else if layers.intersects(viewport_rect) && viewport_rect.right() - layers.right() < width
+        {
+            layers.bottom() + STRIP_GAP_PX
         } else {
             viewport_rect.top() + STRIP_GAP_PX
         };

@@ -2,14 +2,14 @@
 //!
 //! A thickness probe may drive the passive Cut View owned by the measure tool.
 
-use super::{egui, layers_overlay, pick_scene_hit, OccluViewApp, Scene};
+use super::{egui, pick_scene_hit, Scene, SceneContext};
 use crate::app_settings::RulerLineAngle;
 use crate::measure_overlay;
 use crate::measure_tool::{self, MeasureMode, ThicknessProbe, ThicknessReading};
 use crate::probe_section;
 use occluview_core::ScenePickHit;
 
-impl OccluViewApp {
+impl SceneContext<'_> {
     /// Advance the armed measurement tool one frame: keep the tool-exclusivity
     /// invariants, route Esc and stationary clicks, and paint the overlays.
     /// Returns whether the pointer was consumed (mirrors the cut overlay's
@@ -123,12 +123,7 @@ impl OccluViewApp {
         {
             return false;
         }
-        let layer_count = self
-            .document
-            .scene
-            .as_ref()
-            .map_or(0, |scene| scene.meshes().len());
-        if layers_overlay::layer_overlay_rect(viewport_rect, layer_count).contains(pos) {
+        if self.layers_panel_rect(ctx, viewport_rect).contains(pos) {
             return false;
         }
         ctx.layer_id_at(pos)
@@ -148,6 +143,9 @@ impl OccluViewApp {
         suppress_click: bool,
         ctx: &egui::Context,
     ) -> bool {
+        if !self.input_allowed {
+            return false;
+        }
         let Some(pointer) = response
             .interact_pointer_pos()
             .or_else(|| ctx.input(|input| input.pointer.hover_pos()))
@@ -186,12 +184,12 @@ impl OccluViewApp {
             // "Thickness exits on rotation" guard. Note `press_origin()`
             // cannot be used here — egui wipes it on every release, so on the
             // click frame it is always None.
-            if self.ui.viewport_secondary_gesture_moved_since_press {
+            if self.scene_ui.viewport_secondary_gesture_moved_since_press {
                 return false;
             }
             let cleared_anything = self.tools.measure.clear_measurements();
             if cleared_anything {
-                self.ui.status_message = Some(
+                self.scene_ui.status_message = Some(
                     self.ui
                         .locale
                         .tr(crate::i18n::message_id!("measure-cleared")),
@@ -349,7 +347,7 @@ impl OccluViewApp {
                 &[("len", length.as_str())],
             ),
         };
-        self.ui.status_message = Some(message);
+        self.scene_ui.status_message = Some(message);
     }
 
     /// Probe the wall of the hit layer and report the reading.
@@ -362,7 +360,7 @@ impl OccluViewApp {
         }
         match measure_tool::probe_wall_thickness(entry, hit.triangle_index, hit.point) {
             Some(probe) => {
-                self.ui.status_message = Some(match probe.reading {
+                self.scene_ui.status_message = Some(match probe.reading {
                     ThicknessReading::Wall { thickness_mm, .. } => self.ui.locale.tr_with(
                         crate::i18n::message_id!("measure-thickness"),
                         &[(
@@ -385,7 +383,7 @@ impl OccluViewApp {
                 self.drive_probe_cut_view(scene, &probe);
             }
             None => {
-                self.ui.status_message = Some(
+                self.scene_ui.status_message = Some(
                     self.ui
                         .locale
                         .tr(crate::i18n::message_id!("measure-cannot-probe")),

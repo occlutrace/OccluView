@@ -155,6 +155,15 @@ interface renders English.
 
 ## Controls
 
+Use the scene buttons below Layers or the `Scenes` menu to work with two
+independent scenes. Drag a layer name to the other scene, its scene button, or
+the left/right window edge to create a split. Dropped files use an explicit
+scene chooser when both scenes are open. **F6** cycles scenes; Shift reverses the
+order. Focus the divider and use **Left arrow** / **Right arrow** to resize it,
+or **Home** to restore equal widths. Double-clicking the divider also restores
+equal widths; **Esc** cancels a divider drag. Undoing a transfer moves the layer back;
+later edits in either scene must be undone first.
+
 Press **F1** — or open **Settings → Keyboard shortcuts** — for the complete keyboard and mouse reference.
 
 - Open a scan with **Ctrl+O** (**⌘+O** on macOS). Opening another file adds a

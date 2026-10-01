@@ -8,7 +8,10 @@ use rayon::prelude::*;
 
 use crate::Rigid;
 
-use super::{Level, Orientation, MIN_TRIAL_COVERAGE_FRACTION};
+use super::{
+    forward_coverage_is_sufficient, minimum_forward_matches, Level, Orientation,
+    MIN_CORRESPONDENCES, MIN_TRIAL_COVERAGE_FRACTION,
+};
 
 /// A reciprocal check based on only a handful of fixed samples can validate a
 /// coincidental patch. Keep partial scans valid, but require enough absolute
@@ -87,6 +90,70 @@ pub(super) struct ReciprocalSummary {
     pub(super) geometric_rms: f64,
 }
 
+/// Use surface area to choose which directional coverage represents the
+/// common support. Sampling the larger surface can make a valid small fragment
+/// disappear from the reciprocal sample budget; the smaller side is the
+/// denominator that says how much of the requested overlap was actually found.
+pub(super) fn moving_surface_is_smaller(level: &Level<'_>) -> bool {
+    level
+        .moving_surface
+        .is_none_or(|moving| moving.surface_area_mm2() <= level.fixed.surface_area_mm2())
+}
+
+pub(super) fn fixed_surface_is_smaller(level: &Level<'_>) -> bool {
+    level.moving_surface.is_some() && !moving_surface_is_smaller(level)
+}
+
+/// Common support is measured on the physically smaller indexed surface.
+/// `forward_coverage` and `ReciprocalSummary::coverage` retain their own
+/// direction-specific meaning and are never relabelled.
+pub(super) fn common_support_coverage(
+    level: &Level<'_>,
+    forward_coverage: f64,
+    reciprocal: Option<ReciprocalSummary>,
+) -> f64 {
+    if moving_surface_is_smaller(level) {
+        forward_coverage
+    } else {
+        reciprocal.map_or(0.0, |summary| summary.coverage)
+    }
+}
+
+/// The one-percent search floor follows the smaller surface. When the moving
+/// mesh is larger, its forward sample share is not the overlap denominator;
+/// reciprocal evidence over the smaller fixed surface supplies that check.
+pub(super) fn directional_forward_evidence_is_sufficient(
+    level: &Level<'_>,
+    matched: usize,
+    sampled: usize,
+) -> bool {
+    if moving_surface_is_smaller(level) {
+        forward_coverage_is_sufficient(matched, sampled)
+    } else {
+        matched >= MIN_CORRESPONDENCES && sampled > 0
+    }
+}
+
+pub(super) fn minimum_directional_forward_matches(level: &Level<'_>, sampled: usize) -> usize {
+    if moving_surface_is_smaller(level) {
+        minimum_forward_matches(sampled)
+    } else {
+        MIN_CORRESPONDENCES
+    }
+}
+
+pub(super) fn support_coverage_is_sufficient(coverage: f64) -> bool {
+    coverage.is_finite() && (MIN_RECIPROCAL_COVERAGE_FRACTION..=1.0).contains(&coverage)
+}
+
+fn reciprocal_summary_is_valid(summary: ReciprocalSummary) -> bool {
+    summary.matched > 0
+        && summary.coverage.is_finite()
+        && (0.0..=1.0).contains(&summary.coverage)
+        && summary.geometric_rms.is_finite()
+        && summary.geometric_rms >= 0.0
+}
+
 fn reciprocal_summary_is_usable(summary: ReciprocalSummary) -> bool {
     summary.matched >= MIN_RECIPROCAL_MATCHES
         && summary.coverage.is_finite()
@@ -105,7 +172,31 @@ pub(super) fn reciprocal_evidence_is_usable(
     if level.moving_surface.is_none() || level.fixed_samples.is_empty() {
         return true;
     }
-    evidence.is_some_and(reciprocal_summary_is_usable)
+    if fixed_surface_is_smaller(level) {
+        evidence.is_some_and(reciprocal_summary_is_usable)
+    } else {
+        // The fixed-to-moving pass samples the larger surface. It remains a
+        // useful independent guard when populated, but its sparse share must
+        // not veto a fragment that is fully supported in the forward direction.
+        evidence.is_none_or(reciprocal_summary_is_valid)
+    }
+}
+
+/// Keep reciprocal evidence monotonic when it measures the smaller fixed side,
+/// or when both advisory samples are dense enough to be meaningful.
+pub(super) fn reciprocal_trial_is_acceptable(
+    level: &Level<'_>,
+    current: Option<ReciprocalSummary>,
+    trial: Option<ReciprocalSummary>,
+) -> bool {
+    if fixed_surface_is_smaller(level)
+        || current.is_some_and(reciprocal_summary_is_usable)
+            && trial.is_some_and(reciprocal_summary_is_usable)
+    {
+        reciprocal_coverage_ok(current, trial)
+    } else {
+        true
+    }
 }
 
 /// Do not let a trial discard the fixed surface that supported the current

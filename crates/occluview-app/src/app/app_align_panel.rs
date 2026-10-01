@@ -5,7 +5,7 @@
 
 use eframe::egui;
 
-use super::OccluViewApp;
+use super::SceneContext;
 use crate::align_panel::{AlignPanelAction, AlignTab};
 use crate::align_worker::{matching_inputs_changed, AlignWorker};
 
@@ -20,7 +20,11 @@ fn action_after_tab_change(
     (!tab_changed).then_some(action).flatten()
 }
 
-impl OccluViewApp {
+fn align_worker_needs_ui_poll(worker: Option<&AlignWorker>) -> bool {
+    worker.is_some_and(|worker| worker.is_busy() || worker.has_pending_output())
+}
+
+impl SceneContext<'_> {
     /// A stationary right-click takes the last point back.
     ///
     /// Undoing a half-placed pair stays on the geometry the operator is looking
@@ -42,12 +46,14 @@ impl OccluViewApp {
         // Tracked here as well as in the camera path, because a frame this
         // method consumes never reaches the camera path at all.
         if pressed {
-            self.ui.viewport_secondary_gesture_moved_since_press = false;
+            self.scene_ui.viewport_secondary_gesture_moved_since_press = false;
         }
         if down && motion.length_sq() > f32::EPSILON {
-            self.ui.viewport_secondary_gesture_moved_since_press = true;
+            self.scene_ui.viewport_secondary_gesture_moved_since_press = true;
         }
-        if !response.secondary_clicked() || self.ui.viewport_secondary_gesture_moved_since_press {
+        if !response.secondary_clicked()
+            || self.scene_ui.viewport_secondary_gesture_moved_since_press
+        {
             return false;
         }
         if !self.take_align_arrow_back() {
@@ -68,6 +74,12 @@ impl OccluViewApp {
             .worker
             .as_ref()
             .is_some_and(AlignWorker::is_busy);
+        if align_worker_needs_ui_poll(self.tools.align.worker.as_ref()) {
+            // Completion is drained on this UI path. Keep repainting while the
+            // worker is active and if it publishes just after this frame's
+            // empty drain, so results do not wait for another operator input.
+            ctx.request_repaint();
+        }
         let worker_failed = self
             .tools
             .align
@@ -88,6 +100,7 @@ impl OccluViewApp {
         let action = crate::align_panel::show(
             ctx,
             viewport_rect,
+            egui::Id::new(self.scene_key),
             crate::align_panel::AlignPanelView {
                 tool: &self.tools.align.tool,
                 layer_count: self
@@ -119,6 +132,7 @@ impl OccluViewApp {
         if excluding {
             match crate::align_panel_brush::show(
                 ctx,
+                egui::Id::new(self.scene_key),
                 crate::align_panel_brush::BrushPanelView {
                     viewport_rect,
                     brush: &mut brush,
@@ -304,8 +318,11 @@ impl OccluViewApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{action_after_tab_change, heatmap_is_authorized};
+    use super::{action_after_tab_change, align_worker_needs_ui_poll, heatmap_is_authorized};
     use crate::align_panel::{AlignPanelAction, AlignTab};
+    use crate::align_worker::{AlignFailure, AlignOutcome, AlignWorker};
+    use eframe::egui;
+    use std::sync::mpsc;
 
     #[test]
     fn manual_tab_never_authorizes_a_heatmap_from_stale_readiness() {
@@ -327,6 +344,38 @@ mod tests {
         assert_eq!(
             action_after_tab_change(Some(AlignPanelAction::Refine), false),
             Some(AlignPanelAction::Refine)
+        );
+    }
+
+    /// The worker can publish after this frame already drained an empty queue.
+    /// Such a result is no longer computationally busy, but it still needs one
+    /// UI frame or it will sit unapplied until the operator moves the mouse.
+    #[test]
+    fn a_pending_completion_requests_the_idle_ui_poll() {
+        let worker = AlignWorker::spawn();
+        assert!(!align_worker_needs_ui_poll(Some(&worker)));
+        let generation = worker.generation();
+        worker.publish_for_tests(
+            generation,
+            AlignOutcome::Failed {
+                rejection: AlignFailure::FixedSurfaceMissing,
+            },
+        );
+        assert!(!worker.is_busy(), "the computation itself has completed");
+
+        let ctx = egui::Context::default();
+        let (sender, receiver) = mpsc::channel();
+        ctx.set_request_repaint_callback(move |_| {
+            let _ = sender.send(());
+        });
+        if align_worker_needs_ui_poll(Some(&worker)) {
+            ctx.request_repaint();
+        }
+        assert!(
+            receiver
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .is_ok(),
+            "an undrained result must keep the idle egui loop alive once"
         );
     }
 }

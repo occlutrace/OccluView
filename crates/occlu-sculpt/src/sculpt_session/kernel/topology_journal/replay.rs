@@ -247,6 +247,12 @@ impl SculptSession {
         self.rollback_factor.truncate(base_groups);
         self.group_area.truncate(base_groups);
         self.denoise_amount.truncate(base_groups);
+        self.sheet_axis.truncate(base_groups);
+        self.sheet_axis_mark.truncate(base_groups);
+        self.stroke_normal.truncate(base_groups);
+        self.stroke_normal_mark.truncate(base_groups);
+        self.reference_wall_mm.truncate(base_groups);
+        self.reference_wall_at.truncate(base_groups);
         self.sheet_component.truncate(base_groups);
         self.group_retired.truncate(base_groups);
         self.tri_marks.truncate(journal.base_tris);

@@ -1,9 +1,9 @@
 //! Empty-viewport surface and drag-hover feedback: what the operator sees
 //! before any scene exists, and how a file drag over the window answers.
 
-use super::{egui, OccluViewApp};
+use super::{egui, SceneContext};
 
-impl OccluViewApp {
+impl SceneContext<'_> {
     /// While files hover anywhere over the window, switch to the copy cursor so
     /// a drag is answered with "this will open" before the operator lets go.
     /// The viewport itself stays visually clean: a full-surface stroke would
@@ -30,8 +30,8 @@ impl OccluViewApp {
         }
         // A failed startup load can leave the error dialog up over the empty
         // viewport; the guard owns the pointer until it is dismissed.
-        if !self.ui.modal_dialog_open() && response.clicked() {
-            self.ui.open_dialog_requested = true;
+        if self.input_allowed && !self.ui.modal_dialog_open() && response.clicked() {
+            self.scene_ui.open_dialog_requested = true;
             ctx.request_repaint();
         }
         let card_rect =
@@ -94,7 +94,7 @@ mod tests {
             },
             |ui| {
                 let ctx = ui.ctx().clone();
-                OccluViewApp::set_drop_hover_cursor_if_hovering(&ctx);
+                SceneContext::set_drop_hover_cursor_if_hovering(&ctx);
             },
         );
 

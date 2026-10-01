@@ -25,6 +25,7 @@ pub fn warm_up_brush_step() {
     let mut session = SculptSession::new(verts, tris);
     let brushes = [
         (BrushMode::Smooth, TipStamp::Ball),
+        (BrushMode::Relax, TipStamp::Ball),
         (BrushMode::Deposit, TipStamp::Ball),
         (BrushMode::Erode, TipStamp::Ball),
         (BrushMode::Flatten, TipStamp::Cylinder),
@@ -35,7 +36,7 @@ pub fn warm_up_brush_step() {
         let latitude = -0.6 + 0.3 * index as f64;
         let start = 0.9 * index as f64;
         session.set_brush_tip(tip);
-        session.set_dab_elapsed_ms(120.0, false);
+        session.set_dab_elapsed_ms(DWELL_FULL_DOSE_MS);
         session.start_stroke();
         for step in 0..STEPS_PER_BRUSH {
             let longitude = start + STEP_ANGLE * step as f64;

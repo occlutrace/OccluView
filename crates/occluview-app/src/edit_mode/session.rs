@@ -3,10 +3,12 @@
 use occluview_core::{Scene, SceneMesh};
 
 use super::state::{EditModeState, LayerKey, SelectGesture};
-use super::EditModeController;
+use super::undo_snapshot::scene_checkpoint_bytes;
+use super::{EditModeController, EditSessionStartFailure};
 
 impl EditModeController {
     pub(crate) fn begin_face_selection(&mut self, layer: &SceneMesh, scene: &Scene) -> bool {
+        self.session_start_failure = None;
         if matches!(self.state, EditModeState::Busy { .. })
             || !layer.visible
             || layer.mesh.is_point_cloud()
@@ -17,14 +19,28 @@ impl EditModeController {
         if self.selections.ensure_for_entry(layer).is_none() {
             return false;
         }
-        let starting_session = self.baseline_scene.is_none();
+        let starting_session = self.edit_checkpoint.is_none();
         self.active_layer_id = Some(layer.id());
         let _ = self.state.start(LayerKey::from_scene_mesh_id(layer.id()));
 
         // Capture the pre-edit scene the first time a session opens, so Cancel
         // can revert every edit (including structural additions) in one step.
         if starting_session {
-            self.baseline_scene = Some(scene.clone());
+            let checkpoint = self.history.borrow_mut().begin_edit_checkpoint(
+                self.history_scope,
+                scene.clone(),
+                scene_checkpoint_bytes(scene),
+            );
+            let Some(checkpoint) = checkpoint else {
+                self.session_start_failure =
+                    Some(EditSessionStartFailure::HistoryCapacityUnavailable);
+                self.selections.clear();
+                self.active_layer_id = None;
+                self.session_layer_id = None;
+                self.state.confirm_discard();
+                return false;
+            };
+            self.edit_checkpoint = Some(checkpoint);
             self.session_dirty = false;
             self.gesture = SelectGesture::Lasso;
             self.through_mesh = true;
@@ -38,7 +54,11 @@ impl EditModeController {
     pub(crate) fn finish_edit_session(&mut self) {
         self.selections.clear();
         self.active_layer_id = None;
-        self.baseline_scene = None;
+        if let Some(checkpoint_id) = self.edit_checkpoint.take() {
+            self.history
+                .borrow_mut()
+                .finish_edit_checkpoint(checkpoint_id);
+        }
         self.session_dirty = false;
         self.session_layer_id = None;
         self.gesture = SelectGesture::default();
@@ -48,12 +68,19 @@ impl EditModeController {
     /// Revert the whole edit session (Cancel), returning the whole-scene
     /// baseline captured on entry.
     pub(crate) fn cancel_edit_session(&mut self) -> Option<Scene> {
-        let baseline = self.baseline_scene.take()?;
+        let checkpoint_id = self.edit_checkpoint.take()?;
+        let baseline = self
+            .history
+            .borrow_mut()
+            .cancel_edit_checkpoint(checkpoint_id)?;
         self.selections.clear();
         self.active_layer_id = None;
         self.session_layer_id = None;
         self.session_dirty = false;
-        self.undo.clear();
+        if let Some(command_id) = self.pending_history_command.take() {
+            self.history.borrow_mut().discard_pending(command_id);
+        }
+        self.last_undo_push_stored = false;
         self.gesture = SelectGesture::default();
         self.state.confirm_discard();
         Some(baseline)
@@ -77,12 +104,21 @@ impl EditModeController {
 
     pub(crate) fn clear(&mut self) {
         self.state.confirm_discard();
-        self.undo.clear();
+        if let Some(checkpoint_id) = self.edit_checkpoint.take() {
+            self.history
+                .borrow_mut()
+                .finish_edit_checkpoint(checkpoint_id);
+        }
+        if let Some(command_id) = self.pending_history_command.take() {
+            self.history.borrow_mut().discard_pending(command_id);
+        }
+        self.history.borrow_mut().clear_scope(self.history_scope);
         self.selections.clear();
         self.active_layer_id = None;
         self.gesture = SelectGesture::default();
-        self.baseline_scene = None;
         self.session_dirty = false;
         self.session_layer_id = None;
+        self.last_undo_push_stored = false;
+        self.session_start_failure = None;
     }
 }

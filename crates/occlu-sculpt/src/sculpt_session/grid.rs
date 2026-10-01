@@ -116,7 +116,9 @@ impl GroupGrid {
     fn remove(&mut self, group: u32) {
         let key = self.keys[group as usize];
         // The index owns membership, so an entry without a bucket is a broken
-        // invariant; leave the key alone rather than creating a second row.
+        // invariant: report it in a debug build and leave the key alone in a
+        // release build rather than creating a second row for the group.
+        debug_assert!(self.cells.contains_key(&key), "indexed group has a bucket");
         let Some(bucket) = self.cells.get_mut(&key) else {
             return;
         };

@@ -59,6 +59,12 @@ pub use vertex::Vertex;
 static NEXT_MESH_TOPOLOGY_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_MESH_GEOMETRY_ID: AtomicU64 = AtomicU64::new(1);
 
+#[derive(Clone, Copy)]
+enum MeshNormalPolicy {
+    RepairForEditing,
+    PreserveAuthored,
+}
+
 /// Whether a [`Mesh`] carries triangle connectivity or is just a point cloud.
 ///
 /// Dental color scanners frequently emit PLY files with `element vertex` but
@@ -220,11 +226,31 @@ impl Mesh {
     /// - [`CoreError::IndexCountNotMultipleOfThree`] if `indices.len() % 3 != 0`.
     pub fn new(
         name: Option<String>,
-        mut vertices: Vec<Vertex>,
+        vertices: Vec<Vertex>,
         indices: Vec<u32>,
     ) -> Result<Self, CoreError> {
+        Self::new_with_normal_policy(name, vertices, indices, MeshNormalPolicy::RepairForEditing)
+    }
+
+    /// Rebuild a committed sculpt snapshot without rewriting the kernel's
+    /// authored vertex normals. Both paths share shape validation, cache
+    /// construction, and fresh geometry identities; only normal repair differs.
+    fn new_preserving_sculpt_normals(
+        name: Option<String>,
+        vertices: Vec<Vertex>,
+        indices: Vec<u32>,
+    ) -> Result<Self, CoreError> {
+        Self::new_with_normal_policy(name, vertices, indices, MeshNormalPolicy::PreserveAuthored)
+    }
+
+    fn new_with_normal_policy(
+        name: Option<String>,
+        mut vertices: Vec<Vertex>,
+        indices: Vec<u32>,
+        normal_policy: MeshNormalPolicy,
+    ) -> Result<Self, CoreError> {
         Self::validate_shape(&vertices, &indices)?;
-        if !indices.is_empty() {
+        if !indices.is_empty() && matches!(normal_policy, MeshNormalPolicy::RepairForEditing) {
             normals::repair_missing_normals(&mut vertices, &indices);
         }
         let has_vertex_colors = vertices.iter().any(|v| v.color != [255, 255, 255, 255]);

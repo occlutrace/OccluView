@@ -1,7 +1,11 @@
+#![allow(clippy::expect_used)]
 //! Controller tests: state machine, sessions, selection, undo/redo, sync.
 
 use super::session_tests::{triangle_mesh, two_triangle_mesh};
 use super::*;
+use crate::app::workspace::history::{
+    HistoryDirection, HistorySnapshot, HistoryStepKind, WorkspaceHistory,
+};
 use occluview_core::{Mesh, Scene, SceneMesh, SceneMeshId, ScenePickHit, Vertex};
 
 /// A two-object soup mesh: object A (soup triangles 0,1) near the origin and
@@ -121,74 +125,95 @@ fn edit_mode_commands_cover_planned_operations() {
     assert_eq!(commands.len(), 6);
 }
 
-#[test]
-fn undo_stack_enforces_count_and_memory_caps_and_clears_redo() {
-    let mut undo = UndoStack::new(2, 12);
+fn journal_kind() -> HistoryStepKind {
+    HistoryStepKind::LayerEdit {
+        layer_id: SceneMesh::new(Mesh::empty()).id(),
+    }
+}
 
-    assert!(undo.push_undo("a".to_string(), 4));
-    assert!(undo.push_undo("b".to_string(), 4));
-    assert!(undo.push_undo("c".to_string(), 4));
-    assert_eq!(undo.undo_len(), 2);
-    assert_eq!(undo.undo_bytes(), 8);
+fn commit_journal_edit(history: &mut WorkspaceHistory, value: &'static str, bytes: usize) {
+    let command = history
+        .push_pending_edit(None, journal_kind(), value, bytes)
+        .expect("snapshot fits");
+    assert!(history.commit_pending_edit(command));
+}
 
-    let current = "current".to_string();
-    let previous = undo.undo(current, 4);
-    assert_eq!(previous.as_deref(), Some("c"));
-    assert_eq!(undo.redo_len(), 1);
-    assert_eq!(undo.redo_bytes(), 4);
-
-    let redone = undo.redo("after-undo".to_string(), 4);
-    assert_eq!(redone.as_deref(), Some("current"));
-
-    assert!(undo.push_undo("new".to_string(), 4));
-    assert_eq!(undo.redo_len(), 0);
-
-    assert!(!undo.push_undo("too-large".to_string(), 13));
-    assert_eq!(undo.undo_len(), 2);
-    assert_eq!(undo.undo_bytes(), 8);
-
-    undo.clear();
-    assert_eq!(undo.undo_len(), 0);
-    assert_eq!(undo.redo_len(), 0);
+fn navigate_journal(
+    history: &mut WorkspaceHistory,
+    direction: HistoryDirection,
+    current: &'static str,
+) -> Option<&'static str> {
+    let command = history.top_step(None, direction)?.command_id;
+    history.navigate_edit(
+        None,
+        direction,
+        command,
+        HistorySnapshot {
+            value: current,
+            bytes: 4,
+        },
+    )
 }
 
 #[test]
-fn undo_stack_noop_op_preserves_redo_history() {
-    // edit -> undo -> no-op op -> redo must still work: a content no-op must
-    // not destroy the redo stack it displaced.
-    let mut undo = UndoStack::new(8, 4096);
-
-    // An edit and its undo leave one entry on the redo stack.
-    assert!(undo.push_undo("before-edit".to_string(), 4));
-    undo.commit_last_undo();
-    let restored = undo.undo("after-edit".to_string(), 4);
-    assert_eq!(restored.as_deref(), Some("before-edit"));
-    assert_eq!(undo.redo_len(), 1);
-
-    // A no-op op pushes a pre-op snapshot, then discards it: the displaced
-    // redo history is restored, not lost.
-    assert!(undo.push_undo("before-noop".to_string(), 4));
-    assert_eq!(undo.redo_len(), 0, "push displaces the live redo stack");
-    undo.discard_last_undo();
-    assert_eq!(undo.redo_len(), 1, "no-op must restore the displaced redo");
-
-    // Redo replays the edit that was undone before the no-op.
-    let redone = undo.redo("current".to_string(), 4);
-    assert_eq!(redone.as_deref(), Some("after-edit"));
+fn workspace_journal_bounds_count_and_bytes_across_undo_redo() {
+    let mut history = WorkspaceHistory::new(2, 12);
+    for value in ["a", "b", "c"] {
+        commit_journal_edit(&mut history, value, 4);
+    }
+    assert_eq!(history.undo_len(None), 2);
+    assert_eq!(history.used_bytes(), 8);
+    assert_eq!(
+        navigate_journal(&mut history, HistoryDirection::Undo, "current"),
+        Some("c")
+    );
+    assert_eq!(history.used_bytes(), 8);
+    assert_eq!(
+        navigate_journal(&mut history, HistoryDirection::Redo, "after-undo"),
+        Some("current")
+    );
+    commit_journal_edit(&mut history, "new", 4);
+    assert!(history.top_step(None, HistoryDirection::Redo).is_none());
+    assert!(history
+        .push_pending_edit(None, journal_kind(), "too-large", 13)
+        .is_none());
+    assert_eq!(history.undo_len(None), 2);
+    assert_eq!(history.used_bytes(), 8);
+    history.clear_scope(None);
+    assert!(history.top_step(None, HistoryDirection::Undo).is_none());
+    assert!(history.top_step(None, HistoryDirection::Redo).is_none());
+    assert_eq!(history.used_bytes(), 0);
 }
 
 #[test]
-fn undo_stack_committed_op_still_clears_redo() {
-    // A real (content-changing) op still invalidates redo.
-    let mut undo = UndoStack::new(8, 4096);
-    assert!(undo.push_undo("before-edit".to_string(), 4));
-    undo.commit_last_undo();
-    let _ = undo.undo("after-edit".to_string(), 4);
-    assert_eq!(undo.redo_len(), 1);
+fn workspace_journal_noop_preserves_redo_history() {
+    let mut history = WorkspaceHistory::new(8, 4096);
+    commit_journal_edit(&mut history, "before-edit", 4);
+    assert_eq!(
+        navigate_journal(&mut history, HistoryDirection::Undo, "after-edit"),
+        Some("before-edit")
+    );
+    let pending = history
+        .push_pending_edit(None, journal_kind(), "before-noop", 4)
+        .expect("snapshot fits");
+    assert!(history.discard_pending(pending));
+    assert_eq!(
+        navigate_journal(&mut history, HistoryDirection::Redo, "current"),
+        Some("after-edit")
+    );
+}
 
-    assert!(undo.push_undo("before-real-edit".to_string(), 4));
-    undo.commit_last_undo();
-    assert_eq!(undo.redo_len(), 0, "a committed edit clears redo for good");
+#[test]
+fn workspace_journal_committed_edit_clears_redo() {
+    let mut history = WorkspaceHistory::new(8, 4096);
+    commit_journal_edit(&mut history, "before-edit", 4);
+    assert_eq!(
+        navigate_journal(&mut history, HistoryDirection::Undo, "after-edit"),
+        Some("before-edit")
+    );
+    assert!(history.top_step(None, HistoryDirection::Redo).is_some());
+    commit_journal_edit(&mut history, "before-real-edit", 4);
+    assert!(history.top_step(None, HistoryDirection::Redo).is_none());
 }
 
 #[test]
@@ -202,7 +227,11 @@ fn controller_records_layer_edit_undo_and_dirty_state() {
         controller.active_layer(),
         Some(LayerKey::from_scene_mesh_id(layer.id()))
     );
-    assert_eq!(controller.undo_len(), 1);
+    assert_eq!(
+        controller.undo_len(),
+        0,
+        "uncommitted work is not an undo step"
+    );
 
     let Some(token) = token else {
         panic!("required test setup or expected result was missing");
@@ -212,6 +241,11 @@ fn controller_records_layer_edit_undo_and_dirty_state() {
         BusyFinish::Applied
     );
     assert!(controller.is_dirty());
+    assert_eq!(
+        controller.undo_len(),
+        1,
+        "successful work publishes its snapshot"
+    );
 }
 
 #[test]

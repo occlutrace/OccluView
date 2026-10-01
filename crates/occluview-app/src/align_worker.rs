@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 
+use eframe::egui;
 use glam::DVec3;
 use occluview_align::suggested_scale_mm;
 use occluview_align::{
@@ -22,10 +23,13 @@ use occluview_align::{
 };
 use rayon::prelude::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
-/// Initial display maximum, in millimetres.
-pub(crate) const WORKING_MAX_MM: f64 = 0.20;
-/// Initial cool end of the displayed heatmap range.
-pub(crate) const WORKING_MIN_DISPLAY_MM: f64 = 0.05;
+/// Initial display maximum, in millimetres: the hot end of the clinical
+/// deviation bar is 100 um, so a 10 um gap already reads as a real mismatch
+/// rather than the low end of a wide band.
+pub(crate) const WORKING_MAX_MM: f64 = 0.10;
+/// Initial cool end of the displayed heatmap range. Zero, so the map starts at
+/// "no measurable gap" instead of hiding everything below 50 um.
+pub(crate) const WORKING_MIN_DISPLAY_MM: f64 = 0.0;
 /// Absolute zero of the operator-controlled deviation display range.
 pub(crate) const WORKING_SCALE_MIN_MM: f64 = 0.0;
 /// Initial nominal tolerance band, in millimetres.
@@ -63,8 +67,7 @@ impl Default for AlignSettings {
             influence_radius_mm: 2.0,
             matching_ratio: 0.8,
             orientation: Orientation::Match,
-            // Start at the tightest standard range; manual changes remain
-            // stable until the operator selects another range.
+            // Start at the clinical range: zero to 100 um.
             scale_mm: WORKING_MAX_MM,
             min_display_mm: WORKING_MIN_DISPLAY_MM,
             tolerance_mm: WORKING_MIN_MM,
@@ -301,6 +304,16 @@ struct JobQueue {
     wake: Condvar,
 }
 
+/// Shared worker state used by the background thread as one unit.
+struct WorkerThread {
+    queue: Arc<JobQueue>,
+    completions: Arc<Mutex<Vec<AlignCompletion>>>,
+    running: Arc<Mutex<Option<CancelFlag>>>,
+    busy: Arc<AtomicU64>,
+    failed: Arc<AtomicBool>,
+    repaint_ctx: Option<egui::Context>,
+}
+
 /// The worker handle the app holds.
 pub(crate) struct AlignWorker {
     queue: Arc<JobQueue>,
@@ -315,7 +328,20 @@ pub(crate) struct AlignWorker {
 
 impl AlignWorker {
     /// Start the worker thread.
+    #[cfg(test)]
     pub(crate) fn spawn() -> Self {
+        Self::spawn_inner(None)
+    }
+
+    /// Start a worker that wakes the owning UI when it publishes a result or
+    /// fails. A frame can drain just before either event, after which the busy
+    /// state is already false; the worker-side notification closes that idle
+    /// loop race.
+    pub(crate) fn spawn_with_repaint(repaint_ctx: egui::Context) -> Self {
+        Self::spawn_inner(Some(repaint_ctx))
+    }
+
+    fn spawn_inner(repaint_ctx: Option<egui::Context>) -> Self {
         let queue = Arc::new(JobQueue {
             state: Mutex::new(QueueState {
                 jobs: VecDeque::new(),
@@ -330,35 +356,42 @@ impl AlignWorker {
         let busy = Arc::new(AtomicU64::new(0));
         let failed = Arc::new(AtomicBool::new(false));
 
-        let thread_queue = Arc::clone(&queue);
-        let thread_completions = Arc::clone(&completions);
-        let thread_running = Arc::clone(&running);
-        let thread_busy = Arc::clone(&busy);
-        let thread_failed = Arc::clone(&failed);
+        let thread_state = WorkerThread {
+            queue: Arc::clone(&queue),
+            completions: Arc::clone(&completions),
+            running: Arc::clone(&running),
+            busy: Arc::clone(&busy),
+            failed: Arc::clone(&failed),
+            repaint_ctx: repaint_ctx.clone(),
+        };
         let handle = thread::Builder::new()
             .name("occluview-align".into())
             .spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    run_worker(
-                        &thread_queue,
-                        &thread_completions,
-                        &thread_running,
-                        &thread_busy,
-                        &thread_failed,
-                    );
+                    run_worker(&thread_state);
                 }));
                 if let Err(payload) = result {
                     mark_failed(
-                        &thread_failed,
+                        &thread_state.failed,
                         "align worker panicked",
                         Some(panic_message(payload)),
                     );
+                }
+                if thread_state.failed.load(Ordering::Acquire) {
+                    if let Some(ctx) = thread_state.repaint_ctx.as_ref() {
+                        ctx.request_repaint();
+                    }
                 }
             })
             .map_err(|error| {
                 mark_failed(&failed, "thread spawn failed", Some(error.to_string()));
             })
             .ok();
+        if handle.is_none() {
+            if let Some(ctx) = repaint_ctx.as_ref() {
+                ctx.request_repaint();
+            }
+        }
 
         Self {
             queue,
@@ -414,17 +447,37 @@ impl AlignWorker {
 
     /// Move to a new generation, so every result still in flight is discarded.
     pub(crate) fn bump_generation(&self) -> u64 {
-        self.cancel_running();
-        let next = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
-        match self.queue.state.lock() {
-            Ok(mut state) => state.jobs.clear(),
-            Err(_) => mark_failed(&self.failed, "queue lock poisoned", None),
+        let Ok(mut state) = self.queue.state.lock() else {
+            let next = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+            mark_failed(&self.failed, "queue lock poisoned", None);
+            self.clear_completions();
+            return next;
+        };
+        let Ok(running) = self.running.lock() else {
+            let next = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+            state.jobs.clear();
+            mark_failed(&self.failed, "running-job lock poisoned", None);
+            drop(state);
+            self.clear_completions();
+            return next;
+        };
+        if let Some(flag) = running.as_ref() {
+            flag.cancel();
         }
+        let next = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        state.jobs.clear();
+        drop(running);
+        drop(state);
+        self.clear_completions();
+        next
+    }
+
+    /// Clear any result that arrived before or during generation retirement.
+    fn clear_completions(&self) {
         match self.completions.lock() {
             Ok(mut completions) => completions.clear(),
             Err(_) => mark_failed(&self.failed, "completion lock poisoned", None),
         }
-        next
     }
 
     /// The generation new jobs should carry.
@@ -433,13 +486,32 @@ impl AlignWorker {
     }
 
     /// Whether anything is queued or running.
+    ///
+    /// A failed worker cannot run or accept its queued work.
     pub(crate) fn is_busy(&self) -> bool {
+        if self.has_failed() {
+            return false;
+        }
         let queued = self
             .queue
             .state
             .lock()
             .is_ok_and(|state| !state.jobs.is_empty());
         queued || self.busy.load(Ordering::SeqCst) > 0
+    }
+
+    /// Whether a finished result is waiting for the UI to drain it.
+    ///
+    /// Kept separate from `is_busy`: callers that wait for computation to
+    /// finish should not stay busy merely because the UI has not applied the
+    /// result yet, while the egui loop still needs one frame to consume it.
+    pub(crate) fn has_pending_output(&self) -> bool {
+        if let Ok(completions) = self.completions.lock() {
+            !completions.is_empty()
+        } else {
+            mark_failed(&self.failed, "completion lock poisoned", None);
+            true
+        }
     }
 
     /// Queue the newest job and cancel every older queued/running request.
@@ -452,14 +524,25 @@ impl AlignWorker {
         if self.has_failed() {
             return false;
         }
-        self.cancel_running();
-        job.request_id = self.request_sequence.fetch_add(1, Ordering::SeqCst) + 1;
+        // The worker pops and registers its cancellation token under this same
+        // queue -> running lock order. Holding the queue while cancelling and
+        // replacing its job closes the interval where a popped job existed but
+        // its token was not yet visible to the submitter.
         let Ok(mut state) = self.queue.state.lock() else {
             mark_failed(&self.failed, "queue lock poisoned", None);
             return false;
         };
+        let Ok(running) = self.running.lock() else {
+            mark_failed(&self.failed, "running-job lock poisoned", None);
+            return false;
+        };
+        if let Some(flag) = running.as_ref() {
+            flag.cancel();
+        }
+        job.request_id = self.request_sequence.fetch_add(1, Ordering::SeqCst) + 1;
         state.jobs.clear();
         state.jobs.push_back(job);
+        drop(running);
         drop(state);
         self.queue.wake.notify_one();
         true
@@ -481,26 +564,26 @@ impl AlignWorker {
             })
             .collect()
     }
-
-    /// Ask a running job to stop.
-    pub(crate) fn cancel_running(&self) {
-        match self.running.lock() {
-            Ok(running) => {
-                if let Some(flag) = running.as_ref() {
-                    flag.cancel();
-                }
-            }
-            Err(_) => mark_failed(&self.failed, "running-job lock poisoned", None),
-        }
-    }
 }
 
 impl Drop for AlignWorker {
     fn drop(&mut self) {
-        self.cancel_running();
-        if let Ok(mut state) = self.queue.state.lock() {
-            state.shutdown = true;
-            state.jobs.clear();
+        {
+            if let Ok(mut state) = self.queue.state.lock() {
+                if let Ok(running) = self.running.lock() {
+                    if let Some(flag) = running.as_ref() {
+                        flag.cancel();
+                    }
+                } else {
+                    mark_failed(&self.failed, "running-job lock poisoned", None);
+                }
+                state.shutdown = true;
+                state.jobs.clear();
+            } else if let Ok(running) = self.running.lock() {
+                if let Some(flag) = running.as_ref() {
+                    flag.cancel();
+                }
+            }
         }
         self.queue.wake.notify_all();
         if let Some(handle) = self.handle.take() {
@@ -510,23 +593,17 @@ impl Drop for AlignWorker {
 }
 
 /// The worker loop: take a job, run it, publish what came out.
-fn run_worker(
-    queue: &Arc<JobQueue>,
-    completions: &Arc<Mutex<Vec<AlignCompletion>>>,
-    running: &Arc<Mutex<Option<CancelFlag>>>,
-    busy: &Arc<AtomicU64>,
-    failed: &Arc<AtomicBool>,
-) {
+fn run_worker(worker: &WorkerThread) {
     let mut cached = WorkerCache::default();
     loop {
-        let (job, _busy) = {
-            let Ok(mut state) = queue.state.lock() else {
-                mark_failed(failed, "queue lock poisoned", None);
+        let (job, cancel, _busy) = {
+            let Ok(mut state) = worker.queue.state.lock() else {
+                mark_failed(&worker.failed, "queue lock poisoned", None);
                 return;
             };
             while state.jobs.is_empty() && !state.shutdown {
-                let Ok(next) = queue.wake.wait(state) else {
-                    mark_failed(failed, "queue wait poisoned", None);
+                let Ok(next) = worker.queue.wake.wait(state) else {
+                    mark_failed(&worker.failed, "queue wait poisoned", None);
                     return;
                 };
                 state = next;
@@ -537,26 +614,24 @@ fn run_worker(
             let Some(job) = state.jobs.pop_front() else {
                 continue;
             };
-            // The guard starts before the queue lock releases, so `is_busy`
-            // observes either queued work or a busy worker. RAII decrements it
-            // after publication and covers every early return and unwind.
-            (job, Busy::new(busy))
+            let cancel = CancelFlag::new();
+            let Ok(mut slot) = worker.running.lock() else {
+                mark_failed(&worker.failed, "running-job lock poisoned", None);
+                return;
+            };
+            *slot = Some(cancel.clone());
+            drop(slot);
+            // Start before releasing the queue lock so `is_busy` sees either
+            // queued work or a registered running job. RAII covers every exit.
+            (job, cancel, Busy::new(&worker.busy))
         };
-
-        let cancel = CancelFlag::new();
-        let Ok(mut slot) = running.lock() else {
-            mark_failed(failed, "running-job lock poisoned", None);
-            return;
-        };
-        *slot = Some(cancel.clone());
-        drop(slot);
         let outcome = execute(&job, &cancel, &mut cached);
         // Cancelled stages may return structurally valid but unusable values;
         // do not publish them.
         let abandoned = cancel.is_cancelled();
 
-        let Ok(mut slot) = running.lock() else {
-            mark_failed(failed, "running-job lock poisoned", None);
+        let Ok(mut slot) = worker.running.lock() else {
+            mark_failed(&worker.failed, "running-job lock poisoned", None);
             return;
         };
         *slot = None;
@@ -564,8 +639,8 @@ fn run_worker(
         if abandoned {
             continue;
         }
-        let Ok(mut published) = completions.lock() else {
-            mark_failed(failed, "completion lock poisoned", None);
+        let Ok(mut published) = worker.completions.lock() else {
+            mark_failed(&worker.failed, "completion lock poisoned", None);
             return;
         };
         published.push(AlignCompletion {
@@ -573,6 +648,10 @@ fn run_worker(
             request_id: job.request_id,
             outcome,
         });
+        drop(published);
+        if let Some(ctx) = worker.repaint_ctx.as_ref() {
+            ctx.request_repaint();
+        }
     }
 }
 

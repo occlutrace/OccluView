@@ -1,10 +1,10 @@
 use super::super::{
     egui, live_viewport, paint_axis_gizmo, paint_scale_bar, Arc, AxisGizmoInput, GpuMeshUniform,
-    Instant, Mat4, OccluViewApp, Scene, SceneMesh,
+    Instant, Mat4, Scene, SceneContext, SceneMesh,
 };
 use occluview_core::Aabb;
 
-impl OccluViewApp {
+impl SceneContext<'_> {
     pub(in crate::app) fn set_scene(&mut self, mut scene: Scene, reset_camera: bool) {
         self.document.content_revision = self.document.content_revision.wrapping_add(1);
         // The drag is ended here, and which form is decided by what happens to
@@ -135,7 +135,7 @@ impl OccluViewApp {
         self.clear_live_viewport();
         self.render.prepared_scene = None;
         self.render.prepared_selection_overlay = None;
-        self.persistence.current_paths.clear();
+        self.document.current_paths.clear();
         self.render.camera = None;
         self.render.rendered = None;
         self.render.invalidation.reset();
@@ -151,93 +151,98 @@ impl OccluViewApp {
         self.render.section_cache.clear();
     }
 
-    pub(in crate::app) fn show_central_panel(&mut self, root_ui: &mut egui::Ui) {
-        let ctx = root_ui.ctx().clone();
-        // The default CentralPanel carries an 8 px inner margin. That leaves a
-        // visible strip between the application chrome and the render surface;
-        // this panel owns the viewport background, so it must be edge-to-edge.
-        egui::CentralPanel::no_frame().show(root_ui, |ui| {
-            ui.painter().rect_filled(
-                ui.max_rect(),
-                0.0,
-                self.persistence.settings.viewport_background.srgb(),
+    /// Draw one scene into its assigned canvas. The workspace root owns the
+    /// shared `CentralPanel`, so scene rendering never changes global layout.
+    pub(in crate::app) fn show_pane(
+        &mut self,
+        root_ui: &mut egui::Ui,
+        viewport_rect: egui::Rect,
+        workspace_rect: egui::Rect,
+        ctx: &egui::Context,
+    ) {
+        self.workspace_rect = Some(workspace_rect);
+        self.sync_render_extent(viewport_rect.size(), ctx.pixels_per_point());
+        let input_allowed = self.is_active && self.input_allowed;
+        if input_allowed {
+            self.handle_edit_shortcuts(ctx);
+        }
+        let sense = if input_allowed {
+            egui::Sense::click_and_drag()
+        } else {
+            egui::Sense::hover()
+        };
+        let live_viewport = self.render.live_viewport.clone();
+        if let Some(live_viewport) = live_viewport {
+            let response = root_ui.allocate_rect(viewport_rect, sense);
+            // The callback paints into the egui render pass at this rect. Its
+            // camera and GPU peer belong only to this SceneContext.
+            let live_px = response.rect.size() * ctx.pixels_per_point();
+            self.render.live_viewport_px = Some([
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                {
+                    live_px.x.round().max(1.0) as u32
+                },
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                {
+                    live_px.y.round().max(1.0) as u32
+                },
+            ]);
+            root_ui
+                .painter()
+                .add(live_viewport::paint_callback(response.rect, live_viewport));
+            self.show_viewport_overlays(root_ui, &response, ctx, input_allowed);
+        } else if let Some(texture) = self
+            .render
+            .rendered
+            .as_ref()
+            .map(|rendered| rendered.texture.clone())
+        {
+            let available = viewport_rect.size();
+            let response = root_ui.put(
+                viewport_rect,
+                egui::Image::new((texture.id(), available)).sense(sense),
             );
-            self.sync_render_extent(ui.available_size(), ctx.pixels_per_point());
-            let live_viewport = self.render.live_viewport.clone();
-            if let Some(live_viewport) = live_viewport {
-                let available = ui.available_size();
-                let viewport_rect = egui::Rect::from_min_size(ui.cursor().min, available);
-                let response = ui.allocate_rect(viewport_rect, egui::Sense::click_and_drag());
-                // The callback paints into egui's render pass at this rect, so
-                // it is the real viewport; `render_extent_px` is clamped for the
-                // offscreen target and the invalidation threshold. The splat
-                // radius is measured in pixels of the former.
-                let ppp = ctx.pixels_per_point();
-                let live_px = response.rect.size() * ppp;
-                self.render.live_viewport_px = Some([
-                    // Not clamped to the render-extent bounds: this is the
-                    // viewport the callback actually paints, and the splat
-                    // radius is measured against it. A non-finite or negative
-                    // size cannot reach here (egui rects are finite and
-                    // non-negative), so the cast is a plain round with a floor
-                    // of one pixel.
-                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                    {
-                        live_px.x.round().max(1.0) as u32
-                    },
-                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                    {
-                        live_px.y.round().max(1.0) as u32
-                    },
-                ]);
-                ui.painter()
-                    .add(live_viewport::paint_callback(response.rect, live_viewport));
-                self.show_viewport_overlays(ui, &response, &ctx);
-            } else if let Some(texture) = self
-                .render
-                .rendered
-                .as_ref()
-                .map(|rendered| rendered.texture.clone())
-            {
-                let available = ui.available_size();
-                let viewport_rect = egui::Rect::from_min_size(ui.cursor().min, available);
-                let response = ui.put(
-                    viewport_rect,
-                    egui::Image::new((texture.id(), available))
-                        .sense(egui::Sense::click_and_drag()),
-                );
-                self.show_viewport_overlays(ui, &response, &ctx);
-            } else if self.document.scene.is_none() {
-                let available = ui.available_size();
-                let viewport_rect = egui::Rect::from_min_size(ui.cursor().min, available);
-                let response = ui.allocate_rect(viewport_rect, egui::Sense::click());
-                Self::set_drop_hover_cursor_if_hovering(&ctx);
-                self.show_empty_state(ui, &response, &ctx);
-                self.show_status_overlay(ui, viewport_rect);
-            } else {
-                ui.spinner();
+            self.show_viewport_overlays(root_ui, &response, ctx, input_allowed);
+        } else if self
+            .document
+            .scene
+            .as_ref()
+            .is_none_or(|scene| scene.meshes().is_empty())
+        {
+            let response = root_ui.allocate_rect(viewport_rect, sense);
+            Self::set_drop_hover_cursor_if_hovering(ctx);
+            self.show_empty_state(root_ui, &response, ctx);
+            if self.is_active {
+                self.show_status_overlay(root_ui, viewport_rect);
             }
-        });
+        } else {
+            root_ui.scope_builder(egui::UiBuilder::new().max_rect(viewport_rect), |ui| {
+                ui.centered_and_justified(egui::Ui::spinner);
+            });
+        }
     }
 
     /// Every overlay the viewport draws, and the input arbitration that
     /// follows them.
     ///
-    /// One body, called by both branches of `show_central_panel_impl`, so a new
-    /// tool reaches the offscreen branch too. That branch runs only for
-    /// operators whose driver could not give the app a live viewport, where a
-    /// tool missing from it would be hardest to diagnose. The branches differ
-    /// only in how they obtain `response`.
+    /// Viewport-specific overlays for one pane. The common Layers panel is
+    /// drawn once by the workspace root after all scene surfaces.
     fn show_viewport_overlays(
         &mut self,
         ui: &mut egui::Ui,
         response: &egui::Response,
         ctx: &egui::Context,
+        input_allowed: bool,
     ) {
         // While files hover anywhere over the window the viewport advertises
         // itself as the drop target, without painting a border over the model.
         Self::set_drop_hover_cursor_if_hovering(ctx);
-        if self.document.scene.is_none() {
+        if self
+            .document
+            .scene
+            .as_ref()
+            .is_none_or(|scene| scene.meshes().is_empty())
+        {
             // No scene yet: a quiet centered call to action over the clear
             // color. The overlays below are all camera/scene-gated, so the
             // right-click scene menu keeps working untouched.
@@ -267,33 +272,41 @@ impl OccluViewApp {
                 });
             }
         }
-        self.show_layers_overlay(ui, response.rect, ctx);
+        if self.is_active {
+            self.show_status_overlay(ui, response.rect);
+        }
+        let tool_ui_allowed =
+            self.is_active && ctx.input(|input| input.focused) && !self.ui.modal_dialog_open();
+        if !tool_ui_allowed {
+            self.publish_sculpt_cursor(None);
+            self.paint_passive_tool_overlays(ui, response.rect, ctx);
+            return;
+        }
         self.show_mesh_editor_overlay(response.rect, ctx);
         self.paint_mesh_selection_drag_overlay_impl(ui);
-        self.show_status_overlay(ui, response.rect);
+        // Resolve the contact strip and its dynamically sized details panel
+        // before scene tools inspect raw press positions on this same layer.
+        self.drain_contacts_worker(ctx);
+        self.sync_contacts_with_scene(ctx);
+        let contact_ui_consumed = self.show_contact_bar(ui, response.rect, ctx);
+        self.show_contact_hover(ui, response, ctx);
         let bridge_ui_consumed = self.show_bridge_split_overlay(ui, response, ctx);
         let cut_ui_consumed = self.show_cut_tool_overlay(ui, response.rect, ctx);
         // A click the axis gizmo snapped on never doubles as a measure anchor.
         let align_ui_consumed =
             self.show_align_tool_overlay(ui, response, axis_snap.is_some(), ctx);
-        // The contact reading runs whether or not the Align tool is armed, and
-        // its readout is painted after the panels so the chip sits above them.
-        self.drain_contacts_worker(ctx);
-        self.sync_contacts_with_scene(ctx);
-        self.handle_contact_escape(ctx);
-        let contact_ui_consumed = self.show_contact_bar(ui, response.rect, ctx);
-        self.show_contact_hover(ui, response, ctx);
         let contact_ui_consumed = contact_ui_consumed && !align_ui_consumed;
         let measure_ui_consumed =
             self.show_measure_tool_overlay(ui, response, axis_snap.is_some(), ctx);
+        self.handle_contact_escape(ctx);
         if let Some(axis) = axis_snap {
-            if let Some(camera) = self.render.camera.as_mut() {
+            if let Some(camera) = self.render.camera.as_mut().filter(|_| input_allowed) {
                 camera.snap_to_axis(axis);
-                self.render.invalidation.request_redraw();
-                ctx.request_repaint();
+                self.request_camera_repaint(ctx);
             }
         }
-        if !bridge_ui_consumed
+        if input_allowed
+            && !bridge_ui_consumed
             && !cut_ui_consumed
             && !measure_ui_consumed
             && !align_ui_consumed
@@ -305,6 +318,48 @@ impl OccluViewApp {
         // visual cursor then reuses it for held drags and publishes its GPU
         // uniforms before the callback's render pass executes.
         self.paint_sculpt_cursor_impl(ui, response);
+    }
+
+    /// Keep scene annotations visible while controls belong to another pane.
+    /// Painting the saved result must never advance the inactive tool's input.
+    fn paint_passive_tool_overlays(
+        &mut self,
+        ui: &mut egui::Ui,
+        viewport: egui::Rect,
+        ctx: &egui::Context,
+    ) {
+        self.paint_mesh_selection_drag_overlay_impl(ui);
+        if let Some(camera) = self.render.camera {
+            crate::measure_overlay::paint_measurements(
+                ui.painter(),
+                &camera,
+                viewport,
+                &self.tools.measure,
+                self.persistence.settings.unit_display,
+                None,
+                self.persistence.settings.ruler_line_angle,
+            );
+            if self.tools.align.tool.is_armed() {
+                if let Some(scene) = self.document.scene.as_deref() {
+                    crate::align_overlay::paint_pairs(
+                        ui.painter(),
+                        &crate::align_overlay::PairPaint {
+                            camera: &camera,
+                            viewport_rect: viewport,
+                            scene,
+                            tool: &self.tools.align.tool,
+                            rejected: &self.tools.align.rejected,
+                            hover: None,
+                        },
+                    );
+                }
+            }
+        }
+        ui.scope(|ui| {
+            ui.disable();
+            self.show_cut_tool_overlay(ui, viewport, ctx);
+            self.show_contact_bar(ui, viewport, ctx);
+        });
     }
 
     pub(in crate::app) fn render_pending_frame(&mut self, ctx: &egui::Context) {

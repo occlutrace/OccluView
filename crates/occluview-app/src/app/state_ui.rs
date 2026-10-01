@@ -4,10 +4,10 @@
 //! Owned invariants:
 //!
 //! - `status_message*` is write-only presentation: domain code reports
-//!   outcomes, and only this owner (plus [`Self::expire_status_message`])
+//!   outcomes, and only [`SceneUiState::expire_status_message`]
 //!   decides what the operator still sees.
 //! - Dialog flags (`close_guard_open`, `pending_replace_open`, `app_error`,
-//!   `information_dialog`) gate input through [`Self::modal_dialog_open`];
+//!   `information_dialog`) gate input through [`UiState::modal_dialog_open`];
 //!   tools and hotkeys ask the predicate, they do not enumerate dialogs.
 //! - `repaint_ctx` is the egui handle for scheduling repaints; native window
 //!   handles live in [`PlatformState`](super::state_platform::PlatformState).
@@ -53,20 +53,16 @@ fn information_route_is_blocked(
 #[allow(clippy::struct_excessive_bools)]
 pub(super) struct UiState {
     pub(super) repaint_ctx: egui::Context,
+    pub(super) scene_report_open: bool,
+    pub(super) workspace_modal_open: bool,
     /// Runtime localizer: one catalog generation per frame. UI/presentation
     /// ownership; persisted preference lives in [`PersistenceState`](super::state_persistence::PersistenceState).
     pub(super) locale: crate::i18n::LocaleManager,
     /// Whether the native window title was synced to the catalog yet.
     /// Sent once on the first frame and on every manual switch afterwards.
     pub(super) native_title_sent: bool,
-    pub(super) status_message: Option<String>,
-    pub(super) status_message_since: Option<Instant>,
-    pub(super) status_message_snapshot: Option<String>,
     pub(super) app_error: Option<AppErrorDialog>,
     pub(super) information_dialog: InformationDialog,
-    /// Persistent post-repair report card, populated by the Repair executor and
-    /// drawn in `ui()`; shows what a repair changed (or that nothing did).
-    pub(super) repair_report: crate::repair_report::RepairReportDialog,
     /// Whether a popup was open at the start of this frame.
     ///
     /// Read instead of asking egui live, because egui closes a popup on a
@@ -83,27 +79,20 @@ pub(super) struct UiState {
     pub(super) app_logo: Option<egui::TextureHandle>,
     pub(super) foreground_pulse_until: Option<Instant>,
     pub(super) viewport_orbit_cursor_grabbed: bool,
-    /// Suppresses the stationary RMB context menu when the same press already
-    /// moved the camera, including motion below egui's click/drag threshold.
-    pub(super) viewport_secondary_gesture_moved_since_press: bool,
     /// The empty-viewport card was clicked: open the native Open dialog once,
     /// after the panel pass (the toolbar dispatches its dialog the same way).
-    pub(super) open_dialog_requested: bool,
     /// The close-guard dialog is on screen.
     pub(super) close_guard_open: bool,
     /// The operator explicitly chose to close without saving.
     pub(super) close_confirmed: bool,
     /// A replace-scene request waiting for the unsaved-edit guard.
     pub(super) pending_replace_open: Option<PendingReplaceOpen>,
-    /// Layer count the automatic window-growth hint last reacted to. The hint
-    /// fires only when this count changes and only ever grows the window, so a
-    /// manual user resize is never fought frame by frame.
-    pub(super) layers_window_layer_count: Option<usize>,
 }
 
 /// A replace-scene open request parked behind the unsaved-edit guard dialog.
 #[derive(Clone)]
 pub(super) struct PendingReplaceOpen {
+    pub(super) scene_key: super::workspace::id::SceneKey,
     pub(super) paths: Vec<std::path::PathBuf>,
     pub(super) source: &'static str,
     /// When this request was made.
@@ -117,64 +106,19 @@ pub(super) struct PendingReplaceOpen {
     pub(super) requested_at: Instant,
 }
 
-impl UiState {
-    pub(super) fn new(repaint_ctx: egui::Context, locale: crate::i18n::LocaleManager) -> Self {
-        Self {
-            repaint_ctx,
-            locale,
-            native_title_sent: false,
-            status_message: None,
-            status_message_since: None,
-            status_message_snapshot: None,
-            app_error: None,
-            information_dialog: InformationDialog::default(),
-            repair_report: crate::repair_report::RepairReportDialog::default(),
-            popup_open_at_frame_start: false,
-            app_logo: None,
-            foreground_pulse_until: None,
-            viewport_orbit_cursor_grabbed: false,
-            viewport_secondary_gesture_moved_since_press: false,
-            open_dialog_requested: false,
-            close_guard_open: false,
-            close_confirmed: false,
-            pending_replace_open: None,
-            layers_window_layer_count: None,
-        }
-    }
+/// Presentation that belongs to one scene and survives focus changes.
+#[derive(Default)]
+pub(super) struct SceneUiState {
+    pub(super) open_dialog_requested: bool,
+    pub(super) status_message: Option<String>,
+    pub(super) status_message_since: Option<Instant>,
+    pub(super) status_message_snapshot: Option<String>,
+    pub(super) repair_report: crate::repair_report::RepairReportDialog,
+    pub(super) viewport_secondary_gesture_moved_since_press: bool,
+    pub(super) layers_window_layer_count: Option<usize>,
+}
 
-    /// Whether a modal dialog owns the keyboard.
-    ///
-    /// Escape belongs to the dialog in front of the operator, never to a tool
-    /// behind it. Tools ask this one predicate instead of listing dialogs
-    /// inline: a list that misses a dialog lets Escape tear the tool down behind
-    /// it, and for align also run `cancel_align_session`, putting every scan
-    /// back where it started.
-    pub(super) fn modal_dialog_open(&self) -> bool {
-        OpenDialogs {
-            close_guard: self.close_guard_open,
-            pending_replace: self.pending_replace_open.is_some(),
-            error: self.app_error.is_some(),
-            // Any popup, read from the frame-start snapshot. The settings
-            // popup is included by that term; the comment on the field explains
-            // why a live query is too late.
-            settings_popup: self.popup_open_at_frame_start,
-            information_dialog: self.information_dialog.is_open(),
-            repair_report: self.repair_report.is_open(),
-        }
-        .any()
-    }
-
-    /// A decision dialog takes precedence over informational content. Keep an
-    /// open information route in state so it can return after the decision is
-    /// resolved, but never let its modal consume Escape or clicks underneath.
-    pub(super) fn foreground_dialog_open(&self) -> bool {
-        information_route_is_blocked(
-            self.close_guard_open,
-            self.pending_replace_open.is_some(),
-            self.app_error.is_some(),
-        )
-    }
-
+impl SceneUiState {
     /// Expire transient status text after the shared display interval.
     pub(super) fn expire_status_message(&mut self, ctx: &egui::Context) {
         const STATUS_MESSAGE_TTL: std::time::Duration = std::time::Duration::from_secs(4);
@@ -195,6 +139,73 @@ impl UiState {
             ctx.request_repaint_after(STATUS_MESSAGE_TTL.saturating_sub(elapsed));
         }
     }
+}
+
+impl UiState {
+    pub(super) fn new(repaint_ctx: egui::Context, locale: crate::i18n::LocaleManager) -> Self {
+        Self {
+            repaint_ctx,
+            scene_report_open: false,
+            workspace_modal_open: false,
+            locale,
+            native_title_sent: false,
+            app_error: None,
+            information_dialog: InformationDialog::default(),
+            popup_open_at_frame_start: false,
+            app_logo: None,
+            foreground_pulse_until: None,
+            viewport_orbit_cursor_grabbed: false,
+            close_guard_open: false,
+            close_confirmed: false,
+            pending_replace_open: None,
+        }
+    }
+
+    /// Whether a modal dialog owns the keyboard.
+    ///
+    /// Escape belongs to the dialog in front of the operator, never to a tool
+    /// behind it. Tools ask this one predicate instead of listing dialogs
+    /// inline: a list that misses a dialog lets Escape tear the tool down behind
+    /// it, and for align also run `cancel_align_session`, putting every scan
+    /// back where it started.
+    pub(super) fn modal_dialog_open(&self) -> bool {
+        if self.workspace_modal_open {
+            return true;
+        }
+        OpenDialogs {
+            close_guard: self.close_guard_open,
+            pending_replace: self.pending_replace_open.is_some(),
+            error: self.app_error.is_some(),
+            // Any popup, read from the frame-start snapshot. The settings
+            // popup is included by that term; the comment on the field explains
+            // why a live query is too late.
+            settings_popup: self.popup_open_at_frame_start,
+            information_dialog: self.information_dialog.is_open(),
+            repair_report: self.scene_report_open,
+        }
+        .any()
+    }
+
+    /// Accepted commands may originate inside a popup. A popup that produced
+    /// the command is not a blocking decision dialog.
+    pub(super) fn command_dialog_open(&self) -> bool {
+        self.foreground_dialog_open() || self.information_dialog.is_open() || self.scene_report_open
+    }
+
+    /// A decision dialog takes precedence over informational content. Keep an
+    /// open information route in state so it can return after the decision is
+    /// resolved, but never let its modal consume Escape or clicks underneath.
+    pub(super) fn foreground_dialog_open(&self) -> bool {
+        if self.workspace_modal_open {
+            return true;
+        }
+        information_route_is_blocked(
+            self.close_guard_open,
+            self.pending_replace_open.is_some(),
+            self.app_error.is_some(),
+        )
+    }
+
     /// Push the catalog window title to the native window once per
     /// language generation. eframe applies `ViewportCommand::Title` live.
     pub(super) fn sync_native_title(&mut self, ctx: &egui::Context) {
@@ -218,14 +229,15 @@ mod tests {
     }
 
     #[test]
-    fn ui_state_starts_without_dialogs_or_status() {
+    fn ui_state_starts_without_dialogs_and_scene_ui_without_status() {
         let ui = UiState::new(
             egui::Context::default(),
             crate::i18n::LocaleManager::for_tests(),
         );
+        let scene_ui = SceneUiState::default();
 
         assert!(!ui.modal_dialog_open());
         assert!(!ui.foreground_dialog_open());
-        assert!(ui.status_message.is_none());
+        assert!(scene_ui.status_message.is_none());
     }
 }

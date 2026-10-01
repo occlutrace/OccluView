@@ -1,8 +1,8 @@
-// Additive, display-only Sculpt surface feedback.
+// Display-only Sculpt surface tint.
 //
 // Kept in its own shader module so the ordinary mesh pipeline remains exactly
 // the material/depth path used by thumbnails, cut views, and every non-Sculpt
-// frame. The selected mesh is drawn a second time with only this light field.
+// frame. The selected mesh is drawn a second time with only this tint field.
 
 struct Camera {
     view: mat4x4<f32>,
@@ -79,9 +79,9 @@ fn vs_main(in: VertexIn) -> VertexOut {
     return out;
 }
 
-// Emit only an additive RGB field. The target mesh's material was already
-// written by the normal scene pass, so this cannot double scan colors,
-// textures, heatmap hues, or opacity.
+// Blend toward the brush color over the rendered surface. A dark Smooth mark
+// remains visible on a light scan, where adding light would saturate. Only RGB
+// is written; the material's opacity and all pixels outside the stamp remain.
 @fragment
 fn fs_sculpt_feedback(in: VertexOut) -> @location(0) vec4<f32> {
     if sculpt_brush.visible == 0u {
@@ -101,12 +101,6 @@ fn fs_sculpt_feedback(in: VertexOut) -> @location(0) vec4<f32> {
         sculpt_brush.cylinder_plateau,
         sculpt_brush.knife_axis_min_length,
     );
-    var n = in.normal;
-    if length(n) < 0.001 {
-        n = vec3<f32>(0.0, 0.0, 1.0);
-    } else {
-        n = normalize(n);
-    }
     var brush_n = sculpt_brush.normal;
     if length(brush_n) < 0.001 {
         brush_n = vec3<f32>(0.0, 0.0, 1.0);
@@ -131,12 +125,10 @@ fn fs_sculpt_feedback(in: VertexOut) -> @location(0) vec4<f32> {
     if field <= 0.0 && rim <= 0.0 {
         discard;
     }
-    let alignment = abs(dot(n, brush_n));
-    let visible_field = field * (0.58 + 0.42 * alignment);
-    return vec4<f32>(
-        sculpt_brush.color.rgb * (sculpt_brush.intensity * visible_field + 0.24 * rim),
-        0.0,
-    );
+    let tint = clamp(sculpt_brush.intensity * 2.5 * field, 0.0, 1.0);
+    let edge_tint = clamp(0.7 * rim, 0.0, 1.0);
+    let alpha = 1.0 - (1.0 - tint) * (1.0 - edge_tint);
+    return vec4<f32>(sculpt_brush.color.rgb, alpha);
 }
 
 fn sculpt_brush_edge_coordinate(

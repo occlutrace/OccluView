@@ -5,13 +5,13 @@ use occluview_core::{Mesh, Scene, SceneMesh, SceneMeshId};
 
 use super::state::{BusyFinish, EditModeCommand, EditModeState, EditSessionToken, LayerKey};
 use super::EditModeController;
+use crate::app::workspace::history::{HistoryDirection, HistorySnapshot, HistoryStepKind};
 
 #[derive(Clone, Debug)]
 pub(super) enum MeshEditUndoSnapshot {
     Layer(SceneMesh),
     Scene {
         scene: Scene,
-        focus_layer_id: SceneMeshId,
         /// The exact set of layer ids the live scene is expected to hold for
         /// this whole-scene snapshot to be safely restorable. A structural
         /// undo/redo swaps the entire scene, so it is only safe when the live
@@ -21,15 +21,6 @@ pub(super) enum MeshEditUndoSnapshot {
         /// or to the restored scene's id-set when a reverse step is pushed.
         guard_ids: Vec<SceneMeshId>,
     },
-}
-
-impl MeshEditUndoSnapshot {
-    fn focus_layer_id(&self) -> SceneMeshId {
-        match self {
-            Self::Layer(layer) => layer.id(),
-            Self::Scene { focus_layer_id, .. } => *focus_layer_id,
-        }
-    }
 }
 
 /// Outcome of attempting a structural (whole-scene) undo or redo step.
@@ -95,10 +86,16 @@ impl EditModeController {
             return None;
         }
         let snapshot_bytes = scene_mesh_snapshot_bytes_from_mesh(&snapshot_mesh);
-        self.last_undo_push_stored = self.undo.push_undo(
+        self.last_undo_push_stored = false;
+        self.pending_history_command = self.history.borrow_mut().push_pending_edit(
+            self.history_scope,
+            HistoryStepKind::LayerEdit {
+                layer_id: layer.id(),
+            },
             MeshEditUndoSnapshot::Layer(layer.with_mesh(snapshot_mesh)),
             snapshot_bytes,
         );
+        self.last_undo_push_stored = self.pending_history_command.is_some();
         Some(token)
     }
 
@@ -116,10 +113,12 @@ impl EditModeController {
         if !self.state.begin_busy(command, token) {
             return None;
         }
-        self.last_undo_push_stored = self.undo.push_undo(
+        self.last_undo_push_stored = false;
+        self.pending_history_command = self.history.borrow_mut().push_pending_edit(
+            self.history_scope,
+            HistoryStepKind::SceneEdit { layer_id },
             MeshEditUndoSnapshot::Scene {
                 scene: scene.clone(),
-                focus_layer_id: layer_id,
                 // Placeholder = pre-op id-set. It is correct as-is if the op
                 // never mutates the scene (the error path); the success path
                 // re-stamps it to the post-op id-set in
@@ -128,13 +127,17 @@ impl EditModeController {
             },
             scene_snapshot_bytes(scene),
         );
+        self.last_undo_push_stored = self.pending_history_command.is_some();
         Some(token)
     }
 
     pub(crate) fn finish_layer_edit_success(&mut self, token: EditSessionToken) -> BusyFinish {
         // The op changed content: the redo history displaced by this op's
         // pre-op snapshot is now permanently invalid.
-        self.undo.commit_last_undo();
+        self.last_undo_push_stored = self
+            .pending_history_command
+            .take()
+            .is_some_and(|id| self.history.borrow_mut().commit_pending_edit(id));
         let finish = self.state.finish_busy_success(token, true);
         if finish == BusyFinish::Applied {
             self.session_dirty = true;
@@ -153,11 +156,20 @@ impl EditModeController {
     ) -> BusyFinish {
         if self.last_undo_push_stored {
             let post_op_ids = scene_layer_ids(post_op_scene);
-            if let Some(MeshEditUndoSnapshot::Scene { guard_ids, .. }) = self.undo.peek_undo_mut() {
-                *guard_ids = post_op_ids;
+            if let Some(command_id) = self.pending_history_command {
+                self.history
+                    .borrow_mut()
+                    .update_pending::<MeshEditUndoSnapshot>(command_id, |snapshot| {
+                        if let MeshEditUndoSnapshot::Scene { guard_ids, .. } = snapshot {
+                            *guard_ids = post_op_ids;
+                        }
+                    });
             }
         }
-        self.undo.commit_last_undo();
+        self.last_undo_push_stored = self
+            .pending_history_command
+            .take()
+            .is_some_and(|id| self.history.borrow_mut().commit_pending_edit(id));
         let finish = self.state.finish_busy_success(token, true);
         if finish == BusyFinish::Applied {
             self.session_dirty = true;
@@ -170,6 +182,10 @@ impl EditModeController {
         token: EditSessionToken,
         message: String,
     ) -> BusyFinish {
+        if let Some(command_id) = self.pending_history_command.take() {
+            self.history.borrow_mut().discard_pending(command_id);
+        }
+        self.last_undo_push_stored = false;
         self.state.finish_busy_error(token, message)
     }
 
@@ -178,8 +194,11 @@ impl EditModeController {
     /// state stays exactly as it was before the op.
     pub(crate) fn finish_layer_edit_noop(&mut self, token: EditSessionToken) -> BusyFinish {
         let finish = self.state.finish_busy_success(token, false);
-        if finish == BusyFinish::Applied && self.last_undo_push_stored {
-            self.undo.discard_last_undo();
+        if finish == BusyFinish::Applied {
+            if let Some(command_id) = self.pending_history_command.take() {
+                self.history.borrow_mut().discard_pending(command_id);
+            }
+            self.last_undo_push_stored = false;
         }
         finish
     }
@@ -192,15 +211,29 @@ impl EditModeController {
     }
 
     pub(crate) fn undo_layer_id(&self) -> Option<SceneMeshId> {
-        self.undo
-            .peek_undo()
-            .map(MeshEditUndoSnapshot::focus_layer_id)
+        let step = self
+            .history
+            .borrow()
+            .top_step(self.history_scope, HistoryDirection::Undo)?;
+        match step.kind {
+            HistoryStepKind::LayerEdit { layer_id } | HistoryStepKind::SceneEdit { layer_id } => {
+                Some(layer_id)
+            }
+            HistoryStepKind::Transfer => None,
+        }
     }
 
     pub(crate) fn redo_layer_id(&self) -> Option<SceneMeshId> {
-        self.undo
-            .peek_redo()
-            .map(MeshEditUndoSnapshot::focus_layer_id)
+        let step = self
+            .history
+            .borrow()
+            .top_step(self.history_scope, HistoryDirection::Redo)?;
+        match step.kind {
+            HistoryStepKind::LayerEdit { layer_id } | HistoryStepKind::SceneEdit { layer_id } => {
+                Some(layer_id)
+            }
+            HistoryStepKind::Transfer => None,
+        }
     }
 
     /// Re-apply the last undone layer edit (Ctrl+Y). The redo stack is
@@ -242,16 +275,33 @@ impl EditModeController {
         if matches!(self.state, EditModeState::Busy { .. }) {
             return None;
         }
-        if direction.layer_id(self) != Some(current.id()) {
+        let step = self
+            .history
+            .borrow()
+            .top_step(self.history_scope, direction)?;
+        if step.kind
+            != (HistoryStepKind::LayerEdit {
+                layer_id: current.id(),
+            })
+        {
             return None;
         }
-        if !matches!(direction.peek(self), Some(MeshEditUndoSnapshot::Layer(_))) {
+        if !matches!(
+            self.history
+                .borrow()
+                .payload::<MeshEditUndoSnapshot>(step.command_id),
+            Some(MeshEditUndoSnapshot::Layer(_))
+        ) {
             return None;
         }
-        let restored = match direction.apply(
-            self,
-            MeshEditUndoSnapshot::Layer(current.clone()),
-            scene_mesh_snapshot_bytes(current),
+        let restored = match self.history.borrow_mut().navigate_edit(
+            self.history_scope,
+            direction,
+            step.command_id,
+            HistorySnapshot {
+                value: MeshEditUndoSnapshot::Layer(current.clone()),
+                bytes: scene_mesh_snapshot_bytes(current),
+            },
         )? {
             MeshEditUndoSnapshot::Layer(restored) => restored,
             MeshEditUndoSnapshot::Scene { .. } => return None,
@@ -276,18 +326,26 @@ impl EditModeController {
         if matches!(self.state, EditModeState::Busy { .. }) {
             return StructuralHistoryStep::NotAvailable;
         }
-        if direction.layer_id(self) != Some(layer_id) {
+        let Some(step) = self
+            .history
+            .borrow()
+            .top_step(self.history_scope, direction)
+        else {
+            return StructuralHistoryStep::NotAvailable;
+        };
+        if step.kind != (HistoryStepKind::SceneEdit { layer_id }) {
             return StructuralHistoryStep::NotAvailable;
         }
         // Inspect the step under the immutable borrow: it must be a scene
         // snapshot, its guard must still match the live scene, and the reverse
         // step we are about to push must guard against the scene we restore.
         let reverse_guard = {
+            let history = self.history.borrow();
             let Some(MeshEditUndoSnapshot::Scene {
                 scene: restore_scene,
                 guard_ids,
                 ..
-            }) = direction.peek(self)
+            }) = history.payload::<MeshEditUndoSnapshot>(step.command_id)
             else {
                 return StructuralHistoryStep::NotAvailable;
             };
@@ -296,14 +354,17 @@ impl EditModeController {
             }
             scene_layer_ids(restore_scene)
         };
-        let restored = match direction.apply(
-            self,
-            MeshEditUndoSnapshot::Scene {
-                scene: current.clone(),
-                focus_layer_id: layer_id,
-                guard_ids: reverse_guard,
+        let restored = match self.history.borrow_mut().navigate_edit(
+            self.history_scope,
+            direction,
+            step.command_id,
+            HistorySnapshot {
+                value: MeshEditUndoSnapshot::Scene {
+                    scene: current.clone(),
+                    guard_ids: reverse_guard,
+                },
+                bytes: scene_snapshot_bytes(current),
             },
-            scene_snapshot_bytes(current),
         ) {
             Some(MeshEditUndoSnapshot::Scene { scene, .. }) => scene,
             Some(MeshEditUndoSnapshot::Layer(_)) | None => {
@@ -317,43 +378,6 @@ impl EditModeController {
     }
 }
 
-/// Which way to move through the undo/redo stack. Private: `undo_snapshot`'s
-/// `navigate_layer_edit`/`navigate_scene_edit` are the only callers, reached
-/// through the four public undo/redo methods above.
-#[derive(Clone, Copy)]
-enum HistoryDirection {
-    Undo,
-    Redo,
-}
-
-impl HistoryDirection {
-    fn layer_id(self, controller: &EditModeController) -> Option<SceneMeshId> {
-        match self {
-            Self::Undo => controller.undo_layer_id(),
-            Self::Redo => controller.redo_layer_id(),
-        }
-    }
-
-    fn peek(self, controller: &EditModeController) -> Option<&MeshEditUndoSnapshot> {
-        match self {
-            Self::Undo => controller.undo.peek_undo(),
-            Self::Redo => controller.undo.peek_redo(),
-        }
-    }
-
-    fn apply(
-        self,
-        controller: &mut EditModeController,
-        current: MeshEditUndoSnapshot,
-        current_bytes: usize,
-    ) -> Option<MeshEditUndoSnapshot> {
-        match self {
-            Self::Undo => controller.undo.undo(current, current_bytes),
-            Self::Redo => controller.undo.redo(current, current_bytes),
-        }
-    }
-}
-
 pub(super) fn scene_mesh_snapshot_bytes(layer: &SceneMesh) -> usize {
     scene_mesh_snapshot_bytes_from_mesh(&layer.mesh)
 }
@@ -361,16 +385,22 @@ pub(super) fn scene_mesh_snapshot_bytes(layer: &SceneMesh) -> usize {
 fn scene_mesh_snapshot_bytes_from_mesh(mesh: &Mesh) -> usize {
     let texture_bytes = mesh.texture().map_or(0, |texture| texture.rgba.len());
     size_of::<SceneMesh>()
-        + size_of_val(mesh.vertices())
-        + size_of_val(mesh.indices())
-        + texture_bytes
+        .saturating_add(size_of_val(mesh.vertices()))
+        .saturating_add(size_of_val(mesh.indices()))
+        .saturating_add(texture_bytes)
 }
 
 pub(super) fn scene_snapshot_bytes(scene: &Scene) -> usize {
-    size_of::<Scene>()
-        + scene
-            .meshes()
-            .iter()
-            .map(scene_mesh_snapshot_bytes)
-            .sum::<usize>()
+    scene
+        .meshes()
+        .iter()
+        .fold(size_of::<Scene>(), |bytes, layer| {
+            bytes.saturating_add(scene_mesh_snapshot_bytes(layer))
+        })
+}
+
+/// Edit Cancel clones `SceneMesh` entries and shares their immutable `Arc<Mesh>`
+/// values, so its checkpoint accounts for structural metadata, not vertices.
+pub(super) fn scene_checkpoint_bytes(scene: &Scene) -> usize {
+    size_of::<Scene>() + scene.meshes().len().saturating_mul(size_of::<SceneMesh>())
 }

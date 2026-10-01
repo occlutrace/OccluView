@@ -1,13 +1,15 @@
 use super::mesh_editor_overlay as editor;
+use super::workspace::commands::WorkspaceCommand;
+use super::workspace::history::{HistoryDirection, HistoryStepKind};
 use super::{
     apply_last_mesh_edit_redo_with_status, apply_last_mesh_edit_undo_with_status,
     apply_visible_selected_face_mesh_edit_action_with_limit, egui, pick_scene_hit, AppErrorAction,
-    AppErrorDialog, LayerContextAction, MeshEditorAction, MeshSelectionDrag, OccluViewApp, Scene,
+    AppErrorDialog, LayerContextAction, MeshEditorAction, MeshSelectionDrag, Scene, SceneContext,
     ScreenPolygonSelectionRequest,
 };
 use crate::viewer::lasso_capture::{self, LassoEvent};
 
-impl OccluViewApp {
+impl SceneContext<'_> {
     /// `_unguarded`, not `_impl`: calling it skips the dialog check.
     pub(super) fn handle_edit_shortcuts_unguarded(&mut self, ctx: &egui::Context) {
         // Sculpt tool hotkeys (1 = Add/Remove, 2 = Smooth) — Mesh Editor only,
@@ -28,7 +30,7 @@ impl OccluViewApp {
                 });
         if selected_all {
             self.render.invalidation.selection_changed();
-            self.ui.status_message = self.document.scene.as_ref().map(|scene| {
+            self.scene_ui.status_message = self.document.scene.as_ref().map(|scene| {
                 self.ui.locale.tr_plural(
                     crate::i18n::message_id!("edit-selected-faces"),
                     &[],
@@ -60,7 +62,11 @@ impl OccluViewApp {
         }
 
         // Redo before undo: Ctrl+Shift+Z must not fall through to plain Ctrl+Z.
-        let redo_pressed = self.document.edit_mode.redo_layer_id().is_some()
+        let redo_pressed = self
+            .document
+            .edit_mode
+            .next_history_step(HistoryDirection::Redo)
+            .is_some()
             && ctx.input_mut(|input| {
                 input.consume_key(egui::Modifiers::COMMAND, egui::Key::Y)
                     || input.consume_key(
@@ -69,7 +75,11 @@ impl OccluViewApp {
                     )
             });
         let undo_pressed = !redo_pressed
-            && self.document.edit_mode.undo_layer_id().is_some()
+            && self
+                .document
+                .edit_mode
+                .next_history_step(HistoryDirection::Undo)
+                .is_some()
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::Z));
         if !redo_pressed && !undo_pressed {
             return;
@@ -101,7 +111,8 @@ impl OccluViewApp {
             sculpt_pending: self.tools.sculpt.is_busy(),
             active_tab: self.tools.editor_tab,
         };
-        let Some(action) = editor::show(ctx, viewport_rect, state, &self.ui.locale) else {
+        let Some(action) = editor::show(ctx, self.scene_key, viewport_rect, state, &self.ui.locale)
+        else {
             return;
         };
 
@@ -137,7 +148,7 @@ impl OccluViewApp {
         ctx: &egui::Context,
     ) {
         if self.tools.sculpt.is_busy() {
-            self.ui.status_message = Some(
+            self.scene_ui.status_message = Some(
                 self.ui
                     .locale
                     .tr(crate::i18n::message_id!("sculpt-finishing")),
@@ -157,7 +168,7 @@ impl OccluViewApp {
             .collect::<Vec<_>>();
         let target_layers = selected_layers;
         if target_layers.is_empty() {
-            self.ui.status_message = Some(
+            self.scene_ui.status_message = Some(
                 self.ui
                     .locale
                     .tr(crate::i18n::message_id!("edit-select-faces-first")),
@@ -171,7 +182,7 @@ impl OccluViewApp {
             .collect::<Vec<_>>();
         let mut draft = scene.as_ref().clone();
         let close_holes_limit_mm = (layer_action == LayerContextAction::CloseHoles)
-            .then(|| editor::close_holes_limit_mm(ctx))
+            .then(|| editor::close_holes_limit_mm(ctx, self.scene_key))
             .flatten();
         match apply_visible_selected_face_mesh_edit_action_with_limit(
             &mut draft,
@@ -190,7 +201,7 @@ impl OccluViewApp {
                 for layer_id in target_layers.iter().chain(&spawned) {
                     self.document.mark_mesh_edits_unsaved(*layer_id);
                 }
-                self.ui.status_message = Some(self.ui.locale.tr_plural(
+                self.scene_ui.status_message = Some(self.ui.locale.tr_plural(
                     crate::i18n::message_id!("batchedit-status"),
                     &[(
                         "label",
@@ -203,7 +214,7 @@ impl OccluViewApp {
                 ));
             }
             Ok(_) => {
-                self.ui.status_message = Some(
+                self.scene_ui.status_message = Some(
                     self.ui
                         .locale
                         .tr(crate::i18n::message_id!("edit-no-changes-hidden")),
@@ -215,7 +226,7 @@ impl OccluViewApp {
                     crate::i18n::message_id!("edit-apply-failed-summary"),
                     &[("detail", &error.to_string())],
                 );
-                self.ui.status_message = Some(summary.clone());
+                self.scene_ui.status_message = Some(summary.clone());
                 self.ui.app_error = Some(AppErrorDialog {
                     title: self
                         .ui
@@ -244,7 +255,7 @@ impl OccluViewApp {
         self.tools.sculpt.disarm();
         self.document.mesh_selection_drag = None;
         self.render.invalidation.overlay_tools_changed();
-        self.ui.status_message = Some(if self.document.edit_mode.lasso_armed() {
+        self.scene_ui.status_message = Some(if self.document.edit_mode.lasso_armed() {
             self.ui
                 .locale
                 .tr(crate::i18n::message_id!("sculpt-lasso-armed"))
@@ -271,7 +282,7 @@ impl OccluViewApp {
         self.tools.sculpt.disarm();
         self.document.mesh_selection_drag = None;
         self.render.invalidation.overlay_tools_changed();
-        self.ui.status_message = Some(if self.document.edit_mode.object_mode() {
+        self.scene_ui.status_message = Some(if self.document.edit_mode.object_mode() {
             self.ui
                 .locale
                 .tr(crate::i18n::message_id!("sculpt-object-on"))
@@ -324,7 +335,7 @@ impl OccluViewApp {
                     .is_some_and(|scene| self.document.edit_mode.clear_visible_selections(scene))
                 {
                     self.render.invalidation.selection_changed();
-                    self.ui.status_message = Some(
+                    self.scene_ui.status_message = Some(
                         self.ui
                             .locale
                             .tr(crate::i18n::message_id!("sculpt-selection-cleared")),
@@ -352,15 +363,16 @@ impl OccluViewApp {
                     .set_through_mesh(!self.document.edit_mode.through_mesh())
                 {
                     self.render.invalidation.overlay_tools_changed();
-                    self.ui.status_message = Some(if self.document.edit_mode.through_mesh() {
-                        self.ui
-                            .locale
-                            .tr(crate::i18n::message_id!("sculpt-through-on"))
-                    } else {
-                        self.ui
-                            .locale
-                            .tr(crate::i18n::message_id!("sculpt-through-off"))
-                    });
+                    self.scene_ui.status_message =
+                        Some(if self.document.edit_mode.through_mesh() {
+                            self.ui
+                                .locale
+                                .tr(crate::i18n::message_id!("sculpt-through-on"))
+                        } else {
+                            self.ui
+                                .locale
+                                .tr(crate::i18n::message_id!("sculpt-through-off"))
+                        });
                     ctx.request_repaint();
                 }
                 true
@@ -390,7 +402,7 @@ impl OccluViewApp {
     }
 
     fn update_visible_selection_status(&mut self) {
-        self.ui.status_message = self.document.scene.as_ref().map(|scene| {
+        self.scene_ui.status_message = self.document.scene.as_ref().map(|scene| {
             let faces = self.document.edit_mode.visible_selected_face_count(scene);
             let layers = self.document.edit_mode.visible_selected_layer_count(scene);
             if layers > 1 {
@@ -421,7 +433,7 @@ impl OccluViewApp {
         }
         if self.tools.sculpt.worker_has_pending_work() {
             self.tools.sculpt.finish_requested = true;
-            self.ui.status_message = Some(
+            self.scene_ui.status_message = Some(
                 self.ui
                     .locale
                     .tr(crate::i18n::message_id!("sculpt-finishing")),
@@ -435,9 +447,10 @@ impl OccluViewApp {
     pub(super) fn finish_mesh_edit_session_now(&mut self, ctx: &egui::Context) {
         self.tools.sculpt.disarm();
         self.document.edit_mode.finish_edit_session();
+        self.document.discard_edit_metadata();
         self.document.mesh_selection_drag = None;
         self.render.invalidation.selection_changed();
-        self.ui.status_message = Some(
+        self.scene_ui.status_message = Some(
             self.ui
                 .locale
                 .tr(crate::i18n::message_id!("session-applied")),
@@ -458,7 +471,8 @@ impl OccluViewApp {
             return;
         };
         self.commit_scene_draft(current_scene.as_deref(), baseline, ctx);
-        self.ui.status_message = Some(
+        self.document.restore_edit_metadata();
+        self.scene_ui.status_message = Some(
             self.ui
                 .locale
                 .tr(crate::i18n::message_id!("session-reverted")),
@@ -468,7 +482,7 @@ impl OccluViewApp {
     /// Undo (`redo == false`) or redo (`redo == true`) the last mesh edit and
     /// commit the resulting draft scene. Shared by the panel Undo button and
     /// the Ctrl+Z / Ctrl+Y viewport shortcuts.
-    fn apply_history_navigation(&mut self, redo: bool, ctx: &egui::Context) {
+    pub(super) fn apply_history_navigation(&mut self, redo: bool, ctx: &egui::Context) {
         // Finalize any in-flight sculpt drag first (as Done/Cancel do), so the
         // undo acts on a settled scene and the stroke's dabs are not dropped
         // when the coming scene swap invalidates the sculpt session.
@@ -480,7 +494,7 @@ impl OccluViewApp {
         }
         if self.tools.sculpt.worker_has_pending_work() {
             self.tools.sculpt.pending_history = Some(redo);
-            self.ui.status_message = Some(
+            self.scene_ui.status_message = Some(
                 self.ui
                     .locale
                     .tr(crate::i18n::message_id!("sculpt-finishing-history")),
@@ -505,10 +519,33 @@ impl OccluViewApp {
         // `self.tools.align.drag`), so closing it at this point loses the
         // operator nothing.
         self.finish_align_drag();
+        let direction = if redo {
+            HistoryDirection::Redo
+        } else {
+            HistoryDirection::Undo
+        };
+        if self
+            .document
+            .edit_mode
+            .next_history_step(direction)
+            .is_some_and(|step| step.kind == HistoryStepKind::Transfer)
+        {
+            self.commands.push_back(if redo {
+                WorkspaceCommand::Redo {
+                    scene: self.scene_key,
+                }
+            } else {
+                WorkspaceCommand::Undo {
+                    scene: self.scene_key,
+                }
+            });
+            ctx.request_repaint();
+            return;
+        }
         let Some(scene) = self.document.scene.clone() else {
             return;
         };
-        let paths = self.persistence.current_paths.clone();
+        let paths = self.document.current_paths.clone();
         let mut draft = scene.as_ref().clone();
         let apply = if redo {
             apply_last_mesh_edit_redo_with_status(self, &mut draft, &paths)
@@ -774,7 +811,7 @@ impl OccluViewApp {
             }
             LassoEvent::Drop => {
                 self.document.mesh_selection_drag = None;
-                self.ui.status_message =
+                self.scene_ui.status_message =
                     Some(self.ui.locale.tr(crate::i18n::message_id!("lasso-dropped")));
                 ctx.request_repaint();
                 true
@@ -786,7 +823,7 @@ impl OccluViewApp {
                     && (enter || double_clicked)
                     && point_count < lasso_capture::MIN_LASSO_POINTS
                 {
-                    self.ui.status_message = Some(
+                    self.scene_ui.status_message = Some(
                         self.ui
                             .locale
                             .tr(crate::i18n::message_id!("lasso-needs-points")),

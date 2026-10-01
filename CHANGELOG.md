@@ -5,11 +5,69 @@ remain in the Git history.
 
 ## Unreleased
 
-- Sculpt Add/Remove follows camera depth and scales with strength. Ctrl+Shift
-  gently evens surface detail, with cursor color, body, and outline matching the
-  active operation.
+### Layers
 
-## 1.2.1 - 2026-09-27
+- Dragging a layer name moves the layer instead of selecting its text. The name
+  shows a grab cursor, the drag carries a translucent chip with the layer's name
+  and tint, the drop target fades in and out instead of flashing, and the edge
+  band highlights only the strip that will actually take the layer.
+
+### Sculpt
+
+- The brush cursor is a pale wash of the tool colour, matching the brightness of
+  the reference viewer, so the footprint marks the surface instead of covering
+  it. The screen ring is a hairline with a crosshair centre, and the translucent
+  tool body uses its own rim shading and is occluded by geometry in front of it.
+- The pointer becomes a crosshair while a Sculpt tool is armed.
+- The layer guard runs more rollback waves before it restores a whole dab, so a
+  Smooth stroke leaves fewer untouched patches on dense geometry.
+- Remove no longer builds an opening distance field inside a stroke, and a group
+  whose opening thickness was never measured keeps the widest reserve instead of
+  a made-up thin one.
+- Incremental shading no longer publishes a zero normal for a vertex whose faces
+  are all filtered out, which read as a spike on the surface.
+- Relax is warmed with the other brushes, so its first stroke is as responsive.
+
+### Align
+
+- Best-fit matching scores its coarse hypotheses on the seed sample set instead
+  of the dense one, which removes most of the work one press performed. Searching
+  a small scan against a large one no longer takes minutes.
+- Best-fit matching compares what two candidate poses explain about the other
+  scan again, so two placements that explain it equally are still reported as
+  ambiguous while a seating with more support wins outright.
+- The fixed-to-moving overlap signal no longer discards hits on an open border,
+  which is what a small scan's own rim produces.
+- The deviation map opens on the clinical range, 0.000 to 0.100 mm, instead of
+  0.050 to 0.200 mm. The hottest colour is now 100 um rather than 200 um, and the
+  bar starts at zero instead of hiding everything below 50 um.
+
+## 1.2.1 - 2026-09-30
+
+### Workspace, Sculpt and Align
+
+- Work with two independent scenes side by side. Move layers between scenes,
+  import into a chosen scene, and undo transfers without mixing scene history.
+
+- Sculpt Add and Remove follow the local surface instead of camera depth.
+  Brush size uses millimetres and keeps its relative size when switching tips.
+- Every Sculpt brush applies its dose by elapsed brush time, including moving
+  strokes. Smooth preserves rounded forms while reducing smaller bumps.
+- Sculpt strength and size wheel controls use proportional steps, and brush
+  preferences survive restarting the viewer. The surface footprint stays
+  visible on light models.
+- Sculpt commits preserve live surface normals across Undo and Redo.
+- Sculpt uses one surface path for clicks, travel and held strokes. Quick
+  clicks survive preparation, and crossing a panel pauses the brush path.
+- Ctrl-drag in manual alignment turns around the surface point you grabbed.
+  Point pairs remain available after manual movement and tab changes, and the
+  fit button recovers after worker failure.
+- Best fit accepts a small fragment against a full scan with the default
+  matching ratio, whether the fragment is the moving or fixed scan.
+- Best fit matching supports pre- and post-treatment scans when the unchanged
+  region provides sufficient evidence for the alignment.
+- Best fit matching uses principal surface orientations to recover scans
+  rotated around tilted axes.
 
 ### Accessibility
 
@@ -117,7 +175,7 @@ remain in the Git history.
   had already discarded. A finished reading now has to name the measurement it
   answers and is applied only against those surfaces as they stand now.
 - Align Scans presents rough point alignment before nearby surface refinement. Refinement now stays within the selected correspondence radius instead of launching a global feature search from an already placed scan.
-- The heatmap opens at 0.05–0.20 mm. Its cool and hot limits are editable above and below the colour legend.
+- The heatmap opens at 0.00–0.10 mm. Its cool and hot limits are editable above and below the colour legend.
 - In Mesh Editing, keys 1 and 2 open the Sculpt tab with Add/Remove and Smooth respectively. The sculpt cursor appears as soon as the background picking tree is ready, before brush preparation finishes.
 - Modal text and Mesh Editing headings use readable ink in the light theme.
 - A scan moved by hand in Align Scans and put back before the mouse is released

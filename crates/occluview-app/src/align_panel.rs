@@ -113,12 +113,13 @@ pub(crate) struct AlignPanelView<'a> {
 pub(crate) fn show(
     ctx: &egui::Context,
     viewport_rect: egui::Rect,
+    scope: egui::Id,
     view: AlignPanelView<'_>,
     locale: &crate::i18n::LocaleManager,
 ) -> Option<AlignPanelAction> {
     let default_pos = panel_default_pos(viewport_rect, view.layer_count);
     let mut action = None;
-    let id = egui::Id::new("occluview_align_window");
+    let id = scope.with("occluview_align_window");
     let previous_rect = ctx.memory(|memory| memory.area_rect(id));
     let mut window = egui::Window::new(locale.text(crate::i18n::message_id!("align-panel-title")))
         .id(id)
@@ -282,7 +283,7 @@ fn automatically(
     } else {
         None
     };
-    action = action.or(fits(ui, view.tool, enabled, locale));
+    action = action.or(fits(ui, view.tool, enabled, view.busy, locale));
     ui.add_space(4.0);
     prompt(ui, view.tool, locale);
     action = action.or(back(ui, view.tool, enabled, locale));
@@ -450,11 +451,23 @@ fn fits(
     ui: &mut egui::Ui,
     tool: &AlignTool,
     enabled: bool,
+    busy: bool,
     locale: &crate::i18n::LocaleManager,
 ) -> Option<AlignPanelAction> {
+    // A disabled control that swallows the click without saying why reads as a
+    // broken button. Every refusal here is a state the operator can leave, so
+    // the reason is the hover text.
+    let refused = if busy {
+        Some(locale.tr(crate::i18n::message_id!("align-fit-busy")))
+    } else if !enabled {
+        Some(locale.tr(crate::i18n::message_id!("align-status-worker-unavailable")))
+    } else {
+        None
+    };
     let mut action = None;
     let width = ui.available_width();
-    if fit_button(
+    let align_enabled = tool.can_align() && enabled;
+    let mut align = fit_button(
         ui,
         width,
         AppIcon::AlignFit,
@@ -462,15 +475,22 @@ fn fits(
             "1. {}",
             locale.tr(crate::i18n::message_id!("align-fit-perform"))
         ),
-        tool.can_align() && enabled,
+        align_enabled,
         true,
-    )
-    .on_hover_text(locale.tr(crate::i18n::message_id!("align-fit-perform-hint")))
-    .clicked()
-    {
+    );
+    if align_enabled {
+        align = align.on_hover_text(locale.tr(crate::i18n::message_id!("align-fit-perform-hint")));
+    } else if let Some(reason) = &refused {
+        align = align.on_disabled_hover_text(reason);
+    } else {
+        align = align
+            .on_disabled_hover_text(locale.tr(crate::i18n::message_id!("align-reject-unpaired")));
+    }
+    if align.clicked() {
         action = Some(AlignPanelAction::Align);
     }
-    if fit_button(
+    let refine_enabled = tool.can_measure() && enabled;
+    let mut refine = fit_button(
         ui,
         width,
         AppIcon::AlignRefine,
@@ -478,12 +498,18 @@ fn fits(
             "2. {}",
             locale.tr(crate::i18n::message_id!("align-fit-refine"))
         ),
-        tool.can_measure() && enabled,
+        refine_enabled,
         false,
-    )
-    .on_hover_text(locale.tr(crate::i18n::message_id!("align-fit-refine-hint")))
-    .clicked()
-    {
+    );
+    if refine_enabled {
+        refine = refine.on_hover_text(locale.tr(crate::i18n::message_id!("align-fit-refine-hint")));
+    } else if let Some(reason) = &refused {
+        refine = refine.on_disabled_hover_text(reason);
+    } else {
+        refine = refine
+            .on_disabled_hover_text(locale.tr(crate::i18n::message_id!("align-status-two-scans")));
+    }
+    if refine.clicked() {
         action = Some(AlignPanelAction::Refine);
     }
     action

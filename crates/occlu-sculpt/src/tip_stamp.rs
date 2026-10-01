@@ -48,7 +48,7 @@ pub fn segment_stamp_weight(tip: TipStamp, offset: DVec3, segment: DVec3, radius
     let along = offset.dot(axis);
     let across = (offset - axis * along).length();
     let cross = match tip {
-        TipStamp::Knife => across / f64::from(KNIFE_CROSS_RADIUS_SHARE),
+        TipStamp::Knife => across / KNIFE_CROSS_RADIUS_SHARE,
         TipStamp::Ball | TipStamp::Cylinder => across,
     };
     if !(cross < radius_mm) {
@@ -69,7 +69,7 @@ pub fn segment_stamp_weight(tip: TipStamp, offset: DVec3, segment: DVec3, radius
     let mut cuts = [lo, hi, hi, hi];
     let mut count = 1;
     if tip == TipStamp::Cylinder {
-        let plateau = radius_mm * f64::from(CYLINDER_PLATEAU);
+        let plateau = radius_mm * CYLINDER_PLATEAU;
         if cross < plateau {
             let inner = (plateau * plateau - cross * cross).sqrt();
             for edge in [along - inner, along + inner] {
