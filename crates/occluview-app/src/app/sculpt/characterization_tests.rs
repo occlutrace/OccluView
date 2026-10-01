@@ -66,7 +66,7 @@ fn sculpt_wheel_uses_ratio_detents_and_ctrl_wins_over_shift() {
 
     let mut changed = false;
     ctx.run_ui(wheel_input(ctrl_shift, egui::vec2(0.0, 50.0)), |ui| {
-        changed = super::apply_sculpt_wheel_settings(
+        changed = super::stroke::apply_sculpt_wheel_settings(
             ui.ctx(),
             crate::app::workspace::id::SceneKey::INITIAL,
             Some(SculptToolKind::AddRemove),
@@ -98,7 +98,7 @@ fn sculpt_wheel_uses_ratio_detents_and_ctrl_wins_over_shift() {
         ..Default::default()
     };
     ctx.run_ui(wheel_input(shift, egui::vec2(0.0, 50.0)), |ui| {
-        changed = super::apply_sculpt_wheel_settings(
+        changed = super::stroke::apply_sculpt_wheel_settings(
             ui.ctx(),
             crate::app::workspace::id::SceneKey::INITIAL,
             Some(SculptToolKind::AddRemove),
@@ -132,7 +132,7 @@ fn sculpt_wheel_uses_ratio_detents_and_ctrl_wins_over_shift() {
             ..Default::default()
         },
         |ui| {
-            changed = super::apply_sculpt_wheel_settings(
+            changed = super::stroke::apply_sculpt_wheel_settings(
                 ui.ctx(),
                 crate::app::workspace::id::SceneKey::INITIAL,
                 Some(SculptToolKind::AddRemove),
@@ -235,7 +235,7 @@ fn precision_wheel_accumulates_pixels_and_line_events_each_make_a_notch() {
 
     let mut consumed = false;
     ctx.run_ui(wheel_input(ctrl, egui::vec2(0.0, 20.0)), |ui| {
-        consumed = super::apply_sculpt_wheel_settings(
+        consumed = super::stroke::apply_sculpt_wheel_settings(
             ui.ctx(),
             crate::app::workspace::id::SceneKey::INITIAL,
             Some(SculptToolKind::AddRemove),
@@ -253,7 +253,7 @@ fn precision_wheel_accumulates_pixels_and_line_events_each_make_a_notch() {
     );
 
     ctx.run_ui(wheel_input(ctrl, egui::vec2(0.0, 20.0)), |ui| {
-        consumed = super::apply_sculpt_wheel_settings(
+        consumed = super::stroke::apply_sculpt_wheel_settings(
             ui.ctx(),
             crate::app::workspace::id::SceneKey::INITIAL,
             Some(SculptToolKind::AddRemove),
@@ -293,7 +293,7 @@ fn precision_wheel_accumulates_pixels_and_line_events_each_make_a_notch() {
         ..Default::default()
     };
     ctx.run_ui(line_wheel, |ui| {
-        consumed = super::apply_sculpt_wheel_settings(
+        consumed = super::stroke::apply_sculpt_wheel_settings(
             ui.ctx(),
             crate::app::workspace::id::SceneKey::INITIAL,
             Some(SculptToolKind::AddRemove),
@@ -328,7 +328,7 @@ fn modified_wheel_is_owned_and_applied_once_across_discard_passes() {
 
     let mut pass_ownership = Vec::new();
     let output = ctx.run_ui(line_wheel_input(ctrl, egui::vec2(0.0, 1.0)), |ui| {
-        pass_ownership.push(super::apply_sculpt_wheel_settings(
+        pass_ownership.push(super::stroke::apply_sculpt_wheel_settings(
             ui.ctx(),
             crate::app::workspace::id::SceneKey::INITIAL,
             Some(SculptToolKind::AddRemove),
@@ -360,7 +360,7 @@ fn modified_wheel_is_owned_and_applied_once_across_discard_passes() {
     );
     let mut point_ownership = Vec::new();
     let output = point_ctx.run_ui(wheel_input(ctrl, egui::vec2(0.0, 20.0)), |ui| {
-        point_ownership.push(super::apply_sculpt_wheel_settings(
+        point_ownership.push(super::stroke::apply_sculpt_wheel_settings(
             ui.ctx(),
             crate::app::workspace::id::SceneKey::INITIAL,
             Some(SculptToolKind::AddRemove),
@@ -385,7 +385,7 @@ fn modified_wheel_is_owned_and_applied_once_across_discard_passes() {
 
     point_ctx
         .run_ui(wheel_input(ctrl, egui::vec2(0.0, 20.0)), |ui| {
-            let _ = super::apply_sculpt_wheel_settings(
+            let _ = super::stroke::apply_sculpt_wheel_settings(
                 ui.ctx(),
                 crate::app::workspace::id::SceneKey::INITIAL,
                 Some(SculptToolKind::AddRemove),
@@ -430,7 +430,7 @@ fn busy_modified_wheel_remains_owned_if_finish_drains_before_next_pass() {
         } else {
             // If the worker becomes idle before the next pass, the same event
             // stays owned and must not suddenly edit the brush.
-            pass_ownership.push(super::apply_sculpt_wheel_settings(
+            pass_ownership.push(super::stroke::apply_sculpt_wheel_settings(
                 ui.ctx(),
                 crate::app::workspace::id::SceneKey::INITIAL,
                 Some(SculptToolKind::AddRemove),
@@ -451,7 +451,7 @@ fn busy_modified_wheel_remains_owned_if_finish_drains_before_next_pass() {
     output.drop_without_applying_deltas();
 
     ctx.run_ui(line_wheel_input(ctrl, egui::vec2(0.0, 1.0)), |ui| {
-        let _ = super::apply_sculpt_wheel_settings(
+        let _ = super::stroke::apply_sculpt_wheel_settings(
             ui.ctx(),
             crate::app::workspace::id::SceneKey::INITIAL,
             Some(SculptToolKind::AddRemove),

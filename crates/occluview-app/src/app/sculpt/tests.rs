@@ -1,5 +1,6 @@
-use super::{collect_sculpt_pointer_events, SculptPointerEvent};
-use super::{sculpt_cursor_action, sculpt_cursor_color, sculpt_cursor_height, sculpt_target};
+use super::cursor::{sculpt_cursor_action, sculpt_cursor_color, sculpt_cursor_height};
+use super::geometry::sculpt_target;
+use super::input::{collect_sculpt_pointer_events, SculptPointerEvent};
 use crate::sculpt::sculpt_kernel::BrushMode;
 use eframe::egui;
 use glam::Vec3;
