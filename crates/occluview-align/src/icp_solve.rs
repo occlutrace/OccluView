@@ -532,6 +532,15 @@ fn solve_damped(matrix: &[[f64; 6]; 6], gradient: &[f64; 6]) -> Option<[f64; 6]>
 }
 
 /// Cholesky solve for a symmetric positive-definite 6x6.
+///
+/// The pivot guard here is `sum <= f64::MIN_POSITIVE`, looser than
+/// `observability::cholesky`'s `!sum.is_finite() || sum <= MIN_PIVOT`. That
+/// difference is deliberate, not drift. This solver is only reached through
+/// [`solve_damped`], which grows the damping until the factorisation succeeds and
+/// checks the resulting step with `is_finite`, so a marginal pivot is a retry; a
+/// NaN pivot yields a NaN step that `solve_damped` rejects rather than returns.
+/// The whitening factorisation in `observability` has no damping to grow and no
+/// retry, so it has to reject an untrusted pivot on the spot.
 fn solve_cholesky(matrix: &[[f64; 6]; 6], gradient: &[f64; 6]) -> Option<[f64; 6]> {
     let mut lower = [[0.0f64; 6]; 6];
     for row in 0..6 {

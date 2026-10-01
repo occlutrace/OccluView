@@ -235,6 +235,13 @@ fn accumulate(hits: &[Option<(DVec3, DVec3)>], pivot: DVec3) -> (Matrix6, Matrix
 /// Lower-triangular `L` with `L Lᵀ = matrix`, or `None` when the matrix is not
 /// positive definite — which here means the samples do not span six degrees of
 /// freedom.
+///
+/// `MIN_PIVOT` and the `is_finite` guard are deliberately tighter than
+/// `icp_solve::solve_cholesky`'s. This factorisation produces the whitening
+/// transform that [`whiten`] and [`unwhiten`] apply, with no damping to grow and
+/// no retry, so a pivot that cannot be trusted has to answer `None` here. The ICP
+/// solver retries the same factorisation under growing damping and checks the
+/// step for finiteness, which is why it can accept the looser guard.
 fn cholesky(matrix: &Matrix6) -> Option<Matrix6> {
     let mut lower = [[0.0f64; 6]; 6];
     for row in 0..6 {
