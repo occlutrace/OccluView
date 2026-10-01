@@ -978,3 +978,44 @@ shell-preview-isometric = Isométrica
 shell-preview-fit-view = Ajustar vista
 shell-preview-wireframe = Malla de alambre
 shell-preview-copy-image = Copiar imagen
+
+## Espacio de trabajo con dos escenas y traslado de capas.
+workspace-scene-name = Escena { $number }
+workspace-scenes = Escenas
+workspace-scene-new = Crear una escena nueva
+workspace-new-left = Nueva escena a la izquierda
+workspace-new-right = Nueva escena a la derecha
+workspace-one-view = Una vista
+workspace-two-views = Dos vistas
+workspace-fullscreen = Mostrar solo esta escena
+workspace-divider = Ancho de las escenas
+workspace-drop-title = Elegir una escena
+workspace-drop-description = ¿Dónde se deben añadir estos archivos?
+workspace-cancel = Cancelar
+workspace-rename = Cambiar nombre de escena
+workspace-rename-title = Cambiar nombre de escena
+workspace-rename-apply = Cambiar nombre
+workspace-close = Cerrar escena
+workspace-close-title = Cambios sin guardar
+workspace-close-question = ¿Guardar los cambios de { $scenes } antes de cerrar?
+workspace-close-detail = Espera a que terminen las ediciones pendientes antes de guardar. Si descartas los cambios, se cerrará sin guardar.
+workspace-discard-close = Descartar y cerrar
+workspace-move-layer = Mover capa seleccionada
+workspace-two-scene-limit = Este espacio de trabajo admite dos escenas.
+layers-row-drag-hint = Haz clic para activar la capa; arrástrala a otra escena para moverla
+workspace-layer-move-new-scene = Mover la capa a una escena nueva
+workspace-layer-move-scene = Mover la capa a { $scene }
+
+workspace-move-all = Mover todas las capas
+help-workspace-switch = Cambiar la escena activa
+help-workspace-drag = Mover una capa a otra escena o crear una escena en el borde izquierdo o derecho
+help-workspace-divider = Ajustar el ancho de las escenas; Inicio restaura anchos iguales
+
+workspace-wait-edit = Primero termine o cancele la edición en ambas escenas.
+workspace-wait-load = Espere a que terminen de cargar las escenas.
+workspace-wait-gesture = Primero termine el gesto actual del ratón.
+workspace-history-order = Primero deshaga los cambios posteriores en la otra escena.
+workspace-history-budget = No hay suficiente espacio en el historial para esta operación.
+workspace-stale-target = La escena o capa ya no está disponible.
+workspace-close-dialog = Primero cierre el diálogo abierto.
+workspace-import-cancelled = Las importaciones pendientes se cancelaron al cerrar su escena.

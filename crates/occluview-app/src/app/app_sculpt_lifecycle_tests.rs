@@ -72,19 +72,23 @@ fn app_with_a_live_stroke(name: &str) -> (OccluViewApp, SceneMeshId) {
     let mesh = coarse_ridge_mesh();
     let mut scene = Scene::new();
     let index = scene.add(SceneMesh::new(mesh));
-    app.document.scene = Some(Arc::new(scene));
-    let scene = app.document.scene.clone().expect("scene");
+    app.workspace.scenes[0].document.scene = Some(Arc::new(scene));
+    let scene = app.workspace.scenes[0]
+        .document
+        .scene
+        .clone()
+        .expect("scene");
     let entry = &scene.meshes()[index];
     let layer_id = entry.id();
-    assert!(app
+    assert!(app.workspace.scenes[0]
         .document
         .edit_mode
         .begin_face_selection(entry, scene.as_ref()));
     let base = Arc::clone(&entry.mesh);
     drop(scene);
 
-    app.tools.sculpt.worker = Some(worker_for(&base, layer_id));
-    app.tools.sculpt.stroke = Some(StrokeState {
+    app.workspace.scenes[0].tools.sculpt.worker = Some(worker_for(&base, layer_id));
+    app.workspace.scenes[0].tools.sculpt.stroke = Some(StrokeState {
         layer_id,
         last_pointer: [0.0, 0.0],
         input_pointer: [0.0, 0.0],
@@ -94,12 +98,13 @@ fn app_with_a_live_stroke(name: &str) -> (OccluViewApp, SceneMeshId) {
         release_pending: false,
         retained_samples: VecDeque::new(),
     });
-    app.document.unsaved_sculpt_stroke = true;
+    app.workspace.scenes[0].document.unsaved_sculpt_stroke = true;
     (app, layer_id)
 }
 
 fn layer_mesh(app: &OccluViewApp, layer_id: SceneMeshId) -> Arc<Mesh> {
-    app.document
+    app.workspace.scenes[0]
+        .document
         .scene
         .as_ref()
         .expect("a scene")
@@ -113,7 +118,12 @@ fn layer_mesh(app: &OccluViewApp, layer_id: SceneMeshId) -> Arc<Mesh> {
 
 fn lay_densifying_dab(app: &mut OccluViewApp) {
     {
-        let worker = app.tools.sculpt.worker.as_ref().expect("worker");
+        let worker = app.workspace.scenes[0]
+            .tools
+            .sculpt
+            .worker
+            .as_ref()
+            .expect("worker");
         assert!(
             worker.try_apply(densifying_stroke(), BrushMode::Smooth),
             "the dab must be queued"
@@ -122,12 +132,16 @@ fn lay_densifying_dab(app: &mut OccluViewApp) {
     let ctx = app.ui.repaint_ctx.clone();
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
-        app.poll_sculpt_worker(&ctx);
-        let Some(worker) = app.tools.sculpt.worker.as_ref() else {
+        app.active_context()
+            .expect("live test scene")
+            .poll_sculpt_worker(&ctx);
+        let Some(worker) = app.workspace.scenes[0].tools.sculpt.worker.as_ref() else {
             return;
         };
         if worker.is_quiescent() {
-            app.poll_sculpt_worker(&ctx);
+            app.active_context()
+                .expect("live test scene")
+                .poll_sculpt_worker(&ctx);
             return;
         }
         assert!(
@@ -140,7 +154,8 @@ fn lay_densifying_dab(app: &mut OccluViewApp) {
 
 /// Length of the worker's append-only live display shadow.
 fn sculpt_shadow_len(app: &OccluViewApp) -> usize {
-    app.tools
+    app.workspace.scenes[0]
+        .tools
         .sculpt
         .worker
         .as_ref()
@@ -174,9 +189,17 @@ fn pump_sculpt_worker_until_idle(app: &mut OccluViewApp) {
     let ctx = app.ui.repaint_ctx.clone();
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
-        app.poll_sculpt_worker(&ctx);
-        app.settle_sculpt_work_marker();
-        if !app.sculpt_has_live_work() {
+        app.active_context()
+            .expect("live test scene")
+            .poll_sculpt_worker(&ctx);
+        app.active_context()
+            .expect("live test scene")
+            .settle_sculpt_work_marker();
+        if !app
+            .active_context()
+            .expect("live test scene")
+            .sculpt_has_live_work()
+        {
             return;
         }
         assert!(Instant::now() < deadline, "the sculpt work never settled");
@@ -209,7 +232,10 @@ fn sculpt_strength_wheel_frame(app: &mut OccluViewApp, ctx: &egui::Context, delt
     let mut used = false;
     ctx.run_ui(input, |ui| {
         let response = ui.allocate_rect(viewport, egui::Sense::click_and_drag());
-        used = app.adjust_sculpt_brush_from_wheel(ui.ctx(), &response);
+        used = app
+            .active_context()
+            .expect("live test scene")
+            .adjust_sculpt_brush_from_wheel(ui.ctx(), &response);
     })
     .drop_without_applying_deltas();
     used
@@ -219,7 +245,12 @@ fn sculpt_strength_wheel_frame(app: &mut OccluViewApp, ctx: &egui::Context, delt
 fn wait_for_topology_delta_and_sparse_update(app: &OccluViewApp) {
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
-        let worker = app.tools.sculpt.worker.as_ref().expect("worker");
+        let worker = app.workspace.scenes[0]
+            .tools
+            .sculpt
+            .worker
+            .as_ref()
+            .expect("worker");
         if worker.has_pending_topology_delta() && worker.has_pending_sparse_update() {
             return;
         }
@@ -241,14 +272,19 @@ fn topology_deltas_flush_before_sparse_writes_and_commit_at_finish() {
 
     // A real densifying dab publishes a local topology patch.
     {
-        let worker = app.tools.sculpt.worker.as_ref().expect("worker");
+        let worker = app.workspace.scenes[0]
+            .tools
+            .sculpt
+            .worker
+            .as_ref()
+            .expect("worker");
         assert!(
             worker.try_apply(densifying_stroke(), BrushMode::Smooth),
             "the densifying dab must be queued"
         );
     }
     let deadline = Instant::now() + Duration::from_secs(60);
-    while !app
+    while !app.workspace.scenes[0]
         .tools
         .sculpt
         .worker
@@ -264,7 +300,8 @@ fn topology_deltas_flush_before_sparse_writes_and_commit_at_finish() {
     }
     // The vertex IDs remain stable across appended topology, so both outputs
     // can safely share one frame.
-    app.tools
+    app.workspace.scenes[0]
+        .tools
         .sculpt
         .worker
         .as_ref()
@@ -275,14 +312,14 @@ fn topology_deltas_flush_before_sparse_writes_and_commit_at_finish() {
     // Poll until both local output types have reached the prepared scene.
     let ctx = app.ui.repaint_ctx.clone();
     let deadline = Instant::now() + Duration::from_secs(60);
-    while app
+    while app.workspace.scenes[0]
         .tools
         .sculpt
         .worker
         .as_ref()
         .expect("worker")
         .has_pending_topology_delta()
-        || app
+        || app.workspace.scenes[0]
             .tools
             .sculpt
             .worker
@@ -290,7 +327,9 @@ fn topology_deltas_flush_before_sparse_writes_and_commit_at_finish() {
             .expect("worker")
             .has_pending_sparse_update()
     {
-        app.poll_sculpt_worker(&ctx);
+        app.active_context()
+            .expect("live test scene")
+            .poll_sculpt_worker(&ctx);
         assert!(
             Instant::now() < deadline,
             "sculpt deltas were never drained"
@@ -298,7 +337,12 @@ fn topology_deltas_flush_before_sparse_writes_and_commit_at_finish() {
         std::thread::sleep(Duration::from_millis(1));
     }
 
-    let worker = app.tools.sculpt.worker.as_ref().expect("worker");
+    let worker = app.workspace.scenes[0]
+        .tools
+        .sculpt
+        .worker
+        .as_ref()
+        .expect("worker");
     let live_vertices = worker.live_geometry().expect("live geometry").0.len();
     assert!(live_vertices > initial_vertices);
     assert_eq!(
@@ -306,9 +350,17 @@ fn topology_deltas_flush_before_sparse_writes_and_commit_at_finish() {
         initial_topology,
         "the document commits only when the stroke finishes"
     );
-    assert!(app.commit_sculpt_stroke(&ctx));
+    assert!(app
+        .active_context()
+        .expect("live test scene")
+        .commit_sculpt_stroke(&ctx));
     pump_sculpt_worker_until_idle(&mut app);
-    let worker = app.tools.sculpt.worker.as_ref().expect("worker");
+    let worker = app.workspace.scenes[0]
+        .tools
+        .sculpt
+        .worker
+        .as_ref()
+        .expect("worker");
     let scene_topology = layer_mesh(&app, layer_id).topology_id();
     assert_ne!(
         scene_topology, initial_topology,
@@ -360,10 +412,13 @@ fn a_replace_does_not_discard_a_layer_the_operator_is_sculpting() {
         .recv()
         .expect("the delivered scene")
         .expect("a valid scene");
-    app.apply_scene_load_result(pending, Ok(incoming));
+    app.active_context()
+        .expect("live test scene")
+        .apply_scene_load_result(pending, Ok(incoming), &egui::Context::default());
 
     assert_eq!(
-        app.document
+        app.workspace.scenes[0]
+            .document
             .scene
             .as_ref()
             .expect("a scene")
@@ -386,11 +441,17 @@ fn a_save_does_not_call_a_live_stroke_nothing_to_save() {
     lay_densifying_dab(&mut app);
     assert!(sculpt_shadow_len(&app) > layer_mesh(&app, layer_id).vertices().len());
     assert!(
-        app.document.unsaved_edit_layer_ids.is_empty(),
+        app.workspace.scenes[0]
+            .document
+            .unsaved_edit_layer_ids
+            .is_empty(),
         "the fixture really is the uncommitted case: nothing is marked unsaved"
     );
 
-    let pending = app.pending_layer_exports();
+    let pending = app
+        .active_context()
+        .expect("live test scene")
+        .pending_layer_exports();
 
     assert!(
         matches!(pending, PendingLayerExports::StrokeInFlight),
@@ -399,7 +460,7 @@ fn a_save_does_not_call_a_live_stroke_nothing_to_save() {
          `Nothing` a caller reads as \"the scene is clean\""
     );
     assert_eq!(
-        app.ui.status_message,
+        app.workspace.scenes[0].presentation.status_message,
         Some(
             app.ui
                 .locale
@@ -413,17 +474,30 @@ fn a_save_does_not_call_a_live_stroke_nothing_to_save() {
 fn an_empty_stroke_does_not_leave_the_guards_latched() {
     let (mut app, _layer_id) = app_with_a_live_stroke("sculpt-empty-stroke");
     assert!(
-        app.sculpt_has_live_work(),
+        app.active_context()
+            .expect("live test scene")
+            .sculpt_has_live_work(),
         "opening a stroke is already work in progress"
     );
 
     let ctx = app.ui.repaint_ctx.clone();
-    assert!(app.commit_sculpt_stroke(&ctx));
+    assert!(app
+        .active_context()
+        .expect("live test scene")
+        .commit_sculpt_stroke(&ctx));
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
-        app.poll_sculpt_worker(&ctx);
-        app.settle_sculpt_work_marker();
-        if !app.sculpt_has_live_work() {
+        app.active_context()
+            .expect("live test scene")
+            .poll_sculpt_worker(&ctx);
+        app.active_context()
+            .expect("live test scene")
+            .settle_sculpt_work_marker();
+        if !app
+            .active_context()
+            .expect("live test scene")
+            .sculpt_has_live_work()
+        {
             break;
         }
         assert!(
@@ -434,7 +508,7 @@ fn an_empty_stroke_does_not_leave_the_guards_latched() {
     }
 
     assert!(
-        !app.document.has_unsaved_mesh_edits(),
+        !app.workspace.scenes[0].document.has_unsaved_mesh_edits(),
         "an empty stroke is not work the operator has to save"
     );
 }
@@ -442,16 +516,21 @@ fn an_empty_stroke_does_not_leave_the_guards_latched() {
 #[test]
 fn a_stroke_that_ends_without_a_worker_does_not_latch_the_guards() {
     let (mut app, _layer_id) = app_with_a_live_stroke("sculpt-marker-no-worker");
-    app.tools.sculpt.disarm();
-    app.tools.sculpt.worker = None;
+    app.workspace.scenes[0].tools.sculpt.disarm();
+    app.workspace.scenes[0].tools.sculpt.worker = None;
 
-    app.settle_sculpt_work_marker();
+    app.active_context()
+        .expect("live test scene")
+        .settle_sculpt_work_marker();
 
     assert!(
-        !app.document.has_unsaved_mesh_edits(),
+        !app.workspace.scenes[0].document.has_unsaved_mesh_edits(),
         "a stroke that ended is not work the guards have to ask about"
     );
-    assert!(!app.sculpt_has_live_work());
+    assert!(!app
+        .active_context()
+        .expect("live test scene")
+        .sculpt_has_live_work());
 }
 
 /// An export started while a Sculpt stroke is still changing geometry must not
@@ -463,19 +542,28 @@ fn a_stroke_that_ends_without_a_worker_does_not_latch_the_guards() {
 fn every_export_path_refuses_while_a_stroke_is_in_flight() {
     // The layer export path takes the scene directly.
     let (mut app, layer_id) = app_with_a_live_stroke("export-during-stroke-layer");
-    let scene = app.document.scene.clone().expect("scene");
-    let paths = app.persistence.current_paths.clone();
+    let scene = app.workspace.scenes[0]
+        .document
+        .scene
+        .clone()
+        .expect("scene");
+    let paths = app.workspace.scenes[0].document.current_paths.clone();
     let request = LayerContextRequest {
         index: 0,
         layer_id,
         action: LayerContextAction::ExportLayer,
     };
     assert!(
-        !app.save_layer_export_dialog(scene.as_ref(), &paths, request),
+        !app.active_context()
+            .expect("live test scene")
+            .save_layer_export_dialog(scene.as_ref(), &paths, request),
         "a layer export during a live stroke must be refused"
     );
     assert_eq!(
-        app.ui.status_message.as_deref(),
+        app.workspace.scenes[0]
+            .presentation
+            .status_message
+            .as_deref(),
         Some(
             app.ui
                 .locale
@@ -489,11 +577,16 @@ fn every_export_path_refuses_while_a_stroke_is_in_flight() {
     let (mut app, _) = app_with_a_live_stroke("export-during-stroke-scene");
     let ctx = app.ui.repaint_ctx.clone();
     assert!(
-        app.refuse_export_during_stroke(&ctx),
+        app.active_context()
+            .expect("live test scene")
+            .refuse_export_during_stroke(&ctx),
         "the scene paths must refuse the same way"
     );
     assert_eq!(
-        app.ui.status_message.as_deref(),
+        app.workspace.scenes[0]
+            .presentation
+            .status_message
+            .as_deref(),
         Some(
             app.ui
                 .locale
@@ -505,10 +598,13 @@ fn every_export_path_refuses_while_a_stroke_is_in_flight() {
     // With no stroke in flight the guard is silent, so it cannot block the
     // ordinary export path it is there to protect.
     let (mut app, _) = app_with_a_live_stroke("export-during-stroke-idle");
-    app.tools.sculpt.stroke = None;
-    app.document.unsaved_sculpt_stroke = false;
+    app.workspace.scenes[0].tools.sculpt.stroke = None;
+    app.workspace.scenes[0].document.unsaved_sculpt_stroke = false;
     let ctx = app.ui.repaint_ctx.clone();
-    assert!(!app.refuse_export_during_stroke(&ctx));
+    assert!(!app
+        .active_context()
+        .expect("live test scene")
+        .refuse_export_during_stroke(&ctx));
 }
 
 /// A brush-mode switch during a drag commits the live display geometry as one
@@ -524,15 +620,17 @@ fn switching_brush_mode_finishes_a_live_stroke_instead_of_aborting_it() {
         "the fixture must densify: {committed_vertices} -> {densified_vertices}"
     );
     assert!(
-        app.tools.sculpt.stroke.is_some(),
+        app.workspace.scenes[0].tools.sculpt.stroke.is_some(),
         "the drag is still open when the brush is switched"
     );
 
     let ctx = app.ui.repaint_ctx.clone();
-    app.toggle_sculpt_tool(SculptToolKind::Smooth, &ctx);
+    app.active_context()
+        .expect("live test scene")
+        .toggle_sculpt_tool(SculptToolKind::Smooth, &ctx);
 
     assert_eq!(
-        app.tools.sculpt.armed,
+        app.workspace.scenes[0].tools.sculpt.armed,
         Some(SculptToolKind::Smooth),
         "the new brush is armed"
     );
@@ -549,11 +647,11 @@ fn switching_brush_mode_finishes_a_live_stroke_instead_of_aborting_it() {
         "switching brushes must finish the drag, not revert its geometry"
     );
     assert!(
-        app.document.has_unsaved_mesh_edits(),
+        app.workspace.scenes[0].document.has_unsaved_mesh_edits(),
         "the finished stroke is work the operator still has to save"
     );
     assert_eq!(
-        app.document.edit_mode.undo_len(),
+        app.workspace.scenes[0].document.edit_mode.undo_len(),
         1,
         "and it lands as one undoable edit"
     );
@@ -565,7 +663,7 @@ fn switching_brush_mode_finishes_a_live_stroke_instead_of_aborting_it() {
 #[test]
 fn toggling_off_does_not_drop_a_worker_with_a_queued_finish() {
     let (mut app, layer_id) = app_with_a_live_stroke("sculpt-toggle-off");
-    app.tools.sculpt.armed = Some(SculptToolKind::AddRemove);
+    app.workspace.scenes[0].tools.sculpt.armed = Some(SculptToolKind::AddRemove);
     let committed_vertices = layer_mesh(&app, layer_id).vertices().len();
     lay_densifying_dab(&mut app);
     let densified_vertices = sculpt_shadow_len(&app);
@@ -575,11 +673,16 @@ fn toggling_off_does_not_drop_a_worker_with_a_queued_finish() {
     );
 
     let ctx = app.ui.repaint_ctx.clone();
-    app.toggle_sculpt_tool(SculptToolKind::AddRemove, &ctx);
+    app.active_context()
+        .expect("live test scene")
+        .toggle_sculpt_tool(SculptToolKind::AddRemove, &ctx);
 
-    assert_eq!(app.tools.sculpt.armed, None, "the brush is off");
+    assert_eq!(
+        app.workspace.scenes[0].tools.sculpt.armed, None,
+        "the brush is off"
+    );
     assert!(
-        app.tools.sculpt.worker.is_some(),
+        app.workspace.scenes[0].tools.sculpt.worker.is_some(),
         "the worker still owes the finished stroke's completion, so the \
          off-toggle must keep it instead of dropping the work"
     );
@@ -591,10 +694,12 @@ fn toggling_off_does_not_drop_a_worker_with_a_queued_finish() {
         densified_vertices,
         "the stroke in flight when the brush went off must still land"
     );
-    assert!(app.document.has_unsaved_mesh_edits());
-    assert_eq!(app.document.edit_mode.undo_len(), 1);
+    assert!(app.workspace.scenes[0].document.has_unsaved_mesh_edits());
+    assert_eq!(app.workspace.scenes[0].document.edit_mode.undo_len(), 1);
     assert!(
-        !app.sculpt_has_live_work(),
+        !app.active_context()
+            .expect("live test scene")
+            .sculpt_has_live_work(),
         "and the guards are not left latched on a stroke that is over"
     );
 }
@@ -617,17 +722,27 @@ fn abort_also_reverts_a_released_stroke_waiting_in_the_worker() {
     );
 
     let ctx = app.ui.repaint_ctx.clone();
-    assert!(app.commit_sculpt_stroke(&ctx), "the drag is released");
     assert!(
-        app.tools.sculpt.stroke.is_none(),
+        app.active_context()
+            .expect("live test scene")
+            .commit_sculpt_stroke(&ctx),
+        "the drag is released"
+    );
+    assert!(
+        app.workspace.scenes[0].tools.sculpt.stroke.is_none(),
         "no drag is held any more, so only the worker remembers it"
     );
     assert!(
-        app.tools.sculpt.worker_has_pending_work(),
+        app.workspace.scenes[0]
+            .tools
+            .sculpt
+            .worker_has_pending_work(),
         "but the worker still owes the released stroke's completion"
     );
 
-    app.abort_sculpt_stroke();
+    app.active_context()
+        .expect("live test scene")
+        .abort_sculpt_stroke();
 
     let after = layer_mesh(&app, layer_id);
     assert_eq!(
@@ -638,11 +753,14 @@ fn abort_also_reverts_a_released_stroke_waiting_in_the_worker() {
     assert_eq!(after.triangle_count(), committed_triangles);
     assert_eq!(after.topology_id(), committed_topology);
     assert!(
-        !app.document.has_unsaved_mesh_edits(),
+        !app.workspace.scenes[0].document.has_unsaved_mesh_edits(),
         "the reverted stroke is not work the operator has to save"
     );
-    assert_eq!(app.document.edit_mode.undo_len(), 0);
-    assert!(app.tools.sculpt.worker.is_none(), "the session is dropped");
+    assert_eq!(app.workspace.scenes[0].document.edit_mode.undo_len(), 0);
+    assert!(
+        app.workspace.scenes[0].tools.sculpt.worker.is_none(),
+        "the session is dropped"
+    );
 }
 
 /// Ray admission reserves the final queue slot for the stroke boundary. Even
@@ -651,7 +769,12 @@ fn abort_also_reverts_a_released_stroke_waiting_in_the_worker() {
 fn an_active_stroke_keeps_its_finish_boundary_at_queue_capacity() {
     let (mut app, _layer_id) = app_with_a_live_stroke("sculpt-finish-reserved-slot");
     {
-        let worker = app.tools.sculpt.worker.as_ref().expect("worker");
+        let worker = app.workspace.scenes[0]
+            .tools
+            .sculpt
+            .worker
+            .as_ref()
+            .expect("worker");
         worker.set_queue_paused_for_tests(true);
         let step = BrushRayStep {
             origin: [1000.0, 1000.0, 10.0],
@@ -684,16 +807,19 @@ fn an_active_stroke_keeps_its_finish_boundary_at_queue_capacity() {
 
     let ctx = app.ui.repaint_ctx.clone();
     assert!(
-        app.commit_sculpt_stroke(&ctx),
+        app.active_context()
+            .expect("live test scene")
+            .commit_sculpt_stroke(&ctx),
         "the reserved slot admits Finish after the queue reaches 63 commands"
     );
     assert!(
-        app.tools.sculpt.stroke.is_none(),
+        app.workspace.scenes[0].tools.sculpt.stroke.is_none(),
         "the UI closes the released stroke after queuing Finish"
     );
-    assert!(!app.tools.sculpt.finish_retry);
+    assert!(!app.workspace.scenes[0].tools.sculpt.finish_retry);
 
-    app.tools
+    app.workspace.scenes[0]
+        .tools
         .sculpt
         .worker
         .as_ref()
@@ -701,15 +827,19 @@ fn an_active_stroke_keeps_its_finish_boundary_at_queue_capacity() {
         .set_queue_paused_for_tests(false);
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        app.poll_sculpt_worker(&ctx);
-        if app
+        app.active_context()
+            .expect("live test scene")
+            .poll_sculpt_worker(&ctx);
+        if app.workspace.scenes[0]
             .tools
             .sculpt
             .worker
             .as_ref()
             .is_some_and(SculptWorker::is_quiescent)
         {
-            app.poll_sculpt_worker(&ctx);
+            app.active_context()
+                .expect("live test scene")
+                .poll_sculpt_worker(&ctx);
             break;
         }
         assert!(
@@ -739,10 +869,12 @@ fn worker_loss_invalidates_an_active_sculpt_stroke() {
         "the stroke has a densified live preview"
     );
 
-    app.tools.sculpt.worker = None;
+    app.workspace.scenes[0].tools.sculpt.worker = None;
     let ctx = app.ui.repaint_ctx.clone();
     assert!(
-        !app.commit_sculpt_stroke(&ctx),
+        !app.active_context()
+            .expect("live test scene")
+            .commit_sculpt_stroke(&ctx),
         "a stroke cannot finish without its worker"
     );
 
@@ -753,10 +885,13 @@ fn worker_loss_invalidates_an_active_sculpt_stroke() {
         "losing the worker must revert the live shadow, not freeze it on screen"
     );
     assert_eq!(after.topology_id(), committed_topology);
-    assert!(!app.document.has_unsaved_mesh_edits());
-    assert_eq!(app.document.edit_mode.undo_len(), 0);
+    assert!(!app.workspace.scenes[0].document.has_unsaved_mesh_edits());
+    assert_eq!(app.workspace.scenes[0].document.edit_mode.undo_len(), 0);
     assert_eq!(
-        app.ui.status_message.as_deref(),
+        app.workspace.scenes[0]
+            .presentation
+            .status_message
+            .as_deref(),
         Some(
             app.ui
                 .locale
@@ -766,7 +901,7 @@ fn worker_loss_invalidates_an_active_sculpt_stroke() {
         "the operator is told why the stroke could not finish"
     );
     assert!(
-        app.tools.sculpt.stroke.is_none(),
+        app.workspace.scenes[0].tools.sculpt.stroke.is_none(),
         "the dead drag is not left latched"
     );
 }
@@ -780,7 +915,12 @@ fn a_finished_stroke_commits_before_a_later_live_topology_delta() {
 
     // Stroke 1 densifies and is released.
     {
-        let worker = app.tools.sculpt.worker.as_ref().expect("worker");
+        let worker = app.workspace.scenes[0]
+            .tools
+            .sculpt
+            .worker
+            .as_ref()
+            .expect("worker");
         assert!(worker.try_apply(densifying_stroke(), BrushMode::Smooth));
         assert!(worker.finish_stroke());
     }
@@ -788,7 +928,12 @@ fn a_finished_stroke_commits_before_a_later_live_topology_delta() {
 
     // Stroke 2 densifies but remains open.
     {
-        let worker = app.tools.sculpt.worker.as_ref().expect("worker");
+        let worker = app.workspace.scenes[0]
+            .tools
+            .sculpt
+            .worker
+            .as_ref()
+            .expect("worker");
         assert!(worker.try_apply(densifying_stroke(), BrushMode::Smooth));
     }
     let after_second = wait_for_shadow_growth(&app, after_first);
@@ -796,8 +941,10 @@ fn a_finished_stroke_commits_before_a_later_live_topology_delta() {
     let ctx = app.ui.repaint_ctx.clone();
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
-        app.poll_sculpt_worker(&ctx);
-        if app.document.edit_mode.undo_len() == 1
+        app.active_context()
+            .expect("live test scene")
+            .poll_sculpt_worker(&ctx);
+        if app.workspace.scenes[0].document.edit_mode.undo_len() == 1
             && layer_mesh(&app, layer_id).vertices().len() == after_first
         {
             break;
@@ -808,16 +955,17 @@ fn a_finished_stroke_commits_before_a_later_live_topology_delta() {
 
     assert!(app.ui.app_error.is_none(), "no terminal failure");
     assert!(
-        app.tools.sculpt.worker.is_some(),
+        app.workspace.scenes[0].tools.sculpt.worker.is_some(),
         "committing stroke 1 must not invalidate the session it belongs to"
     );
     assert!(
-        app.document.has_unsaved_mesh_edits(),
+        app.workspace.scenes[0].document.has_unsaved_mesh_edits(),
         "stroke 1 is work the operator has to save"
     );
     assert_eq!(
         layer_mesh(&app, layer_id).topology_id(),
-        app.tools
+        app.workspace.scenes[0]
+            .tools
             .sculpt
             .worker
             .as_ref()
@@ -838,7 +986,12 @@ fn multiple_completions_commit_before_the_latest_live_delta() {
     // Two released densifying strokes produce two ordered completions.
     for _ in 0..2 {
         {
-            let worker = app.tools.sculpt.worker.as_ref().expect("worker");
+            let worker = app.workspace.scenes[0]
+                .tools
+                .sculpt
+                .worker
+                .as_ref()
+                .expect("worker");
             assert!(worker.try_apply(densifying_stroke(), BrushMode::Smooth));
             assert!(worker.finish_stroke());
         }
@@ -847,7 +1000,12 @@ fn multiple_completions_commit_before_the_latest_live_delta() {
     let committed_vertices = shadow_len;
     // A third, still-open stroke remains in the live display.
     {
-        let worker = app.tools.sculpt.worker.as_ref().expect("worker");
+        let worker = app.workspace.scenes[0]
+            .tools
+            .sculpt
+            .worker
+            .as_ref()
+            .expect("worker");
         assert!(worker.try_apply(densifying_stroke(), BrushMode::Smooth));
     }
     let final_len = wait_for_shadow_growth(&app, shadow_len);
@@ -855,8 +1013,10 @@ fn multiple_completions_commit_before_the_latest_live_delta() {
     let ctx = app.ui.repaint_ctx.clone();
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
-        app.poll_sculpt_worker(&ctx);
-        if app.document.edit_mode.undo_len() == 2
+        app.active_context()
+            .expect("live test scene")
+            .poll_sculpt_worker(&ctx);
+        if app.workspace.scenes[0].document.edit_mode.undo_len() == 2
             && layer_mesh(&app, layer_id).vertices().len() == committed_vertices
         {
             break;
@@ -870,25 +1030,30 @@ fn multiple_completions_commit_before_the_latest_live_delta() {
 
     assert!(app.ui.app_error.is_none(), "no terminal failure");
     assert!(
-        app.tools.sculpt.worker.is_some(),
+        app.workspace.scenes[0].tools.sculpt.worker.is_some(),
         "the session must survive both commits"
     );
-    assert!(app.document.has_unsaved_mesh_edits());
+    assert!(app.workspace.scenes[0].document.has_unsaved_mesh_edits());
     assert_eq!(sculpt_shadow_len(&app), final_len);
 }
 
 #[test]
 fn entering_sculpt_restores_the_remembered_tool_without_auto_arming_at_startup() {
     let (mut app, _) = app_with_a_live_stroke("sculpt-remembered-tool");
-    app.tools.sculpt.stroke = None;
-    app.tools.sculpt.armed = None;
+    app.workspace.scenes[0].tools.sculpt.stroke = None;
+    app.workspace.scenes[0].tools.sculpt.armed = None;
     app.persistence.settings.last_sculpt_tool = SculptToolKind::Smooth;
 
-    assert!(app.tools.sculpt.armed.is_none());
+    assert!(app.workspace.scenes[0].tools.sculpt.armed.is_none());
     let ctx = app.ui.repaint_ctx.clone();
-    app.switch_editor_tab(mesh_editor_overlay::EditorTab::Sculpt, &ctx);
+    app.active_context()
+        .expect("live test scene")
+        .switch_editor_tab(mesh_editor_overlay::EditorTab::Sculpt, &ctx);
 
-    assert_eq!(app.tools.sculpt.armed, Some(SculptToolKind::Smooth));
+    assert_eq!(
+        app.workspace.scenes[0].tools.sculpt.armed,
+        Some(SculptToolKind::Smooth)
+    );
 }
 
 #[test]
@@ -898,8 +1063,13 @@ fn entering_sculpt_restores_the_remembered_tool_without_auto_arming_at_startup()
 )]
 fn modified_wheel_waits_for_queued_finish_then_works_when_worker_is_idle() {
     let (mut app, _) = app_with_a_live_stroke("sculpt-wheel-finish-boundary");
-    app.tools.sculpt.armed = Some(SculptToolKind::AddRemove);
-    let worker = app.tools.sculpt.worker.as_ref().expect("prepared worker");
+    app.workspace.scenes[0].tools.sculpt.armed = Some(SculptToolKind::AddRemove);
+    let worker = app.workspace.scenes[0]
+        .tools
+        .sculpt
+        .worker
+        .as_ref()
+        .expect("prepared worker");
     worker.set_queue_paused_for_tests(true);
     assert!(worker.try_apply_ray_step(BrushRayStep {
         origin: [0.0, 0.0, 20.0],
@@ -918,33 +1088,47 @@ fn modified_wheel_waits_for_queued_finish_then_works_when_worker_is_idle() {
 
     let ctx = app.ui.repaint_ctx.clone();
     assert!(
-        app.commit_sculpt_stroke(&ctx),
+        app.active_context()
+            .expect("live test scene")
+            .commit_sculpt_stroke(&ctx),
         "Finish is admitted behind the ray"
     );
-    assert!(app.tools.sculpt.stroke.is_none());
-    assert!(app.tools.sculpt.worker_has_pending_work());
+    assert!(app.workspace.scenes[0].tools.sculpt.stroke.is_none());
+    assert!(app.workspace.scenes[0]
+        .tools
+        .sculpt
+        .worker_has_pending_work());
     assert!(
         sculpt_strength_wheel_frame(&mut app, &ctx, 50.0),
         "modified wheel remains owned while the released stroke drains"
     );
     assert_eq!(
-        mesh_editor_overlay::sculpt_strength(&ctx, SculptToolKind::AddRemove),
+        mesh_editor_overlay::sculpt_strength(
+            &ctx,
+            workspace::id::SceneKey::INITIAL,
+            SculptToolKind::AddRemove
+        ),
         SculptToolKind::AddRemove.default_strength(),
         "pending Finish must not change captured brush parameters"
     );
 
-    app.tools
+    app.workspace.scenes[0]
+        .tools
         .sculpt
         .worker
         .as_ref()
         .expect("worker")
         .set_queue_paused_for_tests(false);
     pump_sculpt_worker_until_idle(&mut app);
-    assert!(!app.tools.sculpt.is_busy());
+    assert!(!app.workspace.scenes[0].tools.sculpt.is_busy());
 
     assert!(sculpt_strength_wheel_frame(&mut app, &ctx, 50.0));
     assert_eq!(
-        mesh_editor_overlay::sculpt_strength(&ctx, SculptToolKind::AddRemove),
+        mesh_editor_overlay::sculpt_strength(
+            &ctx,
+            workspace::id::SceneKey::INITIAL,
+            SculptToolKind::AddRemove
+        ),
         0.45,
         "the next idle notch changes the selected catalog strength"
     );

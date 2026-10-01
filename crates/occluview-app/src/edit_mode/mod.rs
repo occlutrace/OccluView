@@ -14,26 +14,36 @@ pub(crate) mod state;
 mod sync_tests;
 #[cfg(test)]
 mod tests;
-pub(crate) mod undo;
-mod undo_snapshot;
+pub(crate) mod undo_snapshot;
 
-use occluview_core::{Scene, SceneMeshId};
+use crate::app::workspace::history::{
+    EditCheckpointId, HistoryCommandId, HistoryDirection, HistoryStepInfo, WorkspaceHistory,
+    WorkspaceHistoryHandle,
+};
+use crate::app::workspace::id::SceneKey;
+use occluview_core::SceneMeshId;
 pub(crate) use selection::ScreenPolygonSelectionRequest;
 use selection_set::FaceSelectionSet;
 pub(crate) use state::{EditModeCommand, EditModeState, EditSessionToken, SelectGesture};
 // History/session enums are consumed by tests across modules only.
 #[cfg(test)]
 pub(crate) use state::{BusyFinish, LayerKey};
-use undo::UndoStack;
-use undo_snapshot::MeshEditUndoSnapshot;
 pub(crate) use undo_snapshot::StructuralHistoryStep;
 
 const DEFAULT_UNDO_COUNT: usize = 16;
 const DEFAULT_UNDO_BYTES: usize = 512 * 1024 * 1024;
 
+/// Why a valid layer could not be opened in an Edit session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum EditSessionStartFailure {
+    /// The shared history could not retain the baseline required by Cancel.
+    HistoryCapacityUnavailable,
+}
+
 pub(crate) struct EditModeController {
     state: EditModeState,
-    undo: UndoStack<MeshEditUndoSnapshot>,
+    history: WorkspaceHistoryHandle,
+    history_scope: Option<SceneKey>,
     selections: FaceSelectionSet,
     /// Layer targeted by single-layer selection commands.
     active_layer_id: Option<SceneMeshId>,
@@ -46,10 +56,9 @@ pub(crate) struct EditModeController {
     /// Lasso selection mode: false (default) = surface, only front-facing
     /// triangles inside the outline; true = through-mesh, every enclosed face.
     through_mesh: bool,
-    /// Scene captured when an edit session began, so Cancel can revert the whole
-    /// session (including structural cut/separate ops that added layers) in one
-    /// predictable step. Held only while a session is active.
-    baseline_scene: Option<Scene>,
+    /// A workspace-owned checkpoint keeps this scene's baseline and journal
+    /// boundary until the user chooses Done or Cancel.
+    edit_checkpoint: Option<EditCheckpointId>,
     /// Session-wide dirty marker. The state machine tracks the target of the
     /// current operation, while this survives switches between editable layers.
     session_dirty: bool,
@@ -63,6 +72,8 @@ pub(crate) struct EditModeController {
     /// oversized snapshot is skipped): guards the no-op discard from popping an
     /// unrelated older snapshot.
     last_undo_push_stored: bool,
+    pending_history_command: Option<HistoryCommandId>,
+    session_start_failure: Option<EditSessionStartFailure>,
 }
 
 impl Default for EditModeController {
@@ -73,18 +84,40 @@ impl Default for EditModeController {
 
 impl EditModeController {
     pub(crate) fn new(max_undo_count: usize, max_undo_bytes: usize) -> Self {
+        Self::new_with_history(
+            WorkspaceHistory::shared(max_undo_count, max_undo_bytes),
+            None,
+        )
+    }
+
+    pub(crate) fn new_for_scene(
+        history: WorkspaceHistoryHandle,
+        scene_key: SceneKey,
+        max_undo_count: usize,
+        max_undo_bytes: usize,
+    ) -> Self {
+        history
+            .borrow_mut()
+            .constrain_limits(max_undo_count, max_undo_bytes);
+        Self::new_with_history(history, Some(scene_key))
+    }
+
+    fn new_with_history(history: WorkspaceHistoryHandle, history_scope: Option<SceneKey>) -> Self {
         Self {
             state: EditModeState::default(),
-            undo: UndoStack::new(max_undo_count, max_undo_bytes),
+            history,
+            history_scope,
             selections: FaceSelectionSet::default(),
             active_layer_id: None,
             next_token: 1,
             gesture: SelectGesture::default(),
             through_mesh: false,
-            baseline_scene: None,
+            edit_checkpoint: None,
             session_dirty: false,
             session_layer_id: None,
             last_undo_push_stored: false,
+            pending_history_command: None,
+            session_start_failure: None,
         }
     }
 
@@ -150,7 +183,12 @@ impl EditModeController {
     }
 
     pub(crate) fn has_active_session(&self) -> bool {
-        self.baseline_scene.is_some()
+        self.edit_checkpoint.is_some()
+    }
+
+    /// Consume the reason the latest Edit-session entry failed, if any.
+    pub(crate) fn take_session_start_failure(&mut self) -> Option<EditSessionStartFailure> {
+        self.session_start_failure.take()
     }
 
     /// Toggle the surface/through-mesh selection mode. Returns true when changed.
@@ -174,6 +212,20 @@ impl EditModeController {
 
     #[cfg(test)]
     pub(crate) fn undo_len(&self) -> usize {
-        self.undo.undo_len()
+        self.history.borrow().undo_len(self.history_scope)
+    }
+
+    pub(crate) fn next_history_step(&self, direction: HistoryDirection) -> Option<HistoryStepInfo> {
+        self.history
+            .borrow()
+            .top_step(self.history_scope, direction)
+    }
+
+    /// Move this controller to a fresh scene lifetime after Replace. Closing
+    /// the old scope releases its history/checkpoint before any command can be
+    /// recorded under the new epoch.
+    pub(crate) fn rebind_scene_scope(&mut self, new_key: SceneKey) {
+        self.clear();
+        self.history_scope = Some(new_key);
     }
 }

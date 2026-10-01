@@ -976,3 +976,44 @@ shell-preview-isometric = Isometrisch
 shell-preview-fit-view = Ansicht einpassen
 shell-preview-wireframe = Drahtgitter
 shell-preview-copy-image = Bild kopieren
+
+## Zwei Szenen und Ebenen verschieben.
+workspace-scene-name = Szene { $number }
+workspace-scenes = Szenen
+workspace-scene-new = Neue Szene erstellen
+workspace-new-left = Neue Szene links
+workspace-new-right = Neue Szene rechts
+workspace-one-view = Eine Ansicht
+workspace-two-views = Zwei Ansichten
+workspace-fullscreen = Nur diese Szene anzeigen
+workspace-divider = Szenenbreite
+workspace-drop-title = Szene auswählen
+workspace-drop-description = Wo sollen diese Dateien hinzugefügt werden?
+workspace-cancel = Abbrechen
+workspace-rename = Szene umbenennen
+workspace-rename-title = Szene umbenennen
+workspace-rename-apply = Umbenennen
+workspace-close = Szene schließen
+workspace-close-title = Ungespeicherte Änderungen
+workspace-close-question = Änderungen in { $scenes } vor dem Schließen speichern?
+workspace-close-detail = Warten Sie, bis laufende Änderungen abgeschlossen sind, bevor Sie speichern. Beim Verwerfen wird ohne Speichern geschlossen.
+workspace-discard-close = Verwerfen und schließen
+workspace-move-layer = Ausgewählte Ebene verschieben
+workspace-two-scene-limit = Dieser Arbeitsbereich unterstützt zwei Szenen.
+layers-row-drag-hint = Klicken, um die Ebene zu fokussieren; ziehen, um sie in eine andere Szene zu verschieben
+workspace-layer-move-new-scene = Ebene in eine neue Szene verschieben
+workspace-layer-move-scene = Ebene nach { $scene } verschieben
+
+workspace-move-all = Alle Ebenen verschieben
+help-workspace-switch = Aktive Szene wechseln
+help-workspace-drag = Ebene in eine andere Szene verschieben oder am linken oder rechten Rand eine Szene erstellen
+help-workspace-divider = Szenenbreite ändern; Pos1 stellt gleiche Breiten wieder her
+
+workspace-wait-edit = Beenden oder verwerfen Sie zuerst die Bearbeitung in beiden Szenen.
+workspace-wait-load = Warten Sie, bis die Szenen geladen sind.
+workspace-wait-gesture = Beenden Sie zuerst die aktuelle Mausgeste.
+workspace-history-order = Machen Sie zuerst die späteren Änderungen in der anderen Szene rückgängig.
+workspace-history-budget = Für diese Aktion reicht der Speicher der Rückgängig-Historie nicht aus.
+workspace-stale-target = Die Szene oder Ebene ist nicht mehr verfügbar.
+workspace-close-dialog = Schließen Sie zuerst den geöffneten Dialog.
+workspace-import-cancelled = Ausstehende Importe wurden beim Schließen ihrer Szene abgebrochen.

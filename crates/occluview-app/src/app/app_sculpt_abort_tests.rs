@@ -79,12 +79,17 @@ fn app_sculpting(name: &str, mesh: Mesh) -> (OccluViewApp, SceneMeshId) {
     let mut app = test_app(name);
     let mut scene = Scene::new();
     let index = scene.add(SceneMesh::new(mesh));
-    app.document.scene = Some(Arc::new(scene));
-    let scene = app.document.scene.clone().expect("scene");
+    app.workspace.scenes[0].document.scene = Some(Arc::new(scene));
+    let scene = app.workspace.scenes[0]
+        .document
+        .scene
+        .clone()
+        .expect("scene");
     let entry = &scene.meshes()[index];
     let layer_id = entry.id();
     assert!(
-        app.document
+        app.workspace.scenes[0]
+            .document
             .edit_mode
             .begin_face_selection(entry, scene.as_ref()),
         "an edit session over the layer"
@@ -97,12 +102,16 @@ fn pump_until_quiescent(app: &mut OccluViewApp) {
     let ctx = app.ui.repaint_ctx.clone();
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
-        app.poll_sculpt_worker(&ctx);
-        let Some(worker) = app.tools.sculpt.worker.as_ref() else {
+        app.active_context()
+            .expect("live test scene")
+            .poll_sculpt_worker(&ctx);
+        let Some(worker) = app.workspace.scenes[0].tools.sculpt.worker.as_ref() else {
             return;
         };
         if worker.is_quiescent() {
-            app.poll_sculpt_worker(&ctx);
+            app.active_context()
+                .expect("live test scene")
+                .poll_sculpt_worker(&ctx);
             return;
         }
         assert!(
@@ -121,7 +130,12 @@ fn lay_and_release_one_dab(
 ) {
     start_stroke(app, base);
     {
-        let worker = app.tools.sculpt.worker.as_ref().expect("worker");
+        let worker = app.workspace.scenes[0]
+            .tools
+            .sculpt
+            .worker
+            .as_ref()
+            .expect("worker");
         assert!(worker.try_apply(stroke, mode), "the dab must be queued");
         assert!(worker.finish_stroke(), "the dab must be released");
     }
@@ -130,8 +144,8 @@ fn lay_and_release_one_dab(
 
 fn start_stroke(app: &mut OccluViewApp, base: &Mesh) {
     let layer_id = layer_id_of(app);
-    app.tools.sculpt.worker = Some(worker_for(base, layer_id));
-    app.tools.sculpt.stroke = Some(StrokeState {
+    app.workspace.scenes[0].tools.sculpt.worker = Some(worker_for(base, layer_id));
+    app.workspace.scenes[0].tools.sculpt.stroke = Some(StrokeState {
         layer_id,
         last_pointer: [0.0, 0.0],
         input_pointer: [0.0, 0.0],
@@ -145,14 +159,20 @@ fn start_stroke(app: &mut OccluViewApp, base: &Mesh) {
 
 fn lay_dab_mid_stroke(app: &mut OccluViewApp, stroke: BrushStroke, mode: BrushMode) {
     {
-        let worker = app.tools.sculpt.worker.as_ref().expect("worker");
+        let worker = app.workspace.scenes[0]
+            .tools
+            .sculpt
+            .worker
+            .as_ref()
+            .expect("worker");
         assert!(worker.try_apply(stroke, mode), "the dab must be queued");
     }
     pump_until_quiescent(app);
 }
 
 fn layer_mesh(app: &OccluViewApp, layer_id: SceneMeshId) -> Arc<Mesh> {
-    app.document
+    app.workspace.scenes[0]
+        .document
         .scene
         .as_ref()
         .expect("a scene")
@@ -165,14 +185,20 @@ fn layer_mesh(app: &OccluViewApp, layer_id: SceneMeshId) -> Arc<Mesh> {
 }
 
 fn layer_id_of(app: &OccluViewApp) -> SceneMeshId {
-    app.document
+    app.workspace.scenes[0]
+        .document
         .edit_mode
         .session_layer_id()
         .expect("the session names its layer")
 }
 
 fn sculpt_shadow_len(app: &OccluViewApp) -> usize {
-    let worker = app.tools.sculpt.worker.as_ref().expect("sculpt worker");
+    let worker = app.workspace.scenes[0]
+        .tools
+        .sculpt
+        .worker
+        .as_ref()
+        .expect("sculpt worker");
     let shadow = worker.shadow();
     let len = shadow.read().expect("display shadow").len();
     len
@@ -189,7 +215,7 @@ fn aborting_a_densified_stroke_leaves_no_partial_geometry_in_the_document() {
     start_stroke(&mut app, &committed);
     lay_dab_mid_stroke(&mut app, densifying_stroke(), BrushMode::Smooth);
     assert!(
-        app.tools.sculpt.stroke.is_some(),
+        app.workspace.scenes[0].tools.sculpt.stroke.is_some(),
         "the stroke is still open; nothing has been released"
     );
     assert!(
@@ -204,7 +230,9 @@ fn aborting_a_densified_stroke_leaves_no_partial_geometry_in_the_document() {
         "the committed document keeps its topology until the stroke finishes"
     );
 
-    app.abort_sculpt_stroke();
+    app.active_context()
+        .expect("live test scene")
+        .abort_sculpt_stroke();
 
     let after = layer_mesh(&app, layer_id);
     assert_eq!(
@@ -223,16 +251,16 @@ fn aborting_a_densified_stroke_leaves_no_partial_geometry_in_the_document() {
         "nor a topology identity that no committed stroke produced"
     );
     assert!(
-        !app.document.has_unsaved_mesh_edits(),
+        !app.workspace.scenes[0].document.has_unsaved_mesh_edits(),
         "an aborted stroke is not work the operator has to save"
     );
     assert_eq!(
-        app.document.edit_mode.undo_len(),
+        app.workspace.scenes[0].document.edit_mode.undo_len(),
         0,
         "and it leaves no history step behind"
     );
     assert!(
-        app.tools.sculpt.worker.is_none(),
+        app.workspace.scenes[0].tools.sculpt.worker.is_none(),
         "abort drops the live preview"
     );
 }
@@ -254,11 +282,11 @@ fn aborting_a_densified_second_stroke_keeps_the_first_stroke_result() {
     );
     let first_topology = first_mesh.topology_id();
     assert!(
-        app.document.has_unsaved_mesh_edits(),
+        app.workspace.scenes[0].document.has_unsaved_mesh_edits(),
         "a committed stroke is unsaved work"
     );
     assert_eq!(
-        app.document.edit_mode.undo_len(),
+        app.workspace.scenes[0].document.edit_mode.undo_len(),
         1,
         "and it is one history step"
     );
@@ -271,11 +299,13 @@ fn aborting_a_densified_second_stroke_keeps_the_first_stroke_result() {
         "the second stroke densified the layer"
     );
     assert!(
-        app.tools.sculpt.stroke.is_some(),
+        app.workspace.scenes[0].tools.sculpt.stroke.is_some(),
         "and the second stroke is still open"
     );
 
-    app.abort_sculpt_stroke();
+    app.active_context()
+        .expect("live test scene")
+        .abort_sculpt_stroke();
 
     let after = layer_mesh(&app, layer_id);
     assert_eq!(
@@ -285,11 +315,11 @@ fn aborting_a_densified_second_stroke_keeps_the_first_stroke_result() {
          to the session baseline"
     );
     assert!(
-        app.document.has_unsaved_mesh_edits(),
+        app.workspace.scenes[0].document.has_unsaved_mesh_edits(),
         "the first stroke is still work the operator has not saved"
     );
     assert_eq!(
-        app.document.edit_mode.undo_len(),
+        app.workspace.scenes[0].document.edit_mode.undo_len(),
         1,
         "and its single history step survives"
     );
@@ -308,11 +338,13 @@ fn a_committed_densifying_stroke_keeps_its_geometry() {
         "the stroke densified the layer"
     );
     assert!(
-        app.document.has_unsaved_mesh_edits(),
+        app.workspace.scenes[0].document.has_unsaved_mesh_edits(),
         "a committed stroke is unsaved work"
     );
 
-    app.abort_sculpt_stroke();
+    app.active_context()
+        .expect("live test scene")
+        .abort_sculpt_stroke();
 
     assert_eq!(
         layer_mesh(&app, layer_id).vertices().len(),
@@ -321,7 +353,7 @@ fn a_committed_densifying_stroke_keeps_its_geometry() {
          geometry"
     );
     assert!(
-        app.document.has_unsaved_mesh_edits(),
+        app.workspace.scenes[0].document.has_unsaved_mesh_edits(),
         "the committed work is still unsaved"
     );
 }
@@ -342,10 +374,12 @@ fn undo_and_redo_a_committed_densifying_stroke() {
         committed_vertices > base_vertices,
         "the stroke densified the layer"
     );
-    assert!(app.document.has_unsaved_mesh_edits());
+    assert!(app.workspace.scenes[0].document.has_unsaved_mesh_edits());
 
     let ctx = app.ui.repaint_ctx.clone();
-    app.apply_history_navigation_now(false, &ctx);
+    app.active_context()
+        .expect("live test scene")
+        .apply_history_navigation_now(false, &ctx);
     let undone = layer_mesh(&app, layer_id);
     assert_eq!(
         undone.vertices().len(),
@@ -355,7 +389,9 @@ fn undo_and_redo_a_committed_densifying_stroke() {
     );
     assert_eq!(undone.triangle_count(), base_triangles);
 
-    app.apply_history_navigation_now(true, &ctx);
+    app.active_context()
+        .expect("live test scene")
+        .apply_history_navigation_now(true, &ctx);
     let redone = layer_mesh(&app, layer_id);
     assert_eq!(
         redone.vertices().len(),
@@ -383,10 +419,10 @@ fn a_worker_failure_after_densification_leaves_no_partial_geometry() {
         "the live preview has densified"
     );
 
-    app.fail_sculpt_session(
-        &SculptFailure::WorkerStatePoisoned,
-        &app.ui.repaint_ctx.clone(),
-    );
+    let ctx = app.ui.repaint_ctx.clone();
+    app.active_context()
+        .expect("live test scene")
+        .fail_sculpt_session(&SculptFailure::WorkerStatePoisoned, &ctx);
 
     let after = layer_mesh(&app, layer_id);
     assert_eq!(
@@ -397,7 +433,7 @@ fn a_worker_failure_after_densification_leaves_no_partial_geometry() {
     assert_eq!(after.triangle_count(), committed_triangles);
     assert_eq!(after.topology_id(), committed_topology);
     assert!(
-        !app.document.has_unsaved_mesh_edits(),
+        !app.workspace.scenes[0].document.has_unsaved_mesh_edits(),
         "and the failed stroke is not unsaved work"
     );
 }

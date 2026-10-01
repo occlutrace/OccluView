@@ -1,6 +1,7 @@
 //! Viewport-ray conversion and brush settings for interactive sculpting.
 
 use super::{egui, mesh_editor_overlay};
+use crate::app::workspace::id::SceneKey;
 use crate::sculpt_kernel::BrushRayStep;
 use crate::sculpt_tool::{SculptTip, SculptToolKind};
 use crate::viewer::viewport_ray;
@@ -11,8 +12,8 @@ use occluview_render::ClipPlane;
 const WHEEL_NOTCH_PX: f32 = 40.0;
 const WHEEL_GESTURE_GAP_SEC: f64 = 0.3;
 
-pub(super) fn has_sculpt_settings_wheel(ctx: &egui::Context) -> bool {
-    collect_sculpt_wheel_notches(ctx).0
+pub(super) fn has_sculpt_settings_wheel(ctx: &egui::Context, scene_key: SceneKey) -> bool {
+    collect_sculpt_wheel_notches(ctx, scene_key).0
 }
 
 #[derive(Clone, Copy, Default)]
@@ -25,9 +26,10 @@ struct SculptWheelAccumulator {
 
 pub(super) fn apply_sculpt_wheel_settings(
     ctx: &egui::Context,
+    scene_key: SceneKey,
     kind: Option<SculptToolKind>,
 ) -> bool {
-    let (consumed, notches) = collect_sculpt_wheel_notches(ctx);
+    let (consumed, notches) = collect_sculpt_wheel_notches(ctx, scene_key);
     if !consumed {
         return false;
     }
@@ -35,14 +37,18 @@ pub(super) fn apply_sculpt_wheel_settings(
         // Ctrl changes strength; Shift changes size. Ctrl takes priority.
         if ctrl {
             let kind = kind.unwrap_or(SculptToolKind::AddRemove);
-            let next =
-                kind.step_strength(mesh_editor_overlay::sculpt_strength(ctx, kind), direction);
-            mesh_editor_overlay::set_sculpt_strength(ctx, kind, next);
+            let next = kind.step_strength(
+                mesh_editor_overlay::sculpt_strength(ctx, scene_key, kind),
+                direction,
+            );
+            mesh_editor_overlay::set_sculpt_strength(ctx, scene_key, kind, next);
         } else {
-            let tip = mesh_editor_overlay::sculpt_tip(ctx);
-            let next =
-                tip.step_radius_mm(mesh_editor_overlay::sculpt_radius_mm(ctx, tip), direction);
-            mesh_editor_overlay::set_sculpt_radius_mm(ctx, tip, next);
+            let tip = mesh_editor_overlay::sculpt_tip(ctx, scene_key);
+            let next = tip.step_radius_mm(
+                mesh_editor_overlay::sculpt_radius_mm(ctx, scene_key, tip),
+                direction,
+            );
+            mesh_editor_overlay::set_sculpt_radius_mm(ctx, scene_key, tip, next);
         }
     }
     true
@@ -55,11 +61,14 @@ pub(super) fn apply_sculpt_wheel_settings(
     clippy::float_cmp,
     reason = "Wheel zero is a protocol sentinel; any nonzero sub-notch travel accumulates."
 )]
-fn collect_sculpt_wheel_notches(ctx: &egui::Context) -> (bool, Vec<(bool, f32)>) {
+fn collect_sculpt_wheel_notches(
+    ctx: &egui::Context,
+    scene_key: SceneKey,
+) -> (bool, Vec<(bool, f32)>) {
     let frame = ctx.cumulative_frame_nr();
     let (events, now) = ctx.input(|input| (input.raw.events.clone(), input.time));
     ctx.data_mut(|data| {
-        let id = egui::Id::new("occluview_sculpt_wheel_accumulator");
+        let id = egui::Id::new(("occluview_sculpt_wheel_accumulator", scene_key));
         let mut accumulator = data
             .get_temp::<SculptWheelAccumulator>(id)
             .unwrap_or_default();

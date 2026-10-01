@@ -12,12 +12,14 @@ use super::app_mesh_export::{
 use super::app_test_support::{named_scene, push_named_layer, scene_names, test_app};
 use super::layers_overlay::LayerOverlayChanges;
 use super::*;
+use crate::app::OccluViewApp;
 use crate::edit_mode::EditModeCommand;
 use occluview_core::{Mesh, SceneMesh, Vertex};
 use occluview_formats::write::MeshWriteFormat;
 
 fn layer_ids(app: &OccluViewApp) -> Vec<occluview_core::SceneMeshId> {
-    app.document
+    app.workspace.scenes[0]
+        .document
         .scene
         .as_ref()
         .expect("scene")
@@ -28,25 +30,33 @@ fn layer_ids(app: &OccluViewApp) -> Vec<occluview_core::SceneMeshId> {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn split_then_undo_redo_keeps_source_paths_and_export_defaults() {
     let mut app = test_app("provenance-history");
     let cases = std::env::temp_dir().join(format!("occluview-provenance-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&cases);
     let source_file = cases.join("lower.stl");
-    app.document.scene = Some(Arc::new(named_scene("lower", 0.0)));
-    app.persistence.current_paths = vec![source_file.clone()];
+    app.workspace.scenes[0].document.scene = Some(Arc::new(named_scene("lower", 0.0)));
+    app.workspace.scenes[0].document.current_paths = vec![source_file.clone()];
     let source_id = layer_ids(&app)[0];
 
-    let token = app
-        .document
+    let document = &mut app.workspace.scenes[0].document;
+    let scene = document.scene.clone().expect("scene");
+    let token = document
         .edit_mode
         .begin_scene_edit(
-            app.document.scene.as_ref().expect("scene"),
+            scene.as_ref(),
             source_id,
             EditModeCommand::CutSelectionToNewLayer,
         )
         .expect("scene edit token");
-    let mut draft = app.document.scene.as_ref().expect("scene").as_ref().clone();
+    let mut draft = app.workspace.scenes[0]
+        .document
+        .scene
+        .as_ref()
+        .expect("scene")
+        .as_ref()
+        .clone();
     let derived = SceneMesh::new(
         Mesh::new(
             Some("derived".to_string()),
@@ -63,49 +73,79 @@ fn split_then_undo_redo_keeps_source_paths_and_export_defaults() {
     let derived_id = derived.id();
     draft.insert(1, derived);
     assert_eq!(
-        app.document
+        app.workspace.scenes[0]
+            .document
             .edit_mode
             .finish_scene_edit_success(token, &draft),
         crate::edit_mode::BusyFinish::Applied
     );
-    let previous = app.document.scene.clone();
-    app.commit_structural_scene(previous.as_deref(), draft, &egui::Context::default());
-    app.document.mark_mesh_edits_unsaved(source_id);
-    app.document.mark_mesh_edits_unsaved(derived_id);
+    let previous = app.workspace.scenes[0].document.scene.clone();
+    app.active_context()
+        .expect("live test scene")
+        .commit_structural_scene(previous.as_deref(), draft, &egui::Context::default());
+    app.workspace.scenes[0]
+        .document
+        .mark_mesh_edits_unsaved(source_id);
+    app.workspace.scenes[0]
+        .document
+        .mark_mesh_edits_unsaved(derived_id);
 
-    let after_split = app.persistence.current_paths.clone();
+    let after_split = app.workspace.scenes[0].document.current_paths.clone();
     assert_eq!(
         after_split,
         vec![source_file.clone(), source_file.clone()],
         "a derived layer inherits the source path"
     );
 
-    app.apply_history_navigation_now(false, &egui::Context::default());
+    app.active_context()
+        .expect("live test scene")
+        .apply_history_navigation_now(false, &egui::Context::default());
     assert_eq!(
         scene_names(&app),
         vec!["lower".to_string()],
         "undo removes the derived layer"
     );
     assert_eq!(
-        app.persistence.current_paths.len(),
-        app.document.scene.as_ref().expect("scene").meshes().len(),
+        app.workspace.scenes[0].document.current_paths.len(),
+        app.workspace.scenes[0]
+            .document
+            .scene
+            .as_ref()
+            .expect("scene")
+            .meshes()
+            .len(),
         "paths stay index-aligned with the scene"
     );
-    assert_eq!(app.persistence.current_paths[0], source_file);
+    assert_eq!(
+        app.workspace.scenes[0].document.current_paths[0],
+        source_file
+    );
 
-    app.apply_history_navigation_now(true, &egui::Context::default());
+    app.active_context()
+        .expect("live test scene")
+        .apply_history_navigation_now(true, &egui::Context::default());
     assert_eq!(
         scene_names(&app),
         vec!["lower".to_string(), "derived".to_string()],
         "redo restores the derived layer"
     );
-    let redone_paths = app.persistence.current_paths.clone();
+    let redone_paths = app.workspace.scenes[0].document.current_paths.clone();
     assert_eq!(
         redone_paths.len(),
-        app.document.scene.as_ref().expect("scene").meshes().len()
+        app.workspace.scenes[0]
+            .document
+            .scene
+            .as_ref()
+            .expect("scene")
+            .meshes()
+            .len()
     );
 
-    let scene = app.document.scene.as_ref().expect("scene");
+    let scene = app.workspace.scenes[0]
+        .document
+        .scene
+        .as_ref()
+        .expect("scene");
     for index in 0..scene.meshes().len() {
         let directory = default_layer_export_directory(&redone_paths, index, None);
         assert_eq!(
@@ -131,32 +171,44 @@ fn removing_a_layer_keeps_the_survivor_path_aligned() {
     let mut app = test_app("provenance-remove");
     let mut scene = named_scene("lower", 0.0);
     let upper_id = push_named_layer(&mut scene, "upper", 5.0);
-    app.document.scene = Some(Arc::new(scene));
+    app.workspace.scenes[0].document.scene = Some(Arc::new(scene));
     let cases =
         std::env::temp_dir().join(format!("occluview-provenance-rm-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&cases);
     let lower_file = cases.join("lower.stl");
     let upper_file = cases.join("upper.stl");
-    app.persistence.current_paths = vec![lower_file.clone(), upper_file.clone()];
+    app.workspace.scenes[0].document.current_paths = vec![lower_file.clone(), upper_file.clone()];
 
-    let mut draft = app.document.scene.as_ref().expect("scene").as_ref().clone();
+    let mut draft = app.workspace.scenes[0]
+        .document
+        .scene
+        .as_ref()
+        .expect("scene")
+        .as_ref()
+        .clone();
     let removed = draft.remove(0);
     assert!(removed.is_some(), "the first layer is the one removed");
-    let previous = app.document.scene.clone();
-    app.commit_structural_scene(previous.as_deref(), draft, &egui::Context::default());
+    let previous = app.workspace.scenes[0].document.scene.clone();
+    app.active_context()
+        .expect("live test scene")
+        .commit_structural_scene(previous.as_deref(), draft, &egui::Context::default());
 
     assert_eq!(scene_names(&app), vec!["upper".to_string()]);
     assert_eq!(
-        app.persistence.current_paths,
+        app.workspace.scenes[0].document.current_paths,
         vec![upper_file.clone()],
         "the survivor keeps its own path after a neighbour is removed"
     );
 
-    let scene = app.document.scene.as_ref().expect("scene");
+    let scene = app.workspace.scenes[0]
+        .document
+        .scene
+        .as_ref()
+        .expect("scene");
     assert_eq!(scene.meshes()[0].id(), upper_id);
     assert_eq!(
         default_layer_export_stem(
-            &app.persistence.current_paths,
+            &app.workspace.scenes[0].document.current_paths,
             scene,
             0,
             MeshWriteFormat::StlBinary
@@ -165,7 +217,7 @@ fn removing_a_layer_keeps_the_survivor_path_aligned() {
         "the survivor exports under its own name, not the removed layer's"
     );
     assert_eq!(
-        default_layer_export_directory(&app.persistence.current_paths, 0, None),
+        default_layer_export_directory(&app.workspace.scenes[0].document.current_paths, 0, None),
         Some(cases),
         "and into its own folder"
     );
@@ -205,7 +257,12 @@ fn cuttable_scene(name: &str) -> Scene {
 }
 
 fn cut_one_triangle(app: &mut OccluViewApp, index: usize) {
-    let scene = app.document.scene.as_ref().expect("scene").clone();
+    let scene = app.workspace.scenes[0]
+        .document
+        .scene
+        .as_ref()
+        .expect("scene")
+        .clone();
     let entry = scene.meshes()[index].clone();
     let layer_id = entry.id();
     let total = entry.mesh.triangle_count();
@@ -215,7 +272,8 @@ fn cut_one_triangle(app: &mut OccluViewApp, index: usize) {
          large enough to cut again, so the source needs several triangles"
     );
     assert!(
-        app.document
+        app.workspace.scenes[0]
+            .document
             .edit_mode
             .begin_face_selection(&entry, scene.as_ref()),
         "the edit session must open"
@@ -223,7 +281,7 @@ fn cut_one_triangle(app: &mut OccluViewApp, index: usize) {
     let marked = total / 4;
     for triangle_index in 0..marked {
         assert!(
-            app.document.edit_mode.select_face_hit(
+            app.workspace.scenes[0].document.edit_mode.select_face_hit(
                 scene.as_ref(),
                 occluview_core::ScenePickHit {
                     layer_index: index,
@@ -239,7 +297,7 @@ fn cut_one_triangle(app: &mut OccluViewApp, index: usize) {
     let mut draft = scene.as_ref().clone();
     let apply = app_layer_edits::apply_visible_selected_face_mesh_edit_action(
         &mut draft,
-        &mut app.document.edit_mode,
+        &mut app.workspace.scenes[0].document.edit_mode,
         LayerContextAction::CutSelectionToNewLayer,
     )
     .expect("cut ok");
@@ -251,29 +309,39 @@ fn cut_one_triangle(app: &mut OccluViewApp, index: usize) {
         .map(SceneMesh::id)
         .filter(|id| !ids_before.contains(id))
     {
-        app.document.mark_mesh_edits_unsaved(id);
+        app.workspace.scenes[0].document.mark_mesh_edits_unsaved(id);
     }
-    let previous = app.document.scene.clone();
-    app.commit_structural_scene(previous.as_deref(), draft, &egui::Context::default());
+    let previous = app.workspace.scenes[0].document.scene.clone();
+    app.active_context()
+        .expect("live test scene")
+        .commit_structural_scene(previous.as_deref(), draft, &egui::Context::default());
 }
 
 fn remove_layer(app: &mut OccluViewApp, index: usize) {
-    let scene = app.document.scene.as_ref().expect("scene").clone();
+    let scene = app.workspace.scenes[0]
+        .document
+        .scene
+        .as_ref()
+        .expect("scene")
+        .clone();
     let layer_id = scene.meshes()[index].id();
-    let paths = app.persistence.current_paths.clone();
-    app.apply_layer_overlay_changes(
-        scene,
-        &paths,
-        LayerOverlayChanges {
-            context_request: Some(LayerContextRequest {
-                index,
-                layer_id,
-                action: LayerContextAction::Remove,
-            }),
-            layer_edits: Vec::new(),
-        },
-        &egui::Context::default(),
-    );
+    let paths = app.workspace.scenes[0].document.current_paths.clone();
+    app.active_context()
+        .expect("live test scene")
+        .apply_layer_overlay_changes(
+            scene,
+            &paths,
+            LayerOverlayChanges {
+                context_request: Some(LayerContextRequest {
+                    index,
+                    layer_id,
+                    action: LayerContextAction::Remove,
+                }),
+                layer_edits: Vec::new(),
+                ..Default::default()
+            },
+            &egui::Context::default(),
+        );
 }
 
 #[test]
@@ -285,8 +353,8 @@ fn a_second_generation_part_keeps_its_ancestor_file() {
     let bite_file = cases.join("bite.obj");
     let mut scene = cuttable_scene("lower");
     append_cuttable_layer(&mut scene, "bite", 20.0);
-    app.document.scene = Some(Arc::new(scene));
-    app.persistence.current_paths = vec![lower_file.clone(), bite_file.clone()];
+    app.workspace.scenes[0].document.scene = Some(Arc::new(scene));
+    app.workspace.scenes[0].document.current_paths = vec![lower_file.clone(), bite_file.clone()];
 
     cut_one_triangle(&mut app, 0);
     assert_eq!(
@@ -295,13 +363,13 @@ fn a_second_generation_part_keeps_its_ancestor_file() {
         "the cut inserts the part right after its source"
     );
     assert_eq!(
-        app.persistence.current_paths[1], lower_file,
+        app.workspace.scenes[0].document.current_paths[1], lower_file,
         "the first-generation part inherits its source file"
     );
 
     remove_layer(&mut app, 0);
     assert_eq!(
-        app.persistence.current_paths,
+        app.workspace.scenes[0].document.current_paths,
         vec![lower_file.clone(), bite_file.clone()],
         "the part keeps the inherited path after its source is removed"
     );
@@ -310,8 +378,12 @@ fn a_second_generation_part_keeps_its_ancestor_file() {
 
     remove_layer(&mut app, 0);
 
-    let scene = app.document.scene.as_ref().expect("scene");
-    let paths = app.persistence.current_paths.clone();
+    let scene = app.workspace.scenes[0]
+        .document
+        .scene
+        .as_ref()
+        .expect("scene");
+    let paths = app.workspace.scenes[0].document.current_paths.clone();
     assert_eq!(paths.len(), scene.meshes().len(), "paths stay aligned");
     assert_eq!(
         scene_names(&app),
@@ -336,19 +408,25 @@ fn a_second_generation_part_keeps_its_ancestor_file() {
 }
 
 fn run_selection_action(app: &mut OccluViewApp, index: usize, action: LayerContextAction) {
-    let scene = app.document.scene.as_ref().expect("scene").clone();
+    let scene = app.workspace.scenes[0]
+        .document
+        .scene
+        .as_ref()
+        .expect("scene")
+        .clone();
     let entry = scene.meshes()[index].clone();
     let total = entry.mesh.triangle_count();
     assert!(total >= 8, "the source needs faces to cut");
     assert!(
-        app.document
+        app.workspace.scenes[0]
+            .document
             .edit_mode
             .begin_face_selection(&entry, scene.as_ref()),
         "the edit session must open"
     );
     for triangle_index in 0..(total / 4) {
         assert!(
-            app.document.edit_mode.select_face_hit(
+            app.workspace.scenes[0].document.edit_mode.select_face_hit(
                 scene.as_ref(),
                 occluview_core::ScenePickHit {
                     layer_index: index,
@@ -364,7 +442,7 @@ fn run_selection_action(app: &mut OccluViewApp, index: usize, action: LayerConte
     let mut draft = scene.as_ref().clone();
     let apply = app_layer_edits::apply_visible_selected_face_mesh_edit_action(
         &mut draft,
-        &mut app.document.edit_mode,
+        &mut app.workspace.scenes[0].document.edit_mode,
         action,
     )
     .expect("action ok");
@@ -376,10 +454,12 @@ fn run_selection_action(app: &mut OccluViewApp, index: usize, action: LayerConte
         .map(SceneMesh::id)
         .filter(|id| !ids_before.contains(id))
     {
-        app.document.mark_mesh_edits_unsaved(id);
+        app.workspace.scenes[0].document.mark_mesh_edits_unsaved(id);
     }
-    let previous = app.document.scene.clone();
-    app.commit_structural_scene(previous.as_deref(), draft, &egui::Context::default());
+    let previous = app.workspace.scenes[0].document.scene.clone();
+    app.active_context()
+        .expect("live test scene")
+        .commit_structural_scene(previous.as_deref(), draft, &egui::Context::default());
 }
 
 #[test]
@@ -395,13 +475,18 @@ fn cut_and_separate_parts_inherit_their_source_file_everywhere() {
         let mut app = test_app("provenance-inherit");
         let mut scene = cuttable_scene("scan");
         append_cuttable_layer(&mut scene, "other", 20.0);
-        app.document.scene = Some(Arc::new(scene));
-        app.persistence.current_paths = vec![source_file.clone(), cases.join("other.obj")];
+        app.workspace.scenes[0].document.scene = Some(Arc::new(scene));
+        app.workspace.scenes[0].document.current_paths =
+            vec![source_file.clone(), cases.join("other.obj")];
 
         run_selection_action(&mut app, 0, action);
 
-        let scene = app.document.scene.as_ref().expect("scene");
-        let paths = app.persistence.current_paths.clone();
+        let scene = app.workspace.scenes[0]
+            .document
+            .scene
+            .as_ref()
+            .expect("scene");
+        let paths = app.workspace.scenes[0].document.current_paths.clone();
         assert!(
             paths.len() > 2,
             "{action:?} must have spawned at least one layer"

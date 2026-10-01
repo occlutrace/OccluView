@@ -1,6 +1,8 @@
+use super::workspace::commands::{LayerDragPayload, SplitSide, WorkspaceCommand};
+use super::workspace::input::PaneTarget;
 use super::{
-    egui, layers_overlay, pick_scene_hit, Arc, LayerOverlayChanges, MeshSelectionDrag,
-    OccluViewApp, PathBuf, Scene,
+    egui, layers_overlay, pick_scene_hit, Arc, LayerOverlayChanges, MeshSelectionDrag, PathBuf,
+    Scene, SceneContext,
 };
 use crate::layers_overlay::LayerRowChange;
 
@@ -20,7 +22,21 @@ const TRANSLUCENT_OPACITY: f32 = 0.35;
 /// compositor clamps to the monitor anyway; this keeps the request sane.
 const LAYER_WINDOW_MAX_HEIGHT_PX: f32 = 1200.0;
 
-impl OccluViewApp {
+impl SceneContext<'_> {
+    /// The shared Layers panel has one screen-space footprint, including its
+    /// collapsed footer, regardless of which scene is active.
+    pub(super) fn layers_panel_rect(
+        &self,
+        ctx: &egui::Context,
+        viewport_rect: egui::Rect,
+    ) -> egui::Rect {
+        layers_overlay::current_panel_rect(
+            ctx,
+            self.workspace_rect.unwrap_or(viewport_rect),
+            self.active_layer_count,
+        )
+    }
+
     /// Grow the OS window so the Layers panel fits every layer without
     /// scrolling.
     ///
@@ -36,7 +52,7 @@ impl OccluViewApp {
         viewport_rect: egui::Rect,
         layer_count: usize,
     ) {
-        if self.ui.layers_window_layer_count == Some(layer_count) {
+        if self.scene_ui.layers_window_layer_count == Some(layer_count) {
             return;
         }
         let wanted = layers_overlay::layer_overlay_desired_height(layer_count)
@@ -44,7 +60,7 @@ impl OccluViewApp {
             + layers_overlay::LAYER_OVERLAY_BOTTOM_RESERVE_PX;
         let deficit = wanted - viewport_rect.height();
         if deficit <= 0.0 {
-            self.ui.layers_window_layer_count = Some(layer_count);
+            self.scene_ui.layers_window_layer_count = Some(layer_count);
             return;
         }
         // A maximized/fullscreen window shrinks back out of its state if a
@@ -52,7 +68,7 @@ impl OccluViewApp {
         // in-panel scrollbar covers the difference.
         let viewport_info = ctx.input(|input| input.viewport().clone());
         if viewport_info.maximized == Some(true) || viewport_info.fullscreen == Some(true) {
-            self.ui.layers_window_layer_count = Some(layer_count);
+            self.scene_ui.layers_window_layer_count = Some(layer_count);
             return;
         }
         // screen_rect unavailable (first frame): leave the count unrecorded so
@@ -60,7 +76,7 @@ impl OccluViewApp {
         let Some(screen) = ctx.input(|input| input.raw.screen_rect) else {
             return;
         };
-        self.ui.layers_window_layer_count = Some(layer_count);
+        self.scene_ui.layers_window_layer_count = Some(layer_count);
         let target_height = (screen.height() + deficit).min(LAYER_WINDOW_MAX_HEIGHT_PX);
         if target_height > screen.height() + 1.0 {
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
@@ -76,28 +92,62 @@ impl OccluViewApp {
         viewport_rect: egui::Rect,
         ctx: &egui::Context,
     ) {
-        let Some(scene) = self.document.scene.clone() else {
+        // The Layers panel belongs to the workspace, so draw it once from the
+        // active scene and anchor it to the shared workspace bounds.
+        if !self.is_active {
             return;
+        }
+        let panel_rect = self.workspace_rect.unwrap_or(viewport_rect);
+        let scene = self.document.scene.clone();
+        let empty_scene = Scene::new();
+        let scene_names = self
+            .scene_summaries
+            .iter()
+            .map(|summary| (summary.key.id.get(), summary.name.clone()))
+            .collect::<Vec<_>>();
+        let scene_tab_items = scene_names
+            .iter()
+            .map(|(id, name)| layers_overlay::LayerSceneTab { id: *id, name })
+            .collect::<Vec<_>>();
+        let scene_tabs = layers_overlay::LayerSceneTabs {
+            scenes: &scene_tab_items,
+            active_scene_id: self.scene_key.id.get(),
+            can_create: self.scene_summaries.len() < 2,
         };
-        self.grow_window_for_layers(ctx, viewport_rect, scene.meshes().len());
 
-        let paths = self.persistence.current_paths.clone();
+        let paths = self.document.current_paths.clone();
         let active_layer_id = self.document.edit_mode.selected_layer_id();
-        let (marked, readable) = self.contact_rows(scene.as_ref());
-        let changes = layers_overlay::show(
-            ui,
-            viewport_rect,
-            scene.as_ref(),
-            &paths,
-            active_layer_id,
-            layers_overlay::LayerContactRows {
-                marked: &marked,
-                readable: &readable,
-            },
-            &self.ui.locale,
-        );
+        let focused_layer_id = self.document.focused_layer_id;
+        // The active scene can be in the right pane while this shared panel is
+        // anchored at the workspace's left edge. Widen only this overlay's
+        // clip; the caller's viewport clipping is restored before other tools
+        // are drawn.
+        let viewport_clip = ui.clip_rect();
+        ui.set_clip_rect(viewport_clip.union(panel_rect));
+        let changes = {
+            let scene_ref = scene.as_deref().unwrap_or(&empty_scene);
+            if self.scene_summaries.len() < 2 {
+                self.grow_window_for_layers(ctx, panel_rect, scene_ref.meshes().len());
+            }
+            let (marked, readable) = self.contact_rows(scene_ref);
+            layers_overlay::show(
+                ui,
+                panel_rect,
+                scene_ref,
+                &paths,
+                active_layer_id,
+                focused_layer_id,
+                Some(&scene_tabs),
+                layers_overlay::LayerContactRows {
+                    marked: &marked,
+                    readable: &readable,
+                },
+                &self.ui.locale,
+            )
+        };
+        ui.set_clip_rect(viewport_clip);
         // Hand over the scene handle before material edits run.
-        self.apply_layer_overlay_changes(scene, &paths, changes, ctx);
+        self.apply_layer_overlay_changes_for_scene(scene, &paths, changes, ctx);
     }
 
     pub(super) fn apply_layer_overlay_changes(
@@ -107,9 +157,112 @@ impl OccluViewApp {
         changes: LayerOverlayChanges,
         ctx: &egui::Context,
     ) {
+        self.apply_layer_overlay_changes_for_scene(Some(scene), paths, changes, ctx);
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn apply_layer_overlay_changes_for_scene(
+        &mut self,
+        scene: Option<Arc<Scene>>,
+        paths: &[PathBuf],
+        changes: LayerOverlayChanges,
+        ctx: &egui::Context,
+    ) {
+        if let Some(layer_id) = changes.focused_layer_id {
+            if self
+                .document
+                .scene
+                .as_ref()
+                .is_some_and(|scene| scene.meshes().iter().any(|entry| entry.id() == layer_id))
+            {
+                self.document.focused_layer_id = Some(layer_id);
+            }
+        }
+
+        let tab_rects = changes
+            .scene_tab_rects
+            .into_iter()
+            .filter_map(|(scene_id, rect)| {
+                self.scene_summaries
+                    .iter()
+                    .find(|summary| summary.key.id.get() == scene_id)
+                    .map(|summary| (summary.key, rect))
+            })
+            .collect();
+        *self.scene_tab_rects = tab_rects;
+        *self.scene_create_rect = changes.scene_create_rect;
+
+        if self.is_active && !self.ui.modal_dialog_open() {
+            if let Some(source) = changes.drag_started {
+                let layer_is_live = self.document.scene.as_ref().is_some_and(|scene| {
+                    scene
+                        .meshes()
+                        .iter()
+                        .any(|entry| entry.id() == source.layer_id)
+                });
+                if source.scene_id == self.scene_key.id.get()
+                    && self.layer_drag.is_none()
+                    && layer_is_live
+                {
+                    *self.layer_drag = Some(LayerDragPayload {
+                        source: self.scene_key,
+                        layer: source.layer_id,
+                    });
+                }
+            }
+        }
+
+        // A context-menu item is still a valid direct widget action while its
+        // menu is open, and `modal_dialog_open()` deliberately includes every
+        // popup. Modal windows already own the input layer above these widgets.
+        if self.is_active {
+            if let Some(action) = changes.scene_action {
+                match action {
+                    layers_overlay::LayerOverlaySceneAction::Activate(scene_id) => {
+                        if let Some(summary) = self
+                            .scene_summaries
+                            .iter()
+                            .find(|summary| summary.key.id.get() == scene_id)
+                        {
+                            self.commands
+                                .push_back(WorkspaceCommand::Activate(PaneTarget {
+                                    scene: summary.key,
+                                    pane: summary.pane,
+                                }));
+                        }
+                    }
+                    layers_overlay::LayerOverlaySceneAction::Create => {
+                        self.queue_new_scene(SplitSide::Right);
+                    }
+                    layers_overlay::LayerOverlaySceneAction::TransferToNew { layer_id } => {
+                        if self.layer_exists_in_live_scene(layer_id) {
+                            self.queue_transfer(layer_id, None);
+                        }
+                    }
+                    layers_overlay::LayerOverlaySceneAction::Transfer { layer_id, scene_id } => {
+                        let destination = self
+                            .scene_summaries
+                            .iter()
+                            .find(|summary| {
+                                summary.key.id.get() == scene_id && summary.key != self.scene_key
+                            })
+                            .map(|summary| summary.key);
+                        if self.layer_exists_in_live_scene(layer_id) {
+                            if let Some(destination) = destination {
+                                self.queue_transfer(layer_id, Some(destination));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         if changes.context_request.is_none() && changes.layer_edits.is_empty() {
             return;
         }
+        let Some(scene) = scene else {
+            return;
+        };
         // Release the cloned scene before an in-place material edit.
         if changes.context_request.is_none() {
             drop(scene);
@@ -174,6 +327,7 @@ impl OccluViewApp {
         }
 
         if scene_changed {
+            *self.preserve_on_transfer_undo = true;
             self.remember_visibility_changes(scene.as_ref(), &draft);
             if structural_scene_change {
                 self.commit_structural_scene(Some(scene.as_ref()), draft, ctx);
@@ -186,6 +340,24 @@ impl OccluViewApp {
                 }
                 ctx.request_repaint();
             }
+            self.retain_focused_layer_if_present();
+        }
+    }
+
+    fn layer_exists_in_live_scene(&self, layer_id: occluview_core::SceneMeshId) -> bool {
+        self.document
+            .scene
+            .as_ref()
+            .is_some_and(|scene| scene.meshes().iter().any(|entry| entry.id() == layer_id))
+    }
+
+    fn retain_focused_layer_if_present(&mut self) {
+        if self
+            .document
+            .focused_layer_id
+            .is_some_and(|focused| !self.layer_exists_in_live_scene(focused))
+        {
+            self.document.focused_layer_id = None;
         }
     }
 
@@ -215,6 +387,7 @@ impl OccluViewApp {
         if !changed {
             return;
         }
+        *self.preserve_on_transfer_undo = true;
         for layer in hidden {
             self.document.hidden_layer_stack.retain(|id| *id != layer);
             self.document.hidden_layer_stack.push(layer);
@@ -252,9 +425,10 @@ impl OccluViewApp {
     }
 
     /// Egui id under which the last right-clicked viewport layer target is
-    /// stashed so the context menu can outlive the single click frame.
-    fn viewport_menu_target_id() -> egui::Id {
-        egui::Id::new("occluview_viewport_layer_menu_target")
+    /// stashed so the context menu can outlive the single click frame. Scene
+    /// identity is part of the key so two panes never share a latent target.
+    fn viewport_menu_target_id(&self) -> egui::Id {
+        egui::Id::new(("occluview_viewport_layer_menu_target", self.scene_key))
     }
 
     /// Layer under the pointer for a viewport right-click, with the state the
@@ -273,7 +447,7 @@ impl OccluViewApp {
         }
         Some(layers_overlay::LayerContextMenuTarget {
             label: layers_overlay::layer_label(
-                &self.persistence.current_paths,
+                &self.document.current_paths,
                 entry,
                 hit.layer_index,
                 &self.ui.locale,
@@ -342,11 +516,11 @@ impl OccluViewApp {
         if response.secondary_clicked()
             && discard_lasso_outline(&mut self.document.mesh_selection_drag)
         {
-            self.ui.status_message =
+            self.scene_ui.status_message =
                 Some(self.ui.locale.tr(crate::i18n::message_id!("lasso-dropped")));
             ctx.request_repaint();
         }
-        let menu_id = Self::viewport_menu_target_id();
+        let menu_id = self.viewport_menu_target_id();
         // A target removed or reordered since the click must not keep serving
         // stale menu actions: validate the stashed index/id pair against the
         // live scene every frame the menu (or its next open) is served.
@@ -407,13 +581,14 @@ impl OccluViewApp {
         let Some(scene) = self.document.scene.clone() else {
             return;
         };
-        let paths = self.persistence.current_paths.clone();
+        let paths = self.document.current_paths.clone();
         self.apply_layer_overlay_changes(
             scene,
             &paths,
             LayerOverlayChanges {
                 context_request: Some(request),
                 layer_edits: Vec::new(),
+                ..LayerOverlayChanges::default()
             },
             ctx,
         );
@@ -452,12 +627,12 @@ impl OccluViewApp {
         }
         entry.visible = false;
         let label = layers_overlay::layer_label(
-            &self.persistence.current_paths,
+            &self.document.current_paths,
             entry,
             hit.layer_index,
             &self.ui.locale,
         );
-        self.ui.status_message = Some(self.ui.locale.tr_with(
+        self.scene_ui.status_message = Some(self.ui.locale.tr_with(
             crate::i18n::message_id!("layer-hidden"),
             &[("label", &label)],
         ));
@@ -496,7 +671,7 @@ impl OccluViewApp {
             return;
         };
         let label = layers_overlay::layer_label(
-            &self.persistence.current_paths,
+            &self.document.current_paths,
             entry,
             hit.layer_index,
             &self.ui.locale,
@@ -507,7 +682,7 @@ impl OccluViewApp {
             .remove(&hit.layer_id)
         {
             entry.opacity = previous;
-            self.ui.status_message = Some(self.ui.locale.tr_with(
+            self.scene_ui.status_message = Some(self.ui.locale.tr_with(
                 crate::i18n::message_id!("layer-opaque-again"),
                 &[("label", &label)],
             ));
@@ -516,7 +691,7 @@ impl OccluViewApp {
                 .translucent_layer_restore
                 .insert(hit.layer_id, entry.opacity);
             entry.opacity = TRANSLUCENT_OPACITY;
-            self.ui.status_message = Some(self.ui.locale.tr_with(
+            self.scene_ui.status_message = Some(self.ui.locale.tr_with(
                 crate::i18n::message_id!("layer-translucent"),
                 &[("label", &label)],
             ));
@@ -557,12 +732,12 @@ impl OccluViewApp {
                 .position(|probe| probe.id() == layer_id)
                 .map_or(1, |index| index + 1);
             let label = layers_overlay::layer_label(
-                &self.persistence.current_paths,
+                &self.document.current_paths,
                 entry,
                 position - 1,
                 &self.ui.locale,
             );
-            self.ui.status_message = Some(self.ui.locale.tr_with(
+            self.scene_ui.status_message = Some(self.ui.locale.tr_with(
                 crate::i18n::message_id!("layer-restored"),
                 &[("label", &label)],
             ));
@@ -571,7 +746,7 @@ impl OccluViewApp {
             ctx.request_repaint();
             return;
         }
-        self.ui.status_message = Some(
+        self.scene_ui.status_message = Some(
             self.ui
                 .locale
                 .tr(crate::i18n::message_id!("layers-none-hidden")),
@@ -582,6 +757,7 @@ impl OccluViewApp {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used)]
     use super::{discard_lasso_outline, egui, MeshSelectionDrag};
 
     /// Both arches of a reading must offer to close it.
@@ -601,13 +777,16 @@ mod tests {
         let antagonist = push_named_layer(&mut scene, "upper", 0.1);
         let _bystander = push_named_layer(&mut scene, "wax", 5.0);
         let scene = super::Arc::new(scene);
-        app.document.scene = Some(super::Arc::clone(&scene));
-        app.tools.contacts.open(ContactPair {
+        app.workspace.scenes[0].document.scene = Some(super::Arc::clone(&scene));
+        app.workspace.scenes[0].tools.contacts.open(ContactPair {
             subject,
             antagonist,
         });
 
-        let (marked, readable) = app.contact_rows(scene.as_ref());
+        let (marked, readable) = app
+            .active_context()
+            .expect("live test scene")
+            .contact_rows(scene.as_ref());
 
         assert_eq!(marked.len(), 3, "one row per layer");
         assert!(

@@ -2,7 +2,7 @@
 
 use super::app_settings_panel::{settings_popup_id, show_settings_popup, SettingsAction};
 use super::information_dialog::InformationDialog;
-use super::OccluViewApp;
+use super::SceneContext;
 use crate::i18n::message_id;
 use crate::icons::AppIcon;
 use crate::ui_theme;
@@ -10,7 +10,7 @@ use eframe::egui;
 
 pub(super) use crate::modal_surface::show_information_modal;
 
-impl OccluViewApp {
+impl SceneContext<'_> {
     pub(super) fn show_settings_popup(&mut self, trigger: &egui::Response) {
         let Some(action) = show_settings_popup(
             trigger,

@@ -1068,3 +1068,44 @@ shell-preview-isometric = Изометрический вид
 shell-preview-fit-view = Вписать в окно
 shell-preview-wireframe = Каркас
 shell-preview-copy-image = Копировать изображение
+
+## Две сцены и перенос слоёв.
+workspace-scene-name = Сцена { $number }
+workspace-scenes = Сцены
+workspace-scene-new = Создать новую сцену
+workspace-new-left = Новая сцена слева
+workspace-new-right = Новая сцена справа
+workspace-one-view = Один вид
+workspace-two-views = Два вида
+workspace-fullscreen = Показать только эту сцену
+workspace-divider = Ширина сцен
+workspace-drop-title = Выберите сцену
+workspace-drop-description = Куда добавить эти файлы?
+workspace-cancel = Отмена
+workspace-rename = Переименовать сцену
+workspace-rename-title = Переименовать сцену
+workspace-rename-apply = Переименовать
+workspace-close = Закрыть сцену
+workspace-close-title = Несохранённые изменения
+workspace-close-question = Сохранить изменения в { $scenes } перед закрытием?
+workspace-close-detail = Перед сохранением дождитесь завершения текущих правок. При отказе от сохранения изменения будут потеряны.
+workspace-discard-close = Закрыть без сохранения
+workspace-move-layer = Перенести выбранный слой
+workspace-two-scene-limit = В рабочей области можно открыть две сцены.
+layers-row-drag-hint = Нажмите, чтобы сфокусировать слой; перетащите его в другую сцену
+workspace-layer-move-new-scene = Перенести слой в новую сцену
+workspace-layer-move-scene = Перенести слой в { $scene }
+
+workspace-move-all = Перенести все слои
+help-workspace-switch = Переключить активную сцену
+help-workspace-drag = Перенести слой в другую сцену или создать сцену у левого или правого края
+help-workspace-divider = Изменить ширину сцен; Home возвращает равную ширину
+
+workspace-wait-edit = Сначала завершите или отмените редактирование в обеих сценах.
+workspace-wait-load = Дождитесь окончания загрузки сцен.
+workspace-wait-gesture = Сначала завершите действие мышью.
+workspace-history-order = Сначала отмените более поздние изменения в другой сцене.
+workspace-history-budget = Для этого действия не хватает места в истории отмены.
+workspace-stale-target = Сцена или слой больше недоступны.
+workspace-close-dialog = Сначала закройте открытый диалог.
+workspace-import-cancelled = Ожидающие загрузки отменены: их сцена закрыта.

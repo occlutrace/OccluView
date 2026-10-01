@@ -978,3 +978,44 @@ shell-preview-isometric = Isometrica
 shell-preview-fit-view = Adatta vista
 shell-preview-wireframe = Reticolo
 shell-preview-copy-image = Copia immagine
+
+## Area di lavoro a due scene e spostamento dei livelli.
+workspace-scene-name = Scena { $number }
+workspace-scenes = Scene
+workspace-scene-new = Crea una nuova scena
+workspace-new-left = Nuova scena a sinistra
+workspace-new-right = Nuova scena a destra
+workspace-one-view = Una vista
+workspace-two-views = Due viste
+workspace-fullscreen = Mostra solo questa scena
+workspace-divider = Larghezza delle scene
+workspace-drop-title = Scegli una scena
+workspace-drop-description = Dove aggiungere questi file?
+workspace-cancel = Annulla
+workspace-rename = Rinomina scena
+workspace-rename-title = Rinomina scena
+workspace-rename-apply = Rinomina
+workspace-close = Chiudi scena
+workspace-close-title = Modifiche non salvate
+workspace-close-question = Salvare le modifiche in { $scenes } prima di chiudere?
+workspace-close-detail = Attendi il completamento delle modifiche in sospeso prima di salvare. Se le scarti, le scene si chiudono senza salvare.
+workspace-discard-close = Scarta e chiudi
+workspace-move-layer = Sposta il livello selezionato
+workspace-two-scene-limit = Questo spazio di lavoro supporta due scene.
+layers-row-drag-hint = Fai clic per attivare il livello; trascinalo in un’altra scena per spostarlo
+workspace-layer-move-new-scene = Sposta il livello in una nuova scena
+workspace-layer-move-scene = Sposta il livello in { $scene }
+
+workspace-move-all = Sposta tutti i livelli
+help-workspace-switch = Cambia la scena attiva
+help-workspace-drag = Sposta un livello in un’altra scena o crea una scena sul bordo sinistro o destro
+help-workspace-divider = Regola la larghezza delle scene; Home ripristina larghezze uguali
+
+workspace-wait-edit = Prima termina o annulla la modifica in entrambe le scene.
+workspace-wait-load = Attendi il completamento del caricamento delle scene.
+workspace-wait-gesture = Prima termina il gesto corrente del mouse.
+workspace-history-order = Prima annulla le modifiche successive nell’altra scena.
+workspace-history-budget = Lo spazio nella cronologia di annullamento non basta per questa operazione.
+workspace-stale-target = La scena o il livello non è più disponibile.
+workspace-close-dialog = Prima chiudi la finestra di dialogo aperta.
+workspace-import-cancelled = Le importazioni in attesa sono state annullate alla chiusura della scena.

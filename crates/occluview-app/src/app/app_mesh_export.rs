@@ -1,7 +1,7 @@
 use super::app_scene_export::posed_mesh;
 use super::{
-    AppErrorAction, AppErrorDialog, LayerContextAction, LayerContextRequest, OccluViewApp, PathBuf,
-    Scene,
+    AppErrorAction, AppErrorDialog, LayerContextAction, LayerContextRequest, PathBuf, Scene,
+    SceneContext,
 };
 use anyhow::{bail, Context, Result};
 use occluview_formats::write::{
@@ -31,7 +31,7 @@ pub(crate) enum SaveEditedLayersOutcome {
     NothingToSave,
 }
 
-impl OccluViewApp {
+impl SceneContext<'_> {
     pub(super) fn save_layer_export_dialog(
         &mut self,
         scene: &Scene,
@@ -110,7 +110,7 @@ impl OccluViewApp {
                     (false, false) => crate::i18n::message_id!("mesh-exported-unmoved"),
                     (false, true) => crate::i18n::message_id!("mesh-exported-unmoved-warnings"),
                 };
-                self.ui.status_message = Some(self.ui.locale.tr_with(
+                self.scene_ui.status_message = Some(self.ui.locale.tr_with(
                     status_key,
                     &[
                         ("name", name.as_str()),
@@ -126,7 +126,7 @@ impl OccluViewApp {
                     crate::i18n::message_id!("mesh-export-failed-summary"),
                     &[("detail", &error.to_string())],
                 );
-                self.ui.status_message = Some(summary.clone());
+                self.scene_ui.status_message = Some(summary.clone());
                 self.ui.app_error = Some(AppErrorDialog {
                     title: self
                         .ui
@@ -174,7 +174,7 @@ impl OccluViewApp {
         // Ask the worker to finish, as Save does, so the next attempt
         // writes the stroke instead of nothing.
         let _ = self.commit_sculpt_stroke(ctx);
-        self.ui.status_message = Some(
+        self.scene_ui.status_message = Some(
             self.ui
                 .locale
                 .tr(crate::i18n::message_id!("edit-session-busy")),
@@ -194,7 +194,7 @@ impl OccluViewApp {
         if self.document.unsaved_sculpt_stroke {
             let ctx = self.ui.repaint_ctx.clone();
             let _ = self.commit_sculpt_stroke(&ctx);
-            self.ui.status_message = Some(
+            self.scene_ui.status_message = Some(
                 self.ui
                     .locale
                     .tr(crate::i18n::message_id!("edit-session-busy")),
@@ -225,7 +225,7 @@ impl OccluViewApp {
             // The caller keeps the guard open until the stroke has landed.
             PendingLayerExports::StrokeInFlight => return SaveEditedLayersOutcome::Aborted,
         };
-        let paths = self.persistence.current_paths.clone();
+        let paths = self.document.current_paths.clone();
         for (index, layer_id) in pending {
             let request = LayerContextRequest {
                 index,

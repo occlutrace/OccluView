@@ -30,6 +30,7 @@ pub(super) fn show_settings_toolbar_toggle(
     ui: &mut egui::Ui,
     enabled: bool,
     locale: &LocaleManager,
+    compact: bool,
 ) -> egui::Response {
     crate::measure_overlay::toolbar_toggle(
         ui,
@@ -39,7 +40,8 @@ pub(super) fn show_settings_toolbar_toggle(
             enabled,
             egui::Popup::is_id_open(ui.ctx(), settings_popup_id()),
             &locale.tr(crate::i18n::message_id!("toolbar-settings-hint")),
-        ),
+        )
+        .compact(compact),
     )
 }
 

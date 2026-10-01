@@ -72,6 +72,7 @@ pub(crate) struct MeasureTool {
     rulers: Vec<RulerMeasurement>,
     probe: Option<ThicknessProbe>,
     dragged_anchor: Option<RulerAnchorRef>,
+    drag_start_measurement: Option<(usize, RulerMeasurement)>,
     /// The dragged anchor's pointer has left its press point (latched).
     drag_moved: bool,
 }
@@ -92,6 +93,7 @@ impl MeasureTool {
         self.mode = Some(mode);
         self.pending = None;
         self.dragged_anchor = None;
+        self.drag_start_measurement = None;
     }
 
     /// Exit the tool. The overlays go with it: once the tool is gone there is
@@ -102,6 +104,7 @@ impl MeasureTool {
         self.rulers.clear();
         self.probe = None;
         self.dragged_anchor = None;
+        self.drag_start_measurement = None;
     }
 
     /// Place a ruler anchor at a picked surface `point`. The first click of a
@@ -193,10 +196,11 @@ impl MeasureTool {
     /// Start dragging a ruler end. An end on another ruler's line slides
     /// along that line (see [`Self::update_line_end_drag`]).
     pub(crate) fn begin_ruler_drag(&mut self, anchor: RulerAnchorRef) -> bool {
-        if anchor.ruler_index >= self.rulers.len() {
+        let Some(start) = self.rulers.get(anchor.ruler_index).copied() else {
             return false;
-        }
+        };
         self.dragged_anchor = Some(anchor);
+        self.drag_start_measurement = Some((anchor.ruler_index, start));
         self.drag_moved = false;
         true
     }
@@ -257,6 +261,24 @@ impl MeasureTool {
 
     pub(crate) fn end_ruler_drag(&mut self) {
         self.dragged_anchor = None;
+        self.drag_start_measurement = None;
+        self.drag_moved = false;
+    }
+
+    /// Cancel only the live endpoint drag, restoring its original ruler while
+    /// keeping completed annotations, a pending first anchor, and the armed
+    /// measurement mode intact.
+    pub(crate) fn cancel_ruler_drag(&mut self) -> bool {
+        self.dragged_anchor = None;
+        self.drag_moved = false;
+        let Some((index, start)) = self.drag_start_measurement.take() else {
+            return false;
+        };
+        self.rulers.get_mut(index).is_some_and(|ruler| {
+            let changed = *ruler != start;
+            *ruler = start;
+            changed
+        })
     }
 
     /// Drop every measurement overlay, keeping the tool armed (the RMB
@@ -267,6 +289,8 @@ impl MeasureTool {
         self.rulers.clear();
         self.probe = None;
         self.dragged_anchor = None;
+        self.drag_start_measurement = None;
+        self.drag_moved = false;
         had
     }
 
@@ -570,6 +594,29 @@ mod tests {
         assert_eq!(tool.ruler_segments()[0].b, Vec3::Y * 3.0);
         tool.end_ruler_drag();
         assert!(tool.dragged_ruler_anchor().is_none());
+    }
+
+    #[test]
+    fn cancel_live_ruler_drag_restores_pose_but_keeps_annotations_and_tool() {
+        let mut tool = MeasureTool::default();
+        tool.arm(MeasureMode::Ruler);
+        tool.place_ruler_point(Vec3::ZERO);
+        tool.place_ruler_point(Vec3::X * 2.0);
+        let before = tool.ruler_segment(0).expect("completed ruler");
+        let anchor = RulerAnchorRef {
+            ruler_index: 0,
+            endpoint: RulerEndpoint::B,
+        };
+
+        assert!(tool.begin_ruler_drag(anchor));
+        assert_eq!(tool.update_ruler_drag(Vec3::Y * 3.0), Some(3.0));
+        assert!(tool.cancel_ruler_drag());
+
+        assert_eq!(tool.ruler_segment(0), Some(before));
+        assert_eq!(tool.ruler_count(), 1);
+        assert!(tool.dragged_ruler_anchor().is_none());
+        assert_eq!(tool.mode(), Some(MeasureMode::Ruler));
+        assert!(!tool.cancel_ruler_drag());
     }
 
     #[test]

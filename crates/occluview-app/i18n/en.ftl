@@ -985,3 +985,44 @@ shell-preview-isometric = Isometric
 shell-preview-fit-view = Fit view
 shell-preview-wireframe = Wireframe
 shell-preview-copy-image = Copy image
+
+## Two-scene workspace and layer transfer.
+workspace-scene-name = Scene { $number }
+workspace-scenes = Scenes
+workspace-scene-new = Create a new scene
+workspace-new-left = New scene on the left
+workspace-new-right = New scene on the right
+workspace-one-view = One view
+workspace-two-views = Two views
+workspace-fullscreen = Show this scene only
+workspace-divider = Scene widths
+workspace-drop-title = Choose a scene
+workspace-drop-description = Where should these files be added?
+workspace-cancel = Cancel
+workspace-rename = Rename scene
+workspace-rename-title = Rename scene
+workspace-rename-apply = Rename
+workspace-close = Close scene
+workspace-close-title = Unsaved changes
+workspace-close-question = Save changes in { $scenes } before closing?
+workspace-close-detail = Wait for pending edits to finish before saving. Discard closes without saving.
+workspace-discard-close = Discard and close
+workspace-move-layer = Move selected layer
+workspace-two-scene-limit = This workspace supports two scenes.
+layers-row-drag-hint = Click to focus; drag to move to another scene
+workspace-layer-move-new-scene = Move layer to a new scene
+workspace-layer-move-scene = Move layer to { $scene }
+
+workspace-move-all = Move all layers
+help-workspace-switch = Switch the active scene
+help-workspace-drag = Move a layer to another scene or create a scene at the left or right edge
+help-workspace-divider = Adjust scene widths; Home restores equal widths
+
+workspace-wait-edit = Finish or cancel editing in both scenes first.
+workspace-wait-load = Wait for the scenes to finish loading.
+workspace-wait-gesture = Finish the current mouse gesture first.
+workspace-history-order = Undo the later changes in the other scene first.
+workspace-history-budget = There is not enough undo history capacity for this operation.
+workspace-stale-target = The scene or layer is no longer available.
+workspace-close-dialog = Close the open dialog first.
+workspace-import-cancelled = Pending imports were cancelled when their scene closed.
