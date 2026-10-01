@@ -1,21 +1,29 @@
 //! `occluview-render` - the wgpu renderer.
 //!
 //! Two consumers share this code: the live GUI (`occluview-app`) and the
-//! offscreen thumbnail renderer (`occluview-thumbnail`). One pipeline, one
-//! shader and one camera, so a given mesh rasterizes identically either way.
-//! What can differ is the mesh: above the fidelity cutoffs in
-//! `occluview-thumbnail`, Explorer gets a decimated preview mesh through this
-//! same pipeline.
+//! offscreen thumbnail renderer (`occluview-thumbnail`). They share the camera
+//! and the vertex layout, but the live path draws with multisampling into the
+//! window while the offscreen path draws without it into an `Rgba8Unorm`
+//! viewport-sized target, so the same mesh does not rasterize identically.
+//! What can also differ is the mesh: above the fidelity cutoffs in
+//! `occluview-thumbnail`, Explorer gets a decimated preview mesh through the
+//! offscreen path.
 //!
 //! ## Layout
 //!
 //! - [`camera`] - the GPU-side camera uniform (matches the WGSL `Camera`
 //!   struct byte-for-byte).
-//! - [`gpu`] - GPU mesh upload (vertex/index buffers) from `occluview_core::Mesh`.
-//! - [`pipeline`] - render pipeline creation (device + shader + layout).
+//! - [`clipping`] - the clip plane and the cut-view spec the cut passes share.
 //! - [`contact_texture`] - the packed contact field a layer paints by (group 2),
 //!   with its ramp carried in the per-mesh uniform.
+//! - [`cut_camera`] - section and slice camera builders.
+//! - [`error`] - the renderer error type.
+//! - [`gpu`] - GPU mesh upload (vertex/index buffers) from `occluview_core::Mesh`.
+//! - [`mesh_uniform`] - the per-mesh uniform that carries the contact ramp.
 //! - [`offscreen`] - headless render-to-texture (thumbnails, golden tests).
+//! - [`pipeline`] - render pipeline creation (device + shader + layout).
+//! - [`sculpt_cursor`] - brush and tool uniforms plus the CPU field-parity call.
+//! - [`texture`] - GPU texture upload, fallback and box-down for oversized atlases.
 //!
 //! ## Status
 //!
