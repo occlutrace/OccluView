@@ -26,9 +26,22 @@ flamegraph.svg
 
 # Local downloads / media / logs
 *.zip
+*.7z
+*.rar
+*.tar.gz
+*.tgz
 *.mp4
+*.mov
+*.avi
+*.mkv
 *.log
 node_modules/
+
+# Private scan corpus and case-identified scan files. The corpus lives outside
+# the repository, so a clone has to learn these masks here rather than from a
+# machine-local exclude file.
+/preop/
+*#[0-9]*.stl
 
 # OS junk
 ehthumbs.db
