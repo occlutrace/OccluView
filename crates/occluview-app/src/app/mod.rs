@@ -64,7 +64,6 @@ mod app_scale_bar;
 mod app_test_support;
 mod app_third_party;
 mod app_viewport;
-mod app_workspace;
 mod app_workspace_commands;
 #[cfg(test)]
 mod app_workspace_ui_tests;
