@@ -1,6 +1,6 @@
 #![allow(clippy::expect_used, clippy::float_cmp, clippy::panic)]
 use super::*;
-use glam::Quat;
+use glam::{Quat, Vec3};
 use occluview_core::{Mesh, SceneMesh};
 use std::thread;
 
@@ -37,30 +37,40 @@ fn shift_flips_add_to_remove_and_forces_smooth() {
         SculptToolKind::Smooth.brush_mode(true, true),
         BrushMode::Smooth
     );
-    // Shift forces Smooth to maximum regardless of the slider; Add/Remove
-    // follows the intensity slider with or without Shift.
-    assert_eq!(SculptToolKind::Smooth.dab_strength(0.3, true), 1.0);
+    // Shift strengthens Smooth by twice the slider, clamped to the top of the
+    // range; Add/Remove follows the intensity slider with or without Shift.
+    // A forced maximum flattened whole cusps from the bottom of the slider.
+    assert!((SculptToolKind::Smooth.dab_strength(0.3, true) - 0.6).abs() < 1e-6);
+    assert_eq!(SculptToolKind::Smooth.dab_strength(0.7, true), 1.0);
     assert_eq!(SculptToolKind::Smooth.dab_strength(1.0, false), 1.0);
     assert_eq!(SculptToolKind::AddRemove.dab_strength(0.3, false), 0.3);
     assert_eq!(SculptToolKind::AddRemove.dab_strength(0.3, true), 0.3);
 }
 
 #[test]
-fn shift_widens_only_the_smooth_footprint() {
-    let base = size_to_radius_mm(SCULPT_SIZE_DEFAULT);
-    assert_eq!(
-        SculptToolKind::Smooth.dab_radius_mm(base, true),
-        base * SHIFT_SMOOTH_RADIUS_BOOST
-    );
-    assert_eq!(SculptToolKind::Smooth.dab_radius_mm(base, false), base);
-    assert_eq!(SculptToolKind::AddRemove.dab_radius_mm(base, true), base);
+fn sculpt_controls_use_the_donor_catalog_defaults_and_physical_ranges() {
+    assert_eq!(SculptTip::Ball.default_radius_mm(), 0.75);
+    assert_eq!(SculptTip::Knife.default_radius_mm(), 0.5);
+    assert_eq!(SculptTip::Cylinder.default_radius_mm(), 0.5);
+    assert_eq!(SculptTip::Ball.radius_range_mm(), (0.25, 4.0));
+    assert_eq!(SculptTip::Knife.radius_range_mm(), (0.25, 2.5));
+    assert_eq!(SculptTip::Cylinder.radius_range_mm(), (0.25, 2.0));
+    assert_eq!(SculptToolKind::AddRemove.default_strength(), 0.35);
+    assert_eq!(SculptToolKind::Smooth.default_strength(), 0.15);
+    assert_eq!(SculptToolKind::AddRemove.strength_range(), (0.05, 1.0));
+    assert_eq!(SculptToolKind::Smooth.strength_range(), (0.01, 1.0));
 }
 
 #[test]
-fn size_slider_maps_monotonically_into_the_mm_range() {
-    assert!(size_to_radius_mm(SCULPT_SIZE_MIN) < size_to_radius_mm(SCULPT_SIZE_MAX));
-    assert!(size_to_radius_mm(SCULPT_SIZE_MIN) >= SCULPT_RADIUS_MIN_MM - 1e-4);
-    assert!(size_to_radius_mm(SCULPT_SIZE_MAX) <= SCULPT_RADIUS_MAX_MM + 1e-4);
+fn brush_wheel_detents_follow_donor_ratios_and_slider_quantization() {
+    assert_eq!(SculptToolKind::AddRemove.step_strength(0.35, 1.0), 0.45);
+    assert_eq!(SculptToolKind::AddRemove.step_strength(0.35, -1.0), 0.25);
+    assert_eq!(SculptToolKind::Smooth.step_strength(0.15, 1.0), 0.2);
+    assert_eq!(SculptToolKind::Smooth.step_strength(0.15, -1.0), 0.12);
+    assert_eq!(SculptTip::Ball.step_radius_mm(0.75, 1.0), 0.9);
+    assert_eq!(SculptTip::Ball.step_radius_mm(0.75, -1.0), 0.65);
+    assert_eq!(SculptTip::Knife.step_radius_mm(2.5, 1.0), 2.5);
+    assert_eq!(SculptTip::Cylinder.step_radius_mm(0.25, -1.0), 0.25);
 }
 
 #[test]
@@ -523,4 +533,179 @@ fn the_knife_tip_cuts_along_its_bearing() {
         (ball_x - ball_y).abs() <= 1.0,
         "the ball must spread evenly: x={ball_x} y={ball_y}"
     );
+}
+
+/// One hold interval in milliseconds, which is what the scheduler reports.
+fn hold_ms() -> f32 {
+    HOLD_DAB_INTERVAL_SEC * 1000.0
+}
+
+/// Share of a full dose one hold interval stands for.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "The fixed 120 ms dose is exactly representable as f32."
+)]
+fn share_of_full_dose() -> f32 {
+    HOLD_DAB_INTERVAL_SEC * 1000.0 / occlu_sculpt::DWELL_FULL_DOSE_MS as f32
+}
+
+/// The dwell a caller reports doses the dab, so four hold intervals deposit
+/// what one full dab does. A caller that stamped a full dose per frame instead
+/// would quadruple the material a held brush lays down.
+#[test]
+fn four_hold_dabs_deposit_one_full_dose() {
+    let mesh = flat_grid(9);
+    let stroke = BrushStroke {
+        center: [4.0, 4.0, 0.0],
+        radius_mm: 3.0,
+        strength: 1.0,
+        view_dir: [0.0, 0.0, -1.0],
+    };
+    let lifted = |doses: &[DabDose]| -> Vec<f32> {
+        let (mut session, shadow) = session_over(&mesh);
+        for dose in doses {
+            let outcome = session
+                .apply_dab_cancellable(
+                    stroke,
+                    BrushMode::Add,
+                    &AtomicBool::new(false),
+                    SculptTip::Ball,
+                    None,
+                    *dose,
+                )
+                .expect("an uncancelled dab returns an outcome");
+            assert!(outcome.failure.is_none(), "the dab completes");
+        }
+        let lifted: Vec<f32> = shadow
+            .read()
+            .expect("shadow lock")
+            .iter()
+            .map(|vertex| vertex.position[2])
+            .collect();
+        lifted
+    };
+
+    let one_full = lifted(&[DabDose::FULL]);
+    let four_holds = lifted(&[
+        DabDose::dwell(hold_ms()),
+        DabDose::dwell(hold_ms()),
+        DabDose::dwell(hold_ms()),
+        DabDose::dwell(hold_ms()),
+    ]);
+    let peak = |heights: &[f32]| heights.iter().copied().fold(0.0f32, f32::max);
+    let full_peak = peak(&one_full);
+    let holds_peak = peak(&four_holds);
+    assert!(full_peak > 0.0, "the full-dose dab must lift the surface");
+    // Four hold dabs land in four separate kernel steps, each with its own
+    // auto-smoothing and face guard, so the total is close to one full dose
+    // rather than bit-identical to it. A caller that stamped a full dose per
+    // frame lands near four times this, which the bound refuses.
+    let ratio = holds_peak / full_peak;
+    assert!(
+        (ratio - 1.0).abs() < 0.2,
+        "four 30 ms hold dabs must deposit about one full dose: full={full_peak} holds={holds_peak} ratio={ratio}"
+    );
+}
+
+/// A hold dab that carries no dwell would still stand for a full dose; this
+/// pins the dose the kernel actually receives, not the scheduler's plan.
+#[test]
+fn a_hold_dab_doses_less_than_a_travelled_dab() {
+    let mesh = flat_grid(9);
+    let stroke = BrushStroke {
+        center: [4.0, 4.0, 0.0],
+        radius_mm: 3.0,
+        strength: 1.0,
+        view_dir: [0.0, 0.0, -1.0],
+    };
+    let lift = |dose: DabDose| -> f32 {
+        let (mut session, shadow) = session_over(&mesh);
+        let _ = session
+            .apply_dab_cancellable(
+                stroke,
+                BrushMode::Add,
+                &AtomicBool::new(false),
+                SculptTip::Ball,
+                None,
+                dose,
+            )
+            .expect("an uncancelled dab returns an outcome");
+        let peak: f32 = shadow
+            .read()
+            .expect("shadow lock")
+            .iter()
+            .map(|vertex| vertex.position[2])
+            .fold(0.0f32, f32::max);
+        peak
+    };
+    let full = lift(DabDose::FULL);
+    let quarter = lift(DabDose::dwell(hold_ms()));
+    assert!(full > 0.0 && quarter > 0.0);
+    assert!(
+        (quarter / full - share_of_full_dose()).abs() < 0.02,
+        "one hold interval must deposit its share of a full dose: full={full} hold={quarter}"
+    );
+}
+
+/// The dwell a caller reports is the only thing that decides how far a dab
+/// moves the surface: Add and Remove mirror each other, strength scales the
+/// dose, and neither end of the controls runs away.
+#[test]
+fn the_dose_controls_depth_symmetry_and_strength() {
+    let mesh = flat_grid(9);
+    let extremes = |strength: f32, radius_mm: f32, mode: BrushMode| -> (f32, f32) {
+        let (mut session, shadow) = session_over(&mesh);
+        let stroke = BrushStroke {
+            center: [4.0, 4.0, 0.0],
+            radius_mm,
+            strength,
+            view_dir: [0.0, 0.0, -1.0],
+        };
+        let outcome = session
+            .apply_dab_cancellable(
+                stroke,
+                mode,
+                &AtomicBool::new(false),
+                SculptTip::Ball,
+                None,
+                DabDose::FULL,
+            )
+            .expect("an uncancelled dab returns an outcome");
+        assert!(outcome.failure.is_none(), "the dab completes");
+        let shadow = shadow.read().expect("shadow lock");
+        shadow.iter().fold((0.0f32, 0.0f32), |(high, low), vertex| {
+            (high.max(vertex.position[2]), low.min(vertex.position[2]))
+        })
+    };
+
+    let (add_high, add_low) = extremes(1.0, 3.0, BrushMode::Add);
+    let (remove_high, remove_low) = extremes(1.0, 3.0, BrushMode::Remove);
+    assert!(
+        add_high > 0.05 && add_low > -0.005,
+        "Add lifts the surface: high={add_high} low={add_low}"
+    );
+    assert!(
+        remove_low < -0.05 && remove_high < 0.005,
+        "Remove lowers the surface: high={remove_high} low={remove_low}"
+    );
+    assert!(
+        (add_high + remove_low).abs() <= add_high * 0.05,
+        "Add {add_high} and Remove {remove_low} mirror each other"
+    );
+
+    let (half_high, _) = extremes(0.5, 3.0, BrushMode::Add);
+    let ratio = half_high / add_high;
+    assert!(
+        (ratio - 0.5).abs() < 0.1,
+        "strength scales the dose: half strength lifted {ratio} of full"
+    );
+
+    for (strength, radius) in [(0.0_f32, 0.4_f32), (1.0, 12.0)] {
+        let (high, low) = extremes(strength, radius, BrushMode::Add);
+        assert!(high.is_finite() && low.is_finite(), "finite at the ends");
+        assert!(
+            high <= 1.5,
+            "radius {radius} at strength {strength} lifted {high} mm in one dab"
+        );
+    }
 }

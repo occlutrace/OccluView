@@ -311,9 +311,26 @@ impl OccluViewApp {
             None
         };
 
-        // An armed sculpt brush owns the primary drag ahead of every selection
-        // gesture; RMB orbit / MMB retarget / wheel zoom fall through below.
+        // Modified wheel input changes brush settings only while Sculpt is
+        // idle. A live drag keeps the existing camera-wheel route; after
+        // release, the worker's Finish interval owns the modified wheel.
+        let sculpt_wheel_used = self.adjust_sculpt_brush_from_wheel(ctx, response);
+
+        // An armed sculpt brush owns primary-button gestures ahead of mesh
+        // selection. Keep the viewport's independent camera-wheel path alive.
         if self.handle_sculpt_drag(ctx, response, pan_drag_active) {
+            if response.hovered() && !sculpt_wheel_used {
+                if let Some(camera) = self.render.camera.as_mut() {
+                    if update_camera_from_scroll(
+                        camera,
+                        ctx,
+                        viewport_rect,
+                        &self.persistence.settings,
+                    ) {
+                        self.request_camera_repaint(ctx);
+                    }
+                }
+            }
             return;
         }
 
@@ -341,8 +358,6 @@ impl OccluViewApp {
         // instead of zooming the camera; consume the wheel so the zoom below
         // skips it this frame. Gated to the viewport (like the zoom) so a
         // modified scroll over a panel keeps its own meaning.
-        let sculpt_wheel_used = self.adjust_sculpt_brush_from_wheel(ctx, response.hovered());
-
         let Some(camera) = self.render.camera.as_mut() else {
             return;
         };

@@ -32,6 +32,43 @@ fn ui_scale_zoom_is_allowed(ctx: &egui::Context) -> bool {
     !ctx.input(|input| input.pointer.any_down())
 }
 
+fn restore_sculpt_preferences(ctx: &egui::Context, settings: &mut crate::app_settings::Settings) {
+    if !settings.remember_sculpt_brush {
+        settings.last_sculpt_tool = crate::sculpt_tool::SculptToolKind::default();
+        settings.last_sculpt_tip = crate::sculpt_tool::SculptTip::default();
+        crate::mesh_editor_overlay::set_sculpt_tip(ctx, settings.last_sculpt_tip);
+        return;
+    }
+
+    let tip = settings.last_sculpt_tip;
+    let tip_index = match tip {
+        crate::sculpt_tool::SculptTip::Ball => 0,
+        crate::sculpt_tool::SculptTip::Knife => 1,
+        crate::sculpt_tool::SculptTip::Cylinder => 2,
+    };
+    crate::mesh_editor_overlay::set_sculpt_tip(ctx, tip);
+    if let Some(share) = settings.sculpt_radius_share {
+        crate::mesh_editor_overlay::set_sculpt_radius_share(ctx, share);
+    } else {
+        // Older settings only stored rounded millimetres. Seed the shared size
+        // from the active tip's saved radius without passing through Ball.
+        crate::mesh_editor_overlay::set_sculpt_radius_mm(
+            ctx,
+            tip,
+            settings.sculpt_radii_mm[tip_index],
+        );
+    }
+    for (kind, strength) in [
+        crate::sculpt_tool::SculptToolKind::AddRemove,
+        crate::sculpt_tool::SculptToolKind::Smooth,
+    ]
+    .into_iter()
+    .zip(settings.sculpt_strengths)
+    {
+        crate::mesh_editor_overlay::set_sculpt_strength(ctx, kind, strength);
+    }
+}
+
 pub(crate) struct OccluViewApp {
     /// Dialogs, transient presentation, notifications; see `state_ui`.
     pub(super) ui: UiState,
@@ -78,16 +115,7 @@ impl OccluViewApp {
             tools: ToolState::new(),
             platform: PlatformState::new(repaint_ctx.clone(), startup),
         };
-        if app.persistence.settings.remember_sculpt_brush {
-            crate::mesh_editor_overlay::set_sculpt_size(
-                &app.ui.repaint_ctx,
-                app.persistence.settings.sculpt_size,
-            );
-            crate::mesh_editor_overlay::set_sculpt_intensity(
-                &app.ui.repaint_ctx,
-                app.persistence.settings.sculpt_intensity,
-            );
-        }
+        restore_sculpt_preferences(&app.ui.repaint_ctx, &mut app.persistence.settings);
         if !startup_paths.is_empty() {
             app.replace_paths(&startup_paths, "startup");
         }
@@ -243,5 +271,76 @@ impl eframe::App for OccluViewApp {
         self.persistence.update_notice.show(&ctx, &self.ui.locale);
         self.show_unsaved_close_guard(&ctx);
         self.guard_pending_replace_open(&ctx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "Persisted catalog values are exact slider values."
+    )]
+    fn sculpt_preferences_restore_selected_tip_radius_and_tool_values() {
+        let ctx = egui::Context::default();
+        let mut settings = crate::app_settings::Settings::default();
+        settings.last_sculpt_tool = crate::sculpt_tool::SculptToolKind::Smooth;
+        settings.last_sculpt_tip = crate::sculpt_tool::SculptTip::Knife;
+        settings.sculpt_radii_mm = [0.75, 1.0, 0.7];
+        settings.sculpt_radius_share = Some(0.155_555_56);
+        settings.sculpt_strengths = [0.4, 0.3];
+
+        restore_sculpt_preferences(&ctx, &mut settings);
+
+        assert_eq!(
+            crate::mesh_editor_overlay::sculpt_tip(&ctx),
+            crate::sculpt_tool::SculptTip::Knife
+        );
+        assert_eq!(
+            crate::mesh_editor_overlay::sculpt_radius_mm(
+                &ctx,
+                crate::sculpt_tool::SculptTip::Knife
+            ),
+            0.6,
+            "the exact normalized share takes precedence over the rounded snapshots"
+        );
+        assert_eq!(
+            crate::mesh_editor_overlay::sculpt_radius_mm(&ctx, crate::sculpt_tool::SculptTip::Ball),
+            0.85
+        );
+        assert_eq!(
+            crate::mesh_editor_overlay::sculpt_strength(
+                &ctx,
+                crate::sculpt_tool::SculptToolKind::Smooth
+            ),
+            0.3
+        );
+
+        let legacy_ctx = egui::Context::default();
+        let mut legacy_settings = crate::app_settings::Settings::default();
+        legacy_settings.last_sculpt_tip = crate::sculpt_tool::SculptTip::Knife;
+        legacy_settings.sculpt_radii_mm = [0.75, 0.6, 0.5];
+        restore_sculpt_preferences(&legacy_ctx, &mut legacy_settings);
+        assert_eq!(
+            crate::mesh_editor_overlay::sculpt_radius_mm(
+                &legacy_ctx,
+                crate::sculpt_tool::SculptTip::Knife
+            ),
+            0.6,
+            "legacy millimetres seed the share through the remembered tip"
+        );
+
+        settings.remember_sculpt_brush = false;
+        restore_sculpt_preferences(&ctx, &mut settings);
+        assert_eq!(
+            settings.last_sculpt_tool,
+            crate::sculpt_tool::SculptToolKind::AddRemove
+        );
+        assert_eq!(
+            crate::mesh_editor_overlay::sculpt_tip(&ctx),
+            crate::sculpt_tool::SculptTip::Ball
+        );
     }
 }

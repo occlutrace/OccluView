@@ -170,14 +170,89 @@ pub(crate) struct Settings {
     /// 0.85..=1.5 (1.0 keeps the platform default).
     pub(crate) ui_scale: f32,
     pub(crate) theme: ThemePreference,
-    /// Keep the sculpt-brush size/intensity sliders across sessions instead of
-    /// resetting them to the built-in defaults.
+    /// Keep the sculpt brush, tip, size, and strengths across sessions instead
+    /// of resetting them to the tool-catalog defaults.
     pub(crate) remember_sculpt_brush: bool,
-    /// Last used sculpt size, honored only while `remember_sculpt_brush`.
-    pub(crate) sculpt_size: f32,
-    /// Last used sculpt intensity, honored only while `remember_sculpt_brush`.
-    pub(crate) sculpt_intensity: f32,
+    /// Last selected Sculpt brush and tip. They are restored on entering the
+    /// Sculpt tab; app startup remains in the non-editing state.
+    #[serde(deserialize_with = "deserialize_last_sculpt_tool")]
+    pub(crate) last_sculpt_tool: crate::sculpt_tool::SculptToolKind,
+    #[serde(deserialize_with = "deserialize_last_sculpt_tip")]
+    pub(crate) last_sculpt_tip: crate::sculpt_tool::SculptTip,
+    /// Compatibility snapshot of one normalized size choice, mapped into the
+    /// Ball, Knife and Cylinder physical ranges for the existing settings file.
+    #[serde(default = "default_sculpt_radii_mm")]
+    pub(crate) sculpt_radii_mm: [f32; 3],
+    /// Exact normalized brush size. The millimetre array above remains the
+    /// migration fallback and a compatibility snapshot for older builds.
+    #[serde(deserialize_with = "deserialize_sculpt_radius_share")]
+    pub(crate) sculpt_radius_share: Option<f32>,
+    /// Add/Remove and Smooth strengths in kernel units.
+    #[serde(default = "default_sculpt_strengths")]
+    pub(crate) sculpt_strengths: [f32; 2],
+    /// Previous versions saved generic 1..100 sliders. Read them once for
+    /// migration, but never write the obsolete fields back out.
+    #[serde(default, rename = "sculpt_size", skip_serializing)]
+    legacy_sculpt_size: Option<f32>,
+    #[serde(default, rename = "sculpt_intensity", skip_serializing)]
+    legacy_sculpt_intensity: Option<f32>,
 }
+
+const fn default_sculpt_radii_mm() -> [f32; 3] {
+    [0.75, 0.5, 0.5]
+}
+
+const fn default_sculpt_strengths() -> [f32; 2] {
+    [0.35, 0.15]
+}
+
+fn deserialize_last_sculpt_tool<'de, D>(
+    deserializer: D,
+) -> std::result::Result<crate::sculpt_tool::SculptToolKind, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(match value.as_str() {
+        Some("smooth") => crate::sculpt_tool::SculptToolKind::Smooth,
+        _ => crate::sculpt_tool::SculptToolKind::AddRemove,
+    })
+}
+
+fn deserialize_last_sculpt_tip<'de, D>(
+    deserializer: D,
+) -> std::result::Result<crate::sculpt_tool::SculptTip, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(match value.as_str() {
+        Some("knife") => crate::sculpt_tool::SculptTip::Knife,
+        Some("cylinder") => crate::sculpt_tool::SculptTip::Cylinder,
+        _ => crate::sculpt_tool::SculptTip::Ball,
+    })
+}
+
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    reason = "Share is stored as f32; out-of-range conversions are filtered and then clamped at use."
+)]
+fn deserialize_sculpt_radius_share<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<f32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(value
+        .as_f64()
+        .map(|share| share as f32)
+        .filter(|share| share.is_finite()))
+}
+
+const LEGACY_SCULPT_SIZE_DEFAULT: f32 = 40.0;
+const LEGACY_SCULPT_INTENSITY_DEFAULT: f32 = 50.0;
 
 impl Default for Settings {
     fn default() -> Self {
@@ -197,8 +272,13 @@ impl Default for Settings {
             ui_scale: 1.0,
             theme: ThemePreference::default(),
             remember_sculpt_brush: true,
-            sculpt_size: 40.0,
-            sculpt_intensity: 50.0,
+            last_sculpt_tool: crate::sculpt_tool::SculptToolKind::default(),
+            last_sculpt_tip: crate::sculpt_tool::SculptTip::default(),
+            sculpt_radii_mm: default_sculpt_radii_mm(),
+            sculpt_radius_share: None,
+            sculpt_strengths: default_sculpt_strengths(),
+            legacy_sculpt_size: None,
+            legacy_sculpt_intensity: None,
         }
     }
 }
@@ -215,6 +295,53 @@ impl Settings {
     pub(crate) fn ui_scale(&self) -> f32 {
         self.ui_scale.clamp(0.85, 1.5)
     }
+
+    // An old slider default is not an authored preference. Keep exact equality
+    // here: tolerances could overwrite a user's saved value.
+    #[allow(clippy::float_cmp)]
+    fn migrate_legacy_sculpt_preferences(
+        &mut self,
+        has_explicit_radii: bool,
+        has_explicit_strengths: bool,
+    ) {
+        if let Some(size) = self.legacy_sculpt_size.take() {
+            if !has_explicit_radii {
+                if size == LEGACY_SCULPT_SIZE_DEFAULT {
+                    self.sculpt_radii_mm = default_sculpt_radii_mm();
+                } else {
+                    // Preserve the former linear mapping: slider 1..100 represented
+                    // 0.4..12 mm. Clamp that remembered physical radius to each
+                    // donor tip's actual catalog range.
+                    let fraction = ((size - 1.0) / 99.0).clamp(0.0, 1.0);
+                    let radius = 0.4 + fraction * (12.0 - 0.4);
+                    self.sculpt_radii_mm = [
+                        radius.clamp(0.25, 4.0),
+                        radius.clamp(0.25, 2.5),
+                        radius.clamp(0.25, 2.0),
+                    ];
+                }
+            }
+        }
+        if let Some(intensity) = self.legacy_sculpt_intensity.take() {
+            if !has_explicit_strengths {
+                if intensity == LEGACY_SCULPT_INTENSITY_DEFAULT {
+                    self.sculpt_strengths = default_sculpt_strengths();
+                } else {
+                    let strength = (intensity / 100.0).clamp(0.0, 1.0);
+                    self.sculpt_strengths = [strength.clamp(0.05, 1.0), strength.clamp(0.01, 1.0)];
+                }
+            }
+        }
+    }
+
+    fn from_json_slice(bytes: &[u8]) -> std::result::Result<Self, serde_json::Error> {
+        let serialized: serde_json::Value = serde_json::from_slice(bytes)?;
+        let has_explicit_radii = serialized.get("sculpt_radii_mm").is_some();
+        let has_explicit_strengths = serialized.get("sculpt_strengths").is_some();
+        let mut settings: Self = serde_json::from_value(serialized)?;
+        settings.migrate_legacy_sculpt_preferences(has_explicit_radii, has_explicit_strengths);
+        Ok(settings)
+    }
     fn path() -> Option<PathBuf> {
         crate::app_paths::app_state_dir().map(|dir| dir.join(SETTINGS_FILE))
     }
@@ -224,7 +351,7 @@ impl Settings {
             return Self::default();
         };
         match std::fs::read(&path) {
-            Ok(bytes) => match serde_json::from_slice::<Self>(&bytes) {
+            Ok(bytes) => match Self::from_json_slice(&bytes) {
                 Ok(settings) => settings,
                 Err(error) => {
                     tracing::warn!(%error, "settings.json is invalid; using defaults");
@@ -415,6 +542,49 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "These persisted catalog values are exactly representable."
+    )]
+    fn legacy_sculpt_defaults_migrate_to_catalog_defaults() -> Result<()> {
+        let settings = Settings::from_json_slice(
+            br#"{"remember_sculpt_brush":true,"sculpt_size":40.0,"sculpt_intensity":50.0}"#,
+        )?;
+
+        assert_eq!(settings.sculpt_radii_mm, default_sculpt_radii_mm());
+        assert_eq!(settings.sculpt_strengths, default_sculpt_strengths());
+
+        let stored = serde_json::to_value(settings)?;
+        assert!(stored.get("sculpt_size").is_none());
+        assert!(stored.get("sculpt_intensity").is_none());
+        Ok(())
+    }
+
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "These migrated settings are exactly representable catalog values."
+    )]
+    fn authored_legacy_sculpt_settings_migrate_and_explicit_new_preferences_win() -> Result<()> {
+        let migrated =
+            Settings::from_json_slice(br#"{"sculpt_size":80.0,"sculpt_intensity":70.0}"#)?;
+        assert_eq!(migrated.sculpt_radii_mm, [4.0, 2.5, 2.0]);
+        assert_eq!(migrated.sculpt_strengths, [0.7, 0.7]);
+
+        let explicit = Settings::from_json_slice(
+            br#"{
+                "sculpt_size":80.0,
+                "sculpt_intensity":70.0,
+                "sculpt_radii_mm":[0.75,0.5,0.5],
+                "sculpt_strengths":[0.35,0.15]
+            }"#,
+        )?;
+        assert_eq!(explicit.sculpt_radii_mm, default_sculpt_radii_mm());
+        assert_eq!(explicit.sculpt_strengths, default_sculpt_strengths());
+        Ok(())
+    }
+
     /// A settings document that carries obsolete export-format fields loads, and
     /// those fields are dropped.
     #[test]
@@ -444,6 +614,41 @@ mod tests {
         let saved = serde_json::to_vec(&settings)?;
         let loaded: Settings = serde_json::from_slice(&saved)?;
         assert_eq!(loaded.scroll_behavior, ScrollBehavior::Zoom);
+        Ok(())
+    }
+
+    #[test]
+    fn sculpt_selection_round_trips_and_invalid_values_fall_back_safely() -> Result<()> {
+        let settings = Settings {
+            last_sculpt_tool: crate::sculpt_tool::SculptToolKind::Smooth,
+            last_sculpt_tip: crate::sculpt_tool::SculptTip::Cylinder,
+            sculpt_radius_share: Some(0.123_456_7),
+            ..Settings::default()
+        };
+        let encoded = serde_json::to_vec(&settings)?;
+        let loaded: Settings = serde_json::from_slice(&encoded)?;
+        assert_eq!(
+            loaded.last_sculpt_tool,
+            crate::sculpt_tool::SculptToolKind::Smooth
+        );
+        assert_eq!(
+            loaded.last_sculpt_tip,
+            crate::sculpt_tool::SculptTip::Cylinder
+        );
+        assert_eq!(
+            loaded.sculpt_radius_share.map(f32::to_bits),
+            Some(0.123_456_7_f32.to_bits())
+        );
+
+        let invalid = Settings::from_json_slice(
+            br#"{"last_sculpt_tool":"pull","last_sculpt_tip":17,"sculpt_radius_share":"large"}"#,
+        )?;
+        assert_eq!(
+            invalid.last_sculpt_tool,
+            crate::sculpt_tool::SculptToolKind::AddRemove
+        );
+        assert_eq!(invalid.last_sculpt_tip, crate::sculpt_tool::SculptTip::Ball);
+        assert_eq!(invalid.sculpt_radius_share, None);
         Ok(())
     }
 

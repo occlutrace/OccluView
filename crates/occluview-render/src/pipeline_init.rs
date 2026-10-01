@@ -432,9 +432,8 @@ impl Renderer {
             label: Some("occluview sculpt feedback shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(SCULPT_FEEDBACK_SHADER_SRC)),
         });
-        // The surface feedback pass is additive and depth-tested against the
-        // already-rendered target mesh. It emits only the brush field, so
-        // textures, scan colors, heatmaps, and their alpha are never doubled.
+        // Tint only the depth-tested brush footprint on the target mesh.
+        // Destination alpha belongs to the material and remains unchanged.
         let sculpt_feedback_pipeline =
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("occluview sculpt surface feedback pipeline"),
@@ -452,8 +451,8 @@ impl Renderer {
                         format: target_format,
                         blend: Some(wgpu::BlendState {
                             color: wgpu::BlendComponent {
-                                src_factor: wgpu::BlendFactor::One,
-                                dst_factor: wgpu::BlendFactor::One,
+                                src_factor: wgpu::BlendFactor::SrcAlpha,
+                                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
                                 operation: wgpu::BlendOperation::Add,
                             },
                             alpha: wgpu::BlendComponent {

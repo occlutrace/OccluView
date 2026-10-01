@@ -67,6 +67,13 @@ impl OccluViewApp {
             (0.22 * world_diagonal).max(crate::cut_manipulator::DEFAULT_DISC_RADIUS_MM)
         };
 
+        // Align keeps its current poses when the operator switches tools. Close
+        // its transaction first so no open hand drag can keep claiming pointer
+        // events or add history after the separator disc has started.
+        if self.tools.align.tool.is_armed() {
+            let ctx = self.ui.repaint_ctx.clone();
+            self.finish_align_session(&ctx);
+        }
         self.tools.cut_view.disable();
         self.tools.measure.disarm();
         self.document.mesh_selection_drag = None;
@@ -539,7 +546,7 @@ impl OccluViewApp {
         ctx.request_repaint();
     }
 
-    fn cancel_bridge_split(&mut self, message: &str) {
+    pub(super) fn cancel_bridge_split(&mut self, message: &str) {
         self.tools.bridge_split.cancel();
         self.tools.bridge_split_disc.disarm();
         self.tools.bridge_split_section.reset();
@@ -601,5 +608,68 @@ fn to_bridge_pose(pose: crate::cut_manipulator::DiscPose) -> crate::bridge_split
         center: pose.center,
         normal: pose.plane_normal,
         radius_mm: pose.radius_mm,
+    }
+}
+
+#[cfg(test)]
+mod transition_tests {
+    #![allow(clippy::expect_used)]
+    use crate::app::app_align_drag::AlignDrag;
+    use crate::app::app_test_support::{named_scene, test_app};
+    use glam::{Affine3A, Vec3};
+    use std::sync::Arc;
+
+    /// Switching from Align to Bridge Split commits its open pose as one edit;
+    /// switching back cancels only the separator preview and leaves Align as
+    /// the sole owner of its pointer gesture.
+    #[test]
+    fn align_and_bridge_split_take_exclusive_turns() {
+        let mut app = test_app("align-bridge-tool-exclusivity");
+        let scene = named_scene("jaw", 0.0);
+        let layer_id = scene.meshes()[0].id();
+        app.document.scene = Some(Arc::new(scene));
+        let ctx = app.ui.repaint_ctx.clone();
+
+        app.arm_align_tool(&ctx);
+        assert!(app.tools.align.tool.is_armed());
+        let start = app.document.scene.as_ref().expect("scene").meshes()[0].transform;
+        app.tools.align.drag = Some(AlignDrag {
+            layer: layer_id,
+            start,
+            pivot_local: Vec3::new(0.25, 0.25, 0.0),
+        });
+        app.nudge_align_layer(
+            layer_id,
+            Affine3A::from_translation(Vec3::new(2.0, -1.0, 0.5)),
+        );
+        let aligned_pose = app.document.scene.as_ref().expect("scene").meshes()[0].transform;
+        assert_ne!(aligned_pose, start);
+
+        let live_scene = app.document.scene.clone().expect("scene");
+        app.begin_bridge_split_from_layer(&live_scene, layer_id);
+        assert!(!app.tools.align.tool.is_armed());
+        assert_eq!(
+            app.document.scene.as_ref().expect("scene").meshes()[0].transform,
+            aligned_pose,
+            "switching tools keeps the Align pose"
+        );
+        assert_eq!(app.document.edit_mode.undo_len(), 1);
+        assert_ne!(
+            app.tools.bridge_split.session().mode(),
+            crate::bridge_split::BridgeSplitMode::Off
+        );
+
+        app.arm_align_tool(&ctx);
+        assert!(app.tools.align.tool.is_armed());
+        assert_eq!(
+            app.tools.bridge_split.session().mode(),
+            crate::bridge_split::BridgeSplitMode::Off,
+            "arming Align discards the other tool's preview and active session"
+        );
+        assert_eq!(
+            app.document.scene.as_ref().expect("scene").meshes()[0].transform,
+            aligned_pose,
+            "arming Align does not alter the pose Bridge Split left behind"
+        );
     }
 }

@@ -12,10 +12,7 @@ use eframe::egui;
 use super::{EditorTab, MeshEditorAction, MeshEditorPanelState};
 use crate::icons::AppIcon;
 use crate::mesh_editor_icons::{self, CELL_ROUNDING};
-use crate::sculpt_tool::{
-    SculptTip, SculptToolKind, SCULPT_INTENSITY_MAX, SCULPT_INTENSITY_MIN, SCULPT_SIZE_MAX,
-    SCULPT_SIZE_MIN,
-};
+use crate::sculpt_tool::{SculptTip, SculptToolKind};
 use crate::ui_theme;
 
 /// Height of the tab strip / its pills.
@@ -426,7 +423,7 @@ pub(super) fn sculpt(
         }
     });
     sculpt_tip_row(ui, enabled, locale);
-    sculpt_settings_row(ui, enabled, locale);
+    sculpt_settings_row(ui, enabled, state.sculpt_armed, locale);
     action
 }
 
@@ -470,17 +467,30 @@ fn tip_icon(tip: SculptTip) -> AppIcon {
 /// Size/intensity sliders for the sculpt tools. Both live in egui memory (like
 /// the Close Holes limit) so they hold while the editor is open, and both are
 /// abstract 0..100 feel sliders, not millimeters.
-fn sculpt_settings_row(ui: &mut egui::Ui, enabled: bool, locale: &crate::i18n::LocaleManager) {
+fn sculpt_settings_row(
+    ui: &mut egui::Ui,
+    enabled: bool,
+    armed: Option<SculptToolKind>,
+    locale: &crate::i18n::LocaleManager,
+) {
     let ctx = ui.ctx().clone();
-    let mut size = super::sculpt_size(&ctx);
-    let mut intensity = super::sculpt_intensity(&ctx);
+    let tip = super::sculpt_tip(&ctx);
+    let kind = armed.unwrap_or(SculptToolKind::AddRemove);
+    let (radius_min, radius_max) = tip.radius_range_mm();
+    let (strength_min, strength_max) = kind.strength_range();
+    let mut radius = super::sculpt_radius_mm(&ctx, tip);
+    let mut strength = super::sculpt_strength(&ctx, kind);
+    let radius_label = format!("{radius:.2} mm");
+    let strength_label = format!("{:.0}%", strength * 100.0);
     sculpt_slider_row(
         ui,
         enabled,
         SculptSliderControl {
             label: &locale.tr(crate::i18n::message_id!("meshedit-slider-size")),
-            value: &mut size,
-            range: SCULPT_SIZE_MIN..=SCULPT_SIZE_MAX,
+            value: &mut radius,
+            value_label: radius_label,
+            range: radius_min..=radius_max,
+            step: SculptTip::radius_step_mm(),
             tooltip: &locale.tr(crate::i18n::message_id!("meshedit-slider-size-hint")),
         },
     );
@@ -490,20 +500,24 @@ fn sculpt_settings_row(ui: &mut egui::Ui, enabled: bool, locale: &crate::i18n::L
         enabled,
         SculptSliderControl {
             label: &locale.tr(crate::i18n::message_id!("meshedit-slider-force")),
-            value: &mut intensity,
-            range: SCULPT_INTENSITY_MIN..=SCULPT_INTENSITY_MAX,
+            value: &mut strength,
+            value_label: strength_label,
+            range: strength_min..=strength_max,
+            step: kind.strength_step(),
             tooltip: &locale.tr(crate::i18n::message_id!("meshedit-slider-force-hint")),
         },
     );
-    super::set_sculpt_size(&ctx, size);
-    super::set_sculpt_intensity(&ctx, intensity);
+    super::set_sculpt_radius_mm(&ctx, tip, radius);
+    super::set_sculpt_strength(&ctx, kind, strength);
     ui.add_space(2.0);
 }
 
 struct SculptSliderControl<'a> {
     label: &'a str,
     value: &'a mut f32,
+    value_label: String,
     range: std::ops::RangeInclusive<f32>,
+    step: f32,
     tooltip: &'a str,
 }
 
@@ -519,11 +533,7 @@ fn sculpt_slider_row(
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(control.label).size(11.0).weak());
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(
-                egui::RichText::new(format!("{:.0}", *control.value))
-                    .size(11.0)
-                    .weak(),
-            );
+            ui.label(egui::RichText::new(&control.value_label).size(11.0).weak());
         });
     });
     let response = ui
@@ -538,6 +548,7 @@ fn sculpt_slider_row(
                 [slider_width, row_height],
                 egui::Slider::new(control.value, control.range)
                     .show_value(false)
+                    .step_by(f64::from(control.step))
                     .trailing_fill(true),
             )
         })
@@ -727,8 +738,6 @@ pub(super) fn tall_text_button(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sculpt_tool::SCULPT_SIZE_DEFAULT;
-
     #[test]
     fn cell_width_splits_a_row_into_equal_columns() {
         let width = cell_width(212.0, 4, 6.0);
@@ -764,7 +773,7 @@ mod tests {
 
     #[test]
     fn sculpt_slider_widget_really_uses_the_full_panel_width() {
-        let mut value = SCULPT_SIZE_DEFAULT;
+        let mut value = 0.75;
         let mut slider_rect = egui::Rect::NOTHING;
         egui::__run_test_ui(|ui| {
             ui.set_width(212.0);
@@ -774,7 +783,9 @@ mod tests {
                 SculptSliderControl {
                     label: "Size",
                     value: &mut value,
-                    range: SCULPT_SIZE_MIN..=SCULPT_SIZE_MAX,
+                    value_label: "0.75 mm".to_string(),
+                    range: 0.25..=4.0,
+                    step: 0.05,
                     tooltip: "Size",
                 },
             )

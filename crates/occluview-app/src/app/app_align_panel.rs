@@ -20,6 +20,10 @@ fn action_after_tab_change(
     (!tab_changed).then_some(action).flatten()
 }
 
+fn align_worker_needs_ui_poll(worker: Option<&AlignWorker>) -> bool {
+    worker.is_some_and(|worker| worker.is_busy() || worker.has_pending_output())
+}
+
 impl OccluViewApp {
     /// A stationary right-click takes the last point back.
     ///
@@ -68,6 +72,12 @@ impl OccluViewApp {
             .worker
             .as_ref()
             .is_some_and(AlignWorker::is_busy);
+        if align_worker_needs_ui_poll(self.tools.align.worker.as_ref()) {
+            // Completion is drained on this UI path. Keep repainting while the
+            // worker is active and if it publishes just after this frame's
+            // empty drain, so results do not wait for another operator input.
+            ctx.request_repaint();
+        }
         let worker_failed = self
             .tools
             .align
@@ -304,8 +314,11 @@ impl OccluViewApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{action_after_tab_change, heatmap_is_authorized};
+    use super::{action_after_tab_change, align_worker_needs_ui_poll, heatmap_is_authorized};
     use crate::align_panel::{AlignPanelAction, AlignTab};
+    use crate::align_worker::{AlignFailure, AlignOutcome, AlignWorker};
+    use eframe::egui;
+    use std::sync::mpsc;
 
     #[test]
     fn manual_tab_never_authorizes_a_heatmap_from_stale_readiness() {
@@ -327,6 +340,38 @@ mod tests {
         assert_eq!(
             action_after_tab_change(Some(AlignPanelAction::Refine), false),
             Some(AlignPanelAction::Refine)
+        );
+    }
+
+    /// The worker can publish after this frame already drained an empty queue.
+    /// Such a result is no longer computationally busy, but it still needs one
+    /// UI frame or it will sit unapplied until the operator moves the mouse.
+    #[test]
+    fn a_pending_completion_requests_the_idle_ui_poll() {
+        let worker = AlignWorker::spawn();
+        assert!(!align_worker_needs_ui_poll(Some(&worker)));
+        let generation = worker.generation();
+        worker.publish_for_tests(
+            generation,
+            AlignOutcome::Failed {
+                rejection: AlignFailure::FixedSurfaceMissing,
+            },
+        );
+        assert!(!worker.is_busy(), "the computation itself has completed");
+
+        let ctx = egui::Context::default();
+        let (sender, receiver) = mpsc::channel();
+        ctx.set_request_repaint_callback(move |_| {
+            let _ = sender.send(());
+        });
+        if align_worker_needs_ui_poll(Some(&worker)) {
+            ctx.request_repaint();
+        }
+        assert!(
+            receiver
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .is_ok(),
+            "an undrained result must keep the idle egui loop alive once"
         );
     }
 }

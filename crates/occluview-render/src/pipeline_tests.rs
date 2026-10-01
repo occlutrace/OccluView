@@ -365,6 +365,175 @@ fn render_sculpt_tool_profile(renderer: &crate::Renderer, action: [f32; 2]) -> V
     read_sculpt_profile_pixels(device, &target.readback)
 }
 
+#[test]
+#[allow(clippy::expect_used)]
+fn sculpt_footprint_tints_light_and_dark_surfaces_without_changing_alpha() {
+    let renderer = pollster::block_on(crate::Renderer::new_headless(
+        wgpu::TextureFormat::Rgba8Unorm,
+    ))
+    .expect("a headless renderer");
+    let center =
+        (SCULPT_PROFILE_HEIGHT / 2 * SCULPT_PROFILE_WIDTH + SCULPT_PROFILE_WIDTH / 2) as usize;
+    for light_ground in [false, true] {
+        let baseline = render_sculpt_feedback_ground(&renderer, light_ground, false);
+        let marked = render_sculpt_feedback_ground(&renderer, light_ground, true);
+        for (index, (pixel, original)) in marked.iter().zip(&baseline).enumerate() {
+            let x = u32::try_from(index % SCULPT_PROFILE_WIDTH as usize).expect("pixel column");
+            let y = u32::try_from(index / SCULPT_PROFILE_WIDTH as usize).expect("pixel row");
+            let x = (f64::from(x) + 0.5) * 2.0 / f64::from(SCULPT_PROFILE_WIDTH) - 1.0;
+            let y = (f64::from(y) + 0.5) * 2.0 / f64::from(SCULPT_PROFILE_HEIGHT) - 1.0;
+            // The half-unit stamp and its antialiased hairline fit well
+            // within this radius; every pixel farther out stays untouched.
+            if x * x + y * y > 0.65 * 0.65 {
+                assert_eq!(pixel, original, "pixel {index} lies outside the brush");
+            }
+        }
+        assert!(
+            marked.iter().zip(&baseline).all(|(a, b)| a[3] == b[3]),
+            "the material's alpha must survive the feedback pass"
+        );
+        if light_ground {
+            assert!(
+                marked[center][..3].iter().all(|channel| *channel < 240),
+                "a dark Smooth footprint must remain visible on white: {:?}",
+                marked[center]
+            );
+        } else {
+            assert!(
+                marked[center][..3].iter().all(|channel| *channel > 0),
+                "the same footprint must remain visible on black"
+            );
+        }
+    }
+    assert_eq!(renderer.take_gpu_error(), None);
+}
+
+#[allow(clippy::expect_used)]
+fn render_sculpt_feedback_ground(
+    renderer: &crate::Renderer,
+    light_ground: bool,
+    visible: bool,
+) -> Vec<[u8; 4]> {
+    let target = SculptProfileTarget::new(renderer);
+    let device = renderer.device();
+    let (gpu_mesh, mesh_bg) = prepare_sculpt_feedback_ground(renderer, visible);
+    let camera_bg = renderer.camera_bind_group();
+    let ground = if light_ground { 1.0 } else { 0.0 };
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("sculpt feedback ground readback"),
+    });
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("sculpt feedback on a rendered ground"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &target.color_view,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: ground,
+                        g: ground,
+                        b: ground,
+                        a: 0.4,
+                    }),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &target.depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(0),
+                    store: wgpu::StoreOp::Store,
+                }),
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        renderer.draw_sculpt_surface_feedback(
+            &mut pass,
+            super::SculptSurfaceFeedbackBindings {
+                camera_bg: &camera_bg,
+                mesh_bg: &mesh_bg,
+                clip_bg: renderer.disabled_clip_bind_group(),
+                mesh: &gpu_mesh,
+            },
+        );
+    }
+    encoder.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture: &target.color,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &target.readback,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(SCULPT_PROFILE_BYTES_PER_ROW),
+                rows_per_image: Some(SCULPT_PROFILE_HEIGHT),
+            },
+        },
+        wgpu::Extent3d {
+            width: SCULPT_PROFILE_WIDTH,
+            height: SCULPT_PROFILE_HEIGHT,
+            depth_or_array_layers: 1,
+        },
+    );
+    renderer.queue().submit(std::iter::once(encoder.finish()));
+    read_sculpt_profile_pixels(device, &target.readback)
+}
+
+#[allow(clippy::expect_used)]
+fn prepare_sculpt_feedback_ground(
+    renderer: &crate::Renderer,
+    visible: bool,
+) -> (crate::GpuMesh, wgpu::BindGroup) {
+    use crate::{GpuCamera, GpuMesh, SculptBrushUniform};
+    use glam::{Mat4, Vec3};
+    use occluview_core::{Mesh, Vertex};
+
+    let device = renderer.device();
+    let mesh = Mesh::new(
+        None,
+        vec![
+            Vertex::at(Vec3::new(-1.0, -1.0, 0.5)),
+            Vertex::at(Vec3::new(1.0, -1.0, 0.5)),
+            Vertex::at(Vec3::new(1.0, 1.0, 0.5)),
+            Vertex::at(Vec3::new(-1.0, 1.0, 0.5)),
+        ],
+        vec![0, 1, 2, 0, 2, 3],
+    )
+    .expect("a plane carrying a surface footprint");
+    let gpu_mesh = GpuMesh::upload(device, renderer.queue(), &mesh);
+    let uniform_buffer = renderer.mesh_uniform_buffer();
+    renderer.queue().write_buffer(
+        &uniform_buffer,
+        0,
+        bytemuck::bytes_of(&crate::mesh_uniform::GpuMeshUniform::identity()),
+    );
+    let mesh_bg = renderer.mesh_bind_group(&uniform_buffer);
+    renderer.set_camera(&GpuCamera::new(
+        Mat4::IDENTITY,
+        Mat4::IDENTITY,
+        Vec3::Z,
+        Vec3::Z * 2.0,
+    ));
+    let mut brush = SculptBrushUniform::hidden();
+    brush.visible = u32::from(visible);
+    brush.center = [0.0, 0.0, 0.5];
+    brush.radius = 0.5;
+    brush.color = [0.1, 0.1, 0.1, 1.0];
+    brush.intensity = 0.035;
+    renderer.set_sculpt_brush(&brush);
+    (gpu_mesh, mesh_bg)
+}
+
 const SCULPT_PROFILE_WIDTH: u32 = 64;
 const SCULPT_PROFILE_HEIGHT: u32 = 64;
 const SCULPT_PROFILE_BYTES_PER_ROW: u32 = SCULPT_PROFILE_WIDTH * 4;

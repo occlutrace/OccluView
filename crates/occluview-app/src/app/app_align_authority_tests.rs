@@ -6,10 +6,12 @@
 #![allow(clippy::expect_used, clippy::float_cmp, clippy::unwrap_used)]
 
 use super::*;
-use crate::align_worker::AlignOutcome;
+use crate::align_worker::{AlignOutcome, AlignWorker};
 use crate::app::app_test_support::{named_scene, push_named_layer, test_app};
+use glam::Vec3;
 use occluview_align::{DeviationStats, DeviationSummary, Observability, Unmeasured};
 use std::sync::Arc;
+use std::time::Duration;
 
 /// A live scene with an armed tool, a named pair, and a landed refined match.
 ///
@@ -27,6 +29,115 @@ fn app_with_a_landed_fit(name: &str) -> (OccluViewApp, SceneMeshId, SceneMeshId)
     app.tools.align.settings.show_deviation = true;
     app.align_worker_mut();
     (app, moving_id, fixed_id)
+}
+
+/// Manual pose changes do not invalidate local point correspondences. Repeated
+/// tab trips must leave the coarse fit available.
+#[test]
+fn manual_pose_changes_preserve_point_pairs_across_repeated_tab_trips() {
+    let (mut app, moving_id, fixed_id) = app_with_a_landed_fit("align-manual-pairs");
+    for (moving, fixed) in [
+        (Vec3::new(0.1, 0.2, 0.0), Vec3::new(5.1, 0.2, 0.0)),
+        (Vec3::new(0.2, 0.8, 0.0), Vec3::new(5.2, 0.8, 0.0)),
+    ] {
+        app.tools.align.tool.click(crate::align_tool::AlignPoint {
+            layer: moving_id,
+            local: moving,
+            normal: Vec3::Z,
+        });
+        app.tools.align.tool.click(crate::align_tool::AlignPoint {
+            layer: fixed_id,
+            local: fixed,
+            normal: Vec3::Z,
+        });
+    }
+    assert_eq!(app.tools.align.tool.pairs().len(), 2);
+    let pairs = app.tools.align.tool.pairs().to_vec();
+
+    app.tools.align.tab = crate::align_panel::AlignTab::Manually;
+    app.settle_align_tab_change();
+    let mut scene = app.document.scene.as_ref().expect("scene").as_ref().clone();
+    let moving = scene
+        .meshes_mut()
+        .iter_mut()
+        .find(|entry| entry.id() == moving_id)
+        .expect("moving scan");
+    moving.transform =
+        glam::Affine3A::from_translation(Vec3::new(0.0, 0.3, -0.2)) * moving.transform;
+    app.document.scene = Some(Arc::new(scene));
+
+    for tab in [
+        crate::align_panel::AlignTab::Automatically,
+        crate::align_panel::AlignTab::Manually,
+        crate::align_panel::AlignTab::Automatically,
+    ] {
+        app.tools.align.tab = tab;
+        app.settle_align_tab_change();
+        assert_eq!(
+            app.tools.align.tool.pairs(),
+            pairs,
+            "manual tab trips must preserve local correspondences"
+        );
+        assert!(app.tools.align.tool.can_align());
+    }
+}
+
+/// A worker failure drops its stale state while preserving the points and
+/// leaving the automatic fit action eligible once the replacement is idle.
+#[test]
+fn a_failed_align_worker_recovers_without_disabling_the_coarse_fit() {
+    let (mut app, moving_id, fixed_id) = app_with_a_landed_fit("align-failed-worker-recovery");
+    for (moving, fixed) in [
+        (Vec3::new(0.1, 0.2, 0.0), Vec3::new(5.1, 0.2, 0.0)),
+        (Vec3::new(0.2, 0.8, 0.0), Vec3::new(5.2, 0.8, 0.0)),
+    ] {
+        app.tools.align.tool.click(crate::align_tool::AlignPoint {
+            layer: moving_id,
+            local: moving,
+            normal: Vec3::Z,
+        });
+        app.tools.align.tool.click(crate::align_tool::AlignPoint {
+            layer: fixed_id,
+            local: fixed,
+            normal: Vec3::Z,
+        });
+    }
+    assert!(app.tools.align.tool.can_align());
+
+    app.align_worker_mut().poison_queue_for_tests();
+    for _ in 0..200 {
+        if app
+            .tools
+            .align
+            .worker
+            .as_ref()
+            .is_some_and(AlignWorker::has_failed)
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        app.tools
+            .align
+            .worker
+            .as_ref()
+            .is_some_and(AlignWorker::has_failed),
+        "the failure path must actually be reached"
+    );
+
+    app.drain_align_worker(&egui::Context::default());
+    assert!(app.tools.align.worker.is_none());
+    assert!(app.tools.align.tool.can_align());
+    let replacement_is_healthy_and_idle = {
+        let worker = app.align_worker_mut();
+        !worker.has_failed() && !worker.is_busy()
+    };
+    assert!(replacement_is_healthy_and_idle);
+    assert!(
+        app.tools.align.tool.can_align(),
+        "a fresh idle worker leaves the fit gate open"
+    );
 }
 
 /// The colours a map of the moving layer would carry: one per vertex.
@@ -284,7 +395,7 @@ fn dropping_a_stale_map_also_drops_the_work_behind_it() {
 
     // Wait for the job to finish and publish: the queue is empty and nothing is
     // running exactly when its completion is waiting to be drained.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
     loop {
         let worker = app.tools.align.worker.as_ref().expect("worker");
         if !worker.is_busy() {
@@ -294,7 +405,7 @@ fn dropping_a_stale_map_also_drops_the_work_behind_it() {
             std::time::Instant::now() < deadline,
             "the measurement never ran"
         );
-        std::thread::sleep(std::time::Duration::from_millis(1));
+        std::thread::sleep(Duration::from_millis(1));
     }
 
     app.invalidate_deviation_map(
@@ -319,7 +430,7 @@ fn dropping_a_stale_map_also_drops_the_work_behind_it() {
     app.tools.align.refined_match_ready = true;
     app.tools.align.settings.show_deviation = true;
     app.run_align_measure();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
     loop {
         let worker = app.tools.align.worker.as_ref().expect("worker");
         if !worker.is_busy() {
@@ -329,7 +440,7 @@ fn dropping_a_stale_map_also_drops_the_work_behind_it() {
             std::time::Instant::now() < deadline,
             "the second measurement never ran"
         );
-        std::thread::sleep(std::time::Duration::from_millis(1));
+        std::thread::sleep(Duration::from_millis(1));
     }
     assert!(
         !app.tools

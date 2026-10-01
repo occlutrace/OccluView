@@ -14,17 +14,23 @@
 use super::app_test_support::{push_named_layer, test_app};
 use super::*;
 use crate::mesh_editor_overlay::EditorTab;
-use crate::sculpt_tool::SculptToolKind;
-use occluview_core::{Mesh, Scene, SceneMesh, Vertex};
-use std::sync::Arc;
+use crate::sculpt_kernel::{BrushMode, BrushRayStep, BrushSession};
+use crate::sculpt_tool::{SculptSession, SculptTip, SculptToolKind, StrokeState};
+use crate::sculpt_worker::{SculptWorker, SculptWorkerInput};
+use glam::{Affine3A, Quat, Vec3};
+use occluview_core::{mesh_edit_buffers_from_mesh, Mesh, Scene, SceneMesh, Vertex};
+use occluview_render::PreparedSceneTopology;
+use std::collections::VecDeque;
+use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
 
 fn quad(x: f32) -> Mesh {
     Mesh::new(
         Some("quad".to_string()),
         vec![
-            Vertex::at(glam::Vec3::new(x, 0.0, 0.0)),
-            Vertex::at(glam::Vec3::new(x + 1.0, 0.0, 0.0)),
-            Vertex::at(glam::Vec3::new(x, 1.0, 0.0)),
+            Vertex::at(Vec3::new(x, 0.0, 0.0)),
+            Vertex::at(Vec3::new(x + 1.0, 0.0, 0.0)),
+            Vertex::at(Vec3::new(x, 1.0, 0.0)),
         ],
         vec![0, 1, 2],
     )
@@ -198,11 +204,15 @@ fn an_active_stroke_stops_sampling_when_pointer_leaves_viewport() {
 
     // The drag is already live; the pointer now moves outside the viewport
     // while the button stays held.
-    app.tools.sculpt.stroke = Some(crate::sculpt_tool::StrokeState {
+    app.tools.sculpt.stroke = Some(StrokeState {
         layer_id,
-        last_dab_local: None,
+        last_pointer: [0.0, 0.0],
+        input_pointer: [0.0, 0.0],
+        last_ray: None,
         hold_seconds: 0.0,
-        last_axis: None,
+        path_break_pending: false,
+        release_pending: false,
+        retained_samples: VecDeque::new(),
     });
     app.document.unsaved_sculpt_stroke = true;
 
@@ -248,14 +258,615 @@ fn an_active_stroke_stops_sampling_when_pointer_leaves_viewport() {
     );
 }
 
-/// The sculpt cursor is only drawn once the surface can answer a ray. A cold
-/// mesh has no warmed BVH and no prepared worker, so a held brush over it must
-/// paint the "preparing" message and lay no dab rather than pick against a tree
-/// that does not exist yet.
 #[test]
-fn sculpt_cursor_waits_for_a_warm_pick_before_sampling() {
+fn a_press_on_the_layers_overlay_does_not_start_sculpting() {
+    let mut app = app_with_an_edit_session("sculpt-layers-overlay-ownership");
+    app.tools.sculpt.armed = Some(SculptToolKind::AddRemove);
+    app.render.camera = Some(Camera::default());
+    let ctx = egui::Context::default();
+    let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 400.0));
+    let panel_click = layers_overlay::layer_overlay_rect(viewport, 1).center();
+    let input = egui::RawInput {
+        screen_rect: Some(viewport),
+        events: vec![egui::Event::PointerButton {
+            pos: panel_click,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        }],
+        ..Default::default()
+    };
+
+    ctx.run_ui(input, |ui| {
+        let response = ui.allocate_rect(viewport, egui::Sense::click_and_drag());
+        let _ = app.handle_sculpt_drag(ui.ctx(), &response, false);
+    })
+    .drop_without_applying_deltas();
+
+    assert!(app.tools.sculpt.pending_presses.is_empty());
+    assert!(app.tools.sculpt.stroke.is_none());
+}
+
+#[test]
+fn a_same_frame_press_move_outside_and_release_retains_the_press_ray() {
+    let mut app = app_with_an_edit_session("sculpt-press-release-same-frame");
+    app.tools.sculpt.armed = Some(SculptToolKind::AddRemove);
+    app.render.camera = Some(Camera::default());
+    let ctx = egui::Context::default();
+    let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 400.0));
+    let press = egui::pos2(350.0, 200.0);
+    let outside = egui::pos2(450.0, 450.0);
+    let input = egui::RawInput {
+        screen_rect: Some(viewport),
+        events: vec![
+            egui::Event::PointerMoved(press),
+            egui::Event::PointerButton {
+                pos: press,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerMoved(outside),
+            egui::Event::PointerButton {
+                pos: outside,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+        ..Default::default()
+    };
+
+    ctx.run_ui(input, |ui| {
+        let response = ui.allocate_rect(viewport, egui::Sense::click_and_drag());
+        let _ = app.handle_sculpt_drag(ui.ctx(), &response, false);
+    })
+    .drop_without_applying_deltas();
+
+    let pending = app
+        .tools
+        .sculpt
+        .pending_presses
+        .front()
+        .expect("the raw press must survive a same-frame release");
+    assert!(pending.released);
+    assert_eq!(pending.press_pointer, [press.x, press.y]);
+    assert_eq!(pending.latest_pointer, [press.x, press.y]);
+    assert!(pending.break_before_latest);
+}
+
+#[test]
+fn a_pending_drag_marks_overlay_gap_before_its_latest_ray() {
+    let mut app = app_with_an_edit_session("sculpt-pending-path-break");
+    app.tools.sculpt.armed = Some(SculptToolKind::AddRemove);
+    app.tools.sculpt.pending_history = Some(false);
+    app.render.camera = Some(Camera::default());
+    let ctx = egui::Context::default();
+    let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 400.0));
+    let press = egui::pos2(150.0, 150.0);
+    let reentry = egui::pos2(165.0, 160.0);
+
+    ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(viewport),
+            events: vec![
+                egui::Event::PointerMoved(press),
+                egui::Event::PointerButton {
+                    pos: press,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+            ..Default::default()
+        },
+        |ui| {
+            let response = ui.allocate_rect(viewport, egui::Sense::click_and_drag());
+            assert!(app.handle_sculpt_drag(ui.ctx(), &response, false));
+        },
+    )
+    .drop_without_applying_deltas();
+
+    let start_ray = app
+        .tools
+        .sculpt
+        .pending_presses
+        .front()
+        .expect("the press waits behind pending history")
+        .start_step
+        .clone();
+
+    ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(viewport),
+            events: vec![egui::Event::PointerMoved(egui::pos2(600.0, 600.0))],
+            ..Default::default()
+        },
+        |ui| {
+            let response = ui.allocate_rect(viewport, egui::Sense::click_and_drag());
+            assert!(ui
+                .ctx()
+                .input(|input| input.pointer.button_down(egui::PointerButton::Primary)));
+            assert!(app.handle_sculpt_drag(ui.ctx(), &response, false));
+        },
+    )
+    .drop_without_applying_deltas();
+
+    ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(viewport),
+            events: vec![egui::Event::PointerMoved(reentry)],
+            ..Default::default()
+        },
+        |ui| {
+            let response = ui.allocate_rect(viewport, egui::Sense::click_and_drag());
+            assert!(app.handle_sculpt_drag(ui.ctx(), &response, false));
+        },
+    )
+    .drop_without_applying_deltas();
+
+    let pending = app
+        .tools
+        .sculpt
+        .pending_presses
+        .front()
+        .expect("the pending gesture remains queued");
+    assert!(pending.break_before_latest);
+    assert!(pending.moved);
+    assert_eq!(pending.press_pointer, [press.x, press.y]);
+    assert_eq!(pending.latest_pointer, [reentry.x, reentry.y]);
+    assert_eq!(pending.start_step, start_ray, "the first ray stays frozen");
+}
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "The event batch and resulting worker samples are asserted in one scenario."
+)]
+fn active_move_uses_its_modifier_state_even_when_release_clears_shift_same_frame() {
+    let mut app = app_with_an_edit_session("sculpt-active-modifier-order");
+    app.tools.sculpt.armed = Some(SculptToolKind::Smooth);
+    app.render.camera = Some(Camera {
+        target: Vec3::ZERO,
+        distance: 100.0,
+        orientation: Some(Quat::IDENTITY),
+        orthographic_height: 2.0,
+        near: 0.1,
+        far: 200.0,
+        ..Default::default()
+    });
+    let scene = app.document.scene.clone().expect("scene");
+    let entry = &scene.meshes()[0];
+    let layer_id = entry.id();
+    let mesh = Arc::clone(&entry.mesh);
+    mesh.warm_bvh();
+    let session = BrushSession::prepare(&mesh_edit_buffers_from_mesh(&mesh)).expect("prepare");
+    app.tools.sculpt.worker = Some(SculptWorker::spawn(SculptSession {
+        layer_id,
+        topology_id: mesh.topology_id(),
+        session,
+        base_mesh: Arc::clone(&mesh),
+        shadow: Arc::new(RwLock::new(mesh.vertices().to_vec())),
+        topology: PreparedSceneTopology::from_mesh(&mesh),
+        world_to_local: Affine3A::IDENTITY,
+        local_per_world: 1.0,
+        dirty_stroke: false,
+        topology_dirty_stroke: false,
+        stroke_start_mesh: None,
+    }));
+    drop(scene);
+
+    let ctx = egui::Context::default();
+    let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 400.0));
+    let start = egui::pos2(200.0, 200.0);
+    let moved = egui::pos2(210.0, 190.0);
+    let shift = egui::Modifiers {
+        shift: true,
+        ..Default::default()
+    };
+    ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(viewport),
+            events: vec![
+                egui::Event::PointerMoved(start),
+                egui::Event::PointerButton {
+                    pos: start,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+            ..Default::default()
+        },
+        |ui| {
+            ui.allocate_rect(viewport, egui::Sense::click_and_drag());
+        },
+    )
+    .drop_without_applying_deltas();
+    app.tools.sculpt.stroke = Some(StrokeState {
+        layer_id,
+        last_pointer: [start.x, start.y],
+        input_pointer: [start.x, start.y],
+        last_ray: None,
+        hold_seconds: 0.0,
+        path_break_pending: false,
+        release_pending: false,
+        retained_samples: VecDeque::new(),
+    });
+    app.document.unsaved_sculpt_stroke = true;
+
+    let mut sampled_strength = None;
+    ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(viewport),
+            events: vec![
+                egui::Event::ModifiersChanged(shift),
+                egui::Event::PointerMoved(moved),
+                egui::Event::ModifiersChanged(egui::Modifiers::NONE),
+            ],
+            ..Default::default()
+        },
+        |ui| {
+            let response = ui.allocate_rect(viewport, egui::Sense::click_and_drag());
+            assert!(app.handle_sculpt_drag(ui.ctx(), &response, false));
+            sampled_strength = app
+                .tools
+                .sculpt
+                .stroke
+                .as_ref()
+                .and_then(|stroke| stroke.last_ray.as_ref())
+                .map(|step| step.strength);
+        },
+    )
+    .drop_without_applying_deltas();
+
+    assert_eq!(
+        sampled_strength,
+        Some(SculptToolKind::Smooth.default_strength() * 2.0),
+        "the accepted worker ray uses Shift from the move, even though the frame ends unshifted"
+    );
+
+    ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(viewport),
+            events: vec![egui::Event::PointerButton {
+                pos: moved,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            ..Default::default()
+        },
+        |ui| {
+            let response = ui.allocate_rect(viewport, egui::Sense::click_and_drag());
+            let _ = app.handle_sculpt_drag(ui.ctx(), &response, false);
+        },
+    )
+    .drop_without_applying_deltas();
+    assert!(app.tools.sculpt.stroke.is_none());
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        app.poll_sculpt_worker(&ctx);
+        if app
+            .tools
+            .sculpt
+            .worker
+            .as_ref()
+            .is_some_and(SculptWorker::is_quiescent)
+        {
+            app.poll_sculpt_worker(&ctx);
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the worker did not finish the ray"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(app.ui.app_error.is_none(), "the worker accepted the ray");
+}
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "One saturated worker scenario covers captured modes, a panel gap, release and ordered Finish."
+)]
+fn saturated_active_input_retains_modifier_samples_across_a_path_break_before_finish() {
+    let mut app = app_with_an_edit_session("sculpt-retained-modifier-boundary");
+    app.tools.sculpt.armed = Some(SculptToolKind::AddRemove);
+    app.render.camera = Some(Camera {
+        target: Vec3::ZERO,
+        distance: 100.0,
+        orientation: Some(Quat::IDENTITY),
+        orthographic_height: 2.0,
+        near: 0.1,
+        far: 200.0,
+        ..Default::default()
+    });
+    let scene = app.document.scene.clone().expect("scene");
+    let entry = &scene.meshes()[0];
+    let layer_id = entry.id();
+    let mesh = Arc::clone(&entry.mesh);
+    mesh.warm_bvh();
+    let session = BrushSession::prepare(&mesh_edit_buffers_from_mesh(&mesh)).expect("prepare");
+    let worker = SculptWorker::spawn(SculptSession {
+        layer_id,
+        topology_id: mesh.topology_id(),
+        session,
+        base_mesh: Arc::clone(&mesh),
+        shadow: Arc::new(RwLock::new(mesh.vertices().to_vec())),
+        topology: PreparedSceneTopology::from_mesh(&mesh),
+        world_to_local: Affine3A::IDENTITY,
+        local_per_world: 1.0,
+        dirty_stroke: false,
+        topology_dirty_stroke: false,
+        stroke_start_mesh: None,
+    });
+    worker.set_queue_paused_for_tests(true);
+    let make_step = |mode, x| BrushRayStep {
+        origin: [x, 0.25, 10.0],
+        direction: [0.0, 0.0, -1.0],
+        near_mm: 0.0,
+        far_mm: 20.0,
+        clip_plane: None,
+        radius_mm: 0.75,
+        strength: 0.35,
+        mode,
+        tip: SculptTip::Ball,
+        axis: None,
+        hold: false,
+        preserve_skirt: false,
+    };
+    let queued = [
+        make_step(BrushMode::Add, 0.2),
+        make_step(BrushMode::Smooth, 0.3),
+        make_step(BrushMode::Relax, 0.4),
+        make_step(BrushMode::Remove, 0.5),
+    ];
+    for step in &queued {
+        assert!(worker.try_apply_ray_step(step.clone()));
+    }
+    app.tools.sculpt.worker = Some(worker);
+    app.tools.sculpt.stroke = Some(StrokeState {
+        layer_id,
+        last_pointer: [200.0, 200.0],
+        input_pointer: [200.0, 200.0],
+        last_ray: Some(queued[0].clone()),
+        hold_seconds: 0.0,
+        path_break_pending: false,
+        release_pending: false,
+        retained_samples: VecDeque::new(),
+    });
+    app.document.unsaved_sculpt_stroke = true;
+    drop(scene);
+
+    let ctx = egui::Context::default();
+    let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 400.0));
+    let start = egui::pos2(200.0, 200.0);
+    let remove_point = egui::pos2(208.0, 192.0);
+    let outside = egui::pos2(450.0, 220.0);
+    let add_point = egui::pos2(220.0, 180.0);
+    let final_point = egui::pos2(228.0, 174.0);
+    ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(viewport),
+            events: vec![
+                egui::Event::PointerMoved(start),
+                egui::Event::PointerButton {
+                    pos: start,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+            ..Default::default()
+        },
+        |ui| {
+            ui.allocate_rect(viewport, egui::Sense::click_and_drag());
+        },
+    )
+    .drop_without_applying_deltas();
+
+    let shift = egui::Modifiers {
+        shift: true,
+        ..Default::default()
+    };
+    let control = egui::Modifiers {
+        ctrl: true,
+        ..Default::default()
+    };
+    ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(viewport),
+            events: vec![
+                egui::Event::ModifiersChanged(shift),
+                egui::Event::PointerMoved(remove_point),
+                egui::Event::PointerMoved(outside),
+                egui::Event::ModifiersChanged(control),
+                egui::Event::PointerMoved(add_point),
+                egui::Event::ModifiersChanged(egui::Modifiers::NONE),
+                egui::Event::PointerMoved(final_point),
+                egui::Event::PointerButton {
+                    pos: final_point,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+            ..Default::default()
+        },
+        |ui| {
+            let response = ui.allocate_rect(viewport, egui::Sense::click_and_drag());
+            assert!(app.handle_sculpt_drag(ui.ctx(), &response, false));
+        },
+    )
+    .drop_without_applying_deltas();
+
+    let stroke = app
+        .tools
+        .sculpt
+        .stroke
+        .as_ref()
+        .expect("release waits for drain");
+    assert!(app.tools.sculpt.finish_retry);
+    assert_eq!(stroke.retained_samples.len(), 3);
+    assert_eq!(stroke.retained_samples[0].step.mode, BrushMode::Remove);
+    assert!(!stroke.retained_samples[0].break_before);
+    assert_eq!(stroke.retained_samples[1].step.mode, BrushMode::Add);
+    assert!(stroke.retained_samples[1].step.preserve_skirt);
+    assert!(stroke.retained_samples[1].break_before);
+    assert_eq!(stroke.retained_samples[2].step.mode, BrushMode::Add);
+    assert!(!stroke.retained_samples[2].step.preserve_skirt);
+    assert!(!stroke.retained_samples[2].break_before);
+    assert_eq!(
+        stroke.retained_samples[0].pointer,
+        [remove_point.x, remove_point.y]
+    );
+    assert_eq!(
+        stroke.retained_samples[1].pointer,
+        [add_point.x, add_point.y]
+    );
+    assert_eq!(
+        stroke.retained_samples[2].pointer,
+        [final_point.x, final_point.y]
+    );
+
+    app.tools
+        .sculpt
+        .worker
+        .as_ref()
+        .expect("worker")
+        .set_queue_paused_for_tests(false);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        app.poll_sculpt_worker(&ctx);
+        let finished = app.tools.sculpt.stroke.is_none()
+            && app
+                .tools
+                .sculpt
+                .worker
+                .as_ref()
+                .is_some_and(SculptWorker::is_quiescent);
+        if finished {
+            app.poll_sculpt_worker(&ctx);
+            break;
+        }
+        assert!(Instant::now() < deadline, "retained samples did not finish");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+
+    let trace = app
+        .tools
+        .sculpt
+        .worker
+        .as_ref()
+        .expect("worker")
+        .take_input_trace_for_tests();
+    let suffix: Vec<_> = trace.iter().rev().take(5).copied().collect();
+    let suffix = suffix.into_iter().rev().collect::<Vec<_>>();
+    assert!(
+        matches!(
+            suffix.as_slice(),
+            [
+                SculptWorkerInput::Ray {
+                    mode: BrushMode::Remove,
+                    preserve_skirt: false,
+                    ..
+                },
+                SculptWorkerInput::BreakPath,
+                SculptWorkerInput::Ray {
+                    mode: BrushMode::Add,
+                    preserve_skirt: true,
+                    ..
+                },
+                SculptWorkerInput::Ray {
+                    mode: BrushMode::Add,
+                    preserve_skirt: false,
+                    ..
+                },
+                SculptWorkerInput::Finish,
+            ]
+        ),
+        "captured modifiers and the path boundary reach the worker in order: {suffix:?}"
+    );
+    assert!(app.ui.app_error.is_none());
+}
+
+#[test]
+fn modified_wheel_does_not_change_brush_settings_during_a_stroke() {
+    let mut app = app_with_an_edit_session("sculpt-held-wheel-settings");
+    app.tools.sculpt.armed = Some(SculptToolKind::AddRemove);
+    let layer_id = app.document.scene.as_ref().expect("scene").meshes()[0].id();
+    app.tools.sculpt.stroke = Some(StrokeState {
+        layer_id,
+        last_pointer: [180.0, 180.0],
+        input_pointer: [180.0, 180.0],
+        last_ray: None,
+        hold_seconds: 0.0,
+        path_break_pending: false,
+        release_pending: false,
+        retained_samples: VecDeque::new(),
+    });
+    let ctx = egui::Context::default();
+    let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 400.0));
+    let center = egui::pos2(200.0, 200.0);
+    let ctrl = egui::Modifiers {
+        ctrl: true,
+        command: false,
+        ..Default::default()
+    };
+    let input = egui::RawInput {
+        screen_rect: Some(viewport),
+        events: vec![
+            egui::Event::PointerMoved(center),
+            egui::Event::ModifiersChanged(ctrl),
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, 50.0),
+                phase: egui::TouchPhase::Move,
+                modifiers: ctrl,
+            },
+        ],
+        ..Default::default()
+    };
+    let mut used = true;
+
+    ctx.run_ui(input, |ui| {
+        let response = ui.allocate_rect(viewport, egui::Sense::click_and_drag());
+        used = app.adjust_sculpt_brush_from_wheel(ui.ctx(), &response);
+    })
+    .drop_without_applying_deltas();
+
+    assert!(
+        !used,
+        "the setting wheel is only active while Sculpt is idle"
+    );
+    assert_eq!(
+        mesh_editor_overlay::sculpt_strength(&ctx, SculptToolKind::AddRemove),
+        SculptToolKind::AddRemove.default_strength()
+    );
+    assert_eq!(
+        mesh_editor_overlay::sculpt_radius_mm(&ctx, SculptTip::Ball),
+        SculptTip::Ball.default_radius_mm()
+    );
+}
+
+/// A cold mesh has no warmed BVH or prepared worker. The press ray must stay
+/// queued during background preparation, with no stroke started until ready.
+#[test]
+fn sculpt_press_keeps_its_ray_while_the_surface_session_prepares() {
     let mut app = app_with_an_edit_session("sculpt-cursor-readiness");
     app.tools.sculpt.armed = Some(SculptToolKind::AddRemove);
+    app.render.camera = Some(Camera {
+        target: Vec3::ZERO,
+        distance: 100.0,
+        orientation: Some(Quat::IDENTITY),
+        orthographic_height: 2.0,
+        near: 0.1,
+        far: 200.0,
+        ..Default::default()
+    });
     let scene = app.document.scene.clone().expect("scene");
     assert!(
         !scene.meshes()[0].mesh.bvh_is_ready(),
@@ -267,13 +878,14 @@ fn sculpt_cursor_waits_for_a_warm_pick_before_sampling() {
     );
 
     let ctx = egui::Context::default();
-    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(200.0, 200.0));
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0));
+    let press_point = egui::pos2(900.0, 400.0);
     // Hover is computed from the previous frame, so establish the pointer over
     // the viewport once before the press frame.
     ctx.run_ui(
         egui::RawInput {
             screen_rect: Some(screen),
-            events: vec![egui::Event::PointerMoved(screen.center())],
+            events: vec![egui::Event::PointerMoved(press_point)],
             ..Default::default()
         },
         |ui| {
@@ -285,7 +897,7 @@ fn sculpt_cursor_waits_for_a_warm_pick_before_sampling() {
     let press = egui::RawInput {
         screen_rect: Some(screen),
         events: vec![egui::Event::PointerButton {
-            pos: screen.center(),
+            pos: press_point,
             button: egui::PointerButton::Primary,
             pressed: true,
             modifiers: egui::Modifiers::NONE,
@@ -298,6 +910,10 @@ fn sculpt_cursor_waits_for_a_warm_pick_before_sampling() {
             response.contains_pointer(),
             "the pointer is inside the viewport"
         );
+        assert!(
+            app.viewport_press_owned(ui.ctx(), &response, press_point),
+            "the preparation fixture must press the scene outside overlay controls"
+        );
         let _ = app.handle_sculpt_drag(ui.ctx(), &response, false);
     })
     .drop_without_applying_deltas();
@@ -305,6 +921,11 @@ fn sculpt_cursor_waits_for_a_warm_pick_before_sampling() {
     assert!(
         app.tools.sculpt.stroke.is_none(),
         "a cold surface must not start a stroke it cannot sample"
+    );
+    assert_eq!(
+        app.tools.sculpt.pending_presses.len(),
+        1,
+        "the valid pointer ray stays queued while the surface session prepares"
     );
     assert_eq!(
         app.ui.status_message,

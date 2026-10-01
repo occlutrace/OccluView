@@ -69,6 +69,10 @@ impl OccluViewApp {
         viewport_rect: egui::Rect,
         ctx: &egui::Context,
     ) -> bool {
+        ctx.data_mut(|data| {
+            data.remove::<egui::Rect>(egui::Id::new("contact_bar_occupied_rect"));
+            data.remove::<egui::Rect>(egui::Id::new("contact_details_occupied_rect"));
+        });
         if !self.tools.contacts.is_open() {
             return false;
         }
@@ -120,6 +124,10 @@ impl OccluViewApp {
                 });
             })
             .response;
+
+        ctx.data_mut(|data| {
+            data.insert_temp(egui::Id::new("contact_bar_occupied_rect"), response.rect);
+        });
 
         self.apply_contact_bar_request(ctx, request, load_mm, flatten);
 
@@ -571,7 +579,16 @@ fn paint_legend(
     );
 }
 
-/// The numbers and the patch rule, behind one button on the bar.
+/// The strip drawn in this frame, including a frame that closes it.
+pub(super) fn occupied_contact_bar_rect(ctx: &egui::Context) -> Option<egui::Rect> {
+    ctx.data(|data| data.get_temp(egui::Id::new("contact_bar_occupied_rect")))
+}
+
+/// The actual extent of the details panel drawn in this frame.
+pub(super) fn contact_details_rect(ctx: &egui::Context) -> Option<egui::Rect> {
+    ctx.data(|data| data.get_temp(egui::Id::new("contact_details_occupied_rect")))
+}
+
 impl OccluViewApp {
     fn show_contact_details(&mut self, ui: &mut egui::Ui, bar: egui::Rect, shown: DetailsContent) {
         let locale = &self.ui.locale;
@@ -597,7 +614,7 @@ impl OccluViewApp {
                 })
             });
 
-        ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+        let details_response = ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
             ui.set_width(width);
             ui_theme::overlay_frame().show(ui, |ui| {
                 ui.set_width(width - 20.0);
@@ -649,6 +666,15 @@ impl OccluViewApp {
                     close = true;
                 }
             });
+        });
+        // The panel's height depends on its current statistics and text. Keep
+        // its actual interaction extent rather than estimating rows for the
+        // viewport's same-layer press ownership check.
+        ui.ctx().data_mut(|data| {
+            data.insert_temp(
+                egui::Id::new("contact_details_occupied_rect"),
+                details_response.response.rect,
+            );
         });
 
         if let Some(next) = toggle {

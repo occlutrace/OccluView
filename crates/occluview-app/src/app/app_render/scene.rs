@@ -271,21 +271,21 @@ impl OccluViewApp {
         self.show_mesh_editor_overlay(response.rect, ctx);
         self.paint_mesh_selection_drag_overlay_impl(ui);
         self.show_status_overlay(ui, response.rect);
+        // Resolve the contact strip and its dynamically sized details panel
+        // before scene tools inspect raw press positions on this same layer.
+        self.drain_contacts_worker(ctx);
+        self.sync_contacts_with_scene(ctx);
+        let contact_ui_consumed = self.show_contact_bar(ui, response.rect, ctx);
+        self.show_contact_hover(ui, response, ctx);
         let bridge_ui_consumed = self.show_bridge_split_overlay(ui, response, ctx);
         let cut_ui_consumed = self.show_cut_tool_overlay(ui, response.rect, ctx);
         // A click the axis gizmo snapped on never doubles as a measure anchor.
         let align_ui_consumed =
             self.show_align_tool_overlay(ui, response, axis_snap.is_some(), ctx);
-        // The contact reading runs whether or not the Align tool is armed, and
-        // its readout is painted after the panels so the chip sits above them.
-        self.drain_contacts_worker(ctx);
-        self.sync_contacts_with_scene(ctx);
-        self.handle_contact_escape(ctx);
-        let contact_ui_consumed = self.show_contact_bar(ui, response.rect, ctx);
-        self.show_contact_hover(ui, response, ctx);
         let contact_ui_consumed = contact_ui_consumed && !align_ui_consumed;
         let measure_ui_consumed =
             self.show_measure_tool_overlay(ui, response, axis_snap.is_some(), ctx);
+        self.handle_contact_escape(ctx);
         if let Some(axis) = axis_snap {
             if let Some(camera) = self.render.camera.as_mut() {
                 camera.snap_to_axis(axis);

@@ -117,6 +117,48 @@ impl OccluViewApp {
         slice_visible: bool,
     ) -> ViewportPointer {
         let pointer = ctx.input(|input| input.pointer.hover_pos());
+        self.viewport_pointer_at(ctx, viewport_rect, scene, slice_visible, pointer)
+    }
+
+    /// Resolve ownership at the event position, even when later events in the
+    /// same input batch have already moved or released the pointer elsewhere.
+    pub(super) fn viewport_press_owned(
+        &self,
+        ctx: &egui::Context,
+        response: &egui::Response,
+        point: egui::Pos2,
+    ) -> bool {
+        let Some(scene) = self.document.scene.as_ref() else {
+            return false;
+        };
+        if ctx
+            .layer_id_at(point)
+            .is_some_and(|layer| layer != response.layer_id)
+        {
+            return false;
+        }
+        self.viewport_pointer_at(
+            ctx,
+            response.rect,
+            scene,
+            self.active_section_panel_rect(response.rect).is_some(),
+            Some(point),
+        )
+        .over_viewport
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Event ownership needs the explicit viewport, scene, panel state and event position."
+    )]
+    fn viewport_pointer_at(
+        &self,
+        ctx: &egui::Context,
+        viewport_rect: egui::Rect,
+        scene: &Scene,
+        slice_visible: bool,
+        pointer: Option<egui::Pos2>,
+    ) -> ViewportPointer {
         let over_rect = pointer.is_some_and(|point| viewport_rect.contains(point));
         // The layers panel is a same-layer (Background) scope, so it needs an
         // explicit rect test; floating areas are caught by their non-Background
@@ -148,6 +190,10 @@ impl OccluViewApp {
                         scene.meshes().len(),
                     )
                     .contains(point))
+                || super::app_contact_bar::occupied_contact_bar_rect(ctx)
+                    .is_some_and(|rect| rect.contains(point))
+                || super::app_contact_bar::contact_details_rect(ctx)
+                    .is_some_and(|rect| rect.contains(point))
                 || ctx
                     .layer_id_at(point)
                     .is_some_and(|layer| layer.order != egui::Order::Background)
@@ -448,5 +494,263 @@ impl OccluViewApp {
             disc_radius_screen,
         };
         (frame, panel_zoom_notches)
+    }
+}
+
+#[cfg(test)]
+mod viewport_ownership_tests {
+    #![allow(clippy::expect_used, clippy::float_cmp)]
+
+    use super::*;
+    use crate::app::app_test_support::{named_scene, push_named_layer, test_app};
+
+    #[test]
+    fn raw_press_ownership_uses_event_position_instead_of_final_hover() {
+        let mut app = test_app("viewport-press-owner");
+        app.document.scene = Some(Arc::new(named_scene("scan", 0.0)));
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1024.0, 768.0));
+        ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(screen),
+                events: vec![egui::Event::PointerMoved(screen.center())],
+                ..Default::default()
+            },
+            |ui| {
+                let response = ui.allocate_response(ui.available_size(), egui::Sense::drag());
+                let layers = layers_overlay::layer_overlay_rect(response.rect, 1);
+                assert!(!app.viewport_press_owned(&ctx, &response, layers.center()));
+                assert!(app.viewport_press_owned(&ctx, &response, response.rect.center()));
+                assert!(!app.viewport_press_owned(
+                    &ctx,
+                    &response,
+                    response.rect.right_bottom() + egui::vec2(10.0, 10.0)
+                ));
+            },
+        )
+        .drop_without_applying_deltas();
+    }
+
+    #[test]
+    fn contact_controls_own_the_frame_that_closes_them_and_release_the_next() {
+        let mut app = test_app("viewport-contact-owner");
+        let mut scene = named_scene("subject", 0.0);
+        let subject = scene.meshes()[0].id();
+        let antagonist = push_named_layer(&mut scene, "antagonist", 2.0);
+        app.document.scene = Some(Arc::new(scene));
+        app.tools.contacts.open(crate::contact::ContactPair {
+            subject,
+            antagonist,
+        });
+        app.tools.contacts.toggle_details();
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1024.0, 768.0));
+        let mut details_point = None;
+        for closing_frame in [true, false] {
+            ctx.run_ui(
+                egui::RawInput { screen_rect: Some(screen), ..Default::default() },
+                |ui| {
+                    let response = ui.allocate_response(ui.available_size(), egui::Sense::drag());
+                    let _ = app.show_contact_bar(ui, response.rect, &ctx);
+                    if closing_frame {
+                        let bar = super::super::app_contact_bar::occupied_contact_bar_rect(&ctx)
+                            .expect("bar drawn");
+                        let details = super::super::app_contact_bar::contact_details_rect(&ctx)
+                            .expect("details drawn");
+                        assert!(details.height() > 0.0);
+                        details_point = Some(details.center());
+                        app.tools.contacts.close();
+                        assert!(!app.viewport_press_owned(&ctx, &response, bar.center()));
+                        assert!(!app.viewport_press_owned(&ctx, &response, details.center()));
+                    } else {
+                        assert!(super::super::app_contact_bar::contact_details_rect(&ctx).is_none());
+                        assert!(app.viewport_press_owned(
+                            &ctx, &response, details_point.expect("previous panel position")
+                        ));
+                    }
+                },
+            )
+            .drop_without_applying_deltas();
+        }
+    }
+
+    fn flat_sculpt_fixture() -> (OccluViewApp, Arc<occluview_core::Mesh>) {
+        use crate::sculpt_kernel::BrushSession;
+        use crate::sculpt_tool::{SculptSession, SculptToolKind};
+        use crate::sculpt_worker::SculptWorker;
+        use glam::{Affine3A, Quat};
+        use occluview_core::{mesh_edit_buffers_from_mesh, Mesh, SceneMesh, Vertex};
+        use occluview_render::PreparedSceneTopology;
+        use std::sync::RwLock;
+
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        for row in 0..17_u32 {
+            for column in 0..17_u32 {
+                let x = f32::from(u16::try_from(column).expect("small column")) * 0.25 - 2.0;
+                let y = f32::from(u16::try_from(row).expect("small row")) * 0.25 - 2.0;
+                vertices.push(Vertex::at(Vec3::new(x, y, 0.0)));
+                if row < 16 && column < 16 {
+                    let corner = row * 17 + column;
+                    indices.extend_from_slice(&[
+                        corner,
+                        corner + 1,
+                        corner + 18,
+                        corner,
+                        corner + 18,
+                        corner + 17,
+                    ]);
+                }
+            }
+        }
+        let mesh = Mesh::new(Some("sheet".into()), vertices, indices).expect("grid mesh");
+        mesh.warm_bvh();
+        let mut scene = Scene::new();
+        scene.add(SceneMesh::new(mesh));
+        let scene = Arc::new(scene);
+        let entry = &scene.meshes()[0];
+        let layer_id = entry.id();
+        let base = Arc::clone(&entry.mesh);
+        let session = BrushSession::prepare(&mesh_edit_buffers_from_mesh(&base)).expect("prepare");
+        let mut app = test_app("sculpt-overlay-gap-replay");
+        assert!(app.document.edit_mode.begin_face_selection(entry, &scene));
+        app.document.scene = Some(Arc::clone(&scene));
+        app.tools.sculpt.armed = Some(SculptToolKind::AddRemove);
+        app.render.camera = Some(occluview_core::Camera {
+            target: Vec3::ZERO,
+            distance: 100.0,
+            orientation: Some(Quat::IDENTITY),
+            orthographic_height: 8.0,
+            near: 0.1,
+            far: 200.0,
+            ..Default::default()
+        });
+        app.tools.sculpt.worker = Some(SculptWorker::spawn(SculptSession {
+            layer_id,
+            topology_id: base.topology_id(),
+            session,
+            base_mesh: Arc::clone(&base),
+            shadow: Arc::new(RwLock::new(base.vertices().to_vec())),
+            topology: PreparedSceneTopology::from_mesh(&base),
+            world_to_local: Affine3A::IDENTITY,
+            local_per_world: 1.0,
+            dirty_stroke: false,
+            topology_dirty_stroke: false,
+            stroke_start_mesh: None,
+        }));
+        (app, base)
+    }
+
+    fn drain_sculpt_worker(app: &mut OccluViewApp, ctx: &egui::Context) {
+        use crate::sculpt_worker::SculptWorker;
+        use std::time::{Duration, Instant};
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            app.poll_sculpt_worker(ctx);
+            if app
+                .tools
+                .sculpt
+                .worker
+                .as_ref()
+                .is_some_and(SculptWorker::is_quiescent)
+            {
+                app.poll_sculpt_worker(ctx);
+                break;
+            }
+            assert!(Instant::now() < deadline, "worker finishes the ray path");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    fn show_occluding_panel(ctx: &egui::Context) {
+        egui::Area::new(egui::Id::new("occluding-test-panel"))
+            .order(egui::Order::Middle)
+            .fixed_pos(egui::pos2(780.0, 480.0))
+            .show(ctx, |panel| {
+                panel.allocate_exact_size(egui::vec2(40.0, 40.0), egui::Sense::click());
+            });
+    }
+
+    #[test]
+    fn sculpt_reentry_after_an_overlay_leaves_the_hidden_surface_untouched() {
+        use crate::sculpt_tool::SculptTip;
+
+        let (mut app, base) = flat_sculpt_fixture();
+        let ctx = egui::Context::default();
+        crate::mesh_editor_overlay::set_sculpt_radius_mm(&ctx, SculptTip::Ball, 0.5);
+        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0));
+        let left = egui::pos2(700.0, 500.0);
+        let hidden = egui::pos2(800.0, 500.0);
+        let right = egui::pos2(900.0, 500.0);
+        let button = |point, pressed| egui::Event::PointerButton {
+            pos: point,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        // Areas need their initial sizing frame before they are visible and
+        // participate in hit testing. Replay input against the drawn panel.
+        ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(viewport),
+                ..Default::default()
+            },
+            |ui| {
+                ui.allocate_rect(viewport, egui::Sense::click_and_drag());
+                show_occluding_panel(&ctx);
+            },
+        )
+        .drop_without_applying_deltas();
+        for events in [
+            vec![egui::Event::PointerMoved(left), button(left, true)],
+            vec![
+                egui::Event::PointerMoved(hidden),
+                egui::Event::PointerMoved(right),
+            ],
+            vec![button(right, false)],
+        ] {
+            ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(viewport),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let response = ui.allocate_rect(viewport, egui::Sense::click_and_drag());
+                    show_occluding_panel(&ctx);
+                    assert!(!app.viewport_press_owned(&ctx, &response, hidden));
+                    let _ = app.handle_sculpt_drag(&ctx, &response, false);
+                },
+            )
+            .drop_without_applying_deltas();
+            drain_sculpt_worker(&mut app, &ctx);
+        }
+        assert!(app.tools.sculpt.stroke.is_none());
+        let committed = Arc::clone(&app.document.scene.as_ref().expect("scene").meshes()[0].mesh);
+        assert!(committed
+            .vertices()
+            .iter()
+            .any(|vertex| vertex.position[2] > 1.0e-4));
+        let middle: Vec<_> = committed
+            .vertices()
+            .iter()
+            .filter(|vertex| vertex.position[0].abs() < 0.1 && vertex.position[1].abs() < 0.1)
+            .collect();
+        assert!(!middle.is_empty(), "the hidden centre remains in the mesh");
+        assert!(
+            middle
+                .iter()
+                .all(|vertex| vertex.position[2].abs() < 1.0e-6),
+            "re-entry starts a new path instead of carving across the panel"
+        );
+        app.apply_history_navigation_now(false, &ctx);
+        let undone = &app.document.scene.as_ref().expect("undo scene").meshes()[0].mesh;
+        assert_eq!(undone.vertices(), base.vertices());
+        assert_eq!(undone.indices(), base.indices());
+        app.apply_history_navigation_now(true, &ctx);
+        let redone = &app.document.scene.as_ref().expect("redo scene").meshes()[0].mesh;
+        assert_eq!(redone.vertices(), committed.vertices());
+        assert_eq!(redone.indices(), committed.indices());
     }
 }
