@@ -746,3 +746,33 @@ fn two_primitive_glb_with_index(corner: u32) -> Vec<u8> {
     bin.extend_from_slice(&2u32.to_le_bytes());
     glb::build_glb(json, &bin)
 }
+
+/// The estimate counts what the reader decodes, not what the file stores, and
+/// these five numbers are that contract.
+///
+/// The colour is the one that looks wrong and is not: `read_color_f32` decodes a
+/// `FLOAT` `VEC4` into `[u8; 4]`, so four bytes is the decoded element and the
+/// sixteen bytes it arrived in are counted by `source_bytes`. Changing a decoded
+/// type has to move its number here, which is the point of the test.
+#[test]
+fn the_estimate_counts_decoded_elements_not_source_strides() {
+    assert_eq!(decoded_element_bytes(DecodedChannel::Position), 12);
+    assert_eq!(decoded_element_bytes(DecodedChannel::Normal), 12);
+    assert_eq!(decoded_element_bytes(DecodedChannel::Color), 4);
+    assert_eq!(decoded_element_bytes(DecodedChannel::TexCoord), 8);
+    assert_eq!(decoded_element_bytes(DecodedChannel::Index), 4);
+}
+
+/// The number weighed against the import budget covers the mesh the same fixture
+/// decodes to.
+#[test]
+fn the_estimate_covers_the_fixture_it_admits() {
+    let glb = one_triangle_glb();
+    let estimate = estimate_peak_bytes(&glb, 0).expect("fixture estimates");
+    let mesh = read_admitted(&glb).expect("fixture reads");
+    let decoded = size_of_val(mesh.vertices()) + size_of_val(mesh.indices());
+    assert!(
+        u64::try_from(decoded).expect("fits") <= estimate,
+        "the estimate {estimate} must cover the {decoded} bytes the fixture decodes to"
+    );
+}
