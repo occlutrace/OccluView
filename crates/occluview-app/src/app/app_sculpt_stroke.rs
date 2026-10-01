@@ -2,8 +2,8 @@
 
 use super::{egui, mesh_editor_overlay};
 use crate::app::workspace::id::SceneKey;
-use crate::sculpt_kernel::BrushRayStep;
-use crate::sculpt_tool::{SculptTip, SculptToolKind};
+use crate::sculpt::sculpt_kernel::BrushRayStep;
+use crate::sculpt::sculpt_tool::{SculptTip, SculptToolKind};
 use crate::viewer::viewport_ray;
 use glam::{Affine3A, Vec3};
 use occluview_core::Camera;
@@ -233,7 +233,7 @@ pub(super) fn local_brush_ray_step(input: LocalBrushRayInput<'_>) -> Option<Brus
             && local_axis.length_squared() > f32::EPSILON)
             .then_some(local_axis.to_array()),
         hold,
-        preserve_skirt: command && mode != crate::sculpt_kernel::BrushMode::Relax,
+        preserve_skirt: command && mode != crate::sculpt::sculpt_kernel::BrushMode::Relax,
     })
 }
 
@@ -476,7 +476,7 @@ mod tests {
         };
         assert!(step(false, true).preserve_skirt);
         let relax = step(true, true);
-        assert_eq!(relax.mode, crate::sculpt_kernel::BrushMode::Relax);
+        assert_eq!(relax.mode, crate::sculpt::sculpt_kernel::BrushMode::Relax);
         assert!(!relax.preserve_skirt);
     }
 }

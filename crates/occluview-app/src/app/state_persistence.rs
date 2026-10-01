@@ -163,11 +163,11 @@ impl PersistenceState {
             self.sculpt_settings_dirty_since = None;
             self.settings_persistence.mark_dirty();
         }
-        let radii = crate::sculpt_tool::SculptTip::ALL
+        let radii = crate::sculpt::sculpt_tool::SculptTip::ALL
             .map(|tip| crate::mesh_editor_overlay::sculpt_radius_mm(ctx, scene_key, tip));
         let strengths = [
-            crate::sculpt_tool::SculptToolKind::AddRemove,
-            crate::sculpt_tool::SculptToolKind::Smooth,
+            crate::sculpt::sculpt_tool::SculptToolKind::AddRemove,
+            crate::sculpt::sculpt_tool::SculptToolKind::Smooth,
         ]
         .map(|kind| crate::mesh_editor_overlay::sculpt_strength(ctx, scene_key, kind));
         let tip = crate::mesh_editor_overlay::sculpt_tip(ctx, scene_key);
@@ -242,7 +242,7 @@ mod tests {
         crate::mesh_editor_overlay::set_sculpt_tip(
             &ctx,
             crate::app::workspace::id::SceneKey::INITIAL,
-            crate::sculpt_tool::SculptTip::Cylinder,
+            crate::sculpt::sculpt_tool::SculptTip::Cylinder,
         );
         crate::mesh_editor_overlay::set_sculpt_radius_share(
             &ctx,
@@ -255,7 +255,7 @@ mod tests {
 
         assert_eq!(
             persistence.settings.last_sculpt_tip,
-            crate::sculpt_tool::SculptTip::Cylinder
+            crate::sculpt::sculpt_tool::SculptTip::Cylinder
         );
         assert_eq!(
             persistence.settings.sculpt_radius_share.map(f32::to_bits),
@@ -266,17 +266,17 @@ mod tests {
             crate::mesh_editor_overlay::sculpt_radius_mm(
                 &ctx,
                 crate::app::workspace::id::SceneKey::INITIAL,
-                crate::sculpt_tool::SculptTip::Ball,
+                crate::sculpt::sculpt_tool::SculptTip::Ball,
             ),
             crate::mesh_editor_overlay::sculpt_radius_mm(
                 &ctx,
                 crate::app::workspace::id::SceneKey::INITIAL,
-                crate::sculpt_tool::SculptTip::Knife,
+                crate::sculpt::sculpt_tool::SculptTip::Knife,
             ),
             crate::mesh_editor_overlay::sculpt_radius_mm(
                 &ctx,
                 crate::app::workspace::id::SceneKey::INITIAL,
-                crate::sculpt_tool::SculptTip::Cylinder,
+                crate::sculpt::sculpt_tool::SculptTip::Cylinder,
             ),
         ];
         assert_eq!(

@@ -14,9 +14,9 @@
 use super::app_test_support::{push_named_layer, test_app};
 use super::*;
 use crate::mesh_editor_overlay::EditorTab;
-use crate::sculpt_kernel::{BrushMode, BrushRayStep, BrushSession};
-use crate::sculpt_tool::{SculptSession, SculptTip, SculptToolKind, StrokeState};
-use crate::sculpt_worker::{SculptWorker, SculptWorkerInput};
+use crate::sculpt::sculpt_kernel::{BrushMode, BrushRayStep, BrushSession};
+use crate::sculpt::sculpt_tool::{SculptSession, SculptTip, SculptToolKind, StrokeState};
+use crate::sculpt::sculpt_worker::{SculptWorker, SculptWorkerInput};
 use glam::{Affine3A, Quat, Vec3};
 use occluview_core::{Mesh, Scene, SceneMesh, Vertex};
 use occluview_edit::mesh_edit_buffers_from_mesh;

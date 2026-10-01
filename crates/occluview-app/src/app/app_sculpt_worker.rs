@@ -1,7 +1,7 @@
 //! UI-side bridge to the persistent sculpt worker.
 
 use super::{egui, AppErrorAction, AppErrorDialog, EditModeCommand, SceneContext};
-use crate::sculpt_worker::{SculptCompletion, SculptFailure, SculptUpdate};
+use crate::sculpt::sculpt_worker::{SculptCompletion, SculptFailure, SculptUpdate};
 use occluview_core::{Mesh, SceneMeshId};
 use std::sync::Arc;
 
@@ -520,7 +520,7 @@ mod tests {
     #[test]
     fn a_terminal_failure_raises_the_error_dialog() {
         use crate::i18n::LocaleManager;
-        use crate::sculpt_worker::SculptFailure;
+        use crate::sculpt::sculpt_worker::SculptFailure;
 
         let locale = LocaleManager::for_tests();
         let failure = SculptFailure::WorkerStatePoisoned;

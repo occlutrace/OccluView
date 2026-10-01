@@ -13,7 +13,7 @@ use crate::align::align_panel::{AlignPanelView, AlignTab};
 use crate::align::align_tool::{AlignPoint, AlignTool};
 use crate::align::align_worker::AlignSettings;
 use crate::mesh_editor_overlay::{EditorTab, MeshEditorPanelState};
-use crate::sculpt_tool::SculptToolKind;
+use crate::sculpt::sculpt_tool::SculptToolKind;
 use eframe::egui;
 use glam::Vec3;
 use occluview_core::{Mesh, SceneMesh};

@@ -8,9 +8,9 @@
 
 use super::*;
 use crate::app::app_test_support::test_app;
-use crate::sculpt_kernel::{BrushMode, BrushSession, BrushStroke};
-use crate::sculpt_tool::{SculptSession, StrokeState};
-use crate::sculpt_worker::SculptWorker;
+use crate::sculpt::sculpt_kernel::{BrushMode, BrushSession, BrushStroke};
+use crate::sculpt::sculpt_tool::{SculptSession, StrokeState};
+use crate::sculpt::sculpt_worker::SculptWorker;
 use glam::{Affine3A, Vec3};
 use occluview_core::{Mesh, Scene, SceneMesh, SceneMeshId, Vertex};
 use occluview_edit::mesh_edit_buffers_from_mesh;
@@ -405,7 +405,7 @@ fn undo_and_redo_a_committed_densifying_stroke() {
 
 #[test]
 fn a_worker_failure_after_densification_leaves_no_partial_geometry() {
-    use crate::sculpt_worker::SculptFailure;
+    use crate::sculpt::sculpt_worker::SculptFailure;
 
     let (mut app, layer_id) = app_sculpting("sculpt-failure-after-densify", coarse_ridge_mesh());
     let committed = layer_mesh(&app, layer_id);

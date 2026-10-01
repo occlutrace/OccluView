@@ -12,9 +12,9 @@
 
 use super::*;
 use crate::edit_mode::{BusyFinish, EditModeCommand, EditModeController};
-use crate::sculpt_kernel::BrushSession;
-use crate::sculpt_tool::mean_uniform_scale;
-use crate::sculpt_tool::SculptTip;
+use crate::sculpt::sculpt_kernel::BrushSession;
+use crate::sculpt::sculpt_tool::mean_uniform_scale;
+use crate::sculpt::sculpt_tool::SculptTip;
 use glam::{DVec3, Vec3};
 use occluview_core::{Mesh, Scene, SceneMesh};
 use occluview_edit::mesh_edit_buffers_from_mesh;

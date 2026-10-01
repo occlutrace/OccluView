@@ -1,10 +1,10 @@
 //! State for interactive sculpt brushes.
 
-use crate::sculpt_kernel::BrushSession;
-use crate::sculpt_kernel::{BrushMode, BrushRayStep};
+use crate::sculpt::sculpt_kernel::BrushSession;
+use crate::sculpt::sculpt_kernel::{BrushMode, BrushRayStep};
 #[cfg(test)]
-use crate::sculpt_kernel::{BrushStroke, DabDose};
-use crate::sculpt_worker::SculptWorker;
+use crate::sculpt::sculpt_kernel::{BrushStroke, DabDose};
+use crate::sculpt::sculpt_worker::SculptWorker;
 use eframe::egui;
 use glam::Affine3A;
 use occluview_core::{Mesh, Scene, SceneMeshId, Vertex};
@@ -847,7 +847,7 @@ impl SculptSession {
                 live[shadow_count..]
                     .iter()
                     .copied()
-                    .map(crate::sculpt_kernel::vertex_from_edit_vertex),
+                    .map(crate::sculpt::sculpt_kernel::vertex_from_edit_vertex),
             );
         }
         if let Some(vertex_id) = moved
@@ -919,10 +919,10 @@ impl StrokeState {
             let both_travel = !previous.step.hold && !sample.step.hold;
             let same_stationary_ray = previous.step.hold
                 && sample.step.hold
-                && crate::sculpt_worker::same_ray(&previous.step, &sample.step);
+                && crate::sculpt::sculpt_worker::same_ray(&previous.step, &sample.step);
             if !previous.break_before
                 && !sample.break_before
-                && crate::sculpt_worker::same_brush_and_visibility(&previous.step, &sample.step)
+                && crate::sculpt::sculpt_worker::same_brush_and_visibility(&previous.step, &sample.step)
                 && (both_travel || same_stationary_ray)
             {
                 let input_pointer = sample.pointer;

@@ -8,7 +8,7 @@
 //! blends a minted vertex's attributes from the two corners of the edge the
 //! kernel split.
 
-use crate::sculpt_tool::SculptTip;
+use crate::sculpt::sculpt_tool::SculptTip;
 use glam::DVec3;
 #[cfg(test)]
 use occluview_sculpt::Dab;
