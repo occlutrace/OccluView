@@ -66,7 +66,7 @@ pub struct SculptBrushUniform {
     /// leaves the knife a narrow radial footprint.
     pub axis: [f32; 3],
     /// Brush tip stamp: `0` ball, `1` knife, `2` cylinder. Matches
-    /// `occlu_sculpt::TipStamp`.
+    /// `occluview_sculpt::TipStamp`.
     pub tip: u32,
     /// Linear-sRGB display color. Alpha is reserved for the tool volume.
     pub color: [f32; 4],

@@ -13,7 +13,7 @@ members = [
     "crates/occluview-geometry-math",
     "crates/occluview-i18n",
     "crates/occluview-mesh-edit",
-    "crates/occlu-sculpt",
+    "crates/occluview-sculpt",
     "crates/occluview-robust-csg",
     "crates/occluview-surface-query",
     "crates/occluview-align",
@@ -37,7 +37,7 @@ exclude = ["fuzz"]
 # opt-in unless the full workspace is requested.
 default-members = [
     "crates/occluview-mesh-edit",
-    "crates/occlu-sculpt",
+    "crates/occluview-sculpt",
     "crates/occluview-align",
     "crates/occluview-surface-query",
     "crates/occluview-contact",
@@ -62,7 +62,7 @@ occluview-robust-csg = 0
 occluview-update = 0
 # Geometry kernels and the shared surface query.
 occluview-mesh-edit = 1
-occlu-sculpt = 1
+occluview-sculpt = 1
 occluview-surface-query = 1
 occluview-hps = 1
 # The pure data model, and the edit façade over the kernels.
@@ -97,7 +97,7 @@ publish = false              # we are not on crates.io yet
 occluview-geometry-math = { path = "crates/occluview-geometry-math" }
 occluview-i18n = { path = "crates/occluview-i18n" }
 occluview-mesh-edit = { path = "crates/occluview-mesh-edit" }
-occlu-sculpt     = { path = "crates/occlu-sculpt" }
+occluview-sculpt = { path = "crates/occluview-sculpt" }
 occluview-robust-csg = { path = "crates/occluview-robust-csg" }
 occluview-surface-query = { path = "crates/occluview-surface-query" }
 occluview-align   = { path = "crates/occluview-align" }

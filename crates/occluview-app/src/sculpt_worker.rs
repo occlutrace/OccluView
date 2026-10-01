@@ -474,11 +474,11 @@ impl DabDispatchClock {
     pub(crate) fn next_elapsed_ms(&mut self, now: Instant) -> f64 {
         let elapsed_ms = self
             .last_dispatch_started_at
-            .map_or(occlu_sculpt::DWELL_FULL_DOSE_MS, |last| {
+            .map_or(occluview_sculpt::DWELL_FULL_DOSE_MS, |last| {
                 now.saturating_duration_since(last).as_secs_f64() * 1000.0
             });
         self.last_dispatch_started_at = Some(now);
-        elapsed_ms.min(occlu_sculpt::DWELL_FULL_DOSE_MS)
+        elapsed_ms.min(occluview_sculpt::DWELL_FULL_DOSE_MS)
     }
 }
 

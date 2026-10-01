@@ -46,7 +46,7 @@ fn dispatch_clock_doses_elapsed_time_once_and_survives_stroke_boundaries() {
     let mut clock = DabDispatchClock::default();
     assert_eq!(
         clock.next_elapsed_ms(start),
-        occlu_sculpt::DWELL_FULL_DOSE_MS,
+        occluview_sculpt::DWELL_FULL_DOSE_MS,
         "the first worker-applied dab matches the donor's lastDabAt=0"
     );
     assert_eq!(
@@ -62,7 +62,7 @@ fn dispatch_clock_doses_elapsed_time_once_and_survives_stroke_boundaries() {
     );
     assert_eq!(
         clock.next_elapsed_ms(start + Duration::from_millis(500)),
-        occlu_sculpt::DWELL_FULL_DOSE_MS,
+        occluview_sculpt::DWELL_FULL_DOSE_MS,
         "long kernel intervals are capped by the kernel dose window"
     );
 }
