@@ -639,7 +639,7 @@ fn to_bridge_pose(
 #[cfg(test)]
 mod transition_tests {
     #![allow(clippy::expect_used)]
-    use crate::app::app_align_drag::AlignDrag;
+    use crate::app::align::drag::AlignDrag;
     use crate::app::app_test_support::{named_scene, test_app};
     use glam::{Affine3A, Vec3};
     use std::sync::Arc;

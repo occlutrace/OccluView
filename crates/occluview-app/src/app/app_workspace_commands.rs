@@ -1,7 +1,7 @@
 //! Workspace commands and document lifetime transitions.
 
 use super::app_guard_dialog::{show_guard_dialog, GuardDialogAction, GuardDialogSpec};
-use super::app_mesh_export::SaveEditedLayersOutcome;
+use super::mesh_edit::export::SaveEditedLayersOutcome;
 use super::workspace::commands::{LayerIds, SplitSide, TransferDestination, WorkspaceCommand};
 use super::workspace::history::HistoryDirection;
 use super::workspace::id::{PaneId, SceneKey};

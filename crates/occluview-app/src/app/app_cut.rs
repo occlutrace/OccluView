@@ -187,9 +187,9 @@ impl SceneContext<'_> {
                 || (self.tools.contacts.is_open()
                     && self.scene_contact_bar_rect(ctx, viewport_rect)
                     .contains(point))
-                || super::app_contact_bar::occupied_contact_bar_rect(ctx, self.scene_key)
+                || super::contact::bar::occupied_contact_bar_rect(ctx, self.scene_key)
                     .is_some_and(|rect| rect.contains(point))
-                || super::app_contact_bar::contact_details_rect(ctx, self.scene_key)
+                || super::contact::bar::contact_details_rect(ctx, self.scene_key)
                     .is_some_and(|rect| rect.contains(point))
                 || ctx
                     .layer_id_at(point)
@@ -579,12 +579,12 @@ mod viewport_ownership_tests {
                         .expect("live test scene")
                         .show_contact_bar(ui, response.rect, &ctx);
                     if closing_frame {
-                        let bar = super::super::app_contact_bar::occupied_contact_bar_rect(
+                        let bar = super::super::contact::bar::occupied_contact_bar_rect(
                             &ctx,
                             super::super::workspace::id::SceneKey::INITIAL,
                         )
                         .expect("bar drawn");
-                        let details = super::super::app_contact_bar::contact_details_rect(
+                        let details = super::super::contact::bar::contact_details_rect(
                             &ctx,
                             super::super::workspace::id::SceneKey::INITIAL,
                         )
@@ -601,7 +601,7 @@ mod viewport_ownership_tests {
                             .expect("live test scene")
                             .viewport_press_owned(&ctx, &response, details.center()));
                     } else {
-                        assert!(super::super::app_contact_bar::contact_details_rect(
+                        assert!(super::super::contact::bar::contact_details_rect(
                             &ctx,
                             super::super::workspace::id::SceneKey::INITIAL
                         )
