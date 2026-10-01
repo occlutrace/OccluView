@@ -191,6 +191,11 @@ fn position_lane_key(value: f32) -> i32 {
 /// degenerate facet (below [`DEGENERATE_AREA_SIN`] of its own longest edge
 /// squared) contributes nothing, so a vertex that only ever touches degenerate
 /// facets keeps the zero normal the caller's fallback fills in.
+///
+/// `occluview-align` keeps its own implementation of this on purpose: it needs
+/// `f64` accumulation for its deviation normals and accepts facets below
+/// [`DEGENERATE_AREA_SIN`]. Routing it here would change what the fit measures,
+/// so the two are not interchangeable.
 #[must_use]
 pub fn accumulate_smooth_normals(
     vertex_count: usize,
