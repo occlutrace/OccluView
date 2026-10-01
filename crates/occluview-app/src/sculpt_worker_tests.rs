@@ -15,9 +15,9 @@ use crate::edit_mode::{BusyFinish, EditModeCommand, EditModeController};
 use crate::sculpt_kernel::BrushSession;
 use crate::sculpt_tool::mean_uniform_scale;
 use crate::sculpt_tool::SculptTip;
-use glam::Vec3;
+use glam::{DVec3, Vec3};
 use occluview_core::{mesh_edit_buffers_from_mesh, Mesh, Scene, SceneMesh};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 fn session_for(mesh: &Mesh) -> SculptSession {
     let entry = SceneMesh::new(mesh.clone());
@@ -37,6 +37,33 @@ fn session_for(mesh: &Mesh) -> SculptSession {
         topology_dirty_stroke: false,
         stroke_start_mesh: None,
     }
+}
+
+#[test]
+fn dispatch_clock_doses_elapsed_time_once_and_survives_stroke_boundaries() {
+    let start = Instant::now();
+    let mut clock = DabDispatchClock::default();
+    assert_eq!(
+        clock.next_elapsed_ms(start),
+        occlu_sculpt::DWELL_FULL_DOSE_MS,
+        "the first worker-applied dab matches the donor's lastDabAt=0"
+    );
+    assert_eq!(
+        clock.next_elapsed_ms(start + Duration::from_millis(30)),
+        30.0,
+        "the next dose is measured between dispatch starts"
+    );
+    // Finish and BreakPath do not reset or advance the clock; only another
+    // actual ray dispatch does.
+    assert_eq!(
+        clock.next_elapsed_ms(start + Duration::from_millis(80)),
+        50.0
+    );
+    assert_eq!(
+        clock.next_elapsed_ms(start + Duration::from_millis(500)),
+        occlu_sculpt::DWELL_FULL_DOSE_MS,
+        "long kernel intervals are capped by the kernel dose window"
+    );
 }
 
 fn worker_for(mesh: &Mesh) -> SculptWorker {
@@ -83,6 +110,23 @@ fn a_dab() -> BrushStroke {
         radius_mm: 2.0,
         strength: 1.0,
         view_dir: [0.0, 0.0, -1.0],
+    }
+}
+
+fn a_ray_step(x: f32, mode: BrushMode, radius_mm: f32, dose: DabDose) -> BrushRayStep {
+    BrushRayStep {
+        origin: [x, 0.0, 5.0],
+        direction: [0.0, 0.0, -1.0],
+        near_mm: 0.0,
+        far_mm: 10.0,
+        clip_plane: None,
+        radius_mm,
+        strength: 0.5,
+        mode,
+        tip: SculptTip::Ball,
+        axis: None,
+        hold: dose.hold,
+        preserve_skirt: false,
     }
 }
 
@@ -158,7 +202,273 @@ fn poisoned_command_queue_is_reported_to_the_worker_owner() {
 }
 
 #[test]
-fn command_queue_has_a_global_bound_across_rapid_strokes() {
+fn a_full_stroke_backlog_refuses_the_new_dab_and_keeps_the_earlier_ones() {
+    let queue = SculptCommandQueue::new();
+    let stroke = BrushStroke {
+        center: [0.0, 0.0, 0.0],
+        radius_mm: 2.0,
+        strength: 1.0,
+        view_dir: [0.0, 0.0, -1.0],
+    };
+    for _ in 0..APPLY_QUEUE_CAPACITY_PER_STROKE {
+        assert!(queue.push_apply(stroke, BrushMode::Add, SculptTip::Ball, None, DabDose::FULL));
+    }
+    assert!(
+        !queue.push_apply(stroke, BrushMode::Add, SculptTip::Ball, None, DabDose::FULL),
+        "a full stroke backlog refuses the new dab"
+    );
+    let state = queue.state.lock().expect("queue state");
+    let queued = state
+        .commands
+        .iter()
+        .filter(|command| matches!(command, SculptCommand::Apply { .. }))
+        .count();
+    assert_eq!(
+        queued, APPLY_QUEUE_CAPACITY_PER_STROKE,
+        "a refused dab must not evict a queued one"
+    );
+}
+
+#[test]
+fn ray_queue_preserves_parameters_and_a_path_break_between_samples() {
+    let queue = SculptCommandQueue::new();
+    assert!(queue.push_ray_step(a_ray_step(0.0, BrushMode::Add, 1.0, DabDose::FULL)));
+    assert!(queue.push_ray_step(a_ray_step(1.0, BrushMode::Add, 1.0, DabDose::FULL)));
+    assert!(queue.push_break_path());
+    assert!(queue.push_ray_step(a_ray_step(2.0, BrushMode::Add, 1.0, DabDose::FULL)));
+    assert!(queue.push_finish());
+
+    let state = queue.state.lock().expect("queue state");
+    assert_eq!(state.commands.len(), 5);
+    let mut commands = state.commands.iter();
+    assert!(matches!(
+        commands.next(),
+        Some(SculptCommand::RayStep { step, first: true, .. }) if step.origin[0] == 0.0
+    ));
+    assert!(matches!(
+        commands.next(),
+        Some(SculptCommand::RayStep { step, first: false, .. }) if step.origin[0] == 1.0
+    ));
+    assert!(matches!(
+        commands.next(),
+        Some(SculptCommand::BreakPath { .. })
+    ));
+    assert!(matches!(
+        commands.next(),
+        Some(SculptCommand::RayStep { step, first: false, .. }) if step.origin[0] == 2.0
+    ));
+    assert!(matches!(commands.next(), Some(SculptCommand::Finish)));
+}
+
+#[test]
+fn preserve_skirt_is_a_captured_parameter_and_prevents_cross_modifier_coalescing() {
+    let queue = SculptCommandQueue::new();
+    let first = a_ray_step(0.0, BrushMode::Add, 1.0, DabDose::FULL);
+    let plain_add = a_ray_step(1.0, BrushMode::Add, 1.0, DabDose::FULL);
+    let mut add = a_ray_step(2.0, BrushMode::Add, 1.0, DabDose::FULL);
+    add.preserve_skirt = true;
+    let mut latest_add = add.clone();
+    latest_add.origin[0] = 3.0;
+
+    assert!(queue.push_ray_step(first));
+    assert!(queue.push_ray_step(plain_add));
+    assert!(queue.push_ray_step(add));
+    assert!(queue.push_ray_step(latest_add));
+    let state = queue.state.lock().expect("queue state");
+    let samples = state
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            SculptCommand::RayStep { step, .. } => Some((step.origin[0], step.preserve_skirt)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(samples, vec![(0.0, false), (1.0, false), (3.0, true)]);
+}
+
+#[test]
+fn repeated_held_samples_at_one_ray_coalesce_without_preadding_dose() {
+    let queue = SculptCommandQueue::new();
+    let first = a_ray_step(0.0, BrushMode::Add, 1.0, DabDose::FULL);
+    let held = a_ray_step(0.0, BrushMode::Add, 1.0, DabDose::dwell(30.0));
+    let mut latest_held = held.clone();
+    latest_held.origin[0] = 0.0005;
+
+    assert!(queue.push_ray_step(first));
+    assert!(queue.push_ray_step(held));
+    assert!(queue.push_ray_step(latest_held.clone()));
+
+    let state = queue.state.lock().expect("queue state");
+    assert_eq!(state.commands.len(), 2);
+    assert!(matches!(
+        state.commands.back(),
+        Some(SculptCommand::RayStep { step, first: false, .. })
+            if step.hold && step.origin[0] == 0.0005
+    ));
+}
+
+#[test]
+fn full_ray_backlog_refuses_a_changed_sample_without_replacing_the_tail() {
+    let queue = SculptCommandQueue::new();
+    for (x, mode) in [
+        (0.0, BrushMode::Add),
+        (1.0, BrushMode::Remove),
+        (2.0, BrushMode::Smooth),
+        (3.0, BrushMode::Relax),
+    ] {
+        assert!(queue.push_ray_step(a_ray_step(x, mode, 1.0, DabDose::FULL)));
+    }
+    assert!(
+        !queue.push_ray_step(a_ray_step(4.0, BrushMode::Add, 1.0, DabDose::FULL)),
+        "a changed-mode endpoint must wait when the per-stroke queue is full"
+    );
+
+    let state = queue.state.lock().expect("queue state");
+    let samples = state
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            SculptCommand::RayStep { step, .. } => Some((step.origin[0], step.mode)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        samples,
+        vec![
+            (0.0, BrushMode::Add),
+            (1.0, BrushMode::Remove),
+            (2.0, BrushMode::Smooth),
+            (3.0, BrushMode::Relax),
+        ],
+        "refusal leaves all previously accepted modifier boundaries intact"
+    );
+}
+
+#[test]
+fn a_path_break_refused_by_queue_pressure_can_be_retried_after_one_command_drains() {
+    let queue = SculptCommandQueue::new();
+    let stroke = a_dab();
+    for _ in 0..31 {
+        assert!(queue.push_apply(stroke, BrushMode::Add, SculptTip::Ball, None, DabDose::FULL));
+        assert!(queue.push_finish());
+    }
+    assert!(queue.push_ray_step(a_ray_step(0.0, BrushMode::Add, 1.0, DabDose::FULL)));
+    assert!(
+        !queue.push_break_path(),
+        "the last slot stays reserved for Finish"
+    );
+    assert!(queue.pop().is_some(), "one older command has drained");
+    assert!(
+        queue.push_break_path(),
+        "the caller can retry the break in order"
+    );
+
+    let state = queue.state.lock().expect("queue state");
+    assert!(matches!(
+        state.commands.back(),
+        Some(SculptCommand::BreakPath { .. })
+    ));
+    assert!(matches!(
+        state.commands.iter().find(|command| matches!(command, SculptCommand::RayStep { .. })),
+        Some(SculptCommand::RayStep { step, first: true, .. }) if step.origin[0] == 0.0
+    ));
+}
+
+#[test]
+fn queued_samples_with_changed_brush_mode_or_radius_are_not_coalesced() {
+    let queue = SculptCommandQueue::new();
+    assert!(queue.push_ray_step(a_ray_step(0.0, BrushMode::Add, 1.0, DabDose::FULL)));
+    assert!(queue.push_ray_step(a_ray_step(1.0, BrushMode::Add, 1.0, DabDose::FULL)));
+    assert!(queue.push_ray_step(a_ray_step(2.0, BrushMode::Remove, 1.0, DabDose::FULL)));
+    assert!(queue.push_ray_step(a_ray_step(3.0, BrushMode::Remove, 2.0, DabDose::FULL)));
+
+    let state = queue.state.lock().expect("queue state");
+    let samples = state
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            SculptCommand::RayStep { step, .. } => {
+                Some((step.origin[0], step.mode, step.radius_mm))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        samples,
+        vec![
+            (0.0, BrushMode::Add, 1.0),
+            (1.0, BrushMode::Add, 1.0),
+            (2.0, BrushMode::Remove, 1.0),
+            (3.0, BrushMode::Remove, 2.0),
+        ]
+    );
+}
+
+#[test]
+fn full_queue_still_coalesces_a_compatible_latest_travel_sample() {
+    let queue = SculptCommandQueue::new();
+    assert!(queue.push_prime_wall_region(DVec3::ZERO, 1.0, 1));
+    let stroke = a_dab();
+    for _ in 0..12 {
+        for _ in 0..APPLY_QUEUE_CAPACITY_PER_STROKE {
+            assert!(queue.push_apply(stroke, BrushMode::Add, SculptTip::Ball, None, DabDose::FULL));
+        }
+        assert!(queue.push_finish());
+    }
+    assert!(queue.push_ray_step(a_ray_step(0.0, BrushMode::Add, 1.0, DabDose::FULL)));
+    assert!(queue.push_ray_step(a_ray_step(1.0, BrushMode::Add, 1.0, DabDose::FULL)));
+    {
+        let state = queue.state.lock().expect("queue state");
+        assert_eq!(state.commands.len(), MAX_QUEUED_COMMANDS - 1);
+    }
+    assert!(queue.push_ray_step(a_ray_step(2.0, BrushMode::Add, 1.0, DabDose::FULL)));
+
+    let state = queue.state.lock().expect("queue state");
+    assert_eq!(state.commands.len(), MAX_QUEUED_COMMANDS - 1);
+    assert!(matches!(
+        state.commands.back(),
+        Some(SculptCommand::RayStep { step, first: false, .. }) if step.origin[0] == 2.0
+    ));
+}
+
+#[test]
+fn a_full_queue_retires_only_the_finishing_strokes_own_dab() {
+    let queue = SculptCommandQueue::new();
+    let stroke = BrushStroke {
+        center: [0.0, 0.0, 0.0],
+        radius_mm: 2.0,
+        strength: 1.0,
+        view_dir: [0.0, 0.0, -1.0],
+    };
+    // The real shape of queue pressure: whole strokes of four dabs and their
+    // end marker, until the bound is reached.
+    for _ in 0..13 {
+        for _ in 0..APPLY_QUEUE_CAPACITY_PER_STROKE {
+            let _ = queue.push_apply(stroke, BrushMode::Add, SculptTip::Ball, None, DabDose::FULL);
+        }
+        assert!(
+            queue.push_finish(),
+            "a stroke end is admitted while the queue has room"
+        );
+    }
+
+    let state = queue.state.lock().expect("queue state");
+    assert_eq!(state.commands.len(), MAX_QUEUED_COMMANDS);
+    let first_stroke = state
+        .commands
+        .iter()
+        .filter(
+            |command| matches!(command, SculptCommand::Apply { stroke_id, .. } if *stroke_id == 1),
+        )
+        .count();
+    assert_eq!(
+        first_stroke, APPLY_QUEUE_CAPACITY_PER_STROKE,
+        "admitting one stroke's end must not retire an older stroke's dab"
+    );
+}
+
+#[test]
+fn the_command_queue_stays_bounded_under_sustained_strokes() {
     let queue = SculptCommandQueue::new();
     let stroke = BrushStroke {
         center: [0.0, 0.0, 0.0],
@@ -168,39 +478,42 @@ fn command_queue_has_a_global_bound_across_rapid_strokes() {
     };
     for _ in 0..32 {
         for _ in 0..APPLY_QUEUE_CAPACITY_PER_STROKE {
-            assert!(queue.push_apply(stroke, BrushMode::Add, SculptTip::Ball, None));
+            let _ = queue.push_apply(stroke, BrushMode::Add, SculptTip::Ball, None, DabDose::FULL);
         }
-        assert!(queue.push_finish());
+        let admitted = queue.push_finish();
+        let state = queue.state.lock().expect("queue state");
+        assert!(
+            state.commands.len() <= MAX_QUEUED_COMMANDS,
+            "the command queue grew past its bound"
+        );
+        assert!(
+            admitted || state.commands.len() == MAX_QUEUED_COMMANDS,
+            "a stroke end is only refused by a queue that is actually full"
+        );
     }
-
-    let state = queue.state.lock().expect("queue state");
-    assert!(
-        state.commands.len() <= MAX_QUEUED_COMMANDS,
-        "rapid strokes must not grow the command queue without bound"
-    );
 }
 
 #[test]
-fn a_rejected_new_stroke_does_not_leave_a_phantom_open_stroke() {
+fn a_rejected_new_ray_stroke_does_not_leave_a_phantom_open_stroke() {
     let queue = SculptCommandQueue::new();
-    let stroke = BrushStroke {
-        center: [0.0, 0.0, 0.0],
-        radius_mm: 2.0,
-        strength: 1.0,
-        view_dir: [0.0, 0.0, -1.0],
-    };
-    for _ in 0..MAX_QUEUED_COMMANDS {
-        assert!(queue.push_finish());
+    let step = a_ray_step(1000.0, BrushMode::Add, 0.75, DabDose::FULL);
+    for _ in 0..(MAX_QUEUED_COMMANDS / 2) {
+        assert!(
+            queue.push_ray_step(step.clone()),
+            "one ray opens the stroke"
+        );
+        assert!(queue.push_finish(), "the stroke boundary is queued");
     }
 
     assert!(
-        !queue.push_apply(stroke, BrushMode::Add, SculptTip::Ball, None),
-        "a full queue of finish markers must reject a new apply"
+        !queue.push_ray_step(step),
+        "a genuinely full queue must reject a new ray"
     );
     let state = queue.state.lock().expect("queue state");
+    assert_eq!(state.commands.len(), MAX_QUEUED_COMMANDS);
     assert!(
         state.open_stroke.is_none(),
-        "a rejected apply must not claim the next stroke id"
+        "a rejected ray must not claim the next stroke id"
     );
 }
 
@@ -217,7 +530,7 @@ fn live_picker_follows_a_triangle_that_left_the_original_bvh_bounds() {
     worker.state.record_touched(vec![0, 1, 2, 3], vec![0, 1]);
 
     let (triangle, point) = worker
-        .pick_local_ray(Vec3::new(10.25, 0.25, 10.0), -Vec3::Z)
+        .pick_local_ray(Vec3::new(10.25, 0.25, 10.0), -Vec3::Z, |_| true)
         .expect("the dirty live triangles must remain pickable");
     assert!(triangle < 2);
     assert!((point.x - 10.25).abs() < 1e-5);
@@ -464,6 +777,38 @@ fn a_densifying_stroke_publishes_local_rows_and_keeps_a_coarse_undo_baseline() {
     assert_eq!(completion.before.topology_id(), original_topology_id);
 }
 
+#[test]
+fn second_ray_stroke_undo_baseline_matches_the_previous_add_commit() {
+    let mesh = coarse_ridge_mesh();
+    let worker = worker_for(&mesh);
+    let mut add = a_ray_step(0.0, BrushMode::Add, 3.5, DabDose::FULL);
+    add.strength = 1.0;
+
+    assert!(worker.try_apply_ray_step(add));
+    let delta = wait_for_topology_delta(&worker);
+    assert!(
+        !delta.appended_vertices.is_empty(),
+        "the first Add must exercise a topology-changing ray commit"
+    );
+    assert!(worker.finish_stroke());
+    let first = wait_for_completion(&worker);
+    assert!(first.mesh.vertices().len() > mesh.vertices().len());
+
+    let mut next_add = a_ray_step(0.0, BrushMode::Add, 3.5, DabDose::FULL);
+    next_add.strength = 1.0;
+    assert!(worker.try_apply_ray_step(next_add));
+    assert!(worker.finish_stroke());
+    let second = wait_for_completion(&worker);
+
+    assert_eq!(
+        second.before.vertices(),
+        first.mesh.vertices(),
+        "a later stroke's undo snapshot must preserve every committed vertex attribute"
+    );
+    assert_eq!(second.before.indices(), first.mesh.indices());
+    assert_eq!(second.before.topology_id(), first.mesh.topology_id());
+}
+
 /// A densified layer must arrive pick-ready and stay pick-ready across the
 /// commit, or no later stroke can land.
 ///
@@ -486,7 +831,7 @@ fn a_densified_layer_is_still_pickable_so_the_next_stroke_can_land() {
     assert!(!delta.dirty_triangles.is_empty());
     assert!(
         worker
-            .pick_local_ray(Vec3::new(0.0, 0.0, 20.0), -Vec3::Z)
+            .pick_local_ray(Vec3::new(0.0, 0.0, 20.0), -Vec3::Z, |_| true)
             .is_some(),
         "the live remeshed sheet stays pickable"
     );
@@ -539,11 +884,20 @@ fn a_pending_topology_delta_leaves_the_worker_token_frozen() {
 /// the scene a mesh that no undo step can describe.
 #[test]
 fn terminal_finish_invariant_errors_stop_the_worker_command_loop() {
+    let open_queued_stroke = |worker: &SculptWorker| {
+        let Ok(mut state) = worker.queue.state.lock() else {
+            panic!("worker queue state");
+        };
+        state.next_stroke_id = state.next_stroke_id.wrapping_add(1);
+        state.open_stroke = Some(state.next_stroke_id);
+    };
+
     // A stroke that changed geometry with nothing recorded to undo back to.
     let mut session = session_for(&test_mesh());
     session.dirty_stroke = true;
     session.stroke_start_mesh = None;
     let worker = SculptWorker::spawn(session);
+    open_queued_stroke(&worker);
     assert!(worker.finish_stroke(), "the finish marker is accepted");
     assert_eq!(
         wait_for_error(&worker),
@@ -560,6 +914,7 @@ fn terminal_finish_invariant_errors_stop_the_worker_command_loop() {
     session.stroke_start_mesh = Some(Arc::new(mesh.clone()));
     session.shadow = Arc::new(RwLock::new(vec![mesh.vertices()[0]]));
     let worker = SculptWorker::spawn(session);
+    open_queued_stroke(&worker);
     assert!(worker.finish_stroke());
     assert_eq!(
         wait_for_error(&worker),

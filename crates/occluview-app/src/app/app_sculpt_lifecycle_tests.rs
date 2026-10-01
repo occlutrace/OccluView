@@ -9,12 +9,13 @@ use super::app_mesh_export::PendingLayerExports;
 use super::*;
 use crate::app::app_test_support::{delivered_load, test_app};
 use crate::scene_loading::SceneLoadMode;
-use crate::sculpt_kernel::{BrushMode, BrushSession, BrushStroke};
-use crate::sculpt_tool::{SculptSession, SculptToolKind, StrokeState};
+use crate::sculpt_kernel::{BrushMode, BrushRayStep, BrushSession, BrushStroke};
+use crate::sculpt_tool::{SculptSession, SculptTip, SculptToolKind, StrokeState};
 use crate::sculpt_worker::SculptWorker;
 use glam::{Affine3A, Vec3};
 use occluview_core::{mesh_edit_buffers_from_mesh, Mesh, Scene, SceneMesh, SceneMeshId, Vertex};
 use occluview_render::PreparedSceneTopology;
+use std::collections::VecDeque;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
@@ -85,9 +86,13 @@ fn app_with_a_live_stroke(name: &str) -> (OccluViewApp, SceneMeshId) {
     app.tools.sculpt.worker = Some(worker_for(&base, layer_id));
     app.tools.sculpt.stroke = Some(StrokeState {
         layer_id,
-        last_dab_local: None,
+        last_pointer: [0.0, 0.0],
+        input_pointer: [0.0, 0.0],
+        last_ray: None,
         hold_seconds: 0.0,
-        last_axis: None,
+        path_break_pending: false,
+        release_pending: false,
+        retained_samples: VecDeque::new(),
     });
     app.document.unsaved_sculpt_stroke = true;
     (app, layer_id)
@@ -177,6 +182,37 @@ fn pump_sculpt_worker_until_idle(app: &mut OccluViewApp) {
         assert!(Instant::now() < deadline, "the sculpt work never settled");
         std::thread::sleep(Duration::from_millis(1));
     }
+}
+
+fn sculpt_strength_wheel_frame(app: &mut OccluViewApp, ctx: &egui::Context, delta_y: f32) -> bool {
+    let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 400.0));
+    let center = viewport.center();
+    let ctrl = egui::Modifiers {
+        ctrl: true,
+        command: false,
+        ..Default::default()
+    };
+    let input = egui::RawInput {
+        screen_rect: Some(viewport),
+        events: vec![
+            egui::Event::PointerMoved(center),
+            egui::Event::ModifiersChanged(ctrl),
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, delta_y),
+                phase: egui::TouchPhase::Move,
+                modifiers: ctrl,
+            },
+        ],
+        ..Default::default()
+    };
+    let mut used = false;
+    ctx.run_ui(input, |ui| {
+        let response = ui.allocate_rect(viewport, egui::Sense::click_and_drag());
+        used = app.adjust_sculpt_brush_from_wheel(ui.ctx(), &response);
+    })
+    .drop_without_applying_deltas();
+    used
 }
 
 /// Wait until a topology delta and a sparse vertex update share one frame.
@@ -500,6 +536,11 @@ fn switching_brush_mode_finishes_a_live_stroke_instead_of_aborting_it() {
         Some(SculptToolKind::Smooth),
         "the new brush is armed"
     );
+    assert_eq!(
+        app.persistence.settings.last_sculpt_tool,
+        SculptToolKind::Smooth,
+        "the selected brush is remembered for the next Sculpt-tab entry"
+    );
     pump_sculpt_worker_until_idle(&mut app);
 
     assert_eq!(
@@ -604,70 +645,82 @@ fn abort_also_reverts_a_released_stroke_waiting_in_the_worker() {
     assert!(app.tools.sculpt.worker.is_none(), "the session is dropped");
 }
 
-/// The worker queue is bounded, so a finish can be refused while older dabs
-/// drain. A refused finish must keep the drag and retry it, not drop the
-/// released stroke.
+/// Ray admission reserves the final queue slot for the stroke boundary. Even
+/// with 63 older commands queued, the active stroke's Finish must be admitted.
 #[test]
-fn a_rejected_finish_keeps_the_stroke_for_a_later_retry() {
-    let (mut app, _layer_id) = app_with_a_live_stroke("sculpt-finish-retry");
-    // Park the kernel thread behind the completion backlog, then fill its
-    // bounded command queue so the next finish is refused.
+fn an_active_stroke_keeps_its_finish_boundary_at_queue_capacity() {
+    let (mut app, _layer_id) = app_with_a_live_stroke("sculpt-finish-reserved-slot");
     {
         let worker = app.tools.sculpt.worker.as_ref().expect("worker");
-        for _ in 0..3 {
+        worker.set_queue_paused_for_tests(true);
+        let step = BrushRayStep {
+            origin: [1000.0, 1000.0, 10.0],
+            direction: [0.0, 0.0, -1.0],
+            near_mm: 0.0,
+            far_mm: 20.0,
+            clip_plane: None,
+            radius_mm: 0.75,
+            strength: 0.35,
+            mode: BrushMode::Add,
+            tip: SculptTip::Ball,
+            axis: None,
+            hold: false,
+            preserve_skirt: false,
+        };
+        // Each completed ray stroke contributes two commands. At 62 queued,
+        // the next ray is command 63 and its reserved Finish is command 64.
+        for _ in 0..31 {
             assert!(
-                worker.try_apply(densifying_stroke(), BrushMode::Smooth),
-                "pressure dab queued"
+                worker.try_apply_ray_step(step.clone()),
+                "pressure ray queued"
             );
-            assert!(worker.finish_stroke(), "pressure stroke released");
-        }
-        let mut refused = false;
-        for _ in 0..1024 {
-            if !worker.finish_stroke() {
-                refused = true;
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(1));
+            assert!(worker.finish_stroke(), "pressure stroke boundary queued");
         }
         assert!(
-            refused,
-            "the bounded command queue must eventually refuse a finish"
+            worker.try_apply_ray_step(step),
+            "the last ray slot is admitted"
         );
     }
 
     let ctx = app.ui.repaint_ctx.clone();
     assert!(
-        !app.commit_sculpt_stroke(&ctx),
-        "queue backpressure refuses the finish"
+        app.commit_sculpt_stroke(&ctx),
+        "the reserved slot admits Finish after the queue reaches 63 commands"
     );
     assert!(
-        app.tools.sculpt.stroke.is_some(),
-        "a refused finish must keep the drag for a later retry"
+        app.tools.sculpt.stroke.is_none(),
+        "the UI closes the released stroke after queuing Finish"
     );
-    assert!(app.tools.sculpt.finish_retry, "and arm that retry");
-    assert_eq!(
-        app.ui.status_message.as_deref(),
-        Some(
-            app.ui
-                .locale
-                .text(crate::i18n::message_id!("sculpt-worker-unavailable"))
-                .as_str()
-        )
-    );
+    assert!(!app.tools.sculpt.finish_retry);
 
-    // Once the pressure clears, the worker poll retries the finish.
-    let deadline = Instant::now() + Duration::from_secs(60);
+    app.tools
+        .sculpt
+        .worker
+        .as_ref()
+        .expect("worker")
+        .set_queue_paused_for_tests(false);
+    let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         app.poll_sculpt_worker(&ctx);
-        if app.tools.sculpt.stroke.is_none() && !app.tools.sculpt.finish_retry {
+        if app
+            .tools
+            .sculpt
+            .worker
+            .as_ref()
+            .is_some_and(SculptWorker::is_quiescent)
+        {
+            app.poll_sculpt_worker(&ctx);
             break;
         }
-        assert!(Instant::now() < deadline, "the kept stroke never retried");
+        assert!(
+            Instant::now() < deadline,
+            "the queued boundaries never drained"
+        );
         std::thread::sleep(Duration::from_millis(1));
     }
     assert!(
         app.ui.app_error.is_none(),
-        "the retry must not end in a terminal failure"
+        "draining the reserved Finish must not fault the worker"
     );
 }
 
@@ -822,4 +875,77 @@ fn multiple_completions_commit_before_the_latest_live_delta() {
     );
     assert!(app.document.has_unsaved_mesh_edits());
     assert_eq!(sculpt_shadow_len(&app), final_len);
+}
+
+#[test]
+fn entering_sculpt_restores_the_remembered_tool_without_auto_arming_at_startup() {
+    let (mut app, _) = app_with_a_live_stroke("sculpt-remembered-tool");
+    app.tools.sculpt.stroke = None;
+    app.tools.sculpt.armed = None;
+    app.persistence.settings.last_sculpt_tool = SculptToolKind::Smooth;
+
+    assert!(app.tools.sculpt.armed.is_none());
+    let ctx = app.ui.repaint_ctx.clone();
+    app.switch_editor_tab(mesh_editor_overlay::EditorTab::Sculpt, &ctx);
+
+    assert_eq!(app.tools.sculpt.armed, Some(SculptToolKind::Smooth));
+}
+
+#[test]
+#[allow(
+    clippy::float_cmp,
+    reason = "The queued Finish must preserve the exact parameter, and an idle notch selects an exact catalog value."
+)]
+fn modified_wheel_waits_for_queued_finish_then_works_when_worker_is_idle() {
+    let (mut app, _) = app_with_a_live_stroke("sculpt-wheel-finish-boundary");
+    app.tools.sculpt.armed = Some(SculptToolKind::AddRemove);
+    let worker = app.tools.sculpt.worker.as_ref().expect("prepared worker");
+    worker.set_queue_paused_for_tests(true);
+    assert!(worker.try_apply_ray_step(BrushRayStep {
+        origin: [0.0, 0.0, 20.0],
+        direction: [0.0, 0.0, -1.0],
+        near_mm: 0.0,
+        far_mm: 100.0,
+        clip_plane: None,
+        radius_mm: 2.0,
+        strength: 0.35,
+        mode: BrushMode::Add,
+        tip: SculptTip::Ball,
+        axis: None,
+        hold: false,
+        preserve_skirt: false,
+    }));
+
+    let ctx = app.ui.repaint_ctx.clone();
+    assert!(
+        app.commit_sculpt_stroke(&ctx),
+        "Finish is admitted behind the ray"
+    );
+    assert!(app.tools.sculpt.stroke.is_none());
+    assert!(app.tools.sculpt.worker_has_pending_work());
+    assert!(
+        sculpt_strength_wheel_frame(&mut app, &ctx, 50.0),
+        "modified wheel remains owned while the released stroke drains"
+    );
+    assert_eq!(
+        mesh_editor_overlay::sculpt_strength(&ctx, SculptToolKind::AddRemove),
+        SculptToolKind::AddRemove.default_strength(),
+        "pending Finish must not change captured brush parameters"
+    );
+
+    app.tools
+        .sculpt
+        .worker
+        .as_ref()
+        .expect("worker")
+        .set_queue_paused_for_tests(false);
+    pump_sculpt_worker_until_idle(&mut app);
+    assert!(!app.tools.sculpt.is_busy());
+
+    assert!(sculpt_strength_wheel_frame(&mut app, &ctx, 50.0));
+    assert_eq!(
+        mesh_editor_overlay::sculpt_strength(&ctx, SculptToolKind::AddRemove),
+        0.45,
+        "the next idle notch changes the selected catalog strength"
+    );
 }

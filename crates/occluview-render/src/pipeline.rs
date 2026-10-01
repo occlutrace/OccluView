@@ -398,7 +398,7 @@ impl Renderer {
         mesh.draw(rpass, occluview_core::MeshKind::TriangleMesh);
     }
 
-    /// Draw only the additive Sculpt surface field over one already-rendered
+    /// Tint only the Sculpt footprint over one already-rendered
     /// triangle mesh. The caller chooses the target entry, so neighbouring
     /// layers never receive the cursor by accident.
     pub(crate) fn draw_sculpt_surface_feedback(

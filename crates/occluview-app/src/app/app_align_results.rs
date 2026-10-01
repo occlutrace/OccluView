@@ -95,6 +95,9 @@ impl OccluViewApp {
                     .locale
                     .tr(crate::i18n::message_id!("align-status-worker-unavailable")),
             );
+            // Drop the stopped worker so the next requested job can create a
+            // fresh one. Its result is discarded, and its thread has exited.
+            self.tools.align.worker = None;
             ctx.request_repaint();
             return;
         }
@@ -352,14 +355,9 @@ impl OccluViewApp {
     /// The map and ghosted layer belong to the Automatically tab; returning to
     /// it restores controls only and requires a new Best fit matching result.
     pub(super) fn settle_align_tab_change(&mut self) {
-        // Either direction: a gesture belongs to the tab it started on. The drag
-        // handler closes one when it finds itself on the wrong tab, but that is a
-        // frame later, and one frame is enough for the release to land somewhere
-        // that no longer expects it.
+        // Commit any open drag before changing which tab owns pointer input.
         self.finish_align_drag();
         self.abandon_align_drag();
-        let entering_automatic =
-            self.tools.align.tab == crate::align_panel::AlignTab::Automatically;
         self.abandon_align_jobs();
         // Manual mode changes the pose without a Best fit result. Both tab
         // directions therefore revoke the old authority: returning to
@@ -376,33 +374,11 @@ impl OccluViewApp {
         if had_derived_overlay {
             self.clear_deviation_overlay();
         }
-        if entering_automatic {
-            if had_derived_overlay {
-                self.tools.align.status = Some(
-                    self.ui
-                        .locale
-                        .tr(crate::i18n::message_id!("align-status-map-elsewhere")),
-                );
-            }
-            return;
-        }
-        // A hand nudge invalidates all points tied to the previous fit. Keep the
-        // selected pair, but clear its derived points.
-        let dropped_arrows = self.tools.align.tool.clear_points();
-        if dropped_arrows {
-            self.tools.align.rejected.clear();
-        }
         if had_derived_overlay {
             self.tools.align.status = Some(
                 self.ui
                     .locale
                     .tr(crate::i18n::message_id!("align-status-map-elsewhere")),
-            );
-        } else if dropped_arrows {
-            self.tools.align.status = Some(
-                self.ui
-                    .locale
-                    .tr(crate::i18n::message_id!("align-status-arrows-cleared")),
             );
         }
     }
@@ -533,10 +509,11 @@ impl OccluViewApp {
             // Dropping it stops the thread and clears its queue.
             self.tools.align.worker = None;
         }
+        let repaint_ctx = self.ui.repaint_ctx.clone();
         self.tools
             .align
             .worker
-            .get_or_insert_with(AlignWorker::spawn)
+            .get_or_insert_with(|| AlignWorker::spawn_with_repaint(repaint_ctx))
     }
 }
 

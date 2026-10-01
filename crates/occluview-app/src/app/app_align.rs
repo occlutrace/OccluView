@@ -133,6 +133,13 @@ impl OccluViewApp {
     /// Two tools sharing the primary click would fight over every gesture, so
     /// arming one disarms the rest.
     pub(super) fn arm_align_tool(&mut self, ctx: &egui::Context) {
+        if self.tools.bridge_split_active() {
+            let reason = self
+                .ui
+                .locale
+                .tr(crate::i18n::message_id!("bridge-canceled"));
+            self.cancel_bridge_split(&reason);
+        }
         self.abort_sculpt_stroke();
         self.tools.sculpt.disarm();
         self.tools.measure.disarm();
@@ -531,6 +538,10 @@ impl OccluViewApp {
             );
             return;
         }
+        // The panel snapshots `busy` before dispatching its action. If the
+        // native loop is otherwise idle, nothing will poll the worker or paint
+        // that busy state unless accepted work schedules the next frame here.
+        self.ui.repaint_ctx.request_repaint();
         if kind != AlignJobKind::Measure {
             // The previous heatmap belongs to the previous fit. Keep the
             // current geometry while the new job runs, but do not display an
