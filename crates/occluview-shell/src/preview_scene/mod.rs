@@ -18,8 +18,6 @@ use occluview_render::{Offscreen, PreparedScene};
 use std::sync::Arc;
 
 #[cfg_attr(not(windows), allow(unused_imports))]
-pub(crate) use interaction::win32_preview_orbit_delta;
-#[cfg_attr(not(windows), allow(unused_imports))]
 pub(crate) use interaction::PreviewViewPreset;
 
 pub(crate) struct PreviewSceneState {
