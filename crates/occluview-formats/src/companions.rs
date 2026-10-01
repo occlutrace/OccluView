@@ -12,7 +12,6 @@
 //! in [`crate::dispatch`], and it never fails the import — a scan whose texture
 //! is missing is still a scan.
 
-use crate::error::FormatError;
 use crate::texture_decode::decode_embedded_raster;
 use occluview_core::Mesh;
 use std::path::{Path, PathBuf};
@@ -249,12 +248,6 @@ fn same_stem_image(path: &Path, directory: &Path) -> Option<PathBuf> {
     found.sort();
     found.into_iter().next()
 }
-
-/// Errors from a companion are not errors of the import: the mesh is what the
-/// operator opened, and a texture that could not be read is reported by the
-/// format's own loss warning when it is written back out.
-#[allow(dead_code)]
-fn _error_type_is_shared(_: FormatError) {}
 
 #[cfg(test)]
 mod tests {
