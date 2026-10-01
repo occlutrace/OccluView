@@ -4,6 +4,9 @@
 //! plumbing that turns a pair into a field. Anything richer would hide the
 //! geometry a test is actually asserting about, and these tests are about
 //! geometry and signs.
+
+// Every contact integration test includes this module and uses a different
+// subset of the fixtures, so the unused-item lint fires per test binary.
 #![allow(dead_code)]
 
 use occluview_contact::{compute_contact_field, ContactField, ContactSettings};
@@ -42,14 +45,6 @@ impl Mesh {
         }
     }
 
-    /// Move every vertex by `dz` along z, in millimetres.
-    pub fn shifted_z(mut self, dz: f64) -> Self {
-        for vertex in self.positions.as_chunks_mut::<3>().0 {
-            vertex[2] = to_f32(f64::from(vertex[2]) + dz);
-        }
-        self
-    }
-
     /// Number of whole vertices.
     pub fn vertex_count(&self) -> usize {
         self.positions.len() / 3
@@ -63,15 +58,6 @@ impl Mesh {
             f64::from(self.positions[offset + 1]),
             f64::from(self.positions[offset + 2]),
         ]
-    }
-
-    /// Re-aim every triangle at -z, which is what "flip the normals" does to a
-    /// scan and what the sign convention is measured against.
-    pub fn reversed(mut self) -> Self {
-        for triangle in self.indices.as_chunks_mut::<3>().0 {
-            triangle.swap(1, 2);
-        }
-        self
     }
 }
 
