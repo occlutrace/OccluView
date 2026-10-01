@@ -3,7 +3,7 @@
 
 use super::super::{
     AppErrorAction, AppErrorDialog, EditModeController, LayerContextAction, LayerContextApply,
-    LayerContextRequest, OccluViewApp, PathBuf, Scene,
+    LayerContextRequest, PathBuf, Scene, SceneContext,
 };
 use super::selection_batch::apply_visible_selected_face_mesh_edit_action_with_limit;
 use super::structural::{
@@ -20,7 +20,7 @@ use occluview_core::{
 use std::sync::Arc;
 
 pub(super) fn apply_selected_face_mesh_edit_action_with_status(
-    app: &mut OccluViewApp,
+    app: &mut SceneContext<'_>,
     scene: &mut Scene,
     paths: &[PathBuf],
     request: LayerContextRequest,
@@ -36,7 +36,7 @@ pub(super) fn apply_selected_face_mesh_edit_action_with_status(
     );
 
     if selection_covers_whole_mesh(scene, &request, &app.document.edit_mode) {
-        app.ui.status_message = Some(match request.action {
+        app.scene_ui.status_message = Some(match request.action {
             LayerContextAction::CropToSelectedFaces => app
                 .ui
                 .locale
@@ -53,7 +53,7 @@ pub(super) fn apply_selected_face_mesh_edit_action_with_status(
     // scene for the undo snapshot — the refusal needs no snapshot at all.
     if request.action == LayerContextAction::SeparateSelectedComponents {
         if let Some(parts) = separate_component_overflow(scene, &request, &app.document.edit_mode) {
-            app.ui.status_message = Some(app.ui.locale.tr_with(
+            app.scene_ui.status_message = Some(app.ui.locale.tr_with(
                 message_id!("select-splits"),
                 &[("parts", &parts.to_string()), ("layer", &layer_label)],
             ));
@@ -84,7 +84,7 @@ pub(super) fn apply_selected_face_mesh_edit_action_with_status(
                     }
                 }
                 let status = layer_edit_status(&layer_label, request.action, None, &app.ui.locale);
-                app.ui.status_message = Some(with_undoable_note(
+                app.scene_ui.status_message = Some(with_undoable_note(
                     &app.document.edit_mode,
                     &app.ui.locale,
                     status,
@@ -95,7 +95,7 @@ pub(super) fn apply_selected_face_mesh_edit_action_with_status(
                     .edit_mode
                     .selected_faces_for_layer(request.layer_id)
                     .is_some_and(|selection| selection.selected_count() > 0);
-                app.ui.status_message = Some(
+                app.scene_ui.status_message = Some(
                     if let Some(parts) =
                         separate_component_overflow(scene, &request, &app.document.edit_mode)
                     {
@@ -119,7 +119,7 @@ pub(super) fn apply_selected_face_mesh_edit_action_with_status(
                 message_id!("edit-apply-failed-summary"),
                 &[("detail", &error.to_string())],
             );
-            app.ui.status_message = Some(summary.clone());
+            app.scene_ui.status_message = Some(summary.clone());
             app.ui.app_error = Some(AppErrorDialog {
                 title: app.ui.locale.tr(message_id!("edit-apply-failed-title")),
                 summary,
@@ -140,7 +140,7 @@ pub(super) fn apply_selected_face_mesh_edit_action_with_status(
 /// opened on. The menu chooses which action runs; the visible selection plan
 /// decides what it runs on.
 pub(super) fn apply_visible_selection_action_with_status(
-    app: &mut OccluViewApp,
+    app: &mut SceneContext<'_>,
     scene: &mut Scene,
     paths: &[PathBuf],
     request: LayerContextRequest,
@@ -177,7 +177,7 @@ pub(super) fn apply_visible_selection_action_with_status(
             {
                 app.document.mark_mesh_edits_unsaved(id);
             }
-            app.ui.status_message = Some(app.ui.locale.tr_plural(
+            app.scene_ui.status_message = Some(app.ui.locale.tr_plural(
                 message_id!("batchedit-status"),
                 &[(
                     "label",
@@ -188,7 +188,8 @@ pub(super) fn apply_visible_selection_action_with_status(
             apply
         }
         Ok(_) => {
-            app.ui.status_message = Some(app.ui.locale.tr(message_id!("edit-no-changes-hidden")));
+            app.scene_ui.status_message =
+                Some(app.ui.locale.tr(message_id!("edit-no-changes-hidden")));
             LayerContextApply::default()
         }
         Err(error) => {
@@ -196,7 +197,7 @@ pub(super) fn apply_visible_selection_action_with_status(
                 message_id!("edit-apply-failed-summary"),
                 &[("detail", &error.to_string())],
             );
-            app.ui.status_message = Some(summary.clone());
+            app.scene_ui.status_message = Some(summary.clone());
             app.ui.app_error = Some(AppErrorDialog {
                 title: app.ui.locale.tr(message_id!("edit-apply-failed-title")),
                 summary,

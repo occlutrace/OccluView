@@ -24,7 +24,7 @@ fn settings_frame(
                 .exact_size(30.0)
                 .show(ui, |ui| {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let trigger = show_settings_toolbar_toggle(ui, true, locale);
+                        let trigger = show_settings_toolbar_toggle(ui, true, locale, false);
                         trigger_rect = Some(trigger.rect);
                         let _ = show_settings_popup(
                             &trigger,

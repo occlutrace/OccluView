@@ -3,7 +3,7 @@
 //! The thickness tool can plant a Cut View, so both workflows share the
 //! viewport ownership and section cache defined here.
 
-use super::{egui, layers_overlay, pick_scene_hit, CutTool, OccluViewApp, Scene};
+use super::{egui, pick_scene_hit, CutTool, Scene, SceneContext};
 use crate::cut_manipulator::{ArchFrame, CutCursor, CutFrameInput, SurfaceSample};
 use crate::cut_overlay;
 use crate::measure_tool::{self, ThicknessProbe, ThicknessReading};
@@ -107,7 +107,7 @@ pub(super) struct ViewportPointer {
     pub(super) over_viewport: bool,
 }
 
-impl OccluViewApp {
+impl SceneContext<'_> {
     /// Resolve pointer ownership shared by both disc tools.
     pub(super) fn viewport_pointer(
         &self,
@@ -155,7 +155,7 @@ impl OccluViewApp {
         &self,
         ctx: &egui::Context,
         viewport_rect: egui::Rect,
-        scene: &Scene,
+        _scene: &Scene,
         slice_visible: bool,
         pointer: Option<egui::Pos2>,
     ) -> ViewportPointer {
@@ -163,7 +163,7 @@ impl OccluViewApp {
         // The layers panel is a same-layer (Background) scope, so it needs an
         // explicit rect test; floating areas are caught by their non-Background
         // layer order.
-        let layers_rect = layers_overlay::layer_overlay_rect(viewport_rect, scene.meshes().len());
+        let layers_rect = self.layers_panel_rect(ctx, viewport_rect);
         let over_section_panel = slice_visible
             && pointer.is_some_and(|point| {
                 crate::cut_ruler::section_panel_contains(viewport_rect, point)
@@ -185,14 +185,11 @@ impl OccluViewApp {
                 // test above cannot see it: without this the cut disc takes the
                 // wheel through the bar and the slider never moves.
                 || (self.tools.contacts.is_open()
-                    && crate::app::app_contact_bar::contact_bar_rect(
-                        viewport_rect,
-                        scene.meshes().len(),
-                    )
+                    && self.scene_contact_bar_rect(ctx, viewport_rect)
                     .contains(point))
-                || super::app_contact_bar::occupied_contact_bar_rect(ctx)
+                || super::app_contact_bar::occupied_contact_bar_rect(ctx, self.scene_key)
                     .is_some_and(|rect| rect.contains(point))
-                || super::app_contact_bar::contact_details_rect(ctx)
+                || super::app_contact_bar::contact_details_rect(ctx, self.scene_key)
                     .is_some_and(|rect| rect.contains(point))
                 || ctx
                     .layer_id_at(point)
@@ -207,7 +204,8 @@ impl OccluViewApp {
     }
 }
 
-impl OccluViewApp {
+impl SceneContext<'_> {
+    #[allow(clippy::too_many_lines)]
     pub(super) fn show_cut_tool_overlay(
         &mut self,
         ui: &mut egui::Ui,
@@ -245,11 +243,18 @@ impl OccluViewApp {
             return false;
         };
 
-        let (frame, panel_zoom_notches) =
-            self.build_cut_frame_input(ctx, &camera, &scene, viewport_rect);
-        let eye = frame.eye;
-        let hover_pos = frame.pointer;
-        let update = self.tools.cut_view.update(&frame, eye);
+        let (update, hover_pos, panel_zoom_notches) = if self.input_allowed
+            && !self.ui.modal_dialog_open()
+        {
+            let (frame, wheel) = self.build_cut_frame_input(ctx, &camera, &scene, viewport_rect);
+            (
+                self.tools.cut_view.update(&frame, frame.eye),
+                frame.pointer,
+                wheel,
+            )
+        } else {
+            (crate::cut_manipulator::CutUpdate::default(), None, 0.0)
+        };
         let orientation_changed = self
             .tools
             .cut_view
@@ -353,7 +358,7 @@ impl OccluViewApp {
                         thickness_mm: probe.thickness_mm,
                     },
                 });
-                self.ui.status_message = Some(
+                self.scene_ui.status_message = Some(
                     self.ui.locale.tr_with(
                         crate::i18n::message_id!("measure-thickness"),
                         &[(
@@ -503,11 +508,13 @@ mod viewport_ownership_tests {
 
     use super::*;
     use crate::app::app_test_support::{named_scene, push_named_layer, test_app};
+    use crate::app::OccluViewApp;
+    use crate::layers_overlay;
 
     #[test]
     fn raw_press_ownership_uses_event_position_instead_of_final_hover() {
         let mut app = test_app("viewport-press-owner");
-        app.document.scene = Some(Arc::new(named_scene("scan", 0.0)));
+        app.workspace.scenes[0].document.scene = Some(Arc::new(named_scene("scan", 0.0)));
         let ctx = egui::Context::default();
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1024.0, 768.0));
         ctx.run_ui(
@@ -519,13 +526,22 @@ mod viewport_ownership_tests {
             |ui| {
                 let response = ui.allocate_response(ui.available_size(), egui::Sense::drag());
                 let layers = layers_overlay::layer_overlay_rect(response.rect, 1);
-                assert!(!app.viewport_press_owned(&ctx, &response, layers.center()));
-                assert!(app.viewport_press_owned(&ctx, &response, response.rect.center()));
-                assert!(!app.viewport_press_owned(
-                    &ctx,
-                    &response,
-                    response.rect.right_bottom() + egui::vec2(10.0, 10.0)
-                ));
+                assert!(!app
+                    .active_context()
+                    .expect("live test scene")
+                    .viewport_press_owned(&ctx, &response, layers.center()));
+                assert!(app
+                    .active_context()
+                    .expect("live test scene")
+                    .viewport_press_owned(&ctx, &response, response.rect.center()));
+                assert!(!app
+                    .active_context()
+                    .expect("live test scene")
+                    .viewport_press_owned(
+                        &ctx,
+                        &response,
+                        response.rect.right_bottom() + egui::vec2(10.0, 10.0)
+                    ));
             },
         )
         .drop_without_applying_deltas();
@@ -537,36 +553,66 @@ mod viewport_ownership_tests {
         let mut scene = named_scene("subject", 0.0);
         let subject = scene.meshes()[0].id();
         let antagonist = push_named_layer(&mut scene, "antagonist", 2.0);
-        app.document.scene = Some(Arc::new(scene));
-        app.tools.contacts.open(crate::contact::ContactPair {
-            subject,
-            antagonist,
-        });
-        app.tools.contacts.toggle_details();
+        app.workspace.scenes[0].document.scene = Some(Arc::new(scene));
+        app.workspace.scenes[0]
+            .tools
+            .contacts
+            .open(crate::contact::ContactPair {
+                subject,
+                antagonist,
+            });
+        app.workspace.scenes[0].tools.contacts.toggle_details();
         let ctx = egui::Context::default();
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1024.0, 768.0));
         let mut details_point = None;
         for closing_frame in [true, false] {
             ctx.run_ui(
-                egui::RawInput { screen_rect: Some(screen), ..Default::default() },
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
                 |ui| {
                     let response = ui.allocate_response(ui.available_size(), egui::Sense::drag());
-                    let _ = app.show_contact_bar(ui, response.rect, &ctx);
+                    let _ = app
+                        .active_context()
+                        .expect("live test scene")
+                        .show_contact_bar(ui, response.rect, &ctx);
                     if closing_frame {
-                        let bar = super::super::app_contact_bar::occupied_contact_bar_rect(&ctx)
-                            .expect("bar drawn");
-                        let details = super::super::app_contact_bar::contact_details_rect(&ctx)
-                            .expect("details drawn");
+                        let bar = super::super::app_contact_bar::occupied_contact_bar_rect(
+                            &ctx,
+                            super::super::workspace::id::SceneKey::INITIAL,
+                        )
+                        .expect("bar drawn");
+                        let details = super::super::app_contact_bar::contact_details_rect(
+                            &ctx,
+                            super::super::workspace::id::SceneKey::INITIAL,
+                        )
+                        .expect("details drawn");
                         assert!(details.height() > 0.0);
                         details_point = Some(details.center());
-                        app.tools.contacts.close();
-                        assert!(!app.viewport_press_owned(&ctx, &response, bar.center()));
-                        assert!(!app.viewport_press_owned(&ctx, &response, details.center()));
+                        app.workspace.scenes[0].tools.contacts.close();
+                        assert!(!app
+                            .active_context()
+                            .expect("live test scene")
+                            .viewport_press_owned(&ctx, &response, bar.center()));
+                        assert!(!app
+                            .active_context()
+                            .expect("live test scene")
+                            .viewport_press_owned(&ctx, &response, details.center()));
                     } else {
-                        assert!(super::super::app_contact_bar::contact_details_rect(&ctx).is_none());
-                        assert!(app.viewport_press_owned(
-                            &ctx, &response, details_point.expect("previous panel position")
-                        ));
+                        assert!(super::super::app_contact_bar::contact_details_rect(
+                            &ctx,
+                            super::super::workspace::id::SceneKey::INITIAL
+                        )
+                        .is_none());
+                        assert!(app
+                            .active_context()
+                            .expect("live test scene")
+                            .viewport_press_owned(
+                                &ctx,
+                                &response,
+                                details_point.expect("previous panel position")
+                            ));
                     }
                 },
             )
@@ -613,10 +659,13 @@ mod viewport_ownership_tests {
         let base = Arc::clone(&entry.mesh);
         let session = BrushSession::prepare(&mesh_edit_buffers_from_mesh(&base)).expect("prepare");
         let mut app = test_app("sculpt-overlay-gap-replay");
-        assert!(app.document.edit_mode.begin_face_selection(entry, &scene));
-        app.document.scene = Some(Arc::clone(&scene));
-        app.tools.sculpt.armed = Some(SculptToolKind::AddRemove);
-        app.render.camera = Some(occluview_core::Camera {
+        assert!(app.workspace.scenes[0]
+            .document
+            .edit_mode
+            .begin_face_selection(entry, &scene));
+        app.workspace.scenes[0].document.scene = Some(Arc::clone(&scene));
+        app.workspace.scenes[0].tools.sculpt.armed = Some(SculptToolKind::AddRemove);
+        app.workspace.scenes[0].render.camera = Some(occluview_core::Camera {
             target: Vec3::ZERO,
             distance: 100.0,
             orientation: Some(Quat::IDENTITY),
@@ -625,7 +674,7 @@ mod viewport_ownership_tests {
             far: 200.0,
             ..Default::default()
         });
-        app.tools.sculpt.worker = Some(SculptWorker::spawn(SculptSession {
+        app.workspace.scenes[0].tools.sculpt.worker = Some(SculptWorker::spawn(SculptSession {
             layer_id,
             topology_id: base.topology_id(),
             session,
@@ -647,15 +696,19 @@ mod viewport_ownership_tests {
 
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
-            app.poll_sculpt_worker(ctx);
-            if app
+            app.active_context()
+                .expect("live test scene")
+                .poll_sculpt_worker(ctx);
+            if app.workspace.scenes[0]
                 .tools
                 .sculpt
                 .worker
                 .as_ref()
                 .is_some_and(SculptWorker::is_quiescent)
             {
-                app.poll_sculpt_worker(ctx);
+                app.active_context()
+                    .expect("live test scene")
+                    .poll_sculpt_worker(ctx);
                 break;
             }
             assert!(Instant::now() < deadline, "worker finishes the ray path");
@@ -678,7 +731,12 @@ mod viewport_ownership_tests {
 
         let (mut app, base) = flat_sculpt_fixture();
         let ctx = egui::Context::default();
-        crate::mesh_editor_overlay::set_sculpt_radius_mm(&ctx, SculptTip::Ball, 0.5);
+        crate::mesh_editor_overlay::set_sculpt_radius_mm(
+            &ctx,
+            super::super::workspace::id::SceneKey::INITIAL,
+            SculptTip::Ball,
+            0.5,
+        );
         let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0));
         let left = egui::pos2(700.0, 500.0);
         let hidden = egui::pos2(800.0, 500.0);
@@ -719,15 +777,29 @@ mod viewport_ownership_tests {
                 |ui| {
                     let response = ui.allocate_rect(viewport, egui::Sense::click_and_drag());
                     show_occluding_panel(&ctx);
-                    assert!(!app.viewport_press_owned(&ctx, &response, hidden));
-                    let _ = app.handle_sculpt_drag(&ctx, &response, false);
+                    assert!(!app
+                        .active_context()
+                        .expect("live test scene")
+                        .viewport_press_owned(&ctx, &response, hidden));
+                    let _ = app
+                        .active_context()
+                        .expect("live test scene")
+                        .handle_sculpt_drag(&ctx, &response, false);
                 },
             )
             .drop_without_applying_deltas();
             drain_sculpt_worker(&mut app, &ctx);
         }
-        assert!(app.tools.sculpt.stroke.is_none());
-        let committed = Arc::clone(&app.document.scene.as_ref().expect("scene").meshes()[0].mesh);
+        assert!(app.workspace.scenes[0].tools.sculpt.stroke.is_none());
+        let committed = Arc::clone(
+            &app.workspace.scenes[0]
+                .document
+                .scene
+                .as_ref()
+                .expect("scene")
+                .meshes()[0]
+                .mesh,
+        );
         assert!(committed
             .vertices()
             .iter()
@@ -744,12 +816,28 @@ mod viewport_ownership_tests {
                 .all(|vertex| vertex.position[2].abs() < 1.0e-6),
             "re-entry starts a new path instead of carving across the panel"
         );
-        app.apply_history_navigation_now(false, &ctx);
-        let undone = &app.document.scene.as_ref().expect("undo scene").meshes()[0].mesh;
+        app.active_context()
+            .expect("live test scene")
+            .apply_history_navigation_now(false, &ctx);
+        let undone = &app.workspace.scenes[0]
+            .document
+            .scene
+            .as_ref()
+            .expect("undo scene")
+            .meshes()[0]
+            .mesh;
         assert_eq!(undone.vertices(), base.vertices());
         assert_eq!(undone.indices(), base.indices());
-        app.apply_history_navigation_now(true, &ctx);
-        let redone = &app.document.scene.as_ref().expect("redo scene").meshes()[0].mesh;
+        app.active_context()
+            .expect("live test scene")
+            .apply_history_navigation_now(true, &ctx);
+        let redone = &app.workspace.scenes[0]
+            .document
+            .scene
+            .as_ref()
+            .expect("redo scene")
+            .meshes()[0]
+            .mesh;
         assert_eq!(redone.vertices(), committed.vertices());
         assert_eq!(redone.indices(), committed.indices());
     }

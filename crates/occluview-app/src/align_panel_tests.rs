@@ -79,6 +79,7 @@ fn panel_controls(
         let _ = super::show(
             &ctx,
             viewport,
+            egui::Id::new("align-panel-test-scene"),
             super::AlignPanelView {
                 tool: &tool,
                 layer_count: 2,

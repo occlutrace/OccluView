@@ -3,11 +3,11 @@
 use eframe::egui;
 use occluview_core::SceneMeshId;
 
-use super::OccluViewApp;
+use super::SceneContext;
 use crate::edit_mode::EditModeCommand;
 use glam::Affine3A;
 
-impl OccluViewApp {
+impl SceneContext<'_> {
     /// Close the tool and put every scan back where the session found it.
     pub(super) fn cancel_align_session(&mut self, ctx: &egui::Context) {
         // Cancel throws the open gesture away; restore_session_poses records
@@ -15,7 +15,7 @@ impl OccluViewApp {
         self.discard_align_drag();
         let restored = self.restore_session_poses();
         self.disarm_align_tool(ctx);
-        self.ui.status_message = Some(if restored {
+        self.scene_ui.status_message = Some(if restored {
             self.ui
                 .locale
                 .tr(crate::i18n::message_id!("align-session-canceled"))
@@ -38,7 +38,7 @@ impl OccluViewApp {
             .as_ref()
             .is_some_and(crate::align_worker::AlignWorker::is_busy);
         self.disarm_align_tool(ctx);
-        self.ui.status_message = Some(match (running, moved) {
+        self.scene_ui.status_message = Some(match (running, moved) {
             (true, _) => self
                 .ui
                 .locale

@@ -113,12 +113,13 @@ pub(crate) struct AlignPanelView<'a> {
 pub(crate) fn show(
     ctx: &egui::Context,
     viewport_rect: egui::Rect,
+    scope: egui::Id,
     view: AlignPanelView<'_>,
     locale: &crate::i18n::LocaleManager,
 ) -> Option<AlignPanelAction> {
     let default_pos = panel_default_pos(viewport_rect, view.layer_count);
     let mut action = None;
-    let id = egui::Id::new("occluview_align_window");
+    let id = scope.with("occluview_align_window");
     let previous_rect = ctx.memory(|memory| memory.area_rect(id));
     let mut window = egui::Window::new(locale.text(crate::i18n::message_id!("align-panel-title")))
         .id(id)

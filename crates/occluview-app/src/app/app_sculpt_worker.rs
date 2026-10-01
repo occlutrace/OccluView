@@ -1,6 +1,6 @@
 //! UI-side bridge to the persistent sculpt worker.
 
-use super::{egui, AppErrorAction, AppErrorDialog, EditModeCommand, OccluViewApp};
+use super::{egui, AppErrorAction, AppErrorDialog, EditModeCommand, SceneContext};
 use crate::sculpt_worker::{SculptCompletion, SculptFailure, SculptUpdate};
 use occluview_core::{Mesh, SceneMeshId};
 use std::sync::Arc;
@@ -54,7 +54,7 @@ fn describe_sculpt_failure(locale: &crate::i18n::LocaleManager, failure: &Sculpt
     }
 }
 
-impl OccluViewApp {
+impl SceneContext<'_> {
     pub(super) fn complete_pending_mesh_edit_session(&mut self, ctx: &egui::Context) {
         if !self.tools.sculpt.finish_requested || self.tools.sculpt.worker_has_pending_work() {
             return;
@@ -210,7 +210,7 @@ impl OccluViewApp {
     /// Surface a terminal worker failure and revoke the sculpt session.
     pub(super) fn fail_sculpt_session(&mut self, failure: &SculptFailure, ctx: &egui::Context) {
         let dialog = sculpt_failure_dialog(&self.ui.locale, failure);
-        self.ui.status_message = Some(dialog.summary.clone());
+        self.scene_ui.status_message = Some(dialog.summary.clone());
         self.ui.app_error = Some(dialog);
         self.tools.sculpt.disarm();
         self.invalidate_sculpt_session_silent();
@@ -353,7 +353,7 @@ impl OccluViewApp {
             return true;
         };
         let Some(worker) = self.tools.sculpt.worker.as_ref() else {
-            self.ui.status_message = Some(
+            self.scene_ui.status_message = Some(
                 self.ui
                     .locale
                     .tr(crate::i18n::message_id!("sculpt-worker-unavailable")),
@@ -368,7 +368,7 @@ impl OccluViewApp {
             // Preserve the drag and retry after queue pressure clears.
             self.tools.sculpt.stroke = Some(stroke);
             self.tools.sculpt.finish_retry = true;
-            self.ui.status_message = Some(
+            self.scene_ui.status_message = Some(
                 self.ui
                     .locale
                     .tr(crate::i18n::message_id!("sculpt-worker-unavailable")),
@@ -409,7 +409,7 @@ impl OccluViewApp {
             before,
             EditModeCommand::Sculpt,
         ) else {
-            self.ui.status_message = Some(
+            self.scene_ui.status_message = Some(
                 self.ui
                     .locale
                     .tr(crate::i18n::message_id!("repair-edit-busy")),
@@ -438,7 +438,7 @@ impl OccluViewApp {
             let _ = self.document.edit_mode.finish_layer_edit_success(token);
             self.document.mark_mesh_edits_unsaved(layer_id);
             // Report whether the pre-edit snapshot was retained.
-            self.ui.status_message = Some(if self.document.edit_mode.last_edit_undoable() {
+            self.scene_ui.status_message = Some(if self.document.edit_mode.last_edit_undoable() {
                 self.ui
                     .locale
                     .tr(crate::i18n::message_id!("sculpt-applied-undo"))

@@ -45,8 +45,18 @@ fn line_wheel_input(modifiers: egui::Modifiers, delta: egui::Vec2) -> egui::RawI
 #[test]
 fn sculpt_wheel_uses_ratio_detents_and_ctrl_wins_over_shift() {
     let ctx = egui::Context::default();
-    mesh_editor_overlay::set_sculpt_radius_mm(&ctx, SculptTip::Ball, 0.75);
-    mesh_editor_overlay::set_sculpt_strength(&ctx, SculptToolKind::AddRemove, 0.35);
+    mesh_editor_overlay::set_sculpt_radius_mm(
+        &ctx,
+        crate::app::workspace::id::SceneKey::INITIAL,
+        SculptTip::Ball,
+        0.75,
+    );
+    mesh_editor_overlay::set_sculpt_strength(
+        &ctx,
+        crate::app::workspace::id::SceneKey::INITIAL,
+        SculptToolKind::AddRemove,
+        0.35,
+    );
     let ctrl_shift = egui::Modifiers {
         ctrl: true,
         command: false,
@@ -58,18 +68,27 @@ fn sculpt_wheel_uses_ratio_detents_and_ctrl_wins_over_shift() {
     ctx.run_ui(wheel_input(ctrl_shift, egui::vec2(0.0, 50.0)), |ui| {
         changed = super::app_sculpt::apply_sculpt_wheel_settings(
             ui.ctx(),
+            crate::app::workspace::id::SceneKey::INITIAL,
             Some(SculptToolKind::AddRemove),
         );
     })
     .drop_without_applying_deltas();
     assert!(changed);
     assert_eq!(
-        mesh_editor_overlay::sculpt_strength(&ctx, SculptToolKind::AddRemove),
+        mesh_editor_overlay::sculpt_strength(
+            &ctx,
+            crate::app::workspace::id::SceneKey::INITIAL,
+            SculptToolKind::AddRemove
+        ),
         0.45,
         "Ctrl+wheel multiplies by 1.3 and snaps to the 0.05 catalog step"
     );
     assert_eq!(
-        mesh_editor_overlay::sculpt_radius_mm(&ctx, SculptTip::Ball),
+        mesh_editor_overlay::sculpt_radius_mm(
+            &ctx,
+            crate::app::workspace::id::SceneKey::INITIAL,
+            SculptTip::Ball
+        ),
         0.75,
         "Ctrl wins when Ctrl and Shift are both held"
     );
@@ -81,17 +100,26 @@ fn sculpt_wheel_uses_ratio_detents_and_ctrl_wins_over_shift() {
     ctx.run_ui(wheel_input(shift, egui::vec2(0.0, 50.0)), |ui| {
         changed = super::app_sculpt::apply_sculpt_wheel_settings(
             ui.ctx(),
+            crate::app::workspace::id::SceneKey::INITIAL,
             Some(SculptToolKind::AddRemove),
         );
     })
     .drop_without_applying_deltas();
     assert!(changed);
     assert_eq!(
-        mesh_editor_overlay::sculpt_radius_mm(&ctx, SculptTip::Ball),
+        mesh_editor_overlay::sculpt_radius_mm(
+            &ctx,
+            crate::app::workspace::id::SceneKey::INITIAL,
+            SculptTip::Ball
+        ),
         0.9
     );
     assert_eq!(
-        mesh_editor_overlay::sculpt_strength(&ctx, SculptToolKind::AddRemove),
+        mesh_editor_overlay::sculpt_strength(
+            &ctx,
+            crate::app::workspace::id::SceneKey::INITIAL,
+            SculptToolKind::AddRemove
+        ),
         0.45
     );
 
@@ -106,6 +134,7 @@ fn sculpt_wheel_uses_ratio_detents_and_ctrl_wins_over_shift() {
         |ui| {
             changed = super::app_sculpt::apply_sculpt_wheel_settings(
                 ui.ctx(),
+                crate::app::workspace::id::SceneKey::INITIAL,
                 Some(SculptToolKind::AddRemove),
             );
         },
@@ -118,36 +147,74 @@ fn sculpt_wheel_uses_ratio_detents_and_ctrl_wins_over_shift() {
 fn switching_sculpt_tips_preserves_the_normalized_radius_share() {
     let ctx = egui::Context::default();
     assert_eq!(
-        mesh_editor_overlay::sculpt_radius_mm(&ctx, SculptTip::Ball),
+        mesh_editor_overlay::sculpt_radius_mm(
+            &ctx,
+            crate::app::workspace::id::SceneKey::INITIAL,
+            SculptTip::Ball
+        ),
         0.75
     );
     assert_eq!(
-        mesh_editor_overlay::sculpt_radius_mm(&ctx, SculptTip::Knife),
+        mesh_editor_overlay::sculpt_radius_mm(
+            &ctx,
+            crate::app::workspace::id::SceneKey::INITIAL,
+            SculptTip::Knife
+        ),
         0.55,
         "the initial Ball radius's normalized share transfers to Knife"
     );
     assert_eq!(
-        mesh_editor_overlay::sculpt_radius_mm(&ctx, SculptTip::Cylinder),
+        mesh_editor_overlay::sculpt_radius_mm(
+            &ctx,
+            crate::app::workspace::id::SceneKey::INITIAL,
+            SculptTip::Cylinder
+        ),
         0.5
     );
 
-    mesh_editor_overlay::set_sculpt_radius_mm(&ctx, SculptTip::Ball, 1.25);
+    mesh_editor_overlay::set_sculpt_radius_mm(
+        &ctx,
+        crate::app::workspace::id::SceneKey::INITIAL,
+        SculptTip::Ball,
+        1.25,
+    );
     assert_eq!(
-        mesh_editor_overlay::sculpt_radius_mm(&ctx, SculptTip::Knife),
+        mesh_editor_overlay::sculpt_radius_mm(
+            &ctx,
+            crate::app::workspace::id::SceneKey::INITIAL,
+            SculptTip::Knife
+        ),
         0.85
     );
     assert_eq!(
-        mesh_editor_overlay::sculpt_radius_mm(&ctx, SculptTip::Cylinder),
+        mesh_editor_overlay::sculpt_radius_mm(
+            &ctx,
+            crate::app::workspace::id::SceneKey::INITIAL,
+            SculptTip::Cylinder
+        ),
         0.7
     );
 
-    mesh_editor_overlay::set_sculpt_radius_mm(&ctx, SculptTip::Knife, 1.0);
+    mesh_editor_overlay::set_sculpt_radius_mm(
+        &ctx,
+        crate::app::workspace::id::SceneKey::INITIAL,
+        SculptTip::Knife,
+        1.0,
+    );
     assert_eq!(
-        mesh_editor_overlay::sculpt_radius_mm(&ctx, SculptTip::Ball),
+        mesh_editor_overlay::sculpt_radius_mm(
+            &ctx,
+            crate::app::workspace::id::SceneKey::INITIAL,
+            SculptTip::Ball
+        ),
         1.5
     );
     assert_eq!(
-        mesh_editor_overlay::sculpt_radius_mm(&ctx, SculptTip::Cylinder),
+        mesh_editor_overlay::sculpt_radius_mm(
+            &ctx,
+            crate::app::workspace::id::SceneKey::INITIAL,
+            SculptTip::Cylinder
+        ),
         0.85
     );
 }
@@ -159,32 +226,47 @@ fn precision_wheel_accumulates_pixels_and_line_events_each_make_a_notch() {
         ctrl: true,
         ..Default::default()
     };
-    mesh_editor_overlay::set_sculpt_strength(&ctx, SculptToolKind::AddRemove, 0.35);
+    mesh_editor_overlay::set_sculpt_strength(
+        &ctx,
+        crate::app::workspace::id::SceneKey::INITIAL,
+        SculptToolKind::AddRemove,
+        0.35,
+    );
 
     let mut consumed = false;
     ctx.run_ui(wheel_input(ctrl, egui::vec2(0.0, 20.0)), |ui| {
         consumed = super::app_sculpt::apply_sculpt_wheel_settings(
             ui.ctx(),
+            crate::app::workspace::id::SceneKey::INITIAL,
             Some(SculptToolKind::AddRemove),
         );
     })
     .drop_without_applying_deltas();
     assert!(consumed, "the modified wheel remains owned below one notch");
     assert_eq!(
-        mesh_editor_overlay::sculpt_strength(&ctx, SculptToolKind::AddRemove),
+        mesh_editor_overlay::sculpt_strength(
+            &ctx,
+            crate::app::workspace::id::SceneKey::INITIAL,
+            SculptToolKind::AddRemove
+        ),
         0.35
     );
 
     ctx.run_ui(wheel_input(ctrl, egui::vec2(0.0, 20.0)), |ui| {
         consumed = super::app_sculpt::apply_sculpt_wheel_settings(
             ui.ctx(),
+            crate::app::workspace::id::SceneKey::INITIAL,
             Some(SculptToolKind::AddRemove),
         );
     })
     .drop_without_applying_deltas();
     assert!(consumed);
     assert_eq!(
-        mesh_editor_overlay::sculpt_strength(&ctx, SculptToolKind::AddRemove),
+        mesh_editor_overlay::sculpt_strength(
+            &ctx,
+            crate::app::workspace::id::SceneKey::INITIAL,
+            SculptToolKind::AddRemove
+        ),
         0.45,
         "40 px of continuous precision scrolling is one donor notch"
     );
@@ -213,13 +295,18 @@ fn precision_wheel_accumulates_pixels_and_line_events_each_make_a_notch() {
     ctx.run_ui(line_wheel, |ui| {
         consumed = super::app_sculpt::apply_sculpt_wheel_settings(
             ui.ctx(),
+            crate::app::workspace::id::SceneKey::INITIAL,
             Some(SculptToolKind::AddRemove),
         );
     })
     .drop_without_applying_deltas();
     assert!(consumed);
     assert_eq!(
-        mesh_editor_overlay::sculpt_strength(&ctx, SculptToolKind::AddRemove),
+        mesh_editor_overlay::sculpt_strength(
+            &ctx,
+            crate::app::workspace::id::SceneKey::INITIAL,
+            SculptToolKind::AddRemove
+        ),
         0.8,
         "each line-unit event is one notch, including multiple events in one frame"
     );
@@ -232,12 +319,18 @@ fn modified_wheel_is_owned_and_applied_once_across_discard_passes() {
         ctrl: true,
         ..Default::default()
     };
-    mesh_editor_overlay::set_sculpt_strength(&ctx, SculptToolKind::AddRemove, 0.35);
+    mesh_editor_overlay::set_sculpt_strength(
+        &ctx,
+        crate::app::workspace::id::SceneKey::INITIAL,
+        SculptToolKind::AddRemove,
+        0.35,
+    );
 
     let mut pass_ownership = Vec::new();
     let output = ctx.run_ui(line_wheel_input(ctrl, egui::vec2(0.0, 1.0)), |ui| {
         pass_ownership.push(super::app_sculpt::apply_sculpt_wheel_settings(
             ui.ctx(),
+            crate::app::workspace::id::SceneKey::INITIAL,
             Some(SculptToolKind::AddRemove),
         ));
         if ui.ctx().current_pass_index() == 0 {
@@ -248,18 +341,28 @@ fn modified_wheel_is_owned_and_applied_once_across_discard_passes() {
     assert_eq!(output.platform_output.num_completed_passes, 2);
     assert_eq!(pass_ownership, [true, true]);
     assert_eq!(
-        mesh_editor_overlay::sculpt_strength(&ctx, SculptToolKind::AddRemove),
+        mesh_editor_overlay::sculpt_strength(
+            &ctx,
+            crate::app::workspace::id::SceneKey::INITIAL,
+            SculptToolKind::AddRemove
+        ),
         0.45,
         "one line event applies one detent even when egui repeats the UI pass"
     );
     output.drop_without_applying_deltas();
 
     let point_ctx = egui::Context::default();
-    mesh_editor_overlay::set_sculpt_strength(&point_ctx, SculptToolKind::AddRemove, 0.35);
+    mesh_editor_overlay::set_sculpt_strength(
+        &point_ctx,
+        crate::app::workspace::id::SceneKey::INITIAL,
+        SculptToolKind::AddRemove,
+        0.35,
+    );
     let mut point_ownership = Vec::new();
     let output = point_ctx.run_ui(wheel_input(ctrl, egui::vec2(0.0, 20.0)), |ui| {
         point_ownership.push(super::app_sculpt::apply_sculpt_wheel_settings(
             ui.ctx(),
+            crate::app::workspace::id::SceneKey::INITIAL,
             Some(SculptToolKind::AddRemove),
         ));
         if ui.ctx().current_pass_index() == 0 {
@@ -270,7 +373,11 @@ fn modified_wheel_is_owned_and_applied_once_across_discard_passes() {
     assert_eq!(output.platform_output.num_completed_passes, 2);
     assert_eq!(point_ownership, [true, true]);
     assert_eq!(
-        mesh_editor_overlay::sculpt_strength(&point_ctx, SculptToolKind::AddRemove),
+        mesh_editor_overlay::sculpt_strength(
+            &point_ctx,
+            crate::app::workspace::id::SceneKey::INITIAL,
+            SculptToolKind::AddRemove
+        ),
         0.35,
         "20 points count once in the frame, not twice toward the 40 point notch"
     );
@@ -280,12 +387,17 @@ fn modified_wheel_is_owned_and_applied_once_across_discard_passes() {
         .run_ui(wheel_input(ctrl, egui::vec2(0.0, 20.0)), |ui| {
             let _ = super::app_sculpt::apply_sculpt_wheel_settings(
                 ui.ctx(),
+                crate::app::workspace::id::SceneKey::INITIAL,
                 Some(SculptToolKind::AddRemove),
             );
         })
         .drop_without_applying_deltas();
     assert_eq!(
-        mesh_editor_overlay::sculpt_strength(&point_ctx, SculptToolKind::AddRemove),
+        mesh_editor_overlay::sculpt_strength(
+            &point_ctx,
+            crate::app::workspace::id::SceneKey::INITIAL,
+            SculptToolKind::AddRemove
+        ),
         0.45,
         "20 points from a later frame combine with the retained 20 point remainder"
     );
@@ -298,7 +410,12 @@ fn busy_modified_wheel_remains_owned_if_finish_drains_before_next_pass() {
         ctrl: true,
         ..Default::default()
     };
-    mesh_editor_overlay::set_sculpt_strength(&ctx, SculptToolKind::AddRemove, 0.35);
+    mesh_editor_overlay::set_sculpt_strength(
+        &ctx,
+        crate::app::workspace::id::SceneKey::INITIAL,
+        SculptToolKind::AddRemove,
+        0.35,
+    );
 
     let mut pass_ownership = Vec::new();
     let output = ctx.run_ui(line_wheel_input(ctrl, egui::vec2(0.0, 1.0)), |ui| {
@@ -306,6 +423,7 @@ fn busy_modified_wheel_remains_owned_if_finish_drains_before_next_pass() {
             // This is the released-but-busy Finish branch in the viewport.
             pass_ownership.push(super::app_sculpt_stroke::has_sculpt_settings_wheel(
                 ui.ctx(),
+                crate::app::workspace::id::SceneKey::INITIAL,
             ));
             ui.ctx()
                 .request_discard("exercise Finish draining during wheel multipass");
@@ -314,6 +432,7 @@ fn busy_modified_wheel_remains_owned_if_finish_drains_before_next_pass() {
             // stays owned and must not suddenly edit the brush.
             pass_ownership.push(super::app_sculpt::apply_sculpt_wheel_settings(
                 ui.ctx(),
+                crate::app::workspace::id::SceneKey::INITIAL,
                 Some(SculptToolKind::AddRemove),
             ));
         }
@@ -321,7 +440,11 @@ fn busy_modified_wheel_remains_owned_if_finish_drains_before_next_pass() {
     assert_eq!(output.platform_output.num_completed_passes, 2);
     assert_eq!(pass_ownership, [true, true]);
     assert_eq!(
-        mesh_editor_overlay::sculpt_strength(&ctx, SculptToolKind::AddRemove),
+        mesh_editor_overlay::sculpt_strength(
+            &ctx,
+            crate::app::workspace::id::SceneKey::INITIAL,
+            SculptToolKind::AddRemove
+        ),
         0.35,
         "a wheel event consumed while Finish is busy does not apply if idle on replay"
     );
@@ -330,12 +453,17 @@ fn busy_modified_wheel_remains_owned_if_finish_drains_before_next_pass() {
     ctx.run_ui(line_wheel_input(ctrl, egui::vec2(0.0, 1.0)), |ui| {
         let _ = super::app_sculpt::apply_sculpt_wheel_settings(
             ui.ctx(),
+            crate::app::workspace::id::SceneKey::INITIAL,
             Some(SculptToolKind::AddRemove),
         );
     })
     .drop_without_applying_deltas();
     assert_eq!(
-        mesh_editor_overlay::sculpt_strength(&ctx, SculptToolKind::AddRemove),
+        mesh_editor_overlay::sculpt_strength(
+            &ctx,
+            crate::app::workspace::id::SceneKey::INITIAL,
+            SculptToolKind::AddRemove
+        ),
         0.45,
         "the next frame remains available for one real detent"
     );

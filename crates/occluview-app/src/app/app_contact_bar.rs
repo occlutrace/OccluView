@@ -3,7 +3,7 @@
 use eframe::egui;
 use occluview_contact::{ContactScale, ContactStats, LOAD_MAX_MM, LOAD_MIN_MM};
 
-use super::OccluViewApp;
+use super::SceneContext;
 use crate::app_settings::UnitDisplay;
 use crate::contact::{ContactMode, ContactStatus};
 use crate::icons::AppIcon;
@@ -61,7 +61,7 @@ struct ContactBarRequest {
     open_details: bool,
 }
 
-impl OccluViewApp {
+impl SceneContext<'_> {
     /// The contact bar. Returns whether it took the pointer.
     pub(super) fn show_contact_bar(
         &mut self,
@@ -70,8 +70,11 @@ impl OccluViewApp {
         ctx: &egui::Context,
     ) -> bool {
         ctx.data_mut(|data| {
-            data.remove::<egui::Rect>(egui::Id::new("contact_bar_occupied_rect"));
-            data.remove::<egui::Rect>(egui::Id::new("contact_details_occupied_rect"));
+            data.remove::<egui::Rect>(egui::Id::new(("contact_bar_occupied_rect", self.scene_key)));
+            data.remove::<egui::Rect>(egui::Id::new((
+                "contact_details_occupied_rect",
+                self.scene_key,
+            )));
         });
         if !self.tools.contacts.is_open() {
             return false;
@@ -90,12 +93,7 @@ impl OccluViewApp {
         let details_open = self.tools.contacts.details_open();
 
         let locale = &self.ui.locale;
-        let layer_count = self
-            .document
-            .scene
-            .as_ref()
-            .map_or(0, |scene| scene.meshes().len());
-        let rect = contact_bar_rect(viewport_rect, layer_count);
+        let rect = self.scene_contact_bar_rect(ctx, viewport_rect);
         let response = ui
             .scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
                 // Account for frame padding when laying out the strip.
@@ -126,7 +124,10 @@ impl OccluViewApp {
             .response;
 
         ctx.data_mut(|data| {
-            data.insert_temp(egui::Id::new("contact_bar_occupied_rect"), response.rect);
+            data.insert_temp(
+                egui::Id::new(("contact_bar_occupied_rect", self.scene_key)),
+                response.rect,
+            );
         });
 
         self.apply_contact_bar_request(ctx, request, load_mm, flatten);
@@ -145,6 +146,18 @@ impl OccluViewApp {
             );
         }
         hovered
+    }
+
+    pub(super) fn scene_contact_bar_rect(
+        &self,
+        ctx: &egui::Context,
+        viewport_rect: egui::Rect,
+    ) -> egui::Rect {
+        let layers = self.layers_panel_rect(ctx, viewport_rect);
+        contact_bar_rect_avoiding_layers(
+            viewport_rect,
+            layers.intersects(viewport_rect).then_some(layers),
+        )
     }
 
     fn apply_contact_bar_request(
@@ -358,9 +371,17 @@ fn paint_strip(
 /// Keep the horizontal reading beside Layers when it fits, otherwise put it
 /// below. Both overlays use this same Layers geometry, so a wider layer list
 /// cannot slide under the contact controls on a large window.
+#[cfg(test)]
 pub(crate) fn contact_bar_rect(viewport_rect: egui::Rect, layer_count: usize) -> egui::Rect {
     let layers = (layer_count > 0)
         .then(|| crate::layers_overlay::layer_overlay_rect(viewport_rect, layer_count));
+    contact_bar_rect_avoiding_layers(viewport_rect, layers)
+}
+
+fn contact_bar_rect_avoiding_layers(
+    viewport_rect: egui::Rect,
+    layers: Option<egui::Rect>,
+) -> egui::Rect {
     let side_left = layers.map_or(viewport_rect.left() + BAR_EDGE_INSET, |rect| {
         rect.right() + BAR_LAYERS_GAP
     });
@@ -580,16 +601,22 @@ fn paint_legend(
 }
 
 /// The strip drawn in this frame, including a frame that closes it.
-pub(super) fn occupied_contact_bar_rect(ctx: &egui::Context) -> Option<egui::Rect> {
-    ctx.data(|data| data.get_temp(egui::Id::new("contact_bar_occupied_rect")))
+pub(super) fn occupied_contact_bar_rect(
+    ctx: &egui::Context,
+    scene_key: super::workspace::id::SceneKey,
+) -> Option<egui::Rect> {
+    ctx.data(|data| data.get_temp(egui::Id::new(("contact_bar_occupied_rect", scene_key))))
 }
 
 /// The actual extent of the details panel drawn in this frame.
-pub(super) fn contact_details_rect(ctx: &egui::Context) -> Option<egui::Rect> {
-    ctx.data(|data| data.get_temp(egui::Id::new("contact_details_occupied_rect")))
+pub(super) fn contact_details_rect(
+    ctx: &egui::Context,
+    scene_key: super::workspace::id::SceneKey,
+) -> Option<egui::Rect> {
+    ctx.data(|data| data.get_temp(egui::Id::new(("contact_details_occupied_rect", scene_key))))
 }
 
-impl OccluViewApp {
+impl SceneContext<'_> {
     fn show_contact_details(&mut self, ui: &mut egui::Ui, bar: egui::Rect, shown: DetailsContent) {
         let locale = &self.ui.locale;
         let width = 268.0;
@@ -672,7 +699,7 @@ impl OccluViewApp {
         // viewport's same-layer press ownership check.
         ui.ctx().data_mut(|data| {
             data.insert_temp(
-                egui::Id::new("contact_details_occupied_rect"),
+                egui::Id::new(("contact_details_occupied_rect", self.scene_key)),
                 details_response.response.rect,
             );
         });

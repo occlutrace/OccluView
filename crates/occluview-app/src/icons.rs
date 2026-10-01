@@ -39,6 +39,7 @@ pub(crate) enum AppIcon {
     Eye,
     EyeOff,
     FitView,
+    SplitView,
     // Measure toolbar
     Ruler,
     Thickness,
@@ -78,8 +79,8 @@ pub(crate) enum AppIcon {
 }
 
 impl AppIcon {
-    /// The SVG for this icon: vendored Lucide, except the two angle glyphs,
-    /// which are OccluView's own, drawn on Lucide's grid and stroke.
+    /// The SVG for this icon: vendored Lucide or an OccluView glyph, drawn on
+    /// the same grid and stroke, including the angle and split-view controls.
     fn svg(self) -> &'static [u8] {
         macro_rules! lucide {
             ($file:literal) => {
@@ -117,6 +118,7 @@ impl AppIcon {
             Self::Eye => lucide!("eye"),
             Self::EyeOff => lucide!("eye-off"),
             Self::FitView => lucide!("maximize-2"),
+            Self::SplitView => lucide!("split-view"),
             Self::Ruler => lucide!("ruler"),
             Self::Thickness => lucide!("proportions"),
             Self::Align => lucide!("combine"),
@@ -300,6 +302,7 @@ mod tests {
             AppIcon::Eye,
             AppIcon::EyeOff,
             AppIcon::FitView,
+            AppIcon::SplitView,
             AppIcon::Ruler,
             AppIcon::Thickness,
             AppIcon::Align,

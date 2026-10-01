@@ -4,7 +4,8 @@ pub(super) use super::app_sculpt_stroke::apply_sculpt_wheel_settings;
 use super::app_sculpt_stroke::{
     local_brush_ray_step, local_clip_plane, local_ray_hit_is_visible, LocalBrushRayInput,
 };
-use super::{egui, live_viewport, mesh_editor_overlay, OccluViewApp};
+use super::{egui, live_viewport, mesh_editor_overlay, SceneContext};
+use crate::app::workspace::id::SceneKey;
 use crate::sculpt_kernel::{BrushMode, BrushRayStep};
 // Test-only re-export: sibling test modules build dabs through `super::`.
 #[cfg(test)]
@@ -151,7 +152,7 @@ fn collect_sculpt_pointer_events(
     pointer_events
 }
 
-impl OccluViewApp {
+impl SceneContext<'_> {
     /// Arm/disarm a sculpt tool (toggling the armed one disarms).
     pub(super) fn toggle_sculpt_tool(&mut self, kind: SculptToolKind, ctx: &egui::Context) {
         // Finish a live stroke before switching brush modes. Other context
@@ -177,7 +178,7 @@ impl OccluViewApp {
             // The worker owns a queued Finish until the next poll.
             self.tools.sculpt.disarm();
         }
-        self.ui.status_message = Some(match self.tools.sculpt.armed {
+        self.scene_ui.status_message = Some(match self.tools.sculpt.armed {
             Some(SculptToolKind::AddRemove) if self.tools.sculpt.worker.is_some() => self
                 .ui
                 .locale
@@ -465,13 +466,13 @@ impl OccluViewApp {
                 || self.tools.sculpt.worker_has_pending_work();
             if !session_ready && !can_still_prepare {
                 self.tools.sculpt.pending_presses.clear();
-                self.ui.status_message =
+                self.scene_ui.status_message =
                     Some(self.ui.locale.tr(crate::i18n::message_id!("sculpt-failed")));
                 return;
             }
             self.tools.sculpt.pending_presses.push_front(pending);
             if self.tools.sculpt.worker.is_none() {
-                self.ui.status_message = Some(
+                self.scene_ui.status_message = Some(
                     self.ui
                         .locale
                         .tr(crate::i18n::message_id!("sculpt-preparing")),
@@ -807,7 +808,7 @@ impl OccluViewApp {
             return;
         };
         if !self.tools.sculpt.queue_pending_press(pending) {
-            self.ui.status_message = Some(
+            self.scene_ui.status_message = Some(
                 self.ui
                     .locale
                     .tr(crate::i18n::message_id!("sculpt-preparing")),
@@ -1046,7 +1047,7 @@ impl OccluViewApp {
 
     fn cancel_overflowed_sculpt_stroke(&mut self) {
         self.abort_sculpt_stroke();
-        self.ui.status_message = Some(
+        self.scene_ui.status_message = Some(
             self.ui
                 .locale
                 .tr(crate::i18n::message_id!("sculpt-input-overflow")),
@@ -1145,7 +1146,7 @@ impl OccluViewApp {
         let camera = *self.render.camera.as_ref()?;
         let scene = self.document.scene.as_ref()?;
         let clip_plane = self.active_viewport_clip_plane(scene.bbox());
-        let tip = mesh_editor_overlay::sculpt_tip(ctx);
+        let tip = mesh_editor_overlay::sculpt_tip(ctx, self.scene_key);
         local_brush_ray_step(LocalBrushRayInput {
             camera: &camera,
             viewport_rect: sample.viewport_rect,
@@ -1157,8 +1158,8 @@ impl OccluViewApp {
             tip,
             shift: sample.shift,
             command: sample.command,
-            radius_world_mm: mesh_editor_overlay::sculpt_radius_mm(ctx, tip),
-            strength: mesh_editor_overlay::sculpt_strength(ctx, sample.kind),
+            radius_world_mm: mesh_editor_overlay::sculpt_radius_mm(ctx, self.scene_key, tip),
+            strength: mesh_editor_overlay::sculpt_strength(ctx, self.scene_key, sample.kind),
             hold: sample.hold,
         })
     }
@@ -1176,7 +1177,7 @@ impl OccluViewApp {
             return false;
         }
         if uniform_scene_scale(&entry.transform).is_none() {
-            self.ui.status_message = Some(
+            self.scene_ui.status_message = Some(
                 self.ui
                     .locale
                     .tr(crate::i18n::message_id!("sculpt-nonuniform-scale")),
@@ -1225,19 +1226,19 @@ impl OccluViewApp {
                 .sculpt
                 .queue_preparation(Arc::clone(&scene), index)
             {
-                self.ui.status_message = None;
+                self.scene_ui.status_message = None;
             } else if scene
                 .meshes()
                 .get(index)
                 .is_some_and(|entry| uniform_scene_scale(&entry.transform).is_none())
             {
-                self.ui.status_message = Some(
+                self.scene_ui.status_message = Some(
                     self.ui
                         .locale
                         .tr(crate::i18n::message_id!("sculpt-nonuniform-scale")),
                 );
             } else {
-                self.ui.status_message = Some(
+                self.scene_ui.status_message = Some(
                     self.ui
                         .locale
                         .tr(crate::i18n::message_id!("sculpt-preparing")),
@@ -1261,7 +1262,7 @@ impl OccluViewApp {
                 if valid && self.document.edit_mode.has_active_session() {
                     self.tools.sculpt.worker = Some(SculptWorker::spawn(session));
                     if self.tools.sculpt.armed.is_some() {
-                        self.ui.status_message = None;
+                        self.scene_ui.status_message = None;
                     }
                     self.render.invalidation.overlay_tools_changed();
                     ctx.request_repaint();
@@ -1271,7 +1272,7 @@ impl OccluViewApp {
             }
             Err(error) => {
                 self.tools.sculpt.pending_presses.clear();
-                self.ui.status_message = Some(self.ui.locale.tr_with(
+                self.scene_ui.status_message = Some(self.ui.locale.tr_with(
                     crate::i18n::message_id!("sculpt-failed"),
                     &[("detail", error.as_str())],
                 ));
@@ -1331,9 +1332,9 @@ impl OccluViewApp {
         // Consume modified wheel events during that interval without changing
         // captured brush parameters or zooming the view under pending history.
         if self.tools.sculpt.is_busy() {
-            return super::app_sculpt_stroke::has_sculpt_settings_wheel(ctx);
+            return super::app_sculpt_stroke::has_sculpt_settings_wheel(ctx, self.scene_key);
         }
-        if !apply_sculpt_wheel_settings(ctx, Some(kind)) {
+        if !apply_sculpt_wheel_settings(ctx, self.scene_key, Some(kind)) {
             return false;
         }
         self.render.invalidation.overlay_tools_changed();
@@ -1479,11 +1480,12 @@ impl OccluViewApp {
                 input.modifiers.ctrl || input.modifiers.command,
             )
         });
-        let tip = mesh_editor_overlay::sculpt_tip(ui.ctx());
-        let radius_world = mesh_editor_overlay::sculpt_radius_mm(ui.ctx(), tip);
-        let strength_setting = mesh_editor_overlay::sculpt_strength(ui.ctx(), kind);
+        let tip = mesh_editor_overlay::sculpt_tip(ui.ctx(), self.scene_key);
+        let radius_world = mesh_editor_overlay::sculpt_radius_mm(ui.ctx(), self.scene_key, tip);
+        let strength_setting = mesh_editor_overlay::sculpt_strength(ui.ctx(), self.scene_key, kind);
         let mode = kind.brush_mode(shift, command);
-        let color = animate_sculpt_cursor_color(ui.ctx(), sculpt_cursor_color(mode));
+        let color =
+            animate_sculpt_cursor_color(ui.ctx(), self.scene_key, sculpt_cursor_color(mode));
         let strength = kind.dab_strength(strength_setting, shift);
         if mode == BrushMode::Remove && self.tools.sculpt.stroke.is_none() {
             if let Some(worker) = self.tools.sculpt.worker.as_ref().filter(|worker| {
@@ -1495,7 +1497,7 @@ impl OccluViewApp {
                 let _ = worker.try_prime_wall_region(center, radius_mm, 128);
             }
         }
-        let action = animate_sculpt_cursor_action(ui.ctx(), mode);
+        let action = animate_sculpt_cursor_action(ui.ctx(), self.scene_key, mode);
         let shape = match tip {
             SculptTip::Ball => SculptToolShape::Cone,
             SculptTip::Knife => SculptToolShape::Knife,
@@ -1530,7 +1532,7 @@ impl OccluViewApp {
         };
         let tool_width = radius_world;
         let target_height = sculpt_cursor_height(mode, strength, radius_world);
-        let tool_length = animate_sculpt_cursor_height(ui.ctx(), target_height);
+        let tool_length = animate_sculpt_cursor_height(ui.ctx(), self.scene_key, target_height);
         let tool_model = Mat4::from_scale_rotation_translation(
             Vec3::new(tool_width, radius_world, tool_length),
             tool_rotation,
@@ -1590,7 +1592,10 @@ impl OccluViewApp {
         }
     }
 
-    fn publish_sculpt_cursor(&self, cursor: Option<live_viewport::SculptCursor>) {
+    pub(in crate::app) fn publish_sculpt_cursor(
+        &self,
+        cursor: Option<live_viewport::SculptCursor>,
+    ) {
         let Some(viewport) = self.render.live_viewport.as_ref() else {
             return;
         };
@@ -1721,44 +1726,52 @@ fn sculpt_cursor_height(mode: BrushMode, strength: f32, radius: f32) -> f32 {
     }
 }
 
-fn animate_sculpt_cursor_height(context: &egui::Context, target: f32) -> f32 {
+fn animate_sculpt_cursor_height(context: &egui::Context, scene_key: SceneKey, target: f32) -> f32 {
     context.animate_value_with_time(
-        egui::Id::new("sculpt-cursor-height"),
+        egui::Id::new(("sculpt-cursor-height", scene_key)),
         target,
         SCULPT_CURSOR_TRANSITION_SEC,
     )
 }
 
-fn animate_sculpt_cursor_color(context: &egui::Context, target: egui::Color32) -> egui::Color32 {
+fn animate_sculpt_cursor_color(
+    context: &egui::Context,
+    scene_key: SceneKey,
+    target: egui::Color32,
+) -> egui::Color32 {
     let rgba = egui::Rgba::from(target).to_array();
     let red = context.animate_value_with_time(
-        egui::Id::new("sculpt-cursor-red"),
+        egui::Id::new(("sculpt-cursor-red", scene_key)),
         rgba[0],
         SCULPT_CURSOR_TRANSITION_SEC,
     );
     let green = context.animate_value_with_time(
-        egui::Id::new("sculpt-cursor-green"),
+        egui::Id::new(("sculpt-cursor-green", scene_key)),
         rgba[1],
         SCULPT_CURSOR_TRANSITION_SEC,
     );
     let blue = context.animate_value_with_time(
-        egui::Id::new("sculpt-cursor-blue"),
+        egui::Id::new(("sculpt-cursor-blue", scene_key)),
         rgba[2],
         SCULPT_CURSOR_TRANSITION_SEC,
     );
     egui::Rgba::from_rgba_unmultiplied(red, green, blue, 1.0).into()
 }
 
-fn animate_sculpt_cursor_action(context: &egui::Context, mode: BrushMode) -> [f32; 2] {
+fn animate_sculpt_cursor_action(
+    context: &egui::Context,
+    scene_key: SceneKey,
+    mode: BrushMode,
+) -> [f32; 2] {
     let target = sculpt_cursor_action(mode);
     [
         context.animate_value_with_time(
-            egui::Id::new("sculpt-cursor-invert"),
+            egui::Id::new(("sculpt-cursor-invert", scene_key)),
             target[0],
             SCULPT_CURSOR_TRANSITION_SEC,
         ),
         context.animate_value_with_time(
-            egui::Id::new("sculpt-cursor-flat"),
+            egui::Id::new(("sculpt-cursor-flat", scene_key)),
             target[1],
             SCULPT_CURSOR_TRANSITION_SEC,
         ),

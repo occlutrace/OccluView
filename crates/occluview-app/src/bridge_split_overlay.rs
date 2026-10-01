@@ -1,5 +1,6 @@
 //! Compact Bridge Split controls and separator-disc overlay.
 
+use crate::app::workspace::id::SceneKey;
 use crate::bridge_split::{
     BridgeSplitMode, BridgeSplitToolError, MAX_BRIDGE_SPLIT_KERF_MM, MIN_BRIDGE_SPLIT_KERF_MM,
 };
@@ -49,6 +50,7 @@ struct RimProjection {
 
 pub(crate) fn show_panel(
     ctx: &egui::Context,
+    scene_key: SceneKey,
     viewport_rect: egui::Rect,
     state: BridgeSplitPanelState<'_>,
     locale: &crate::i18n::LocaleManager,
@@ -57,7 +59,7 @@ pub(crate) fn show_panel(
     let mut action = None;
     let mut open = true;
     egui::Window::new(locale.tr(crate::i18n::message_id!("bridge-panel-title")))
-        .id(egui::Id::new("occluview_bridge_split"))
+        .id(egui::Id::new(("occluview_bridge_split", scene_key)))
         .default_pos(default_pos)
         .constrain_to(viewport_rect)
         .resizable(false)

@@ -62,24 +62,31 @@ fn fixed_pair_normals_use_the_inverse_transpose_for_scaled_instances() {
     let moving_id = push_named_layer(&mut scene, "moving", 0.0);
     let fixed_id = push_named_layer(&mut scene, "fixed", 5.0);
     scene.meshes_mut()[1].transform = Affine3A::from_scale(Vec3::new(2.0, 1.0, 1.0));
-    app.document.scene = Some(Arc::new(scene));
+    app.workspace.scenes[0].document.scene = Some(Arc::new(scene));
 
-    app.tools.align.tool.arm();
-    app.tools.align.tool.imply_pair(&[moving_id, fixed_id]);
+    app.workspace.scenes[0].tools.align.tool.arm();
+    app.workspace.scenes[0]
+        .tools
+        .align
+        .tool
+        .imply_pair(&[moving_id, fixed_id]);
     // Placing the first point on the moving scan settles the roles without a
     // swap, so the pair below is oriented the way it was clicked.
-    app.tools.align.tool.click(AlignPoint {
+    app.workspace.scenes[0].tools.align.tool.click(AlignPoint {
         layer: moving_id,
         local: Vec3::new(1.0, 0.0, 0.0),
         normal: Vec3::Y,
     });
-    app.tools.align.tool.click(AlignPoint {
+    app.workspace.scenes[0].tools.align.tool.click(AlignPoint {
         layer: fixed_id,
         local: Vec3::new(1.0, 1.0, 0.0),
         normal: Vec3::new(1.0, 1.0, 0.0),
     });
 
-    let pairs = app.align_world_pairs();
+    let pairs = app
+        .active_context()
+        .expect("live test scene")
+        .align_world_pairs();
     assert_eq!(pairs.len(), 1, "two clicks make one pair");
     let fixed_normal = pairs[0].fixed_normal.as_vec3();
 
@@ -124,9 +131,10 @@ fn clicked_triangle_normals_stay_in_the_mesh_local_frame() {
     scene.add(SceneMesh::new(mesh).with_transform(transform));
     let layer_id = scene.meshes()[0].id();
     let scene = Arc::new(scene);
-    app.document.scene = Some(Arc::clone(&scene));
-    app.render.camera = Some(crate::viewer::home_camera_for_scene(scene.as_ref()));
-    app.tools.align.tool.arm();
+    app.workspace.scenes[0].document.scene = Some(Arc::clone(&scene));
+    app.workspace.scenes[0].render.camera =
+        Some(crate::viewer::home_camera_for_scene(scene.as_ref()));
+    app.workspace.scenes[0].tools.align.tool.arm();
 
     let ctx = egui::Context::default();
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 400.0));
@@ -146,7 +154,7 @@ fn clicked_triangle_normals_stay_in_the_mesh_local_frame() {
             let ctx = ui.ctx().clone();
             let response = ui.allocate_response(ui.available_size(), egui::Sense::click());
             if response.clicked_by(egui::PointerButton::Primary) {
-                let consumed = app.handle_align_click(&response, &ctx);
+                let consumed = app.active_context().expect("live test scene").handle_align_click(&response, &ctx);
                 clicked = Some((
                     consumed,
                     response.rect,
@@ -161,7 +169,7 @@ fn clicked_triangle_normals_stay_in_the_mesh_local_frame() {
     let (consumed, rect, pointer) = clicked.expect("the release frame is a click on the viewport");
     assert!(consumed, "the armed tool consumes the click");
 
-    let pending = app
+    let pending = app.workspace.scenes[0]
         .tools
         .align
         .tool
@@ -189,7 +197,11 @@ fn clicked_triangle_normals_stay_in_the_mesh_local_frame() {
     );
 
     let hit = pick_scene_hit(
-        app.render.camera.as_ref().expect("camera"),
+        app.workspace.scenes[0]
+            .render
+            .camera
+            .as_ref()
+            .expect("camera"),
         rect,
         pointer,
         scene.as_ref(),
@@ -216,42 +228,57 @@ fn removing_a_named_layer_revokes_refined_authority() {
     let mut scene = named_scene("lower", 0.0);
     let fixed_id = scene.meshes()[0].id();
     let moving_id = push_named_layer(&mut scene, "upper", 5.0);
-    app.document.scene = Some(Arc::new(scene));
-    app.tools.align.tool.arm();
-    app.tools.align.tool.imply_pair(&[moving_id, fixed_id]);
-    app.tools.align.refined_match_ready = true;
-    app.tools.align.settings.show_deviation = true;
-    app.tools.align.rejected = vec![0];
-    app.align_worker_mut();
+    app.workspace.scenes[0].document.scene = Some(Arc::new(scene));
+    app.workspace.scenes[0].tools.align.tool.arm();
+    app.workspace.scenes[0]
+        .tools
+        .align
+        .tool
+        .imply_pair(&[moving_id, fixed_id]);
+    app.workspace.scenes[0].tools.align.refined_match_ready = true;
+    app.workspace.scenes[0].tools.align.settings.show_deviation = true;
+    app.workspace.scenes[0].tools.align.rejected = vec![0];
+    app.active_context()
+        .expect("live test scene")
+        .align_worker_mut();
 
     // Drop the moving layer from the scene the way a layer-remove does.
-    let mut scene = app.document.scene.as_ref().expect("scene").as_ref().clone();
+    let mut scene = app.workspace.scenes[0]
+        .document
+        .scene
+        .as_ref()
+        .expect("scene")
+        .as_ref()
+        .clone();
     let remove_index = scene
         .meshes()
         .iter()
         .position(|entry| entry.id() == moving_id)
         .expect("the moving layer");
     scene.remove(remove_index);
-    app.document.scene = Some(Arc::new(scene));
+    app.workspace.scenes[0].document.scene = Some(Arc::new(scene));
 
     // The overlay frame is what notices the removal and revokes the session.
     let ctx = egui::Context::default();
     ctx.run_ui(egui::RawInput::default(), |ui| {
         let response = ui.allocate_response(egui::vec2(400.0, 400.0), egui::Sense::click());
         let ctx = ui.ctx().clone();
-        let _ = app.show_align_tool_overlay(ui, &response, false, &ctx);
+        let _ = app
+            .active_context()
+            .expect("live test scene")
+            .show_align_tool_overlay(ui, &response, false, &ctx);
     })
     .drop_without_applying_deltas();
 
     assert!(
-        !app.tools.align.refined_match_ready,
+        !app.workspace.scenes[0].tools.align.refined_match_ready,
         "a named layer that left the scene cannot still hold a refined match"
     );
     assert!(
-        app.tools.align.rejected.is_empty(),
+        app.workspace.scenes[0].tools.align.rejected.is_empty(),
         "outlier marks indexing the departed pair must go"
     );
-    assert!(!app.tools.align.settings.show_deviation);
+    assert!(!app.workspace.scenes[0].tools.align.settings.show_deviation);
 }
 
 /// An accepted fit must wake an otherwise idle native egui loop immediately.
@@ -272,35 +299,52 @@ fn accepted_point_fit_requests_a_repaint_for_the_idle_loop() {
     let mut scene = named_scene("lower", 0.0);
     let lower_id = scene.meshes()[0].id();
     let upper_id = push_named_layer(&mut scene, "upper", 5.0);
-    app.document.scene = Some(Arc::new(scene));
+    app.workspace.scenes[0].document.scene = Some(Arc::new(scene));
     // Set up the alignment model directly: arm_align_tool also repaints, so
     // calling it here would leave the idle-loop callback already scheduled.
-    app.tools.align.tool.arm();
-    app.tools.align.tool.imply_pair(&[lower_id, upper_id]);
+    app.workspace.scenes[0].tools.align.tool.arm();
+    app.workspace.scenes[0]
+        .tools
+        .align
+        .tool
+        .imply_pair(&[lower_id, upper_id]);
 
-    let moving_id = app.tools.align.tool.moving_layer().expect("moving scan");
-    let fixed_id = app.tools.align.tool.fixed_layer().expect("fixed scan");
+    let moving_id = app.workspace.scenes[0]
+        .tools
+        .align
+        .tool
+        .moving_layer()
+        .expect("moving scan");
+    let fixed_id = app.workspace.scenes[0]
+        .tools
+        .align
+        .tool
+        .fixed_layer()
+        .expect("fixed scan");
     for offset in [0.1, 0.3] {
-        app.tools.align.tool.click(AlignPoint {
+        app.workspace.scenes[0].tools.align.tool.click(AlignPoint {
             layer: moving_id,
             local: Vec3::new(offset, 0.2, 0.0),
             normal: Vec3::Z,
         });
-        app.tools.align.tool.click(AlignPoint {
+        app.workspace.scenes[0].tools.align.tool.click(AlignPoint {
             layer: fixed_id,
             local: Vec3::new(5.1 + offset, 0.2, 0.0),
             normal: Vec3::Z,
         });
     }
-    assert!(app.tools.align.tool.can_align());
-    app.run_align_fit();
+    assert!(app.workspace.scenes[0].tools.align.tool.can_align());
+    app.active_context()
+        .expect("live test scene")
+        .run_align_fit();
 
     assert!(
         ctx.has_requested_repaint(),
         "an accepted fit leaves an immediate repaint scheduled"
     );
     assert!(
-        app.tools
+        app.workspace.scenes[0]
+            .tools
             .align
             .worker
             .as_ref()

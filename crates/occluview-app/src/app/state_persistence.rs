@@ -5,7 +5,7 @@
 //!
 //! - `settings` is loaded once at startup and saved on change; workers never
 //!   touch it directly.
-//! - `recent_files` / `last_export_dir` / `current_paths` are document
+//! - `recent_files` / `last_export_dir` are workspace
 //!   locations, not content; the content lives in [`DocumentState`](super::state_document::DocumentState).
 //! - `update_notice` polls the release channel without ever blocking the
 //!   frame; `sculpt_settings_dirty_since` debounces brush-preference writes
@@ -37,7 +37,6 @@ pub(super) struct PersistenceState {
     pub(super) language_persistence: SettingsPersistence,
     pub(super) recent_files: RecentFiles,
     pub(super) last_export_dir: Option<PathBuf>,
-    pub(super) current_paths: Vec<PathBuf>,
     pub(super) update_notice: UpdateNotice,
     /// When the sculpt sliders last changed during the current drag: the
     /// debounced persist in [`Self::sync_sculpt_preferences`] waits for them
@@ -60,7 +59,6 @@ impl PersistenceState {
             settings_persistence: SettingsPersistence::default(),
             language_persistence: SettingsPersistence::default(),
             last_export_dir,
-            current_paths: Vec::new(),
             update_notice: UpdateNotice::begin_check(update_check_on_start),
             sculpt_settings_dirty_since: None,
         }
@@ -75,7 +73,6 @@ impl PersistenceState {
             language_persistence: SettingsPersistence::default(),
             recent_files: RecentFiles::new(1),
             last_export_dir: None,
-            current_paths: Vec::new(),
             update_notice: UpdateNotice::begin_check(false),
             sculpt_settings_dirty_since: None,
         }
@@ -144,7 +141,11 @@ impl PersistenceState {
     /// is on. The active normalized radius share is saved directly so tip
     /// changes cannot quantize it through another tip's millimetre steps. The
     /// persist is debounced because a drag changes values every frame.
-    pub(super) fn sync_sculpt_preferences(&mut self, ctx: &egui::Context) {
+    pub(super) fn sync_sculpt_preferences(
+        &mut self,
+        ctx: &egui::Context,
+        scene_key: super::workspace::id::SceneKey,
+    ) {
         if !self.settings.remember_sculpt_brush {
             self.sculpt_settings_dirty_since = None;
             return;
@@ -163,14 +164,14 @@ impl PersistenceState {
             self.settings_persistence.mark_dirty();
         }
         let radii = crate::sculpt_tool::SculptTip::ALL
-            .map(|tip| crate::mesh_editor_overlay::sculpt_radius_mm(ctx, tip));
+            .map(|tip| crate::mesh_editor_overlay::sculpt_radius_mm(ctx, scene_key, tip));
         let strengths = [
             crate::sculpt_tool::SculptToolKind::AddRemove,
             crate::sculpt_tool::SculptToolKind::Smooth,
         ]
-        .map(|kind| crate::mesh_editor_overlay::sculpt_strength(ctx, kind));
-        let tip = crate::mesh_editor_overlay::sculpt_tip(ctx);
-        let radius_share = crate::mesh_editor_overlay::sculpt_radius_share(ctx);
+        .map(|kind| crate::mesh_editor_overlay::sculpt_strength(ctx, scene_key, kind));
+        let tip = crate::mesh_editor_overlay::sculpt_tip(ctx, scene_key);
+        let radius_share = crate::mesh_editor_overlay::sculpt_radius_share(ctx, scene_key);
         let tip_changed = self.settings.last_sculpt_tip != tip;
         let share_changed = self
             .settings
@@ -220,7 +221,6 @@ mod tests {
             language_persistence: SettingsPersistence::default(),
             recent_files: RecentFiles::new(10),
             last_export_dir: None,
-            current_paths: Vec::new(),
             update_notice: UpdateNotice::begin_check(false),
             sculpt_settings_dirty_since: None,
         }
@@ -239,11 +239,19 @@ mod tests {
     fn sculpt_sync_persists_the_exact_shared_radius_and_active_tip() {
         let ctx = egui::Context::default();
         let share = 0.123_456_7_f32;
-        crate::mesh_editor_overlay::set_sculpt_tip(&ctx, crate::sculpt_tool::SculptTip::Cylinder);
-        crate::mesh_editor_overlay::set_sculpt_radius_share(&ctx, share);
+        crate::mesh_editor_overlay::set_sculpt_tip(
+            &ctx,
+            crate::app::workspace::id::SceneKey::INITIAL,
+            crate::sculpt_tool::SculptTip::Cylinder,
+        );
+        crate::mesh_editor_overlay::set_sculpt_radius_share(
+            &ctx,
+            crate::app::workspace::id::SceneKey::INITIAL,
+            share,
+        );
         let mut persistence = empty_persistence();
 
-        persistence.sync_sculpt_preferences(&ctx);
+        persistence.sync_sculpt_preferences(&ctx, super::super::workspace::id::SceneKey::INITIAL);
 
         assert_eq!(
             persistence.settings.last_sculpt_tip,
@@ -255,13 +263,19 @@ mod tests {
             "saved share must not pass through another tip's millimetre step grid"
         );
         let expected_radii = [
-            crate::mesh_editor_overlay::sculpt_radius_mm(&ctx, crate::sculpt_tool::SculptTip::Ball),
             crate::mesh_editor_overlay::sculpt_radius_mm(
                 &ctx,
+                crate::app::workspace::id::SceneKey::INITIAL,
+                crate::sculpt_tool::SculptTip::Ball,
+            ),
+            crate::mesh_editor_overlay::sculpt_radius_mm(
+                &ctx,
+                crate::app::workspace::id::SceneKey::INITIAL,
                 crate::sculpt_tool::SculptTip::Knife,
             ),
             crate::mesh_editor_overlay::sculpt_radius_mm(
                 &ctx,
+                crate::app::workspace::id::SceneKey::INITIAL,
                 crate::sculpt_tool::SculptTip::Cylinder,
             ),
         ];

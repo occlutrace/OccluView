@@ -8,7 +8,7 @@ use occluview_align::{FitRejection, Rigid};
 use occluview_core::SceneMeshId;
 
 use super::app_align_display::AlignOverlay;
-use super::OccluViewApp;
+use super::SceneContext;
 use crate::align_worker::{AlignCompletion, AlignFailure, AlignOutcome, AlignWorker};
 use crate::edit_mode::EditModeCommand;
 
@@ -23,7 +23,7 @@ fn change_affects_pair(
         .any(|layer| changed_layers.contains(&layer))
 }
 
-impl OccluViewApp {
+impl SceneContext<'_> {
     /// Invalidate a fit when one of the two selected surfaces changes
     /// visibility. A material update is cheap, but it changes the set of
     /// surfaces the operator can see and therefore the meaning of a later
@@ -490,7 +490,7 @@ fn fit_rejection_parts(rejection: FitRejection) -> (crate::i18n::MessageId, Stri
     (key, String::new(), String::new())
 }
 
-impl OccluViewApp {
+impl SceneContext<'_> {
     /// The Align worker, replacing one that has died.
     ///
     /// `AlignWorker::submit` refuses every job once the thread has failed, and
@@ -629,23 +629,46 @@ mod tests {
         let mut app = test_app("commit-align-pose");
         let mut scene = named_scene("lower", 0.0);
         let moving_id = push_named_layer(&mut scene, "upper", 5.0);
-        app.document.scene = Some(std::sync::Arc::new(scene));
-        app.tools.align.tool.arm();
-        app.tools.align.tool.imply_pair(&[moving_id, moving_id]);
+        app.workspace.scenes[0].document.scene = Some(std::sync::Arc::new(scene));
+        app.workspace.scenes[0].tools.align.tool.arm();
+        app.workspace.scenes[0]
+            .tools
+            .align
+            .tool
+            .imply_pair(&[moving_id, moving_id]);
 
         let pose = Rigid::new(glam::DQuat::IDENTITY, glam::DVec3::new(1.5, -2.0, 0.25));
-        assert!(app.commit_align_pose(pose), "a fit on a live scene commits");
+        assert!(
+            app.active_context()
+                .expect("live test scene")
+                .commit_align_pose(pose),
+            "a fit on a live scene commits"
+        );
 
-        let moved = app.document.scene.as_ref().expect("scene").meshes()[1].transform;
+        let moved = app.workspace.scenes[0]
+            .document
+            .scene
+            .as_ref()
+            .expect("scene")
+            .meshes()[1]
+            .transform;
         assert_eq!(moved, pose.to_affine(), "the pose reaches the live scene");
         assert!(
-            app.document.has_unsaved_mesh_edits(),
+            app.workspace.scenes[0].document.has_unsaved_mesh_edits(),
             "the close guard must see the alignment, or it is lost without asking"
         );
 
-        app.apply_history_navigation_now(false, &egui::Context::default());
+        app.active_context()
+            .expect("live test scene")
+            .apply_history_navigation_now(false, &egui::Context::default());
         assert_eq!(
-            app.document.scene.as_ref().expect("scene").meshes()[1].transform,
+            app.workspace.scenes[0]
+                .document
+                .scene
+                .as_ref()
+                .expect("scene")
+                .meshes()[1]
+                .transform,
             Affine3A::IDENTITY,
             "Ctrl+Z returns the scan to where it was"
         );

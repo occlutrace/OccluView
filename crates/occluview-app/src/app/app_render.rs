@@ -7,7 +7,7 @@ pub(super) use offscreen::{RenderError, APP_OFFSCREEN_RENDER_TIMEOUT, OFFSCREEN_
 pub(super) use scene::scene_mesh_uniform;
 
 #[cfg(test)]
-use super::{AppErrorAction, OccluViewApp};
+use super::AppErrorAction;
 
 #[cfg(test)]
 #[path = "app_render_tests.rs"]

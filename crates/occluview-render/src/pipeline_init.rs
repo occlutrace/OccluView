@@ -816,6 +816,8 @@ impl Renderer {
             mesh_layout,
             texture_layout,
             clip_layout,
+            sculpt_brush_layout,
+            sculpt_tool_layout,
             sculpt_brush_buffer,
             sculpt_brush_bind_group,
             sculpt_tool_buffer,
@@ -846,6 +848,131 @@ impl Renderer {
             sample_count,
             gpu_error,
             gpu_faulted,
+        })
+    }
+
+    /// Create an independent live viewport renderer on the same device and
+    /// queue. Immutable wgpu handles are cloned (wgpu handles share the same
+    /// underlying GPU object); camera, point-splat dimensions and Sculpt
+    /// uniforms get fresh buffers and bindings so queue writes for one pane
+    /// cannot overwrite another pane's state before a shared submission.
+    ///
+    /// Device fault reporting is shared with the source renderer. A GPU fault
+    /// affects the one physical device, so every peer fails closed together
+    /// and only the original device callbacks own the shared fault latch.
+    /// This constructor deliberately does not install more callbacks on the
+    /// shared device.
+    ///
+    /// # Errors
+    /// Returns [`RenderError::Surface`] if the shared device is already
+    /// faulted or the camera uniform layout is unexpectedly zero-sized.
+    #[allow(clippy::too_many_lines)]
+    pub fn new_peer(&self) -> Result<Self, RenderError> {
+        if self.is_gpu_faulted() {
+            return Err(RenderError::Surface(
+                "cannot create a viewport while the shared GPU device is faulted".into(),
+            ));
+        }
+
+        let camera_size = size_of::<crate::camera::GpuCamera>() as u64;
+        if camera_size == 0 {
+            return Err(RenderError::Surface("zero-sized camera".into()));
+        }
+
+        let camera_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("occluview peer camera uniform"),
+            size: camera_size,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let sculpt_brush_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("occluview peer sculpt brush uniform"),
+            size: size_of::<SculptBrushUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        self.queue.write_buffer(
+            &sculpt_brush_buffer,
+            0,
+            bytemuck::bytes_of(&SculptBrushUniform::hidden()),
+        );
+        let sculpt_brush_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("occluview peer sculpt brush bind group"),
+            layout: &self.sculpt_brush_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: sculpt_brush_buffer.as_entire_binding(),
+            }],
+        });
+
+        let sculpt_tool_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("occluview peer sculpt tool uniform"),
+            size: size_of::<SculptToolUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        self.queue.write_buffer(
+            &sculpt_tool_buffer,
+            0,
+            bytemuck::bytes_of(&SculptToolUniform::hidden()),
+        );
+        let sculpt_tool_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("occluview peer sculpt tool bind group"),
+            layout: &self.sculpt_tool_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: sculpt_tool_buffer.as_entire_binding(),
+            }],
+        });
+
+        Ok(Self {
+            device: Arc::clone(&self.device),
+            queue: Arc::clone(&self.queue),
+            pipeline: self.pipeline.clone(),
+            point_pipeline: self.point_pipeline.clone(),
+            transparent_pipeline: self.transparent_pipeline.clone(),
+            transparent_point_pipeline: self.transparent_point_pipeline.clone(),
+            wireframe_pipeline: self.wireframe_pipeline.clone(),
+            ghost_pipeline: self.ghost_pipeline.clone(),
+            sculpt_feedback_pipeline: self.sculpt_feedback_pipeline.clone(),
+            sculpt_tool_pipeline: self.sculpt_tool_pipeline.clone(),
+            camera_layout: self.camera_layout.clone(),
+            camera_buffer,
+            mesh_layout: self.mesh_layout.clone(),
+            texture_layout: self.texture_layout.clone(),
+            clip_layout: self.clip_layout.clone(),
+            sculpt_brush_layout: self.sculpt_brush_layout.clone(),
+            sculpt_tool_layout: self.sculpt_tool_layout.clone(),
+            sculpt_brush_buffer,
+            sculpt_brush_bind_group,
+            sculpt_tool_buffer,
+            sculpt_tool_bind_group,
+            sculpt_tool_shape: AtomicU32::new(0),
+            sculpt_tool_cone_buffer: self.sculpt_tool_cone_buffer.clone(),
+            sculpt_tool_cone_vertex_bytes: self.sculpt_tool_cone_vertex_bytes,
+            sculpt_tool_cone_index_count: self.sculpt_tool_cone_index_count,
+            sculpt_tool_cylinder_buffer: self.sculpt_tool_cylinder_buffer.clone(),
+            sculpt_tool_cylinder_vertex_bytes: self.sculpt_tool_cylinder_vertex_bytes,
+            sculpt_tool_cylinder_index_count: self.sculpt_tool_cylinder_index_count,
+            sculpt_tool_knife_buffer: self.sculpt_tool_knife_buffer.clone(),
+            sculpt_tool_knife_vertex_bytes: self.sculpt_tool_knife_vertex_bytes,
+            sculpt_tool_knife_index_count: self.sculpt_tool_knife_index_count,
+            point_splat_viewport_width_bits: AtomicU32::new(
+                DEFAULT_POINT_SPLAT_VIEWPORT[0].to_bits(),
+            ),
+            point_splat_viewport_height_bits: AtomicU32::new(
+                DEFAULT_POINT_SPLAT_VIEWPORT[1].to_bits(),
+            ),
+            clip_buffer_disabled: self.clip_buffer_disabled.clone(),
+            clip_bind_group_disabled: self.clip_bind_group_disabled.clone(),
+            depth_format: self.depth_format,
+            stencil_back_pipeline: self.stencil_back_pipeline.clone(),
+            stencil_front_pipeline: self.stencil_front_pipeline.clone(),
+            cap_pipeline: self.cap_pipeline.clone(),
+            cap_uniform_layout: self.cap_uniform_layout.clone(),
+            sample_count: self.sample_count,
+            gpu_error: Arc::clone(&self.gpu_error),
+            gpu_faulted: Arc::clone(&self.gpu_faulted),
         })
     }
 }

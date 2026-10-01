@@ -147,6 +147,15 @@ pub struct Renderer {
     pub(crate) texture_layout: wgpu::BindGroupLayout,
     /// Layout for the clip plane (group 3): `ClipPlane` uniform.
     pub(crate) clip_layout: wgpu::BindGroupLayout,
+    /// Layout for the display-only Sculpt brush uniform. Retained so a peer
+    /// renderer can create its own uniform buffer without rebuilding the
+    /// immutable pipeline layouts.
+    pub(crate) sculpt_brush_layout: wgpu::BindGroupLayout,
+    /// Layout for the display-only Sculpt tool uniform, also shared by peers.
+    pub(crate) sculpt_tool_layout: wgpu::BindGroupLayout,
+    /// The following buffers and atomics contain mutable per-renderer state.
+    /// `Renderer::new_peer` shares immutable pipeline/layout handles while
+    /// creating independent camera, Sculpt and viewport-size state.
     sculpt_brush_buffer: wgpu::Buffer,
     sculpt_brush_bind_group: wgpu::BindGroup,
     sculpt_tool_buffer: wgpu::Buffer,

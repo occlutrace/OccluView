@@ -42,6 +42,312 @@ fn gpu_fault_stays_fail_closed_after_its_message_is_drained() {
     );
 }
 
+/// Two live panes use one device submission, so all `Queue::write_buffer`
+/// operations happen before either pane's command buffer is executed. This
+/// catches the camera/clip uniform alias that a sequential render-and-wait
+/// test would miss.
+#[test]
+#[allow(clippy::expect_used)]
+#[allow(clippy::too_many_lines)]
+fn renderer_peers_keep_camera_and_clip_state_independent_in_one_submission() {
+    use crate::{
+        ClipPlane, GpuCamera, GpuMeshUniform, GpuTexture, PreparedScene, PreparedSceneSource,
+        Renderer,
+    };
+    use glam::Vec3;
+    use occluview_core::{MeshBuilder, Vertex};
+    use std::sync::Arc;
+
+    let left = pollster::block_on(Renderer::new_headless(wgpu::TextureFormat::Rgba8Unorm))
+        .expect("a headless renderer");
+    let right = left.new_peer().expect("a peer renderer");
+    assert!(
+        std::ptr::eq(left.device(), right.device()),
+        "peers must share the same wgpu device"
+    );
+    assert!(
+        std::ptr::eq(left.queue(), right.queue()),
+        "peers must use one ordered queue"
+    );
+    assert!(
+        Arc::ptr_eq(&left.gpu_error, &right.gpu_error)
+            && Arc::ptr_eq(&left.gpu_faulted, &right.gpu_faulted),
+        "one physical device must have one error and fault owner"
+    );
+
+    let mut builder = MeshBuilder::new();
+    let a = builder.push_vertex(Vertex::at(Vec3::new(-0.7, -0.6, 0.0)).with_normal(Vec3::Z));
+    let b = builder.push_vertex(Vertex::at(Vec3::new(0.7, -0.6, 0.0)).with_normal(Vec3::Z));
+    let c = builder.push_vertex(Vertex::at(Vec3::new(0.0, 0.7, 0.0)).with_normal(Vec3::Z));
+    builder.push_triangle(a, b, c);
+    let mesh = builder.build().expect("the isolation triangle is valid");
+    let prepared = PreparedScene::prepare(
+        &left,
+        &[PreparedSceneSource {
+            mesh: &mesh,
+            uniform: GpuMeshUniform::identity(),
+            visible: true,
+            wireframe: false,
+            contact: None,
+        }],
+    );
+    let fallback = GpuTexture::fallback(&left, left.device(), left.queue());
+
+    let pane_width = 64;
+    let height = 64;
+    let target_width = pane_width * 2;
+    left.set_point_splat_viewport(pane_width, height);
+    right.set_point_splat_viewport(pane_width, height);
+    let left_eye = Vec3::new(-0.25, 0.0, 3.0);
+    let right_eye = Vec3::new(0.25, 0.0, 3.0);
+    let make_camera = |eye: Vec3| {
+        GpuCamera::new(
+            glam::camera::rh::view::look_at_mat4(eye, Vec3::new(eye.x, 0.0, 0.0), Vec3::Y),
+            glam::camera::rh::proj::directx::orthographic(-1.0, 1.0, -1.0, 1.0, 0.1, 10.0),
+            Vec3::Z,
+            eye,
+        )
+    };
+    // These writes are intentionally queued before the same submission. If a
+    // peer reused the source camera buffer, both passes would see the last
+    // camera value rather than their own.
+    left.set_camera(&make_camera(left_eye));
+    right.set_camera(&make_camera(right_eye));
+
+    let left_clip_buffer = left.clip_uniform_buffer();
+    let right_clip_buffer = right.clip_uniform_buffer();
+    left.queue().write_buffer(
+        &left_clip_buffer,
+        0,
+        bytemuck::bytes_of(&ClipPlane::new([1.0, 0.0, 0.0], 0.0)),
+    );
+    right.queue().write_buffer(
+        &right_clip_buffer,
+        0,
+        bytemuck::bytes_of(&ClipPlane::disabled()),
+    );
+    let left_clip = left.clip_bind_group(&left_clip_buffer);
+    let right_clip = right.clip_bind_group(&right_clip_buffer);
+    let target = PeerIsolationTarget::new(&left, target_width, height);
+
+    let device = left.device();
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("two viewport isolation encoder"),
+    });
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("two peer isolation viewports"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &target.color_view,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &target.depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(0),
+                    store: wgpu::StoreOp::Store,
+                }),
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_viewport(0.0, 0.0, pane_width as f32, height as f32, 0.0, 1.0);
+        pass.set_scissor_rect(0, 0, pane_width, height);
+        prepared.draw_with_clip(
+            &left,
+            &mut pass,
+            &left.camera_bind_group(),
+            &fallback.bind_group,
+            &left_clip,
+        );
+        pass.set_viewport(
+            pane_width as f32,
+            0.0,
+            pane_width as f32,
+            height as f32,
+            0.0,
+            1.0,
+        );
+        pass.set_scissor_rect(pane_width, 0, pane_width, height);
+        prepared.draw_with_clip(
+            &right,
+            &mut pass,
+            &right.camera_bind_group(),
+            &fallback.bind_group,
+            &right_clip,
+        );
+    }
+    target.copy_to_buffer(&mut encoder);
+    left.queue().submit(std::iter::once(encoder.finish()));
+
+    let pixels = target.read(device);
+    let left_stats = visible_pixel_stats(&pixels, target_width, pane_width, 0);
+    let right_stats = visible_pixel_stats(&pixels, target_width, pane_width, pane_width);
+    assert!(left_stats.count > 0, "the clipped left pane still draws");
+    assert!(
+        right_stats.count > left_stats.count * 3 / 2,
+        "the right pane has no clipping, left={left_stats:?}, right={right_stats:?}"
+    );
+    assert!(
+        left_stats.mean_x > f64::from(pane_width) * 0.56,
+        "the left camera and +X clip plane should leave the right half: {left_stats:?}"
+    );
+    assert!(
+        right_stats.mean_x < f64::from(pane_width) * 0.44,
+        "the right camera should independently pan the full triangle left: {right_stats:?}"
+    );
+    assert_eq!(left.take_gpu_error(), None, "the peer draw is valid");
+}
+
+#[derive(Debug)]
+struct VisiblePixelStats {
+    count: usize,
+    mean_x: f64,
+}
+
+fn visible_pixel_stats(
+    pixels: &[[u8; 4]],
+    image_width: u32,
+    pane_width: u32,
+    pane_x: u32,
+) -> VisiblePixelStats {
+    let mut count = 0usize;
+    let mut sum_x = 0u64;
+    let pane_x = pane_x as usize;
+    let pane_width = pane_width as usize;
+    for row in pixels.chunks_exact(image_width as usize) {
+        for (local_x, pixel) in row.iter().skip(pane_x).take(pane_width).enumerate() {
+            if pixel[0] > 12 || pixel[1] > 12 || pixel[2] > 12 {
+                count += 1;
+                sum_x += local_x as u64;
+            }
+        }
+    }
+    VisiblePixelStats {
+        count,
+        mean_x: if count == 0 {
+            0.0
+        } else {
+            sum_x as f64 / count as f64
+        },
+    }
+}
+
+struct PeerIsolationTarget {
+    color: wgpu::Texture,
+    color_view: wgpu::TextureView,
+    depth_view: wgpu::TextureView,
+    readback: wgpu::Buffer,
+    width: u32,
+    height: u32,
+}
+
+impl PeerIsolationTarget {
+    #[allow(clippy::expect_used)]
+    fn new(renderer: &crate::Renderer, width: u32, height: u32) -> Self {
+        let size = wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        };
+        let color = renderer.device().create_texture(&wgpu::TextureDescriptor {
+            label: Some("peer isolation color"),
+            size,
+            mip_level_count: 1,
+            sample_count: renderer.sample_count(),
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let depth = renderer.device().create_texture(&wgpu::TextureDescriptor {
+            label: Some("peer isolation depth"),
+            size,
+            mip_level_count: 1,
+            sample_count: renderer.sample_count(),
+            dimension: wgpu::TextureDimension::D2,
+            format: renderer.depth_format(),
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let color_view = color.create_view(&wgpu::TextureViewDescriptor::default());
+        let depth_view = depth.create_view(&wgpu::TextureViewDescriptor::default());
+        let readback = renderer.device().create_buffer(&wgpu::BufferDescriptor {
+            label: Some("peer isolation readback"),
+            size: u64::from(width) * u64::from(height) * 4,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        Self {
+            color,
+            color_view,
+            depth_view,
+            readback,
+            width,
+            height,
+        }
+    }
+
+    fn copy_to_buffer(&self, encoder: &mut wgpu::CommandEncoder) {
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.color,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &self.readback,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(self.width * 4),
+                    rows_per_image: Some(self.height),
+                },
+            },
+            wgpu::Extent3d {
+                width: self.width,
+                height: self.height,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+
+    #[allow(clippy::expect_used)]
+    fn read(&self, device: &wgpu::Device) -> Vec<[u8; 4]> {
+        use std::sync::mpsc;
+
+        let slice = self.readback.slice(..);
+        let (map_tx, map_rx) = mpsc::sync_channel(1);
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = map_tx.send(result);
+        });
+        device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .expect("wait for peer isolation readback");
+        map_rx
+            .recv()
+            .expect("peer isolation readback callback")
+            .expect("peer isolation readback maps");
+        let mapped = slice
+            .get_mapped_range()
+            .expect("mapped peer isolation pixels");
+        let pixels = bytemuck::cast_slice(&mapped).to_vec();
+        drop(mapped);
+        self.readback.unmap();
+        pixels
+    }
+}
+
 /// The fault flag stops the frame loop from feeding a broken device, but it is
 /// not a verdict that the device is gone: a driver reset, a recovered eGPU, or
 /// a rebuilt offscreen device can leave it set on a working renderer. The
