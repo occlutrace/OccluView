@@ -25,10 +25,7 @@ fn macos_pkg_handoff_uses_launch_services_and_rejects_disk_images() {
 fn platform_key_tracks_the_running_os_and_architecture() {
     let expected = match (std::env::consts::OS, std::env::consts::ARCH) {
         ("windows", "x86_64") => "windows-x86_64",
-        ("windows", "aarch64") => "windows-aarch64",
         ("linux", "x86_64") => "linux-x86_64",
-        ("linux", "aarch64") => "linux-aarch64",
-        ("macos", "x86_64") => "macos-x86_64",
         ("macos", "aarch64") => "macos-aarch64",
         _ => "unsupported",
     };
@@ -104,6 +101,82 @@ fn manifest_parses_platform_entries() {
     assert_eq!(manifest.version, "0.2.0");
     assert_eq!(manifest.notes.as_deref(), Some("fixes"));
     assert!(manifest.platforms.contains_key("windows-x86_64"));
+}
+
+/// The manifest `scripts/write-latest-json.py` writes must parse in the client,
+/// and the platform keys it publishes must be the ones this client knows.
+#[test]
+fn a_generated_manifest_round_trips_through_the_client_parser() {
+    let generated = r#"{
+        "schema": 1,
+        "version": "1.3.0",
+        "notes": "OccluView v1.3.0 — see the GitHub release for details.",
+        "platforms": {
+            "windows-x86_64": {
+                "url": "https://github.com/occlutrace/OccluView/releases/download/v1.3.0/OccluView-Windows-Setup.msi",
+                "signature": "untrusted comment: signature\nRWS1\n",
+                "sha256": "ab12"
+            },
+            "linux-x86_64": {
+                "url": "https://github.com/occlutrace/OccluView/releases/download/v1.3.0/OccluView-Linux.deb",
+                "signature": "untrusted comment: signature\nRWS2\n",
+                "sha256": "cd34"
+            },
+            "macos-aarch64": {
+                "url": "https://github.com/occlutrace/OccluView/releases/download/v1.3.0/OccluView-macOS-AppleSilicon.pkg",
+                "signature": "untrusted comment: signature\nRWS3\n",
+                "sha256": "ef56"
+            }
+        }
+    }"#;
+    let manifest: Manifest = serde_json::from_str(generated).expect("the generated manifest parses");
+    assert_eq!(manifest.schema, MANIFEST_SCHEMA);
+    assert_eq!(manifest.version, "1.3.0");
+    assert!(manifest.notes.is_some());
+    let mut keys: Vec<&str> = manifest.platforms.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    let mut published = PUBLISHED_PLATFORMS.to_vec();
+    published.sort_unstable();
+    assert_eq!(
+        keys, published,
+        "scripts/write-latest-json.py and PUBLISHED_PLATFORMS have drifted"
+    );
+}
+
+/// A manifest written before the schema field existed still parses, so this
+/// client keeps offering releases published by an older workflow.
+#[test]
+fn a_manifest_without_a_schema_field_is_read_as_the_current_schema() {
+    let legacy = br#"{"version": "1.2.4", "platforms": {}}"#;
+    let manifest: Manifest = serde_json::from_slice(legacy).expect("a pre-schema manifest parses");
+    assert_eq!(manifest.schema, MANIFEST_SCHEMA);
+}
+
+/// Fields this client does not know are ignored, so a later release can add an
+/// optional field without making the manifest unreadable.
+#[test]
+fn unknown_manifest_fields_do_not_break_the_parser() {
+    let extended = br#"{"schema": 1, "version": "1.3.0", "platforms": {}, "future": 7}"#;
+    let manifest: Manifest =
+        serde_json::from_slice(extended).expect("an unknown field is ignored");
+    assert_eq!(manifest.version, "1.3.0");
+}
+
+/// A manifest that declares a schema newer than this client supports is
+/// refused: an existing field may have changed meaning.
+#[test]
+fn a_manifest_declaring_a_newer_schema_is_refused() {
+    let (keypair, pubkey) = test_keypair();
+    let manifest = br#"{"schema": 2, "version": "9.9.9", "platforms": {}}"#.to_vec();
+    let signature = sign(&keypair, &manifest).into_bytes();
+    let manifest_url = serve_once(manifest, "/latest.json");
+    let sig_url = serve_once(signature, "/latest.json.minisig");
+
+    let result = check_with(&manifest_url, &sig_url, &[pubkey.as_str()], "0.1.0");
+    assert!(
+        matches!(result, Err(UpdateError::BadManifest(_))),
+        "a newer schema must be refused, got {result:?}"
+    );
 }
 
 #[test]

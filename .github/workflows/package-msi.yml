@@ -757,39 +757,10 @@ jobs:
             echo "::warning::The macOS packages are not notarized and are left out of the release."
           fi
 
-          python3 - "$version" "$tag" \
+          python3 scripts/write-latest-json.py "$version" "$tag" \
             "$msi_name" "$msi_sha" "$msi.minisig" \
             "$deb_name" "$deb_sha" "$deb.minisig" \
-            "$pkg_name" "$pkg_sha" "$pkg_sig" <<'PY'
-          import json, sys
-          version, tag, msi_name, msi_sha, msi_sig, deb_name, deb_sha, deb_sig = sys.argv[1:9]
-          pkg_name, pkg_sha, pkg_sig = sys.argv[9:12]
-          release_url = f"https://github.com/occlutrace/OccluView/releases/download/{tag}"
-          manifest = {
-              "version": version,
-              "notes": f"OccluView {tag} — see the GitHub release for details.",
-              "platforms": {
-                  "windows-x86_64": {
-                      "url": f"{release_url}/{msi_name}",
-                      "signature": open(msi_sig, encoding="utf-8").read(),
-                      "sha256": msi_sha,
-                  },
-                  "linux-x86_64": {
-                      "url": f"{release_url}/{deb_name}",
-                      "signature": open(deb_sig, encoding="utf-8").read(),
-                      "sha256": deb_sha,
-                  },
-              },
-          }
-          if pkg_name:
-              manifest["platforms"]["macos-aarch64"] = {
-                  "url": f"{release_url}/{pkg_name}",
-                  "signature": open(pkg_sig, encoding="utf-8").read(),
-                  "sha256": pkg_sha,
-              }
-          with open("dist/latest.json", "w", encoding="utf-8") as handle:
-              json.dump(manifest, handle, indent=2)
-          PY
+            "$pkg_name" "$pkg_sha" "$pkg_sig"
           minisign -S -s /tmp/minisign.key -m dist/latest.json
           rm -f /tmp/minisign.key
           echo "Update manifest:" && cat dist/latest.json
