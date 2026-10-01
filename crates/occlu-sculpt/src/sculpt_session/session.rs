@@ -636,12 +636,6 @@ impl SculptSession {
         &self.dab_added_parents
     }
 
-    /// The index buffer, live prefix first.
-    ///
-    /// The session's connectivity is part of its contract, not an internal:
-    /// a product that paints protection over a physical wall, or that has to
-    /// state which faces the stroke touched, reads it. `&[u32]` gives the
-    /// topology without handing out a mutable handle to it.
     /// The live face array, as the session holds it.
     ///
     /// Read-only, and deliberately not "the committed mesh": a consumer that
