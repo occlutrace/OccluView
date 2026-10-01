@@ -376,7 +376,6 @@ impl SurfaceTopology {
         self.triangles.get(triangle as usize).copied()
     }
 
-    /// Append one welded group holding a single new vertex. Returns the group id.
     /// Room for `groups` appended groups and `triangles` appended faces, and
     /// for `rows` overlay rows of each kind. A growing array or map copies
     /// itself whole inside the edit that crosses its capacity.
