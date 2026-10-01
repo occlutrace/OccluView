@@ -59,9 +59,6 @@ pub fn knife_weight(offset: DVec3, axis: Option<DVec3>, radius_mm: f64) -> f64 {
         return ball_weight(offset.length(), radius_mm * cross_share.sqrt());
     };
     let axis_length = axis.length();
-    if !axis_length.is_finite() || axis_length <= minimum_axis_length {
-        return ball_weight(offset.length(), radius_mm * cross_share.sqrt());
-    }
     let unit = axis * (1.0 / axis_length);
     let along = offset.dot(unit);
     let across = (offset - unit * along).length();
