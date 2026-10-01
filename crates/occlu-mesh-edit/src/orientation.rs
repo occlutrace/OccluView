@@ -42,7 +42,6 @@ pub fn invert_orientation(
         output_triangles: indices.len() / 3,
         removed_triangles: 0,
         filled_holes: 0,
-        moved_vertices: 0,
         skipped_border_rims: 0,
         skipped_oversize_rims: 0,
         skipped_damaged_rims: 0,
