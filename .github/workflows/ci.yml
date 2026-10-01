@@ -282,13 +282,13 @@ jobs:
           cargo clippy -p occluview-hps -p occluview-formats \
             --all-features --all-targets --locked -- -D warnings
           cargo test -p occluview-hps -p occluview-formats --all-features --locked
-      - name: cargo check and test (occlu-sculpt without default features)
+      - name: cargo check and test (occluview-sculpt without default features)
         # `parallel` is the crate default, so the single-threaded fairing and
         # remesh paths only compile without it; this lane is what keeps a
         # `cfg(not(feature = "parallel"))` branch from rotting.
         run: |
-          cargo check -p occlu-sculpt --no-default-features --locked
-          cargo test -p occlu-sculpt --no-default-features --locked
+          cargo check -p occluview-sculpt --no-default-features --locked
+          cargo test -p occluview-sculpt --no-default-features --locked
 
   test:
     name: test (windows shell)

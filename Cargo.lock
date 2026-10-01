@@ -2614,15 +2614,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "occlu-sculpt"
-version = "1.2.1"
-dependencies = [
- "glam",
- "occluview-geometry-math",
- "rayon",
-]
-
-[[package]]
 name = "occluview-align"
 version = "1.2.1"
 dependencies = [
@@ -2648,7 +2639,6 @@ dependencies = [
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
- "occlu-sculpt",
  "occluview-align",
  "occluview-contact",
  "occluview-core",
@@ -2657,6 +2647,7 @@ dependencies = [
  "occluview-geometry-math",
  "occluview-i18n",
  "occluview-render",
+ "occluview-sculpt",
  "occluview-update",
  "pollster 1.0.1",
  "raw-window-handle",
@@ -2818,6 +2809,15 @@ dependencies = [
  "glam",
  "manifold-csg",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "occluview-sculpt"
+version = "1.2.1"
+dependencies = [
+ "glam",
+ "occluview-geometry-math",
+ "rayon",
 ]
 
 [[package]]

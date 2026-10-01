@@ -546,7 +546,7 @@ fn hold_ms() -> f32 {
     reason = "The fixed 120 ms dose is exactly representable as f32."
 )]
 fn share_of_full_dose() -> f32 {
-    HOLD_DAB_INTERVAL_SEC * 1000.0 / occlu_sculpt::DWELL_FULL_DOSE_MS as f32
+    HOLD_DAB_INTERVAL_SEC * 1000.0 / occluview_sculpt::DWELL_FULL_DOSE_MS as f32
 }
 
 /// The dwell a caller reports doses the dab, so four hold intervals deposit
