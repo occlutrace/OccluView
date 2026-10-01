@@ -39,7 +39,8 @@ remain in the Git history.
 - The fixed-to-moving overlap signal no longer discards hits on an open border,
   which is what a small scan's own rim produces.
 - The deviation map opens on the clinical range, 0.000 to 0.100 mm, instead of
-  0.050 to 0.200 mm, so a 0.010 mm gap already reads as a mismatch.
+  0.050 to 0.200 mm. The hottest colour is now 100 um rather than 200 um, and the
+  bar starts at zero instead of hiding everything below 50 um.
 
 ## 1.2.1 - 2026-09-30
 
