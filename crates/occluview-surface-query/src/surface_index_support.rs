@@ -125,14 +125,14 @@ pub(super) fn sweep(dims: [i64; 3], gaps: &mut [u8], forward: bool) {
 
 /// Find a connected-component root with path compression.
 ///
-/// Iterative, not recursive. `union` has no rank rule, so it always hangs the
-/// right root on the left, and a facet order that keeps leaving a fresh vertex
-/// as a component root builds a chain as long as the facet count — one stack
-/// frame per facet in the recursive form. The surface index is built on the
-/// align worker, whose thread has the 2 MiB default stack and no `stack_size`,
-/// and a stack overflow aborts the process: `catch_unwind` around the worker
-/// body never sees it, so the crate's "never panics on hostile input" would be
-/// false for an imported mesh.
+/// Iterative, not recursive, as cheap insurance against deep trees: a
+/// recursive form needs one stack frame per level, and a stack overflow
+/// aborts the process instead of unwinding, so `catch_unwind` around a
+/// worker body would never see it.
+///
+/// `union` below attaches the smaller tree under the larger (union by size),
+/// so every parent hop at least doubles the component size and the depth
+/// stays logarithmic in the vertex count even before compression.
 ///
 /// Two passes instead of one: walk to the root, then point every node on the
 /// path at it. Same compression, no stack.
