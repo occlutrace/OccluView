@@ -1,7 +1,6 @@
-//! Windows VERSIONINFO for the two console binaries, `occluview-cli.exe` and
-//! `occluview-hps-export.exe`.
+//! Windows VERSIONINFO for the console binary, `occluview-cli.exe`.
 //!
-//! Both ship in support bundles, so their Properties pages must name the
+//! The binary ships in support bundles, so its Properties page must name the
 //! product and version like the GUI binary does. The resource plumbing is
 //! kept in sync with `crates/occluview-app/build.rs` by hand: build scripts
 //! cannot share code without a dedicated build-dependency crate, and this
@@ -23,37 +22,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let out_dir = PathBuf::from(env::var("OUT_DIR")?);
     let rc_exe = find_resource_compiler()?;
 
-    for binary in [
-        BinaryResource {
-            bin_name: "occluview-cli",
-            original_filename: "occluview-cli.exe",
-            description: "OccluView headless CLI",
-        },
-        BinaryResource {
-            bin_name: "occluview-hps-export",
-            original_filename: "occluview-hps-export.exe",
-            description: "OccluView HPS export tool",
-        },
-    ] {
-        let rc_path = out_dir.join(format!("{}.rc", binary.bin_name));
-        let res_path = out_dir.join(format!("{}.res", binary.bin_name));
-        fs::write(&rc_path, exe_resource_script(&binary)?)?;
+    let binary = BinaryResource {
+        bin_name: "occluview-cli",
+        original_filename: "occluview-cli.exe",
+        description: "OccluView headless CLI",
+    };
+    let rc_path = out_dir.join(format!("{}.rc", binary.bin_name));
+    let res_path = out_dir.join(format!("{}.res", binary.bin_name));
+    fs::write(&rc_path, exe_resource_script(&binary)?)?;
 
-        let status = Command::new(&rc_exe)
-            .arg("/nologo")
-            .arg(format!("/fo{}", res_path.display()))
-            .arg(&rc_path)
-            .status()?;
-        if !status.success() {
-            return Err(format!("rc.exe failed while compiling {}", rc_path.display()).into());
-        }
-
-        println!(
-            "cargo:rustc-link-arg-bin={}={}",
-            binary.bin_name,
-            res_path.display()
-        );
+    let status = Command::new(&rc_exe)
+        .arg("/nologo")
+        .arg(format!("/fo{}", res_path.display()))
+        .arg(&rc_path)
+        .status()?;
+    if !status.success() {
+        return Err(format!("rc.exe failed while compiling {}", rc_path.display()).into());
     }
+
+    println!(
+        "cargo:rustc-link-arg-bin={}={}",
+        binary.bin_name,
+        res_path.display()
+    );
     Ok(())
 }
 
