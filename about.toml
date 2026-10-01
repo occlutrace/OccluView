@@ -20,11 +20,12 @@ accepted = [
     "Unlicense",
     "CDLA-Permissive-2.0",
 ]
-# One file covers both shipped platforms: the MSI, the portable ZIP, and
-# the deb.
+# One file covers every shipped platform: the MSI, the portable ZIP, the deb,
+# and the macOS app.
 targets = [
     "x86_64-pc-windows-msvc",
     "x86_64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
 ]
 # Only code that ships inside the binaries: build-script tooling and
 # dev-only test dependencies are not distributed.
