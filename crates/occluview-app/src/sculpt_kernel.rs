@@ -1,4 +1,4 @@
-//! Adapter between the app's sculpt contract and the `occlu-sculpt` kernel.
+//! Adapter between the app's sculpt contract and the `occluview-sculpt` kernel.
 //!
 //! Production input is a viewport ray step; the kernel owns raycast, path
 //! continuity, dose, and remeshing. Point dabs remain only as test fixtures.
@@ -11,8 +11,8 @@
 use crate::sculpt_tool::SculptTip;
 use glam::DVec3;
 #[cfg(test)]
-use occlu_sculpt::Dab;
-use occlu_sculpt::{BrushMode as KernelMode, SculptRayConstraints, SculptSession, TipStamp};
+use occluview_sculpt::Dab;
+use occluview_sculpt::{BrushMode as KernelMode, SculptRayConstraints, SculptSession, TipStamp};
 use occluview_core::Vertex;
 use occluview_edit::{EditVertex, MeshEditBuffers, MeshEditError, MeshTopology};
 use occluview_render::{SculptFaceUpdate, SculptTopologyDelta, SculptVertexUpdate};
@@ -334,7 +334,7 @@ impl BrushSession {
         let elapsed_ms = if dose.hold {
             f64::from(dose.elapsed_ms)
         } else {
-            occlu_sculpt::DWELL_FULL_DOSE_MS
+            occluview_sculpt::DWELL_FULL_DOSE_MS
         };
         self.kernel.set_dab_elapsed_ms(elapsed_ms);
         self.kernel.set_preserve_skirt(false);

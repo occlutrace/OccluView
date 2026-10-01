@@ -1,5 +1,5 @@
 [package]
-name = "occlu-sculpt"
+name = "occluview-sculpt"
 description = "Surface sculpting kernel: brush dabs, live remeshing and stroke sessions for dental scan meshes."
 version.workspace = true
 edition.workspace = true
