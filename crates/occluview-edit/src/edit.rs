@@ -1,4 +1,4 @@
-use occlu_mesh_edit::{
+use occluview_mesh_edit::{
     component_at_triangle, crop_to_selected_faces, delete_selected_faces, fill_holes,
     fill_selected_holes, invert_orientation, repair_mesh, selected_connected_components,
     EditVertex, FaceSelection, MeshEditBuffers, MeshEditError, MeshEditOptions, MeshEditReport,

@@ -1,10 +1,12 @@
-//! `occluview-edit` — mesh-editing façade over `occlu-mesh-edit`.
+//! `occluview-edit` — mesh-editing façade over the product-neutral
+//! `occluview-mesh-edit` kernel.
 //!
-//! The product-neutral editing kernel works on its own buffers; this crate
-//! adapts a `occluview-core` [`Mesh`](occluview_core::Mesh) to those buffers,
-//! runs the requested operation, and rebuilds a core mesh. It also owns the
-//! world-space bridge-split adapter and the scene section assembly, which are
-//! the only parts of the model that call the kernel. Keeping them here leaves
+//! The kernel works on its own flat buffers and knows nothing about the core
+//! scene model; this façade adapts a `occluview-core`
+//! [`Mesh`](occluview_core::Mesh) to those buffers, runs the requested
+//! operation, and rebuilds a core mesh. It also owns the world-space
+//! bridge-split adapter and the scene section assembly, which are the only
+//! parts of the model that call the kernel. Keeping them here leaves
 //! `occluview-core` a pure data model with no kernel dependency.
 //!
 //! ## Invariants
@@ -47,7 +49,7 @@ pub use edit::{
     repair_mesh_in_mesh, selected_connected_components_in_mesh, CoreMeshEditResult,
     CoreMeshRepairResult, SculptSessionBuffers,
 };
-pub use occlu_mesh_edit::{
+pub use occluview_mesh_edit::{
     BridgeSplitError, BridgeSplitReport, BridgeSplitRequest, EditVertex, FaceSelection,
     MeshEditBuffers, MeshEditError, MeshEditOptions, MeshEditReport, MeshEditWarning, MeshTopology,
     RepairOptions, RepairReport, CLOSE_HOLES_EDGE_CEILING,
@@ -57,5 +59,5 @@ pub use section::{LayerSection, SceneSection, SectionCache};
 /// Scene section assembly over `occluview-core`'s scene graph.
 pub mod scene {
     pub use crate::section::{LayerSection, SceneSection, SectionCache};
-    pub use occlu_mesh_edit::{SectionPlane, SectionPolyline, SectionResult};
+    pub use occluview_mesh_edit::{SectionPlane, SectionPolyline, SectionResult};
 }

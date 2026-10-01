@@ -1,5 +1,5 @@
 use glam::{Affine3A, DAffine3, DMat3, DVec3, Vec3};
-use occlu_mesh_edit::{
+use occluview_mesh_edit::{
     fill_holes, repair_mesh, split_bridge, split_bridge_surface, validate_bridge_split,
     validate_bridge_split_part, validate_bridge_split_request, BridgeSplitError, BridgeSplitReport,
     BridgeSplitRequest, MeshEditBuffers, MeshEditOptions, RepairOptions, RepairReport,
