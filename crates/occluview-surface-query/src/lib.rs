@@ -13,6 +13,6 @@ pub use cancel::CancelFlag;
 pub use soup::Soup;
 pub use surface::{SurfaceHit, SurfaceIndex};
 
-/// Alignment sampling support shared with the surface index implementation.
+/// Alignment sampling support consumed by `occluview-align`, not part of the public API.
 #[doc(hidden)]
 pub use surface::{feature_voxel_key, FeaturePoint, SurfaceSample, FEATURE_VOXEL_MM};
