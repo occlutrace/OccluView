@@ -170,7 +170,12 @@ impl SculptSession {
                 }
                 false
             }
-            BrushMode::Flatten => self.triangle_is_unsafe(triangle, mode),
+            BrushMode::Flatten => {
+                // Flatten never reaches the layer commit: `dab_flatten` writes
+                // group positions directly, so this predicate never sees it.
+                debug_assert!(false, "Flatten bypasses commit_even_layer");
+                false
+            }
         }
     }
 
