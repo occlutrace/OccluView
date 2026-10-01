@@ -14,6 +14,7 @@
 //! `ν_i = 1 + (1/n_i) Σ_j 1/n_j`, uniform umbrella weights, deterministic
 //! sweep order, tolerance-based early exit with a hard sweep bound.
 
+use crate::numeric::count_as_f32;
 use glam::Vec3;
 
 /// Hard bound on fairing sweeps (safety valve; tolerance exits earlier).
@@ -248,10 +249,4 @@ fn cap_scale(positions: &[Vec3]) -> f32 {
     } else {
         1.0
     }
-}
-
-/// Count-to-f32 via `u16` (cap fans never approach `u16::MAX`; saturation
-/// only guards a pathological input). Mirrors `cap_refine::count_as_f32`.
-fn count_as_f32(count: usize) -> f32 {
-    f32::from(u16::try_from(count).unwrap_or(u16::MAX))
 }

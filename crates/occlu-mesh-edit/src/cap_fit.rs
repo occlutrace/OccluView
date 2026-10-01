@@ -3,6 +3,7 @@
 //! of surface samples just outside it. `cap_refine.rs` owns the
 //! triangulation and refinement.
 
+use crate::numeric::{basis_from_normal, count_as_f32};
 use glam::{Vec2, Vec3};
 
 /// Tikhonov ridge added to the (scale-normalized) quadric normal equations.
@@ -254,12 +255,6 @@ pub(super) fn fit_cap_surface(
     }
 }
 
-/// Lossless-enough count-to-float for averaging small vertex fans. Cap sizes
-/// never approach `u16::MAX`, so the saturation only guards a pathological rim.
-fn count_as_f32(count: usize) -> f32 {
-    f32::from(u16::try_from(count).unwrap_or(u16::MAX))
-}
-
 /// Angular bins over the rim's planar radii, for a cheap "does this support
 /// sample project inside the rim polygon" verdict. Per bin the minimum rim
 /// radius is kept (conservative: near-rim outside samples are never dropped by
@@ -318,18 +313,6 @@ impl OverhangClassifier {
         let bin_minimum = self.min_radius_by_bin[Self::bin_of(coord_u, coord_v)];
         bin_minimum < f32::MAX && radius < bin_minimum * OVERHANG_MARGIN
     }
-}
-
-/// Right-handed orthonormal tangent basis for a unit `normal`.
-fn basis_from_normal(normal: Vec3) -> (Vec3, Vec3) {
-    let axis = if normal.x.abs() > 0.9 {
-        Vec3::Y
-    } else {
-        Vec3::X
-    };
-    let u = axis.cross(normal).normalize();
-    let v = normal.cross(u);
-    (u, v)
 }
 
 /// Solve a 6x6 linear system by Gaussian elimination with partial pivoting.

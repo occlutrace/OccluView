@@ -29,6 +29,7 @@ use super::cap_delaunay::relax_uv;
 use super::cap_fit::fit_cap_surface;
 use super::cap_lawson::CapMesh;
 use super::{EditVertex, GeneratedVertexPolicy};
+use crate::numeric::count_as_f32;
 use glam::{Vec2, Vec3};
 use std::collections::BTreeSet;
 
@@ -318,12 +319,6 @@ fn harmonic_interior(values: &mut [f32], rim_len: usize, triangles: &[[usize; 3]
             break;
         }
     }
-}
-
-/// Lossless-enough count-to-float for averaging small vertex fans. Cap sizes
-/// never approach `u16::MAX`, so the saturation only guards a pathological rim.
-fn count_as_f32(count: usize) -> f32 {
-    f32::from(u16::try_from(count).unwrap_or(u16::MAX))
 }
 
 /// Attributes for a bisection midpoint: the average of its edge endpoints
