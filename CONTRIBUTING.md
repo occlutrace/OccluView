@@ -109,6 +109,12 @@ Remove cosmetic wording pins, deleted-feature negative checks, and tests that
 only duplicate the implementation's current string layout. Report-only
 inventory counts are preferred to arbitrary repository-wide test caps.
 
+The repository-contract tests live in `crates/occluview-repo-contracts`. They
+run with `cargo test --workspace` and assert what the repository says about
+itself: the CI workflows, the packaging reports, the release version that
+`Cargo.toml`, `Cargo.lock` and the installer share, and the MSRV that
+`rust-toolchain.toml`, `Cargo.toml` and `clippy.toml` share.
+
 ## Commits
 
 Use conventional commits (`fix(scope): ...`) with an imperative subject. Keep
@@ -138,6 +144,12 @@ repurpose one without bumping the `schema` the reader checks.
 `scripts/write-latest-json.py` writes the manifest and must agree with the
 platform keys in `crates/occluview-update`; the installers it names are the
 Windows MSI, the Linux `.deb`, and the notarized macOS `.pkg`.
+
+Regenerate a lockfile in the same commit as any manifest change it resolves:
+`Cargo.lock` for the workspace and `fuzz/Cargo.lock` for the fuzz crate. CI
+builds with `--locked`, so a manifest edit committed with a stale lockfile stops
+the build instead of silently re-resolving it, and neither lockfile drifts from
+the manifests it reads.
 
 Two checks are local and cannot run in CI, because CI has no patient scans and
 no Explorer session. Both fail rather than skip: a gate that passes without
