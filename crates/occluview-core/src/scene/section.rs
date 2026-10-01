@@ -125,9 +125,9 @@ fn daffine3(transform: &Affine3A) -> DAffine3 {
 /// Content fingerprint of the inputs `SceneSection::compute` consumes.
 ///
 /// Keyed on the plane bits and, per included layer, the stable layer id, the
-/// mesh `topology_id` (geometry identity), and the transform bits. This is a
+/// mesh `geometry_id` (geometry identity), and the transform bits. This is a
 /// sound value key: it recomputes on geometry/transform/visibility changes and
-/// reuses on material-only changes (which preserve `topology_id`).
+/// reuses on material-only changes (which preserve `geometry_id`).
 #[derive(Clone, PartialEq, Eq)]
 struct SectionKey {
     plane: [u32; 4],
@@ -138,7 +138,7 @@ struct SectionKey {
 #[derive(Clone, PartialEq, Eq)]
 struct LayerFingerprint {
     id: u64,
-    topology: u64,
+    geometry: u64,
     transform: [u32; 12],
 }
 
@@ -156,7 +156,7 @@ fn section_key(scene: &Scene, plane: SectionPlane) -> SectionKey {
         .filter(|entry| contributes_contour(entry))
         .map(|entry| LayerFingerprint {
             id: entry.id().get(),
-            topology: entry.mesh.topology_id(),
+            geometry: entry.mesh.geometry_id(),
             transform: affine_bits(&entry.transform),
         })
         .collect();
@@ -319,11 +319,41 @@ mod tests {
         let scene = scene_with(cube());
         let mut cache = SectionCache::new();
         let first = cache.get_or_compute(&scene, xplane(0.5));
-        // Re-tint the layer (clones the mesh, preserving topology_id).
+        // Re-tint the layer (clones the mesh, preserving geometry_id).
         let mut retinted = scene.clone();
         retinted.meshes_mut()[0].tint = [0.1, 0.2, 0.3, 1.0];
         let second = cache.get_or_compute(&retinted, xplane(0.5));
         assert!(Arc::ptr_eq(&first, &second), "material-only change reuses");
+    }
+
+    #[test]
+    fn cache_invalidates_on_sculpted_vertices() {
+        let scene = scene_with(cube());
+        let mut cache = SectionCache::new();
+        let first = cache.get_or_compute(&scene, xplane(0.5));
+
+        // A sculpt commit keeps `topology_id` frozen and mints a fresh
+        // `geometry_id`; the cache must key on the latter.
+        let mut sculpted = scene.clone();
+        let mesh = Arc::clone(&sculpted.meshes()[0].mesh);
+        let mut vertices = mesh.vertices().to_vec();
+        vertices[0].position[1] += 0.3;
+        let new_mesh = mesh
+            .with_sculpted_vertices(vertices)
+            .expect("same vertex count");
+        assert_eq!(new_mesh.topology_id(), mesh.topology_id());
+        assert_ne!(new_mesh.geometry_id(), mesh.geometry_id());
+        sculpted.meshes_mut()[0].mesh = Arc::new(new_mesh);
+
+        let second = cache.get_or_compute(&sculpted, xplane(0.5));
+        assert!(
+            !Arc::ptr_eq(&first, &second),
+            "sculpt commit invalidates the cache"
+        );
+        assert_ne!(
+            first.per_layer[0].polylines, second.per_layer[0].polylines,
+            "section contour changes after a sculpt"
+        );
     }
 
     #[test]
