@@ -50,14 +50,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
 /// Base icon edge at 96 DPI; scaled up for high-DPI displays.
 const BASE_ICON_PX: u32 = 16;
 
-/// Which app intent a launch item carries. The two currently produce the same
-/// command line (see [`PreviewHandler::launch_in_app`]).
-#[derive(Clone, Copy)]
-enum LaunchIntent {
-    Open,
-    Edit,
-}
-
 impl PreviewHandler {
     /// Build and track the context menu at a client-space point, then run the
     /// selected command. Best-effort: any failure leaves the preview untouched.
@@ -207,11 +199,7 @@ impl PreviewHandler {
     ) -> windows::core::Result<()> {
         match command {
             PreviewMenuCommand::Open => {
-                self.launch_in_app(hwnd, LaunchIntent::Open);
-                Ok(())
-            }
-            PreviewMenuCommand::Edit => {
-                self.launch_in_app(hwnd, LaunchIntent::Edit);
+                self.launch_in_app(hwnd);
                 Ok(())
             }
             PreviewMenuCommand::CopyImage => self.copy_preview_to_clipboard(hwnd),
@@ -249,7 +237,7 @@ impl PreviewHandler {
         Ok(())
     }
 
-    fn launch_in_app(&self, hwnd: HWND, intent: LaunchIntent) {
+    fn launch_in_app(&self, hwnd: HWND) {
         let Some(path) = self.source.borrow().path().map(PathBuf::from) else {
             // Stream-only preview with no filesystem path: nothing to launch.
             return;
@@ -258,14 +246,9 @@ impl PreviewHandler {
             tracing::warn!("could not resolve occluview.exe next to the shell DLL");
             return;
         };
-        // occluview-app has no `--edit` verb (its argument parser treats any
-        // unknown argument as a file path), so both intents open the viewer
-        // with just the file.
-        let params = match intent {
-            LaunchIntent::Open | LaunchIntent::Edit => {
-                HSTRING::from(format!("\"{}\"", path.display()))
-            }
-        };
+        // The app has no `--edit` verb: its argument parser treats an unknown
+        // argument as a file path, so a launch carries only the file.
+        let params = HSTRING::from(format!("\"{}\"", path.display()));
         // SAFETY: all string pointers stay alive across this synchronous call.
         let result = unsafe {
             ShellExecuteW(
