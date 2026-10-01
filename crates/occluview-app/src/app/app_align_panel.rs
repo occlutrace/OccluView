@@ -5,7 +5,7 @@
 
 use eframe::egui;
 
-use super::OccluViewApp;
+use super::SceneContext;
 use crate::align_panel::{AlignPanelAction, AlignTab};
 use crate::align_worker::{matching_inputs_changed, AlignWorker};
 
@@ -24,7 +24,7 @@ fn align_worker_needs_ui_poll(worker: Option<&AlignWorker>) -> bool {
     worker.is_some_and(|worker| worker.is_busy() || worker.has_pending_output())
 }
 
-impl OccluViewApp {
+impl SceneContext<'_> {
     /// A stationary right-click takes the last point back.
     ///
     /// Undoing a half-placed pair stays on the geometry the operator is looking
@@ -46,12 +46,14 @@ impl OccluViewApp {
         // Tracked here as well as in the camera path, because a frame this
         // method consumes never reaches the camera path at all.
         if pressed {
-            self.ui.viewport_secondary_gesture_moved_since_press = false;
+            self.scene_ui.viewport_secondary_gesture_moved_since_press = false;
         }
         if down && motion.length_sq() > f32::EPSILON {
-            self.ui.viewport_secondary_gesture_moved_since_press = true;
+            self.scene_ui.viewport_secondary_gesture_moved_since_press = true;
         }
-        if !response.secondary_clicked() || self.ui.viewport_secondary_gesture_moved_since_press {
+        if !response.secondary_clicked()
+            || self.scene_ui.viewport_secondary_gesture_moved_since_press
+        {
             return false;
         }
         if !self.take_align_arrow_back() {
@@ -98,6 +100,7 @@ impl OccluViewApp {
         let action = crate::align_panel::show(
             ctx,
             viewport_rect,
+            egui::Id::new(self.scene_key),
             crate::align_panel::AlignPanelView {
                 tool: &self.tools.align.tool,
                 layer_count: self
@@ -129,6 +132,7 @@ impl OccluViewApp {
         if excluding {
             match crate::align_panel_brush::show(
                 ctx,
+                egui::Id::new(self.scene_key),
                 crate::align_panel_brush::BrushPanelView {
                     viewport_rect,
                     brush: &mut brush,

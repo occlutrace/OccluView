@@ -1,6 +1,6 @@
 //! Viewport orchestration for the interactive Bridge Split separator disc.
 
-use super::{egui, OccluViewApp, Scene};
+use super::{egui, Scene, SceneContext};
 use crate::bridge_split::{apply_preview_to_scene, BridgeSplitMode, BridgeSplitTarget};
 use crate::bridge_split_overlay::{
     paint_separator_disc, show_panel, BridgeSplitPanelAction, BridgeSplitPanelState, SeparatorDisc,
@@ -26,10 +26,10 @@ struct BridgeSectionInput<'a> {
     panel_zoom_notches: f32,
 }
 
-impl OccluViewApp {
+impl SceneContext<'_> {
     pub(super) fn begin_bridge_split_from_layer(&mut self, scene: &Scene, layer_id: SceneMeshId) {
         if self.document.edit_mode.has_active_session() {
-            self.ui.status_message = Some(
+            self.scene_ui.status_message = Some(
                 self.ui
                     .locale
                     .tr(crate::i18n::message_id!("edit-session-busy")),
@@ -37,12 +37,12 @@ impl OccluViewApp {
             return;
         }
         if self.tools.bridge_split.session().mode() != BridgeSplitMode::Off {
-            self.ui.status_message =
+            self.scene_ui.status_message =
                 Some(self.ui.locale.tr(crate::i18n::message_id!("bridge-active")));
             return;
         }
         let Some(entry) = scene.meshes().iter().find(|entry| entry.id() == layer_id) else {
-            self.ui.status_message = Some(
+            self.scene_ui.status_message = Some(
                 self.ui
                     .locale
                     .tr(crate::i18n::message_id!("bridge-target-gone")),
@@ -50,7 +50,7 @@ impl OccluViewApp {
             return;
         };
         if !entry.visible || entry.mesh.is_point_cloud() || entry.mesh.triangle_count() == 0 {
-            self.ui.status_message = Some(
+            self.scene_ui.status_message = Some(
                 self.ui
                     .locale
                     .tr(crate::i18n::message_id!("bridge-needs-mesh")),
@@ -99,7 +99,7 @@ impl OccluViewApp {
         }
         self.tools.bridge_split_section.reset();
         self.render.invalidation.overlay_tools_changed();
-        self.ui.status_message = Some(
+        self.scene_ui.status_message = Some(
             self.ui
                 .locale
                 .tr(crate::i18n::message_id!("bridge-place-disc")),
@@ -163,7 +163,11 @@ impl OccluViewApp {
             viewport_rect: response.rect,
         };
         let (frame, panel_zoom_notches) = self.build_bridge_split_frame(ctx, &frame_context);
-        let update = self.update_bridge_split_disc(&frame, entry, ctx);
+        let update = if self.input_allowed {
+            self.update_bridge_split_disc(&frame, entry, ctx)
+        } else {
+            crate::cut_manipulator::CutUpdate::default()
+        };
         let section_consumed = self.show_bridge_split_section(BridgeSectionInput {
             ui,
             ctx,
@@ -294,6 +298,7 @@ impl OccluViewApp {
     ) -> Option<BridgeSplitPanelAction> {
         show_panel(
             ctx,
+            self.scene_key,
             viewport_rect,
             BridgeSplitPanelState {
                 mode: self.tools.bridge_split.session().mode(),
@@ -353,6 +358,19 @@ impl OccluViewApp {
         false
     }
 
+    pub(super) fn poll_bridge_split_worker(&mut self, ctx: &egui::Context) {
+        let target = self
+            .document
+            .scene
+            .as_deref()
+            .and_then(|scene| live_bridge_entry(scene, self.tools.bridge_split.session().target()))
+            .map(BridgeSplitTarget::capture);
+        if self.tools.bridge_split.poll(target) {
+            self.render.invalidation.overlay_tools_changed();
+            ctx.request_repaint();
+        }
+    }
+
     fn poll_bridge_split_result(&mut self, entry: &SceneMesh, ctx: &egui::Context) {
         if self
             .tools
@@ -366,7 +384,7 @@ impl OccluViewApp {
 
     fn submit_bridge_preview(&mut self, entry: &SceneMesh) {
         if self.tools.bridge_split.submit_current_request(entry) {
-            self.ui.status_message = Some(
+            self.scene_ui.status_message = Some(
                 self.ui
                     .locale
                     .tr(crate::i18n::message_id!("bridge-calculating")),
@@ -423,12 +441,17 @@ impl OccluViewApp {
             scene,
             self.tools.bridge_split_section.slice_visible(),
         );
+        let pointer = pointer.filter(|_| self.input_allowed);
+        let over_viewport = over_viewport && self.input_allowed;
         let ctrl = ctx.input(|input| input.modifiers.command);
         // The wheel scoping and the camera basis are the cut tool's, not a
         // second copy of them: an operator meets one wheel gesture over one
         // Section panel, whichever disc tool put it there.
-        let (wheel_notches, panel_zoom_notches) =
-            super::disc_frame::section_panel_wheel(ctx, over_section_panel, ctrl);
+        let (wheel_notches, panel_zoom_notches) = if self.input_allowed {
+            super::disc_frame::section_panel_wheel(ctx, over_section_panel, ctrl)
+        } else {
+            (0.0, 0.0)
+        };
         let super::disc_frame::DiscViewGeometry {
             eye,
             view_dir,
@@ -451,10 +474,10 @@ impl OccluViewApp {
         let frame = CutFrameInput {
             pointer,
             over_viewport,
-            primary_pressed: ctx
-                .input(|input| input.pointer.button_pressed(egui::PointerButton::Primary)),
-            primary_down: ctx
-                .input(|input| input.pointer.button_down(egui::PointerButton::Primary)),
+            primary_pressed: self.input_allowed
+                && ctx.input(|input| input.pointer.button_pressed(egui::PointerButton::Primary)),
+            primary_down: self.input_allowed
+                && ctx.input(|input| input.pointer.button_down(egui::PointerButton::Primary)),
             ctrl,
             escape: false,
             flip: false,
@@ -490,7 +513,7 @@ impl OccluViewApp {
             entry.id(),
             EditModeCommand::BridgeSplit,
         ) else {
-            self.ui.status_message = Some(
+            self.scene_ui.status_message = Some(
                 self.ui
                     .locale
                     .tr(crate::i18n::message_id!("bridge-unavailable")),
@@ -515,7 +538,7 @@ impl OccluViewApp {
             .finish_scene_edit_success(token, &applied.scene)
             != BusyFinish::Applied
         {
-            self.ui.status_message = Some(
+            self.scene_ui.status_message = Some(
                 self.ui
                     .locale
                     .tr(crate::i18n::message_id!("bridge-not-applied")),
@@ -530,7 +553,7 @@ impl OccluViewApp {
         self.tools.bridge_split.cancel();
         self.tools.bridge_split_disc.disarm();
         self.tools.bridge_split_section.reset();
-        self.ui.status_message = Some(if surface_result {
+        self.scene_ui.status_message = Some(if surface_result {
             self.ui
                 .locale
                 .tr(crate::i18n::message_id!("bridge-complete-surface"))
@@ -551,7 +574,7 @@ impl OccluViewApp {
         self.tools.bridge_split_disc.disarm();
         self.tools.bridge_split_section.reset();
         self.document.mesh_selection_drag = None;
-        self.ui.status_message = Some(message.to_string());
+        self.scene_ui.status_message = Some(message.to_string());
         self.render.invalidation.overlay_tools_changed();
         self.ui.repaint_ctx.request_repaint();
     }
@@ -627,47 +650,83 @@ mod transition_tests {
         let mut app = test_app("align-bridge-tool-exclusivity");
         let scene = named_scene("jaw", 0.0);
         let layer_id = scene.meshes()[0].id();
-        app.document.scene = Some(Arc::new(scene));
+        app.workspace.scenes[0].document.scene = Some(Arc::new(scene));
         let ctx = app.ui.repaint_ctx.clone();
 
-        app.arm_align_tool(&ctx);
-        assert!(app.tools.align.tool.is_armed());
-        let start = app.document.scene.as_ref().expect("scene").meshes()[0].transform;
-        app.tools.align.drag = Some(AlignDrag {
+        app.active_context()
+            .expect("live test scene")
+            .arm_align_tool(&ctx);
+        assert!(app.workspace.scenes[0].tools.align.tool.is_armed());
+        let start = app.workspace.scenes[0]
+            .document
+            .scene
+            .as_ref()
+            .expect("scene")
+            .meshes()[0]
+            .transform;
+        app.workspace.scenes[0].tools.align.drag = Some(AlignDrag {
             layer: layer_id,
             start,
             pivot_local: Vec3::new(0.25, 0.25, 0.0),
         });
-        app.nudge_align_layer(
-            layer_id,
-            Affine3A::from_translation(Vec3::new(2.0, -1.0, 0.5)),
-        );
-        let aligned_pose = app.document.scene.as_ref().expect("scene").meshes()[0].transform;
+        app.active_context()
+            .expect("live test scene")
+            .nudge_align_layer(
+                layer_id,
+                Affine3A::from_translation(Vec3::new(2.0, -1.0, 0.5)),
+            );
+        let aligned_pose = app.workspace.scenes[0]
+            .document
+            .scene
+            .as_ref()
+            .expect("scene")
+            .meshes()[0]
+            .transform;
         assert_ne!(aligned_pose, start);
 
-        let live_scene = app.document.scene.clone().expect("scene");
-        app.begin_bridge_split_from_layer(&live_scene, layer_id);
-        assert!(!app.tools.align.tool.is_armed());
+        let live_scene = app.workspace.scenes[0]
+            .document
+            .scene
+            .clone()
+            .expect("scene");
+        app.active_context()
+            .expect("live test scene")
+            .begin_bridge_split_from_layer(&live_scene, layer_id);
+        assert!(!app.workspace.scenes[0].tools.align.tool.is_armed());
         assert_eq!(
-            app.document.scene.as_ref().expect("scene").meshes()[0].transform,
+            app.workspace.scenes[0]
+                .document
+                .scene
+                .as_ref()
+                .expect("scene")
+                .meshes()[0]
+                .transform,
             aligned_pose,
             "switching tools keeps the Align pose"
         );
-        assert_eq!(app.document.edit_mode.undo_len(), 1);
+        assert_eq!(app.workspace.scenes[0].document.edit_mode.undo_len(), 1);
         assert_ne!(
-            app.tools.bridge_split.session().mode(),
+            app.workspace.scenes[0].tools.bridge_split.session().mode(),
             crate::bridge_split::BridgeSplitMode::Off
         );
 
-        app.arm_align_tool(&ctx);
-        assert!(app.tools.align.tool.is_armed());
+        app.active_context()
+            .expect("live test scene")
+            .arm_align_tool(&ctx);
+        assert!(app.workspace.scenes[0].tools.align.tool.is_armed());
         assert_eq!(
-            app.tools.bridge_split.session().mode(),
+            app.workspace.scenes[0].tools.bridge_split.session().mode(),
             crate::bridge_split::BridgeSplitMode::Off,
             "arming Align discards the other tool's preview and active session"
         );
         assert_eq!(
-            app.document.scene.as_ref().expect("scene").meshes()[0].transform,
+            app.workspace.scenes[0]
+                .document
+                .scene
+                .as_ref()
+                .expect("scene")
+                .meshes()[0]
+                .transform,
             aligned_pose,
             "arming Align does not alter the pose Bridge Split left behind"
         );

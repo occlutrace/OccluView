@@ -56,6 +56,18 @@ impl LiveViewport {
             render_state.target_format,
             u32::from(sample_count),
         )?;
+        Ok(Self::from_renderer(renderer))
+    }
+
+    /// Create a clean peer viewport using the source pane's shared device,
+    /// queue and immutable renderer pipelines. Per-view GPU uniforms and
+    /// clipping resources are newly allocated; no prepared scene or geometry
+    /// is copied from `self`.
+    pub(super) fn new_peer(&self) -> Result<SharedLiveViewport, RenderError> {
+        Ok(Self::from_renderer(self.renderer.new_peer()?))
+    }
+
+    fn from_renderer(renderer: Renderer) -> SharedLiveViewport {
         let fallback_texture = GpuTexture::fallback(&renderer, renderer.device(), renderer.queue());
         let camera_bind_group = renderer.camera_bind_group();
         let clip_buffer = renderer.clip_uniform_buffer();
@@ -63,7 +75,7 @@ impl LiveViewport {
             .queue()
             .write_buffer(&clip_buffer, 0, bytemuck::bytes_of(&ClipPlane::disabled()));
         let clip_bind_group = renderer.clip_bind_group(&clip_buffer);
-        Ok(Arc::new(Mutex::new(Self {
+        Arc::new(Mutex::new(Self {
             renderer,
             fallback_texture,
             camera_bind_group,
@@ -74,7 +86,7 @@ impl LiveViewport {
             prepared_scene: None,
             selection_overlay: None,
             sculpt_cursor: None,
-        })))
+        }))
     }
 
     /// Allow drawing to resume after the operator acknowledged a fault.

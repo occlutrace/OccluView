@@ -40,7 +40,11 @@ pub(crate) struct BrushPanelView<'a> {
 }
 
 /// Show the Brush tool window; returns what the operator asked for.
-pub(crate) fn show(ctx: &egui::Context, view: BrushPanelView<'_>) -> Option<BrushPanelAction> {
+pub(crate) fn show(
+    ctx: &egui::Context,
+    scope: egui::Id,
+    view: BrushPanelView<'_>,
+) -> Option<BrushPanelAction> {
     // Opens to the left of the main window's default corner, so the two do not
     // land on top of each other the first time the checkbox is ticked.
     let default_pos = view.viewport_rect.right_top() + egui::vec2(-WINDOW_WIDTH - 300.0, 16.0);
@@ -49,7 +53,7 @@ pub(crate) fn show(ctx: &egui::Context, view: BrushPanelView<'_>) -> Option<Brus
         view.locale
             .tr(crate::i18n::message_id!("align-brush-title")),
     )
-    .id(egui::Id::new("occluview_align_brush_window"))
+    .id(scope.with("occluview_align_brush_window"))
     .default_pos(default_pos)
     .constrain_to(view.viewport_rect)
     .resizable(false)

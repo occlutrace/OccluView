@@ -35,20 +35,31 @@ fn three_layer_scene() -> (Scene, SceneMeshId, SceneMeshId, SceneMeshId) {
 }
 
 fn open_contacts_on(app: &mut OccluViewApp, layer: SceneMeshId) -> bool {
-    app.tools.align.settings.show_deviation = false;
-    let scene = app.document.scene.clone().expect("scene");
-    app.begin_contacts_from_layer(&scene, layer)
+    app.workspace.scenes[0].tools.align.settings.show_deviation = false;
+    let scene = app.workspace.scenes[0]
+        .document
+        .scene
+        .clone()
+        .expect("scene");
+    app.active_context()
+        .expect("live test scene")
+        .begin_contacts_from_layer(&scene, layer)
 }
 
 fn pending(app: &OccluViewApp) -> ContactRequest {
-    app.tools
+    app.workspace.scenes[0]
+        .tools
         .contacts
         .pending_request()
         .expect("a submitted reading waits for its answer")
 }
 
 fn deliver_answer(app: &OccluViewApp, request: ContactRequest, failure: ContactFailure) {
-    let worker = app.tools.contacts.worker().expect("a worker");
+    let worker = app.workspace.scenes[0]
+        .tools
+        .contacts
+        .worker()
+        .expect("a worker");
     worker.publish_for_tests(ContactCompletion {
         generation: worker.generation(),
         request_id: request.id,
@@ -62,7 +73,7 @@ fn an_answer_for_a_superseded_reading_is_not_applied_to_the_current_one() {
     let mut app = test_app("contact-superseded-reading");
     let ctx = app.ui.repaint_ctx.clone();
     let (scene, first, _second, third) = three_layer_scene();
-    app.document.scene = Some(Arc::new(scene));
+    app.workspace.scenes[0].document.scene = Some(Arc::new(scene));
 
     assert!(open_contacts_on(&mut app, first));
     let superseded = pending(&app);
@@ -73,20 +84,23 @@ fn an_answer_for_a_superseded_reading_is_not_applied_to_the_current_one() {
     assert_ne!(superseded.keys, current.keys, "about different surfaces");
 
     deliver_answer(&app, superseded, ContactFailure::NoSurface);
-    app.drain_contacts_worker(&ctx);
+    app.active_context()
+        .expect("live test scene")
+        .drain_contacts_worker(&ctx);
 
     assert_eq!(
-        app.tools.contacts.status(),
+        app.workspace.scenes[0].tools.contacts.status(),
         Some(crate::contact::ContactStatus::Measuring),
         "the new reading is still measuring; a refusal that belongs to the \
          previous one must not write its sentence"
     );
     assert!(
-        !app.tools.contacts.refused(),
+        !app.workspace.scenes[0].tools.contacts.refused(),
         "and must not offer the operator a retry for it"
     );
     assert_eq!(
-        app.tools
+        app.workspace.scenes[0]
+            .tools
             .contacts
             .pending_request()
             .map(|request| request.id),
@@ -100,33 +114,39 @@ fn an_answer_measured_before_the_scan_moved_is_not_applied() {
     let mut app = test_app("contact-moved-under-hold");
     let ctx = app.ui.repaint_ctx.clone();
     let (scene, first, _second, _third) = three_layer_scene();
-    app.document.scene = Some(Arc::new(scene));
+    app.workspace.scenes[0].document.scene = Some(Arc::new(scene));
 
     assert!(open_contacts_on(&mut app, first));
     let request = pending(&app);
 
-    app.document.live_scene_mut().expect("scene").meshes_mut()[0].transform =
-        glam::Affine3A::from_translation(Vec3::new(0.0, 0.0, 2.0));
-    app.tools.contacts.hold_for_drag();
+    app.workspace.scenes[0]
+        .document
+        .live_scene_mut()
+        .expect("scene")
+        .meshes_mut()[0]
+        .transform = glam::Affine3A::from_translation(Vec3::new(0.0, 0.0, 2.0));
+    app.workspace.scenes[0].tools.contacts.hold_for_drag();
     assert!(
-        app.tools.contacts.fields().is_empty(),
+        app.workspace.scenes[0].tools.contacts.fields().is_empty(),
         "the hold clears them"
     );
 
     deliver_answer(&app, request, ContactFailure::NoSurface);
-    app.drain_contacts_worker(&ctx);
+    app.active_context()
+        .expect("live test scene")
+        .drain_contacts_worker(&ctx);
 
     assert_eq!(
-        app.tools.contacts.status(),
+        app.workspace.scenes[0].tools.contacts.status(),
         Some(crate::contact::ContactStatus::Remeasuring),
         "the reading is still held, and an answer from before the move must not \
          replace what the panel is saying"
     );
     assert!(
-        !app.tools.contacts.refused(),
+        !app.workspace.scenes[0].tools.contacts.refused(),
         "nor leave a refusal behind for a pose the operator has already left"
     );
-    assert!(app.tools.contacts.fields().is_empty());
+    assert!(app.workspace.scenes[0].tools.contacts.fields().is_empty());
 }
 
 /// A worker that could not start is not kept: the next reading gets a new
@@ -136,22 +156,28 @@ fn an_answer_measured_before_the_scan_moved_is_not_applied() {
 fn a_reading_replaces_a_worker_that_could_not_start() {
     let mut app = test_app("contact-no-executor");
     let (scene, first, _second, _third) = three_layer_scene();
-    app.document.scene = Some(Arc::new(scene));
-    app.tools
+    app.workspace.scenes[0].document.scene = Some(Arc::new(scene));
+    app.workspace.scenes[0]
+        .tools
         .contacts
         .install_worker_for_tests(ContactWorker::spawn_failing());
 
     assert!(open_contacts_on(&mut app, first));
 
     assert!(
-        app.tools
+        app.workspace.scenes[0]
+            .tools
             .contacts
             .worker()
             .is_some_and(|worker| !worker.has_failed()),
         "the reading must reach a worker that can run"
     );
     assert!(
-        app.tools.contacts.pending_request().is_some(),
+        app.workspace.scenes[0]
+            .tools
+            .contacts
+            .pending_request()
+            .is_some(),
         "and the measurement it submitted must be waiting, not abandoned"
     );
 }
@@ -161,8 +187,9 @@ fn a_worker_that_dies_with_a_job_in_flight_releases_the_reading() {
     let mut app = test_app("contact-worker-died");
     let ctx = app.ui.repaint_ctx.clone();
     let (scene, first, _second, _third) = three_layer_scene();
-    app.document.scene = Some(Arc::new(scene));
-    app.tools
+    app.workspace.scenes[0].document.scene = Some(Arc::new(scene));
+    app.workspace.scenes[0]
+        .tools
         .contacts
         .install_worker_for_tests(ContactWorker::spawn_panicking());
 
@@ -170,29 +197,34 @@ fn a_worker_that_dies_with_a_job_in_flight_releases_the_reading() {
     let keys = pending(&app).keys;
 
     let mut waited = Duration::ZERO;
-    while app.tools.contacts.is_busy() && waited < Duration::from_secs(10) {
-        app.drain_contacts_worker(&ctx);
+    while app.workspace.scenes[0].tools.contacts.is_busy() && waited < Duration::from_secs(10) {
+        app.active_context()
+            .expect("live test scene")
+            .drain_contacts_worker(&ctx);
         std::thread::sleep(Duration::from_millis(5));
         waited += Duration::from_millis(5);
     }
 
     assert!(
-        !app.tools.contacts.is_busy(),
+        !app.workspace.scenes[0].tools.contacts.is_busy(),
         "the bar must stop spinning when its worker is gone"
     );
     assert_eq!(
-        app.tools.contacts.status(),
+        app.workspace.scenes[0].tools.contacts.status(),
         Some(crate::contact::ContactStatus::Failed(
             ContactFailure::Worker
         )),
         "and it must say the reading failed"
     );
     assert!(
-        app.tools.contacts.refused(),
+        app.workspace.scenes[0].tools.contacts.refused(),
         "with the retry a refusal earns, instead of an endless spinner"
     );
     assert!(
-        !app.tools.contacts.needs_measurement(keys),
+        !app.workspace.scenes[0]
+            .tools
+            .contacts
+            .needs_measurement(keys),
         "a dead worker must not be retried every frame"
     );
 }
@@ -205,30 +237,42 @@ fn read_again_after_a_worker_death_reaches_a_new_worker() {
     let mut app = test_app("contact-retry-after-death");
     let ctx = app.ui.repaint_ctx.clone();
     let (scene, first, _second, _third) = three_layer_scene();
-    app.document.scene = Some(Arc::new(scene));
-    app.tools
+    app.workspace.scenes[0].document.scene = Some(Arc::new(scene));
+    app.workspace.scenes[0]
+        .tools
         .contacts
         .install_worker_for_tests(ContactWorker::spawn_panicking());
 
     assert!(open_contacts_on(&mut app, first));
     let mut waited = Duration::ZERO;
-    while app.tools.contacts.is_busy() && waited < Duration::from_secs(10) {
-        app.drain_contacts_worker(&ctx);
+    while app.workspace.scenes[0].tools.contacts.is_busy() && waited < Duration::from_secs(10) {
+        app.active_context()
+            .expect("live test scene")
+            .drain_contacts_worker(&ctx);
         std::thread::sleep(Duration::from_millis(5));
         waited += Duration::from_millis(5);
     }
-    assert!(app.tools.contacts.refused(), "the death is reported");
+    assert!(
+        app.workspace.scenes[0].tools.contacts.refused(),
+        "the death is reported"
+    );
 
     // The retry chip's action, as the bar wires it.
-    app.tools.contacts.forget_failure();
-    app.submit_contacts_job();
+    app.workspace.scenes[0].tools.contacts.forget_failure();
+    app.active_context()
+        .expect("live test scene")
+        .submit_contacts_job();
 
     assert!(
-        app.tools.contacts.pending_request().is_some(),
+        app.workspace.scenes[0]
+            .tools
+            .contacts
+            .pending_request()
+            .is_some(),
         "the retry must reach a worker that can run it"
     );
     assert!(
-        !app.tools.contacts.refused(),
+        !app.workspace.scenes[0].tools.contacts.refused(),
         "and it must not report the old worker's failure again"
     );
 }
@@ -243,37 +287,56 @@ fn showing_a_scan_again_clears_the_unusable_sentence() {
     let mut app = test_app("contact-unusable-clears");
     let ctx = app.ui.repaint_ctx.clone();
     let (scene, first, second, _third) = three_layer_scene();
-    app.document.scene = Some(Arc::new(scene));
+    app.workspace.scenes[0].document.scene = Some(Arc::new(scene));
 
     assert!(open_contacts_on(&mut app, first));
     let mut waited = Duration::ZERO;
-    while app.tools.contacts.is_busy() && waited < Duration::from_secs(10) {
-        app.drain_contacts_worker(&ctx);
+    while app.workspace.scenes[0].tools.contacts.is_busy() && waited < Duration::from_secs(10) {
+        app.active_context()
+            .expect("live test scene")
+            .drain_contacts_worker(&ctx);
         std::thread::sleep(Duration::from_millis(5));
         waited += Duration::from_millis(5);
     }
 
     // Hide the antagonist: the reading cannot be measured right now.
-    app.document.live_scene_mut().expect("scene").meshes_mut()[1].visible = false;
-    app.sync_contacts_with_scene(&ctx);
+    app.workspace.scenes[0]
+        .document
+        .live_scene_mut()
+        .expect("scene")
+        .meshes_mut()[1]
+        .visible = false;
+    app.active_context()
+        .expect("live test scene")
+        .sync_contacts_with_scene(&ctx);
     assert_eq!(
-        app.tools.contacts.status(),
+        app.workspace.scenes[0].tools.contacts.status(),
         Some(crate::contact::ContactStatus::AntagonistUnusable),
         "hiding the other scan explains why nothing is measured"
     );
 
     // Show it again: the explanation is no longer true.
-    app.document.live_scene_mut().expect("scene").meshes_mut()[1].visible = true;
-    app.sync_contacts_with_scene(&ctx);
+    app.workspace.scenes[0]
+        .document
+        .live_scene_mut()
+        .expect("scene")
+        .meshes_mut()[1]
+        .visible = true;
+    app.active_context()
+        .expect("live test scene")
+        .sync_contacts_with_scene(&ctx);
     assert!(
         !matches!(
-            app.tools.contacts.status(),
+            app.workspace.scenes[0].tools.contacts.status(),
             Some(crate::contact::ContactStatus::AntagonistUnusable)
         ),
         "the sentence must not outlive the reason for it"
     );
     assert!(
-        !app.tools.contacts.has_unusable_override(),
+        !app.workspace.scenes[0]
+            .tools
+            .contacts
+            .has_unusable_override(),
         "and the override must be gone, not merely overwritten"
     );
     let _ = second;
@@ -284,32 +347,51 @@ fn a_dropped_answer_releases_the_request_so_the_scene_can_be_measured_again() {
     let mut app = test_app("contact-dropped-answer-resubmits");
     let ctx = app.ui.repaint_ctx.clone();
     let (scene, first, _second, _third) = three_layer_scene();
-    app.document.scene = Some(Arc::new(scene));
+    app.workspace.scenes[0].document.scene = Some(Arc::new(scene));
 
     assert!(open_contacts_on(&mut app, first));
     let request = pending(&app);
     let keys = request.keys;
 
-    app.document.live_scene_mut().expect("scene").meshes_mut()[0].transform =
-        glam::Affine3A::from_translation(Vec3::new(0.0, 0.0, 2.0));
-    app.tools.contacts.hold_for_drag();
+    app.workspace.scenes[0]
+        .document
+        .live_scene_mut()
+        .expect("scene")
+        .meshes_mut()[0]
+        .transform = glam::Affine3A::from_translation(Vec3::new(0.0, 0.0, 2.0));
+    app.workspace.scenes[0].tools.contacts.hold_for_drag();
     deliver_answer(&app, request, ContactFailure::NoSurface);
-    app.drain_contacts_worker(&ctx);
+    app.active_context()
+        .expect("live test scene")
+        .drain_contacts_worker(&ctx);
 
     assert!(
-        app.tools.contacts.pending_request().is_none(),
+        app.workspace.scenes[0]
+            .tools
+            .contacts
+            .pending_request()
+            .is_none(),
         "a dropped answer must release the request it belonged to"
     );
 
-    app.document.live_scene_mut().expect("scene").meshes_mut()[0].transform =
-        glam::Affine3A::IDENTITY;
-    app.tools.contacts.resume_after_drag();
+    app.workspace.scenes[0]
+        .document
+        .live_scene_mut()
+        .expect("scene")
+        .meshes_mut()[0]
+        .transform = glam::Affine3A::IDENTITY;
+    app.workspace.scenes[0].tools.contacts.resume_after_drag();
     assert!(
-        app.tools.contacts.needs_measurement(keys),
+        app.workspace.scenes[0]
+            .tools
+            .contacts
+            .needs_measurement(keys),
         "with the drag over, the dropped answer must not be treated as still \
          pending: nothing is running and nothing would ever submit one"
     );
-    app.sync_contacts_with_scene(&ctx);
+    app.active_context()
+        .expect("live test scene")
+        .sync_contacts_with_scene(&ctx);
 
     let resubmitted = pending(&app);
     assert_eq!(
@@ -332,11 +414,18 @@ fn a_dropped_answer_releases_the_request_so_the_scene_can_be_measured_again() {
 #[test]
 fn the_align_worker_is_replaced_after_it_dies() {
     let mut app = test_app("align-worker-respawn");
-    assert!(!app.align_worker_mut().has_failed());
+    assert!(!app
+        .active_context()
+        .expect("live test scene")
+        .align_worker_mut()
+        .has_failed());
 
-    app.align_worker_mut().poison_queue_for_tests();
+    app.active_context()
+        .expect("live test scene")
+        .align_worker_mut()
+        .poison_queue_for_tests();
     for _ in 0..200 {
-        if app
+        if app.workspace.scenes[0]
             .tools
             .align
             .worker
@@ -348,7 +437,8 @@ fn the_align_worker_is_replaced_after_it_dies() {
         std::thread::sleep(Duration::from_millis(5));
     }
     assert!(
-        app.tools
+        app.workspace.scenes[0]
+            .tools
             .align
             .worker
             .as_ref()
@@ -357,7 +447,10 @@ fn the_align_worker_is_replaced_after_it_dies() {
     );
 
     assert!(
-        !app.align_worker_mut().has_failed(),
+        !app.active_context()
+            .expect("live test scene")
+            .align_worker_mut()
+            .has_failed(),
         "asking for the worker again must hand back a live one"
     );
 }
@@ -375,43 +468,58 @@ fn opening_a_reading_clears_the_align_heatmap() {
 
     let mut app = test_app("contact-clears-align-heatmap");
     let (scene, first, _second, _third) = three_layer_scene();
-    app.document.scene = Some(Arc::new(scene));
+    app.workspace.scenes[0].document.scene = Some(Arc::new(scene));
 
     // The state a landed Best fit leaves behind: a map up on the moving scan.
-    app.tools.align.settings.show_deviation = true;
+    app.workspace.scenes[0].tools.align.settings.show_deviation = true;
     assert!(
-        app.attach_overlay_colors(first, vec![[12, 34, 56, 255]; 3], AlignOverlay::Map),
+        app.active_context()
+            .expect("live test scene")
+            .attach_overlay_colors(first, vec![[12, 34, 56, 255]; 3], AlignOverlay::Map),
         "the map attaches to a layer whose vertex count it matches"
     );
     assert!(
-        app.align_overlay_is_up(),
+        app.active_context()
+            .expect("live test scene")
+            .align_overlay_is_up(),
         "the map is up before the reading opens, or this proves nothing"
     );
 
     // The scene value the layer menu hands the action (production passes the
     // same `draft` copy). A second `Arc<Scene>` handle would trip
     // `live_scene_mut`'s sole-owner assertion instead of testing this contract.
-    let draft = app.document.scene.as_ref().expect("scene").as_ref().clone();
+    let draft = app.workspace.scenes[0]
+        .document
+        .scene
+        .as_ref()
+        .expect("scene")
+        .as_ref()
+        .clone();
     assert!(
-        app.begin_contacts_from_layer(&draft, first),
+        app.active_context()
+            .expect("live test scene")
+            .begin_contacts_from_layer(&draft, first),
         "the reading opens on the nearest eligible antagonist"
     );
 
     assert!(
-        !app.tools.align.settings.show_deviation,
+        !app.workspace.scenes[0].tools.align.settings.show_deviation,
         "the heatmap toggle must not keep claiming a map is visible"
     );
     assert_eq!(
-        app.tools.align.overlay,
+        app.workspace.scenes[0].tools.align.overlay,
         AlignOverlay::Nothing,
         "the overlay must say it is gone, not still be a map"
     );
     assert!(
-        !app.align_overlay_is_up(),
+        !app.active_context()
+            .expect("live test scene")
+            .align_overlay_is_up(),
         "the map's colour arrays must be dropped, not only the flag"
     );
     assert!(
-        app.document
+        app.workspace.scenes[0]
+            .document
             .scene
             .as_ref()
             .expect("scene")
@@ -441,18 +549,25 @@ fn opening_contacts_from_the_menu_does_not_edit_the_scene_under_a_second_handle(
     // Install the scene as the sole handle so the setup's own in-place edits
     // (attaching the map colours) are legal, then take the menu's clone.
     let vertex_count = scene.meshes()[0].mesh.vertices().len();
-    app.document.scene = Some(std::sync::Arc::new(scene));
-    app.tools.align.settings.show_deviation = true;
-    app.tools.align.overlay = AlignOverlay::Map;
+    app.workspace.scenes[0].document.scene = Some(std::sync::Arc::new(scene));
+    app.workspace.scenes[0].tools.align.settings.show_deviation = true;
+    app.workspace.scenes[0].tools.align.overlay = AlignOverlay::Map;
     assert!(
-        app.attach_overlay_colors(first, vec![[1, 2, 3, 4]; vertex_count], AlignOverlay::Map),
+        app.active_context()
+            .expect("live test scene")
+            .attach_overlay_colors(first, vec![[1, 2, 3, 4]; vertex_count], AlignOverlay::Map),
         "fixture: the heatmap has colours to clear"
     );
     // The menu takes the document's handle the way `show_layers_overlay` and the
     // viewport right-click menu do: one clone, which is then moved into the
     // dispatcher. Modeling an extra clone here would be stricter than the real
     // path and would fail for a reason the product does not have.
-    let scene = app.document.scene.as_ref().expect("scene").clone();
+    let scene = app.workspace.scenes[0]
+        .document
+        .scene
+        .as_ref()
+        .expect("scene")
+        .clone();
     let scene_ptr = std::sync::Arc::as_ptr(&scene);
 
     // The menu's request, through the real dispatcher, with the menu's own
@@ -465,29 +580,38 @@ fn opening_contacts_from_the_menu_does_not_edit_the_scene_under_a_second_handle(
         action: LayerContextAction::Contacts,
     };
     let ctx = egui::Context::default();
-    app.apply_layer_overlay_changes(
-        scene,
-        &[],
-        LayerOverlayChanges {
-            context_request: Some(request),
-            layer_edits: Vec::new(),
-        },
-        &ctx,
-    );
+    app.active_context()
+        .expect("live test scene")
+        .apply_layer_overlay_changes(
+            scene,
+            &[],
+            LayerOverlayChanges {
+                context_request: Some(request),
+                layer_edits: Vec::new(),
+                ..Default::default()
+            },
+            &ctx,
+        );
 
     assert!(
-        app.tools.contacts.is_open(),
+        app.workspace.scenes[0].tools.contacts.is_open(),
         "the reading the operator asked for opens"
     );
     assert_eq!(
-        app.tools.align.overlay,
+        app.workspace.scenes[0].tools.align.overlay,
         AlignOverlay::Nothing,
         "and the heatmap gives way to it, which is the in-place edit under test"
     );
     // The second handle must still be looking at the same scene, i.e. nothing
     // copied it out from under the caller.
     assert_eq!(
-        std::sync::Arc::as_ptr(app.document.scene.as_ref().expect("scene")),
+        std::sync::Arc::as_ptr(
+            app.workspace.scenes[0]
+                .document
+                .scene
+                .as_ref()
+                .expect("scene")
+        ),
         scene_ptr,
         "the document must still hold the very scene the caller passed, not a copy"
     );
@@ -503,7 +627,7 @@ fn opening_contacts_from_the_menu_does_not_edit_the_scene_under_a_second_handle(
 fn the_shader_is_told_the_width_the_field_was_packed_with() {
     let mut app = test_app("contact-field-width-wiring");
     let (scene, first, _second, _third) = three_layer_scene();
-    app.document.scene = Some(Arc::new(scene));
+    app.workspace.scenes[0].document.scene = Some(Arc::new(scene));
 
     assert!(open_contacts_on(&mut app, first));
     let request = pending(&app);
@@ -524,7 +648,7 @@ fn the_shader_is_told_the_width_the_field_was_packed_with() {
         revision: 2,
     };
     assert!(
-        app.tools.contacts.store_measured(
+        app.workspace.scenes[0].tools.contacts.store_measured(
             request,
             subject_field,
             antagonist_field,
@@ -533,8 +657,15 @@ fn the_shader_is_told_the_width_the_field_was_packed_with() {
         "the reading must be accepted before it can be painted"
     );
 
-    let scene = app.document.scene.clone().expect("scene");
-    let updates = app.prepared_scene_updates(&scene);
+    let scene = app.workspace.scenes[0]
+        .document
+        .scene
+        .clone()
+        .expect("scene");
+    let updates = app
+        .active_context()
+        .expect("live test scene")
+        .prepared_scene_updates(&scene);
     // `prepared_scene_updates` walks the scene in layer order, and the subject
     // is the first layer of `three_layer_scene`.
     let subject_update = updates.first().expect("the scene has layers");

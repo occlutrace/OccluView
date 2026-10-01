@@ -978,3 +978,44 @@ shell-preview-isometric = Isométrique
 shell-preview-fit-view = Ajuster la vue
 shell-preview-wireframe = Maillage filaire
 shell-preview-copy-image = Copier l’image
+
+## Espace de travail à deux scènes et déplacement des calques.
+workspace-scene-name = Scène { $number }
+workspace-scenes = Scènes
+workspace-scene-new = Créer une nouvelle scène
+workspace-new-left = Nouvelle scène à gauche
+workspace-new-right = Nouvelle scène à droite
+workspace-one-view = Vue unique
+workspace-two-views = Deux vues
+workspace-fullscreen = Afficher cette scène seule
+workspace-divider = Largeur des scènes
+workspace-drop-title = Choisir une scène
+workspace-drop-description = Où ajouter ces fichiers ?
+workspace-cancel = Annuler
+workspace-rename = Renommer la scène
+workspace-rename-title = Renommer la scène
+workspace-rename-apply = Renommer
+workspace-close = Fermer la scène
+workspace-close-title = Modifications non enregistrées
+workspace-close-question = Enregistrer les modifications de { $scenes } avant de fermer ?
+workspace-close-detail = Attendez la fin des modifications en cours avant d’enregistrer. Ignorer les modifications ferme sans enregistrer.
+workspace-discard-close = Ignorer et fermer
+workspace-move-layer = Déplacer le calque sélectionné
+workspace-two-scene-limit = Cet espace de travail prend en charge deux scènes.
+layers-row-drag-hint = Cliquez pour activer le calque ; faites-le glisser vers une autre scène pour le déplacer
+workspace-layer-move-new-scene = Déplacer le calque vers une nouvelle scène
+workspace-layer-move-scene = Déplacer le calque vers { $scene }
+
+workspace-move-all = Déplacer tous les calques
+help-workspace-switch = Changer de scène active
+help-workspace-drag = Déplacer un calque vers une autre scène ou créer une scène sur le bord gauche ou droit
+help-workspace-divider = Ajuster la largeur des scènes ; Début rétablit des largeurs égales
+
+workspace-wait-edit = Terminez ou annulez d’abord la modification dans les deux scènes.
+workspace-wait-load = Attendez la fin du chargement des scènes.
+workspace-wait-gesture = Terminez d’abord le geste de souris en cours.
+workspace-history-order = Annulez d’abord les modifications ultérieures dans l’autre scène.
+workspace-history-budget = L’historique d’annulation manque de place pour cette opération.
+workspace-stale-target = La scène ou le calque n’est plus disponible.
+workspace-close-dialog = Fermez d’abord la boîte de dialogue ouverte.
+workspace-import-cancelled = Les imports en attente ont été annulés à la fermeture de leur scène.

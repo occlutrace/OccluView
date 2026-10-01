@@ -7,8 +7,7 @@ use super::layers_overlay::{self, LayerOverlayChanges};
 use super::live_viewport;
 use super::mesh_editor_overlay::{self, MeshEditorAction};
 use super::scene_loading::{
-    combine_loaded_scene, load_status_message, LoadQueueCameraReset, PendingSceneLoad,
-    SceneLoadMode, SceneLoadRequest,
+    combine_loaded_scene, load_status_message, LoadQueueCameraReset, SceneLoadMode,
 };
 use super::viewer::{
     build_proj_matrix, build_view_matrix, camera_studio_light_dir, desired_render_extent_px,
@@ -16,8 +15,10 @@ use super::viewer::{
     pick_scene_point, render_extent_change_requires_rerender, viewport_orbit_drag_active,
     viewport_pan_drag_active, zoom_factor_from_scroll, AxisGizmoInput,
 };
-use super::{read_files_with_memory_budget, single_instance, Context, PathBuf, Result};
+use super::{single_instance, Context, PathBuf, Result};
 use crate::scale_bar::ScaleBar;
+#[cfg(test)]
+use crate::scene_loading::{PendingSceneLoad, SceneLoadRequest};
 use anyhow::Error;
 use eframe::egui;
 use glam::Mat4;
@@ -25,7 +26,8 @@ use occluview_core::{Camera, Scene, SceneMesh};
 use occluview_render::{
     GpuCamera, GpuMeshUniform, Offscreen, PreparedSceneSource, ThumbnailSpec, ViewportSpec,
 };
-use std::sync::mpsc::{self, TryRecvError};
+#[cfg(test)]
+use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -93,6 +95,10 @@ mod app_settings_window;
 mod app_test_support;
 mod app_third_party;
 mod app_viewport;
+mod app_workspace;
+mod app_workspace_commands;
+#[cfg(test)]
+mod app_workspace_ui_tests;
 mod disc_frame;
 mod information_dialog;
 mod open_dialogs;
@@ -104,6 +110,7 @@ mod state_platform;
 mod state_render;
 mod state_tool;
 mod state_ui;
+pub(crate) mod workspace;
 
 use app_layer_edits::{
     apply_last_mesh_edit_redo_with_status, apply_last_mesh_edit_undo_with_status,
@@ -112,7 +119,7 @@ use app_layer_edits::{
 };
 use app_load_errors::{load_error_dialog, load_failure_summary};
 use app_scale_bar::paint_scale_bar;
-pub(crate) use state::OccluViewApp;
+pub(crate) use state::{OccluViewApp, SceneContext};
 use state_document::MeshSelectionDrag;
 pub(crate) use state_platform::StartupHandles;
 use state_render::RenderedFrame;

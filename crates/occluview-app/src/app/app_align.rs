@@ -10,14 +10,14 @@ use occluview_align::Rigid;
 use occluview_core::{Scene, SceneMesh, SceneMeshId};
 
 use super::app_align_display::AlignOverlay;
-use super::OccluViewApp;
+use super::SceneContext;
 use crate::align_geometry::transform_key;
 use crate::align_markings::AlignSide;
 use crate::align_tool::{AlignPoint, ClickOutcome};
 use crate::align_worker::{AlignJob, AlignJobKind, MeasureKey, SurfaceKey, WorldPair};
 use crate::viewer::pick_scene_hit;
 
-impl OccluViewApp {
+impl SceneContext<'_> {
     /// One frame of the tool: drain the worker, take the click, paint the
     /// pairs, and run whatever the panel asked for. Returns whether the tool
     /// consumed this frame's viewport input.
@@ -227,7 +227,7 @@ impl OccluViewApp {
             .iter()
             .position(|entry| entry.id() == layer)?;
         Some(crate::layers_overlay::layer_label(
-            &self.persistence.current_paths,
+            &self.document.current_paths,
             &scene.meshes()[index],
             index,
             &self.ui.locale,

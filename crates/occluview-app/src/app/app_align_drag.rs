@@ -8,7 +8,7 @@ use glam::{Affine3A, Vec3};
 use occluview_core::SceneMeshId;
 
 use super::app_align::layer_of;
-use super::OccluViewApp;
+use super::SceneContext;
 use crate::edit_mode::EditModeCommand;
 use crate::i18n::message_id;
 use crate::viewer::pick_scene_hit;
@@ -77,7 +77,7 @@ pub(crate) struct AlignDrag {
     pub(super) pivot_local: Vec3,
 }
 
-impl OccluViewApp {
+impl SceneContext<'_> {
     /// Commit an open drag before a scene transition that keeps its layer.
     pub(super) fn abandon_align_drag(&mut self) {
         self.finish_align_drag();
@@ -569,6 +569,8 @@ impl OccluViewApp {
 mod tests {
     #![allow(clippy::expect_used, clippy::panic)]
 
+    use crate::app::OccluViewApp;
+
     use super::*;
     use crate::app::app_test_support::{named_scene, test_app};
     use glam::Quat;
@@ -577,13 +579,24 @@ mod tests {
     /// A layer and a camera looking down at it, active enough to drag.
     fn rig(name: &str) -> (OccluViewApp, SceneMeshId, Camera) {
         let mut app = test_app(name);
-        app.document.scene = Some(std::sync::Arc::new(named_scene("jaw", 0.0)));
-        let id = app.document.scene.as_ref().expect("scene").meshes()[0].id();
+        app.workspace.scenes[0].document.scene = Some(std::sync::Arc::new(named_scene("jaw", 0.0)));
+        let id = app.workspace.scenes[0]
+            .document
+            .scene
+            .as_ref()
+            .expect("scene")
+            .meshes()[0]
+            .id();
         let camera = Camera::default().frame_occlusal(
-            app.document.scene.as_ref().expect("scene").bbox(),
+            app.workspace.scenes[0]
+                .document
+                .scene
+                .as_ref()
+                .expect("scene")
+                .bbox(),
             45.0_f32.to_radians(),
         );
-        app.render.camera = Some(camera);
+        app.workspace.scenes[0].render.camera = Some(camera);
         (app, id, camera)
     }
 
@@ -625,14 +638,19 @@ mod tests {
         scene.add(SceneMesh::new(mesh));
         let id = scene.meshes()[0].id();
         let mut app = test_app(name);
-        app.document.scene = Some(Arc::new(scene));
+        app.workspace.scenes[0].document.scene = Some(Arc::new(scene));
         let camera = Camera::default().frame_occlusal(
-            app.document.scene.as_ref().expect("scene").bbox(),
+            app.workspace.scenes[0]
+                .document
+                .scene
+                .as_ref()
+                .expect("scene")
+                .bbox(),
             45.0_f32.to_radians(),
         );
-        app.render.camera = Some(camera);
-        app.tools.align.tool.arm();
-        app.tools.align.tab = AlignTab::Manually;
+        app.workspace.scenes[0].render.camera = Some(camera);
+        app.workspace.scenes[0].tools.align.tool.arm();
+        app.workspace.scenes[0].tools.align.tab = AlignTab::Manually;
 
         let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 600.0));
         let target = Vec3::new(30.0, 5.0, 0.0);
@@ -673,7 +691,10 @@ mod tests {
         ctx.run_ui(raw, |ui| {
             let response = ui.interact(rect, viewport_id, egui::Sense::click_and_drag());
             let frame_ctx = ui.ctx().clone();
-            consumed = app.handle_align_drag(&response, &frame_ctx);
+            consumed = app
+                .active_context()
+                .expect("live test scene")
+                .handle_align_drag(&response, &frame_ctx);
         })
         .drop_without_applying_deltas();
         consumed
@@ -707,23 +728,34 @@ mod tests {
             crate::align_drag::DragConstraint::XyPlane,
         ] {
             let (mut app, id, _) = rig("ctrl-step-anchor");
-            app.tools.align.constraint = constraint;
+            app.workspace.scenes[0].tools.align.constraint = constraint;
             let pose = Affine3A::from_translation(Vec3::new(30.0, -12.0, 7.0))
                 * Affine3A::from_quat(Quat::from_rotation_y(0.45));
-            let mut scene = app.document.scene.as_ref().expect("scene").as_ref().clone();
+            let mut scene = app.workspace.scenes[0]
+                .document
+                .scene
+                .as_ref()
+                .expect("scene")
+                .as_ref()
+                .clone();
             scene
                 .meshes_mut()
                 .iter_mut()
                 .find(|entry| entry.id() == id)
                 .expect("layer")
                 .transform = pose;
-            app.document.scene = Some(std::sync::Arc::new(scene));
+            app.workspace.scenes[0].document.scene = Some(std::sync::Arc::new(scene));
             let mut camera = Camera::default().frame_occlusal(
-                app.document.scene.as_ref().expect("scene").bbox(),
+                app.workspace.scenes[0]
+                    .document
+                    .scene
+                    .as_ref()
+                    .expect("scene")
+                    .bbox(),
                 45.0_f32.to_radians(),
             );
             camera.orbit_view_by(0.35, -0.2);
-            app.render.camera = Some(camera);
+            app.workspace.scenes[0].render.camera = Some(camera);
 
             // A valid off-centre point in the mesh's local frame.
             let grabbed_local = Vec3::new(0.75, 0.1, 0.0);
@@ -734,13 +766,19 @@ mod tests {
             };
             let anchor_world = pose.transform_point3(grabbed_local);
             let first_step = app
+                .active_context()
+                .expect("live test scene")
                 .align_drag_step(drag, &camera, frame(true))
                 .expect("a Ctrl-drag over a live layer must produce a step");
             assert!(
                 (first_step.transform_point3(anchor_world) - anchor_world).length() < 1e-3,
                 "{constraint:?}: the clicked point moved"
             );
-            let scene = app.document.scene.as_ref().expect("scene");
+            let scene = app.workspace.scenes[0]
+                .document
+                .scene
+                .as_ref()
+                .expect("scene");
             let entry = scene.meshes().iter().find(|e| e.id() == id).expect("layer");
             let centre_local = entry.mesh.bbox_cached().center();
             let centre_world = entry.transform.transform_point3(centre_local);
@@ -766,7 +804,7 @@ mod tests {
     fn changing_between_translation_and_tilt_keeps_the_current_grab_point() {
         let (mut app, id, mut camera) = rig("mixed-manual-gesture");
         camera.orbit_view_by(0.25, -0.18);
-        app.render.camera = Some(camera);
+        app.workspace.scenes[0].render.camera = Some(camera);
         let pose = Affine3A::from_translation(Vec3::new(4.0, -2.0, 6.0))
             * Affine3A::from_quat(Quat::from_rotation_x(0.3));
         let anchor_local = Vec3::new(0.75, 0.1, 0.0);
@@ -775,19 +813,27 @@ mod tests {
             start: pose,
             pivot_local: anchor_local,
         };
-        app.tools.align.drag = Some(drag);
-        let mut scene = app.document.scene.as_ref().expect("scene").as_ref().clone();
+        app.workspace.scenes[0].tools.align.drag = Some(drag);
+        let mut scene = app.workspace.scenes[0]
+            .document
+            .scene
+            .as_ref()
+            .expect("scene")
+            .as_ref()
+            .clone();
         scene
             .meshes_mut()
             .iter_mut()
             .find(|entry| entry.id() == id)
             .expect("layer")
             .transform = pose;
-        app.document.scene = Some(std::sync::Arc::new(scene));
+        app.workspace.scenes[0].document.scene = Some(std::sync::Arc::new(scene));
 
         let viewport = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 600.0));
         let anchor_before = pose.transform_point3(anchor_local);
         let translation = app
+            .active_context()
+            .expect("live test scene")
             .align_drag_step(
                 drag,
                 &camera,
@@ -798,8 +844,14 @@ mod tests {
                 },
             )
             .expect("plain movement step");
-        app.nudge_align_layer(id, translation);
-        let translated_scene = app.document.scene.as_ref().expect("scene");
+        app.active_context()
+            .expect("live test scene")
+            .nudge_align_layer(id, translation);
+        let translated_scene = app.workspace.scenes[0]
+            .document
+            .scene
+            .as_ref()
+            .expect("scene");
         let translated = translated_scene
             .meshes()
             .iter()
@@ -814,15 +866,23 @@ mod tests {
         );
 
         let rotation = app
+            .active_context()
+            .expect("live test scene")
             .align_drag_step(drag, &camera, frame(true))
             .expect("Ctrl movement step");
         assert!(
             (rotation.transform_point3(translated_anchor) - translated_anchor).length() < 1e-3,
             "adding Ctrl should turn around the point in its current pose"
         );
-        app.nudge_align_layer(id, rotation);
+        app.active_context()
+            .expect("live test scene")
+            .nudge_align_layer(id, rotation);
 
-        let after_rotation = app.document.scene.as_ref().expect("scene");
+        let after_rotation = app.workspace.scenes[0]
+            .document
+            .scene
+            .as_ref()
+            .expect("scene");
         let turned = after_rotation
             .meshes()
             .iter()
@@ -833,6 +893,8 @@ mod tests {
         assert!((turned_anchor - translated_anchor).length() < 1e-3);
 
         let next_translation = app
+            .active_context()
+            .expect("live test scene")
             .align_drag_step(
                 drag,
                 &camera,
@@ -843,8 +905,14 @@ mod tests {
                 },
             )
             .expect("plain movement after Ctrl");
-        app.nudge_align_layer(id, next_translation);
-        let moved_again = app.document.scene.as_ref().expect("scene");
+        app.active_context()
+            .expect("live test scene")
+            .nudge_align_layer(id, next_translation);
+        let moved_again = app.workspace.scenes[0]
+            .document
+            .scene
+            .as_ref()
+            .expect("scene");
         let moved_pose = moved_again
             .meshes()
             .iter()
@@ -859,6 +927,8 @@ mod tests {
         );
 
         let final_rotation = app
+            .active_context()
+            .expect("live test scene")
             .align_drag_step(drag, &camera, frame(true))
             .expect("second Ctrl movement");
         assert!(
@@ -871,19 +941,25 @@ mod tests {
     /// freezing the gesture or turning about a point at infinity.
     #[test]
     fn an_absurd_grab_still_produces_a_usable_step() {
-        let (app, id, camera) = rig("absurd-grab");
+        let (mut app, id, camera) = rig("absurd-grab");
         let drag = AlignDrag {
             layer: id,
             start: Affine3A::IDENTITY,
             pivot_local: Vec3::splat(1.0e9),
         };
         let step = app
+            .active_context()
+            .expect("live test scene")
             .align_drag_step(drag, &camera, frame(true))
             .expect("an absurd grab must still leave the gesture alive");
         assert!(step.is_finite(), "{step:?}");
         // The discarded grab is replaced by the layer's own centre, so the
         // centre is what the turn fixes.
-        let scene = app.document.scene.as_ref().expect("scene");
+        let scene = app.workspace.scenes[0]
+            .document
+            .scene
+            .as_ref()
+            .expect("scene");
         let centre = scene.meshes()[0].mesh.bbox_cached().center();
         let pinned = step.transform_point3(centre);
         assert!(
@@ -898,14 +974,17 @@ mod tests {
     fn a_step_for_a_missing_layer_produces_nothing() {
         let (mut app, id, camera) = rig("missing-layer");
         // Drop the scene out from under the open gesture.
-        app.document.scene = None;
+        app.workspace.scenes[0].document.scene = None;
         let drag = AlignDrag {
             layer: id,
             start: Affine3A::IDENTITY,
             pivot_local: Vec3::ZERO,
         };
         assert!(
-            app.align_drag_step(drag, &camera, frame(true)).is_none(),
+            app.active_context()
+                .expect("live test scene")
+                .align_drag_step(drag, &camera, frame(true))
+                .is_none(),
             "a step with no scene must refuse rather than guess"
         );
     }
@@ -913,13 +992,15 @@ mod tests {
     /// A non-rotation frame is a translation and must not touch the rotation.
     #[test]
     fn a_plain_drag_step_translates_instead_of_turning() {
-        let (app, id, camera) = rig("plain-drag");
+        let (mut app, id, camera) = rig("plain-drag");
         let drag = AlignDrag {
             layer: id,
             start: Affine3A::IDENTITY,
             pivot_local: Vec3::new(5.0, 5.0, 5.0),
         };
         let step = app
+            .active_context()
+            .expect("live test scene")
             .align_drag_step(drag, &camera, frame(false))
             .expect("a plain drag must produce a step");
         let rotation = Quat::from_mat3a(&step.matrix3);
@@ -961,12 +1042,17 @@ mod tests {
 
         let mut app = test_app("real-ctrl-drag-gesture");
         let (scene, id) = wide_scene();
-        app.document.scene = Some(Arc::new(scene));
-        let bbox = app.document.scene.as_ref().expect("scene").bbox();
+        app.workspace.scenes[0].document.scene = Some(Arc::new(scene));
+        let bbox = app.workspace.scenes[0]
+            .document
+            .scene
+            .as_ref()
+            .expect("scene")
+            .bbox();
         let camera = Camera::default().frame_occlusal(bbox, 45.0_f32.to_radians());
-        app.render.camera = Some(camera);
-        app.tools.align.tool.arm();
-        app.tools.align.tab = AlignTab::Manually;
+        app.workspace.scenes[0].render.camera = Some(camera);
+        app.workspace.scenes[0].tools.align.tool.arm();
+        app.workspace.scenes[0].tools.align.tab = AlignTab::Manually;
 
         let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 600.0));
         // A point on the surface, far from the centre at (20, 20, 0).
@@ -991,7 +1077,9 @@ mod tests {
             ctx.run_ui(raw, |ui| {
                 let response = ui.interact(rect, viewport_id, egui::Sense::click_and_drag());
                 let frame_ctx = ui.ctx().clone();
-                app.handle_align_drag(&response, &frame_ctx);
+                app.active_context()
+                    .expect("live test scene")
+                    .handle_align_drag(&response, &frame_ctx);
             })
             .drop_without_applying_deltas();
         };
@@ -1034,10 +1122,14 @@ mod tests {
             egui::Event::PointerMoved(press_at + egui::vec2(100.0, 45.0)),
         ]);
 
-        let Some(drag) = app.tools.align.drag else {
+        let Some(drag) = app.workspace.scenes[0].tools.align.drag else {
             panic!("a Ctrl-drag over the surface must open a drag");
         };
-        let scene = app.document.scene.as_ref().expect("scene");
+        let scene = app.workspace.scenes[0]
+            .document
+            .scene
+            .as_ref()
+            .expect("scene");
         let entry = scene.meshes().iter().find(|e| e.id() == id).expect("layer");
         let centre = entry.mesh.bbox_cached().center();
 
@@ -1102,10 +1194,10 @@ mod tests {
         ));
 
         assert!(
-            app.tools.align.drag.is_none(),
+            app.workspace.scenes[0].tools.align.drag.is_none(),
             "the release closes the drag"
         );
-        let entry = app
+        let entry = app.workspace.scenes[0]
             .document
             .scene
             .as_ref()
@@ -1119,7 +1211,7 @@ mod tests {
             (entry.transform.transform_point3(target) - target).length() < 1e-2,
             "Ctrl rotation must keep the pressed surface point in place"
         );
-        assert_eq!(app.document.edit_mode.undo_len(), 1);
+        assert_eq!(app.workspace.scenes[0].document.edit_mode.undo_len(), 1);
     }
 
     /// The actual pointer path has to ray-pick in a transformed instance, not
@@ -1130,19 +1222,30 @@ mod tests {
             actual_drag_fixture("transformed-ctrl-ray-pick");
         let pose = Affine3A::from_translation(Vec3::new(11.0, -7.0, 5.0))
             * Affine3A::from_quat(Quat::from_rotation_y(0.34) * Quat::from_rotation_x(-0.21));
-        let mut scene = app.document.scene.as_ref().expect("scene").as_ref().clone();
+        let mut scene = app.workspace.scenes[0]
+            .document
+            .scene
+            .as_ref()
+            .expect("scene")
+            .as_ref()
+            .clone();
         scene
             .meshes_mut()
             .iter_mut()
             .find(|entry| entry.id() == id)
             .expect("jaw")
             .transform = pose;
-        app.document.scene = Some(std::sync::Arc::new(scene));
+        app.workspace.scenes[0].document.scene = Some(std::sync::Arc::new(scene));
         let camera = Camera::default().frame_occlusal(
-            app.document.scene.as_ref().expect("scene").bbox(),
+            app.workspace.scenes[0]
+                .document
+                .scene
+                .as_ref()
+                .expect("scene")
+                .bbox(),
             45.0_f32.to_radians(),
         );
-        app.render.camera = Some(camera);
+        app.workspace.scenes[0].render.camera = Some(camera);
 
         let target_local = Vec3::new(12.0, 12.0, 0.0);
         let target_world = pose.transform_point3(target_local);
@@ -1161,7 +1264,11 @@ mod tests {
             ],
         ));
 
-        let drag = app.tools.align.drag.expect("the press ray opens a drag");
+        let drag = app.workspace.scenes[0]
+            .tools
+            .align
+            .drag
+            .expect("the press ray opens a drag");
         assert_eq!(drag.layer, id);
         assert!(
             (drag.pivot_local - target_local).length() < 1e-2,
@@ -1182,7 +1289,7 @@ mod tests {
             ],
         ));
 
-        let moved = app
+        let moved = app.workspace.scenes[0]
             .document
             .scene
             .as_ref()
@@ -1196,7 +1303,7 @@ mod tests {
             (moved.transform.transform_point3(drag.pivot_local) - grabbed_world).length() < 1e-2,
             "the ray-picked world point must stay fixed through Ctrl tilt"
         );
-        assert_eq!(app.document.edit_mode.undo_len(), 1);
+        assert_eq!(app.workspace.scenes[0].document.edit_mode.undo_len(), 1);
     }
 
     /// Once a surface press owns a drag, moving and releasing outside the
@@ -1216,7 +1323,7 @@ mod tests {
                 pointer_button(press_at, true, egui::Modifiers::NONE),
             ],
         ));
-        assert!(app.tools.align.drag.is_some());
+        assert!(app.workspace.scenes[0].tools.align.drag.is_some());
 
         let outside = egui::pos2(900.0, 700.0);
         assert!(drive_actual_drag_frame(
@@ -1229,15 +1336,27 @@ mod tests {
                 pointer_button(outside, false, egui::Modifiers::NONE),
             ],
         ));
-        assert!(app.tools.align.drag.is_none());
+        assert!(app.workspace.scenes[0].tools.align.drag.is_none());
         assert_ne!(
-            app.document.scene.as_ref().expect("scene").meshes()[0].transform,
+            app.workspace.scenes[0]
+                .document
+                .scene
+                .as_ref()
+                .expect("scene")
+                .meshes()[0]
+                .transform,
             Affine3A::IDENTITY,
             "motion through release outside the viewport must be applied"
         );
-        assert_eq!(app.document.edit_mode.undo_len(), 1);
+        assert_eq!(app.workspace.scenes[0].document.edit_mode.undo_len(), 1);
         assert_eq!(
-            app.document.scene.as_ref().expect("scene").meshes()[0].id(),
+            app.workspace.scenes[0]
+                .document
+                .scene
+                .as_ref()
+                .expect("scene")
+                .meshes()[0]
+                .id(),
             id
         );
     }
@@ -1248,8 +1367,8 @@ mod tests {
     fn a_surface_click_without_motion_keeps_the_landed_fit() {
         let (mut app, _, ctx, rect, press_at, _modifiers, viewport_id, _) =
             actual_drag_fixture("align-grab-without-move");
-        app.tools.align.refined_match_ready = true;
-        app.tools.align.settings.show_deviation = true;
+        app.workspace.scenes[0].tools.align.refined_match_ready = true;
+        app.workspace.scenes[0].tools.align.settings.show_deviation = true;
         drive_actual_drag_frame(&mut app, &ctx, rect, viewport_id, vec![]);
         assert!(drive_actual_drag_frame(
             &mut app,
@@ -1261,8 +1380,8 @@ mod tests {
                 pointer_button(press_at, true, egui::Modifiers::NONE),
             ],
         ));
-        assert!(app.tools.align.refined_match_ready);
-        assert!(app.tools.align.settings.show_deviation);
+        assert!(app.workspace.scenes[0].tools.align.refined_match_ready);
+        assert!(app.workspace.scenes[0].tools.align.settings.show_deviation);
         assert!(drive_actual_drag_frame(
             &mut app,
             &ctx,
@@ -1270,9 +1389,9 @@ mod tests {
             viewport_id,
             vec![pointer_button(press_at, false, egui::Modifiers::NONE,)],
         ));
-        assert!(app.tools.align.refined_match_ready);
-        assert!(app.tools.align.settings.show_deviation);
-        assert_eq!(app.document.edit_mode.undo_len(), 0);
+        assert!(app.workspace.scenes[0].tools.align.refined_match_ready);
+        assert!(app.workspace.scenes[0].tools.align.settings.show_deviation);
+        assert_eq!(app.workspace.scenes[0].document.edit_mode.undo_len(), 0);
     }
 
     /// The final `InputState::modifiers` value applies to the whole egui pass,
@@ -1296,8 +1415,12 @@ mod tests {
                 pointer_button(press_at, true, egui::Modifiers::NONE),
             ],
         ));
-        let drag = app.tools.align.drag.expect("surface press opens drag");
-        let camera = app.render.camera.expect("camera");
+        let drag = app.workspace.scenes[0]
+            .tools
+            .align
+            .drag
+            .expect("surface press opens drag");
+        let camera = app.workspace.scenes[0].render.camera.expect("camera");
         let plain_motion = egui::vec2(16.0, 8.0);
         let turn_motion = egui::vec2(48.0, -18.0);
         let after_plain = press_at + plain_motion;
@@ -1316,12 +1439,18 @@ mod tests {
                 pointer_button(after_turn, false, ctrl),
             ],
         ));
-        let moved = app.document.scene.as_ref().expect("scene").meshes()[0].transform;
+        let moved = app.workspace.scenes[0]
+            .document
+            .scene
+            .as_ref()
+            .expect("scene")
+            .meshes()[0]
+            .transform;
         assert!(
             (moved.transform_point3(drag.pivot_local) - expected_anchor).length() < 1e-2,
             "the first movement must translate before the later Ctrl turn"
         );
-        assert_ne!(app.document.edit_mode.undo_len(), 0);
+        assert_ne!(app.workspace.scenes[0].document.edit_mode.undo_len(), 0);
 
         // The reverse ordering starts with Ctrl down, then releases it before
         // the second move in a batch whose final modifiers are NONE.
@@ -1339,8 +1468,12 @@ mod tests {
                 pointer_button(press_at, true, ctrl),
             ],
         ));
-        let drag = app.tools.align.drag.expect("surface press opens drag");
-        let camera = app.render.camera.expect("camera");
+        let drag = app.workspace.scenes[0]
+            .tools
+            .align
+            .drag
+            .expect("surface press opens drag");
+        let camera = app.workspace.scenes[0].render.camera.expect("camera");
         let turn_motion = egui::vec2(46.0, 22.0);
         let plain_motion = egui::vec2(-14.0, 11.0);
         let after_turn = press_at + turn_motion;
@@ -1359,12 +1492,18 @@ mod tests {
                 pointer_button(after_plain, false, egui::Modifiers::NONE),
             ],
         ));
-        let moved = app.document.scene.as_ref().expect("scene").meshes()[0].transform;
+        let moved = app.workspace.scenes[0]
+            .document
+            .scene
+            .as_ref()
+            .expect("scene")
+            .meshes()[0]
+            .transform;
         assert!(
             (moved.transform_point3(drag.pivot_local) - expected_anchor).length() < 1e-2,
             "the first Ctrl movement must pin the press before later translation"
         );
-        assert_eq!(app.document.edit_mode.undo_len(), 1);
+        assert_eq!(app.workspace.scenes[0].document.edit_mode.undo_len(), 1);
     }
 
     /// Cancel discards the open gesture before restoring the session snapshot.
@@ -1374,8 +1513,10 @@ mod tests {
     fn cancel_discards_an_open_ctrl_drag_and_records_only_the_restore() {
         let (mut app, id, ctx, rect, press_at, modifiers, viewport_id, _) =
             actual_drag_fixture("cancel-open-ctrl-drag");
-        app.arm_align_tool(&ctx);
-        app.tools.align.tab = crate::align_panel::AlignTab::Manually;
+        app.active_context()
+            .expect("live test scene")
+            .arm_align_tool(&ctx);
+        app.workspace.scenes[0].tools.align.tab = crate::align_panel::AlignTab::Manually;
         drive_actual_drag_frame(&mut app, &ctx, rect, viewport_id, vec![]);
         let moved_at = press_at + egui::vec2(50.0, -16.0);
         assert!(drive_actual_drag_frame(
@@ -1390,8 +1531,8 @@ mod tests {
                 egui::Event::PointerMoved(moved_at),
             ],
         ));
-        assert!(app.tools.align.drag.is_some());
-        let moved_pose = app
+        assert!(app.workspace.scenes[0].tools.align.drag.is_some());
+        let moved_pose = app.workspace.scenes[0]
             .document
             .scene
             .as_ref()
@@ -1402,23 +1543,34 @@ mod tests {
             .expect("jaw")
             .transform;
         assert_ne!(moved_pose, Affine3A::IDENTITY);
-        assert_eq!(app.document.edit_mode.undo_len(), 0);
+        assert_eq!(app.workspace.scenes[0].document.edit_mode.undo_len(), 0);
 
-        app.cancel_align_session(&ctx);
-        assert!(app.tools.align.drag.is_none());
+        app.active_context()
+            .expect("live test scene")
+            .cancel_align_session(&ctx);
+        assert!(app.workspace.scenes[0].tools.align.drag.is_none());
         assert_eq!(
-            app.document.scene.as_ref().expect("scene").meshes()[0].transform,
+            app.workspace.scenes[0]
+                .document
+                .scene
+                .as_ref()
+                .expect("scene")
+                .meshes()[0]
+                .transform,
             Affine3A::IDENTITY
         );
         assert_eq!(
-            app.document.edit_mode.undo_len(),
+            app.workspace.scenes[0].document.edit_mode.undo_len(),
             1,
             "Cancel should have one restore entry, with no drag commit before it"
         );
 
-        app.apply_history_navigation_now(false, &ctx);
+        app.active_context()
+            .expect("live test scene")
+            .apply_history_navigation_now(false, &ctx);
         assert_eq!(
-            app.document
+            app.workspace.scenes[0]
+                .document
                 .scene
                 .as_ref()
                 .expect("scene")
@@ -1430,6 +1582,6 @@ mod tests {
             moved_pose,
             "one undo should cancel the Cancel"
         );
-        assert_eq!(app.document.edit_mode.undo_len(), 0);
+        assert_eq!(app.workspace.scenes[0].document.edit_mode.undo_len(), 0);
     }
 }

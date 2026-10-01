@@ -16,8 +16,8 @@
 //! - `unsaved_sculpt_stroke` tracks a live Sculpt stroke until its result is
 //!   committed or discarded.
 //! - `edit_mode` owns selection and undo/redo; structural swaps re-sync it.
-//! - `active_load` / `queued_loads` mutate only the document; the camera
-//!   reset decision and the modified-during-load flag live here with them.
+//! - Imports are scheduled by the workspace and carry a scene lifetime key;
+//!   camera-reset decisions stay with their target document.
 //!
 //! Permitted mutation entry points: [`DocumentState::new`] for bootstrap,
 //! scene-commit and layer-edit helpers for content, the loading pipeline for
@@ -26,12 +26,15 @@
 
 use super::egui;
 use crate::edit_mode::EditModeController;
-use crate::scene_loading::{LoadQueueCameraReset, PendingSceneLoad, SceneLoadRequest};
+use crate::scene_loading::LoadQueueCameraReset;
 use occluview_core::{Scene, SceneMeshId};
 use std::sync::Arc;
 
 pub(super) struct DocumentState {
     pub(super) scene: Option<Arc<Scene>>,
+    pub(super) current_paths: Vec<std::path::PathBuf>,
+    pub(super) focused_layer_id: Option<SceneMeshId>,
+    edit_metadata: Option<EditMetadata>,
     /// Bumped when committed scene content or unsaved mesh edits change.
     pub(super) content_revision: u64,
     pub(super) edit_mode: EditModeController,
@@ -48,13 +51,21 @@ pub(super) struct DocumentState {
     /// second toggle restores the original value.
     pub(super) translucent_layer_restore: std::collections::HashMap<SceneMeshId, f32>,
     pub(super) mesh_selection_drag: Option<MeshSelectionDrag>,
-    pub(super) active_load: Option<PendingSceneLoad>,
-    pub(super) queued_loads: std::collections::VecDeque<SceneLoadRequest>,
     pub(super) load_queue_camera_reset: LoadQueueCameraReset,
     pub(super) camera_modified_during_load: bool,
     /// Whether an open Align drag differs from its starting pose.
     pub(super) unsaved_drag_pose: bool,
     pub(super) unsaved_sculpt_stroke: bool,
+}
+
+/// Document metadata is checkpointed with the Edit scene baseline. Structural
+/// edits can remove source paths and dirty flags that Cancel must restore.
+struct EditMetadata {
+    paths: Vec<std::path::PathBuf>,
+    dirty: std::collections::BTreeSet<SceneMeshId>,
+    hidden: Vec<SceneMeshId>,
+    translucent: std::collections::HashMap<SceneMeshId, f32>,
+    focused: Option<SceneMeshId>,
 }
 
 /// In-progress mesh selection drag. Rectangle drags (default) track an origin
@@ -122,14 +133,15 @@ impl DocumentState {
     pub(super) fn new() -> Self {
         Self {
             scene: None,
+            current_paths: Vec::new(),
+            focused_layer_id: None,
+            edit_metadata: None,
             content_revision: 0,
             edit_mode: EditModeController::default(),
             unsaved_edit_layer_ids: std::collections::BTreeSet::new(),
             hidden_layer_stack: Vec::new(),
             translucent_layer_restore: std::collections::HashMap::new(),
             mesh_selection_drag: None,
-            active_load: None,
-            queued_loads: std::collections::VecDeque::new(),
             load_queue_camera_reset: LoadQueueCameraReset::Idle,
             camera_modified_during_load: false,
             unsaved_drag_pose: false,
@@ -184,10 +196,30 @@ impl DocumentState {
         self.unsaved_edit_layer_ids.clear();
     }
 
-    pub(super) fn mark_camera_modified(&mut self) {
-        if self.active_load.is_some() || !self.queued_loads.is_empty() {
-            self.camera_modified_during_load = true;
+    pub(super) fn capture_edit_metadata(&mut self) {
+        if self.edit_metadata.is_none() {
+            self.edit_metadata = Some(EditMetadata {
+                paths: self.current_paths.clone(),
+                dirty: self.unsaved_edit_layer_ids.clone(),
+                hidden: self.hidden_layer_stack.clone(),
+                translucent: self.translucent_layer_restore.clone(),
+                focused: self.focused_layer_id,
+            });
         }
+    }
+
+    pub(super) fn restore_edit_metadata(&mut self) {
+        if let Some(metadata) = self.edit_metadata.take() {
+            self.current_paths = metadata.paths;
+            self.unsaved_edit_layer_ids = metadata.dirty;
+            self.hidden_layer_stack = metadata.hidden;
+            self.translucent_layer_restore = metadata.translucent;
+            self.focused_layer_id = metadata.focused;
+        }
+    }
+
+    pub(super) fn discard_edit_metadata(&mut self) {
+        self.edit_metadata = None;
     }
 }
 

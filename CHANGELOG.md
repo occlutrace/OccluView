@@ -5,6 +5,9 @@ remain in the Git history.
 
 ## Unreleased
 
+- Work with two independent scenes side by side. Move layers between scenes,
+  import into a chosen scene, and undo transfers without mixing scene history.
+
 - Sculpt Add and Remove follow the local surface instead of camera depth.
   Brush size uses millimetres and keeps its relative size when switching tips.
 - Every Sculpt brush applies its dose by elapsed brush time, including moving

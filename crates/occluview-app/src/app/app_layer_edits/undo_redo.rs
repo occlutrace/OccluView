@@ -4,14 +4,14 @@
 
 use super::super::{
     layers_overlay, EditModeController, LayerContextAction, LayerContextApply, LayerContextRequest,
-    OccluViewApp, PathBuf, Scene,
+    PathBuf, Scene, SceneContext,
 };
 use super::resolve_layer;
 use super::structural::structural_scene_apply;
 use crate::edit_mode::StructuralHistoryStep;
 
 pub(in crate::app) fn apply_last_mesh_edit_undo_with_status(
-    app: &mut OccluViewApp,
+    app: &mut SceneContext<'_>,
     scene: &mut Scene,
     paths: &[PathBuf],
 ) -> LayerContextApply {
@@ -23,7 +23,8 @@ pub(in crate::app) fn apply_last_mesh_edit_undo_with_status(
         .iter()
         .position(|entry| entry.id() == layer_id)
     else {
-        app.ui.status_message = Some(app.ui.locale.tr(crate::i18n::message_id!("undo-nothing")));
+        app.scene_ui.status_message =
+            Some(app.ui.locale.tr(crate::i18n::message_id!("undo-nothing")));
         return LayerContextApply::default();
     };
     apply_layer_mesh_undo_action_with_status(
@@ -41,7 +42,7 @@ pub(in crate::app) fn apply_last_mesh_edit_undo_with_status(
 /// Re-apply the last undone mesh edit (Ctrl+Y / Ctrl+Shift+Z). Mirrors the
 /// undo path: structural (whole-scene) redo first, then single-layer redo.
 pub(in crate::app) fn apply_last_mesh_edit_redo_with_status(
-    app: &mut OccluViewApp,
+    app: &mut SceneContext<'_>,
     scene: &mut Scene,
     paths: &[PathBuf],
 ) -> LayerContextApply {
@@ -53,7 +54,8 @@ pub(in crate::app) fn apply_last_mesh_edit_redo_with_status(
         .iter()
         .position(|entry| entry.id() == layer_id)
     else {
-        app.ui.status_message = Some(app.ui.locale.tr(crate::i18n::message_id!("redo-nothing")));
+        app.scene_ui.status_message =
+            Some(app.ui.locale.tr(crate::i18n::message_id!("redo-nothing")));
         return LayerContextApply::default();
     };
     let Some(current) = scene.meshes().get(index).cloned() else {
@@ -65,14 +67,14 @@ pub(in crate::app) fn apply_last_mesh_edit_redo_with_status(
         StructuralHistoryStep::Restored(restored_scene) => {
             *scene = restored_scene;
             app.document.mark_mesh_edits_unsaved(layer_id);
-            app.ui.status_message = Some(app.ui.locale.tr_with(
+            app.scene_ui.status_message = Some(app.ui.locale.tr_with(
                 crate::i18n::message_id!("redo-redid"),
                 &[("layer", &layer_label)],
             ));
             return structural_scene_apply();
         }
         StructuralHistoryStep::SceneChanged => {
-            app.ui.status_message = Some(app.ui.locale.tr_with(
+            app.scene_ui.status_message = Some(app.ui.locale.tr_with(
                 crate::i18n::message_id!("redo-unavailable"),
                 &[("layer", &layer_label)],
             ));
@@ -97,7 +99,7 @@ pub(in crate::app) fn apply_last_mesh_edit_redo_with_status(
     // walk is paid once here instead.
     let _ = entry.mesh.bbox();
     app.document.mark_mesh_edits_unsaved(layer_id);
-    app.ui.status_message = Some(app.ui.locale.tr_with(
+    app.scene_ui.status_message = Some(app.ui.locale.tr_with(
         crate::i18n::message_id!("redo-redid"),
         &[("layer", &layer_label)],
     ));
@@ -105,7 +107,7 @@ pub(in crate::app) fn apply_last_mesh_edit_redo_with_status(
 }
 
 pub(super) fn apply_layer_mesh_undo_action_with_status(
-    app: &mut OccluViewApp,
+    app: &mut SceneContext<'_>,
     scene: &mut Scene,
     paths: &[PathBuf],
     request: LayerContextRequest,
@@ -124,14 +126,14 @@ pub(super) fn apply_layer_mesh_undo_action_with_status(
         StructuralHistoryStep::Restored(restored) => {
             *scene = restored;
             app.document.mark_mesh_edits_unsaved(request.layer_id);
-            app.ui.status_message = Some(app.ui.locale.tr_with(
+            app.scene_ui.status_message = Some(app.ui.locale.tr_with(
                 crate::i18n::message_id!("undo-undid"),
                 &[("layer", &layer_label)],
             ));
             return structural_scene_apply();
         }
         StructuralHistoryStep::SceneChanged => {
-            app.ui.status_message = Some(app.ui.locale.tr_with(
+            app.scene_ui.status_message = Some(app.ui.locale.tr_with(
                 crate::i18n::message_id!("undo-unavailable"),
                 &[("layer", &layer_label)],
             ));
@@ -143,7 +145,7 @@ pub(super) fn apply_layer_mesh_undo_action_with_status(
     let apply = apply_layer_mesh_undo_action(scene, request, &mut app.document.edit_mode);
     if apply.scene_changed {
         app.document.mark_mesh_edits_unsaved(request.layer_id);
-        app.ui.status_message = Some(app.ui.locale.tr_with(
+        app.scene_ui.status_message = Some(app.ui.locale.tr_with(
             crate::i18n::message_id!("undo-undid"),
             &[("layer", &layer_label)],
         ));

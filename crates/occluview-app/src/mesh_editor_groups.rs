@@ -10,6 +10,7 @@
 use eframe::egui;
 
 use super::{EditorTab, MeshEditorAction, MeshEditorPanelState};
+use crate::app::workspace::id::SceneKey;
 use crate::icons::AppIcon;
 use crate::mesh_editor_icons::{self, CELL_ROUNDING};
 use crate::sculpt_tool::{SculptTip, SculptToolKind};
@@ -342,6 +343,7 @@ pub(super) fn edit_selection(
 /// the kernel already protects outer scan borders.
 pub(super) fn close_holes(
     ui: &mut egui::Ui,
+    scene_key: SceneKey,
     enabled: bool,
     locale: &crate::i18n::LocaleManager,
 ) -> Option<MeshEditorAction> {
@@ -370,7 +372,7 @@ pub(super) fn close_holes(
         ui.allocate_ui_with_layout(
             egui::vec2(ui.available_width(), ROW_H),
             egui::Layout::left_to_right(egui::Align::Center),
-            |ui| close_holes_limit_control(ui, enabled, locale),
+            |ui| close_holes_limit_control(ui, scene_key, enabled, locale),
         );
     });
     ui.add_space(2.0);
@@ -384,6 +386,7 @@ pub(super) fn close_holes(
 /// takes the primary drag away from the selection gestures until toggled off.
 pub(super) fn sculpt(
     ui: &mut egui::Ui,
+    scene_key: SceneKey,
     state: &MeshEditorPanelState,
     enabled: bool,
     locale: &crate::i18n::LocaleManager,
@@ -422,16 +425,21 @@ pub(super) fn sculpt(
             action = Some(MeshEditorAction::ToggleSculpt(SculptToolKind::Smooth));
         }
     });
-    sculpt_tip_row(ui, enabled, locale);
-    sculpt_settings_row(ui, enabled, state.sculpt_armed, locale);
+    sculpt_tip_row(ui, scene_key, enabled, locale);
+    sculpt_settings_row(ui, scene_key, enabled, state.sculpt_armed, locale);
     action
 }
 
 /// One cell per tip stamp. The tip changes the dab's shape, so the row sits
 /// between the brush selector and the size sliders it is used with.
-fn sculpt_tip_row(ui: &mut egui::Ui, enabled: bool, locale: &crate::i18n::LocaleManager) {
+fn sculpt_tip_row(
+    ui: &mut egui::Ui,
+    scene_key: SceneKey,
+    enabled: bool,
+    locale: &crate::i18n::LocaleManager,
+) {
     let ctx = ui.ctx().clone();
-    let selected = super::sculpt_tip(&ctx);
+    let selected = super::sculpt_tip(&ctx, scene_key);
     section(
         ui,
         locale,
@@ -450,7 +458,7 @@ fn sculpt_tip_row(ui: &mut egui::Ui, enabled: bool, locale: &crate::i18n::Locale
             )
             .clicked()
             {
-                super::set_sculpt_tip(&ctx, tip);
+                super::set_sculpt_tip(&ctx, scene_key, tip);
             }
         }
     });
@@ -464,22 +472,21 @@ fn tip_icon(tip: SculptTip) -> AppIcon {
     }
 }
 
-/// Size/intensity sliders for the sculpt tools. Both live in egui memory (like
-/// the Close Holes limit) so they hold while the editor is open, and both are
-/// abstract 0..100 feel sliders, not millimeters.
+/// Per-scene brush radius in millimetres and mode-specific strength.
 fn sculpt_settings_row(
     ui: &mut egui::Ui,
+    scene_key: SceneKey,
     enabled: bool,
     armed: Option<SculptToolKind>,
     locale: &crate::i18n::LocaleManager,
 ) {
     let ctx = ui.ctx().clone();
-    let tip = super::sculpt_tip(&ctx);
+    let tip = super::sculpt_tip(&ctx, scene_key);
     let kind = armed.unwrap_or(SculptToolKind::AddRemove);
     let (radius_min, radius_max) = tip.radius_range_mm();
     let (strength_min, strength_max) = kind.strength_range();
-    let mut radius = super::sculpt_radius_mm(&ctx, tip);
-    let mut strength = super::sculpt_strength(&ctx, kind);
+    let mut radius = super::sculpt_radius_mm(&ctx, scene_key, tip);
+    let mut strength = super::sculpt_strength(&ctx, scene_key, kind);
     let radius_label = format!("{radius:.2} mm");
     let strength_label = format!("{:.0}%", strength * 100.0);
     sculpt_slider_row(
@@ -507,8 +514,8 @@ fn sculpt_settings_row(
             tooltip: &locale.tr(crate::i18n::message_id!("meshedit-slider-force-hint")),
         },
     );
-    super::set_sculpt_radius_mm(&ctx, tip, radius);
-    super::set_sculpt_strength(&ctx, kind, strength);
+    super::set_sculpt_radius_mm(&ctx, scene_key, tip, radius);
+    super::set_sculpt_strength(&ctx, scene_key, kind, strength);
     ui.add_space(2.0);
 }
 
@@ -575,11 +582,12 @@ fn sculpt_slider_width(available_width: f32) -> f32 {
 
 fn close_holes_limit_control(
     ui: &mut egui::Ui,
+    scene_key: SceneKey,
     enabled: bool,
     locale: &crate::i18n::LocaleManager,
 ) {
-    let id = super::close_holes_limit_id();
-    let mut armed = super::close_holes_limit_enabled(ui.ctx());
+    let id = super::close_holes_limit_id(scene_key);
+    let mut armed = super::close_holes_limit_enabled(ui.ctx(), scene_key);
     let mut limit = ui
         .ctx()
         .data(|data| data.get_temp::<f32>(id))
@@ -622,7 +630,7 @@ fn close_holes_limit_control(
         )
     });
     drag_value.on_hover_text(locale.tr(crate::i18n::message_id!("meshedit-limit-drag-hint")));
-    super::set_close_holes_limit_enabled(ui.ctx(), armed);
+    super::set_close_holes_limit_enabled(ui.ctx(), scene_key, armed);
     ui.ctx().data_mut(|data| data.insert_temp(id, limit));
 }
 
@@ -836,8 +844,8 @@ mod tests {
                 let _ = tab_strip(ui, &state, &locale);
                 let _ = selection(ui, &state, enabled, &locale);
                 let _ = edit_selection(ui, &state, enabled, &locale);
-                let _ = close_holes(ui, enabled, &locale);
-                let _ = sculpt(ui, &state, enabled, &locale);
+                let _ = close_holes(ui, SceneKey::INITIAL, enabled, &locale);
+                let _ = sculpt(ui, SceneKey::INITIAL, &state, enabled, &locale);
                 super::super::session_bar::status(ui, &state, &locale);
                 let _ = super::super::session_bar::session(ui, &state, !state.busy, &locale);
             });

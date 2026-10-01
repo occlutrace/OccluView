@@ -980,3 +980,44 @@ shell-preview-isometric = Isométrica
 shell-preview-fit-view = Ajustar visualização
 shell-preview-wireframe = Estrutura de arame
 shell-preview-copy-image = Copiar imagem
+
+## Espaço de trabalho com duas cenas e movimentação de camadas.
+workspace-scene-name = Cena { $number }
+workspace-scenes = Cenas
+workspace-scene-new = Criar uma nova cena
+workspace-new-left = Nova cena à esquerda
+workspace-new-right = Nova cena à direita
+workspace-one-view = Uma vista
+workspace-two-views = Duas vistas
+workspace-fullscreen = Mostrar somente esta cena
+workspace-divider = Largura das cenas
+workspace-drop-title = Escolha uma cena
+workspace-drop-description = Onde estes arquivos devem ser adicionados?
+workspace-cancel = Cancelar
+workspace-rename = Renomear cena
+workspace-rename-title = Renomear cena
+workspace-rename-apply = Renomear
+workspace-close = Fechar cena
+workspace-close-title = Alterações não salvas
+workspace-close-question = Salvar as alterações em { $scenes } antes de fechar?
+workspace-close-detail = Aguarde a conclusão das edições pendentes antes de salvar. Descartar fecha sem salvar.
+workspace-discard-close = Descartar e fechar
+workspace-move-layer = Mover camada selecionada
+workspace-two-scene-limit = Este espaço de trabalho oferece suporte a duas cenas.
+layers-row-drag-hint = Clique para focar; arraste para mover para outra cena
+workspace-layer-move-new-scene = Mover camada para uma nova cena
+workspace-layer-move-scene = Mover camada para { $scene }
+
+workspace-move-all = Mover todas as camadas
+help-workspace-switch = Alternar a cena ativa
+help-workspace-drag = Mover uma camada para outra cena ou criar uma cena na borda esquerda ou direita
+help-workspace-divider = Ajustar a largura das cenas; Home restaura larguras iguais
+
+workspace-wait-edit = Primeiro conclua ou cancele a edição nas duas cenas.
+workspace-wait-load = Aguarde o carregamento das cenas.
+workspace-wait-gesture = Primeiro termine o gesto atual do mouse.
+workspace-history-order = Primeiro desfaça as alterações posteriores na outra cena.
+workspace-history-budget = Não há espaço suficiente no histórico para esta operação.
+workspace-stale-target = A cena ou camada não está mais disponível.
+workspace-close-dialog = Primeiro feche a caixa de diálogo aberta.
+workspace-import-cancelled = As importações pendentes foram canceladas ao fechar a cena.

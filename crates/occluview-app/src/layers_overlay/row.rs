@@ -5,6 +5,7 @@ use super::layout::{
     LAYER_ROW_TINT_WIDTH_PX,
 };
 use super::menu::{attach_layer_context_menu, LayerContextMenuTarget};
+use super::{LayerOverlaySceneAction, LayerSceneTabs};
 use crate::layer_actions::{
     tint_matches, LayerContextAction, LayerContextRequest, LAYER_OVERLAY_TINT_PRESETS,
     LAYER_TINT_PRESETS,
@@ -20,6 +21,15 @@ pub(super) struct LayerRowView<'a> {
     pub(super) hover: Option<&'a str>,
     /// Whether this layer is the one currently open in the mesh editor.
     pub(super) active: bool,
+    /// Generic Layers focus. This is deliberately separate from editor
+    /// ownership so a click cannot silently retarget an open editor.
+    pub(super) focused: bool,
+}
+
+pub(super) struct LayerRowInteraction {
+    pub(super) edit: Option<LayerRowChange>,
+    pub(super) focused_layer_id: Option<SceneMeshId>,
+    pub(super) drag_started: bool,
 }
 
 // Five independent display/state flags, not a state machine — see SceneMesh.
@@ -65,8 +75,10 @@ pub(super) fn show_layer_row(
     state: LayerRowState,
     view: LayerRowView<'_>,
     context_request: &mut Option<LayerContextRequest>,
+    scene_tabs: Option<&LayerSceneTabs<'_>>,
+    scene_action: &mut Option<LayerOverlaySceneAction>,
     locale: &crate::i18n::LocaleManager,
-) -> Option<LayerRowChange> {
+) -> LayerRowInteraction {
     let mut changed = false;
     let mut visible = state.visible;
     let mut opacity = state.opacity;
@@ -90,6 +102,15 @@ pub(super) fn show_layer_row(
             ),
             1.5,
             ui_theme::accent(),
+        );
+    } else if view.focused {
+        ui.painter()
+            .rect_filled(row_rect, 5.0, ui_theme::row_hover_fill());
+        ui.painter().rect_stroke(
+            row_rect.shrink(0.5),
+            5.0,
+            egui::Stroke::new(1.0, ui_theme::accent()),
+            egui::StrokeKind::Middle,
         );
     } else if hovered {
         ui.painter()
@@ -117,7 +138,7 @@ pub(super) fn show_layer_row(
     // registered after it and sit on top, so they keep input priority.
     let row_hit = ui.interact(
         row_rect,
-        ui.id().with(("layer-row-background", view.index)),
+        ui.id().with(("layer-row-background", view.layer_id)),
         egui::Sense::click(),
     );
     let row_actions_label = format!(
@@ -127,6 +148,8 @@ pub(super) fn show_layer_row(
     );
     crate::accessibility::button(&row_hit, &row_actions_label, true, None);
 
+    let mut focused_layer_id = None;
+    let mut drag_started = false;
     ui.allocate_ui_with_layout(
         row_size,
         egui::Layout::left_to_right(egui::Align::Center),
@@ -167,7 +190,14 @@ pub(super) fn show_layer_row(
                 visible = !visible;
                 changed = true;
             }
-            attach_layer_context_menu(eye_response, &target(visible), context_request, locale);
+            attach_layer_context_menu(
+                eye_response,
+                &target(visible),
+                context_request,
+                scene_tabs,
+                scene_action,
+                locale,
+            );
 
             ui.add_space(LAYER_ROW_GAP_PX);
 
@@ -179,15 +209,40 @@ pub(super) fn show_layer_row(
                     .size(11.5),
             )
             .truncate()
-            .sense(egui::Sense::click());
-            let label_response = ui.add_sized([label_width, LAYER_ROW_CONTROL_HEIGHT_PX], label);
-            crate::accessibility::button(&label_response, view.label, true, Some(view.active));
-            let label_response = if let Some(hover) = view.hover {
-                label_response.on_hover_text(hover)
+            .sense(if scene_tabs.is_some() {
+                egui::Sense::click_and_drag()
+            } else {
+                egui::Sense::click()
+            });
+            let label_response = ui
+                .push_id(("layer-name", view.layer_id), |ui| {
+                    ui.add_sized([label_width, LAYER_ROW_CONTROL_HEIGHT_PX], label)
+                })
+                .inner;
+            let label_response = if scene_tabs.is_some() {
+                label_response.on_hover_cursor(egui::CursorIcon::Grab)
             } else {
                 label_response
             };
-            attach_layer_context_menu(label_response, &target(visible), context_request, locale);
+            crate::accessibility::button(&label_response, view.label, true, Some(view.focused));
+            focused_layer_id = label_response.clicked().then_some(view.layer_id);
+            drag_started = label_response.drag_started();
+            let label_response = match (view.hover, scene_tabs.is_some()) {
+                (Some(hover), true) => label_response.on_hover_text(format!(
+                    "{hover}\n{}",
+                    locale.tr(crate::i18n::message_id!("layers-row-drag-hint"))
+                )),
+                (Some(hover), false) => label_response.on_hover_text(hover),
+                (None, _) => label_response,
+            };
+            attach_layer_context_menu(
+                label_response,
+                &target(visible),
+                context_request,
+                scene_tabs,
+                scene_action,
+                locale,
+            );
 
             ui.add_space(LAYER_ROW_GAP_PX);
 
@@ -219,7 +274,14 @@ pub(super) fn show_layer_row(
                 f64::from(opacity),
             );
             changed |= slider_response.changed();
-            attach_layer_context_menu(slider_response, &target(visible), context_request, locale);
+            attach_layer_context_menu(
+                slider_response,
+                &target(visible),
+                context_request,
+                scene_tabs,
+                scene_action,
+                locale,
+            );
 
             ui.add_space(LAYER_ROW_GAP_PX);
 
@@ -232,7 +294,14 @@ pub(super) fn show_layer_row(
                 changed = true;
                 tint_clicked = true;
             }
-            attach_layer_context_menu(swatch_response, &target(visible), context_request, locale);
+            attach_layer_context_menu(
+                swatch_response,
+                &target(visible),
+                context_request,
+                scene_tabs,
+                scene_action,
+                locale,
+            );
 
             ui.add_space(LAYER_ROW_ACTION_GAP_PX);
 
@@ -266,18 +335,36 @@ pub(super) fn show_layer_row(
                     action: LayerContextAction::Remove,
                 });
             }
-            attach_layer_context_menu(remove_response, &target(visible), context_request, locale);
+            attach_layer_context_menu(
+                remove_response,
+                &target(visible),
+                context_request,
+                scene_tabs,
+                scene_action,
+                locale,
+            );
         },
     );
-    attach_layer_context_menu(row_hit, &target(visible), context_request, locale);
+    attach_layer_context_menu(
+        row_hit,
+        &target(visible),
+        context_request,
+        scene_tabs,
+        scene_action,
+        locale,
+    );
 
-    changed.then_some(LayerRowChange {
-        index: view.index,
-        visible,
-        opacity,
-        tint,
-        tint_clicked,
-    })
+    LayerRowInteraction {
+        edit: changed.then_some(LayerRowChange {
+            index: view.index,
+            visible,
+            opacity,
+            tint,
+            tint_clicked,
+        }),
+        focused_layer_id,
+        drag_started,
+    }
 }
 
 /// How tall the tint palette popup may get before it scrolls. Enough for the

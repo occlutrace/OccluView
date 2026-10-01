@@ -1,4 +1,4 @@
-use super::{egui, OccluViewApp, PathBuf, Scene};
+use super::{egui, PathBuf, Scene, SceneContext};
 use std::collections::{BTreeSet, HashMap};
 
 pub(super) fn reconcile_scene_paths(
@@ -46,7 +46,7 @@ pub(super) fn reconcile_scene_paths(
         .collect()
 }
 
-impl OccluViewApp {
+impl SceneContext<'_> {
     fn retain_unsaved_edit_layer_ids(&mut self, scene: &Scene) {
         let retained_ids: BTreeSet<_> = scene
             .meshes()
@@ -72,10 +72,10 @@ impl OccluViewApp {
 
         let reconciled_paths = previous_scene.map_or_else(
             || vec![PathBuf::new(); draft.meshes().len()],
-            |scene| reconcile_scene_paths(scene, &self.persistence.current_paths, &draft),
+            |scene| reconcile_scene_paths(scene, &self.document.current_paths, &draft),
         );
         self.retain_unsaved_edit_layer_ids(&draft);
-        self.persistence.current_paths = reconciled_paths;
+        self.document.current_paths = reconciled_paths;
         self.set_scene(draft, false);
         ctx.request_repaint();
     }
