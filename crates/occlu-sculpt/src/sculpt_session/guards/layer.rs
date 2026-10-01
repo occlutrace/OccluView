@@ -173,8 +173,13 @@ impl SculptSession {
             BrushMode::Flatten => {
                 // Flatten never reaches the layer commit: `dab_flatten` writes
                 // group positions directly, so this predicate never sees it.
+                // Fail closed. If a future change does route Flatten through the
+                // layer commit, refusing the face makes the dab visibly do
+                // nothing instead of publishing geometry no guard has checked;
+                // `debug_assert!` is a no-op in release, so the answer here is
+                // the one that ships.
                 debug_assert!(false, "Flatten bypasses commit_even_layer");
-                false
+                true
             }
         }
     }
