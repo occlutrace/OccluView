@@ -12,7 +12,7 @@ use eframe::egui;
 /// colour in the viewport, on the preset the palette leads with. The swatch is
 /// the only place the colour is ever labelled, so it shows what the viewport
 /// draws.
-pub(super) fn color32_from_tint(color: [f32; 4]) -> egui::Color32 {
+pub(crate) fn color32_from_tint(color: [f32; 4]) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(
         unit_float_to_u8(color[0]),
         unit_float_to_u8(color[1]),

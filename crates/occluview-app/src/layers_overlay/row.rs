@@ -209,6 +209,10 @@ pub(super) fn show_layer_row(
                     .size(11.5),
             )
             .truncate()
+            // The row name is a drag handle, not an editor: without this the
+            // label keeps egui's default text selection and a drag over the
+            // name paints a selection instead of moving the layer.
+            .selectable(false)
             .sense(if scene_tabs.is_some() {
                 egui::Sense::click_and_drag()
             } else {
@@ -220,13 +224,19 @@ pub(super) fn show_layer_row(
                 })
                 .inner;
             let label_response = if scene_tabs.is_some() {
-                label_response.on_hover_cursor(egui::CursorIcon::Grab)
+                // The grab cursor has to survive the drag itself, not only the
+                // hover: once the pointer leaves the label, a hover-only
+                // cursor would fall back to the arrow mid-drag.
+                label_response.on_hover_and_drag_cursor(egui::CursorIcon::Grab)
             } else {
                 label_response
             };
             crate::accessibility::button(&label_response, view.label, true, Some(view.focused));
             focused_layer_id = label_response.clicked().then_some(view.layer_id);
-            drag_started = label_response.drag_started();
+            // Primary only: the same label carries the context menu, and a
+            // secondary drag would arm the layer drag with no primary release
+            // to end it.
+            drag_started = label_response.drag_started_by(egui::PointerButton::Primary);
             let label_response = match (view.hover, scene_tabs.is_some()) {
                 (Some(hover), true) => label_response.on_hover_text(format!(
                     "{hover}\n{}",
