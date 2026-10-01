@@ -1,9 +1,27 @@
-use super::{
-    bridge_split_mesh_in_world, normalize_bridge_split_input, CoreBridgeSplitError, Mesh,
-    MeshTexture, Vertex,
-};
+//! World-space bridge-split adapter tests.
+//!
+//! The separator disc is placed by a scene transform, so these cover the
+//! recentring and restoration that keep the world-space kerf independent of a
+//! layer's placement, plus the import-normalization preflight.
+
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::float_cmp,
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_lossless,
+    clippy::cast_possible_wrap
+)]
+
 use glam::{Affine3A, Mat3, Quat, Vec3};
 use occlu_mesh_edit::{BridgeSplitError, BridgeSplitRequest};
+use occluview_core::{Mesh, MeshTexture, Vertex};
+use occluview_edit::{
+    bridge_split_mesh_in_world, mesh_edit_buffers_from_mesh, normalize_bridge_split_input,
+    CoreBridgeSplitError, CoreBridgeSplitResult,
+};
 
 fn textured_cube() -> Mesh {
     let positions = [
@@ -116,7 +134,7 @@ fn request(center: Vec3, normal: Vec3) -> BridgeSplitRequest {
     }
 }
 
-fn split_after_bridge_normalization(source: &Mesh) -> super::CoreBridgeSplitResult {
+fn split_after_bridge_normalization(source: &Mesh) -> CoreBridgeSplitResult {
     let normalized = normalize_bridge_split_input(source).expect("normalizable bridge input");
     bridge_split_mesh_in_world(
         normalized.as_ref().unwrap_or(source),
@@ -127,7 +145,7 @@ fn split_after_bridge_normalization(source: &Mesh) -> super::CoreBridgeSplitResu
 }
 
 fn world_gap(
-    result: &super::CoreBridgeSplitResult,
+    result: &CoreBridgeSplitResult,
     transform: Affine3A,
     center: Vec3,
     normal: Vec3,
@@ -189,15 +207,11 @@ fn world_adapter_keeps_multiple_closed_components_in_one_logical_part() {
             .expect("world adapter must preserve a valid multi-component side");
 
     assert_eq!(
-        occlu_mesh_edit::validate_bridge_split_part(&super::mesh_edit_buffers_from_mesh(
-            &result.part_a
-        )),
+        occlu_mesh_edit::validate_bridge_split_part(&mesh_edit_buffers_from_mesh(&result.part_a)),
         Ok(2)
     );
     assert_eq!(
-        occlu_mesh_edit::validate_bridge_split_part(&super::mesh_edit_buffers_from_mesh(
-            &result.part_b
-        )),
+        occlu_mesh_edit::validate_bridge_split_part(&mesh_edit_buffers_from_mesh(&result.part_b)),
         Ok(1)
     );
 }

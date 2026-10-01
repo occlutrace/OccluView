@@ -11,12 +11,8 @@
 //! NIR scans). Indices are 32-bit triangles. Colors are optional so
 //! plain STL (no color) doesn't pay for a zeroed channel.
 
-mod bridge_split_adapter;
-#[cfg(feature = "robust-csg")]
-mod bridge_split_robust;
 mod builder;
 mod bvh;
-mod edit_adapter;
 mod normals;
 pub use occlu_geometry_math::accumulate_smooth_normals;
 mod principal_axis;
@@ -26,12 +22,6 @@ mod vertex;
 #[cfg(test)]
 mod tests;
 
-#[cfg(test)]
-mod bridge_split_tests;
-
-#[cfg(all(test, feature = "robust-csg"))]
-mod bridge_split_robust_tests;
-
 use crate::bbox::Aabb;
 use crate::error::CoreError;
 use bvh::{DirtyVertexRay, TriangleBvh};
@@ -39,19 +29,7 @@ use glam::Vec3;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
-pub use bridge_split_adapter::{
-    bridge_split_mesh_in_world, bridge_split_prepared_mesh_in_world, normalize_bridge_split_input,
-    prepare_bridge_split_source, CoreBridgeSplitError, CoreBridgeSplitResult,
-    PreparedBridgeSplitSource,
-};
 pub use builder::MeshBuilder;
-pub use edit_adapter::{
-    component_at_triangle_in_mesh, crop_mesh_to_selected_faces, delete_selected_faces_in_mesh,
-    fill_holes_in_mesh, fill_selected_holes_in_mesh, invert_mesh_orientation,
-    mesh_edit_buffers_from_mesh, mesh_from_edit_buffers_like, mesh_from_sculpt_session_like,
-    repair_mesh_in_mesh, selected_connected_components_in_mesh, CoreMeshEditResult,
-    CoreMeshRepairResult, SculptSessionBuffers,
-};
 pub use principal_axis::PrincipalFrame;
 pub use texture::MeshTexture;
 pub use vertex::Vertex;
@@ -235,7 +213,11 @@ impl Mesh {
     /// Rebuild a committed sculpt snapshot without rewriting the kernel's
     /// authored vertex normals. Both paths share shape validation, cache
     /// construction, and fresh geometry identities; only normal repair differs.
-    fn new_preserving_sculpt_normals(
+    ///
+    /// # Errors
+    /// - [`CoreError::IndexOutOfRange`] if any index exceeds the vertex count.
+    /// - [`CoreError::IndexCountNotMultipleOfThree`] if `indices.len() % 3 != 0`.
+    pub fn new_preserving_sculpt_normals(
         name: Option<String>,
         vertices: Vec<Vertex>,
         indices: Vec<u32>,

@@ -119,7 +119,7 @@ pub(super) fn run_worker(
                     };
                     let vertices = shadow.clone();
                     let mesh = if topology_dirty {
-                        occluview_core::mesh_from_sculpt_session_like(
+                        occluview_edit::mesh_from_sculpt_session_like(
                             &session.base_mesh,
                             &session.session,
                         )

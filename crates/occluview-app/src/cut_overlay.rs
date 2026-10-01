@@ -11,8 +11,8 @@ use crate::cut_manipulator::DiscPose;
 use crate::viewer::project_world_to_viewport;
 use eframe::egui;
 use glam::Vec3;
-use occluview_core::scene::SceneSection;
 use occluview_core::{Camera, SceneMeshId};
+use occluview_edit::scene::SceneSection;
 
 /// White halo drawn under every stroke (scale-bar style).
 const HALO: egui::Color32 = egui::Color32::from_rgba_premultiplied(214, 219, 224, 168);

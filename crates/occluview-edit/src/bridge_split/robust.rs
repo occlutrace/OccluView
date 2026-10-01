@@ -6,11 +6,12 @@ use occluview_robust_csg::{
     RobustMesh, RobustMeshPart, SeparatorDisc,
 };
 
-use super::bridge_split_adapter::{
+use super::{
     conversion, part_name, validate_restored_finite_result, CoreBridgeSplitError,
     CoreBridgeSplitResult,
 };
-use super::{Mesh, Vertex};
+use crate::edit::mesh_edit_buffers_from_mesh;
+use occluview_core::{Mesh, Vertex};
 
 pub(super) fn supports(source: &Mesh) -> bool {
     !source.has_vertex_colors() && !source.has_uvs() && source.texture().is_none()
@@ -105,8 +106,8 @@ fn core_result_from_robust_parts(
     let inverse = affine.inverse();
     let part_a = mesh_from_robust_part(parts[0], source.name(), "Part A", inverse)?;
     let part_b = mesh_from_robust_part(parts[1], source.name(), "Part B", inverse)?;
-    let positive_buffers = super::mesh_edit_buffers_from_mesh(&part_a);
-    let negative_buffers = super::mesh_edit_buffers_from_mesh(&part_b);
+    let positive_buffers = mesh_edit_buffers_from_mesh(&part_a);
+    let negative_buffers = mesh_edit_buffers_from_mesh(&part_b);
     validate_restored_finite_result(&positive_buffers, &negative_buffers, affine, request)?;
 
     Ok(CoreBridgeSplitResult {
@@ -136,10 +137,7 @@ fn stabilize_for_local_storage(
         .into_iter()
         .map(|position| {
             let local = inverse.transform_point3(DVec3::from_array(position));
-            let local = super::bridge_split_adapter::finite_vec3(
-                local,
-                "robust CSG local storage position",
-            )?;
+            let local = super::finite_vec3(local, "robust CSG local storage position")?;
             let restored_world = affine.transform_point3(DVec3::from_array(local.map(f64::from)));
             if !restored_world.is_finite() {
                 return Err(conversion(
@@ -208,10 +206,7 @@ fn mesh_from_robust_part(
         .map(|&position| {
             let local_position = inverse.transform_point3(DVec3::from_array(position));
             Ok(Vertex {
-                position: super::bridge_split_adapter::finite_vec3(
-                    local_position,
-                    "robust CSG local position",
-                )?,
+                position: super::finite_vec3(local_position, "robust CSG local position")?,
                 normal: [0.0; 3],
                 color: [255, 255, 255, 255],
                 uv: [0.0, 0.0],

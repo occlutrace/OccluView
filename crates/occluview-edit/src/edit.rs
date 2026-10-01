@@ -1,11 +1,10 @@
-use super::{Mesh, MeshKind, MeshTexture, Vertex};
-use crate::error::CoreError;
 use occlu_mesh_edit::{
     component_at_triangle, crop_to_selected_faces, delete_selected_faces, fill_holes,
     fill_selected_holes, invert_orientation, repair_mesh, selected_connected_components,
     EditVertex, FaceSelection, MeshEditBuffers, MeshEditError, MeshEditOptions, MeshEditReport,
     MeshEditResult as RawMeshEditResult, MeshTopology, RepairOptions, RepairReport,
 };
+use occluview_core::{CoreError, Mesh, MeshKind, MeshTexture, Vertex};
 
 /// Result of applying a mesh edit to a core [`Mesh`].
 #[derive(Clone, Debug)]
@@ -23,12 +22,6 @@ pub struct CoreMeshRepairResult {
     pub mesh: Mesh,
     /// Per-pass repair report.
     pub report: RepairReport,
-}
-
-#[derive(Clone, Copy)]
-enum RebuildNormalPolicy {
-    RepairForEditing,
-    PreserveSculptSession,
 }
 
 fn edit_vertex_from_vertex(vertex: &Vertex) -> EditVertex {
@@ -125,36 +118,24 @@ pub fn mesh_from_sculpt_session_like<S: SculptSessionBuffers + ?Sized>(
         },
         source.name().map(str::to_owned),
         false,
-        RebuildNormalPolicy::PreserveSculptSession,
-    )
-}
-
-pub(super) fn mesh_from_edit_buffers_named_like(
-    source: &Mesh,
-    buffers: MeshEditBuffers,
-    name: Option<String>,
-) -> Result<Mesh, CoreError> {
-    rebuild_mesh_from_edit_buffers(
-        source,
-        buffers,
-        name,
-        false,
-        RebuildNormalPolicy::RepairForEditing,
-    )
-}
-
-pub(super) fn mesh_from_edit_buffers_named_preserving_texture(
-    source: &Mesh,
-    buffers: MeshEditBuffers,
-    name: Option<String>,
-) -> Result<Mesh, CoreError> {
-    rebuild_mesh_from_edit_buffers(
-        source,
-        buffers,
-        name,
         true,
-        RebuildNormalPolicy::RepairForEditing,
     )
+}
+
+pub(crate) fn mesh_from_edit_buffers_named_like(
+    source: &Mesh,
+    buffers: MeshEditBuffers,
+    name: Option<String>,
+) -> Result<Mesh, CoreError> {
+    rebuild_mesh_from_edit_buffers(source, buffers, name, false, false)
+}
+
+pub(crate) fn mesh_from_edit_buffers_named_preserving_texture(
+    source: &Mesh,
+    buffers: MeshEditBuffers,
+    name: Option<String>,
+) -> Result<Mesh, CoreError> {
+    rebuild_mesh_from_edit_buffers(source, buffers, name, true, false)
 }
 
 fn rebuild_mesh_from_edit_buffers(
@@ -162,7 +143,7 @@ fn rebuild_mesh_from_edit_buffers(
     buffers: MeshEditBuffers,
     name: Option<String>,
     preserve_source_texture: bool,
-    normal_policy: RebuildNormalPolicy,
+    preserve_sculpt_normals: bool,
 ) -> Result<Mesh, CoreError> {
     let texture = source_texture(source);
     let has_uvs = mesh_has_uvs(&buffers);
@@ -187,13 +168,10 @@ fn rebuild_mesh_from_edit_buffers(
                 .iter()
                 .map(vertex_from_edit_vertex)
                 .collect();
-            match normal_policy {
-                RebuildNormalPolicy::RepairForEditing => {
-                    Mesh::new(name, vertices, buffers.indices)?
-                }
-                RebuildNormalPolicy::PreserveSculptSession => {
-                    Mesh::new_preserving_sculpt_normals(name, vertices, buffers.indices)?
-                }
+            if preserve_sculpt_normals {
+                Mesh::new_preserving_sculpt_normals(name, vertices, buffers.indices)?
+            } else {
+                Mesh::new(name, vertices, buffers.indices)?
             }
         }
     };

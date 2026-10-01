@@ -1,5 +1,6 @@
 use super::{EditModeController, GpuMeshUniform, Mat4, PreparedSceneSource};
-use occluview_core::{FaceSelection, Mesh, Scene, SceneMeshId, Vertex};
+use occluview_core::{Mesh, Scene, SceneMeshId, Vertex};
+use occluview_edit::FaceSelection;
 
 const SELECTION_OVERLAY_TINT: [f32; 4] = [1.0, 0.58, 0.06, 1.0];
 const SELECTION_OVERLAY_OPACITY: f32 = 0.34;
@@ -131,7 +132,8 @@ mod tests {
     use super::*;
     use crate::edit_mode::EditModeController;
     use glam::{Affine3A, Vec3};
-    use occluview_core::{FaceSelection, Mesh, SceneMesh, ScenePickHit};
+    use occluview_core::{Mesh, SceneMesh, ScenePickHit};
+    use occluview_edit::FaceSelection;
 
     fn vertex(x: f32, y: f32, z: f32) -> Vertex {
         Vertex::at(Vec3::new(x, y, z)).with_normal(Vec3::Z)

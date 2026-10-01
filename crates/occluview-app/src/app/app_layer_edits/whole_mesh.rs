@@ -7,9 +7,10 @@ use super::super::{
 };
 use super::resolve_layer;
 use super::structural::structural_scene_apply;
-use occluview_core::{
-    fill_selected_holes_in_mesh, invert_mesh_orientation, CoreError, CoreMeshEditResult,
-    FaceSelection, Mesh, MeshEditOptions, MeshEditReport,
+use occluview_core::{CoreError, Mesh};
+use occluview_edit::{
+    fill_selected_holes_in_mesh, invert_mesh_orientation, CoreMeshEditResult, FaceSelection,
+    MeshEditOptions, MeshEditReport,
 };
 use std::sync::Arc;
 
@@ -22,7 +23,7 @@ use std::sync::Arc;
 /// selection gate takes `max(options.max_boundary_loop, kernel constant)`, so
 /// lowering the kernel value against a stale local copy changes nothing in the
 /// shipped product.
-use occluview_core::CLOSE_HOLES_EDGE_CEILING;
+use occluview_edit::CLOSE_HOLES_EDGE_CEILING;
 
 pub(super) fn apply_layer_mesh_edit_action_with_status(
     app: &mut SceneContext<'_>,

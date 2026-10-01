@@ -8,8 +8,8 @@ use crate::probe_section::SliceProbe;
 use crate::section_view::{SectionMainView, SectionView, SectionViewFrame, SectionViewUiOutcome};
 use eframe::egui;
 use glam::Vec3;
-use occluview_core::scene::{SceneSection, SectionPlane};
 use occluview_core::{Aabb, SceneMeshId};
+use occluview_edit::scene::{SceneSection, SectionPlane};
 use occluview_render::{ClipPlane, CutViewSpec};
 
 const CUT_PREVIEW_RENDER_SIZE_PX: u16 = 512;

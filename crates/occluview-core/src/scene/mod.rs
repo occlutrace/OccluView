@@ -13,7 +13,6 @@ mod id;
 mod material;
 mod mesh_entry;
 mod picking;
-mod section;
 
 #[cfg(test)]
 mod tests;
@@ -21,9 +20,7 @@ mod tests;
 pub use id::SceneMeshId;
 pub use material::{DEFAULT_COLORED_MESH_TINT, DEFAULT_UNTEXTURED_MESH_TINT};
 pub use mesh_entry::{OverlayKind, SceneMesh};
-pub use occlu_mesh_edit::{SectionPlane, SectionPolyline, SectionResult};
 pub use picking::ScenePickHit;
-pub use section::{LayerSection, SceneSection, SectionCache};
 
 /// A scene: a collection of positioned, styled meshes plus a default lighting
 /// and background. The dental "upper+lower" case is a 2-mesh scene.

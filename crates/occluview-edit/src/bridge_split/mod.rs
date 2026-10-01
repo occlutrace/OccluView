@@ -9,11 +9,11 @@ use occluview_robust_csg::PreparedRobustSolid;
 use std::sync::Arc;
 use thiserror::Error;
 
-use super::edit_adapter::{
-    mesh_edit_buffers_from_mesh, mesh_from_edit_buffers_named_preserving_texture,
-};
-use super::Mesh;
-use crate::CoreError;
+use crate::edit::{mesh_edit_buffers_from_mesh, mesh_from_edit_buffers_named_preserving_texture};
+use occluview_core::{CoreError, Mesh};
+
+#[cfg(feature = "robust-csg")]
+mod robust;
 
 const MAX_AUTOMATIC_IMPORT_RIM_EDGES: usize = 32;
 const MAX_AUTOMATIC_IMPORT_RIM_PERIMETER_MM: f32 = 2.0;
@@ -89,8 +89,8 @@ pub fn prepare_bridge_split_source(
     source: Arc<Mesh>,
 ) -> Result<PreparedBridgeSplitSource, CoreBridgeSplitError> {
     #[cfg(feature = "robust-csg")]
-    if super::bridge_split_robust::supports(&source) {
-        if let Ok(robust) = super::bridge_split_robust::prepare(&source) {
+    if robust::supports(&source) {
+        if let Ok(robust) = robust::prepare(&source) {
             return Ok(PreparedBridgeSplitSource {
                 source,
                 robust: Some(Arc::new(robust)),
@@ -108,9 +108,7 @@ pub fn prepare_bridge_split_source(
             Err(CoreBridgeSplitError::Kernel(_) | CoreBridgeSplitError::Core(_)) => source,
             Err(error) => return Err(error),
         };
-        let robust = super::bridge_split_robust::prepare(&source)
-            .ok()
-            .map(Arc::new);
+        let robust = robust::prepare(&source).ok().map(Arc::new);
         if robust.is_none() {
             let source = match normalized_source(Arc::clone(&source)) {
                 Ok(normalized) => normalized,
@@ -244,7 +242,7 @@ pub fn bridge_split_prepared_mesh_in_world(
 
     #[cfg(feature = "robust-csg")]
     if let Some(robust) = prepared.robust.as_deref() {
-        match super::bridge_split_robust::split(robust, source, affine, request) {
+        match robust::split(robust, source, affine, request) {
             Ok(result) => return Ok(result),
             Err(robust_error) => {
                 // A successful direct result is finite-disc equivalent because
@@ -536,12 +534,7 @@ pub(super) fn validate_restored_finite_result(
         normal,
         f64::from(request.kerf_mm),
     );
-    super::bridge_split_robust::validate_stored_separator_clearance(
-        [part_a, part_b],
-        transform,
-        request,
-        tolerance,
-    )
+    robust::validate_stored_separator_clearance([part_a, part_b], transform, request, tolerance)
 }
 
 fn validate_restored_topology(

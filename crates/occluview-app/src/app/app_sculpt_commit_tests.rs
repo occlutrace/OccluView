@@ -18,7 +18,8 @@ use crate::app::OccluViewApp;
 use crate::sculpt_kernel::BrushSession;
 use crate::sculpt_tool::{PendingSculptPress, SculptSession, SculptTip};
 use glam::{Affine3A, Vec3};
-use occluview_core::{mesh_edit_buffers_from_mesh, Mesh, Scene, SceneMesh, Vertex};
+use occluview_core::{Mesh, Scene, SceneMesh, Vertex};
+use occluview_edit::mesh_edit_buffers_from_mesh;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 

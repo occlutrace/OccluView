@@ -16,7 +16,8 @@ use super::structural::{apply_separate_selected_components, MAX_SEPARATE_COMPONE
 use super::SelectedFaceEditContext;
 use crate::edit_mode::EditModeCommand;
 use glam::Vec3;
-use occluview_core::{FaceSelection, Mesh, SceneMesh, ScenePickHit, Vertex};
+use occluview_core::{Mesh, SceneMesh, ScenePickHit, Vertex};
+use occluview_edit::FaceSelection;
 
 /// Build a triangulated grid of `cols`x`rows` quads on a gentle paraboloid so
 /// vertex positions and normals carry real, distinct geometry.
@@ -128,7 +129,7 @@ fn perf_label_1m() {
     let (selection, components) = even_row_strip_selection(cols, rows);
     let start = std::time::Instant::now();
     let labelled =
-        occluview_core::selected_connected_components_in_mesh(&mesh, &selection).expect("label");
+        occluview_edit::selected_connected_components_in_mesh(&mesh, &selection).expect("label");
     let elapsed = start.elapsed();
     let tris = mesh.triangle_count();
     let found = labelled.len();

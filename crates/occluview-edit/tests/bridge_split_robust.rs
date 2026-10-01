@@ -1,10 +1,29 @@
-use super::{
-    bridge_split_mesh_in_world, bridge_split_prepared_mesh_in_world, mesh_edit_buffers_from_mesh,
-    normalize_bridge_split_input, prepare_bridge_split_source, CoreBridgeSplitError,
-    CoreBridgeSplitResult, Mesh, PreparedBridgeSplitSource, Vertex,
-};
+//! Robust-CSG bridge-split tests (feature `robust-csg`).
+//!
+//! The fallback runs when the direct clipper cannot represent the placement;
+//! these cover overlap unioning, thread-safe reuse of the prepared source, and
+//! the disc safety ceiling.
+
+#![cfg(feature = "robust-csg")]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::float_cmp,
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_lossless,
+    clippy::cast_possible_wrap
+)]
+
 use glam::{Affine3A, Vec3};
 use occlu_mesh_edit::{BridgeSplitError, BridgeSplitRequest};
+use occluview_core::{Mesh, Vertex};
+use occluview_edit::{
+    bridge_split_mesh_in_world, bridge_split_prepared_mesh_in_world, mesh_edit_buffers_from_mesh,
+    normalize_bridge_split_input, prepare_bridge_split_source, CoreBridgeSplitError,
+    CoreBridgeSplitResult, PreparedBridgeSplitSource,
+};
 use std::sync::Arc;
 
 fn cube_with_precision_sliver() -> Mesh {

@@ -60,7 +60,7 @@ impl EditModeController {
     pub(crate) fn selected_faces_for_layer(
         &self,
         layer_id: SceneMeshId,
-    ) -> Option<occluview_core::FaceSelection> {
+    ) -> Option<occluview_edit::FaceSelection> {
         self.selections.selection_for_layer(layer_id)
     }
 

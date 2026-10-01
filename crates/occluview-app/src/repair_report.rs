@@ -11,7 +11,7 @@
 //! is one of its existing fields. Presentation only — no mesh logic lives here.
 
 use eframe::egui;
-use occluview_core::RepairReport;
+use occluview_edit::RepairReport;
 
 use crate::i18n::LocaleManager;
 use crate::icons::AppIcon;
@@ -527,7 +527,7 @@ fn gutter_icon(ui: &mut egui::Ui, icon: LineIcon) {
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
-    use occluview_core::MeshEditWarning;
+    use occluview_edit::MeshEditWarning;
 
     fn english() -> LocaleManager {
         LocaleManager::for_tests()
