@@ -2,6 +2,7 @@
 //!
 //! The crate owns the borrowed mesh view, deterministic nearest-surface index,
 //! and cooperative cancellation flag used by alignment and contact measurement.
+#![forbid(unsafe_code)]
 #![cfg_attr(test, allow(clippy::expect_used, clippy::panic, clippy::unwrap_used))]
 
 mod cancel;

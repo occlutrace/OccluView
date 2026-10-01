@@ -1,5 +1,7 @@
 //! Windows Jump List publisher.
 
+// Shell COM and PROPVARIANT cleanup are `unsafe` by definition; this
+// module-level allow is the crate gate's only relaxation here.
 #![allow(unsafe_code)]
 
 use super::APP_USER_MODEL_ID;

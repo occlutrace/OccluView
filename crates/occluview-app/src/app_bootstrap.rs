@@ -1,3 +1,7 @@
+// Windows startup FFI (modal message boxes and the process AppUserModelID):
+// this module-level allow is the crate gate's only relaxation here.
+#![allow(unsafe_code)]
+
 use crate::{app, app_paths, live_viewport, single_instance};
 use anyhow::Result;
 use eframe::egui;
@@ -641,6 +645,8 @@ fn show_diagnostics_message(report_path: Option<&Path>) {
         };
         let title = HSTRING::from("OccluView graphics diagnostics");
         let message = HSTRING::from(message);
+        // SAFETY: both HSTRINGs are live NUL-terminated wide strings for the
+        // duration of the call, and a null owner handle means no parent window.
         unsafe {
             MessageBoxW(None, &message, &title, MB_OK | MB_ICONINFORMATION);
         }
@@ -848,6 +854,8 @@ fn show_startup_fatal_message_box(report_path: Option<&Path>, details: &str) {
     };
     let title = HSTRING::from("OccluView 3D Viewer");
     let message = HSTRING::from(message);
+    // SAFETY: both HSTRINGs are live NUL-terminated wide strings for the
+    // duration of the call, and a null owner handle means no parent window.
     unsafe {
         MessageBoxW(None, &message, &title, MB_OK | MB_ICONERROR);
     }
@@ -880,6 +888,8 @@ fn set_process_app_user_model_id() {
     use windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
 
     let app_id = HSTRING::from(crate::APP_USER_MODEL_ID);
+    // SAFETY: `app_id` is a live NUL-terminated wide string and the call only
+    // reads it.
     if let Err(error) = unsafe { SetCurrentProcessExplicitAppUserModelID(&app_id) } {
         tracing::warn!(?error, "failed to set process AppUserModelID");
     }

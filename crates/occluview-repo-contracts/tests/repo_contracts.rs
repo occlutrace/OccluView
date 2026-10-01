@@ -728,3 +728,117 @@ fn release_version_is_kept_in_sync_across_workspace_lockfile_and_installer() {
         );
     }
 }
+
+fn workspace_crates_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("crates")
+}
+
+fn collect_rust_sources(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_rust_sources(&path, out);
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
+            out.push(path);
+        }
+    }
+}
+
+fn workspace_crate_sources() -> Vec<PathBuf> {
+    let mut sources = Vec::new();
+    for entry in std::fs::read_dir(workspace_crates_dir())
+        .expect("the workspace has a crates directory")
+        .flatten()
+    {
+        let src = entry.path().join("src");
+        if src.is_dir() {
+            collect_rust_sources(&src, &mut sources);
+        }
+    }
+    sources.sort();
+    sources
+}
+
+fn opens_unsafe_block(code: &str) -> bool {
+    let mut rest = code;
+    while let Some(position) = rest.find("unsafe") {
+        let after = &rest[position + "unsafe".len()..];
+        if after.trim_start().starts_with('{') {
+            return true;
+        }
+        rest = after;
+    }
+    false
+}
+
+fn has_safety_comment(lines: &[&str], index: usize) -> bool {
+    if lines[index].contains("SAFETY") {
+        return true;
+    }
+    let mut cursor = index;
+    while cursor > 0 {
+        cursor -= 1;
+        let trimmed = lines[cursor].trim();
+        if !trimmed.starts_with("//") {
+            return false;
+        }
+        if trimmed.contains("SAFETY") {
+            return true;
+        }
+    }
+    false
+}
+
+fn unsafe_blocks_without_a_safety_comment(source: &std::path::Path) -> Vec<usize> {
+    let text = std::fs::read_to_string(source).expect("a workspace source file is readable");
+    let lines: Vec<&str> = text.lines().collect();
+    let mut missing = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        let code = line.split("//").next().unwrap_or("");
+        if opens_unsafe_block(code) && !has_safety_comment(&lines, index) {
+            missing.push(index + 1);
+        }
+    }
+    missing
+}
+
+#[test]
+fn unsafe_code_is_gated_and_every_unsafe_block_is_justified() {
+    let mut unexplained = Vec::new();
+    for source in workspace_crate_sources() {
+        for line in unsafe_blocks_without_a_safety_comment(&source) {
+            unexplained.push(format!("{}:{line}", source.display()));
+        }
+    }
+    assert!(
+        unexplained.is_empty(),
+        "unsafe blocks without a SAFETY: comment:\n{}",
+        unexplained.join("\n")
+    );
+
+    for entry in std::fs::read_dir(workspace_crates_dir())
+        .expect("the workspace has a crates directory")
+        .flatten()
+    {
+        let library = entry.path().join("src/lib.rs");
+        let binary = entry.path().join("src/main.rs");
+        let root = if library.is_file() {
+            library
+        } else if binary.is_file() {
+            binary
+        } else {
+            continue;
+        };
+        let text = std::fs::read_to_string(&root).expect("a crate root is readable");
+        assert!(
+            text.contains("unsafe_code"),
+            "{} must carry an unsafe_code gate",
+            root.display()
+        );
+    }
+}

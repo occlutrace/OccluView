@@ -40,6 +40,7 @@
 //!
 //! Units are millimetres. Every transform is rigid: dental scans are metric,
 //! so a scale difference is *detected and reported*, never fitted away.
+#![forbid(unsafe_code)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::float_cmp))]
 
 mod deviation;

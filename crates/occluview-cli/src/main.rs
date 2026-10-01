@@ -12,6 +12,9 @@
 
 // CLI tool: stdout and stderr are its output.
 #![allow(clippy::print_stdout, clippy::print_stderr)]
+// The Windows thumbnail replacement is the crate's only FFI; it lives in a
+// submodule that opts back in with a module-level allow.
+#![deny(unsafe_code)]
 
 mod export;
 
@@ -279,7 +282,7 @@ fn write_thumbnail_atomically(path: &Path, image: &image::RgbaImage) -> Result<(
         let _ = std::fs::remove_file(&temporary);
         return Err(error);
     }
-    if let Err(error) = replace_thumbnail_file(&temporary, path) {
+    if let Err(error) = replace_thumbnail_file::replace(&temporary, path) {
         let _ = std::fs::remove_file(&temporary);
         return Err(error.into());
     }
@@ -307,37 +310,50 @@ fn reserve_thumbnail_temp(parent: &Path, file_name: &OsStr) -> Result<(PathBuf, 
 }
 
 #[cfg(not(windows))]
-fn replace_thumbnail_file(temporary: &Path, destination: &Path) -> std::io::Result<()> {
-    std::fs::rename(temporary, destination)
+mod replace_thumbnail_file {
+    use std::path::Path;
+
+    pub(super) fn replace(temporary: &Path, destination: &Path) -> std::io::Result<()> {
+        std::fs::rename(temporary, destination)
+    }
 }
 
+// Windows `rename` fails when the destination exists, so replacement goes
+// through `MoveFileExW`. This module is the crate's FFI boundary and the only
+// place the crate's `unsafe_code` gate is relaxed.
 #[cfg(windows)]
-#[allow(unsafe_code)]
-fn replace_thumbnail_file(temporary: &Path, destination: &Path) -> std::io::Result<()> {
+mod replace_thumbnail_file {
+    #![allow(unsafe_code)]
+
     use std::os::windows::ffi::OsStrExt;
+    use std::path::Path;
     use windows::core::PCWSTR;
     use windows::Win32::Storage::FileSystem::{
         MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
     };
 
-    let temporary: Vec<u16> = temporary
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect();
-    let destination: Vec<u16> = destination
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect();
-    unsafe {
-        MoveFileExW(
-            PCWSTR(temporary.as_ptr()),
-            PCWSTR(destination.as_ptr()),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
+    pub(super) fn replace(temporary: &Path, destination: &Path) -> std::io::Result<()> {
+        let temporary: Vec<u16> = temporary
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let destination: Vec<u16> = destination
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        // SAFETY: both paths are NUL-terminated wide strings that outlive the
+        // call, and `MoveFileExW` only reads them.
+        unsafe {
+            MoveFileExW(
+                PCWSTR(temporary.as_ptr()),
+                PCWSTR(destination.as_ptr()),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+        }
+        .map_err(|error| std::io::Error::other(error.to_string()))
     }
-    .map_err(|error| std::io::Error::other(error.to_string()))
 }
 
 /// Where a thumbnail goes when the operator named no output.
