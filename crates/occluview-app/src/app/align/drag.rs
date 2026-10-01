@@ -436,3 +436,30 @@ impl SceneContext<'_> {
         true
     }
 }
+
+/// Roll back just the in-progress manual pose drag after focus leaves the
+/// window. The Align session remains armed; unlike Escape this does not restore
+/// earlier, already completed moves from the session.
+pub(in crate::app) fn rollback_align_drag(scene: &mut SceneContext<'_>) {
+    let drag = scene.tools.align.drag.take();
+    scene.discard_align_drag();
+    let Some(drag) = drag else {
+        return;
+    };
+    let changed = scene.document.live_scene_mut().is_some_and(|live| {
+        let Some(entry) = live
+            .meshes_mut()
+            .iter_mut()
+            .find(|entry| entry.id() == drag.layer)
+        else {
+            return false;
+        };
+        let changed = entry.transform != drag.start;
+        entry.transform = drag.start;
+        changed
+    });
+    scene.document.unsaved_drag_pose = false;
+    if changed {
+        scene.mark_scene_materials_changed();
+    }
+}
