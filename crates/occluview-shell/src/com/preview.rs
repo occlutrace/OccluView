@@ -1,17 +1,17 @@
 use super::{
     center_square_on_canvas, com_entry, e_fail, e_notimpl, e_pointer, implement,
     own_pinned_dll_module, path_extension, pixels_to_hbitmap, placeholder_for_oversize_input,
-    s_false, w, win32_preview_orbit_delta, BeginPaint, BitBlt, CoTaskMemFree, CreateCompatibleDC,
-    CreateWindowExW, DeferredSource, DeleteDC, DeleteObject, DestroyWindow, EndPaint,
-    GetKeyboardFocus, IClassFactory, IInitializeWithFile, IInitializeWithFile_Impl,
-    IInitializeWithItem, IInitializeWithItem_Impl, IInitializeWithStream,
-    IInitializeWithStream_Impl, IObjectWithSite, IObjectWithSite_Impl, IOleWindow, IOleWindow_Impl,
-    IPreviewHandler, IPreviewHandler_Impl, IShellItem, IStream, IUnknown, Interface, MoveWindow,
-    Ordering, PathBuf, PreviewSceneState, RedrawWindow, Ref, SelectObject, SetKeyboardFocus,
-    SetParent, ShellError, StreamRead, ThumbnailProvider, ThumbnailSpec, Vec2, ACTIVE_COM_OBJECTS,
-    BOOL, GUID, GWLP_USERDATA, HBITMAP, HGDIOBJ, HINSTANCE, HRESULT, HWND, MAX_OFFSCREEN_EDGE, MSG,
-    PAINTSTRUCT, PCWSTR, POINT, PREVIEW_WINDOW_CLASS_NAME, RDW_INVALIDATE, RDW_UPDATENOW, RECT,
-    SIGDN_FILESYSPATH, SRCCOPY, WINDOW_EX_STYLE, WS_CHILD, WS_CLIPSIBLINGS, WS_VISIBLE,
+    s_false, w, BeginPaint, BitBlt, CoTaskMemFree, CreateCompatibleDC, CreateWindowExW,
+    DeferredSource, DeleteDC, DeleteObject, DestroyWindow, EndPaint, GetKeyboardFocus,
+    IClassFactory, IInitializeWithFile, IInitializeWithFile_Impl, IInitializeWithItem,
+    IInitializeWithItem_Impl, IInitializeWithStream, IInitializeWithStream_Impl, IObjectWithSite,
+    IObjectWithSite_Impl, IOleWindow, IOleWindow_Impl, IPreviewHandler, IPreviewHandler_Impl,
+    IShellItem, IStream, IUnknown, Interface, MoveWindow, Ordering, PathBuf, PreviewSceneState,
+    RedrawWindow, Ref, SelectObject, SetKeyboardFocus, SetParent, ShellError, StreamRead,
+    ThumbnailProvider, ThumbnailSpec, Vec2, ACTIVE_COM_OBJECTS, BOOL, GUID, GWLP_USERDATA, HBITMAP,
+    HGDIOBJ, HINSTANCE, HRESULT, HWND, MAX_OFFSCREEN_EDGE, MSG, PAINTSTRUCT, PCWSTR, POINT,
+    PREVIEW_WINDOW_CLASS_NAME, RDW_INVALIDATE, RDW_UPDATENOW, RECT, SIGDN_FILESYSPATH, SRCCOPY,
+    WINDOW_EX_STYLE, WS_CHILD, WS_CLIPSIBLINGS, WS_VISIBLE,
 };
 
 mod context_menu;
@@ -418,7 +418,11 @@ impl PreviewHandler {
             };
             match self.drag_mode.get() {
                 PreviewDragMode::Orbit => {
-                    state.orbit_drag_delta(win32_preview_orbit_delta(delta), size_px)
+                    // Raw pointer motion goes into the shared camera mapping
+                    // unchanged; the vertical orientation is corrected when the
+                    // rendered buffer is presented. Reversing it here makes the
+                    // preview pane orbit opposite to the app viewport.
+                    state.orbit_drag_delta(delta, size_px)
                 }
                 PreviewDragMode::Pan => state.pan_drag(delta, size_px),
                 PreviewDragMode::None => false,

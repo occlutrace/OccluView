@@ -135,10 +135,6 @@ impl PreviewSceneState {
     }
 }
 
-pub(crate) fn win32_preview_orbit_delta(pointer_delta_px: Vec2) -> Vec2 {
-    pointer_delta_px
-}
-
 fn viewport_ray(camera: &Camera, viewport_px: Vec2, pointer_px: Vec2) -> Option<(Vec3, Vec3)> {
     let width = viewport_px.x;
     let height = viewport_px.y;
@@ -256,14 +252,14 @@ mod tests {
         assert_matches_main_viewer(Vec2::new(0.0, 64.0));
     }
 
-    /// Delta-level check. A downward Win32 drag driven through the full preview
-    /// input adapter (`win32_preview_orbit_delta` -> `orbit_drag_delta`) must
-    /// move the camera in the same direction as the known-good app viewport
-    /// handler for the same logical gesture, and horizontal drags must stay
-    /// mirror-symmetric and pitch-free. The app math is inlined here so this test
-    /// stands on its own if the app changes: the app feeds the raw egui delta
-    /// (Y-down, same as Win32 client space) into `orbit_delta_from_pointer_motion`
-    /// then `Camera::orbit_view_by` — see `occluview-app` viewer/interaction.rs.
+    /// Delta-level check. A downward Win32 drag driven through the preview input
+    /// adapter (`orbit_drag_delta`) must move the camera in the same direction as
+    /// the known-good app viewport handler for the same logical gesture, and
+    /// horizontal drags must stay mirror-symmetric and pitch-free. The app math is
+    /// inlined here so this test stands on its own if the app changes: the app feeds
+    /// the raw egui delta (Y-down, same as Win32 client space) into
+    /// `orbit_delta_from_pointer_motion` then `Camera::orbit_view_by` — see
+    /// `occluview-app` viewer/interaction.rs.
     #[test]
     fn preview_input_adapter_matches_app_for_down_and_is_symmetric_left_right() {
         // Inline app-equivalent expectation for the same gesture (declared first
@@ -294,7 +290,7 @@ mod tests {
         let base = state.camera;
         let down = Vec2::new(0.0, 64.0);
         assert!(
-            state.orbit_drag_delta(win32_preview_orbit_delta(down), viewport),
+            state.orbit_drag_delta(down, viewport),
             "preview should accept the downward drag"
         );
         let app_down = app_camera_after(down, viewport_vec, base);
@@ -316,12 +312,8 @@ mod tests {
         // ---- left/right symmetry: +dx and -dx are mirror yaws with no vertical leak ----
         let mut right_state = fresh_front();
         let mut left_state = fresh_front();
-        assert!(
-            right_state.orbit_drag_delta(win32_preview_orbit_delta(Vec2::new(64.0, 0.0)), viewport)
-        );
-        assert!(
-            left_state.orbit_drag_delta(win32_preview_orbit_delta(Vec2::new(-64.0, 0.0)), viewport)
-        );
+        assert!(right_state.orbit_drag_delta(Vec2::new(64.0, 0.0), viewport));
+        assert!(left_state.orbit_drag_delta(Vec2::new(-64.0, 0.0), viewport));
         // Horizontal drags must not move the eye vertically (the pitch mapping
         // must not leak into yaw)...
         assert!(
@@ -335,19 +327,6 @@ mod tests {
         assert!(
             right_dx.abs() > 1e-3 && (right_dx + left_dx).abs() < 1e-3,
             "left/right drags must be mirror-symmetric in yaw: right_dx={right_dx} left_dx={left_dx}"
-        );
-    }
-
-    /// Pointer motion is passed unchanged to the shared camera mapping. Vertical
-    /// orientation is corrected when the rendered buffer is presented.
-    #[test]
-    fn win32_preview_orbit_delta_is_not_reversed_before_shared_camera_mapping() {
-        let pointer_delta = Vec2::new(48.0, 30.0);
-
-        assert_eq!(
-            win32_preview_orbit_delta(pointer_delta),
-            pointer_delta,
-            "the COM preview handler must pass raw pointer motion into the shared camera mapping; reversing it here makes Explorer Preview Pane orbit opposite to the app viewport"
         );
     }
 
