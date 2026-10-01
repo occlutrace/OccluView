@@ -42,21 +42,6 @@ pub(super) fn load_error_dialog(
         locale.text(crate::i18n::message_id!("error-open-title"))
     };
     let summary = load_failure_summary(locale, action, error);
-    if is_special_load_error(error) {
-        return AppErrorDialog {
-            title,
-            summary,
-            details: format!(
-                "{action} failed\n\nFiles:\n{}\n\nError:\n{error:#}",
-                paths
-                    .iter()
-                    .map(|path| path.display().to_string())
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            ),
-            action: AppErrorAction::None,
-        };
-    }
     let files = paths
         .iter()
         .map(|path| path.display().to_string())
@@ -93,18 +78,6 @@ pub(super) fn load_failure_summary(
             &[("detail", &format!("{error:#}"))],
         )
     }
-}
-
-fn is_special_load_error(error: &Error) -> bool {
-    error
-        .downcast_ref::<occluview_formats::FormatError>()
-        .is_some_and(|format_error| {
-            matches!(
-                format_error,
-                occluview_formats::FormatError::TooLarge { .. }
-                    | occluview_formats::FormatError::MemoryBudgetExceeded { .. }
-            )
-        })
 }
 
 #[allow(clippy::cast_precision_loss)]
