@@ -1,4 +1,4 @@
-use crate::recent_files::{RecentEntry, RecentFiles};
+use crate::desktop::recent_files::{RecentEntry, RecentFiles};
 use std::path::{Path, PathBuf};
 
 const RECENT_FILES_FILE: &str = "recent-files.txt";
@@ -26,7 +26,7 @@ pub(crate) fn load_recent_files(limit: usize) -> RecentFiles {
 }
 
 pub(crate) fn recent_files_path() -> Option<PathBuf> {
-    crate::app_paths::app_state_dir().map(|base| base.join(RECENT_FILES_FILE))
+    crate::desktop::app_paths::app_state_dir().map(|base| base.join(RECENT_FILES_FILE))
 }
 
 pub(crate) fn save_recent_files(recent_files: &RecentFiles) {
@@ -43,7 +43,7 @@ pub(crate) fn save_recent_files(recent_files: &RecentFiles) {
         tracing::warn!(error = ?e, "recent files save failed");
     }
     #[cfg(windows)]
-    if let Err(e) = crate::jump_list::publish_recent_files(recent_files) {
+    if let Err(e) = crate::desktop::jump_list::publish_recent_files(recent_files) {
         tracing::warn!(error = ?e, "jump list update failed");
     }
 }

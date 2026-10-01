@@ -2,7 +2,9 @@
 // this module-level allow is the crate gate's only relaxation here.
 #![allow(unsafe_code)]
 
-use crate::{app, app_paths, live_viewport, single_instance};
+use crate::app;
+use crate::desktop::{app_paths, single_instance};
+use crate::live_viewport;
 use anyhow::Result;
 use eframe::egui;
 use std::collections::VecDeque;
@@ -97,7 +99,7 @@ fn real_main() -> Result<()> {
     if args.shell_refresh {
         #[cfg(windows)]
         {
-            crate::shell_refresh::notify_shell_associations_changed();
+            crate::desktop::shell_refresh::notify_shell_associations_changed();
             return Ok(());
         }
         #[cfg(not(windows))]
@@ -135,7 +137,8 @@ fn real_main() -> Result<()> {
             // As the short-lived second instance we inherit the launcher's
             // window-activation token (user-interaction provenance). Forward it
             // with the paths so the running instance can raise itself past the
-            // desktop's focus-stealing prevention. See single_instance/activation.rs.
+            // desktop's focus-stealing prevention. See
+            // desktop/single_instance/activation.rs.
             let request = single_instance::OpenRequest {
                 paths: args.files.clone(),
                 activation_token: single_instance::capture_activation_token(),

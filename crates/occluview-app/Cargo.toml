@@ -56,7 +56,7 @@ sys-locale        = { workspace = true }
 # Read the top-level window handle for the single-instance file handoff (used
 # to raise the running window). The X11-specific raise lives behind a Linux
 # target dep (x11rb); this crate only provides the handle type, so it stays
-# cross-platform. See `src/single_instance/activation.rs`.
+# cross-platform. See `src/desktop/single_instance/activation.rs`.
 raw-window-handle = "0.6.2"
 
 # Catalog identifiers compile against the English Fluent catalog.

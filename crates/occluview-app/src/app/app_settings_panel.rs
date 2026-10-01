@@ -11,7 +11,7 @@ use crate::i18n::{endonym, LocaleManager};
 use crate::icons::AppIcon;
 use crate::measure_overlay::ruler_line_angle_key;
 use crate::ui_theme;
-use crate::update_notice::UpdateCheckStatus;
+use crate::desktop::update_notice::UpdateCheckStatus;
 use eframe::egui;
 
 pub(super) const PANEL_MARGIN: i8 = 12;

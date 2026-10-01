@@ -10,8 +10,8 @@ use crate::app_settings::ScrollBehavior;
 use crate::app_settings::Settings;
 use crate::i18n::os::OsLocaleSource;
 use crate::i18n::preference::UiLanguagePreference;
-use crate::recent_files::RecentFiles;
-use crate::update_notice::UpdateCheckStatus;
+use crate::desktop::recent_files::RecentFiles;
+use crate::desktop::update_notice::UpdateCheckStatus;
 
 struct FixedLocales(&'static [&'static str]);
 

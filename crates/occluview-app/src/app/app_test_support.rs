@@ -6,7 +6,7 @@ use occluview_core::{Mesh, SceneMesh, SceneMeshId, Vertex};
 pub(super) fn test_app(name: &str) -> OccluViewApp {
     let _ = name;
     std::env::set_var("OCCLUVIEW_NO_UPDATE_CHECK", "1");
-    std::env::set_var(crate::app_paths::TEST_STATE_DIR_ENV, test_state_dir());
+    std::env::set_var(crate::desktop::app_paths::TEST_STATE_DIR_ENV, test_state_dir());
     OccluViewApp::new_for_tests(egui::Context::default())
 }
 

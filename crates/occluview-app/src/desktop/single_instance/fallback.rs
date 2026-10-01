@@ -1,6 +1,6 @@
 use super::protocol::{parse_request, serialize_request};
 use super::{OpenRequest, FALLBACK_POLL_INTERVAL};
-use crate::app_paths::app_state_dir;
+use crate::desktop::app_paths::app_state_dir;
 use anyhow::{Context, Result};
 use eframe::egui;
 use std::path::PathBuf;
@@ -115,7 +115,7 @@ mod tests {
             std::env::temp_dir().join(format!("occluview-fallback-exit-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&state_dir);
         assert!(std::fs::create_dir_all(&state_dir).is_ok());
-        std::env::set_var(crate::app_paths::TEST_STATE_DIR_ENV, &state_dir);
+        std::env::set_var(crate::desktop::app_paths::TEST_STATE_DIR_ENV, &state_dir);
 
         let (sender, receiver) = mpsc::channel::<OpenRequest>();
         let listener_alive = std::sync::Arc::new(());

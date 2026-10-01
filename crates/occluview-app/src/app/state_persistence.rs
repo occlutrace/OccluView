@@ -17,8 +17,8 @@
 
 use crate::app_files::{load_recent_files, save_recent_files};
 use crate::app_settings::{Settings, SettingsPersistence, RECENT_FILES_LIMIT};
-use crate::recent_files::RecentFiles;
-use crate::update_notice::UpdateNotice;
+use crate::desktop::recent_files::RecentFiles;
+use crate::desktop::update_notice::UpdateNotice;
 use eframe::egui;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -112,7 +112,7 @@ impl PersistenceState {
     ) {
         let now = Instant::now();
         if self.language_persistence.should_attempt(now) {
-            match crate::app_paths::app_state_dir() {
+            match crate::desktop::app_paths::app_state_dir() {
                 Some(dir) => match crate::i18n::preference::save(&dir, preference) {
                     Ok(()) => self.language_persistence.record_success(),
                     Err(error) => {

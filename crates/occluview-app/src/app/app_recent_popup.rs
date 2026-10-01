@@ -1,7 +1,7 @@
 //! The recent-scenes dropdown that hangs off the toolbar Open button.
 
 use super::{recent_scene_hover, recent_scene_label, PathBuf};
-use crate::recent_files::RecentFiles;
+use crate::desktop::recent_files::RecentFiles;
 use eframe::egui;
 
 const RECENT_FILES_POPUP_ID: &str = "recent-files-dropdown-v1";

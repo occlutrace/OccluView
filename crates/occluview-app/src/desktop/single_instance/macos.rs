@@ -16,7 +16,7 @@ pub(super) fn acquire() -> Result<SingleInstance> {
 }
 
 fn lock_file_path() -> Option<PathBuf> {
-    crate::app_paths::app_state_dir().map(|base| base.join(LOCK_FILE_NAME))
+    crate::desktop::app_paths::app_state_dir().map(|base| base.join(LOCK_FILE_NAME))
 }
 
 fn acquire_lock_file(lock_path: PathBuf) -> Result<SingleInstance> {
