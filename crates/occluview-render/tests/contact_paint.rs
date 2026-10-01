@@ -4,10 +4,12 @@
 //! whether it can be read at all: the ramp's colour reaches the screen at the
 //! colour the law gives it, the surface outside the painted band is left
 //! exactly as it was, and the edge between the two is a fade rather than a
-//! contour line. Each is asserted against a colour written out by hand below,
-//! derived from the law's own stop values rather than from the shader's
-//! arithmetic — a test that re-derived the production formula could only ever
-//! agree with it.
+//! contour line. The first two tests assert their columns against a colour
+//! written out by hand below, derived from the law's own stop values rather than
+//! from the shader's arithmetic — a test that re-derived the production formula
+//! could only ever agree with it. The third uploads the table `occluview-contact`
+//! compiles and compares the pixels with what that crate's CPU evaluates from the
+//! same table, which is the agreement the panel and the legend depend on.
 //!
 //! The field is a signed distance per vertex, so the fixture is a quad whose
 //! four corner values put all three zones on screen at once: a fully painted
@@ -19,6 +21,7 @@
 mod common;
 
 use glam::Vec3;
+use occluview_contact::{ContactScale, CLINICAL, LOAD_MAX_MM, LOAD_MIN_MM, TIGHTNESS};
 use occluview_core::{Mesh, MeshBuilder, Vertex};
 use occluview_render::{
     ContactFieldTexels, ContactPaintSource, GpuCamera, GpuMeshUniform, Offscreen, PreparedScene,
@@ -245,18 +248,22 @@ fn assert_stop_colour(actual: [u8; 3], expected: [u8; 3], what: &str) {
     // The hue is the contract. The highlight is dimmer than any of these stops,
     // so it may brighten a mark but it may not reorder its channels: the moment
     // the stop's channel order changes, an operator reading the legend is being
-    // told the wrong depth.
-    let order = |c: [u8; 3]| {
-        let mut ranked = [0_usize, 1, 2];
-        ranked.sort_by_key(|channel| std::cmp::Reverse(c[*channel]));
-        ranked
-    };
-    assert_eq!(
-        order(actual),
-        order(expected),
-        "{what}: {actual:?} has a different channel order than {expected:?}; the \
-         highlight moved the hue and the legend does not describe this pixel"
-    );
+    // told the wrong depth. Only channels the stop itself separates are ordered:
+    // a stop whose green and blue are both 20 has no order to keep there, and
+    // the one-unit specular lift on one of the pair is not a hue.
+    for outer in 0..3 {
+        for inner in 0..3 {
+            if expected[outer] <= expected[inner].saturating_add(9) {
+                continue;
+            }
+            assert!(
+                actual[outer] > actual[inner],
+                "{what}: {actual:?} reorders channels {outer} and {inner} against \
+                 {expected:?}; the highlight moved the hue and the legend does not \
+                 describe this pixel"
+            );
+        }
+    }
 }
 
 /// The painted band takes the ramp's stop colour, the bare surface is untouched,
@@ -450,5 +457,76 @@ fn moving_the_load_stop_repaints_without_re_uploading_the_field() {
         pixel(&cleared_pixels, MID_RAMP_PX, SAMPLE_ROW),
         pixel(&bare, MID_RAMP_PX, SAMPLE_ROW),
         "a field of sentinels must paint nothing, exactly like no field at all"
+    );
+}
+
+/// The compiled stop table paints the colour the CPU reads.
+///
+/// `occluview-contact` compiles a law's stops into the fixed-size payload the
+/// shader reads, and evaluates the same payload on the CPU for the panel, the
+/// hover readout and the legend. Nothing in the type system connects the two
+/// evaluations, so this test uploads the compiled table the way the app does,
+/// paints it through the real shader, and compares every fully painted column
+/// against [`ContactScale::color_at`].
+///
+/// The frame below full weight is left to the test above. `color_at` returns the
+/// paint weight as its alpha, so a column is compared only where that weight is
+/// opaque: below it the shader mixes the mark with the bare surface and the CPU
+/// colour is not what the pixel should be.
+#[test]
+fn the_compiled_stop_table_paints_the_colour_the_cpu_reads() {
+    let _gpu = gpu_test_lock();
+    let offscreen = pollster::block_on(Offscreen::new()).expect("offscreen init");
+    let mesh = field_quad();
+    let field_width = u32::try_from(field_values().len()).expect("four corner values");
+
+    let mut compared = 0_usize;
+    for law in [&TIGHTNESS, &CLINICAL] {
+        for load in [LOAD_MIN_MM, law.load_mm, LOAD_MAX_MM] {
+            let scale = ContactScale::new(law, load);
+            let table = scale.stop_table();
+            let stops = &table.stops[..table.count as usize];
+            let mut uniform = GpuMeshUniform::identity();
+            let copied =
+                uniform.set_contact_paint(field_width, table.ramp[2], table.ramp[3], stops);
+            assert_eq!(
+                copied,
+                stops.len(),
+                "{} at {load} mm: the whole compiled ramp must reach the shader",
+                law.id
+            );
+            let pixels = render(
+                &offscreen,
+                &prepare(
+                    &offscreen,
+                    &mesh,
+                    &uniform,
+                    Some(ContactPaintSource::new(packed_field(&field_values()), 1)),
+                ),
+            );
+
+            for x in 0..WIDTH {
+                let value = f64::from(field_at_column(x));
+                // `field_at_column` extrapolates past the quad's own edges, and
+                // those columns are background rather than paint.
+                if !(f64::from(FIELD_LEFT_MM)..=f64::from(FIELD_RIGHT_MM)).contains(&value) {
+                    continue;
+                }
+                let cpu = scale.color_at(value);
+                if cpu[3] != u8::MAX {
+                    continue;
+                }
+                assert_stop_colour(
+                    pixel(&pixels, x, SAMPLE_ROW),
+                    [cpu[0], cpu[1], cpu[2]],
+                    &format!("{} at {load} mm, column {x} ({value:.4} mm)", law.id),
+                );
+                compared += 1;
+            }
+        }
+    }
+    assert!(
+        compared > 40,
+        "the sweep compared {compared} opaque columns; the fixture stopped covering the ramp"
     );
 }

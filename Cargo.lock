@@ -2784,6 +2784,7 @@ dependencies = [
  "image",
  "naga",
  "occlu-geometry-math",
+ "occluview-contact",
  "occluview-core",
  "pollster 1.0.1",
  "thiserror 2.0.21",
