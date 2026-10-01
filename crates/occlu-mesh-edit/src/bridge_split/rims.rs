@@ -13,10 +13,39 @@ struct CutGraph {
     edges: BTreeSet<CutEdge>,
 }
 
-pub(crate) fn build_cut_loops(
+/// Which reading of a cut rim the caller wants.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CutPolicy {
+    /// Refuse a segment that collapsed to a geometric point, an opposing
+    /// duplicate, a branch or an open rim. Used for closed-solid splitting,
+    /// where dropping a generated edge would hide a topology defect.
+    Strict,
+    /// Skip a segment that collapsed to a point. Open and branching components
+    /// are the caller's business, not a defect.
+    Lenient,
+}
+
+/// The single reading of `cut_edges` both walkers start from.
+struct CutScan {
+    /// The lowest vertex index seen at each geometric position, so a walk can
+    /// name a position by a vertex that exists in the mesh.
+    representative: BTreeMap<PositionKey, usize>,
+    /// Segments as generated, in the direction the caller listed them. The
+    /// recovery path canonicalises this set afterwards.
+    directed: BTreeSet<CutEdge>,
+}
+
+/// Read the cut edges against the mesh once.
+///
+/// Both walkers need the same three things — the vertex range check, the
+/// canonical position key and the lowest-index representative — and they were
+/// built twice. Only the treatment of a collapsed segment differs, which is what
+/// [`CutPolicy`] selects.
+fn collect_cut_scan(
     mesh: &MeshEditBuffers,
     cut_edges: &[[u32; 2]],
-) -> Result<Vec<Vec<usize>>, BridgeSplitError> {
+    policy: CutPolicy,
+) -> Result<CutScan, BridgeSplitError> {
     if cut_edges.is_empty() {
         return Err(damaged("no cut edges were generated"));
     }
@@ -39,7 +68,10 @@ pub(crate) fn build_cut_loops(
         let from_key = canonical_position_key(from_vertex.position);
         let to_key = canonical_position_key(to_vertex.position);
         if from_key == to_key {
-            return Err(damaged("cut edge collapsed to one geometric point"));
+            if policy == CutPolicy::Strict {
+                return Err(damaged("cut edge collapsed to one geometric point"));
+            }
+            continue;
         }
         representative
             .entry(from_key)
@@ -51,6 +83,21 @@ pub(crate) fn build_cut_loops(
             .or_insert(to as usize);
         directed.insert((from_key, to_key));
     }
+
+    Ok(CutScan {
+        representative,
+        directed,
+    })
+}
+
+pub(crate) fn build_cut_loops(
+    mesh: &MeshEditBuffers,
+    cut_edges: &[[u32; 2]],
+) -> Result<Vec<Vec<usize>>, BridgeSplitError> {
+    let CutScan {
+        representative,
+        directed,
+    } = collect_cut_scan(mesh, cut_edges, CutPolicy::Strict)?;
 
     for &(from, to) in &directed {
         if directed.contains(&(to, from)) {
@@ -136,10 +183,6 @@ pub(crate) fn build_closed_cut_loops(
     mesh: &MeshEditBuffers,
     cut_edges: &[[u32; 2]],
 ) -> Result<Vec<Vec<usize>>, BridgeSplitError> {
-    if cut_edges.is_empty() {
-        return Err(damaged("no cut edges were generated"));
-    }
-
     let graph = build_surface_cut_graph(mesh, cut_edges)?;
     let CutGraph {
         representative,
@@ -176,36 +219,14 @@ fn build_surface_cut_graph(
     mesh: &MeshEditBuffers,
     cut_edges: &[[u32; 2]],
 ) -> Result<CutGraph, BridgeSplitError> {
-    let mut representative: BTreeMap<PositionKey, usize> = BTreeMap::new();
-    let mut edges = BTreeSet::new();
-    for &[from, to] in cut_edges {
-        let from_vertex =
-            mesh.vertices
-                .get(from as usize)
-                .ok_or_else(|| MeshEditError::MalformedMesh {
-                    reason: "cut edge start is out of range".to_string(),
-                })?;
-        let to_vertex =
-            mesh.vertices
-                .get(to as usize)
-                .ok_or_else(|| MeshEditError::MalformedMesh {
-                    reason: "cut edge end is out of range".to_string(),
-                })?;
-        let from_key = canonical_position_key(from_vertex.position);
-        let to_key = canonical_position_key(to_vertex.position);
-        if from_key == to_key {
-            continue;
-        }
-        representative
-            .entry(from_key)
-            .and_modify(|index| *index = (*index).min(from as usize))
-            .or_insert(from as usize);
-        representative
-            .entry(to_key)
-            .and_modify(|index| *index = (*index).min(to as usize))
-            .or_insert(to as usize);
-        edges.insert(ordered_edge(from_key, to_key));
-    }
+    let CutScan {
+        representative,
+        directed,
+    } = collect_cut_scan(mesh, cut_edges, CutPolicy::Lenient)?;
+    let edges: BTreeSet<CutEdge> = directed
+        .into_iter()
+        .map(|(from, to)| ordered_edge(from, to))
+        .collect();
     if edges.is_empty() {
         return Err(damaged(
             "every cut segment collapsed to one geometric point",
