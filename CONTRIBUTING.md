@@ -43,6 +43,36 @@ boundary. Every `unsafe` block carries a `SAFETY:` comment on the line above it
 that states the invariant that makes the call sound. The repository-contract
 tests enforce the crate gate and the `SAFETY:` comment.
 
+## Logging
+
+Tracing events feed the operator's console and the in-memory ring buffer that a
+crash report writes under `crashes/`. That ring is attached to public issues and
+support bundles, so every recorded event is treated as public.
+
+Choose the lowest level that fits:
+
+- `error!` — the operation failed and someone has to act. One event per failure,
+  naming the operation that failed.
+- `warn!` — the operation continued with a degraded result, or an optional
+  channel (a dialog, a notification, an icon) was unavailable.
+- `info!` — a state transition that reconstructs a session: startup, scene load,
+  diagnostics. Not a per-frame or per-item event.
+- `debug!` — development detail behind `RUST_LOG`. It still reaches the ring, so
+  the rules below apply.
+- `trace!` — unused; prefer `debug!`.
+
+Forbidden fields. Never log a path, a file name, a patient name, or any other
+case identifier, whether as an event field or inside the message. A file path is
+never a log field: record the shape of the session instead — a file count, a
+format extension, a `path_count` — never the location. An error logged with
+`%error` must already be scrubbed of paths by its constructor. `CrashLogLayer`
+masks a field whose name is a known path field or whose rendered value contains
+a path separator, but that mask is a backstop, not permission to log the value.
+
+Subscribers live in the binaries. A library crate that does not already depend
+on `tracing` must not add it to emit a breadcrumb; return a value or an error
+and let the calling binary decide whether the outcome deserves a line.
+
 ## Tests
 
 For behaviour changes, add or update tests. Prefer behavioural assertions over
