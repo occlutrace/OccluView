@@ -1,5 +1,6 @@
 //! Live displacement and triangle safety. Clay commits its complete field in
-//! `layer`, as does each Smooth pass; Flatten retains local rollback. Cumulative
+//! `layer`, as does each Smooth and Relax pass; Flatten writes its positions
+//! directly and has no layer rollback. Cumulative
 //! shape, per-operation orientation, and the opposing-wall Remove reserve are
 //! separate constraints on the same stored f32 surface.
 
@@ -306,54 +307,6 @@ impl SculptSession {
             && now.cross.dot(pre.cross)
                 < -0.5 * pre_area_squared.sqrt() * now.cross.dot(now.cross).sqrt();
         collapsed || reversed
-    }
-
-    fn triangle_baseline_unsafe(
-        baseline: TriangleMeasure,
-        pre_dab: TriangleMeasure,
-        candidate: TriangleMeasure,
-        mode: BrushMode,
-    ) -> bool {
-        if mode == BrushMode::Deposit && baseline.area > 1e-12 {
-            if candidate.area + 1e-12 < baseline.area * MIN_SESSION_AREA_RATIO {
-                return true;
-            }
-            if candidate.cross.dot(baseline.cross) < 0.0 {
-                // Building material may bend an open transition, but it
-                // may not roll that surface through its accepted inside.
-                return true;
-            }
-        }
-        if !Self::triangle_final_is_safe_measured(baseline, candidate) {
-            return true;
-        }
-        // The same Apply floor again, against the *pre-dab* face, plus the
-        // paintable-area floor, so this dab cannot hide a triangle.
-        if !Self::triangle_editable_after_move_measured(pre_dab, candidate) {
-            return true;
-        }
-        false
-    }
-
-    fn triangle_is_unsafe(&self, triangle: u32, mode: BrushMode) -> bool {
-        let Some(corners) = self.topology.triangle(triangle) else {
-            return false;
-        };
-        let pre_dab = TriangleMeasure::new(corners.map(|group| self.pre_group(group)));
-        let candidate =
-            TriangleMeasure::new(corners.map(|group| stored_position(self.group_v(group))));
-        if (0..3).all(|corner| {
-            let a = pre_dab.points[corner];
-            let b = candidate.points[corner];
-            a.x == b.x && a.y == b.y && a.z == b.z
-        }) {
-            return false;
-        }
-        if Self::triangle_flipped(pre_dab, candidate) {
-            return true;
-        }
-        let baseline = TriangleMeasure::new(corners.map(|group| self.reference_group_v(group)));
-        Self::triangle_baseline_unsafe(baseline, pre_dab, candidate, mode)
     }
 
     /// The geometric acceptance contract: may this face be published?
