@@ -17,9 +17,15 @@ pub struct MeshTexture {
 impl MeshTexture {
     /// Construct from decoded RGBA8 pixels. Asserts the length matches
     /// `width * height * 4`.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `rgba.len()` differs from `width * height * 4`. The renderer
+    /// indexes the buffer by these dimensions, so a shorter buffer would read
+    /// past its end.
     #[must_use]
     pub fn new(width: u32, height: u32, rgba: Vec<u8>) -> Self {
-        debug_assert_eq!(rgba.len(), (width as usize) * (height as usize) * 4);
+        assert_eq!(rgba.len(), (width as usize) * (height as usize) * 4);
         Self {
             width,
             height,
