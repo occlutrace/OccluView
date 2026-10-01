@@ -84,6 +84,7 @@ jobs:
         # runner.
         run: |
           cargo clippy -p occluview-core -p occluview-formats -p occluview-render \
+            -p occluview-repo-contracts \
             --all-targets --locked --target x86_64-pc-windows-gnu -- -D warnings
 
   windows-only:
