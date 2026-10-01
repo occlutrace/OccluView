@@ -78,7 +78,7 @@ fn section_panel_never_collides_with_chrome_across_window_sizes() {
             };
             shown += 1;
             assert!(vp.contains_rect(panel), "{w}x{h}: panel leaves viewport");
-            let pill = crate::app_chrome::status_overlay_rect(vp);
+            let pill = crate::ui::app_chrome::status_overlay_rect(vp);
             assert!(
                 !panel.intersects(pill),
                 "{w}x{h}: panel covers the status pill"

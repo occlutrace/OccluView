@@ -40,11 +40,11 @@ impl SceneContext<'_> {
             ui.vertical_centered(|ui| {
                 let (icon_rect, _) =
                     ui.allocate_exact_size(egui::vec2(34.0, 34.0), egui::Sense::hover());
-                crate::icons::paint(
+                crate::ui::icons::paint(
                     ui.painter(),
                     icon_rect,
-                    crate::icons::AppIcon::Open,
-                    crate::ui_theme::text_weak(),
+                    crate::ui::icons::AppIcon::Open,
+                    crate::ui::ui_theme::text_weak(),
                 );
                 ui.add_space(4.0);
                 ui.label(
@@ -53,7 +53,7 @@ impl SceneContext<'_> {
                             .locale
                             .text(crate::i18n::message_id!("empty-open-file")),
                     )
-                    .color(crate::ui_theme::text())
+                    .color(crate::ui::ui_theme::text())
                     .size(14.0)
                     .strong(),
                 );
@@ -63,12 +63,12 @@ impl SceneContext<'_> {
                             .locale
                             .text(crate::i18n::message_id!("empty-formats-hint")),
                     )
-                    .color(crate::ui_theme::text_weak())
+                    .color(crate::ui::ui_theme::text_weak())
                     .size(11.5),
                 );
                 ui.label(
                     egui::RichText::new(crate::i18n::platform_shortcut_text("Ctrl+O"))
-                        .color(crate::ui_theme::text_muted())
+                        .color(crate::ui::ui_theme::text_muted())
                         .size(10.5),
                 );
             });

@@ -13,8 +13,8 @@ use crate::align_brush::{AlignBrush, BrushTarget};
 use crate::align_markings::{AlignSide, MaskCommand};
 use crate::align_panel::chip;
 use crate::align_panel_roles::AlignRoles;
-use crate::icons::AppIcon;
-use crate::ui_theme;
+use crate::ui::icons::AppIcon;
+use crate::ui::ui_theme;
 
 /// Fixed window width. Narrower than the main window: it holds one slider's
 /// worth of content and floats over the mesh being painted.
@@ -160,7 +160,7 @@ fn header(ui: &mut egui::Ui, locale: &crate::i18n::LocaleManager) -> Option<Brus
         let glyph = ui
             .allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover())
             .0;
-        crate::icons::paint(ui.painter(), glyph, AppIcon::MaskBrush, ui_theme::accent());
+        crate::ui::icons::paint(ui.painter(), glyph, AppIcon::MaskBrush, ui_theme::accent());
         ui.label(
             egui::RichText::new(locale.tr(crate::i18n::message_id!("align-brush-title")))
                 .size(13.0)
@@ -169,7 +169,7 @@ fn header(ui: &mut egui::Ui, locale: &crate::i18n::LocaleManager) -> Option<Brus
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let (close_rect, close_response) =
                 ui.allocate_exact_size(egui::vec2(22.0, 20.0), egui::Sense::click());
-            crate::icons::paint(
+            crate::ui::icons::paint(
                 ui.painter(),
                 close_rect,
                 AppIcon::Close,
@@ -187,7 +187,7 @@ fn header(ui: &mut egui::Ui, locale: &crate::i18n::LocaleManager) -> Option<Brus
                     egui::StrokeKind::Inside,
                 );
             }
-            crate::accessibility::button(
+            crate::ui::accessibility::button(
                 &close_response,
                 &locale.tr(crate::i18n::message_id!("align-brush-close-hint")),
                 true,

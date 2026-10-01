@@ -14,9 +14,9 @@ use eframe::egui;
 use occluview_edit::RepairReport;
 
 use crate::i18n::LocaleManager;
-use crate::icons::AppIcon;
-use crate::modal_surface::show_information_modal;
-use crate::ui_theme;
+use crate::ui::icons::AppIcon;
+use crate::ui::modal_surface::show_information_modal;
+use crate::ui::ui_theme;
 
 /// The small glyph painted in a report line's gutter. Removals borrow the
 /// editor's trash glyph, closed pinholes borrow the close-holes glyph, and
@@ -499,12 +499,12 @@ fn gutter_icon(ui: &mut egui::Ui, icon: LineIcon) {
     let painter = ui.painter();
     match icon {
         LineIcon::Removed => {
-            crate::icons::paint(painter, rect, AppIcon::Delete, ui_theme::text_weak());
+            crate::ui::icons::paint(painter, rect, AppIcon::Delete, ui_theme::text_weak());
         }
         LineIcon::Closed => {
-            crate::icons::paint(painter, rect, AppIcon::CloseHoles, ui_theme::text_weak());
+            crate::ui::icons::paint(painter, rect, AppIcon::CloseHoles, ui_theme::text_weak());
         }
-        LineIcon::Fixed => crate::icons::paint(painter, rect, AppIcon::Check, ui_theme::accent()),
+        LineIcon::Fixed => crate::ui::icons::paint(painter, rect, AppIcon::Check, ui_theme::accent()),
     }
 }
 

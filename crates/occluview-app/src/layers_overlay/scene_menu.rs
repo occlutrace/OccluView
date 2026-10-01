@@ -5,8 +5,8 @@
 //! saving it, which is the only way an alignment survives the session. The
 //! viewer has no project file.
 
-use crate::icons::AppIcon;
-use crate::ui_theme;
+use crate::ui::icons::AppIcon;
+use crate::ui::ui_theme;
 use eframe::egui;
 
 use super::menu::menu_item;

@@ -373,11 +373,11 @@ fn draw_available(
 ) {
     use crate::i18n::catalog::args;
     let (icon_rect, _) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::hover());
-    crate::icons::paint(
+    crate::ui::icons::paint(
         ui.painter(),
         icon_rect,
-        crate::icons::AppIcon::InstallUpdate,
-        crate::ui_theme::text(),
+        crate::ui::icons::AppIcon::InstallUpdate,
+        crate::ui::ui_theme::text(),
     );
     ui.label(
         egui::RichText::new(locale.text_with(

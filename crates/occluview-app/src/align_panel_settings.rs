@@ -7,7 +7,7 @@ use eframe::egui;
 use occluview_align::Orientation;
 
 use crate::align_worker::AlignSettings;
-use crate::ui_theme;
+use crate::ui::ui_theme;
 
 /// The two sliders and the orientation rule that steer best-fit matching.
 pub(crate) fn matching(
@@ -31,7 +31,7 @@ pub(crate) fn matching(
                 enabled,
                 egui::Slider::new(&mut settings.matching_ratio, range.clone()).show_value(false),
             );
-            crate::accessibility::slider(
+            crate::ui::accessibility::slider(
                 &slider,
                 &locale.tr(crate::i18n::message_id!("align-matching-parts")),
                 enabled,
@@ -48,7 +48,7 @@ pub(crate) fn matching(
                         format!("{}%", number_format.decimal(value * 100.0, 0))
                     }),
             );
-            crate::accessibility::spin_button(
+            crate::ui::accessibility::spin_button(
                 &value,
                 &locale.tr(crate::i18n::message_id!("align-matching-parts")),
                 enabled,
@@ -71,7 +71,7 @@ pub(crate) fn matching(
                 egui::Slider::new(&mut settings.influence_radius_mm, range.clone())
                     .show_value(false),
             );
-            crate::accessibility::slider(
+            crate::ui::accessibility::slider(
                 &slider,
                 &locale.tr(crate::i18n::message_id!("align-max-influence")),
                 enabled,
@@ -85,7 +85,7 @@ pub(crate) fn matching(
                     .speed(0.1)
                     .suffix(" mm"),
             );
-            crate::accessibility::spin_button(
+            crate::ui::accessibility::spin_button(
                 &value,
                 &locale.tr(crate::i18n::message_id!("align-max-influence")),
                 enabled,

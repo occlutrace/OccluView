@@ -7,7 +7,7 @@
 //! visibly resize forever. This module keeps the backdrop and card separate
 //! while preserving `ModalResponse` close and Escape semantics.
 
-use crate::ui_theme;
+use crate::ui::ui_theme;
 use eframe::egui;
 
 const BACKDROP_ALPHA: u8 = 48;
@@ -53,7 +53,7 @@ pub(crate) fn show_information_modal<T>(
             backdrop.response()
         })
         .inner;
-    crate::accessibility::button(&backdrop_response, close_label, true, None);
+    crate::ui::accessibility::button(&backdrop_response, close_label, true, None);
 
     // Only force a sizing pass when the available content rectangle changed
     // and the remembered card does not fit it. Repeating this every frame

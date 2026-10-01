@@ -1,4 +1,3 @@
-use super::app_chrome::{load_app_logo_color_image, status_overlay_rect, viewer_visuals};
 use super::app_files::{recent_scene_hover, recent_scene_label};
 use super::cut_tool::CutTool;
 use super::edit_mode::{EditModeCommand, EditModeController, ScreenPolygonSelectionRequest};
@@ -16,9 +15,10 @@ use super::viewer::{
     viewport_pan_drag_active, zoom_factor_from_scroll, AxisGizmoInput,
 };
 use super::{Context, PathBuf, Result};
-use crate::scale_bar::ScaleBar;
 #[cfg(test)]
 use crate::scene_loading::{PendingSceneLoad, SceneLoadRequest};
+use crate::ui::app_chrome::{load_app_logo_color_image, status_overlay_rect, viewer_visuals};
+use crate::ui::scale_bar::ScaleBar;
 use anyhow::Error;
 use eframe::egui;
 use glam::Mat4;

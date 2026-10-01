@@ -6,12 +6,12 @@
 
 use super::information_dialog::InformationDialog;
 use super::SceneContext;
-use crate::interaction_hints::{
+use crate::ui::interaction_hints::{
     contextual_line, contextual_line_key, ContextualHint, HintContext, ALL_SECTIONS,
 };
 
-use crate::modal_surface::show_information_modal;
-use crate::ui_theme;
+use crate::ui::modal_surface::show_information_modal;
+use crate::ui::ui_theme;
 use eframe::egui;
 
 use crate::i18n::LocaleManager;

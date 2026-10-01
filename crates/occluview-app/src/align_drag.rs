@@ -36,8 +36,8 @@ impl DragConstraint {
     }
 
     /// The glyph the panel shows.
-    pub(crate) fn icon(self) -> crate::icons::AppIcon {
-        use crate::icons::AppIcon;
+    pub(crate) fn icon(self) -> crate::ui::icons::AppIcon {
+        use crate::ui::icons::AppIcon;
         match self {
             Self::Free => AppIcon::MoveLayer,
             Self::ZOnly => AppIcon::MoveVertical,
