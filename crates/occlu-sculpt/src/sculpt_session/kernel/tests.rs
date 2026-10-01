@@ -1729,11 +1729,15 @@ fn remove_wall_guard_keeps_tangent_motion_for_a_sub_epsilon_support_gap() {
 }
 
 #[test]
-fn public_erode_prepares_and_respects_an_opposing_wall_on_its_first_dab() {
+fn public_erode_respects_an_opposing_wall_once_the_caller_prepared_the_probe() {
     let half_cells = 4;
     let mut session = closed_slab_session(half_cells, 1.0, 1.2);
     let top_raw = (2 * half_cells + 1).pow(2) as u32 + grid_vertex(half_cells, 0, 0);
     let group = session.topology.group_of(top_raw);
+    // The probe belongs to the caller's preparation step. Building it inside
+    // the first carve measured a whole-mesh distance field while the operator
+    // was already painting, so the guard only ever reads a prepared probe.
+    session.prepare_wall_probe();
     session.start_stroke();
     session.remesh_armed = false;
     let dab = centered_dab(2.0, BrushMode::Erode, 1.0);
@@ -1741,7 +1745,7 @@ fn public_erode_prepares_and_respects_an_opposing_wall_on_its_first_dab() {
     let _ = session.dab(&dab);
     assert!(
         session.wall_probe.is_some(),
-        "first Erode prepared the probe"
+        "the caller prepared the probe"
     );
     let wall = session.reference_group_wall_mm(group);
     assert!((1.1..=1.3).contains(&wall), "measured wall was {wall} mm");

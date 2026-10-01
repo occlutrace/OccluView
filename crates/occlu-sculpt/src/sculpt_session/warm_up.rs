@@ -25,6 +25,7 @@ pub fn warm_up_brush_step() {
     let mut session = SculptSession::new(verts, tris);
     let brushes = [
         (BrushMode::Smooth, TipStamp::Ball),
+        (BrushMode::Relax, TipStamp::Ball),
         (BrushMode::Deposit, TipStamp::Ball),
         (BrushMode::Erode, TipStamp::Ball),
         (BrushMode::Flatten, TipStamp::Cylinder),
