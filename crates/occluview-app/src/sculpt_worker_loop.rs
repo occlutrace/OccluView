@@ -74,32 +74,7 @@ pub(super) fn run_worker(
                     break;
                 }
                 if let Some(failure) = outcome.failure {
-                    let failure = match failure {
-                        DabFailure::ShadowPoisoned => SculptFailure::ShadowPoisoned,
-                        DabFailure::ShadowShapeMismatch {
-                            shadow_count,
-                            live_count,
-                        } => {
-                            tracing::error!(
-                                shadow_count,
-                                live_count,
-                                "sculpt display shadow shape differs from kernel mesh"
-                            );
-                            SculptFailure::ShadowShapeMismatch
-                        }
-                        DabFailure::InvalidVertexIndex {
-                            vertex_id,
-                            vertex_count,
-                        } => {
-                            tracing::error!(
-                                vertex_id,
-                                vertex_count,
-                                "sculpt kernel returned an invalid vertex id"
-                            );
-                            SculptFailure::InvalidVertexIndex
-                        }
-                    };
-                    state.set_error(failure);
+                    state.set_error(dab_failure_to_sculpt_failure(failure));
                     state.finish_geometry_update();
                     queue.mark_idle();
                     break;
@@ -188,6 +163,38 @@ pub(super) fn run_worker(
     }
 }
 
+/// Map a kernel dab failure to the worker's failure.
+///
+/// Both the test-only `Apply` arm and [`publish_apply`] reach this, so the tests
+/// cover the mapping production uses rather than a copy of it.
+fn dab_failure_to_sculpt_failure(failure: DabFailure) -> SculptFailure {
+    match failure {
+        DabFailure::ShadowPoisoned => SculptFailure::ShadowPoisoned,
+        DabFailure::ShadowShapeMismatch {
+            shadow_count,
+            live_count,
+        } => {
+            tracing::error!(
+                shadow_count,
+                live_count,
+                "sculpt display shadow shape differs from kernel mesh"
+            );
+            SculptFailure::ShadowShapeMismatch
+        }
+        DabFailure::InvalidVertexIndex {
+            vertex_id,
+            vertex_count,
+        } => {
+            tracing::error!(
+                vertex_id,
+                vertex_count,
+                "sculpt kernel returned an invalid vertex id"
+            );
+            SculptFailure::InvalidVertexIndex
+        }
+    }
+}
+
 fn publish_apply(
     outcome: Option<DabOutcome>,
     state: &WorkerState,
@@ -199,32 +206,7 @@ fn publish_apply(
         return false;
     };
     if let Some(failure) = outcome.failure {
-        let failure = match failure {
-            DabFailure::ShadowPoisoned => SculptFailure::ShadowPoisoned,
-            DabFailure::ShadowShapeMismatch {
-                shadow_count,
-                live_count,
-            } => {
-                tracing::error!(
-                    shadow_count,
-                    live_count,
-                    "sculpt display shadow shape differs from kernel mesh"
-                );
-                SculptFailure::ShadowShapeMismatch
-            }
-            DabFailure::InvalidVertexIndex {
-                vertex_id,
-                vertex_count,
-            } => {
-                tracing::error!(
-                    vertex_id,
-                    vertex_count,
-                    "sculpt kernel returned an invalid vertex id"
-                );
-                SculptFailure::InvalidVertexIndex
-            }
-        };
-        state.set_error(failure);
+        state.set_error(dab_failure_to_sculpt_failure(failure));
         state.finish_geometry_update();
         queue.mark_idle();
         return false;
