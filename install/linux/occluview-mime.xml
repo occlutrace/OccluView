@@ -36,6 +36,11 @@
        tested that is the drawing format, so every Wavefront scan carries a
        drawing icon, no thumbnail and no association with the viewer. Weight 60 settles the
        tie for a workstation that holds dental scans. -->
+  <mime-type type="application/x-off">
+    <comment>OFF mesh</comment>
+    <glob pattern="*.off" />
+    <glob pattern="*.OFF" />
+  </mime-type>
   <mime-type type="model/obj">
     <comment>Wavefront OBJ mesh</comment>
     <glob pattern="*.obj" weight="60" />

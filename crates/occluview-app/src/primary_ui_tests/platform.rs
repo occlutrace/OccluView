@@ -4,11 +4,12 @@ use super::*;
 use roxmltree::{Document, Node};
 use std::collections::BTreeSet;
 
-const MACOS_CONTENT_TYPES: [(&str, &str); 6] = [
+const MACOS_CONTENT_TYPES: [(&str, &str); 7] = [
     ("stl", "public.standard-tesselated-geometry-format"),
     ("ply", "public.polygon-file-format"),
     ("obj", "public.geometry-definition-format"),
     ("glb", "org.khronos.glb"),
+    ("off", "ai.occlutrace.occluview.off"),
     ("hps", "ai.occlutrace.occluview.hps"),
     ("dcm", "org.nema.dicom"),
 ];

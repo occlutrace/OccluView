@@ -65,7 +65,15 @@ pub const LEGACY_HPS_EXTENSION: &str = "dcm";
 /// This is narrower than every parser that may exist in the crate: v1 only
 /// promises formats that are implemented and product-approved for the native
 /// viewer and shell integration.
-pub const V1_OPEN_EXTENSIONS: &[&str] = &["stl", "ply", "obj", "glb", "hps", LEGACY_HPS_EXTENSION];
+pub const V1_OPEN_EXTENSIONS: &[&str] = &[
+    "stl",
+    "ply",
+    "obj",
+    "glb",
+    "off",
+    "hps",
+    LEGACY_HPS_EXTENSION,
+];
 
 /// The common interface every format reader implements.
 ///
@@ -138,7 +146,15 @@ mod tests {
     fn v1_open_extensions_match_public_format_promise() {
         assert_eq!(
             V1_OPEN_EXTENSIONS,
-            ["stl", "ply", "obj", "glb", "hps", LEGACY_HPS_EXTENSION]
+            [
+                "stl",
+                "ply",
+                "obj",
+                "glb",
+                "off",
+                "hps",
+                LEGACY_HPS_EXTENSION
+            ]
         );
 
         // Pin the claim, not two substrings. "`.hps` and `.dcm` appear

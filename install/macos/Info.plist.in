@@ -49,6 +49,20 @@
       </array>
     </dict>
     <dict>
+      <!-- macOS declares no system type for OFF, so the viewer declares its
+           own and claims the extension through it. -->
+      <key>CFBundleTypeName</key>
+      <string>OFF Mesh</string>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+      <key>LSHandlerRank</key>
+      <string>Default</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>ai.occlutrace.occluview.off</string>
+      </array>
+    </dict>
+    <dict>
       <key>CFBundleTypeName</key>
       <string>HPS Dental Scan</string>
       <key>CFBundleTypeRole</key>
@@ -88,6 +102,16 @@
       <string>ai.occlutrace.occluview.hps</string>
       <key>UTTypeTagSpecification</key>
       <dict><key>public.filename-extension</key><array><string>hps</string></array></dict>
+    </dict>
+    <dict>
+      <key>UTTypeConformsTo</key>
+      <array><string>public.data</string></array>
+      <key>UTTypeDescription</key>
+      <string>OFF Mesh</string>
+      <key>UTTypeIdentifier</key>
+      <string>ai.occlutrace.occluview.off</string>
+      <key>UTTypeTagSpecification</key>
+      <dict><key>public.filename-extension</key><array><string>off</string></array></dict>
     </dict>
   </array>
 </dict>
