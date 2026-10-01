@@ -403,8 +403,8 @@ fn execute(job: &ContactJob, cancel: &CancelFlag) -> ContactOutcome {
     }
 
     let field = compute_contact_field(
-        crate::contact::world_soup(&job.subject_positions, &job.subject_indices),
-        crate::contact::world_soup(&job.antagonist_positions, &job.antagonist_indices),
+        crate::contact::contact::world_soup(&job.subject_positions, &job.subject_indices),
+        crate::contact::contact::world_soup(&job.antagonist_positions, &job.antagonist_indices),
         job.settings,
         cancel,
     );
