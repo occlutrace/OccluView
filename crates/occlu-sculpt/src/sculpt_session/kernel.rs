@@ -33,8 +33,10 @@ const CLAY_AUTOSMOOTH_PASSES: usize = 2;
 /// removes grain without the volume loss of a plain Laplacian.
 const TAUBIN_LAMBDA: f64 = 0.36;
 const TAUBIN_MU: f64 = -0.38;
-/// Minimum work size for independent Rayon loops over session data.
-#[cfg_attr(not(feature = "parallel"), allow(dead_code))]
+/// Minimum work size for independent Rayon loops over session data. Only the
+/// `parallel` build performs those loops, so the constant does not exist in
+/// the single-threaded configuration.
+#[cfg(feature = "parallel")]
 pub(crate) const PAR_FLOOR: usize = 8192;
 /// Grid cells spanned by one brush radius.
 pub(super) const GRID_CELLS_ACROSS_RADIUS: f64 = 4.0;
