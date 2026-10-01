@@ -1,4 +1,4 @@
-# occluview-cli — headless CLI: convert / render-to-png / thumbnail / HPS export.
+# occluview-cli — headless CLI: convert / render-to-png / thumbnail.
 # Depends on core + render + formats + thumbnail. It has no Windows shell
 # dependency so the Linux thumbnailer stays a platform-neutral binary.
 [package]
@@ -19,10 +19,6 @@ workspace = true
 name = "occluview-cli"
 path = "src/main.rs"
 
-[[bin]]
-name = "occluview-hps-export"
-path = "src/bin/occluview-hps-export.rs"
-
 [dependencies]
 occluview-core    = { workspace = true }
 occluview-formats = { workspace = true }
@@ -31,9 +27,6 @@ occluview-thumbnail = { workspace = true }
 anyhow            = { workspace = true }
 tracing-subscriber = { workspace = true }
 image             = { workspace = true }
-serde             = { workspace = true }
-serde_json        = { workspace = true }
-sha2              = { workspace = true }
 
 [target.'cfg(windows)'.dependencies.windows]
 version = "0.62.2"
