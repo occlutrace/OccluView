@@ -4,6 +4,12 @@ use glam::Vec3;
 
 use super::{Camera, CameraProjection, BBOX_FRAME_FILL, MIN_ORTHOGRAPHIC_HEIGHT_MM};
 
+/// Camera elevation above the horizon for the occlusal default, in radians.
+///
+/// About 34°, deliberately short of the 90° that would look straight down the
+/// mesh's vertical axis.
+const OCCLUSAL_ELEVATION_RADIANS: f32 = 0.6;
+
 impl Default for Camera {
     fn default() -> Self {
         Self {
@@ -79,9 +85,11 @@ impl Camera {
 
     /// Frame a bounding box with the **occlusal default** orientation.
     ///
-    /// The occlusal view looks down the mesh's vertical (Y) axis onto the XZ
-    /// plane, which corresponds to the chewing surface for a dental arch lying
-    /// in XZ. For arbitrary meshes, this remains a conservative default.
+    /// The camera is raised `OCCLUSAL_ELEVATION_RADIANS` — about 34° — above the
+    /// horizontal, so it looks at the occlusal plane obliquely rather than
+    /// straight down the mesh's vertical (Y) axis. For a dental arch lying in XZ
+    /// that plane is the chewing surface, and the bias is deliberate; for an
+    /// arbitrary mesh it remains a conservative default.
     #[must_use]
     pub fn frame_occlusal(mut self, bbox: Aabb, fovy: f32) -> Self {
         if bbox.is_empty() {
@@ -95,9 +103,10 @@ impl Camera {
         let vertical_half = 0.5_f32 * size.y;
         let radius = planar_half.hypot(vertical_half).max(1.0);
 
-        // Place the camera above, looking down at the occlusal plane.
+        // Place the camera above, looking down at the occlusal plane at the
+        // occlusal bias rather than straight down.
         self.focus_on(center);
-        self.set_yaw_pitch(0.0, 0.6); // ~34° from horizontal: occlusal bias, not straight down
+        self.set_yaw_pitch(0.0, OCCLUSAL_ELEVATION_RADIANS);
         self.projection = CameraProjection::Orthographic;
         self.fovy = fovy;
         self.orthographic_height = (radius * 2.0 / BBOX_FRAME_FILL).max(MIN_ORTHOGRAPHIC_HEIGHT_MM);
