@@ -59,6 +59,13 @@ remain in the Git history.
   so an idle listener kept a 50 ms directory poll and its repaint bursts running
   for the life of the process on Linux and macOS.
 
+### Localisation
+
+- The Repair report's "Copy details" payload and the thickness probe's "open: no
+  opposite wall" label now follow the interface language. Both were hardcoded
+  English, so they stayed English in all seven languages.
+
+
 ## 1.2.1 - 2026-09-30
 
 ### Workspace, Sculpt and Align

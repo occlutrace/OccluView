@@ -265,6 +265,23 @@ repair-skipped-rims = { $count ->
     [one] { $grouped } rim could not be filled (non-simple)
    *[other] { $grouped } rims could not be filled (non-simple)
 }
+repair-copy-title = Repair report — { $layer }
+repair-copy-before = Before: { $vertices } vertices, { $triangles } triangles
+repair-copy-after = After:  { $vertices } vertices, { $triangles } triangles
+repair-copy-welded = Welded duplicate vertices
+repair-copy-slivers = Removed sliver faces
+repair-copy-duplicate-faces = Removed duplicate faces
+repair-copy-nonmanifold = Fixed non-manifold edges
+repair-copy-bowtie = Split bowtie vertices
+repair-copy-reoriented = Reoriented triangles
+repair-copy-flipped = Flipped inside-out parts
+repair-copy-debris = Removed debris parts
+repair-copy-debris-faces = Removed debris faces
+repair-copy-pinholes = Closed pinholes
+repair-copy-unused = Removed unused vertices
+repair-copy-open-rims = Open rims left (scan boundary)
+repair-copy-skipped-rims = Rims skipped (non-simple)
+measure-open-no-opposite-wall = open: no opposite wall
 repair-toast-welded = { $count ->
     [one] welded { $count } vertex
    *[other] welded { $count } vertices

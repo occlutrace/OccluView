@@ -338,6 +338,7 @@ impl SceneContext<'_> {
                 self.persistence.settings.unit_display,
                 None,
                 self.persistence.settings.ruler_line_angle,
+                &self.ui.locale,
             );
             if self.tools.align.tool.is_armed() {
                 if let Some(scene) = self.document.scene.as_deref() {
