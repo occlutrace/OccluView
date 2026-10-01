@@ -26,9 +26,11 @@ impl SculptSession {
         if self.stroke_epoch == 0 {
             self.stroke_mark.iter_mut().for_each(|s| *s = 0);
             self.material_mark.iter_mut().for_each(|s| *s = 0);
+            self.stroke_normal_mark.fill(u32::MAX);
             self.stroke_epoch = 1;
         }
         self.stroke_path = None;
+        self.invalidate_sheet_state(false);
     }
 
     /// Close the stroke: publish the record the pointer-up path needs.
@@ -52,6 +54,7 @@ impl SculptSession {
     fn finish_stroke_record(&mut self) -> StrokeRecord {
         self.dab_axis = None;
         self.stroke_path = None;
+        self.invalidate_sheet_state(false);
         let count = self.stroke_indices.len();
         let stroke_indices = std::mem::take(&mut self.stroke_indices);
         let stroke_positions = std::mem::take(&mut self.stroke_positions);
@@ -263,6 +266,8 @@ impl SculptSession {
             }
         }
         self.normal_scope = scope;
-        self.finish_dirty_batch()
+        let dirty = self.finish_dirty_batch();
+        self.invalidate_sheet_state(true);
+        dirty
     }
 }

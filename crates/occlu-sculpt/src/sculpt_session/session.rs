@@ -4,6 +4,11 @@
 use super::*;
 use crate::TopologyRevision;
 
+const WALL_SDF_CAP_MM: f64 = 10.0;
+const WALL_SDF_RAYS: usize = 8;
+const WALL_SDF_CONE_DEG: f64 = 30.0;
+const WALL_REPROBE_DRIFT_MM: f64 = 0.25;
+
 /// Exact kernel-owned state on both sides of a completed stroke.
 #[derive(Default)]
 pub struct StrokeRecord {
@@ -38,6 +43,8 @@ impl SculptSession {
         let topology = SurfaceTopology::new(&verts, &tris);
         let rays = TriBuckets::build(&verts, &tris, 2.0);
         let reference_verts = verts.clone();
+        let opening_verts = verts.clone();
+        let opening_tris = tris.clone();
         let group_count = topology.group_count();
         let live_tris = tris.len() as u32 / 3;
         let face_origin: Vec<u32> = (0..live_tris).collect();
@@ -74,6 +81,13 @@ impl SculptSession {
             stroke_indices: Vec::new(),
             stroke_positions: Vec::new(),
             stroke_path: None,
+            spine: Vec::new(),
+            sheet_axis: vec![[0.0; 3]; group_count],
+            sheet_axis_mark: vec![u32::MAX; group_count],
+            sheet_axis_epoch: 0,
+            stroke_normal: vec![[0.0; 3]; group_count],
+            stroke_normal_mark: vec![u32::MAX; group_count],
+            sheet_votes: Vec::new(),
             dab_path: Vec::new(),
             dab_path_spacing: 0.0,
             path_scratch: Vec::new(),
@@ -103,7 +117,7 @@ impl SculptSession {
             normal_scratch: Vec::new(),
             #[cfg(feature = "parallel")]
             budget_scratch: Vec::new(),
-            dab_exposure: 1.0,
+            dab_dose: 1.0,
             session_base_groups: group_count as u32,
             retired_groups: 0,
             stroke_retired_base: 0,
@@ -136,6 +150,12 @@ impl SculptSession {
             dab_added_parents: Vec::new(),
             verts,
             reference_verts,
+            opening_verts,
+            opening_tris,
+            wall_probe: None,
+            reference_wall_mm: vec![f32::NAN; group_count],
+            reference_wall_at: vec![[0.0; 3]; group_count],
+            wall_facing: None,
             input_spacing_mm,
 
             tris,
@@ -171,8 +191,15 @@ impl SculptSession {
         self.display_normals.reserve(3 * groups);
         self.reference_verts.reserve(3 * groups);
         self.reference_normals.reserve(3 * groups);
+        self.reference_wall_mm.reserve(groups);
+        self.reference_wall_at.reserve(groups);
         self.stroke_mark.reserve(groups);
         self.material_mark.reserve(groups);
+        self.sheet_axis.reserve(groups);
+        self.sheet_axis_mark.reserve(groups);
+        self.stroke_normal.reserve(groups);
+        self.stroke_normal_mark.reserve(groups);
+        self.sheet_votes.reserve(groups / 2);
         self.dirty_marks.reserve(groups);
         self.sheet_component.reserve(groups);
         self.group_retired.reserve(groups);
@@ -374,14 +401,15 @@ impl SculptSession {
         }
     }
 
-    /// A delayed input sample cannot accumulate a burst of material. The web
-    /// pacer defines one full stationary dose as 120 ms; travelling dabs are
-    /// already spaced in world distance and keep their ordinary full dose.
-    pub fn set_dab_elapsed_ms(&mut self, elapsed_ms: f64, hold: bool) {
-        self.dab_exposure = if hold && elapsed_ms.is_finite() {
-            (elapsed_ms / 120.0).clamp(0.0, 1.0)
+    /// Set the pointer time the next dab call stands for, in milliseconds.
+    /// All brushes use this dose for both held and traveling rays; the swept
+    /// stamp distributes it along the path. Non-finite time means no dose, and
+    /// delayed input is capped at one full interval.
+    pub fn set_dab_elapsed_ms(&mut self, elapsed_ms: f64) {
+        self.dab_dose = if elapsed_ms.is_finite() {
+            (elapsed_ms / DWELL_FULL_DOSE_MS).clamp(0.0, 1.0)
         } else {
-            1.0
+            0.0
         };
     }
 
@@ -463,9 +491,136 @@ impl SculptSession {
         )
     }
 
+    /// Prepare the immutable opposing-wall ray grid. Native callers should do
+    /// this on their session worker before enabling Remove input; `prepare_dab`
+    /// also calls it defensively so the public Erode path cannot skip the wall
+    /// reserve when an adapter forgets its preparation step.
+    pub fn prepare_wall_probe(&mut self) {
+        self.ensure_wall_probe();
+    }
+
+    /// Warm the local wall-thickness memo around the pointer. Returns the
+    /// number of fresh group readings computed, bounded by `budget`.
+    pub fn prime_wall_region(&mut self, center: DVec3, radius: f64, budget: usize) -> usize {
+        self.ensure_wall_probe();
+        if !center.is_finite() || !radius.is_finite() || radius <= 0.0 || budget == 0 {
+            return 0;
+        }
+        let mut candidates = std::mem::take(&mut self.region_candidates);
+        candidates.clear();
+        self.brush_grid
+            .query_radius(center, radius, &mut candidates);
+        candidates.sort_unstable();
+        candidates.dedup();
+        let radius_squared = radius * radius;
+        let mut computed = 0;
+        for group in candidates.iter().copied() {
+            if computed >= budget {
+                break;
+            }
+            if self.group_retired[group as usize]
+                || !self.reference_wall_mm[group as usize].is_nan()
+                || (self.group_v(group) - center).length_squared() > radius_squared
+            {
+                continue;
+            }
+            self.reference_group_wall_mm(group);
+            computed += 1;
+        }
+        self.region_candidates = candidates;
+        computed
+    }
+
+    pub(super) fn ensure_wall_probe(&mut self) {
+        if self.wall_probe.is_none() {
+            let opening_verts = std::mem::take(&mut self.opening_verts);
+            let opening_tris = std::mem::take(&mut self.opening_tris);
+            self.wall_probe = Some(SdfProbe::new(
+                opening_verts,
+                opening_tris,
+                WALL_SDF_CAP_MM,
+                WALL_SDF_RAYS,
+                WALL_SDF_CONE_DEG,
+            ));
+        }
+    }
+
+    /// Opening-surface thickness for one welded group. Probe all soup members
+    /// and use the thinnest reading, so a sharp feature inherits its safest
+    /// local limit. A memo loses at least its measured drift when the material
+    /// point has moved, making reuse conservative.
+    pub(super) fn reference_group_wall_mm(&mut self, group: u32) -> f64 {
+        self.ensure_wall_probe();
+        let index = group as usize;
+        let cached = self.reference_wall_mm[index];
+        let material = self.reference_group_v(group);
+        if !cached.is_nan() {
+            let anchor = self.reference_wall_at[index];
+            let drift = (DVec3::new(anchor[0] as f64, anchor[1] as f64, anchor[2] as f64)
+                - material)
+                .length();
+            if drift.is_nan() {
+                return cached as f64;
+            }
+            if drift <= WALL_REPROBE_DRIFT_MM {
+                return (cached as f64 - drift).max(0.0);
+            }
+        }
+        let Some(probe) = self.wall_probe.as_ref() else {
+            // Missing snapshot data must not disable Remove protection. A
+            // zero reserve stops an inward move at the reference surface.
+            self.reference_wall_mm[index] = 0.8;
+            self.reference_wall_at[index] =
+                [material.x as f32, material.y as f32, material.z as f32];
+            return 0.8;
+        };
+        let mut wall = f64::INFINITY;
+        for &vertex in self.topology.members(group) {
+            let offset = vertex as usize * 3;
+            let Some(position) = self.reference_verts.get(offset..offset + 3) else {
+                continue;
+            };
+            let Some(normal) = self.reference_normals.get(offset..offset + 3) else {
+                continue;
+            };
+            let origin = DVec3::new(position[0] as f64, position[1] as f64, position[2] as f64);
+            let normal = DVec3::new(normal[0] as f64, normal[1] as f64, normal[2] as f64);
+            wall = wall.min(probe.thickness_at_pose(origin, normal) as f64);
+        }
+        if !wall.is_finite() {
+            wall = WALL_SDF_CAP_MM;
+        }
+        self.reference_wall_mm[index] = wall as f32;
+        self.reference_wall_at[index] = [material.x as f32, material.y as f32, material.z as f32];
+        wall
+    }
+
+    /// Pass the thinner parent's memo to a remesh child. Unknown readings stay
+    /// unknown so the new material point is measured against the frozen probe.
+    pub(super) fn inherit_wall_reading(&mut self, group: u32, a: u32, b: u32) {
+        let (wa, wb) = (
+            self.reference_wall_mm[a as usize],
+            self.reference_wall_mm[b as usize],
+        );
+        if wa.is_nan() || wb.is_nan() {
+            return;
+        }
+        let parent = if wa <= wb { a } else { b };
+        self.reference_wall_mm[group as usize] = self.reference_wall_mm[parent as usize];
+        self.reference_wall_at[group as usize] = self.reference_wall_at[parent as usize];
+    }
+
     /// Live per-vertex shading normals, interleaved xyz.
     pub fn normals(&self) -> &[f32] {
         &self.display_normals
+    }
+
+    /// Per-vertex welded normals used by brush geometry, interleaved xyz.
+    /// Duplicate vertices in one welded group carry the same value. Unlike
+    /// [`Self::normals`], this is not the display-normal field and does not
+    /// preserve a rendered crease.
+    pub fn brush_normals(&self) -> &[f32] {
+        &self.brush_normals
     }
 
     /// Faces the last [`SculptSession::dab`] may have moved or rewired,
@@ -521,12 +676,11 @@ impl SculptSession {
         if !self.prepare_dab(dab) {
             return false;
         }
-        // Facing 1.0: this asks whether the dab's FOOTPRINT reaches the
-        // surface, not which way the clicked sheet is wound; the clay law
-        // applies its own facing gate per vertex.
-        self.region_points
-            .iter()
-            .any(|point| self.weight(*point, dab, 1.0) > 0.0)
+        let region = std::mem::take(&mut self.region_points);
+        self.assign_sheet_axes(dab, &region);
+        let reaches = region.iter().any(|point| self.weight(*point, dab) > 0.0);
+        self.region_points = region;
+        reaches
     }
 
     /// Whether every live face still satisfies the Apply contract against the

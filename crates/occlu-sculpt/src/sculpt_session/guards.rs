@@ -1,7 +1,7 @@
 //! Live displacement and triangle safety. Clay commits its complete field in
 //! `layer`, as does each Smooth pass; Flatten retains local rollback. Cumulative
-//! shape, per-operation orientation, camera coverage, and the Remove wall
-//! reserve are separate constraints on the same stored f32 surface.
+//! shape, per-operation orientation, and the opposing-wall Remove reserve are
+//! separate constraints on the same stored f32 surface.
 
 use super::*;
 
@@ -23,16 +23,15 @@ pub(super) const MIN_SESSION_AREA_RATIO: f64 = 0.15;
 /// shrinks a face through this area hides the triangle until pointer-up
 /// cycle, and the next brush then treats the hole as a defect.
 pub(crate) const LIVE_PAINTABLE_AREA: f64 = 1e-6;
-/// Cosine of the angle between a face and the toward-camera axis. Below this
-/// a large face is a slit: still in the index, drawn empty (or as the red
-/// interior once it goes back). 0.15 is ~9° from edge-on.
+/// Diagnostic threshold for counting an indexed face as edge-on in the live
+/// trace. It does not participate in any brush or safety decision.
 pub(crate) const EDGE_ON_COS: f64 = 0.15;
 /// Per-move approach floor on the current edge, independent of the material
 /// coordinates inherited from the opening surface. Remeshing changes edges.
 const MIN_NEIGHBOUR_APPROACH_SHARE: f64 = 0.35;
 
 /// Geometry shared by the live safety predicates for one triangle. Smooth and
-/// clay ask the final, editable and camera laws about the same candidate; keep
+/// clay ask the final and editable laws about the same candidate; keep
 /// its cross, area and quality instead of rebuilding them in every question.
 #[derive(Clone, Copy)]
 struct TriangleMeasure {
@@ -176,10 +175,17 @@ impl SculptSession {
         self.clamp_step_scaled(group, here, proposed, 1.0)
     }
 
-    /// [`Self::clamp_step_at`] for a move that stands for `dabs` dab-equivalents
-    /// of a swept step: the per-dab budget applies to each of them. The
-    /// neighbour clearance and the product constraint are geometric limits of
-    /// the final position and stay whole.
+    /// Per-group triangle-altitude displacement bound for operators that use
+    /// a per-vertex step clamp. The swept remesher scales its own work budget
+    /// separately; brush Smooth and Relax do not use this as a dose limit.
+    pub(super) fn step_limit(&self, group: u32, dabs: f64) -> f64 {
+        self.step_budget[group as usize] as f64 * MAX_STEP_FRACTION_OF_TRIANGLE * dabs.max(1.0)
+    }
+
+    /// Clamp a displacement to the per-group triangle-altitude bound scaled
+    /// for `dabs`, then preserve current one-ring clearance. Native Knife,
+    /// Flatten, and remesh relocation use this geometric clamp; it does not
+    /// apply a product-specific constraint or control Smooth/Relax dose.
     pub(super) fn clamp_step_scaled(
         &self,
         group: u32,
@@ -188,8 +194,7 @@ impl SculptSession {
         dabs: f64,
     ) -> DVec3 {
         let step = proposed - here;
-        let budget =
-            self.step_budget[group as usize] as f64 * MAX_STEP_FRACTION_OF_TRIANGLE * dabs.max(1.0);
+        let budget = self.step_limit(group, dabs);
         if !budget.is_finite() || budget <= 0.0 {
             diag::bump(|diag| diag.clamp_zero += 1);
             return here;
@@ -241,6 +246,50 @@ impl SculptSession {
         } else {
             self.group_v(group)
         }
+    }
+
+    /// Clamp an Erode target to its share of the immutable opposing-wall
+    /// allowance. Each side receives half the measured material above the
+    /// donor's 0.8 mm floor. Improving a point or moving it outward is free.
+    pub(super) fn guard_remove_wall(
+        &mut self,
+        group: u32,
+        current: DVec3,
+        candidate: DVec3,
+    ) -> DVec3 {
+        let axis = if let Some(facing) = self.wall_facing {
+            self.sheet_push(group, facing)
+        } else {
+            let mut normal = self.reference_group_n(group).normalize_or_zero();
+            let live_normal = self.group_n(group).normalize_or_zero();
+            if normal.length() <= 1e-12 {
+                return current;
+            }
+            if live_normal.length() > 1e-12 && normal.dot(live_normal) < 0.0 {
+                normal = -normal;
+            }
+            normal
+        };
+        if axis.length() <= 1e-12 {
+            return current;
+        }
+        let reference = self.reference_group_v(group);
+        let current_support = (current - reference).dot(axis);
+        let candidate_support = (candidate - reference).dot(axis);
+        if candidate_support >= 0.0 || candidate_support >= current_support {
+            return candidate;
+        }
+        let reserve = (self.reference_group_wall_mm(group) - 0.8) * 0.5;
+        let minimum_support = (-reserve.max(0.0)).min(current_support);
+        if candidate_support >= minimum_support {
+            return candidate;
+        }
+        let denominator = current_support - candidate_support;
+        if !denominator.is_finite() || denominator <= 0.0 {
+            return current;
+        }
+        let fraction = ((current_support - minimum_support) / denominator).clamp(0.0, 1.0);
+        current + (candidate - current) * fraction
     }
 
     fn triangle_flipped(pre: TriangleMeasure, now: TriangleMeasure) -> bool {
@@ -302,7 +351,6 @@ impl SculptSession {
         }
         let baseline = TriangleMeasure::new(corners.map(|group| self.reference_group_v(group)));
         Self::triangle_baseline_unsafe(baseline, pre_dab, candidate, mode)
-            || Self::triangle_hides_from_camera_measured(pre_dab, candidate, self.camera_context())
     }
 
     /// The geometric acceptance contract: may this face be published?
@@ -339,7 +387,7 @@ impl SculptSession {
     }
 
     /// Shape is cumulative; orientation is checked per operation. Clay checks
-    /// winding against the pre-dab face and camera while this rule limits the
+    /// winding against the pre-dab face while this rule limits the
     /// final shape relative to the session baseline.
     fn triangle_shape_is_safe_measured(
         baseline: TriangleMeasure,
@@ -362,7 +410,7 @@ impl SculptSession {
             .all(|(a, b)| (candidate.points[b] - candidate.points[a]).length() > MIN_EDGE_MM)
     }
 
-    /// Live Smooth, Erode and no-camera Deposit use this predicate: the move
+    /// Live Smooth, Erode and Deposit use this predicate: the move
     /// must satisfy the Apply contract against the pre-dab face, and it may
     /// not shrink a face below [`LIVE_PAINTABLE_AREA`] when its input area is
     /// above that floor.
@@ -407,66 +455,6 @@ impl SculptSession {
             return false;
         }
         true
-    }
-
-    pub(super) fn stroke_view(&self) -> DVec3 {
-        DVec3::new(
-            self.live_kin.vx as f64,
-            self.live_kin.vy as f64,
-            self.live_kin.vz as f64,
-        )
-    }
-
-    fn stroke_facing(&self) -> f64 {
-        self.live_kin.facing as f64
-    }
-
-    fn camera_context(&self) -> Option<(DVec3, f64)> {
-        let view = self.stroke_view();
-        let facing = self.stroke_facing();
-        (view.length() > 1e-12 && facing != 0.0).then(|| (view.normalize_or_zero(), facing))
-    }
-
-    /// A depth stroke may not erase a face's signed projected area.
-    ///
-    /// Add/Remove preserve the screen-space triangle while moving along the
-    /// view axis, even when the 3-D triangle becomes a steep wall. Preserve a
-    /// fraction of the signed projected area, and do not reduce it further at
-    /// the silhouette. This keeps depth changes from pinning a layer solely
-    /// because its face normal changes.
-    fn triangle_hides_from_camera_measured(
-        baseline: TriangleMeasure,
-        candidate: TriangleMeasure,
-        camera: Option<(DVec3, f64)>,
-    ) -> bool {
-        let Some((view, facing)) = camera else {
-            return false;
-        };
-        let pre_cross = baseline.cross * facing;
-        let now_cross = candidate.cross * facing;
-        let pre_geom = pre_cross.length();
-        let now_geom = now_cross.length();
-        if pre_geom <= 1e-18 {
-            return false;
-        }
-        if now_geom <= 1e-18 {
-            return true;
-        }
-        let pre_cam = -pre_cross.dot(view);
-        let now_cam = -now_cross.dot(view);
-        let tolerance = layer::clay_area_roundoff(baseline, candidate);
-        if pre_cam > tolerance {
-            let pre_cos = pre_cam / pre_geom;
-            let floor = if pre_cos <= EDGE_ON_COS {
-                pre_cam
-            } else {
-                (pre_geom * EDGE_ON_COS).min(pre_cam)
-            };
-            return now_cam + tolerance < floor;
-        }
-        // A numerically edge-on face has no measurable covering area to
-        // preserve, but it still may not cross onto the hidden side.
-        pre_cam >= -tolerance && now_cam < -tolerance
     }
 }
 
