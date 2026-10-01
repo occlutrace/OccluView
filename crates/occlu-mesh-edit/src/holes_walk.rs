@@ -8,6 +8,7 @@
 
 use super::adjacency::vertex_index;
 use super::{MeshEditBuffers, MeshEditError};
+use crate::numeric::basis_from_normal;
 use glam::Vec3;
 use std::collections::{HashMap, HashSet};
 
@@ -382,17 +383,6 @@ pub(crate) fn vertex_position(
                 mesh.vertices.len()
             ),
         })
-}
-
-fn basis_from_normal(normal: Vec3) -> (Vec3, Vec3) {
-    let axis = if normal.x.abs() > 0.9 {
-        Vec3::Y
-    } else {
-        Vec3::X
-    };
-    let u = axis.cross(normal).normalize();
-    let v = normal.cross(u);
-    (u, v)
 }
 
 /// Ear-clip for rims longer than [`SMALL_EARCLIP_MAX`]. Same contract as the

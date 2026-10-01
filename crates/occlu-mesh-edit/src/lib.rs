@@ -40,6 +40,7 @@ mod holes_cleanup;
 mod holes_gate;
 mod holes_walk;
 mod normals;
+mod numeric;
 mod orientation;
 mod pinch;
 mod repair;
