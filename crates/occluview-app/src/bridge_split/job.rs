@@ -1,8 +1,9 @@
 use super::state::{BridgeSplitGuard, BridgeSplitToolError};
 use glam::Affine3A;
-use occluview_core::{
+use occluview_core::Mesh;
+use occluview_edit::{
     bridge_split_prepared_mesh_in_world, prepare_bridge_split_source, BridgeSplitRequest,
-    CoreBridgeSplitResult, Mesh, PreparedBridgeSplitSource,
+    CoreBridgeSplitResult, PreparedBridgeSplitSource,
 };
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::{mpsc, Arc, Mutex};

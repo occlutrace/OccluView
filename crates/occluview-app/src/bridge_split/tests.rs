@@ -5,9 +5,9 @@ use super::{
     DEFAULT_BRIDGE_SPLIT_KERF_MM, MAX_BRIDGE_SPLIT_KERF_MM, MIN_BRIDGE_SPLIT_KERF_MM,
 };
 use glam::{Affine3A, Vec3};
-use occluview_core::{
-    BridgeSplitError, BridgeSplitReport, BridgeSplitRequest, CoreBridgeSplitResult, Mesh, Scene,
-    SceneMesh,
+use occluview_core::{Mesh, Scene, SceneMesh};
+use occluview_edit::{
+    BridgeSplitError, BridgeSplitReport, BridgeSplitRequest, CoreBridgeSplitResult,
 };
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;

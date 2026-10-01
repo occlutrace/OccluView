@@ -12,8 +12,8 @@ use crate::cut_ruler::{
 use crate::probe_section::SliceProbe;
 use eframe::egui;
 use glam::Vec3;
-use occluview_core::scene::{SceneSection, SectionPlane};
 use occluview_core::{Aabb, Camera, SceneMeshId};
+use occluview_edit::scene::{SceneSection, SectionPlane};
 
 const SLICE_ZOOM_STEP: f32 = 1.15;
 const SLICE_ZOOM_MIN: f32 = 0.4;

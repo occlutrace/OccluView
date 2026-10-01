@@ -34,7 +34,8 @@
 use crate::sculpt_kernel::{BrushMode, BrushSession, BrushStroke};
 use crate::sculpt_tool::{mean_uniform_scale, SculptSession};
 use glam::Affine3A;
-use occluview_core::{mesh_edit_buffers_from_mesh, Mesh, SceneMesh, SculptSessionBuffers, Vertex};
+use occluview_core::{Mesh, SceneMesh, Vertex};
+use occluview_edit::{mesh_edit_buffers_from_mesh, SculptSessionBuffers};
 use occluview_render::{
     GpuMeshUniform, Offscreen, PreparedSceneSource, PreparedSceneTopology, SculptTopologyDelta,
 };
@@ -469,7 +470,7 @@ fn perf_session_prepare() {
 #[ignore = "perf harness: run with --ignored --nocapture"]
 fn perf_repair_dirty_tetrahedron() {
     use glam::Vec3;
-    use occluview_core::RepairOptions;
+    use occluview_edit::RepairOptions;
     let mesh = Mesh::new(
         Some("perf-dirty-tetra".to_string()),
         vec![
@@ -482,7 +483,7 @@ fn perf_repair_dirty_tetrahedron() {
     )
     .expect("dirty tetra builds");
     let start = Instant::now();
-    let result = occluview_core::repair_mesh_in_mesh(&mesh, RepairOptions::default());
+    let result = occluview_edit::repair_mesh_in_mesh(&mesh, RepairOptions::default());
     let elapsed = start.elapsed();
     assert!(result.is_ok(), "the dirty tetrahedron must repair");
     println!("perf repair-dirty-tetra: took {elapsed:?}");

@@ -7,9 +7,9 @@
 //! camera motion never recomputes it; only geometry, transform, visibility, or
 //! plane changes invalidate it.
 
-use super::{Scene, SceneMesh, SceneMeshId};
 use glam::{Affine3A, DAffine3, DMat3};
 use occlu_mesh_edit::{plane_section, SectionPlane, SectionPolyline};
+use occluview_core::{Scene, SceneMesh, SceneMeshId};
 use std::sync::Arc;
 
 /// Whether `entry` contributes a contour. Never true for point clouds.
@@ -216,9 +216,8 @@ impl SectionCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mesh::{Mesh, Vertex};
-    use crate::scene::{Scene, SceneMesh};
     use glam::{DVec3, Vec3};
+    use occluview_core::{Mesh, Scene, SceneMesh, Vertex};
 
     /// Closed unit cube [0,1]^3 with two triangles per face.
     fn cube() -> Mesh {

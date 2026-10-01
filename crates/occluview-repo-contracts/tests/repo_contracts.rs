@@ -707,6 +707,7 @@ fn release_version_is_kept_in_sync_across_workspace_lockfile_and_installer() {
         "occluview-align",
         "occluview-contact",
         "occluview-core",
+        "occluview-edit",
         "occluview-formats",
         "occluview-hps",
         "occluview-i18n",

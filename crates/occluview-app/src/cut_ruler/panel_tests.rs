@@ -181,8 +181,8 @@ fn panel_drag_pans_and_places_nothing() {
 /// A real hexagonal cross-section: a centered cube cut by a tilted plane,
 /// computed by the production kernel, plus a cam framing it in the panel.
 fn proof_section() -> (SceneSection, SliceCam) {
-    use occluview_core::scene::SectionPlane;
     use occluview_core::{Mesh, Scene, SceneMesh, Vertex};
+    use occluview_edit::scene::SectionPlane;
     let s = 8.0_f32;
     let corner = |x: f32, y: f32, z: f32| Vertex::at(Vec3::new(x * s, y * s, z * s));
     let vertices = vec![
