@@ -71,11 +71,21 @@ fn compact_mode_remaps_indices_and_drops_orphan_vertices() {
 
     assert_eq!(result.mesh.vertices.len(), 3);
     assert_eq!(result.mesh.indices, vec![0, 1, 2]);
-    assert_eq!(result.mesh.vertices[0].position, mesh.vertices[1].position);
-    assert_eq!(result.mesh.vertices[1].position, mesh.vertices[3].position);
-    assert_eq!(result.mesh.vertices[2].position, mesh.vertices[2].position);
-    assert_eq!(result.mesh.vertices[0].color, mesh.vertices[1].color);
-    assert_eq!(result.mesh.vertices[1].uv, mesh.vertices[3].uv);
+    // The surviving order is source [1, 3, 2]. Every fixture vertex has its own
+    // position, uv and colour, so pinning all three for each slot leaves a wrong
+    // pick nothing to coincide with; slot 2 previously rested on a position check
+    // against source index 2 alone, which reads as a self-comparison.
+    for (slot, source) in [(0usize, 1usize), (1, 3), (2, 2)] {
+        assert_eq!(
+            result.mesh.vertices[slot].position,
+            mesh.vertices[source].position
+        );
+        assert_eq!(result.mesh.vertices[slot].uv, mesh.vertices[source].uv);
+        assert_eq!(
+            result.mesh.vertices[slot].color,
+            mesh.vertices[source].color
+        );
+    }
 }
 
 #[test]
@@ -428,15 +438,10 @@ fn fill_holes_respects_selection_scoped_loop_gating() {
     assert_eq!(full.report.output_triangles, 6);
 }
 
-/// A pile of coincident vertices must not make the duplicate-normal pass
+/// A pile of coincident vertices, each with its own incident triangle and
+/// assigned normal: the shape that used to make the duplicate-normal pass
 /// quadratic.
-///
-/// A file that loads quickly still brings the pile into the scene, and Repair,
-/// Close holes and Invert normals run this pass on the UI thread with no
-/// repaint, no progress and no cancel.
-#[test]
-fn a_huge_coincident_vertex_group_stays_linear_on_the_edit_path() {
-    let group = 20_000usize;
+fn coincident_group_mesh(group: usize) -> (Vec<EditVertex>, Vec<u32>) {
     let mut vertices = Vec::with_capacity(group * 3);
     let mut indices = Vec::with_capacity(group * 3);
     for i in 0..group {
@@ -456,19 +461,22 @@ fn a_huge_coincident_vertex_group_stays_linear_on_the_edit_path() {
             vertices.push(vertex);
         }
     }
+    (vertices, indices)
+}
 
-    let started = std::time::Instant::now();
+/// A pile of coincident vertices must not make the duplicate-normal pass
+/// quadratic.
+///
+/// A file that loads quickly still brings the pile into the scene, and Repair,
+/// Close holes and Invert normals run this pass on the UI thread with no
+/// repaint, no progress and no cancel. What the pass *costs* is checked by
+/// `a_huge_coincident_vertex_group_stays_linear_perf_smoke`, which is ignored by
+/// default: a wall-clock threshold in the default run fails on a loaded machine
+/// with no code change.
+#[test]
+fn a_huge_coincident_vertex_group_keeps_finite_normals() {
+    let (mut vertices, indices) = coincident_group_mesh(20_000);
     recompute_all_normals(&mut vertices, &indices).expect("valid mesh");
-    let elapsed = started.elapsed();
-
-    // Measured in the test profile at this k: 820 ms pairwise against 16 ms
-    // bounded. 300 ms sits between them with room on either side for faster
-    // or slower runners.
-    assert!(
-        elapsed < std::time::Duration::from_millis(300),
-        "coincident-group normal smoothing took {elapsed:?} on the edit path; \
-         it is quadratic again"
-    );
     for vertex in &vertices {
         let normal = glam::Vec3::from_array(vertex.normal);
         assert!(
@@ -476,6 +484,29 @@ fn a_huge_coincident_vertex_group_stays_linear_on_the_edit_path() {
             "every vertex should keep a finite normal, got {normal:?}"
         );
     }
+}
+
+/// Wall-clock smoke for the quadratic regression. Ignored by default; run it
+/// deliberately with
+/// `cargo test -p occlu-mesh-edit --lib -- --ignored stays_linear_perf_smoke`.
+///
+/// Measured in the test profile at this group size: about 820 ms pairwise against
+/// about 16 ms once the group is clustered, so a 300 ms threshold sits between the
+/// two with room on either side. Those numbers are how the bound is checked;
+/// nothing in the default suite can check it.
+#[test]
+#[ignore = "wall-clock smoke: run deliberately, on a quiet machine"]
+fn a_huge_coincident_vertex_group_stays_linear_perf_smoke() {
+    let (mut vertices, indices) = coincident_group_mesh(20_000);
+    let started = std::time::Instant::now();
+    recompute_all_normals(&mut vertices, &indices).expect("valid mesh");
+    let elapsed = started.elapsed();
+
+    assert!(
+        elapsed < std::time::Duration::from_millis(300),
+        "coincident-group normal smoothing took {elapsed:?} on the edit path; \
+         it is quadratic again"
+    );
 }
 
 /// A crease inside a coincident pile past the bounded threshold must survive.

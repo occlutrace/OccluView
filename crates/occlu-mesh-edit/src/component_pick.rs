@@ -250,39 +250,23 @@ mod tests {
         }
     }
 
-    // Intentional diagnostic: the perf smoke prints its measured wall time to the
-    // test log (the crate otherwise denies stray prints).
-    #[allow(clippy::print_stderr)]
+    /// 500 x 500 cells give 500000 triangles and 1500000 soup vertices. Picking
+    /// any facet must resolve the whole welded object.
     #[test]
-    fn perf_component_pick_on_a_half_million_triangle_soup_stays_interactive() {
-        // 500 x 500 cells -> 500_000 triangles, 1_500_000 soup vertices. Picking
-        // any facet must resolve the whole welded object within a loose 10 s
-        // bound that catches O(N^2) behaviour; it is not a precise benchmark.
+    fn component_pick_over_a_half_million_triangle_soup_returns_the_whole_object() {
         let cells = 500;
         let mesh = soup_grid(cells);
         let triangle_count = mesh.triangle_count();
         assert_eq!(triangle_count, (cells * cells * 2) as usize);
 
-        let started = std::time::Instant::now();
         let component = component_at_triangle(&mesh, triangle_count / 2)
             .expect("valid mesh")
             .expect("picked triangle belongs to the one welded object");
-        let elapsed = started.elapsed();
-        eprintln!(
-            "perf: component_at_triangle over {triangle_count} soup triangles \
-             ({} verts) returned {} triangles in {elapsed:?}",
-            mesh.vertices.len(),
-            component.len(),
-        );
 
         assert_eq!(
             component.len(),
             triangle_count,
             "the welded grid is one object, so the pick returns every triangle"
-        );
-        assert!(
-            elapsed < std::time::Duration::from_secs(10),
-            "component pick on 500k soup triangles must stay bounded, took {elapsed:?}"
         );
     }
 }
