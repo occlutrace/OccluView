@@ -1,4 +1,10 @@
 //! Build-time support for optional private HPS key embedding.
+//!
+//! The generated module shuffles the key bytes and masks them so the key is not
+//! readable as a byte string in the binary. There is deliberately no decoy or
+//! noise material: a term that cancels itself during reconstruction does no
+//! work for an attacker, and its presence would suggest the layout is defended
+//! by more than the masking that is actually there.
 
 use std::env;
 use std::fs;
@@ -57,8 +63,6 @@ struct ObfuscatedKey {
     payload: Vec<u8>,
     mask_a: Vec<u8>,
     mask_b: Vec<u8>,
-    decoy_a: Vec<u8>,
-    decoy_b: Vec<u8>,
     salt: [u8; 16],
 }
 
@@ -91,26 +95,11 @@ impl ObfuscatedKey {
                 key[usize::from(original_idx)] ^ first_mask ^ second_mask ^ salt_mask ^ slot_mask;
         }
 
-        let mut decoy_a = vec![0_u8; 64];
-        let mut decoy_b = vec![0_u8; 64];
-        for (slot, (left, right)) in decoy_a.iter_mut().zip(decoy_b.iter_mut()).enumerate() {
-            let slot_low = slot.to_le_bytes()[0];
-            let marker = key_len
-                .wrapping_add(slot_low.wrapping_mul(13))
-                .rotate_left(u32::from(slot_low & 7));
-            *left = prng.next_u8() ^ marker ^ 0xa7;
-            *right = prng.next_u8() ^ marker.rotate_right(3) ^ 0x5c;
-        }
-        decoy_a[0] ^= 0xa5;
-        decoy_b[0] ^= 0x5a;
-
         Self {
             order,
             payload,
             mask_a,
             mask_b,
-            decoy_a,
-            decoy_b,
             salt,
         }
     }
@@ -121,15 +110,11 @@ impl ObfuscatedKey {
              pub(super) const EMBEDDED_HPS_KEY_PAYLOAD: &[u8] = &[{}];\n\
              pub(super) const EMBEDDED_HPS_KEY_MASK_A: &[u8] = &[{}];\n\
              pub(super) const EMBEDDED_HPS_KEY_MASK_B: &[u8] = &[{}];\n\
-             pub(super) const EMBEDDED_HPS_KEY_DECOY_A: &[u8] = &[{}];\n\
-             pub(super) const EMBEDDED_HPS_KEY_DECOY_B: &[u8] = &[{}];\n\
              pub(super) const EMBEDDED_HPS_KEY_SALT: [u8; 16] = [{}];\n",
             hex_bytes(&self.order),
             hex_bytes(&self.payload),
             hex_bytes(&self.mask_a),
             hex_bytes(&self.mask_b),
-            hex_bytes(&self.decoy_a),
-            hex_bytes(&self.decoy_b),
             hex_bytes(&self.salt),
         )
     }
