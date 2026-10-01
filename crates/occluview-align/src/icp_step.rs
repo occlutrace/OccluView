@@ -5,12 +5,14 @@ use glam::DVec3;
 use crate::Rigid;
 
 use super::icp_overlap::{
-    reciprocal_coverage_ok, reciprocal_evidence, reciprocal_evidence_is_usable, ReciprocalSummary,
+    common_support_coverage, directional_forward_evidence_is_sufficient,
+    minimum_directional_forward_matches, reciprocal_evidence, reciprocal_evidence_is_usable,
+    reciprocal_trial_is_acceptable, support_coverage_is_sufficient, ReciprocalSummary,
 };
 use super::icp_solve::{accumulate, apply_step, correspondences, summarize, trim, Correspondence};
 use super::{
-    forward_coverage_is_sufficient, minimum_forward_matches, FitRejection, Level, Summary,
-    BACKTRACK_SCALES, MIN_CORRESPONDENCES, MIN_TRIAL_COVERAGE_FRACTION, STALL_IMPROVEMENT,
+    FitRejection, Level, Summary, BACKTRACK_SCALES, MIN_CORRESPONDENCES,
+    MIN_TRIAL_COVERAGE_FRACTION, STALL_IMPROVEMENT,
 };
 
 /// Immutable input captured for one bounded line-search pass.
@@ -28,6 +30,7 @@ pub(super) struct TrialState {
 /// Find correspondences at the narrowest radius that can determine a pose.
 /// Widening is monotonic within a level, so a rough pose gets more reach while
 /// a seated pose keeps the conservative local neighbourhood.
+#[allow(clippy::cast_precision_loss)]
 pub(super) fn correspondences_at_radius(
     level: &Level<'_>,
     pose: Rigid,
@@ -36,17 +39,33 @@ pub(super) fn correspondences_at_radius(
 ) -> Result<(Vec<Option<Correspondence>>, usize), FitRejection> {
     let mut found = correspondences(level, pose, radii[*radius_slot]);
     let mut matched = found.iter().flatten().count();
-    while !forward_coverage_is_sufficient(matched, level.samples.len())
-        && *radius_slot + 1 < radii.len()
+    let mut reciprocal = reciprocal_evidence(level, pose, radii[*radius_slot]);
+    while *radius_slot + 1 < radii.len()
+        && (!directional_forward_evidence_is_sufficient(level, matched, level.samples.len())
+            || !reciprocal_evidence_is_usable(level, reciprocal)
+            || !support_coverage_is_sufficient(common_support_coverage(
+                level,
+                matched as f64 / level.samples.len().max(1) as f64,
+                reciprocal,
+            )))
     {
         *radius_slot += 1;
         found = correspondences(level, pose, radii[*radius_slot]);
         matched = found.iter().flatten().count();
+        reciprocal = reciprocal_evidence(level, pose, radii[*radius_slot]);
     }
-    if !forward_coverage_is_sufficient(matched, level.samples.len()) {
+    let forward_coverage = matched as f64 / level.samples.len().max(1) as f64;
+    if !directional_forward_evidence_is_sufficient(level, matched, level.samples.len())
+        || !reciprocal_evidence_is_usable(level, reciprocal)
+        || !support_coverage_is_sufficient(common_support_coverage(
+            level,
+            forward_coverage,
+            reciprocal,
+        ))
+    {
         return Err(FitRejection::TooFewPairs {
             have: matched,
-            need: minimum_forward_matches(level.samples.len()),
+            need: minimum_directional_forward_matches(level, level.samples.len()),
         });
     }
     Ok((found, matched))
@@ -73,28 +92,31 @@ pub(super) fn try_backtracked_step(
         if trial_matched < MIN_CORRESPONDENCES {
             continue;
         }
+        let trial_reciprocal = reciprocal_evidence(level, trial_pose, state.radius);
+        if !reciprocal_evidence_is_usable(level, trial_reciprocal) {
+            continue;
+        }
         let trial_kept = trim(&trial_found, level.settings.matching_ratio);
         if trial_kept.len() < MIN_CORRESPONDENCES {
             continue;
         }
         let (trial_matrix, _, _) = accumulate(&trial_kept);
-        let trial_summary = summarize(
+        let mut trial_summary = summarize(
             &trial_found,
             &trial_kept,
             trial_matched,
             level.samples.len(),
             &trial_matrix,
         );
-        if trial_summary.coverage + f64::EPSILON
-            < state.measured.coverage * MIN_TRIAL_COVERAGE_FRACTION
+        trial_summary.support_coverage =
+            common_support_coverage(level, trial_summary.coverage, trial_reciprocal);
+        if !support_coverage_is_sufficient(trial_summary.support_coverage)
+            || trial_summary.support_coverage + f64::EPSILON
+                < state.measured.support_coverage * MIN_TRIAL_COVERAGE_FRACTION
         {
             continue;
         }
-        let trial_reciprocal = reciprocal_evidence(level, trial_pose, state.radius);
-        if !reciprocal_evidence_is_usable(level, trial_reciprocal) {
-            continue;
-        }
-        if !reciprocal_coverage_ok(state.measured_reciprocal, trial_reciprocal) {
+        if !reciprocal_trial_is_acceptable(level, state.measured_reciprocal, trial_reciprocal) {
             continue;
         }
         // A step may not trade seating away for a smaller residual: a trimmed

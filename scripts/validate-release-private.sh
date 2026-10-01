@@ -80,10 +80,11 @@ if [[ $status -ne 0 ]]; then
   exit "$status"
 fi
 
-# Only the seven root-corpus tests share this filter. The other ignored tests
-# need separately acquired prepared or partial-overlap pairs.
-if ! grep -Eq 'test result: ok\. 7 passed; 0 failed' "$log"; then
-  echo "validate-release-private: expected seven alignment tests to pass" >&2
+# These fourteen root-corpus tests share this filter: six established positive
+# cases, six unrelated-arch start offsets, and both default-ratio crop roles.
+# Other ignored tests need separately acquired prepared or partial-overlap pairs.
+if ! grep -Eq 'test result: ok\. 14 passed; 0 failed' "$log"; then
+  echo "validate-release-private: expected fourteen alignment tests to pass" >&2
   tail -n 40 "$log" >&2
   exit 1
 fi
@@ -151,9 +152,9 @@ log = pathlib.Path(os.environ["OCCLUVIEW_RECEIPT_LOG"]).read_text(
 )
 for match in re.finditer(r"^test ([a-z0-9_:]+) \.\.\.", log, flags=re.MULTILINE):
     test_names.append(match.group(1))
-if len(test_names) != 9:
+if len(test_names) != 16:
     raise SystemExit(
-        f"validate-release-private: expected nine completed acceptance tests in the log, found {len(test_names)}"
+        f"validate-release-private: expected sixteen completed acceptance tests in the log, found {len(test_names)}"
     )
 for name, value in (
     ("max_residual_mm", r"MAX_RESIDUAL_MM: f64 = ([0-9.]+)"),
