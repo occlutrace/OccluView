@@ -12,8 +12,8 @@ use eframe::egui;
 
 use crate::align_panel::AlignPanelAction;
 use crate::align_worker::{AlignSettings, WORKING_MAX_MM, WORKING_SCALE_MIN_MM};
-use crate::icons::AppIcon;
-use crate::{align_overlay, ui_theme};
+use crate::ui::icons::AppIcon;
+use crate::{align_overlay, ui::ui_theme};
 
 /// Show the Heatmap block; returns what the operator asked for.
 pub(crate) fn show(
@@ -51,7 +51,7 @@ fn toggle(
         let glyph = ui
             .allocate_exact_size(egui::vec2(17.0, 17.0), egui::Sense::hover())
             .0;
-        crate::icons::paint(
+        crate::ui::icons::paint(
             ui.painter(),
             glyph,
             AppIcon::Heatmap,
@@ -115,7 +115,7 @@ fn range(
                 .fixed_decimals(3)
                 .suffix(" mm"),
         );
-        crate::accessibility::spin_button(
+        crate::ui::accessibility::spin_button(
             &minimum,
             &locale.tr(crate::i18n::message_id!("align-map-min")),
             enabled,
@@ -133,7 +133,7 @@ fn range(
                 .fixed_decimals(3)
                 .suffix(" mm"),
         );
-        crate::accessibility::spin_button(
+        crate::ui::accessibility::spin_button(
             &maximum,
             &locale.tr(crate::i18n::message_id!("align-map-max")),
             enabled,

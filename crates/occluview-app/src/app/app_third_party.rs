@@ -4,7 +4,7 @@
 use super::app_settings_window::show_information_modal;
 use super::information_dialog::InformationDialog;
 use super::SceneContext;
-use crate::ui_theme;
+use crate::ui::ui_theme;
 use std::sync::OnceLock;
 
 /// The attribution file the artifacts ship, embedded verbatim. `include_str!`

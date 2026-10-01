@@ -545,4 +545,4 @@ SPDX-License-Identifier: MIT
 
 | Component | Version | License | How it gets here |
 | --- | --- | --- | --- |
-| Lucide icons | 0.544.0 | ISC | 52 SVG files vendored under `crates/occluview-app/assets/icons/`, rasterized at draw time by `src/icons.rs`; their license text ships beside them (`LICENSE-LUCIDE.txt`) |
+| Lucide icons | 0.544.0 | ISC | 52 SVG files vendored under `crates/occluview-app/assets/icons/`, rasterized at draw time by `src/ui/icons.rs`; their license text ships beside them (`LICENSE-LUCIDE.txt`) |

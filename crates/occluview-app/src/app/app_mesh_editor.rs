@@ -587,11 +587,11 @@ impl SceneContext<'_> {
             MeshSelectionDrag::Rect { .. } => {
                 let rect = drag.rect();
                 ui.painter()
-                    .rect_filled(rect, 3.0, crate::ui_theme::accent().gamma_multiply(0.08));
+                    .rect_filled(rect, 3.0, crate::ui::ui_theme::accent().gamma_multiply(0.08));
                 ui.painter().rect_stroke(
                     rect,
                     3.0,
-                    egui::Stroke::new(1.0_f32, crate::ui_theme::accent().gamma_multiply(0.85)),
+                    egui::Stroke::new(1.0_f32, crate::ui::ui_theme::accent().gamma_multiply(0.85)),
                     egui::StrokeKind::Middle,
                 );
             }
@@ -602,7 +602,7 @@ impl SceneContext<'_> {
                 let Some(&first) = points.first() else {
                     return;
                 };
-                let stroke = egui::Stroke::new(1.5_f32, crate::ui_theme::accent());
+                let stroke = egui::Stroke::new(1.5_f32, crate::ui::ui_theme::accent());
                 let (dash, gap) = (6.0, 4.0);
                 if points.len() >= 2 {
                     ui.painter()
@@ -618,7 +618,7 @@ impl SceneContext<'_> {
                         ));
                     }
                     if points.len() >= 2 {
-                        let hint_color = crate::ui_theme::accent().gamma_multiply(0.48);
+                        let hint_color = crate::ui::ui_theme::accent().gamma_multiply(0.48);
                         let hint = egui::Stroke::new(1.0_f32, hint_color);
                         ui.painter().extend(egui::Shape::dashed_line(
                             &[hover, first],

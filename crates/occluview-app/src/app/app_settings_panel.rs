@@ -5,13 +5,13 @@ use crate::app_settings::ScrollBehavior;
 use crate::app_settings::{
     RulerLineAngle, Settings, ThemePreference, UnitDisplay, ViewportBackground,
 };
+use crate::desktop::update_notice::UpdateCheckStatus;
 use crate::i18n::catalog::EMBEDDED_TAGS;
 use crate::i18n::preference::UiLanguagePreference;
 use crate::i18n::{endonym, LocaleManager};
-use crate::icons::AppIcon;
 use crate::measure_overlay::ruler_line_angle_key;
-use crate::ui_theme;
-use crate::desktop::update_notice::UpdateCheckStatus;
+use crate::ui::icons::AppIcon;
+use crate::ui::ui_theme;
 use eframe::egui;
 
 pub(super) const PANEL_MARGIN: i8 = 12;
@@ -407,7 +407,7 @@ pub(super) fn show_settings_popup(
 
     if let Some(popup) = popup {
         let label = locale.tr(crate::i18n::message_id!("settings-header"));
-        crate::accessibility::panel(&popup.response, &label);
+        crate::ui::accessibility::panel(&popup.response, &label);
         popup.inner
     } else {
         None
@@ -421,7 +421,7 @@ fn panel_header(ui: &mut egui::Ui, locale: &LocaleManager) {
         |ui| {
             let (icon_rect, _) =
                 ui.allocate_exact_size(egui::vec2(17.0, 17.0), egui::Sense::hover());
-            crate::icons::paint(ui.painter(), icon_rect, AppIcon::Settings, ui_theme::text());
+            crate::ui::icons::paint(ui.painter(), icon_rect, AppIcon::Settings, ui_theme::text());
             ui.add_space(4.0);
             ui.label(
                 egui::RichText::new(locale.tr(crate::i18n::message_id!("settings-header")))
@@ -539,7 +539,7 @@ fn slider_f32_row_inner(
                     .step_by(0.05)
                     .trailing_fill(true),
             );
-            crate::accessibility::slider(&slider_response, label, true, f64::from(edit));
+            crate::ui::accessibility::slider(&slider_response, label, true, f64::from(edit));
             let changed = slider_response.changed();
             let pointer_down = slider_response.is_pointer_button_down_on();
             let drag_stopped = slider_response.drag_stopped();

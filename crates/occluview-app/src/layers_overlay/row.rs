@@ -10,7 +10,7 @@ use crate::layer_actions::{
     tint_matches, LayerContextAction, LayerContextRequest, LAYER_OVERLAY_TINT_PRESETS,
     LAYER_TINT_PRESETS,
 };
-use crate::ui_theme;
+use crate::ui::ui_theme;
 use eframe::egui;
 use occluview_core::SceneMeshId;
 
@@ -146,7 +146,7 @@ pub(super) fn show_layer_row(
         locale.tr(crate::i18n::message_id!("layers-title")),
         view.label
     );
-    crate::accessibility::button(&row_hit, &row_actions_label, true, None);
+    crate::ui::accessibility::button(&row_hit, &row_actions_label, true, None);
 
     let mut focused_layer_id = None;
     let mut drag_started = false;
@@ -164,13 +164,13 @@ pub(super) fn show_layer_row(
                 egui::vec2(LAYER_ROW_EYE_WIDTH_PX, LAYER_ROW_CONTROL_HEIGHT_PX),
                 egui::Sense::click(),
             );
-            crate::icons::paint(
+            crate::ui::icons::paint(
                 ui.painter(),
                 eye_rect,
                 if visible {
-                    crate::icons::AppIcon::Eye
+                    crate::ui::icons::AppIcon::Eye
                 } else {
-                    crate::icons::AppIcon::EyeOff
+                    crate::ui::icons::AppIcon::EyeOff
                 },
                 if visible {
                     ui_theme::text()
@@ -184,7 +184,7 @@ pub(super) fn show_layer_row(
                 locale.tr(crate::i18n::message_id!("layers-row-show"))
             };
             let eye_label = format!("{eye_hint}: {}", view.label);
-            crate::accessibility::button(&eye_response, &eye_label, true, Some(visible));
+            crate::ui::accessibility::button(&eye_response, &eye_label, true, Some(visible));
             let eye_response = eye_response.on_hover_text(eye_hint);
             if eye_response.clicked() {
                 visible = !visible;
@@ -231,7 +231,7 @@ pub(super) fn show_layer_row(
             } else {
                 label_response
             };
-            crate::accessibility::button(&label_response, view.label, true, Some(view.focused));
+            crate::ui::accessibility::button(&label_response, view.label, true, Some(view.focused));
             focused_layer_id = label_response.clicked().then_some(view.layer_id);
             // Primary only: the same label carries the context menu, and a
             // secondary drag would arm the layer drag with no primary release
@@ -277,7 +277,7 @@ pub(super) fn show_layer_row(
                 locale.tr(crate::i18n::message_id!("layers-row-opacity")),
                 view.label
             );
-            crate::accessibility::slider(
+            crate::ui::accessibility::slider(
                 &slider_response,
                 &opacity_label,
                 state.visible,
@@ -320,10 +320,10 @@ pub(super) fn show_layer_row(
                 egui::vec2(LAYER_ROW_REMOVE_WIDTH_PX, LAYER_ROW_CONTROL_HEIGHT_PX),
                 egui::Sense::click(),
             );
-            crate::icons::paint(
+            crate::ui::icons::paint(
                 ui.painter(),
                 remove_rect,
-                crate::icons::AppIcon::Close,
+                crate::ui::icons::AppIcon::Close,
                 if remove_response.hovered() {
                     ui_theme::accent()
                 } else {
@@ -335,7 +335,7 @@ pub(super) fn show_layer_row(
                 locale.tr(crate::i18n::message_id!("layers-row-remove")),
                 view.label
             );
-            crate::accessibility::button(&remove_response, &remove_label, true, None);
+            crate::ui::accessibility::button(&remove_response, &remove_label, true, None);
             let remove_response = remove_response
                 .on_hover_text(locale.tr(crate::i18n::message_id!("layers-row-remove")));
             if remove_response.clicked() {
@@ -410,7 +410,7 @@ fn tint_swatch(
         locale.tr(crate::i18n::message_id!("tint-choose")),
         view.label
     );
-    crate::accessibility::button(&response, &tint_label, enabled, None);
+    crate::ui::accessibility::button(&response, &tint_label, enabled, None);
     let response = response.on_hover_text(locale.tr(crate::i18n::message_id!("tint-choose")));
 
     let popup_id = ui.make_persistent_id(("layer_tint_palette", view.layer_id));

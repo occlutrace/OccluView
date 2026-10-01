@@ -6,7 +6,7 @@ mod row;
 mod scene_menu;
 
 use crate::layer_actions::LayerContextRequest;
-use crate::ui_theme;
+use crate::ui::ui_theme;
 pub(crate) use color::color32_from_tint;
 use eframe::egui;
 pub(crate) use layout::{
@@ -230,7 +230,7 @@ pub(crate) fn show(
                             }
                         });
                 });
-            crate::accessibility::button(&toggle_response, &title, true, Some(expanded));
+            crate::ui::accessibility::button(&toggle_response, &title, true, Some(expanded));
 
             if let Some(scene_tabs) = scene_tabs {
                 let footer = show_scene_footer(ui, overlay_inner_width, scene_tabs, locale);
@@ -303,7 +303,7 @@ fn show_scene_footer(
             )
             .truncate();
             let response = ui.add_sized([tab_width, LAYER_SCENE_FOOTER_BUTTON_HEIGHT_PX], button);
-            crate::accessibility::button(&response, tab.name, true, Some(selected));
+            crate::ui::accessibility::button(&response, tab.name, true, Some(selected));
             let response = response.on_hover_text(tab.name);
             if response.clicked() {
                 changes.action = Some(LayerOverlaySceneAction::Activate(tab.id));
@@ -317,7 +317,7 @@ fn show_scene_footer(
                 [plus_width, LAYER_SCENE_FOOTER_BUTTON_HEIGHT_PX],
                 egui::Button::new(egui::RichText::new("+").size(15.0)),
             );
-            crate::accessibility::button(&response, &label, true, None);
+            crate::ui::accessibility::button(&response, &label, true, None);
             let response = response.on_hover_text(&label);
             if response.clicked() {
                 changes.action = Some(LayerOverlaySceneAction::Create);

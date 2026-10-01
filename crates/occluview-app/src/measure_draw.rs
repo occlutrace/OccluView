@@ -11,7 +11,7 @@
 
 use eframe::egui;
 
-use crate::ui_theme;
+use crate::ui::ui_theme;
 
 /// Endpoint marker sizing (logical px, so DPI- and zoom-sane). Matched across
 /// both measuring surfaces so they read as one tool.

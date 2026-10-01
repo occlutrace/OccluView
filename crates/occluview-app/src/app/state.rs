@@ -341,7 +341,7 @@ impl eframe::App for OccluViewApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        crate::ui_theme::set_active(self.persistence.settings.theme);
+        crate::ui::ui_theme::set_active(self.persistence.settings.theme);
         ctx.set_visuals(super::viewer_visuals(self.persistence.settings.theme));
         let target_ui_scale = self.persistence.settings.ui_scale();
         if ui_scale_zoom_is_allowed(&ctx) && (ctx.zoom_factor() - target_ui_scale).abs() > 1e-3 {

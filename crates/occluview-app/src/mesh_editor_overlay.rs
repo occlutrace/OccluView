@@ -12,7 +12,7 @@
 use eframe::egui;
 
 use crate::app::workspace::id::SceneKey;
-use crate::icons::AppIcon;
+use crate::ui::icons::AppIcon;
 
 use crate::sculpt_tool::{SculptTip, SculptToolKind};
 

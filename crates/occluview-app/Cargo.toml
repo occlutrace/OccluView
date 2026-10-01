@@ -45,7 +45,7 @@ egui              = { workspace = true }
 eframe            = { workspace = true, features = ["wgpu", "default_fonts", "x11", "wayland"] }
 rfd               = { workspace = true }
 image             = { workspace = true }
-# Lucide icon rasterization: SVG -> RGBA at draw size, see src/icons.rs.
+# Lucide icon rasterization: SVG -> RGBA at draw size, see src/ui/icons.rs.
 resvg             = { version = "0.48.1", default-features = false }
 serde             = { workspace = true }
 serde_json        = { workspace = true }

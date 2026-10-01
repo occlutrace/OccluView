@@ -17,14 +17,14 @@ use occluview_core::Camera;
 
 use crate::app_settings::{RulerLineAngle, UnitDisplay};
 use crate::i18n::LocaleManager;
-use crate::icons::AppIcon;
 use crate::measure_draw::{self, LABEL_LIFT_PX};
 use crate::measure_ruler::{self, LinePlacement, RulerSegment};
 use crate::measure_tool::{
     format_angle, format_length, MeasureTool, RulerAnchorRef, RulerEndpoint, ThicknessProbe,
     ThicknessReading,
 };
-use crate::ui_theme;
+use crate::ui::icons::AppIcon;
+use crate::ui::ui_theme;
 use crate::viewer::{project_world_to_viewport, viewport_ray};
 
 const RULER_ANCHOR_GRAB_RADIUS_PX: f32 = 10.0;
@@ -491,7 +491,7 @@ pub(crate) fn toolbar_toggle(ui: &mut egui::Ui, control: ToolbarToggle<'_>) -> e
         egui::pos2(rect.left() + 7.0 + icon_side * 0.5, rect.center().y),
         egui::Vec2::splat(icon_side),
     );
-    crate::icons::paint(painter, icon_rect, icon, ink);
+    crate::ui::icons::paint(painter, icon_rect, icon, ink);
     if !compact {
         painter.galley(
             egui::pos2(
@@ -507,9 +507,9 @@ pub(crate) fn toolbar_toggle(ui: &mut egui::Ui, control: ToolbarToggle<'_>) -> e
             egui::pos2(rect.right() - 8.0, rect.center().y),
             egui::vec2(10.0, 10.0),
         );
-        crate::icons::paint(painter, close_rect, AppIcon::Close, ink);
+        crate::ui::icons::paint(painter, close_rect, AppIcon::Close, ink);
     }
-    crate::accessibility::button(&response, label, enabled, Some(active));
+    crate::ui::accessibility::button(&response, label, enabled, Some(active));
     response
         .on_hover_text(tooltip)
         .on_disabled_hover_text(tooltip)

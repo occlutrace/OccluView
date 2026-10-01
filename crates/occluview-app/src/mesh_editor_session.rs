@@ -5,8 +5,8 @@
 use eframe::egui;
 
 use super::{MeshEditorAction, MeshEditorPanelState};
-use crate::icons::AppIcon;
-use crate::ui_theme;
+use crate::ui::icons::AppIcon;
+use crate::ui::ui_theme;
 
 use super::groups::{icon, tall_text_button};
 
@@ -26,7 +26,7 @@ pub(super) fn status(
         ui.horizontal(|ui| {
             let (icon_rect, _) =
                 ui.allocate_exact_size(egui::vec2(13.0, 13.0), egui::Sense::hover());
-            crate::icons::paint(ui.painter(), icon_rect, AppIcon::Warn, ui_theme::warning());
+            crate::ui::icons::paint(ui.painter(), icon_rect, AppIcon::Warn, ui_theme::warning());
             ui.label(
                 egui::RichText::new(locale.tr(crate::i18n::message_id!("meshedit-status-unsaved")))
                     .color(ui_theme::warning())

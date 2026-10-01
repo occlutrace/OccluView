@@ -6,8 +6,8 @@ use occluview_contact::{ContactScale, ContactStats, LOAD_MAX_MM, LOAD_MIN_MM};
 use super::SceneContext;
 use crate::app_settings::UnitDisplay;
 use crate::contact::{ContactMode, ContactStatus};
-use crate::icons::AppIcon;
-use crate::ui_theme;
+use crate::ui::icons::AppIcon;
+use crate::ui::ui_theme;
 
 /// Height of the strip, in points. The legend and the controls share one row so
 /// the bar stays a strip rather than a panel.
@@ -327,13 +327,13 @@ fn paint_strip(
                     egui::vec2(CLOSE_BUTTON_WIDTH, CHIP_HEIGHT),
                     egui::Sense::click(),
                 );
-                crate::accessibility::button(
+                crate::ui::accessibility::button(
                     &close_response,
                     &locale.tr(crate::i18n::message_id!("contact-close-hint")),
                     true,
                     None,
                 );
-                crate::icons::paint(
+                crate::ui::icons::paint(
                     ui.painter(),
                     close_rect.shrink(5.0),
                     AppIcon::Close,
@@ -403,7 +403,7 @@ fn contact_bar_rect_avoiding_layers(
 /// The reading's name and the mark that says what it is.
 fn paint_identity(ui: &mut egui::Ui, title: &str) {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
-    crate::icons::paint(ui.painter(), rect, AppIcon::Contacts, ui_theme::accent());
+    crate::ui::icons::paint(ui.painter(), rect, AppIcon::Contacts, ui_theme::accent());
     response.on_hover_text(title);
 }
 
@@ -470,7 +470,7 @@ fn paint_load(
                 )
                 .labelled_by(label_response.id)
                 .on_hover_text(locale.tr(crate::i18n::message_id!("contact-load-hint")));
-            crate::accessibility::slider(&slider, &label, true, *load_mm);
+            crate::ui::accessibility::slider(&slider, &label, true, *load_mm);
             let value_changed = if show_value {
                 let value = ui
                     .add_sized(
@@ -482,7 +482,7 @@ fn paint_load(
                             .suffix(locale.tr(crate::i18n::message_id!("contact-load-suffix"))),
                     )
                     .labelled_by(label_response.id);
-                crate::accessibility::spin_button(&value, &label, true);
+                crate::ui::accessibility::spin_button(&value, &label, true);
                 value.changed()
             } else {
                 false
