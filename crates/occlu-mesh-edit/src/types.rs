@@ -64,8 +64,6 @@ impl MeshEditBuffers {
 pub enum GeneratedVertexPolicy {
     /// Interpolate or average nearby/boundary attributes when possible.
     InterpolateBoundary,
-    /// Use deterministic neutral fallback attributes.
-    NeutralFallback,
 }
 
 /// Attribute policy shared by mesh edit kernels.
@@ -230,10 +228,6 @@ pub struct MeshEditReport {
     pub removed_triangles: usize,
     /// Filled hole count.
     pub filled_holes: usize,
-    /// Vertices whose position was actually changed (relaxation ops). Lets a
-    /// caller detect a content no-op — e.g. smoothing an already-converged
-    /// region moves nothing and must not dirty the session.
-    pub moved_vertices: usize,
     /// Hole filling: rims left open by the scan-border guard (the mesh's
     /// natural boundary, not damage).
     pub skipped_border_rims: usize,

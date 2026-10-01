@@ -98,7 +98,6 @@ fn edit_faces(
         output_triangles,
         removed_triangles: input_triangles.saturating_sub(output_triangles),
         filled_holes: 0,
-        moved_vertices: 0,
         skipped_border_rims: 0,
         skipped_oversize_rims: 0,
         skipped_damaged_rims: 0,
