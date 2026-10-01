@@ -84,10 +84,13 @@ pub enum FormatError {
     /// The format was recognized, but this reader declined to produce a mesh.
     ///
     /// Three situations arrive here and one message has to fit all of them: a
-    /// deferred reader (3MF), a fast thumbnail path handing back to the full
-    /// reader, and an encrypted container with no key configured. "Not enabled
+    /// fast thumbnail path handing back to the full reader, an encrypted HPS
+    /// package with no key configured, and a `.gltf` (JSON) file, which the GLB
+    /// reader declines so the caller exports it as `.glb` instead. "Not enabled
     /// yet" fits the first but would tell the third that their file type is
-    /// unsupported, which is wrong.
+    /// unsupported, which is wrong. 3MF does not arrive here: `dispatch`
+    /// recognises the format and answers [`Self::Malformed`], because there is
+    /// no reader for it at all rather than a reader that declined.
     #[error("{format} was recognized but not read: {reason}")]
     Deferred {
         /// The recognized format family.
