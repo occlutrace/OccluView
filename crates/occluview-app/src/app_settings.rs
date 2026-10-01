@@ -176,9 +176,9 @@ pub(crate) struct Settings {
     /// Last selected Sculpt brush and tip. They are restored on entering the
     /// Sculpt tab; app startup remains in the non-editing state.
     #[serde(deserialize_with = "deserialize_last_sculpt_tool")]
-    pub(crate) last_sculpt_tool: crate::sculpt_tool::SculptToolKind,
+    pub(crate) last_sculpt_tool: crate::sculpt::sculpt_tool::SculptToolKind,
     #[serde(deserialize_with = "deserialize_last_sculpt_tip")]
-    pub(crate) last_sculpt_tip: crate::sculpt_tool::SculptTip,
+    pub(crate) last_sculpt_tip: crate::sculpt::sculpt_tool::SculptTip,
     /// Compatibility snapshot of one normalized size choice, mapped into the
     /// Ball, Knife and Cylinder physical ranges for the existing settings file.
     #[serde(default = "default_sculpt_radii_mm")]
@@ -208,28 +208,28 @@ const fn default_sculpt_strengths() -> [f32; 2] {
 
 fn deserialize_last_sculpt_tool<'de, D>(
     deserializer: D,
-) -> std::result::Result<crate::sculpt_tool::SculptToolKind, D::Error>
+) -> std::result::Result<crate::sculpt::sculpt_tool::SculptToolKind, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     let value = serde_json::Value::deserialize(deserializer)?;
     Ok(match value.as_str() {
-        Some("smooth") => crate::sculpt_tool::SculptToolKind::Smooth,
-        _ => crate::sculpt_tool::SculptToolKind::AddRemove,
+        Some("smooth") => crate::sculpt::sculpt_tool::SculptToolKind::Smooth,
+        _ => crate::sculpt::sculpt_tool::SculptToolKind::AddRemove,
     })
 }
 
 fn deserialize_last_sculpt_tip<'de, D>(
     deserializer: D,
-) -> std::result::Result<crate::sculpt_tool::SculptTip, D::Error>
+) -> std::result::Result<crate::sculpt::sculpt_tool::SculptTip, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     let value = serde_json::Value::deserialize(deserializer)?;
     Ok(match value.as_str() {
-        Some("knife") => crate::sculpt_tool::SculptTip::Knife,
-        Some("cylinder") => crate::sculpt_tool::SculptTip::Cylinder,
-        _ => crate::sculpt_tool::SculptTip::Ball,
+        Some("knife") => crate::sculpt::sculpt_tool::SculptTip::Knife,
+        Some("cylinder") => crate::sculpt::sculpt_tool::SculptTip::Cylinder,
+        _ => crate::sculpt::sculpt_tool::SculptTip::Ball,
     })
 }
 
@@ -272,8 +272,8 @@ impl Default for Settings {
             ui_scale: 1.0,
             theme: ThemePreference::default(),
             remember_sculpt_brush: true,
-            last_sculpt_tool: crate::sculpt_tool::SculptToolKind::default(),
-            last_sculpt_tip: crate::sculpt_tool::SculptTip::default(),
+            last_sculpt_tool: crate::sculpt::sculpt_tool::SculptToolKind::default(),
+            last_sculpt_tip: crate::sculpt::sculpt_tool::SculptTip::default(),
             sculpt_radii_mm: default_sculpt_radii_mm(),
             sculpt_radius_share: None,
             sculpt_strengths: default_sculpt_strengths(),
@@ -620,8 +620,8 @@ mod tests {
     #[test]
     fn sculpt_selection_round_trips_and_invalid_values_fall_back_safely() -> Result<()> {
         let settings = Settings {
-            last_sculpt_tool: crate::sculpt_tool::SculptToolKind::Smooth,
-            last_sculpt_tip: crate::sculpt_tool::SculptTip::Cylinder,
+            last_sculpt_tool: crate::sculpt::sculpt_tool::SculptToolKind::Smooth,
+            last_sculpt_tip: crate::sculpt::sculpt_tool::SculptTip::Cylinder,
             sculpt_radius_share: Some(0.123_456_7),
             ..Settings::default()
         };
@@ -629,11 +629,11 @@ mod tests {
         let loaded: Settings = serde_json::from_slice(&encoded)?;
         assert_eq!(
             loaded.last_sculpt_tool,
-            crate::sculpt_tool::SculptToolKind::Smooth
+            crate::sculpt::sculpt_tool::SculptToolKind::Smooth
         );
         assert_eq!(
             loaded.last_sculpt_tip,
-            crate::sculpt_tool::SculptTip::Cylinder
+            crate::sculpt::sculpt_tool::SculptTip::Cylinder
         );
         assert_eq!(
             loaded.sculpt_radius_share.map(f32::to_bits),
@@ -645,9 +645,9 @@ mod tests {
         )?;
         assert_eq!(
             invalid.last_sculpt_tool,
-            crate::sculpt_tool::SculptToolKind::AddRemove
+            crate::sculpt::sculpt_tool::SculptToolKind::AddRemove
         );
-        assert_eq!(invalid.last_sculpt_tip, crate::sculpt_tool::SculptTip::Ball);
+        assert_eq!(invalid.last_sculpt_tip, crate::sculpt::sculpt_tool::SculptTip::Ball);
         assert_eq!(invalid.sculpt_radius_share, None);
         Ok(())
     }

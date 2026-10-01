@@ -1,7 +1,7 @@
 #![allow(clippy::float_cmp)]
 
 use crate::mesh_editor_overlay;
-use crate::sculpt_tool::{SculptTip, SculptToolKind};
+use crate::sculpt::sculpt_tool::{SculptTip, SculptToolKind};
 use eframe::egui;
 
 fn wheel_input(modifiers: egui::Modifiers, delta: egui::Vec2) -> egui::RawInput {
