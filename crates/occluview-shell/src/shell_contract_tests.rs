@@ -4,6 +4,7 @@ use super::{
 };
 use roxmltree::{Document, Node};
 use serde_yaml_ng::Value;
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 fn repo_file(path: &str) -> String {
@@ -469,7 +470,7 @@ fn assert_supported_registry_entry(wix: &Document<'_>, extension: &str) {
     assert!(registry_key(wix, &edit_key).is_some());
     assert!(registry_key(wix, &format!("{edit_key}\\command")).is_some());
 
-    if DEDICATED_FILE_ICON_EXTENSIONS.contains(&extension) && extension != "dcm" {
+    if DEDICATED_FILE_ICON_EXTENSIONS.contains(&extension) {
         let icon_key = format!("{progid_key}\\DefaultIcon");
         assert_eq!(
             registry_value(wix, &icon_key, None).as_deref(),
@@ -618,6 +619,45 @@ fn assert_manual_registry_contract(wix: &Document<'_>) {
         ),
         Some(String::new()),
         ".dcm remains visible in Windows app discovery"
+    );
+}
+
+/// The installer's icon entries and the crate's declared list are two independent
+/// facts, so they can disagree — which is the assertion's whole value. While
+/// `DEDICATED_FILE_ICON_EXTENSIONS` aliased `SUPPORTED_EXTENSIONS` it could not
+/// fail.
+#[test]
+fn the_shipped_icon_entries_match_the_declared_icon_list() {
+    let source = repo_file("install/occluview.wxs");
+    let wix = Document::parse(&source).expect("WiX source is well-formed XML");
+    let shipped: BTreeSet<String> = wix
+        .descendants()
+        .filter(|node| node.is_element() && node.tag_name().name() == "RegistryKey")
+        .filter_map(|node| node.attribute("Key"))
+        .filter_map(|key| key.strip_prefix("Software\\Classes\\MeshFile."))
+        .filter_map(|class| class.strip_suffix("\\DefaultIcon"))
+        .map(|class| {
+            // HPS is the one class whose extension does not match its ProgID
+            // spelling: `.hps` and the legacy `.dcm` share it.
+            if class == "HPS" {
+                "hps".to_owned()
+            } else {
+                class.to_ascii_lowercase()
+            }
+        })
+        .collect();
+    let declared: BTreeSet<String> = DEDICATED_FILE_ICON_EXTENSIONS
+        .iter()
+        .map(|extension| (*extension).to_owned())
+        .collect();
+    assert_eq!(
+        declared.len(),
+        DEDICATED_FILE_ICON_EXTENSIONS.len(),
+        "the declared icon list repeats an extension"
+    );
+    assert_eq!(
+        shipped, declared,
+        "the installer ships a DefaultIcon for exactly the declared extensions"
     );
 }
 

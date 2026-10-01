@@ -1,13 +1,12 @@
 /// The installed GUI binary name used by shell "Open with" registration.
 pub const APP_EXE_NAME: &str = "occluview.exe";
 
-/// The CLSID string for the OccluView thumbnail provider.
+/// The shell's `IThumbnailProvider` **category** CLSID, not a CLSID of ours.
 ///
-/// Registered under
-/// `HKCR\.<ext>\ShellEx\{E357FCCD-A995-4576-B01F-234630154E96}` for each
-/// supported extension. (The literal `{E357FCCD-A995-4576-B01F-234630154E96}`
-/// is the shell's `IThumbnailProvider` category, not our own CLSID — our own
-/// CLSID is generated when the COM class lands.)
+/// Registered under `HKCR\.[ext]\ShellEx\<this>` for each supported extension,
+/// which is how Explorer finds whichever handler claims the category. OccluView's
+/// own CLSID is the separate one `occluview_shell.dll` registers; naming this
+/// constant the provider's CLSID pointed every reader at the wrong key.
 pub const THUMBNAIL_PROVIDER_CATEGORY: &str = "{E357FCCD-A995-4576-B01F-234630154E96}";
 
 /// The shell preview handler category used by Explorer's Preview Pane.
@@ -22,8 +21,14 @@ pub const PREVIEW_HANDLER_CATEGORY: &str = "{8895B1C6-B41F-4C1C-A562-0D564250836
 /// sources.
 pub const SUPPORTED_EXTENSIONS: &[&str] = occluview_formats::V1_OPEN_EXTENSIONS;
 
-/// Formats that ship a dedicated file-type icon asset in the MSI.
-pub const DEDICATED_FILE_ICON_EXTENSIONS: &[&str] = SUPPORTED_EXTENSIONS;
+/// Extensions whose MSI registration names the shipped `occluview-3d` icon.
+///
+/// Deliberately not `SUPPORTED_EXTENSIONS`. This is a separate shipped fact: the
+/// installer writes a `DefaultIcon` per `ProgID`, and `.dcm` has none of its own
+/// because it shares the HPS container's. A test parses the entries out of
+/// `install/occluview.wxs` and fails when the two disagree, which no drift can do
+/// while this aliases the supported set.
+pub const DEDICATED_FILE_ICON_EXTENSIONS: &[&str] = &["stl", "ply", "obj", "glb", "off", "hps"];
 
 /// Extensions OccluView reads but must never claim as the machine default.
 ///
