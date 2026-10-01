@@ -26,8 +26,6 @@ pub(super) struct TriBuckets {
     /// Per triangle, the cell range it is stored under. Two corners, not a
     /// list: nothing is allocated per triangle.
     pub(super) triangle_cells: Vec<CellSpan>,
-
-    pub(super) dropped_triangle_visits: usize,
 }
 
 impl TriBuckets {
@@ -51,7 +49,6 @@ impl TriBuckets {
             occupied_axes: Default::default(),
             map: crate::hash::FxHashMap::default(),
             triangle_cells: Vec::with_capacity(tris.len() / 3),
-            dropped_triangle_visits: 0,
         };
         for (ti, t) in tris.as_chunks::<3>().0.iter().enumerate() {
             let span = grid.span_for_points(v(t[0]), v(t[1]), v(t[2]));
@@ -221,11 +218,6 @@ impl TriBuckets {
     /// Forget every triangle at or past `from_id` (topology undo). The caller
     /// truncates its own index buffer afterwards.
     pub(super) fn drop_triangles(&mut self, from_id: u32) {
-        {
-            self.dropped_triangle_visits = self
-                .dropped_triangle_visits
-                .saturating_add(self.triangle_cells.len().saturating_sub(from_id as usize));
-        }
         for index in from_id as usize..self.triangle_cells.len() {
             let triangle = index as u32;
             for cell in span_cells(self.triangle_cells[index]) {

@@ -76,11 +76,6 @@ pub(super) mod diag {
     pub(super) fn peek() -> DabDiagnostics {
         DAB.with(Cell::get)
     }
-
-    /// Put back counters saved with `take`.
-    pub(super) fn restore(saved: DabDiagnostics) {
-        DAB.with(|slot| slot.set(saved));
-    }
 }
 
 /// Why a stroke's dabs did or did not move the surface, as counters.
@@ -165,8 +160,6 @@ mod stroke;
 pub use stroke::tip_dab_spacing_mm;
 mod visible_ray;
 pub use visible_ray::SculptRayConstraints;
-mod warm_up;
-pub use warm_up::warm_up_brush_step;
 
 pub use crate::{RemeshPolicy, SurfacePoint, SurfaceTopology, TopologyRevision};
 use grid::GroupGrid;

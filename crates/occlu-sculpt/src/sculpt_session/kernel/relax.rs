@@ -78,10 +78,6 @@ impl SculptSession {
                 proposals.push((group, target));
             }
         }
-        #[cfg(test)]
-        {
-            self.live_kin.relax_pairs = 1;
-        }
         self.live_kin.proposals = proposals.len() as u32;
         self.commit_even_layer(&proposals, BrushMode::Relax);
         self.proposals = proposals;
