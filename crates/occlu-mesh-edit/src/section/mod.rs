@@ -602,3 +602,35 @@ mod property_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod error_contract {
+    use super::*;
+
+    /// Names every variant so a new one cannot be added without a case here.
+    fn variant_name(error: SectionError) -> &'static str {
+        match error {
+            SectionError::NonFinite => "NonFinite",
+            SectionError::NonUnitNormal => "NonUnitNormal",
+            SectionError::DegenerateNormal => "DegenerateNormal",
+        }
+    }
+
+    #[test]
+    fn every_section_error_variant_renders_an_operator_message() {
+        let variants = [
+            SectionError::NonFinite,
+            SectionError::NonUnitNormal,
+            SectionError::DegenerateNormal,
+        ];
+        for variant in &variants {
+            assert!(!variant_name(*variant).is_empty());
+            let message = variant.to_string();
+            assert!(!message.trim().is_empty(), "empty message for {variant:?}");
+            assert!(
+                !message.contains("occlu-") && !message.contains("occlu_"),
+                "operator message names an internal crate: {message:?}"
+            );
+        }
+    }
+}

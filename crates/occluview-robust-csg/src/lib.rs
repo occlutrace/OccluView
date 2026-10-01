@@ -157,3 +157,54 @@ pub use disc_split::{
     validate_separator_clearance,
 };
 pub use prepared_solid::{prepare_robust_solid, PreparedRobustSolid};
+
+#[cfg(test)]
+mod error_contract {
+    use super::*;
+
+    /// Names every variant so a new one cannot be added without a case here.
+    fn variant_name(error: &RobustCsgError) -> &'static str {
+        match error {
+            RobustCsgError::InvalidInput { .. } => "InvalidInput",
+            RobustCsgError::Kernel { .. } => "Kernel",
+            RobustCsgError::UnexpectedComponents { .. } => "UnexpectedComponents",
+            RobustCsgError::SeparatorMiss => "SeparatorMiss",
+            RobustCsgError::KerfSpanningComponent { .. } => "KerfSpanningComponent",
+            RobustCsgError::SeparatorClearanceLost => "SeparatorClearanceLost",
+            RobustCsgError::AmbiguousShellWinding { .. } => "AmbiguousShellWinding",
+            RobustCsgError::InvalidTransform { .. } => "InvalidTransform",
+        }
+    }
+
+    #[test]
+    fn every_robust_csg_error_variant_renders_an_operator_message() {
+        let variants = [
+            RobustCsgError::InvalidInput {
+                reason: "the mesh has no triangles".to_string(),
+            },
+            RobustCsgError::Kernel {
+                reason: "the native kernel refused the input".to_string(),
+            },
+            RobustCsgError::UnexpectedComponents { components: 3 },
+            RobustCsgError::SeparatorMiss,
+            RobustCsgError::KerfSpanningComponent { component: 1 },
+            RobustCsgError::SeparatorClearanceLost,
+            RobustCsgError::AmbiguousShellWinding {
+                shell: 0,
+                reason: "the shell is inward".to_string(),
+            },
+            RobustCsgError::InvalidTransform {
+                reason: "the transform is singular".to_string(),
+            },
+        ];
+        for variant in &variants {
+            assert!(!variant_name(variant).is_empty());
+            let message = variant.to_string();
+            assert!(!message.trim().is_empty(), "empty message for {variant:?}");
+            assert!(
+                !message.contains("occlu-") && !message.contains("occlu_"),
+                "operator message names an internal crate: {message:?}"
+            );
+        }
+    }
+}

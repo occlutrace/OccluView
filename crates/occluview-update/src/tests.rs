@@ -482,3 +482,43 @@ fn an_installer_swapped_after_download_is_caught_before_launch() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Every update failure renders an operator sentence that names no crate.
+#[test]
+fn every_update_error_variant_renders_an_operator_message() {
+    let variants = [
+        UpdateError::Http("the server returned 503".to_string()),
+        UpdateError::BadSignature,
+        UpdateError::BadHash,
+        UpdateError::BadManifest("missing version".to_string()),
+        UpdateError::NoPlatformAsset,
+        UpdateError::Io(std::io::Error::other("the download stopped early")),
+        UpdateError::UnsafeDownloadDir("/tmp".to_string()),
+        UpdateError::Unsupported,
+        UpdateError::UnsupportedInstallerFormat,
+    ];
+    for variant in &variants {
+        assert!(!update_error_variant_name(variant).is_empty());
+        let message = variant.to_string();
+        assert!(!message.trim().is_empty(), "empty message for {variant:?}");
+        assert!(
+            !message.contains("occlu-") && !message.contains("occlu_"),
+            "operator message names an internal crate: {message:?}"
+        );
+    }
+}
+
+/// Names every variant so a new one cannot be added without a case here.
+fn update_error_variant_name(error: &UpdateError) -> &'static str {
+    match error {
+        UpdateError::Http(_) => "Http",
+        UpdateError::BadSignature => "BadSignature",
+        UpdateError::BadHash => "BadHash",
+        UpdateError::BadManifest(_) => "BadManifest",
+        UpdateError::NoPlatformAsset => "NoPlatformAsset",
+        UpdateError::Io(_) => "Io",
+        UpdateError::UnsafeDownloadDir(_) => "UnsafeDownloadDir",
+        UpdateError::Unsupported => "Unsupported",
+        UpdateError::UnsupportedInstallerFormat => "UnsupportedInstallerFormat",
+    }
+}

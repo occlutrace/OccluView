@@ -66,3 +66,44 @@ mod tests {
         assert!(format!("{e}").contains('7'));
     }
 }
+
+#[cfg(test)]
+mod error_contract {
+    use super::*;
+
+    /// Names every variant so a new one cannot be added without a case here.
+    fn variant_name(error: &CoreError) -> &'static str {
+        match error {
+            CoreError::IndexOutOfRange { .. } => "IndexOutOfRange",
+            CoreError::IndexCountNotMultipleOfThree { .. } => "IndexCountNotMultipleOfThree",
+            CoreError::Geometry(_) => "Geometry",
+            CoreError::MeshOutgrewItsSource { .. } => "MeshOutgrewItsSource",
+        }
+    }
+
+    #[test]
+    fn every_core_error_variant_renders_an_operator_message() {
+        let variants = [
+            CoreError::IndexOutOfRange {
+                at_index: 4,
+                value: 99,
+                vertex_count: 10,
+            },
+            CoreError::IndexCountNotMultipleOfThree { index_count: 7 },
+            CoreError::Geometry("a triangle is degenerate".to_string()),
+            CoreError::MeshOutgrewItsSource {
+                mesh_bytes: 32,
+                input_bytes: 8,
+            },
+        ];
+        for variant in &variants {
+            assert!(!variant_name(variant).is_empty());
+            let message = variant.to_string();
+            assert!(!message.trim().is_empty(), "empty message for {variant:?}");
+            assert!(
+                !message.contains("occlu-") && !message.contains("occlu_"),
+                "operator message names an internal crate: {message:?}"
+            );
+        }
+    }
+}

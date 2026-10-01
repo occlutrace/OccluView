@@ -73,6 +73,20 @@ Subscribers live in the binaries. A library crate that does not already depend
 on `tracing` must not add it to emit a breadcrumb; return a value or an error
 and let the calling binary decide whether the outcome deserves a line.
 
+## Errors
+
+A fallible operation returns a typed error enum owned by the crate that first
+names the failure; a caller that only forwards it returns the same type instead
+of re-wrapping it. Application code carries the failure as `anyhow::Error` and
+downcasts to the typed enum at the UI boundary, where the operator-facing
+sentence is produced. Every `Display` message is such a sentence: it names what
+failed and what the operator can do, never an internal crate, module, or
+variant identifier, and never a path, file name, or case identifier. A file
+path belongs in the caller's `anyhow` context, not in the enum. Each public
+error enum has a test that constructs every variant and asserts its rendered
+message is non-empty and free of internal crate names, so a variant cannot be
+added without a case there.
+
 ## Tests
 
 For behaviour changes, add or update tests. Prefer behavioural assertions over

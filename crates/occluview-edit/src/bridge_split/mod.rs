@@ -744,3 +744,46 @@ fn invalid_transform(reason: &str) -> CoreBridgeSplitError {
 pub(super) fn conversion(reason: String) -> CoreBridgeSplitError {
     CoreBridgeSplitError::Conversion { reason }
 }
+
+#[cfg(test)]
+mod error_contract {
+    use super::*;
+
+    /// Names every variant so a new one cannot be added without a case here.
+    fn variant_name(error: &CoreBridgeSplitError) -> &'static str {
+        match error {
+            CoreBridgeSplitError::InvalidTransform { .. } => "InvalidTransform",
+            CoreBridgeSplitError::Conversion { .. } => "Conversion",
+            CoreBridgeSplitError::Kernel(_) => "Kernel",
+            CoreBridgeSplitError::Core(_) => "Core",
+            CoreBridgeSplitError::RobustCsg { .. } => "RobustCsg",
+        }
+    }
+
+    #[test]
+    fn every_core_bridge_split_error_variant_renders_an_operator_message() {
+        let cause = CoreError::Geometry("a triangle is degenerate".to_string());
+        let variants = [
+            CoreBridgeSplitError::InvalidTransform {
+                reason: "the matrix is not invertible".to_string(),
+            },
+            CoreBridgeSplitError::Conversion {
+                reason: "a coordinate is out of range".to_string(),
+            },
+            CoreBridgeSplitError::Kernel(BridgeSplitError::EmptyInput),
+            CoreBridgeSplitError::Core(cause),
+            CoreBridgeSplitError::RobustCsg {
+                reason: "the fallback found no solid".to_string(),
+            },
+        ];
+        for variant in &variants {
+            assert!(!variant_name(variant).is_empty());
+            let message = variant.to_string();
+            assert!(!message.trim().is_empty(), "empty message for {variant:?}");
+            assert!(
+                !message.contains("occlu-") && !message.contains("occlu_"),
+                "operator message names an internal crate: {message:?}"
+            );
+        }
+    }
+}
