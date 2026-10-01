@@ -249,7 +249,7 @@ fn build_surface(
 /// Area-weighted vertex normals for HPS surfaces.
 ///
 /// The accumulation and the facet-degeneracy threshold are shared with
-/// `occlu-mesh-edit` and `occluview-core` via `occluview-geometry-math`, so the
+/// `occluview-mesh-edit` and `occluview-core` via `occluview-geometry-math`, so the
 /// crates cannot drift apart. A vertex that only touches degenerate or missing
 /// facets keeps a hard +Z fallback.
 fn smooth_normals(positions: &[[f32; 3]], indices: &[u32]) -> Vec<[f32; 3]> {

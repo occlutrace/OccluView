@@ -16,7 +16,7 @@
 )]
 
 use glam::{Affine3A, Mat3, Quat, Vec3};
-use occlu_mesh_edit::{BridgeSplitError, BridgeSplitRequest};
+use occluview_mesh_edit::{BridgeSplitError, BridgeSplitRequest};
 use occluview_core::{Mesh, MeshTexture, Vertex};
 use occluview_edit::{
     bridge_split_mesh_in_world, mesh_edit_buffers_from_mesh, normalize_bridge_split_input,
@@ -207,11 +207,11 @@ fn world_adapter_keeps_multiple_closed_components_in_one_logical_part() {
             .expect("world adapter must preserve a valid multi-component side");
 
     assert_eq!(
-        occlu_mesh_edit::validate_bridge_split_part(&mesh_edit_buffers_from_mesh(&result.part_a)),
+        occluview_mesh_edit::validate_bridge_split_part(&mesh_edit_buffers_from_mesh(&result.part_a)),
         Ok(2)
     );
     assert_eq!(
-        occlu_mesh_edit::validate_bridge_split_part(&mesh_edit_buffers_from_mesh(&result.part_b)),
+        occluview_mesh_edit::validate_bridge_split_part(&mesh_edit_buffers_from_mesh(&result.part_b)),
         Ok(1)
     );
 }

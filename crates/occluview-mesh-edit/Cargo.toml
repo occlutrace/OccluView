@@ -1,7 +1,8 @@
-# occlu-mesh-edit — product-neutral mesh editing kernels.
+# occluview-mesh-edit — product-neutral mesh-editing kernel behind the
+# occluview-edit façade.
 [package]
-name = "occlu-mesh-edit"
-description = "Pure mesh editing kernels shared by OccluView and OccluTrace adapters."
+name = "occluview-mesh-edit"
+description = "Product-neutral mesh editing kernel; the occluview-edit facade adapts it to the core mesh model."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

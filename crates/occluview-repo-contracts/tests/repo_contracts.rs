@@ -705,7 +705,7 @@ fn release_version_is_kept_in_sync_across_workspace_lockfile_and_installer() {
 
     for package in [
         "occluview-geometry-math",
-        "occlu-mesh-edit",
+        "occluview-mesh-edit",
         "occlu-sculpt",
         "occluview-align",
         "occluview-contact",

@@ -12,7 +12,7 @@ resolver = "2"
 members = [
     "crates/occluview-geometry-math",
     "crates/occluview-i18n",
-    "crates/occlu-mesh-edit",
+    "crates/occluview-mesh-edit",
     "crates/occlu-sculpt",
     "crates/occluview-robust-csg",
     "crates/occluview-surface-query",
@@ -36,7 +36,7 @@ exclude = ["fuzz"]
 # cross-platform app and logic crates here; the Windows COM shell crate remains
 # opt-in unless the full workspace is requested.
 default-members = [
-    "crates/occlu-mesh-edit",
+    "crates/occluview-mesh-edit",
     "crates/occlu-sculpt",
     "crates/occluview-align",
     "crates/occluview-surface-query",
@@ -61,7 +61,7 @@ occluview-repo-contracts = 0
 occluview-robust-csg = 0
 occluview-update = 0
 # Geometry kernels and the shared surface query.
-occlu-mesh-edit = 1
+occluview-mesh-edit = 1
 occlu-sculpt = 1
 occluview-surface-query = 1
 occluview-hps = 1
@@ -96,7 +96,7 @@ publish = false              # we are not on crates.io yet
 # Internal crates.
 occluview-geometry-math = { path = "crates/occluview-geometry-math" }
 occluview-i18n = { path = "crates/occluview-i18n" }
-occlu-mesh-edit  = { path = "crates/occlu-mesh-edit" }
+occluview-mesh-edit = { path = "crates/occluview-mesh-edit" }
 occlu-sculpt     = { path = "crates/occlu-sculpt" }
 occluview-robust-csg = { path = "crates/occluview-robust-csg" }
 occluview-surface-query = { path = "crates/occluview-surface-query" }

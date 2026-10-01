@@ -6,7 +6,7 @@ use occluview_geometry_math::{DUPLICATE_NORMAL_DOT, MAX_PAIRWISE_DUPLICATE_GROUP
 use rayon::prelude::*;
 
 /// The welding tolerance and its key function live in `occluview-geometry-math`,
-/// shared with `occlu-mesh-edit`. One number has to decide which vertices
+/// shared with `occluview-mesh-edit`. One number has to decide which vertices
 /// share a normal at load and after every edit, or a scan changes shading the
 /// first time it is touched.
 use occluview_geometry_math::coincident_position_key as position_key;
