@@ -37,38 +37,43 @@ pub const UPDATE_PUBKEY: &str = "RWRoIIL40qxwrFOI5OeCx0Fcf1ClUksy36PrIZrdKkGhQq2
 /// see `SECURITY.md`.
 pub const UPDATE_PUBKEYS: &[&str] = &[UPDATE_PUBKEY];
 
-/// Manifest platform key for the running build.
+/// Manifest platform keys the release workflow publishes.
+///
+/// `scripts/write-latest-json.py` writes exactly these entries, and a target
+/// with no entry here has no installable update, so [`PLATFORM`] is
+/// `"unsupported"` on it. A key added on one side must be added on the other.
+pub const PUBLISHED_PLATFORMS: &[&str] = &["windows-x86_64", "linux-x86_64", "macos-aarch64"];
+
+/// Wire-format version of `latest.json` this client understands.
+///
+/// Adding a field does not bump this, so a manifest may carry fields older
+/// clients do not know and they keep working. A bump means an existing field
+/// changed meaning; the client then refuses the manifest instead of acting on
+/// a shape it cannot vouch for.
+const MANIFEST_SCHEMA: u32 = 1;
+
+/// Default for a manifest written before the schema field existed.
+fn default_manifest_schema() -> u32 {
+    MANIFEST_SCHEMA
+}
+
+/// Manifest platform key for the running build, when the release publishes an
+/// artifact for it.
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 pub const PLATFORM: &str = "windows-x86_64";
-/// Manifest platform key for the running build.
-#[cfg(all(target_os = "windows", target_arch = "aarch64"))]
-pub const PLATFORM: &str = "windows-aarch64";
-/// Manifest platform key for the running build.
+/// Manifest platform key for the running build, when the release publishes an
+/// artifact for it.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub const PLATFORM: &str = "linux-x86_64";
-/// Manifest platform key for the running build.
-#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-pub const PLATFORM: &str = "linux-aarch64";
-/// Manifest platform key for the running build.
-#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-pub const PLATFORM: &str = "macos-x86_64";
-/// Manifest platform key for the running build.
+/// Manifest platform key for the running build, when the release publishes an
+/// artifact for it.
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 pub const PLATFORM: &str = "macos-aarch64";
-/// Manifest platform key for builds with no published platform key.
+/// Manifest platform key for a target the release does not package.
 #[cfg(not(any(
-    all(
-        target_os = "windows",
-        any(target_arch = "x86_64", target_arch = "aarch64")
-    ),
-    all(
-        target_os = "linux",
-        any(target_arch = "x86_64", target_arch = "aarch64")
-    ),
-    all(
-        target_os = "macos",
-        any(target_arch = "x86_64", target_arch = "aarch64")
-    ),
+    all(target_os = "windows", target_arch = "x86_64"),
+    all(target_os = "linux", target_arch = "x86_64"),
+    all(target_os = "macos", target_arch = "aarch64"),
 )))]
 pub const PLATFORM: &str = "unsupported";
 
@@ -111,6 +116,10 @@ pub enum UpdateError {
 
 #[derive(serde::Deserialize)]
 struct Manifest {
+    /// Wire-format version; absent in manifests written before the field
+    /// existed, which predate every schema change.
+    #[serde(default = "default_manifest_schema")]
+    schema: u32,
     version: String,
     #[serde(default)]
     notes: Option<String>,
@@ -195,6 +204,12 @@ pub fn check_with(
 
     let manifest: Manifest = serde_json::from_slice(&manifest_bytes)
         .map_err(|error| UpdateError::BadManifest(error.to_string()))?;
+    if !(1..=MANIFEST_SCHEMA).contains(&manifest.schema) {
+        return Err(UpdateError::BadManifest(format!(
+            "manifest schema {} is not supported; this client reads schema {MANIFEST_SCHEMA}",
+            manifest.schema
+        )));
+    }
     let latest = parse_version(&manifest.version)?;
     let current = parse_version(current_version)?;
     if latest <= current {

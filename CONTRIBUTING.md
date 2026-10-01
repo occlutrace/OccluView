@@ -128,6 +128,17 @@ Bump the workspace version, update `CHANGELOG.md`, and tag `vX.Y.Z`. The release
 workflow builds and verifies the distributable packages. Signing-key rotation is
 described in `SECURITY.md`.
 
+Every crate is `publish = false`, so the workspace carries no semver obligation
+to crates.io. The one compatibility-committed artifact is the update feed:
+installed copies fetch `latest.json` from the latest release and verify it
+against the key compiled into the binary, so the manifest's field names and
+platform keys are a stable contract. Add a field when a release needs one —
+older clients ignore what they do not know — but do not rename, remove, or
+repurpose one without bumping the `schema` the reader checks.
+`scripts/write-latest-json.py` writes the manifest and must agree with the
+platform keys in `crates/occluview-update`; the installers it names are the
+Windows MSI, the Linux `.deb`, and the notarized macOS `.pkg`.
+
 Two checks are local and cannot run in CI, because CI has no patient scans and
 no Explorer session. Both fail rather than skip: a gate that passes without
 checking anything is worse than no gate.
