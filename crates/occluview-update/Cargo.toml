@@ -1,3 +1,4 @@
+# occluview-update — signed update-manifest checks; the only crate carrying HTTP and signature verification.
 [package]
 name = "occluview-update"
 description = "Self-update checks for OccluView: signed latest.json manifest, artifact verification, installer handoff."

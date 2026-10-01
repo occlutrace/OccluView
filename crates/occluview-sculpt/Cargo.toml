@@ -1,3 +1,4 @@
+# occluview-sculpt — surface sculpting kernel; its size and `parallel` feature are a real compile cut the app builds on.
 [package]
 name = "occluview-sculpt"
 description = "Surface sculpting kernel: brush dabs, live remeshing and stroke sessions for dental scan meshes."

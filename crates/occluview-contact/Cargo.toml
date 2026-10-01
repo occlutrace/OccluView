@@ -1,3 +1,4 @@
+# occluview-contact — occlusal contact law with its own determinism tests; render's shader test cross-checks its colour stops.
 [package]
 name = "occluview-contact"
 version.workspace = true
