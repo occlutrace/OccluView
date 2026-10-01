@@ -726,6 +726,10 @@ mod viewport_ownership_tests {
     }
 
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Keep the complete gesture and its state assertions in one regression scenario."
+    )]
     fn sculpt_reentry_after_an_overlay_leaves_the_hidden_surface_untouched() {
         use crate::sculpt_tool::SculptTip;
 

@@ -1380,8 +1380,8 @@ mod tests {
             start: before,
             pivot_local: Vec3::ZERO,
         });
-        scene.tools.align.drag_last_pointer_pos = Some(eframe::egui::pos2(10.0, 20.0));
-        scene.tools.align.drag_modifiers = Some(eframe::egui::Modifiers::CTRL);
+        scene.tools.align.drag_last_pointer_pos = Some(egui::pos2(10.0, 20.0));
+        scene.tools.align.drag_modifiers = Some(egui::Modifiers::CTRL);
         scene.tools.align.drag_pose_changed = true;
         scene.document.unsaved_drag_pose = true;
 

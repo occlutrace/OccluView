@@ -801,6 +801,10 @@ mod tests {
     /// Switching modifiers during one held gesture keeps the same local
     /// surface anchor attached to the pose as translation moves it.
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Keep the complete gesture and its state assertions in one regression scenario."
+    )]
     fn changing_between_translation_and_tilt_keeps_the_current_grab_point() {
         let (mut app, id, mut camera) = rig("mixed-manual-gesture");
         camera.orbit_view_by(0.25, -0.18);

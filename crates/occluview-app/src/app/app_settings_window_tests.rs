@@ -4,6 +4,8 @@ use crate::app::app_settings_panel::show_settings_toolbar_toggle;
 #[cfg(target_os = "macos")]
 use crate::app::app_settings_panel::SettingsAction;
 #[cfg(target_os = "macos")]
+use crate::app::OccluViewApp;
+#[cfg(target_os = "macos")]
 use crate::app_settings::ScrollBehavior;
 use crate::app_settings::Settings;
 use crate::i18n::os::OsLocaleSource;
