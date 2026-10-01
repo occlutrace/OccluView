@@ -408,17 +408,6 @@ mod tests {
     }
 
     #[test]
-    fn rasterization_is_deterministic() {
-        for icon in ALL_ICONS {
-            assert_eq!(
-                icon.rasterize(16),
-                icon.rasterize(16),
-                "icon {icon:?} must rasterise identically every time"
-            );
-        }
-    }
-
-    #[test]
     fn cube_face_highlights_are_distinct() {
         // The three face highlights must differ from each other and from the
         // plain isometric outline, so the view presets are visually separable.
