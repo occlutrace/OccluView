@@ -156,7 +156,6 @@ load-adding = { $count ->
 }
 load-open-failed-start = Open failed: could not start loader
 load-add-failed-start = Add failed: could not start loader
-load-open-failed-stopped = Open failed: loader stopped
 load-loader-failed-summary = The background scene loader could not be started.
 # A file larger than the viewer reads. The limit is in the message because
 # the operator's next step depends on how far over it they are.
@@ -582,16 +581,9 @@ align-arrow-removed = { $n ->
 }
 align-status-markings-changed = Markings changed
 align-status-place-arrow-first = Place at least one arrow before marking automatically
-align-status-arrows-cleared = Arrows cleared — moving by hand from here
 
 ## Unsaved-work guards and error dialog buttons.
 
-guard-close-title = Unsaved mesh edits
-guard-close-headline-one = 1 edited layer has not been saved to disk.
-guard-close-headline-many = Edited layers have not been saved to disk.
-guard-close-note = { $count } edited layers are affected.
-guard-close-detail = Save exports each edited layer (PLY, STL, or OBJ) and then closes.
-guard-close-destructive = Close without saving
 guard-replace-title = Edit in progress
 guard-replace-headline-session = An edit session is active on { $layer }.
 guard-replace-headline-one = 1 edited layer has unsaved changes.

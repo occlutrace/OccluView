@@ -159,7 +159,6 @@ load-adding = { $count ->
 }
 load-open-failed-start = Не удалось открыть: загрузчик не запустился
 load-add-failed-start = Не удалось добавить: загрузчик не запустился
-load-open-failed-stopped = Не удалось открыть: загрузчик остановлен
 load-loader-failed-summary = Не удалось запустить фоновый загрузчик сцены.
 load-file-too-large = Файл { $size } GiB — больше, чем { $limit } GiB, которые программа читает за один раз
 load-memory-budget-exceeded = Текущая сцена и эти файлы займут около { $size } GiB; лимит импорта программы — { $limit } GiB. Закройте слои или загрузите меньше файлов.
@@ -652,16 +651,9 @@ align-arrow-removed = { $n ->
 }
 align-status-markings-changed = Пометки изменены
 align-status-place-arrow-first = Поставьте хотя бы одну стрелку перед автопометкой
-align-status-arrows-cleared = Стрелки убраны — дальше вручную
 
 ## Unsaved-work guards and error dialog buttons — DRAFT.
 
-guard-close-title = Несохранённые правки сетки
-guard-close-headline-one = 1 изменённый слой не записан на диск.
-guard-close-headline-many = Изменённые слои не записаны на диск.
-guard-close-note = Затронуто изменённых слоёв: { $count }.
-guard-close-detail = Сохранение экспортирует каждый изменённый слой (PLY, STL или OBJ), затем закрывает.
-guard-close-destructive = Закрыть без сохранения
 guard-replace-title = Идёт редактирование
 guard-replace-headline-session = На слое { $layer } активна сессия редактирования.
 guard-replace-headline-one = 1 изменённый слой с несохранёнными изменениями.

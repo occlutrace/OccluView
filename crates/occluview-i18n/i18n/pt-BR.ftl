@@ -154,7 +154,6 @@ load-adding = { $count ->
 }
 load-open-failed-start = Falha ao abrir: carregador não iniciou
 load-add-failed-start = Falha ao adicionar: carregador não iniciou
-load-open-failed-stopped = Falha ao abrir: carregador parou
 load-loader-failed-summary = Não deu para iniciar o carregador de cena.
 load-file-too-large = O arquivo tem { $size } GiB, acima dos { $limit } GiB lidos de uma vez
 load-memory-budget-exceeded = A cena atual e estes arquivos precisam de cerca de { $size } GiB; o limite de importação é { $limit } GiB. Feche camadas ou carregue menos arquivos.
@@ -578,16 +577,9 @@ align-arrow-removed = { $n ->
 }
 align-status-markings-changed = Marcas mudadas
 align-status-place-arrow-first = Posicione ao menos uma seta antes de marcar
-align-status-arrows-cleared = Setas fora — na mão daqui em diante
 
 ## Unsaved-work guards and error dialog buttons — DRAFT.
 
-guard-close-title = Edições de malha não salvas
-guard-close-headline-one = 1 camada editada não salva.
-guard-close-headline-many = Camadas editadas não salvas.
-guard-close-note = { $count } camadas editadas afetadas.
-guard-close-detail = Salvar exporta cada camada (PLY, STL ou OBJ) e fecha.
-guard-close-destructive = Fechar sem salvar
 guard-replace-title = Edição em curso
 guard-replace-headline-session = Há uma sessão ativa em { $layer }.
 guard-replace-headline-one = 1 camada com mudanças não salvas.

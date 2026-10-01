@@ -153,7 +153,6 @@ load-adding = { $count ->
 }
 load-open-failed-start = Apertura fallita: loader non partito
 load-add-failed-start = Aggiunta fallita: loader non partito
-load-open-failed-stopped = Apertura fallita: loader fermo
 load-loader-failed-summary = Il loader di scena non si è avviato.
 load-file-too-large = Il file è di { $size } GiB, oltre i { $limit } GiB letti in un colpo solo
 load-memory-budget-exceeded = La scena attuale e questi file richiedono circa { $size } GiB; il limite di importazione è { $limit } GiB. Chiudi alcuni livelli o carica meno file.
@@ -576,16 +575,9 @@ align-arrow-removed = { $n ->
 }
 align-status-markings-changed = Marcature cambiate
 align-status-place-arrow-first = Piazza almeno una freccia prima di marcare
-align-status-arrows-cleared = Frecce via — a mano da qui
 
 ## Unsaved-work guards and error dialog buttons — DRAFT.
 
-guard-close-title = Modifiche mesh non salvate
-guard-close-headline-one = 1 livello modificato non salvato.
-guard-close-headline-many = Livelli modificati non salvati.
-guard-close-note = { $count } livelli modificati coinvolti.
-guard-close-detail = Salva esporta ogni livello (PLY, STL o OBJ) e chiude.
-guard-close-destructive = Chiudi senza salvare
 guard-replace-title = Editing in corso
 guard-replace-headline-session = Sessione attiva su { $layer }.
 guard-replace-headline-one = 1 livello modificato non salvato.

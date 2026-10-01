@@ -64,6 +64,7 @@ pub(crate) fn paint_measurements(
         project: |point| project_world_to_viewport(camera, viewport_rect, point).map(|(p, _)| p),
         segments: &segments,
         unit,
+        number_format: locale.number_format(),
     };
     let preview = hover
         .and_then(|pointer| line_target(camera, viewport_rect, tool, pointer, line_angle))
@@ -211,13 +212,14 @@ struct OnScreen {
 }
 
 /// What every ruler needs to paint itself: the painter, the world-to-screen
-/// projection, every resolved ruler (a ruler on a line reads its base) and the
-/// display unit.
+/// projection, every resolved ruler (a ruler on a line reads its base), the
+/// display unit and the locale's number separators.
 struct RulerPainter<'a, P> {
     painter: &'a egui::Painter,
     project: P,
     segments: &'a [RulerSegment],
     unit: UnitDisplay,
+    number_format: crate::i18n::catalog::NumberFormat,
 }
 
 impl<P: Fn(Vec3) -> Option<egui::Pos2>> RulerPainter<'_, P> {
@@ -235,7 +237,7 @@ impl<P: Fn(Vec3) -> Option<egui::Pos2>> RulerPainter<'_, P> {
         measure_draw::segment(self.painter, a, b);
         measure_draw::anchor_dot(self.painter, a);
         measure_draw::anchor_dot(self.painter, b);
-        let label = format_length(segment.distance_mm(), self.unit);
+        let label = format_length(segment.distance_mm(), self.unit, self.number_format);
         if crossing.is_some() {
             measure_draw::label_chip_beside(self.painter, a, b, &label, crossing);
             return;
@@ -295,7 +297,7 @@ impl<P: Fn(Vec3) -> Option<egui::Pos2>> RulerPainter<'_, P> {
             painter,
             start,
             end,
-            &format_length(ruler.distance_mm(), self.unit),
+            &format_length(ruler.distance_mm(), self.unit, self.number_format),
             angle_label,
         );
     }
@@ -341,7 +343,12 @@ impl<P: Fn(Vec3) -> Option<egui::Pos2>> RulerPainter<'_, P> {
         } else {
             measure_draw::angle_arc(painter, end, along, start - end)
         }?;
-        measure_draw::label_chip(painter, label_at, &format_angle(angle), ui_theme::text());
+        measure_draw::label_chip(
+            painter,
+            label_at,
+            &format_angle(angle, self.number_format),
+            ui_theme::text(),
+        );
         Some(label_at)
     }
 }
@@ -374,7 +381,7 @@ fn paint_probe(
             measure_draw::label_chip(
                 painter,
                 label_anchor,
-                &format_length(f64::from(thickness_mm), unit),
+                &format_length(f64::from(thickness_mm), unit, locale.number_format()),
                 ui_theme::text(),
             );
         }

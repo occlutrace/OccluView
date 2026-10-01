@@ -333,7 +333,12 @@ impl CutRuler {
     /// Draw the current measurement through `map` (so it scales with zoom/pan),
     /// using the shared measure-draw "ray" look so the panel reads identically to
     /// the main-viewport thickness probe.
-    pub(crate) fn draw(&self, painter: &egui::Painter, map: &SlicePlaneMap) {
+    pub(crate) fn draw(
+        &self,
+        painter: &egui::Painter,
+        map: &SlicePlaneMap,
+        number_format: crate::i18n::catalog::NumberFormat,
+    ) {
         if let Some(mark) = self.thickness {
             let entry = map.world_to_panel(mark.entry);
             let exit = map.world_to_panel(mark.exit);
@@ -341,7 +346,7 @@ impl CutRuler {
                 painter,
                 entry,
                 exit,
-                &measure_tool::format_mm(f64::from(mark.thickness_mm)),
+                &measure_tool::format_mm(f64::from(mark.thickness_mm), number_format),
             );
             return;
         }
@@ -367,7 +372,7 @@ impl CutRuler {
                     measure_draw::label_chip(
                         painter,
                         mid,
-                        &measure_tool::format_mm(distance),
+                        &measure_tool::format_mm(distance, number_format),
                         ui_theme::text(),
                     );
                 }
