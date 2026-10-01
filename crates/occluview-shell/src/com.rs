@@ -41,7 +41,7 @@
 )]
 
 use crate::deferred_source::DeferredSource;
-use crate::preview_scene::{win32_preview_orbit_delta, PreviewSceneState};
+use crate::preview_scene::PreviewSceneState;
 use crate::stream_read::{
     read_capped_stream, read_capped_stream_until, StreamRead, StreamReadBounds,
 };
