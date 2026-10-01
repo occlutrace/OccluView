@@ -786,23 +786,6 @@ impl SceneContext<'_> {
     }
 }
 
-#[cfg(test)]
-fn intercept_unsaved_close_request(
-    ctx: &egui::Context,
-    has_unsaved_mesh_edits: bool,
-    close_confirmed: bool,
-    close_guard_open: &mut bool,
-) {
-    if ctx.input(|input| input.viewport().close_requested())
-        && has_unsaved_mesh_edits
-        && !close_confirmed
-    {
-        ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-        *close_guard_open = true;
-        ctx.request_repaint();
-    }
-}
-
 /// Slim vertical hairline between toolbar groups.
 fn toolbar_divider(ui: &mut egui::Ui) {
     ui_theme::vertical_divider(ui, 18.0);
@@ -811,32 +794,6 @@ fn toolbar_divider(ui: &mut egui::Ui) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn hidden_window_close_is_cancelled_before_ui_can_run() {
-        let ctx = egui::Context::default();
-        let mut input = egui::RawInput::default();
-        let root_viewport = input.viewports.get_mut(&egui::ViewportId::ROOT);
-        assert!(root_viewport.is_some(), "root viewport exists");
-        let Some(root_viewport) = root_viewport else {
-            panic!("required test setup or expected result was missing");
-        };
-        root_viewport.events.push(egui::ViewportEvent::Close);
-        let mut close_guard_open = false;
-
-        let output = ctx.run_logic(&input, |ctx| {
-            intercept_unsaved_close_request(ctx, true, false, &mut close_guard_open);
-        });
-
-        assert!(close_guard_open, "unsaved close must open the guard");
-        assert!(
-            output
-                .viewport_commands
-                .get(&egui::ViewportId::ROOT)
-                .is_some_and(|commands| { commands.contains(&egui::ViewportCommand::CancelClose) }),
-            "logic-only close must be cancelled before eframe exits"
-        );
-    }
 
     #[test]
     fn production_guard_dialog_stays_content_sized() -> anyhow::Result<()> {
