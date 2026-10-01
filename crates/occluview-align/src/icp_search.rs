@@ -376,6 +376,21 @@ fn global_seed_candidates_from_small_fixed(
         cancel: level.cancel,
         start: level.start,
     };
+    // Every hypothesis is scored once here and only the retained shortlist is
+    // re-scored at full resolution afterwards, so the sweep runs on the cheap
+    // seed level. Scoring it on the caller's level measured the dense coarse
+    // sample set (8,000 points) for all 384 x 24 hypotheses.
+    let anchor_level = Level {
+        moving: level.moving,
+        normals: level.normals,
+        fixed: level.fixed,
+        moving_surface: Some(moving_surface),
+        fixed_samples: level.fixed_samples,
+        samples: context.samples,
+        settings: level.settings,
+        cancel: level.cancel,
+        start: level.start,
+    };
     let mut hypotheses = Vec::new();
     for (anchor_index, anchor) in moving_anchors.into_iter().enumerate() {
         if anchor_index % 32 == 0 && level.cancel.is_cancelled() {
@@ -393,7 +408,7 @@ fn global_seed_candidates_from_small_fixed(
             if !shift.is_finite() || shift > context.max_shift {
                 continue;
             }
-            let Some(mut summary) = forward_summary(level, candidate) else {
+            let Some(mut summary) = forward_seed_summary(&anchor_level, candidate) else {
                 continue;
             };
             // Cheap reciprocal support uses only 64 small-side representatives.
@@ -504,6 +519,35 @@ fn score_candidate(level: &Level<'_>, pose: Rigid) -> Option<(Summary, Option<Re
     }
     summary.support_coverage = common_support_coverage(level, summary.coverage, reciprocal);
     support_coverage_is_sufficient(summary.support_coverage).then_some((summary, reciprocal))
+}
+
+/// Forward objective for the coarse seed sweep.
+///
+/// The sweep runs on a few hundred seed samples while the caller's level holds
+/// the dense coarse set, and the correspondence floors are absolute counts.
+/// Read against a fifteen times smaller sample set those floors are fifteen
+/// times stricter, which drops the true pose of a crop that covers a small
+/// share of the moving scan. The sweep therefore only asks that a hypothesis
+/// explain something: the retained shortlist is re-scored at full resolution,
+/// where the real floors decide.
+fn forward_seed_summary(level: &Level<'_>, pose: Rigid) -> Option<Summary> {
+    let found = correspondences(level, pose, level.settings.influence_radius_mm);
+    let matched = found.iter().flatten().count();
+    if matched == 0 {
+        return None;
+    }
+    let kept = trim(&found, level.settings.matching_ratio);
+    if kept.is_empty() {
+        return None;
+    }
+    let (matrix, _, _) = accumulate(&kept);
+    Some(summarize(
+        &found,
+        &kept,
+        matched,
+        level.samples.len(),
+        &matrix,
+    ))
 }
 
 /// Calculate only the forward objective for a coarse seed or a full candidate.
@@ -826,7 +870,18 @@ fn coarse_candidates_are_equivalent(candidate: &CoarseCandidate, best: &CoarseCa
     {
         return false;
     }
-    true
+    // Two hypotheses inside both tie bands are the same answer only if they
+    // explain the other surface equally well. Reciprocal coverage is the axis
+    // that separates an upright seating which explains the fixed scan's own
+    // surface from a pose that merely lands on a comparable patch of it;
+    // dropping this comparison made every such pair refuse as ambiguous.
+    match (candidate.reciprocal, best.reciprocal) {
+        (Some(candidate), Some(best)) => {
+            (candidate.coverage - best.coverage).abs() <= COARSE_TIE_COVERAGE
+        }
+        (None, None) => true,
+        _ => false,
+    }
 }
 
 /// How far a coarse hypothesis may turn the scan and still be answering the

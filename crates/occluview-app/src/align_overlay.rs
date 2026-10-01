@@ -340,19 +340,19 @@ mod tests {
     #[test]
     fn configured_legend_limits_match_the_colors_painted_on_the_scan() {
         let ramp = RampSettings {
-            min_mm: 0.05,
-            scale_mm: 0.20,
-            ..ramp(RampMode::Magnitude, 0.20)
+            min_mm: 0.02,
+            scale_mm: 0.10,
+            ..ramp(RampMode::Magnitude, 0.10)
         };
         assert_eq!(
             legend_color_at(0, LEGEND_STEPS, &ramp),
-            ramp_color(0.05, &ramp)
+            ramp_color(0.02, &ramp)
         );
         assert_eq!(
             legend_color_at(LEGEND_STEPS - 1, LEGEND_STEPS, &ramp),
-            ramp_color(0.20, &ramp)
+            ramp_color(0.10, &ramp)
         );
-        assert_eq!(ramp_color(0.0, &ramp), ramp_color(0.05, &ramp));
+        assert_eq!(ramp_color(0.0, &ramp), ramp_color(0.02, &ramp));
     }
 
     fn bar(mode: RampMode, scale_mm: f64) -> Vec<[u8; 4]> {

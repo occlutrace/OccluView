@@ -187,14 +187,16 @@ pub struct RampSettings {
 #[must_use]
 pub fn suggested_scale_mm(stats: &DeviationStats) -> f64 {
     /// Below this a scale stops meaning anything to an operator.
-    const FLOOR_MM: f64 = 0.05;
-    /// Readable steps, in millimetres. The range runs well past a clinical
-    /// tolerance on purpose: a scan pair straight off a two-point fit really is
+    const FLOOR_MM: f64 = 0.01;
+    /// Readable steps, in millimetres. The low end is fine enough for the
+    /// clinical 0-0.1 mm window; the range runs well past a clinical tolerance
+    /// on purpose: a scan pair straight off a two-point fit really is
     /// millimetres apart, and capping the suggestion at a clinical number
     /// leaves every vertex pinned to an end stop — a saturated mosaic that says
     /// nothing about where the two actually differ.
-    const STEPS: [f64; 13] = [
-        0.05, 0.1, 0.15, 0.2, 0.3, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0, 10.0,
+    const STEPS: [f64; 17] = [
+        0.01, 0.02, 0.03, 0.05, 0.075, 0.1, 0.15, 0.2, 0.3, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0,
+        10.0,
     ];
 
     let Some(summary) = stats.summary.filter(|summary| summary.p95.is_finite()) else {
