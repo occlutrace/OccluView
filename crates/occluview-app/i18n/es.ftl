@@ -970,7 +970,6 @@ mesh-warning-vertex-alpha = el alfa de vértice no se escribió
 load-superseded-parked-open = Hay una apertura más reciente esperando: responda primero a su aviso
 
 shell-preview-open = Abrir en OccluView
-shell-preview-edit = Editar en OccluView
 shell-preview-front = Frontal
 shell-preview-top = Superior
 shell-preview-side = Lateral

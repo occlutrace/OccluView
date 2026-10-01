@@ -31,8 +31,6 @@ use glam::Vec2;
 pub(crate) enum PreviewMenuIcon {
     /// Open externally: a tray/box with an arrow leaving it.
     Open,
-    /// Edit: a pencil on the diagonal.
-    Edit,
     /// Front face of an isometric cube highlighted.
     CubeFront,
     /// Top face of an isometric cube highlighted.
@@ -63,7 +61,6 @@ impl PreviewMenuIcon {
         let hw = 0.045;
         match self {
             Self::Open => paint_open(r, hw),
-            Self::Edit => paint_edit(r, hw),
             Self::CubeFront => paint_cube(r, hw, Some(CubeFace::Front)),
             Self::CubeTop => paint_cube(r, hw, Some(CubeFace::Top)),
             Self::CubeSide => paint_cube(r, hw, Some(CubeFace::Side)),
@@ -88,16 +85,6 @@ fn paint_open(r: &mut Raster, hw: f32) {
     // Arrowhead barbs.
     r.stroke((0.86, 0.16), (0.62, 0.18), hw);
     r.stroke((0.86, 0.16), (0.84, 0.42), hw);
-}
-
-fn paint_edit(r: &mut Raster, hw: f32) {
-    // Pencil: a thick shaft, a filled nib at the lower-left, a cap at the top.
-    r.stroke((0.30, 0.72), (0.74, 0.28), hw);
-    r.stroke((0.24, 0.66), (0.68, 0.22), hw);
-    // Nib (filled triangle) at the writing end.
-    r.fill_poly(&[(0.14, 0.86), (0.30, 0.74), (0.26, 0.62)]);
-    // Flat cap (eraser) at the far end.
-    r.stroke((0.68, 0.22), (0.80, 0.34), hw);
 }
 
 #[derive(Clone, Copy)]
@@ -350,9 +337,8 @@ fn signed_edge_distance(px: f32, py: f32, a: P, b: P, cx: f32, cy: f32) -> f32 {
 mod tests {
     use super::*;
 
-    const ALL_ICONS: [PreviewMenuIcon; 9] = [
+    const ALL_ICONS: [PreviewMenuIcon; 8] = [
         PreviewMenuIcon::Open,
-        PreviewMenuIcon::Edit,
         PreviewMenuIcon::CubeFront,
         PreviewMenuIcon::CubeTop,
         PreviewMenuIcon::CubeSide,
