@@ -88,8 +88,10 @@ pub(super) mod diag {
 /// A pure displacement changes neither the face nor the vertex count, so a
 /// report built from those counts cannot separate "the kernel refused this
 /// dab" from "the display did not show what the kernel moved". These fields
-/// answer that from one pasted line: which refusal fired, how often, and how
-/// hard the anti-inversion gain had to scale the dose.
+/// answer that from one pasted line: which refusal fired and how often.
+///
+/// Three slots are RESERVED: no code writes them, they are always zero, and
+/// they exist only so the published wire order stays stable.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DabDiagnostics {
     /// No seed triangle for the dab (stale pick, ray left the surface).
@@ -100,13 +102,15 @@ pub struct DabDiagnostics {
     pub clamp_zero: u32,
     /// Vertices whose move the per-vertex budget truncated.
     pub clamp_truncated: u32,
-    /// Dabs whose dose the anti-inversion gain had to scale down.
+    /// RESERVED. Never written: the anti-inversion gain no longer scales a
+    /// dose, so nothing produces this count. Always zero; the slot is kept so
+    /// the wire order does not shift.
     pub gain_scaled_dabs: u32,
-    /// Smallest gain a dab ran with, in permille (1000 = unscaled).
+    /// RESERVED. Never written; stays at its default of 1000 permille.
     pub gain_min_permille: u32,
     /// Dabs whose anti-inversion waves pulled moved vertices back.
     pub rollback_resets: u32,
-    /// Dabs whose region violates a guard before this dab moves anything.
+    /// RESERVED. Never written; always zero. See `gain_scaled_dabs`.
     pub already_unsafe_dabs: u32,
     /// Dabs that committed no movement, including dabs whose weights are zero.
     /// This reports the operator's "the brush does nothing" symptom separately
@@ -135,6 +139,9 @@ impl DabDiagnostics {
     }
 
     /// Flat wire order, shared with the operator report.
+    ///
+    /// Slots 4, 5 and 7 are the reserved counters. They are reported as zero
+    /// and a consumer must ignore them.
     pub fn encode(self) -> [u32; 10] {
         [
             self.seed_missing,
