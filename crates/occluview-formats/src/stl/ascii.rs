@@ -108,7 +108,7 @@ pub(crate) fn read_admitted(
             break;
         }
         if !kw.eq_ignore_ascii_case("facet") {
-            return Err(unexpected("facet or endsolid", kw, text));
+            return Err(unexpected("facet or endsolid", kw));
         }
         tokens.next(); // consume `facet`
                        // `normal nx ny nz` — but some writers emit `facet` then skip the normal.
@@ -119,7 +119,7 @@ pub(crate) fn read_admitted(
             tokens.next();
             // Some writers write `normal 0 0 0` for "unset"; keep as-is, the
             // viewer can recompute if needed.
-            read_vec3(&mut tokens, text)?
+            read_vec3(&mut tokens)?
         } else {
             Vec3::ZERO
         };
@@ -131,7 +131,7 @@ pub(crate) fn read_admitted(
         let mut verts = [Vec3::ZERO; 3];
         for v in &mut verts {
             expect_keyword(&mut tokens, "vertex")?;
-            *v = read_vec3(&mut tokens, text)?;
+            *v = read_vec3(&mut tokens)?;
         }
 
         expect_keyword(&mut tokens, "endloop")?;
@@ -187,7 +187,7 @@ where
 {
     match tokens.next() {
         Some(kw) if kw.eq_ignore_ascii_case(expected) => Ok(()),
-        Some(other) => Err(unexpected(expected, other, "")),
+        Some(other) => Err(unexpected(expected, other)),
         None => Err(FormatError::Truncated {
             format: "STL (ascii)",
             expected: 0,
@@ -196,7 +196,7 @@ where
     }
 }
 
-fn read_vec3<'a, I>(tokens: &mut std::iter::Peekable<I>, _text: &str) -> Result<Vec3, FormatError>
+fn read_vec3<'a, I>(tokens: &mut std::iter::Peekable<I>) -> Result<Vec3, FormatError>
 where
     I: Iterator<Item = &'a str>,
 {
@@ -218,7 +218,7 @@ where
     Ok(Vec3::new(x, y, z))
 }
 
-fn unexpected(expected: &str, got: &str, _text: &str) -> FormatError {
+fn unexpected(expected: &str, got: &str) -> FormatError {
     FormatError::Malformed {
         format: "STL (ascii)",
         offset: 0,

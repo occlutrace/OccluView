@@ -108,16 +108,6 @@ impl HpsKeyProvider for NoHpsKeyProvider {
     }
 }
 
-/// Reads an HPS key from the supported process environment variables.
-#[derive(Debug, Default, Copy, Clone)]
-pub struct EnvHpsKeyProvider;
-
-impl HpsKeyProvider for EnvHpsKeyProvider {
-    fn base_key(&self) -> Result<Option<HpsSecretKey>, FormatError> {
-        leaf_provider_key(&occluview_hps::EnvHpsKeyProvider::default())
-    }
-}
-
 /// Runtime provider used by the app, CLI, and shell paths.
 #[derive(Debug, Default, Copy, Clone)]
 pub struct RuntimeHpsKeyProvider;
