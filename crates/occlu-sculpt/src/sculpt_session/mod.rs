@@ -30,6 +30,7 @@ mod ray_buckets;
 mod sdf;
 mod session;
 mod sheet;
+#[cfg(feature = "parallel")]
 pub(crate) use kernel::PAR_FLOOR;
 use ray_buckets::TriBuckets;
 use sdf::SdfProbe;
