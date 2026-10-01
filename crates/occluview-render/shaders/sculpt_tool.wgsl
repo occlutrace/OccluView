@@ -41,6 +41,8 @@ struct VertexOut {
     @builtin(position) clip_pos: vec4<f32>,
     @location(0) world_pos: vec3<f32>,
     @location(1) normal: vec3<f32>,
+    // Position along the tool axis, 0 at the contact end and 1 at the far end.
+    @location(2) axial: f32,
 }
 
 @vertex
@@ -71,13 +73,13 @@ fn vs_main(in: VertexIn) -> VertexOut {
     out.clip_pos = camera.projection * camera.view * world;
     out.world_pos = world.xyz;
     out.normal = (tool.model * vec4<f32>(shaped_normal, 0.0)).xyz;
+    out.axial = z;
     return out;
 }
 
 @fragment
 fn fs_main(
     in: VertexOut,
-    @builtin(front_facing) front_facing: bool,
 ) -> @location(0) vec4<f32> {
     if tool.opacity <= 0.0 {
         discard;
@@ -98,16 +100,16 @@ fn fs_main(
     } else {
         view_dir = normalize(view_dir);
     }
-    if dot(n, view_dir) < 0.0 {
-        n = -n;
+    // The body is a hollow glass shell: its brightness is the rim, not the
+    // surface. Fresnel drives both the colour and the alpha, and the ends fade
+    // so the contact point reads as the tool's tip rather than a cut cylinder.
+    let fresnel = pow(1.0 - abs(dot(n, view_dir)), 1.35);
+    let invert = clamp(tool.action.x, 0.0, 1.0);
+    let far = mix(0.7, 0.84, invert);
+    let axial = smoothstep(0.0, 0.1, in.axial) * (1.0 - smoothstep(far, 1.0, in.axial));
+    let alpha = tool.opacity * (0.18 + 0.82 * fresnel) * axial;
+    if alpha < 0.02 {
+        discard;
     }
-    let key = normalize(camera.light_dir);
-    let ndotl = max(dot(n, key), 0.0);
-    let half_vec = normalize(key + view_dir);
-    let specular = pow(max(dot(n, half_vec), 0.0), 36.0);
-    let edge = 1.0 - clamp(dot(n, view_dir), 0.0, 1.0);
-    let front_mix = select(0.90, 1.0, front_facing);
-    let form = front_mix * (0.72 + 0.28 * ndotl);
-    let rgb = clamp(tool.color.rgb * form + vec3<f32>(0.22 * specular + 0.08 * edge), vec3<f32>(0.0), vec3<f32>(1.0));
-    return vec4<f32>(rgb, clamp(tool.opacity * (0.86 + 0.14 * ndotl), 0.0, 0.72));
+    return vec4<f32>(tool.color.rgb, alpha);
 }
