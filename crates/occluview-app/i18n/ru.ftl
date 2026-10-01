@@ -305,6 +305,23 @@ repair-skipped-rims = { $count ->
     [many] { $grouped } кромок не заполнено (непростой контур)
    *[other] { $grouped } кромок не заполнено (непростой контур)
 }
+repair-copy-title = Отчёт о ремонте — { $layer }
+repair-copy-before = Было: { $vertices } вершин, { $triangles } треугольников
+repair-copy-after = Стало: { $vertices } вершин, { $triangles } треугольников
+repair-copy-welded = Дублирующиеся вершины сварены
+repair-copy-slivers = Тонкие грани удалены
+repair-copy-duplicate-faces = Дублирующиеся грани удалены
+repair-copy-nonmanifold = Неманифолдные рёбра исправлены
+repair-copy-bowtie = Вершины-бабочки разделены
+repair-copy-reoriented = Треугольники переориентированы
+repair-copy-flipped = Вывернутые части развёрнуты
+repair-copy-debris = Мусорные части удалены
+repair-copy-debris-faces = Мусорные грани удалены
+repair-copy-pinholes = Точечные отверстия закрыты
+repair-copy-unused = Неиспользуемые вершины удалены
+repair-copy-open-rims = Осталось открытых кромок (граница скана)
+repair-copy-skipped-rims = Кромки пропущены (непростой контур)
+measure-open-no-opposite-wall = открыто: нет противоположной стенки
 repair-toast-welded = { $count ->
     [one] Сварена { $count } вершина
     [few] Сварены { $count } вершины

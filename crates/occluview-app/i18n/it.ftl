@@ -259,6 +259,23 @@ repair-skipped-rims = { $count ->
     [one] { $grouped } bordo non riempito (non semplice)
    *[other] { $grouped } bordi non riempiti (non semplici)
 }
+repair-copy-title = Report riparazione — { $layer }
+repair-copy-before = Prima: { $vertices } vertici, { $triangles } triangoli
+repair-copy-after = Dopo: { $vertices } vertici, { $triangles } triangoli
+repair-copy-welded = Vertici duplicati saldati
+repair-copy-slivers = Facce degeneri rimosse
+repair-copy-duplicate-faces = Facce duplicate rimosse
+repair-copy-nonmanifold = Spigoli non-manifold sistemati
+repair-copy-bowtie = Vertici bowtie divisi
+repair-copy-reoriented = Triangoli riorientati
+repair-copy-flipped = Parti rovesciate ribaltate
+repair-copy-debris = Detriti rimossi
+repair-copy-debris-faces = Facce di detriti rimosse
+repair-copy-pinholes = Micro-fori chiusi
+repair-copy-unused = Vertici inutili rimossi
+repair-copy-open-rims = Bordi aperti rimasti (confine scansione)
+repair-copy-skipped-rims = Bordi saltati (non semplici)
+measure-open-no-opposite-wall = aperto: nessuna parete opposta
 repair-toast-welded = { $count ->
     [one] saldato { $count } vertice
    *[other] saldati { $count } vertici

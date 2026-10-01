@@ -259,6 +259,23 @@ repair-skipped-rims = { $count ->
     [one] { $grouped } Rand nicht gefüllt (nicht simpel)
    *[other] { $grouped } Ränder nicht gefüllt (nicht simpel)
 }
+repair-copy-title = Reparaturbericht — { $layer }
+repair-copy-before = Vorher: { $vertices } Vertices, { $triangles } Dreiecke
+repair-copy-after = Nachher: { $vertices } Vertices, { $triangles } Dreiecke
+repair-copy-welded = Doppelte Vertices verschweißt
+repair-copy-slivers = Sliver-Flächen entfernt
+repair-copy-duplicate-faces = Doppelte Flächen entfernt
+repair-copy-nonmanifold = Nicht-mannigfaltige Kanten repariert
+repair-copy-bowtie = Bowtie-Vertices getrennt
+repair-copy-reoriented = Dreiecke neu orientiert
+repair-copy-flipped = Umgekrempelte Teile gewendet
+repair-copy-debris = Trümmerteile entfernt
+repair-copy-debris-faces = Trümmerflächen entfernt
+repair-copy-pinholes = Pinholes geschlossen
+repair-copy-unused = Ungenutzte Vertices entfernt
+repair-copy-open-rims = Offene Ränder übrig (Scangrenze)
+repair-copy-skipped-rims = Ränder übersprungen (nicht simpel)
+measure-open-no-opposite-wall = offen: keine gegenüberliegende Wand
 repair-toast-welded = { $count ->
     [one] { $count } Vertex verschweißt
    *[other] { $count } Vertices verschweißt
