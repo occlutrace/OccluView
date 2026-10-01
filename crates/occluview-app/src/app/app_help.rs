@@ -91,8 +91,8 @@ impl SceneContext<'_> {
             HintContext::Align
         } else if self.document.edit_mode.has_active_session() {
             match self.tools.editor_tab {
-                crate::mesh_editor_overlay::EditorTab::EditMesh => HintContext::MeshEditing,
-                crate::mesh_editor_overlay::EditorTab::Sculpt => HintContext::Sculpt,
+                super::mesh_editor_overlay::EditorTab::EditMesh => HintContext::MeshEditing,
+                super::mesh_editor_overlay::EditorTab::Sculpt => HintContext::Sculpt,
             }
         } else if self.tools.contacts.is_open() {
             // A reading is a tool the operator is in the middle of using, so its

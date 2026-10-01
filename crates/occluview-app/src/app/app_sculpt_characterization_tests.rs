@@ -1,6 +1,6 @@
 #![allow(clippy::float_cmp)]
 
-use crate::mesh_editor_overlay;
+use crate::mesh_editor::mesh_editor_overlay;
 use crate::sculpt::sculpt_tool::{SculptTip, SculptToolKind};
 use eframe::egui;
 

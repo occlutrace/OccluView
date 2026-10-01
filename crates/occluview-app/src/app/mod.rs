@@ -4,7 +4,7 @@ use super::edit_mode::{EditModeCommand, EditModeController, ScreenPolygonSelecti
 use super::layer_actions::{self, LayerContextAction, LayerContextApply, LayerContextRequest};
 use super::layers_overlay::{self, LayerOverlayChanges};
 use super::live_viewport;
-use super::mesh_editor_overlay::{self, MeshEditorAction};
+use super::mesh_editor::mesh_editor_overlay::{self, MeshEditorAction};
 use super::scene_loading::{
     combine_loaded_scene, load_status_message, LoadQueueCameraReset, SceneLoadMode,
 };
