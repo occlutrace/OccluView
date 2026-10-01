@@ -1,10 +1,10 @@
 //! Windows VERSIONINFO for `occluview_shell.dll`.
 //!
 //! The MSI installs this DLL and can Authenticode-sign it, so its Properties
-//! page must name the product and version like the executables do. The resource
-//! plumbing is kept in sync with `crates/occluview-app/build.rs` by hand:
-//! build scripts cannot share code without a dedicated build-dependency
-//! crate, and this much duplication is the cheaper contract.
+//! page must name the product and version like the executables do. Only the
+//! resource script below is local; the SDK plumbing it shares with the other two
+//! build scripts — locating `rc.exe` and parsing the crate version — comes from
+//! `build/windows_resource_helpers.rs`.
 
 #![allow(clippy::print_stdout)]
 
@@ -13,7 +13,15 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
+/// VERSIONINFO helpers shared with the other two Windows build scripts.
+mod versioninfo {
+    include!("../../build/windows_resource_helpers.rs");
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // A change to the shared helpers must rebuild this script.
+    println!("cargo:rerun-if-changed=../../build/windows_resource_helpers.rs");
+
     let target_is_windows = env::var_os("CARGO_CFG_WINDOWS").is_some();
     if !target_is_windows {
         return Ok(());
@@ -25,7 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     fs::write(&rc_path, dll_resource_script()?)?;
 
-    let rc_exe = find_resource_compiler()?;
+    let rc_exe = versioninfo::find_resource_compiler()?;
     let status = Command::new(rc_exe)
         .arg("/nologo")
         .arg(format!("/fo{}", res_path.display()))
@@ -41,54 +49,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn find_resource_compiler() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    if let Some(rc) = env::var_os("RC") {
-        return Ok(PathBuf::from(rc));
-    }
-
-    for candidate in ["rc.exe", "llvm-rc.exe", "llvm-rc"] {
-        if let Some(path) = find_in_path(candidate) {
-            return Ok(path);
-        }
-    }
-
-    for base in windows_kits_roots() {
-        let bin_root = base.join("Windows Kits").join("10").join("bin");
-        let Ok(entries) = fs::read_dir(bin_root) else {
-            continue;
-        };
-        let mut candidates = entries
-            .filter_map(Result::ok)
-            .map(|entry| entry.path().join("x64").join("rc.exe"))
-            .filter(|path| path.exists())
-            .collect::<Vec<_>>();
-        candidates.sort();
-        if let Some(path) = candidates.pop() {
-            return Ok(path);
-        }
-    }
-
-    Err("Windows SDK resource compiler rc.exe was not found".into())
-}
-
-fn find_in_path(command: &str) -> Option<PathBuf> {
-    let paths = env::var_os("PATH")?;
-    env::split_paths(&paths)
-        .map(|path| path.join(command))
-        .find(|path| path.is_file())
-}
-
-fn windows_kits_roots() -> Vec<PathBuf> {
-    ["ProgramFiles(x86)", "ProgramFiles"]
-        .into_iter()
-        .filter_map(env::var_os)
-        .map(PathBuf::from)
-        .collect()
-}
-
 fn dll_resource_script() -> Result<String, Box<dyn std::error::Error>> {
     let version = env::var("CARGO_PKG_VERSION")?;
-    let version_parts = version_tuple(&version);
+    let version_parts = versioninfo::version_tuple(&version);
     // FILETYPE 0x2 is VFT_DLL; everything else mirrors the exe resource.
     Ok(format!(
         r#"1 VERSIONINFO
@@ -124,17 +87,4 @@ END
         minor = version_parts.1,
         patch = version_parts.2,
     ))
-}
-
-fn version_tuple(version: &str) -> (u16, u16, u16) {
-    let mut parts = version.split('.');
-    let major = parse_version_part(parts.next());
-    let minor = parse_version_part(parts.next());
-    let patch = parse_version_part(parts.next());
-    (major, minor, patch)
-}
-
-fn parse_version_part(part: Option<&str>) -> u16 {
-    part.and_then(|value| value.parse::<u16>().ok())
-        .unwrap_or(0)
 }
