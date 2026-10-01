@@ -4,10 +4,10 @@
 //! viewport ownership and section cache defined here.
 
 use super::{egui, pick_scene_hit, CutTool, Scene, SceneContext};
-use crate::cut_manipulator::{ArchFrame, CutCursor, CutFrameInput, SurfaceSample};
-use crate::cut_overlay;
+use crate::cut::cut_manipulator::{ArchFrame, CutCursor, CutFrameInput, SurfaceSample};
+use crate::cut::cut_overlay;
+use crate::cut::section_view::SectionMainView;
 use crate::measure_tool::{self, ThicknessProbe, ThicknessReading};
-use crate::section_view::SectionMainView;
 use glam::{Vec3, Vec3A};
 use occluview_edit::scene::SceneSection;
 use std::sync::Arc;
@@ -71,9 +71,9 @@ pub(super) fn triangle_world_normal(
 /// The hit mesh's own principal-axis frame, transformed into world space.
 /// `centroid` is a point (needs the transform's translation), `axis0`/`axis1`
 /// are directions (only the linear part, no translation). Shared by Cut View
-/// and Bridge Split, both of which drive the same [`crate::cut_manipulator`]
+/// and Bridge Split, both of which drive the same [`crate::cut::cut_manipulator`]
 /// follow orientation from it. `None` propagates through to the disc's
-/// local-normal fallback (see [`crate::cut_geometry::follow_plane_normal`]).
+/// local-normal fallback (see [`crate::cut::cut_geometry::follow_plane_normal`]).
 pub(super) fn world_arch_frame(entry: &occluview_core::SceneMesh) -> Option<ArchFrame> {
     let local = entry.mesh.principal_frame_cached()?;
     let centroid = entry.transform.transform_point3(local.centroid);
@@ -166,7 +166,7 @@ impl SceneContext<'_> {
         let layers_rect = self.layers_panel_rect(ctx, viewport_rect);
         let over_section_panel = slice_visible
             && pointer.is_some_and(|point| {
-                crate::cut_ruler::section_panel_contains(viewport_rect, point)
+                crate::cut::cut_ruler::section_panel_contains(viewport_rect, point)
             });
         let gizmo_hidden = self.axis_gizmo_is_hidden();
         let gizmo_avoid = if gizmo_hidden {
@@ -253,7 +253,7 @@ impl SceneContext<'_> {
                 wheel,
             )
         } else {
-            (crate::cut_manipulator::CutUpdate::default(), None, 0.0)
+            (crate::cut::cut_manipulator::CutUpdate::default(), None, 0.0)
         };
         let orientation_changed = self
             .tools
@@ -335,11 +335,11 @@ impl SceneContext<'_> {
 
     fn apply_cut_section_outcome(
         &mut self,
-        panel: crate::cut_tool::CutToolUiOutcome,
+        panel: crate::cut::cut_tool::CutToolUiOutcome,
         ctx: &egui::Context,
     ) {
         let measure_owned = self.tools.cut_view.is_probe_linked();
-        if matches!(panel.command, crate::cut_ruler::SectionPanelCommand::Close) {
+        if matches!(panel.command, crate::cut::cut_ruler::SectionPanelCommand::Close) {
             if measure_owned {
                 self.disarm_measure_and_probe_cut();
             } else {

@@ -7,7 +7,7 @@
 //! in world space and is only *reprojected* each frame, so camera motion never
 //! recomputes it.
 
-use crate::cut_manipulator::DiscPose;
+use crate::cut::cut_manipulator::DiscPose;
 use crate::viewer::project_world_to_viewport;
 use eframe::egui;
 use glam::Vec3;

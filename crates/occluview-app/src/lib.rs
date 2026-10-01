@@ -18,11 +18,10 @@
 //! Everything above that sits in the `mod` list below: `app` and `viewer` hold
 //! the application state and the viewport, `scene_loading` brings files in,
 //! `align` registers one scan onto another, `edit_mode` and `sculpt` change
-//! geometry, `cut_*` and `section_view` slice it, `measure_*` and
-//! `probe_section` measure it, `layer_*` and `mesh_editor_*` drive the panels,
-//! `ui` holds the shared theme, icons, chrome and accessibility layer, and
-//! `desktop` handles the single-instance handoff, shell surfaces, recent files
-//! and update notice around all of it.
+//! geometry, `cut` slices and probes it, `measure_*` measures it, `layer_*`
+//! and `mesh_editor_*` drive the panels, `ui` holds the shared theme, icons,
+//! chrome and accessibility layer, and `desktop` handles the single-instance
+//! handoff, shell surfaces, recent files and update notice around all of it.
 
 // Test setup failures must fail the test instead of passing through an early return.
 #![cfg_attr(test, allow(clippy::panic))]
@@ -53,11 +52,7 @@ mod contact;
 #[cfg(test)]
 mod contact_render_tests;
 mod contact_worker;
-mod cut_geometry;
-mod cut_manipulator;
-mod cut_overlay;
-mod cut_ruler;
-mod cut_tool;
+mod cut;
 mod desktop;
 mod edit_mode;
 pub(crate) mod i18n;
@@ -70,11 +65,9 @@ mod measure_ruler;
 mod measure_tool;
 mod mesh_editor_icons;
 mod mesh_editor_overlay;
-mod probe_section;
 mod repair_report;
 mod scene_loading;
 mod sculpt;
-mod section_view;
 mod ui;
 mod viewer;
 
@@ -85,8 +78,6 @@ pub(crate) const APP_USER_MODEL_ID: &str = "OccluTrace.OccluView";
 #[cfg(target_os = "linux")]
 const LINUX_DESKTOP_APP_ID: &str = "ai.occlutrace.OccluView";
 
-#[cfg(test)]
-mod cut_manipulator_hostile_tests;
 #[cfg(test)]
 mod panel_shots;
 #[cfg(test)]

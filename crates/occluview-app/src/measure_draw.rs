@@ -1,6 +1,6 @@
 //! Shared measurement drawing — the "ray" look reused by the main-viewport
 //! measure overlay ([`crate::measure_overlay`]) and the Section-panel ruler
-//! ([`crate::cut_ruler`]).
+//! ([`crate::cut::cut_ruler`]).
 //!
 //! Both surfaces draw the same primitives so a wall-thickness chord reads
 //! identically whether it is painted over the 3D model or inside the section
@@ -385,7 +385,7 @@ mod tests {
                     ]
                 })
                 .map(|p| {
-                    crate::cut_geometry::closest_param_on_segment(p, a, b)
+                    crate::cut::cut_geometry::closest_param_on_segment(p, a, b)
                         .1
                         .sqrt()
                 })

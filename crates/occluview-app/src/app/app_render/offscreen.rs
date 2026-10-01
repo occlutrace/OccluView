@@ -232,8 +232,8 @@ impl SceneContext<'_> {
         plane: occluview_render::ClipPlane,
         focus: glam::Vec3,
         half_extent: f32,
-        basis: crate::cut_ruler::SliceBasis,
-    ) -> Option<(egui::ColorImage, crate::cut_ruler::SliceCam)> {
+        basis: crate::cut::cut_ruler::SliceBasis,
+    ) -> Option<(egui::ColorImage, crate::cut::cut_ruler::SliceCam)> {
         let bbox = self.effective_scene_bbox(scene);
         let restore_deviation = self.align_overlay_is_up();
         if let Err(e) = self.ensure_offscreen() {
@@ -316,7 +316,7 @@ impl SceneContext<'_> {
         let preview_size = usize::from(CutTool::preview_size_px());
         let color_image =
             egui::ColorImage::from_rgba_unmultiplied([preview_size, preview_size], &pixels);
-        let slice_cam = crate::cut_ruler::SliceCam {
+        let slice_cam = crate::cut::cut_ruler::SliceCam {
             focus,
             normal: glam::Vec3::from_array(plane.normal),
             half_extent,
@@ -351,7 +351,7 @@ impl SceneContext<'_> {
         } else {
             self.tools.cut_view.is_active() && self.tools.cut_view.slice_visible()
         };
-        visible.then(|| crate::cut_ruler::section_panel_rect(viewport_rect))?
+        visible.then(|| crate::cut::cut_ruler::section_panel_rect(viewport_rect))?
     }
 
     pub(in crate::app) fn axis_gizmo_is_hidden(&self) -> bool {
