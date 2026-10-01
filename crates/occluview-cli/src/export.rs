@@ -1,7 +1,9 @@
 #![cfg_attr(test, allow(clippy::expect_used))]
 
 use anyhow::{bail, Context, Result};
-use occluview_core::{fill_holes_in_mesh, MeshEditOptions, MeshEditReport};
+use occluview_core::{
+    fill_holes_in_mesh, MeshEditOptions, MeshEditReport, CLOSE_HOLES_EDGE_CEILING,
+};
 use occluview_formats::dispatch::read_file_with_key_provider;
 use occluview_formats::hps::RuntimeHpsKeyProvider;
 use occluview_formats::write::{
@@ -9,14 +11,6 @@ use occluview_formats::write::{
 };
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-
-/// Generous edge ceiling for whole-mesh Close Holes, mirroring the app button
-/// (`app_layer_edits::whole_mesh`): the mm perimeter slider does the real
-/// limiting, so the edge count is only a safety valve under the ear-clip's rim
-/// limit.
-// One number, owned by the kernel: a private copy here would pin the ceiling,
-// because the selection gate takes the maximum of the two.
-use occluview_core::CLOSE_HOLES_EDGE_CEILING;
 
 /// Load a mesh (STL loads as a triangle soup), run the whole-mesh Close Holes
 /// pipeline — the app's button path — and write the closed result.
@@ -29,7 +23,7 @@ pub(crate) fn close_holes_file(
 ) -> Result<(MeshEditReport, MeshWriteReport)> {
     let mesh = read_file_with_key_provider(input, &RuntimeHpsKeyProvider)
         .with_context(|| format!("loading {}", input.display()))?;
-    let format = ExportFormat::from_output_path(output)?;
+    let format = ExportFormat::from_output_path(output, "close-holes")?;
 
     // Mirror `app_layer_edits::whole_mesh::close_holes_options` exactly,
     // including the branch, not just the fields it sets.
@@ -40,6 +34,10 @@ pub(crate) fn close_holes_file(
     // as "Skipped (oversize)". The ceiling belongs only to the mm-limited
     // branch: the perimeter limit is what makes a wider edge count acceptable,
     // because the operator requested a bounded rim.
+    //
+    // The ceiling itself is the kernel's number, which the app button also uses:
+    // a copy here would pin it, because the selection gate takes the maximum of
+    // the two.
     let options = match limit_mm {
         Some(limit_mm) => MeshEditOptions {
             compact_vertices: true,
@@ -75,10 +73,10 @@ pub(crate) enum ExportFormat {
 }
 
 impl ExportFormat {
-    pub(crate) fn from_output_path(path: &Path) -> Result<Self> {
+    pub(crate) fn from_output_path(path: &Path, verb: &str) -> Result<Self> {
         let Some(extension) = path.extension().and_then(|ext| ext.to_str()) else {
             bail!(
-                "convert: output path {} has no extension; use .stl, .ply, or .obj",
+                "{verb}: output path {} has no extension; use .stl, .ply, or .obj",
                 path.display()
             );
         };
@@ -87,7 +85,7 @@ impl ExportFormat {
             "obj" => Ok(Self::Obj),
             "ply" => Ok(Self::Ply),
             "stl" => Ok(Self::Stl),
-            other => bail!("convert: unsupported output format .{other}; use .stl, .ply, or .obj"),
+            other => bail!("{verb}: unsupported output format .{other}; use .stl, .ply, or .obj"),
         }
     }
 
@@ -103,7 +101,7 @@ impl ExportFormat {
 pub(crate) fn convert_file(input: &Path, output: &Path) -> Result<(ExportFormat, MeshWriteReport)> {
     let mesh = read_file_with_key_provider(input, &RuntimeHpsKeyProvider)
         .with_context(|| format!("loading {}", input.display()))?;
-    let format = ExportFormat::from_output_path(output)?;
+    let format = ExportFormat::from_output_path(output, "convert")?;
     let report = write_mesh_overwrite(
         output,
         &mesh,
@@ -191,21 +189,40 @@ mod tests {
     #[test]
     fn output_extension_maps_to_supported_formats() {
         assert_eq!(
-            ExportFormat::from_output_path(Path::new("scan.obj")).expect("obj"),
+            ExportFormat::from_output_path(Path::new("scan.obj"), "convert").expect("obj"),
             ExportFormat::Obj
         );
         assert_eq!(
-            ExportFormat::from_output_path(Path::new("scan.ply")).expect("ply"),
+            ExportFormat::from_output_path(Path::new("scan.ply"), "convert").expect("ply"),
             ExportFormat::Ply
         );
         assert_eq!(
-            ExportFormat::from_output_path(Path::new("scan.stl")).expect("stl"),
+            ExportFormat::from_output_path(Path::new("scan.stl"), "convert").expect("stl"),
             ExportFormat::Stl
         );
-        let message = ExportFormat::from_output_path(Path::new("scan.glb"))
+    }
+
+    /// The message has to name the command the operator typed. It used to say
+    /// `convert:` whatever the caller was, so `close-holes -o out.glb` reported an
+    /// error from a command that was not running.
+    #[test]
+    fn an_unsupported_output_names_the_calling_command() {
+        let message = ExportFormat::from_output_path(Path::new("scan.glb"), "convert")
             .expect_err("glb export should not be supported yet")
             .to_string();
-        assert!(message.contains("unsupported output format"));
+        assert!(message.starts_with("convert: "), "{message}");
+        assert!(message.contains("unsupported output format"), "{message}");
+
+        let message = ExportFormat::from_output_path(Path::new("scan.glb"), "close-holes")
+            .expect_err("glb export should not be supported yet")
+            .to_string();
+        assert!(message.starts_with("close-holes: "), "{message}");
+
+        let message = ExportFormat::from_output_path(Path::new("scan"), "close-holes")
+            .expect_err("an extension-less output cannot name a format")
+            .to_string();
+        assert!(message.starts_with("close-holes: "), "{message}");
+        assert!(message.contains("has no extension"), "{message}");
     }
 
     #[test]
