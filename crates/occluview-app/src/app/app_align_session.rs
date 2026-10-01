@@ -36,7 +36,7 @@ impl SceneContext<'_> {
             .align
             .worker
             .as_ref()
-            .is_some_and(crate::align_worker::AlignWorker::is_busy);
+            .is_some_and(crate::align::align_worker::AlignWorker::is_busy);
         self.disarm_align_tool(ctx);
         self.scene_ui.status_message = Some(match (running, moved) {
             (true, _) => self

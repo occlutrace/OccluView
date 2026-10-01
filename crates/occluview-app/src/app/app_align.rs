@@ -1,6 +1,6 @@
 //! Align Scans: wiring the click model, the worker, and the scene together.
 //!
-//! Every heavy call goes to [`crate::align_worker`]. This module only routes
+//! Every heavy call goes to [`crate::align::align_worker`]. This module only routes
 //! clicks and hands the worker the geometry it needs; what comes back is applied
 //! in [`super::app_align_results`].
 
@@ -11,10 +11,10 @@ use occluview_core::{Scene, SceneMesh, SceneMeshId};
 
 use super::app_align_display::AlignOverlay;
 use super::SceneContext;
-use crate::align_geometry::transform_key;
-use crate::align_markings::AlignSide;
-use crate::align_tool::{AlignPoint, ClickOutcome};
-use crate::align_worker::{AlignJob, AlignJobKind, MeasureKey, SurfaceKey, WorldPair};
+use crate::align::align_geometry::transform_key;
+use crate::align::align_markings::AlignSide;
+use crate::align::align_tool::{AlignPoint, ClickOutcome};
+use crate::align::align_worker::{AlignJob, AlignJobKind, MeasureKey, SurfaceKey, WorldPair};
 use crate::viewer::pick_scene_hit;
 
 impl SceneContext<'_> {
@@ -46,9 +46,9 @@ impl SceneContext<'_> {
 
         let hover = ctx.input(|input| input.pointer.hover_pos());
         if let Some((camera, scene)) = self.render.camera.zip(self.document.scene.clone()) {
-            crate::align_overlay::paint_pairs(
+            crate::align::align_overlay::paint_pairs(
                 ui.painter(),
-                &crate::align_overlay::PairPaint {
+                &crate::align::align_overlay::PairPaint {
                     camera: &camera,
                     viewport_rect: response.rect,
                     scene: &scene,
@@ -211,8 +211,8 @@ impl SceneContext<'_> {
         // operator last left. The drag constraint resets too: an axis lock
         // carried into the next pair of scans reads as "the scan is stuck"
         // rather than as a setting that is still on.
-        self.tools.align.tab = crate::align_panel::AlignTab::default();
-        self.tools.align.constraint = crate::align_drag::DragConstraint::default();
+        self.tools.align.tab = crate::align::align_panel::AlignTab::default();
+        self.tools.align.constraint = crate::align::align_drag::DragConstraint::default();
     }
 
     /// A layer's name, the way the operator named the file.
@@ -268,7 +268,7 @@ impl SceneContext<'_> {
         // tab that has no arrows in it, and since the panel only drops a
         // half-placed point on the way out of Automatically, that arrow would
         // survive every later switch.
-        if self.tools.align.tab != crate::align_panel::AlignTab::Automatically {
+        if self.tools.align.tab != crate::align::align_panel::AlignTab::Automatically {
             return true;
         }
         let Some(pointer) = response.interact_pointer_pos() else {
@@ -484,11 +484,11 @@ impl SceneContext<'_> {
         // has since changed under the tool indexes vertices that no longer mean
         // what it thinks, and handing it to a job would exclude an arbitrary
         // region of the current scan with nothing on screen to say so.
-        let moving_marked = crate::align_markings::MarkedOn {
+        let moving_marked = crate::align::align_markings::MarkedOn {
             geometry: moving.mesh.geometry_id(),
             vertex_count: moving.mesh.vertices().len(),
         };
-        let fixed_marked = crate::align_markings::MarkedOn {
+        let fixed_marked = crate::align::align_markings::MarkedOn {
             geometry: fixed.mesh.geometry_id(),
             vertex_count: fixed.mesh.vertices().len(),
         };

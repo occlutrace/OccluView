@@ -1,7 +1,7 @@
 //! Tests for the Align Scans click model in `align_tool.rs`.
 #![allow(clippy::expect_used)]
 
-use crate::align_tool::{AlignPoint, AlignTool, ClickOutcome};
+use crate::align::align_tool::{AlignPoint, AlignTool, ClickOutcome};
 use glam::Vec3;
 use occluview_core::{Mesh, Scene, SceneMesh, SceneMeshId, Vertex};
 

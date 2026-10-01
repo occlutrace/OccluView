@@ -1051,7 +1051,7 @@ fn sculpt_press_keeps_its_ray_while_the_surface_session_prepares() {
 /// shift held mid-stroke would keep adding where the operator meant to subtract.
 #[test]
 fn a_stroke_takes_its_direction_from_the_toggle_and_shift_together() {
-    use crate::align_brush::AlignBrush;
+    use crate::align::align_brush::AlignBrush;
 
     for inverse in [false, true] {
         for shift in [false, true] {

@@ -293,7 +293,7 @@ fn tilted_sheet(offset_mm: f32) -> (Vec<f32>, Vec<u32>) {
 /// result one flat colour.
 #[test]
 fn a_real_third_of_a_millimetre_shows_a_transition_the_legend_agrees_with() {
-    use crate::align_overlay::legend_value_mm;
+    use crate::align::align_overlay::legend_value_mm;
     use occluview_align::{
         deviation, deviation_stats, suggested_scale_mm, CancelFlag, DeviationSettings, Soup,
         SurfaceIndex,

@@ -701,7 +701,7 @@ impl OccluViewApp {
                 .align
                 .worker
                 .as_ref()
-                .is_some_and(crate::align_worker::AlignWorker::is_busy)
+                .is_some_and(crate::align::align_worker::AlignWorker::is_busy)
             || scene.document.unsaved_sculpt_stroke
             || scene.tools.sculpt.is_busy()
             || scene.tools.bridge_split_active()
