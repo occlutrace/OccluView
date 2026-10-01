@@ -2847,7 +2847,6 @@ version = "1.2.1"
 dependencies = [
  "glam",
  "occlu-geometry-math",
- "serde_json",
 ]
 
 [[package]]
