@@ -131,7 +131,7 @@ fn render_align(name: &str, tab: AlignTab, refined: bool, brush_open: bool) {
 
 #[test]
 fn align_and_mesh_editor_wireframes_for_visual_review() {
-    crate::ui_theme::set_active(crate::app_settings::ThemePreference::Light);
+    crate::ui::ui_theme::set_active(crate::app_settings::ThemePreference::Light);
     render_align(
         "audit-align-automatic",
         AlignTab::Automatically,

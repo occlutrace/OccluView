@@ -2,7 +2,7 @@ use crate::app_settings::ThemePreference;
 use eframe::egui;
 
 pub(crate) fn load_app_logo_color_image() -> Option<egui::ColorImage> {
-    let image = image::load_from_memory(include_bytes!("../assets/windows/occluview.png"))
+    let image = image::load_from_memory(include_bytes!("../../assets/windows/occluview.png"))
         .ok()?
         .to_rgba8();
     let (width, height) = image.dimensions();
@@ -36,7 +36,7 @@ pub(crate) fn status_overlay_rect(viewport_rect: egui::Rect) -> egui::Rect {
 /// a single neutral accent for hover/active/selection, and softly rounded
 /// controls. Tuned to read as a professional CAD viewer rather than a demo.
 pub(crate) fn viewer_visuals(theme: ThemePreference) -> egui::Visuals {
-    use crate::ui_theme::{accent, hairline, text};
+    use crate::ui::ui_theme::{accent, hairline, text};
 
     let dark = theme == ThemePreference::Dark;
     let mut visuals = if dark {

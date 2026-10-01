@@ -152,7 +152,7 @@ impl AppIcon {
     fn svg(self) -> &'static [u8] {
         macro_rules! lucide {
             ($file:literal) => {
-                include_bytes!(concat!("../assets/icons/", $file, ".svg"))
+                include_bytes!(concat!("../../assets/icons/", $file, ".svg"))
             };
         }
         match self {

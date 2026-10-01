@@ -2,8 +2,8 @@
 
 use eframe::egui::{self, FontId, Pos2, Rect, Response, Sense, Ui, Vec2};
 
-use crate::icons::AppIcon;
-use crate::ui_theme;
+use crate::ui::icons::AppIcon;
+use crate::ui::ui_theme;
 
 /// Shared corner radius for tool cells and commit buttons.
 pub(crate) const CELL_ROUNDING: f32 = 4.0;
@@ -58,7 +58,7 @@ pub(crate) fn icon_button(
     let icon_side = (rect.width().min(rect.height() - caption_h) - 8.0).clamp(14.0, 24.0);
     let icon_center = Pos2::new(rect.center().x, rect.top() + 4.0 + icon_side * 0.5);
     let icon_rect = Rect::from_center_size(icon_center, Vec2::splat(icon_side));
-    crate::icons::paint(painter, icon_rect, icon, fg);
+    crate::ui::icons::paint(painter, icon_rect, icon, fg);
 
     let galley = painter.layout(
         label.to_owned(),
@@ -80,7 +80,7 @@ pub(crate) fn icon_button(
             egui::StrokeKind::Inside,
         );
     }
-    crate::accessibility::button(&response, label, enabled, Some(active));
+    crate::ui::accessibility::button(&response, label, enabled, Some(active));
     response.on_hover_text(tooltip)
 }
 

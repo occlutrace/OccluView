@@ -20,8 +20,9 @@
 //! `align_*` registers one scan onto another, `edit_mode` and `sculpt_*` change
 //! geometry, `cut_*` and `section_view` slice it, `measure_*` and
 //! `probe_section` measure it, `layer_*` and `mesh_editor_*` drive the panels,
-//! and `desktop` handles the single-instance handoff, shell surfaces, recent
-//! files and update notice around all of it.
+//! `ui` holds the shared theme, icons, chrome and accessibility layer, and
+//! `desktop` handles the single-instance handoff, shell surfaces, recent files
+//! and update notice around all of it.
 
 // Test setup failures must fail the test instead of passing through an early return.
 #![cfg_attr(test, allow(clippy::panic))]
@@ -41,7 +42,6 @@ pub use startup::{
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 
-mod accessibility;
 mod align_brush;
 mod align_drag;
 mod align_geometry;
@@ -59,7 +59,6 @@ mod align_tool_tests;
 mod align_worker;
 pub(crate) mod app;
 mod app_bootstrap;
-mod app_chrome;
 mod app_files;
 mod app_settings;
 mod bridge_split;
@@ -76,8 +75,6 @@ mod cut_tool;
 mod desktop;
 mod edit_mode;
 pub(crate) mod i18n;
-mod icons;
-mod interaction_hints;
 mod layer_actions;
 mod layers_overlay;
 mod live_viewport;
@@ -87,16 +84,14 @@ mod measure_ruler;
 mod measure_tool;
 mod mesh_editor_icons;
 mod mesh_editor_overlay;
-mod modal_surface;
 mod probe_section;
 mod repair_report;
-mod scale_bar;
 mod scene_loading;
 mod sculpt_kernel;
 mod sculpt_tool;
 mod sculpt_worker;
 mod section_view;
-mod ui_theme;
+mod ui;
 mod viewer;
 
 pub use app_bootstrap::main_entry;

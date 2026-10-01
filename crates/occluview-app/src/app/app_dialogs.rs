@@ -5,11 +5,11 @@ use super::app_settings_panel::{settings_popup_id, show_settings_toolbar_toggle}
 use super::information_dialog::InformationDialog;
 use super::{load_app_logo_color_image, status_overlay_rect, PathBuf, OPEN_DIALOG_EXTENSIONS};
 use super::{AppErrorAction, SceneContext};
-use crate::icons::AppIcon;
-use crate::interaction_hints::ContextualHint;
 use crate::measure_overlay::{toolbar_toggle, ToolbarToggle};
 use crate::measure_tool::{self, MeasureMode};
-use crate::ui_theme;
+use crate::ui::icons::AppIcon;
+use crate::ui::interaction_hints::ContextualHint;
+use crate::ui::ui_theme;
 use eframe::egui;
 
 pub(super) use super::app_recent_popup::recent_files_popup_id;
@@ -171,7 +171,7 @@ impl SceneContext<'_> {
                     ui.add_enabled_ui(!self.persistence.recent_files.is_empty(), |ui| {
                         let (rect, response) =
                             ui.allocate_exact_size(egui::vec2(18.0, 22.0), egui::Sense::click());
-                        crate::icons::paint(
+                        crate::ui::icons::paint(
                             ui.painter(),
                             rect,
                             AppIcon::ChevronDown,
@@ -181,7 +181,7 @@ impl SceneContext<'_> {
                                 ui_theme::text_weak()
                             },
                         );
-                        crate::accessibility::button(
+                        crate::ui::accessibility::button(
                             &response,
                             &self
                                 .ui
@@ -715,7 +715,7 @@ impl SceneContext<'_> {
                 ui.horizontal(|ui| {
                     let (icon_rect, _) =
                         ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::hover());
-                    crate::icons::paint(
+                    crate::ui::icons::paint(
                         ui.painter(),
                         icon_rect,
                         AppIcon::Error,
@@ -735,7 +735,7 @@ impl SceneContext<'_> {
                         .desired_width(f32::INFINITY)
                         .interactive(false),
                 );
-                crate::accessibility::read_only_text(
+                crate::ui::accessibility::read_only_text(
                     &details_response,
                     &self.ui.locale.tr(crate::i18n::message_id!("error-details")),
                     &details,

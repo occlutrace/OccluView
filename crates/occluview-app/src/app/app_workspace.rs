@@ -8,7 +8,7 @@ use super::workspace::id::{PaneId, SceneKey};
 use super::workspace::input::{GestureKind, PaneTarget, PointerButtons, PressResult};
 use super::workspace::layout::{EffectiveLayout, LayoutConstraints, PaneRect, WorkspaceLayout};
 use super::{egui, OccluViewApp};
-use crate::icons::AppIcon;
+use crate::ui::icons::AppIcon;
 use eframe::egui::{pos2, vec2, Rect};
 
 const PANE_HEADER_HEIGHT: f32 = 30.0;
@@ -245,7 +245,7 @@ impl OccluViewApp {
         let is_active = self.workspace.input.active().scene == pane.key;
         let split = matches!(layout, EffectiveLayout::SideBySide { .. });
         ui.painter()
-            .rect_filled(rect, 0.0, crate::ui_theme::panel_fill());
+            .rect_filled(rect, 0.0, crate::ui::ui_theme::panel_fill());
         let separator_y = rect.bottom() - if is_active && split { 1.0 } else { 0.5 };
         ui.painter().line_segment(
             [
@@ -253,9 +253,9 @@ impl OccluViewApp {
                 pos2(rect.right(), separator_y),
             ],
             if is_active && split {
-                egui::Stroke::new(2.0, crate::ui_theme::accent())
+                egui::Stroke::new(2.0, crate::ui::ui_theme::accent())
             } else {
-                egui::Stroke::new(1.0, crate::ui_theme::hairline())
+                egui::Stroke::new(1.0, crate::ui::ui_theme::hairline())
             },
         );
 
@@ -274,12 +274,12 @@ impl OccluViewApp {
                                 .truncate(),
                         )
                         .on_hover_text(&pane.name);
-                    crate::accessibility::button(&title, &pane.name, !modal_open, Some(is_active));
+                    crate::ui::accessibility::button(&title, &pane.name, !modal_open, Some(is_active));
                     if title.has_focus() && !modal_open {
                         ui.painter().rect_stroke(
                             title.rect,
                             3.0,
-                            egui::Stroke::new(1.0, crate::ui_theme::accent()),
+                            egui::Stroke::new(1.0, crate::ui::ui_theme::accent()),
                             egui::StrokeKind::Inside,
                         );
                     }
@@ -304,14 +304,14 @@ impl OccluViewApp {
                             &response,
                             AppIcon::FitView,
                             if is_active {
-                                crate::ui_theme::accent()
+                                crate::ui::ui_theme::accent()
                             } else {
-                                crate::ui_theme::text_weak()
+                                crate::ui::ui_theme::text_weak()
                             },
                             !modal_open,
                         );
                         let response = response.on_hover_text(&label);
-                        crate::accessibility::button(&response, &label, !modal_open, None);
+                        crate::ui::accessibility::button(&response, &label, !modal_open, None);
                         if response.clicked() && !modal_open {
                             self.workspace
                                 .commands
@@ -336,11 +336,11 @@ impl OccluViewApp {
                             ui,
                             &response,
                             AppIcon::SplitView,
-                            crate::ui_theme::text_weak(),
+                            crate::ui::ui_theme::text_weak(),
                             !modal_open,
                         );
                         let response = response.on_hover_text(&label);
-                        crate::accessibility::button(&response, &label, !modal_open, None);
+                        crate::ui::accessibility::button(&response, &label, !modal_open, None);
                         if response.clicked() && !modal_open {
                             let layout = self
                                 .workspace
@@ -384,12 +384,12 @@ impl OccluViewApp {
             WorkspaceLayout::Single { .. } => return Some(divider),
         };
         if modal_open {
-            crate::accessibility::slider(&response, &label, false, f64::from(current_ratio));
+            crate::ui::accessibility::slider(&response, &label, false, f64::from(current_ratio));
             return Some(divider);
         }
 
         let mut ratio = current_ratio;
-        crate::accessibility::slider(&response, &label, true, f64::from(ratio));
+        crate::ui::accessibility::slider(&response, &label, true, f64::from(ratio));
         if response.double_clicked() {
             ratio = 0.5;
         } else if response.dragged_by(egui::PointerButton::Primary)
@@ -429,12 +429,12 @@ impl OccluViewApp {
             ui.painter().rect_filled(
                 divider.shrink(2.0),
                 2.0,
-                crate::ui_theme::accent().gamma_multiply(0.16),
+                crate::ui::ui_theme::accent().gamma_multiply(0.16),
             );
             ui.painter().rect_stroke(
                 divider.shrink(1.0),
                 2.0,
-                egui::Stroke::new(1.0, crate::ui_theme::accent()),
+                egui::Stroke::new(1.0, crate::ui::ui_theme::accent()),
                 egui::StrokeKind::Inside,
             );
         }
@@ -853,7 +853,7 @@ impl OccluViewApp {
             .tr(crate::i18n::message_id!("workspace-cancel"));
         let mut target = None;
         let mut cancel_drop = false;
-        let modal = crate::modal_surface::show_information_modal(
+        let modal = crate::ui::modal_surface::show_information_modal(
             ctx,
             egui::Id::new("workspace-drop-target-dialog"),
             vec2(380.0, 180.0),
@@ -863,7 +863,7 @@ impl OccluViewApp {
                     egui::RichText::new(&title)
                         .strong()
                         .size(17.0)
-                        .color(crate::ui_theme::text()),
+                        .color(crate::ui::ui_theme::text()),
                 );
                 ui.add_space(4.0);
                 ui.label(&description);
@@ -909,7 +909,7 @@ impl OccluViewApp {
         let mut value = initial;
         let mut submit = false;
         let mut dismiss = false;
-        let modal = crate::modal_surface::show_information_modal(
+        let modal = crate::ui::modal_surface::show_information_modal(
             ctx,
             egui::Id::new("workspace-rename-dialog"),
             vec2(380.0, 160.0),
@@ -919,7 +919,7 @@ impl OccluViewApp {
                     egui::RichText::new(&title)
                         .strong()
                         .size(17.0)
-                        .color(crate::ui_theme::text()),
+                        .color(crate::ui::ui_theme::text()),
                 );
                 ui.add_space(8.0);
                 let response = ui
@@ -1174,7 +1174,7 @@ impl OccluViewApp {
         };
         if let Some(painted) = painted {
             if alpha > 0.002 {
-                let accent = crate::ui_theme::accent();
+                let accent = crate::ui::ui_theme::accent();
                 // A pane is a whole canvas, so tinting it reads as burning the
                 // view the operator is about to use. Mark it with its border
                 // instead and keep the tint for the narrow bands.
@@ -1221,14 +1221,14 @@ impl OccluViewApp {
         let galley = painter.layout_no_wrap(
             payload.label.clone(),
             egui::FontId::proportional(12.0),
-            crate::ui_theme::text(),
+            crate::ui::ui_theme::text(),
         );
         let rect = Rect::from_min_size(at + vec2(12.0, 14.0), galley.size() + vec2(22.0, 12.0));
         let tint = crate::layers_overlay::color32_from_tint(payload.tint);
         let (fill, stroke) = if accepted {
-            (tint.gamma_multiply(0.85), crate::ui_theme::accent())
+            (tint.gamma_multiply(0.85), crate::ui::ui_theme::accent())
         } else {
-            (tint.gamma_multiply(0.35), crate::ui_theme::hairline())
+            (tint.gamma_multiply(0.35), crate::ui::ui_theme::hairline())
         };
         painter.rect_filled(rect, 6.0, fill);
         painter.rect_stroke(
@@ -1237,7 +1237,7 @@ impl OccluViewApp {
             egui::Stroke::new(1.0, stroke),
             egui::StrokeKind::Inside,
         );
-        painter.galley(rect.min + vec2(11.0, 6.0), galley, crate::ui_theme::text());
+        painter.galley(rect.min + vec2(11.0, 6.0), galley, crate::ui::ui_theme::text());
     }
 
     fn paint_layer_drop_label(
@@ -1262,7 +1262,7 @@ impl OccluViewApp {
         let galley = painter.layout_no_wrap(
             label,
             egui::FontId::proportional(14.0),
-            crate::ui_theme::text(),
+            crate::ui::ui_theme::text(),
         );
         // A drop band is narrower than this pill, so centring the pill on the
         // band would hang it off the workspace, where the panel clips it. Shift
@@ -1275,11 +1275,11 @@ impl OccluViewApp {
                 - (wanted.bottom() - workspace_rect.bottom()).max(0.0),
         );
         let label_rect = wanted.translate(shift);
-        painter.rect_filled(label_rect, 6.0, crate::ui_theme::panel_fill());
+        painter.rect_filled(label_rect, 6.0, crate::ui::ui_theme::panel_fill());
         painter.galley(
             label_rect.min + vec2(12.0, 8.0),
             galley,
-            crate::ui_theme::text(),
+            crate::ui::ui_theme::text(),
         );
     }
 }
@@ -1294,17 +1294,17 @@ fn paint_pane_action(
     let rect = response.rect;
     if enabled && (response.hovered() || response.has_focus()) {
         ui.painter()
-            .rect_filled(rect, 3.0, crate::ui_theme::row_hover_fill());
+            .rect_filled(rect, 3.0, crate::ui::ui_theme::row_hover_fill());
         if response.has_focus() {
             ui.painter().rect_stroke(
                 rect,
                 3.0,
-                egui::Stroke::new(1.0, crate::ui_theme::accent()),
+                egui::Stroke::new(1.0, crate::ui::ui_theme::accent()),
                 egui::StrokeKind::Inside,
             );
         }
     }
-    crate::icons::paint(ui.painter(), rect.shrink(5.0), icon, ink);
+    crate::ui::icons::paint(ui.painter(), rect.shrink(5.0), icon, ink);
 }
 
 /// Roll back just the in-progress manual pose drag after focus leaves the

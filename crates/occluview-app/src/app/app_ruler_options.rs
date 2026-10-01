@@ -8,10 +8,10 @@
 
 use super::{egui, SceneContext};
 use crate::app_settings::RulerLineAngle;
-use crate::icons::AppIcon;
 use crate::measure_overlay::ruler_line_angle_key;
 use crate::measure_tool::MeasureMode;
-use crate::ui_theme;
+use crate::ui::icons::AppIcon;
+use crate::ui::ui_theme;
 
 const STRIP_ID: &str = "ruler-options-strip";
 /// Gap between the strip and the viewport's top edge, the Layers panel, or

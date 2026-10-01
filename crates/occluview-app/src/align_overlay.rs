@@ -13,7 +13,7 @@ use crate::align_tool::AlignTool;
 use crate::align_worker::AlignSettings;
 use crate::i18n::catalog::NumberFormat;
 use crate::measure_draw;
-use crate::ui_theme;
+use crate::ui::ui_theme;
 use crate::viewer::project_world_to_viewport;
 
 /// Radius of a numbered pair marker.

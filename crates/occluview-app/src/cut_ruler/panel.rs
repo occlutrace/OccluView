@@ -5,7 +5,7 @@ use occluview_edit::scene::SceneSection;
 
 use super::model::{CutRuler, SliceBasis, SliceCam, SlicePlaneMap};
 use crate::cut_geometry::snap_to_contour;
-use crate::{probe_section, ui_theme};
+use crate::{probe_section, ui::ui_theme};
 
 /// The section image stays square so both axes use the same mm-per-pixel scale.
 const MAX_IMAGE_SIDE_PX: f32 = 300.0;
@@ -114,7 +114,7 @@ pub(crate) fn section_panel_rect(viewport_rect: egui::Rect) -> Option<egui::Rect
     let side_by_height = viewport_rect.height() - PANEL_BOTTOM_GAP_PX - chrome_h - top_reserve;
     // Horizontal budget: never cover the bottom-left status pill (transient
     // messages must stay readable while cutting).
-    let pill_right = crate::app_chrome::status_overlay_rect(viewport_rect).right();
+    let pill_right = crate::ui::app_chrome::status_overlay_rect(viewport_rect).right();
     let side_by_width =
         viewport_rect.right() - PANEL_MARGIN_PX - PANEL_PAD_PX * 2.0 - (pill_right + CHROME_GAP_PX);
     let proportional =
@@ -403,12 +403,12 @@ fn draw_section_header(
 fn draw_close_button(ui: &mut egui::Ui, locale: &crate::i18n::LocaleManager) -> (bool, bool) {
     let (close_rect, close) = ui.allocate_exact_size(egui::vec2(24.0, 20.0), egui::Sense::click());
     let label = locale.tr(crate::i18n::message_id!("cut-close-section"));
-    crate::accessibility::button(&close, &label, true, None);
+    crate::ui::accessibility::button(&close, &label, true, None);
     let close_hovered = close.hovered();
-    crate::icons::paint(
+    crate::ui::icons::paint(
         ui.painter(),
         close_rect,
-        crate::icons::AppIcon::Close,
+        crate::ui::icons::AppIcon::Close,
         if close_hovered {
             ui_theme::text()
         } else {

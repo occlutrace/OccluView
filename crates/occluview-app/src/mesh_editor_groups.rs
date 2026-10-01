@@ -11,10 +11,10 @@ use eframe::egui;
 
 use super::{EditorTab, MeshEditorAction, MeshEditorPanelState};
 use crate::app::workspace::id::SceneKey;
-use crate::icons::AppIcon;
 use crate::mesh_editor_icons::{self, CELL_ROUNDING};
 use crate::sculpt_tool::{SculptTip, SculptToolKind};
-use crate::ui_theme;
+use crate::ui::icons::AppIcon;
+use crate::ui::ui_theme;
 
 /// Height of the tab strip / its pills.
 const TAB_H: f32 = 28.0;
@@ -97,7 +97,7 @@ fn tab_pill(ui: &mut egui::Ui, label: &str, width: f32, active: bool) -> egui::R
             egui::StrokeKind::Inside,
         );
     }
-    crate::accessibility::button(&response, label, true, Some(active));
+    crate::ui::accessibility::button(&response, label, true, Some(active));
     response
 }
 
@@ -109,7 +109,7 @@ fn close_cross(
     locale: &crate::i18n::LocaleManager,
 ) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(size, TAB_H), egui::Sense::click());
-    crate::icons::paint(
+    crate::ui::icons::paint(
         ui.painter(),
         rect.shrink(3.0),
         AppIcon::Close,
@@ -128,7 +128,7 @@ fn close_cross(
         );
     }
     let label = locale.tr(crate::i18n::message_id!("meshedit-cancel-session"));
-    crate::accessibility::button(&response, &label, true, None);
+    crate::ui::accessibility::button(&response, &label, true, None);
     response.on_hover_text(label)
 }
 
@@ -639,7 +639,7 @@ fn close_holes_limit_control(
 pub(super) fn header(ui: &mut egui::Ui, title: &str, icon: AppIcon) {
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
-        crate::icons::paint(ui.painter(), rect, icon, ui_theme::accent());
+        crate::ui::icons::paint(ui.painter(), rect, icon, ui_theme::accent());
         ui.label(
             egui::RichText::new(title)
                 .strong()

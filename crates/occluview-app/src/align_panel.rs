@@ -12,8 +12,8 @@ use eframe::egui;
 use crate::align_drag::DragConstraint;
 use crate::align_tool::AlignTool;
 use crate::align_worker::AlignSettings;
-use crate::icons::AppIcon;
-use crate::{align_panel_map, ui_theme};
+use crate::ui::icons::AppIcon;
+use crate::{align_panel_map, ui::ui_theme};
 
 /// Fixed window width, matching the mesh editor so the two read as one family.
 const WINDOW_WIDTH: f32 = 320.0;
@@ -179,7 +179,7 @@ fn body(
     let enabled = !view.busy && !view.worker_failed;
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
-        crate::icons::paint(ui.painter(), rect, AppIcon::Align, ui_theme::accent());
+        crate::ui::icons::paint(ui.painter(), rect, AppIcon::Align, ui_theme::accent());
         ui.label(
             egui::RichText::new(locale.tr(crate::i18n::message_id!("align-title")))
                 .strong()
@@ -672,7 +672,7 @@ fn chip_with_accessibility(
     match (icon, label.is_empty()) {
         (Some(icon), true) => {
             let glyph = egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(16.0));
-            crate::icons::paint(painter, glyph, icon, ink);
+            crate::ui::icons::paint(painter, glyph, icon, ink);
         }
         (Some(icon), false) => {
             let text_width = painter
@@ -686,7 +686,7 @@ fn chip_with_accessibility(
                 egui::pos2(left + glyph_side / 2.0, rect.center().y),
                 egui::Vec2::splat(glyph_side),
             );
-            crate::icons::paint(painter, glyph, icon, ink);
+            crate::ui::icons::paint(painter, glyph, icon, ink);
             painter.text(
                 egui::pos2(glyph.right() + 5.0, rect.center().y),
                 egui::Align2::LEFT_CENTER,
@@ -699,7 +699,7 @@ fn chip_with_accessibility(
             painter.text(rect.center(), egui::Align2::CENTER_CENTER, label, font, ink);
         }
     }
-    crate::accessibility::button(&response, accessibility_label, enabled, Some(active));
+    crate::ui::accessibility::button(&response, accessibility_label, enabled, Some(active));
     response
 }
 
@@ -758,7 +758,7 @@ fn fit_button(
         egui::pos2(rect.left() + 21.0, rect.center().y),
         egui::Vec2::splat(17.0),
     );
-    crate::icons::paint(painter, glyph, icon, ink);
+    crate::ui::icons::paint(painter, glyph, icon, ink);
     painter.text(
         egui::pos2(glyph.right() + 9.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
@@ -766,7 +766,7 @@ fn fit_button(
         egui::FontId::proportional(if primary { 13.0 } else { 12.0 }),
         ink,
     );
-    crate::accessibility::button(&response, label, enabled, None);
+    crate::ui::accessibility::button(&response, label, enabled, None);
     response
 }
 

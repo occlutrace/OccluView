@@ -1,7 +1,7 @@
-use crate::icons::AppIcon;
 use crate::layer_actions::{LayerContextAction, LayerContextRequest};
 use crate::mesh_editor_icons::CELL_ROUNDING;
-use crate::ui_theme;
+use crate::ui::icons::AppIcon;
+use crate::ui::ui_theme;
 use eframe::egui;
 use occluview_core::SceneMeshId;
 
@@ -460,7 +460,7 @@ fn menu_item_state(
     }
     let icon_center = egui::pos2(rect.left() + PAD_L + GUTTER * 0.5, rect.center().y);
     let icon_rect = egui::Rect::from_center_size(icon_center, egui::vec2(ICON, ICON));
-    crate::icons::paint(painter, icon_rect, icon, fg);
+    crate::ui::icons::paint(painter, icon_rect, icon, fg);
     painter.text(
         egui::pos2(rect.left() + PAD_L + GUTTER + LABEL_GAP, rect.center().y),
         egui::Align2::LEFT_CENTER,
@@ -468,7 +468,7 @@ fn menu_item_state(
         egui::FontId::proportional(12.5),
         fg,
     );
-    crate::accessibility::button(&response, label, enabled, selected);
+    crate::ui::accessibility::button(&response, label, enabled, selected);
     response
 }
 

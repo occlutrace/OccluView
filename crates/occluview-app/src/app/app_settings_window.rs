@@ -4,11 +4,11 @@ use super::app_settings_panel::{settings_popup_id, show_settings_popup, Settings
 use super::information_dialog::InformationDialog;
 use super::SceneContext;
 use crate::i18n::message_id;
-use crate::icons::AppIcon;
-use crate::ui_theme;
+use crate::ui::icons::AppIcon;
+use crate::ui::ui_theme;
 use eframe::egui;
 
-pub(super) use crate::modal_surface::show_information_modal;
+pub(super) use crate::ui::modal_surface::show_information_modal;
 
 impl SceneContext<'_> {
     pub(super) fn show_settings_popup(&mut self, trigger: &egui::Response) {
@@ -268,7 +268,7 @@ fn about_link(ui: &mut egui::Ui, width: f32, icon: AppIcon, label: &str) -> bool
             egui::StrokeKind::Inside,
         );
     }
-    crate::accessibility::link(&response, label, true);
+    crate::ui::accessibility::link(&response, label, true);
     let ink = ui_theme::text();
     let font = egui::FontId::proportional(12.0);
     let galley = ui.painter().layout_no_wrap(label.to_owned(), font, ink);
@@ -279,7 +279,7 @@ fn about_link(ui: &mut egui::Ui, width: f32, icon: AppIcon, label: &str) -> bool
         egui::pos2(content_left + icon_side * 0.5, rect.center().y),
         egui::Vec2::splat(icon_side),
     );
-    crate::icons::paint(ui.painter(), icon_rect, icon, ui_theme::text_weak());
+    crate::ui::icons::paint(ui.painter(), icon_rect, icon, ui_theme::text_weak());
     ui.painter().galley(
         egui::pos2(
             icon_rect.right() + 7.0,

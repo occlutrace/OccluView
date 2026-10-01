@@ -38,9 +38,9 @@ pub(super) fn paint_scale_bar(
     let viewport_is_dark = background.is_dark();
     let shadow = egui::Stroke::new(
         4.0_f32,
-        crate::ui_theme::viewport_ink_halo(viewport_is_dark),
+        crate::ui::ui_theme::viewport_ink_halo(viewport_is_dark),
     );
-    let line = egui::Stroke::new(2.0_f32, crate::ui_theme::viewport_ink(viewport_is_dark));
+    let line = egui::Stroke::new(2.0_f32, crate::ui::ui_theme::viewport_ink(viewport_is_dark));
     for stroke in [shadow, line] {
         painter.line_segment([egui::pos2(x0, y), egui::pos2(x1, y)], stroke);
         painter.line_segment([egui::pos2(x0, y - tick), egui::pos2(x0, y + tick)], stroke);
@@ -51,6 +51,6 @@ pub(super) fn paint_scale_bar(
         egui::Align2::LEFT_TOP,
         bar.label(unit, locale.number_format()),
         egui::FontId::proportional(13.0),
-        crate::ui_theme::viewport_ink(viewport_is_dark),
+        crate::ui::ui_theme::viewport_ink(viewport_is_dark),
     );
 }

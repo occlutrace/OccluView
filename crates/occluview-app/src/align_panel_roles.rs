@@ -10,8 +10,8 @@
 use eframe::egui;
 
 use crate::align_markings::AlignSide;
-use crate::icons::AppIcon;
-use crate::ui_theme;
+use crate::ui::icons::AppIcon;
+use crate::ui::ui_theme;
 
 /// Longest a scan's name is shown at. Both names and the button have to fit one
 /// line of a 272-pixel window, and a file name can be arbitrarily long.
