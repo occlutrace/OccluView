@@ -425,10 +425,11 @@ impl Renderer {
             .draw(rpass, occluview_core::MeshKind::TriangleMesh);
     }
 
-    /// Draw the translucent Sculpt tool volume. It is intentionally
-    /// depth-independent: the volume remains
-    /// visible while it hovers over a dense scan and cannot affect the depth
-    /// buffer or any authoritative picking result.
+    /// Draw the translucent Sculpt tool volume.
+    ///
+    /// It is depth-tested like any other solid, so the part of the volume behind
+    /// the scan's nearer surface is hidden, and it never writes depth, so it
+    /// cannot occlude a later draw or affect any authoritative picking result.
     pub fn draw_sculpt_tool(
         &self,
         rpass: &mut wgpu::RenderPass<'_>,
