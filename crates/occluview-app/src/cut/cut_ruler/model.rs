@@ -16,7 +16,9 @@
 use eframe::egui;
 use glam::Vec3;
 
-use crate::{cut::probe_section::SliceProbe, measure_draw, measure_tool, ui::ui_theme};
+use crate::{
+    cut::probe_section::SliceProbe, measure::measure_draw, measure::measure_tool, ui::ui_theme,
+};
 
 /// Two planes are "the same section" when their normals and offsets agree within
 /// these tolerances; a larger change is a different section and discards the

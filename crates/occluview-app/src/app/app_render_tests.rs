@@ -423,7 +423,7 @@ fn the_offscreen_viewport_replays_overlay_vertices_after_scene_upload() {
 fn inactive_scene_keeps_its_ruler_visible_without_consuming_escape() {
     use crate::app::app_test_support::{named_scene, test_app};
     use crate::app::workspace::commands::SplitSide;
-    use crate::measure_tool::MeasureMode;
+    use crate::measure::measure_tool::MeasureMode;
     use eframe::egui;
     let mut app = test_app("inactive-ruler-annotation");
     let key = app.workspace.scenes[0].key;
@@ -469,7 +469,7 @@ fn inactive_scene_keeps_its_ruler_visible_without_consuming_escape() {
             assert!(ctx.input(|input| input.key_pressed(egui::Key::Escape)));
         },
     );
-    let expected = crate::measure_tool::format_length(
+    let expected = crate::measure::measure_tool::format_length(
         1.0,
         app.persistence.settings.unit_display,
         crate::i18n::catalog::NumberFormat::for_tag("en"),

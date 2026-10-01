@@ -8,8 +8,8 @@
 
 use super::{egui, SceneContext};
 use crate::app_settings::RulerLineAngle;
-use crate::measure_overlay::ruler_line_angle_key;
-use crate::measure_tool::MeasureMode;
+use crate::measure::measure_overlay::ruler_line_angle_key;
+use crate::measure::measure_tool::MeasureMode;
 use crate::ui::icons::AppIcon;
 use crate::ui::ui_theme;
 

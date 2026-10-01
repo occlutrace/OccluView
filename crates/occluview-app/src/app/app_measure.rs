@@ -5,8 +5,8 @@
 use super::{egui, pick_scene_hit, Scene, SceneContext};
 use crate::app_settings::RulerLineAngle;
 use crate::cut::probe_section;
-use crate::measure_overlay;
-use crate::measure_tool::{self, MeasureMode, ThicknessProbe, ThicknessReading};
+use crate::measure::measure_overlay;
+use crate::measure::measure_tool::{self, MeasureMode, ThicknessProbe, ThicknessReading};
 use occluview_core::ScenePickHit;
 
 impl SceneContext<'_> {

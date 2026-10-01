@@ -331,7 +331,7 @@ impl SceneContext<'_> {
     ) {
         self.paint_mesh_selection_drag_overlay_impl(ui);
         if let Some(camera) = self.render.camera {
-            crate::measure_overlay::paint_measurements(
+            crate::measure::measure_overlay::paint_measurements(
                 ui.painter(),
                 &camera,
                 viewport,
