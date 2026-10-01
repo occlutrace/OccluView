@@ -1,3 +1,4 @@
+# occluview-i18n — Fluent catalogs shared by the app and the shell, which cannot depend on the app.
 [package]
 name = "occluview-i18n"
 description = "Shared Fluent catalogs and locale resolution for OccluView."

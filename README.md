@@ -291,5 +291,35 @@ start once with `OCCLUVIEW_LIVE_MSAA=1` in the environment to force the
 single-sample path; `OCCLUVIEW_LIVE_MSAA=4` forces it back on. A startup refusal
 names the override.
 
+## Workspace layout
+
+The workspace is layered from shared leaves upward: a crate may depend only on a
+lower-ranked crate, and each rank is declared in `[workspace.metadata.layer-ranks]`
+in the root `Cargo.toml`. `crates/occluview-repo-contracts` checks Cargo's
+dependency graph against those ranks. The `fuzz/` crate is excluded from the
+workspace.
+
+| crate | role | rank |
+|---|---|---|
+| `occluview-geometry-math` | Shared geometry constants and pure math; the bottom leaf, importing no other workspace crate. | 0 |
+| `occluview-i18n` | Fluent catalogs and locale resolution shared by the app and the shell. | 0 |
+| `occluview-repo-contracts` | Repository contract tests: CI workflows, packaging reports and the release version. | 0 |
+| `occluview-robust-csg` | Native Manifold CSG boundary; isolates the C++ build from mesh code. | 0 |
+| `occluview-update` | Signed update-manifest checks; the only crate carrying HTTP and signature verification. | 0 |
+| `occluview-mesh-edit` | Product-neutral mesh-editing kernel. | 1 |
+| `occluview-sculpt` | Surface sculpting kernel with its own `parallel` feature. | 1 |
+| `occluview-surface-query` | Shared triangle-surface indexing and cooperative cancellation. | 1 |
+| `occluview-hps` | HPS parser; isolates the archive, cipher and image dependencies. | 1 |
+| `occluview-core` | Pure data model: math, units, mesh, scene and camera, with no I/O, GPU or platform code. | 1 |
+| `occluview-edit` | Adapts the mesh-editing kernel to core meshes and owns the optional native CSG fallback. | 2 |
+| `occluview-align` | Scan registration and signed deviation metrology. | 2 |
+| `occluview-contact` | Occlusal contact metrology and the clinical colour law. | 2 |
+| `occluview-formats` | Import and export readers and writers for the supported scan formats. | 3 |
+| `occluview-render` | wgpu renderer for the live viewer and the offscreen thumbnail path. | 3 |
+| `occluview-thumbnail` | Platform-neutral thumbnail loading, rendering and fallback. | 4 |
+| `occluview-shell` | Windows COM shell extension: Explorer thumbnails and the preview pane. | 5 |
+| `occluview-app` | Desktop viewer binary (`occluview`), built with egui and wgpu. | 5 |
+| `occluview-cli` | Headless `occluview-cli` helper. | 5 |
+
 Licensed under [Apache-2.0](LICENSE); distribution notices are in [NOTICE](NOTICE)
 and [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
