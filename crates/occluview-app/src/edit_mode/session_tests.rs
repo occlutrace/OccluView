@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used)]
 //! Session-lifecycle, sync re-arming, redo, and no-op controller tests.
 
 use super::*;
@@ -54,6 +55,41 @@ fn begin_face_selection_captures_baseline_scene_once_per_session() {
     );
     // Session closed: a second cancel has no baseline to restore.
     assert!(controller.cancel_edit_session().is_none());
+}
+
+#[test]
+fn begin_face_selection_refuses_when_history_cannot_retain_baseline() {
+    let Some(mesh) = triangle_mesh("budget-limited") else {
+        panic!("required test setup or expected result was missing");
+    };
+    let mut scene = Scene::new();
+    let layer_index = scene.add(SceneMesh::new(mesh));
+    let before_layer = scene.meshes()[layer_index].clone();
+    let before_mesh = before_layer.mesh.clone();
+    let scene_key = SceneKey::from_raw_for_test(1, 1).expect("nonzero test scene key");
+    let history = WorkspaceHistory::shared(4, 0);
+    let mut controller =
+        EditModeController::new_for_scene(history.clone(), scene_key, 4, DEFAULT_UNDO_BYTES);
+    let history_bytes_before = history.borrow().used_bytes();
+
+    assert!(!controller.begin_face_selection(&before_layer, &scene));
+
+    assert_eq!(
+        controller.take_session_start_failure(),
+        Some(EditSessionStartFailure::HistoryCapacityUnavailable)
+    );
+    assert_eq!(history.borrow().used_bytes(), history_bytes_before);
+    assert!(!history.borrow().has_active_edit_checkpoint(scene_key));
+    assert_eq!(controller.undo_len(), 0);
+    assert!(!controller.has_active_session());
+    assert_eq!(controller.selected_layer_id(), None);
+    assert_eq!(scene.meshes().len(), 1);
+    assert_eq!(scene.meshes()[0].id(), before_layer.id());
+    assert_eq!(
+        scene.meshes()[0].mesh.triangle_count(),
+        before_mesh.triangle_count()
+    );
+    assert_eq!(scene.meshes()[0].mesh.vertices(), before_mesh.vertices());
 }
 
 #[test]
@@ -388,10 +424,10 @@ fn oversized_snapshot_applies_edit_without_phantom_undo() {
     let mut scene = Scene::new();
     let layer_index = scene.add(SceneMesh::new(mesh));
     let layer = scene.meshes()[layer_index].clone();
-    // A byte cap below any real snapshot: the pre-op snapshot is skipped.
+    // A standalone whole-layer command may run without an Edit checkpoint;
+    // a cap below its snapshot reports it as not undoable.
     let mut controller = EditModeController::new(8, 1);
 
-    assert!(controller.begin_face_selection(&layer, &scene));
     let Some(token) = controller.begin_layer_edit(&layer, EditModeCommand::InvertNormals) else {
         panic!("required test setup or expected result was missing");
     };

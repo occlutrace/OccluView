@@ -91,6 +91,7 @@ fn render_align(name: &str, tab: AlignTab, refined: bool, brush_open: bool) {
         let _ = crate::align_panel::show(
             ctx,
             SCREEN,
+            egui::Id::new("panel-shot-scene"),
             AlignPanelView {
                 tool: &tool,
                 layer_count: 2,
@@ -115,6 +116,7 @@ fn render_align(name: &str, tab: AlignTab, refined: bool, brush_open: bool) {
             brush.set_armed(true);
             let _ = crate::align_panel_brush::show(
                 ctx,
+                egui::Id::new("panel-shot-scene"),
                 crate::align_panel_brush::BrushPanelView {
                     viewport_rect: SCREEN,
                     brush: &mut brush,
@@ -149,7 +151,13 @@ fn align_and_mesh_editor_wireframes_for_visual_review() {
             ..Default::default()
         };
         let locale = crate::i18n::LocaleManager::for_tests();
-        let _ = crate::mesh_editor_overlay::show(ctx, SCREEN, state, &locale);
+        let _ = crate::mesh_editor_overlay::show(
+            ctx,
+            crate::app::workspace::id::SceneKey::INITIAL,
+            SCREEN,
+            state,
+            &locale,
+        );
     });
 
     frame("audit-sculpt-editor", |ctx| {
@@ -161,6 +169,12 @@ fn align_and_mesh_editor_wireframes_for_visual_review() {
             ..Default::default()
         };
         let locale = crate::i18n::LocaleManager::for_tests();
-        let _ = crate::mesh_editor_overlay::show(ctx, SCREEN, state, &locale);
+        let _ = crate::mesh_editor_overlay::show(
+            ctx,
+            crate::app::workspace::id::SceneKey::INITIAL,
+            SCREEN,
+            state,
+            &locale,
+        );
     });
 }

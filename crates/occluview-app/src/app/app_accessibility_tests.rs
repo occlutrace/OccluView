@@ -213,7 +213,8 @@ fn assert_disabled(controls: &[AccessibleControl], name: &str) {
 
 fn app_with_scene(ctx: &egui::Context) -> OccluViewApp {
     let mut app = OccluViewApp::new_for_tests(ctx.clone());
-    app.document.scene = Some(app_test_support::named_scene("Upper arch", 0.0).into());
+    app.workspace.scenes[0].document.scene =
+        Some(app_test_support::named_scene("Upper arch", 0.0).into());
     app
 }
 
@@ -230,16 +231,27 @@ fn viewer_surfaces_publish_named_controls_with_roles_and_toggle_states() {
     ctx.enable_accesskit();
     let mut app = app_with_scene(&ctx);
     app.persistence.recent_files.push("prior-case.stl");
-    app.tools.measure.arm(MeasureMode::Ruler);
-    app.tools.align.brush.set_armed(true);
+    app.workspace.scenes[0]
+        .tools
+        .measure
+        .arm(MeasureMode::Ruler);
+    app.workspace.scenes[0].tools.align.brush.set_armed(true);
     egui::Popup::open_id(&ctx, settings_popup_id());
 
     let mut output = ctx.run_ui(input(), |ui| {
         let render_ctx = ui.ctx().clone();
-        app.show_toolbar(ui);
-        app.show_layers_overlay(ui, viewport(), &render_ctx);
-        app.show_align_panel(&render_ctx, viewport());
-        app.show_ruler_options(&render_ctx, viewport());
+        app.active_context()
+            .expect("live test scene")
+            .show_toolbar(ui);
+        app.active_context()
+            .expect("live test scene")
+            .show_layers_overlay(ui, viewport(), &render_ctx);
+        app.active_context()
+            .expect("live test scene")
+            .show_align_panel(&render_ctx, viewport());
+        app.active_context()
+            .expect("live test scene")
+            .show_ruler_options(&render_ctx, viewport());
     });
     output.textures_delta.clear();
     let controls = controls(&output, "toolbar, layers, align, ruler strip, and settings");
@@ -318,16 +330,94 @@ fn viewer_surfaces_publish_named_controls_with_roles_and_toggle_states() {
 }
 
 #[test]
+fn localized_toolbar_controls_fit_narrow_windows_without_overlapping() {
+    for tag in ["en", "ru", "de", "es", "fr", "it", "pt-BR"] {
+        for width in [400.0, 600.0, 900.0, 1600.0] {
+            let ctx = egui::Context::default();
+            ctx.enable_accesskit();
+            let mut app = app_with_scene(&ctx);
+            app.ui
+                .locale
+                .set_preference(UiLanguagePreference::Explicit(tag));
+            app.workspace.scenes[0]
+                .tools
+                .measure
+                .arm(MeasureMode::Ruler);
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(width, 900.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    app.active_context().expect("active scene").show_toolbar(ui);
+                },
+            );
+            output.textures_delta.clear();
+            let named = controls(&output, "responsive toolbar");
+            for key in [
+                crate::i18n::message_id!("toolbar-open-label"),
+                crate::i18n::message_id!("toolbar-add-label"),
+                crate::i18n::message_id!("toolbar-cut-label"),
+                crate::i18n::message_id!("toolbar-ruler-label"),
+                crate::i18n::message_id!("toolbar-thickness-label"),
+                crate::i18n::message_id!("toolbar-align-label"),
+                crate::i18n::message_id!("toolbar-edit-label"),
+                crate::i18n::message_id!("toolbar-settings-label"),
+            ] {
+                assert_role(&named, &app.ui.locale.tr(key), "Button");
+            }
+            let update = output
+                .platform_output
+                .accesskit_update
+                .as_ref()
+                .expect("accessibility");
+            let mut bounds: Vec<_> = update
+                .nodes
+                .iter()
+                .filter_map(|(_, node)| {
+                    matches!(
+                        node.role(),
+                        egui::accesskit::Role::Button | egui::accesskit::Role::MenuItem
+                    )
+                    .then(|| node.bounds())
+                    .flatten()
+                })
+                .collect();
+            assert!(!bounds.is_empty());
+            bounds.sort_by(|a, b| a.x0.total_cmp(&b.x0));
+            for rect in &bounds {
+                assert!(
+                    rect.x0 >= 0.0 && rect.x1 <= f64::from(width),
+                    "{tag}, {width}: outside viewport: {rect:?}"
+                );
+            }
+            for pair in bounds.windows(2) {
+                assert!(
+                    pair[0].x1 <= pair[1].x0 + 0.5,
+                    "{tag}, {width}: toolbar overlap: {pair:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn unavailable_toolbar_commands_expose_disabled_state() {
     let ctx = egui::Context::default();
     ctx.enable_accesskit();
     let mut app = OccluViewApp::new_for_tests(ctx.clone());
-    let mut output = ctx.run_ui(input(), |ui| app.show_toolbar(ui));
+    let mut output = ctx.run_ui(input(), |ui| {
+        app.active_context()
+            .expect("live test scene")
+            .show_toolbar(ui);
+    });
     output.textures_delta.clear();
     let controls = controls(&output, "empty-scene toolbar");
 
     for name in [
-        "Add",
         "Recent files",
         "Cut View",
         "Ruler",
@@ -337,6 +427,12 @@ fn unavailable_toolbar_commands_expose_disabled_state() {
     ] {
         assert_disabled(&controls, name);
     }
+    assert!(
+        controls
+            .iter()
+            .any(|control| control.name == "Add" && !control.disabled),
+        "an empty scene must accept added files"
+    );
 }
 
 #[test]
@@ -344,17 +440,20 @@ fn contact_strip_controls_publish_names_roles_and_selected_state() {
     let ctx = egui::Context::default();
     ctx.enable_accesskit();
     let mut app = app_with_scene(&ctx);
-    let layer_id = app
+    let layer_id = app.workspace.scenes[0]
         .document
         .scene
         .as_ref()
         .and_then(|scene| scene.meshes().first())
         .map(SceneMesh::id)
         .expect("the contact strip has a scene layer");
-    app.tools.contacts.open(crate::contact::ContactPair {
-        subject: layer_id,
-        antagonist: layer_id,
-    });
+    app.workspace.scenes[0]
+        .tools
+        .contacts
+        .open(crate::contact::ContactPair {
+            subject: layer_id,
+            antagonist: layer_id,
+        });
     let names = [
         (ContactMode::Marks.label_key(), "contact mode", "Button"),
         (ContactMode::Approach.label_key(), "contact mode", "Button"),
@@ -385,7 +484,9 @@ fn contact_strip_controls_publish_names_roles_and_selected_state() {
         .collect();
     let mut output = ctx.run_ui(input(), |ui| {
         let render_ctx = ui.ctx().clone();
-        app.show_contact_bar(ui, viewport(), &render_ctx);
+        app.active_context()
+            .expect("live test scene")
+            .show_contact_bar(ui, viewport(), &render_ctx);
     });
     output.textures_delta.clear();
     let controls = controls(&output, "contact strip");
@@ -406,15 +507,22 @@ fn mesh_editor_and_sculpt_controls_publish_names_roles_and_selected_tabs() {
         let ctx = egui::Context::default();
         ctx.enable_accesskit();
         let mut app = app_with_scene(&ctx);
-        let scene = app.document.scene.as_ref().unwrap().clone();
-        assert!(app
+        let scene = app.workspace.scenes[0]
+            .document
+            .scene
+            .as_ref()
+            .unwrap()
+            .clone();
+        assert!(app.workspace.scenes[0]
             .document
             .edit_mode
             .begin_face_selection(&scene.meshes()[0], &scene));
-        app.tools.editor_tab = tab;
+        app.workspace.scenes[0].tools.editor_tab = tab;
 
         let mut output = ctx.run_ui(input(), |ui| {
-            app.show_mesh_editor_overlay(viewport(), ui.ctx());
+            app.active_context()
+                .expect("live test scene")
+                .show_mesh_editor_overlay(viewport(), ui.ctx());
         });
         output.textures_delta.clear();
         let controls = controls(&output, "mesh editor and sculpt panel");
@@ -533,7 +641,9 @@ fn information_and_error_dialog_controls_have_accessible_roles_and_names() {
     app.ui.information_dialog = InformationDialog::About;
     let mut about = ctx.run_ui(input(), |ui| {
         let render_ctx = ui.ctx().clone();
-        app.show_information_dialog(&render_ctx);
+        app.active_context()
+            .expect("live test scene")
+            .show_information_dialog(&render_ctx);
     });
     about.textures_delta.clear();
     let about_controls = controls(&about, "About dialog");
@@ -559,7 +669,9 @@ fn information_and_error_dialog_controls_have_accessible_roles_and_names() {
     });
     let mut error = ctx.run_ui(input(), |ui| {
         let render_ctx = ui.ctx().clone();
-        app.show_error_dialog(&render_ctx);
+        app.active_context()
+            .expect("live test scene")
+            .show_error_dialog(&render_ctx);
     });
     error.textures_delta.clear();
     let error_controls = controls(&error, "graphics error dialog");
@@ -578,7 +690,11 @@ fn accessibility_names_follow_the_active_locale() {
     app.ui
         .locale
         .set_preference(UiLanguagePreference::Explicit("ru"));
-    let mut output = ctx.run_ui(input(), |ui| app.show_toolbar(ui));
+    let mut output = ctx.run_ui(input(), |ui| {
+        app.active_context()
+            .expect("live test scene")
+            .show_toolbar(ui);
+    });
     output.textures_delta.clear();
     let controls = controls(&output, "Russian toolbar");
 

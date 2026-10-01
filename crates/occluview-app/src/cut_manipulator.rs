@@ -218,6 +218,24 @@ impl CutManipulator {
         self.mode = CutMode::Off;
     }
 
+    /// Cancel only an active planted-disc handle drag, restoring the pose it
+    /// had at press time while leaving Cut View armed and planted.
+    pub(crate) fn cancel_pointer_gesture(&mut self) -> bool {
+        let CutMode::Planted { pose, drag, .. } = &mut self.mode else {
+            return false;
+        };
+        let Some(drag) = drag.take() else {
+            return false;
+        };
+        match drag {
+            DiscDrag::Translate { center0, .. } | DiscDrag::PushPull { center0, .. } => {
+                pose.center = center0;
+            }
+            DiscDrag::Tilt { normal0, .. } => pose.plane_normal = normal0,
+        }
+        true
+    }
+
     /// Plant the disc at a fixed world pose, preserving the pose radius.
     pub(crate) fn plant_pose(&mut self, pose: DiscPose, keep_positive: bool) {
         self.radius_mm = pose.radius_mm;
@@ -619,6 +637,29 @@ mod tests {
         assert!(out.consumed_pointer);
         assert!(out.pose_changed);
         assert!(m.pose().expect("pose").center.distance(before) > 1.0);
+    }
+
+    #[test]
+    fn focus_loss_cancels_only_the_live_disc_drag() {
+        let mut m = CutManipulator::default();
+        plant(&mut m);
+        let before = m.pose().expect("pose");
+        m.update(&CutFrameInput {
+            primary_pressed: true,
+            primary_down: true,
+            ..base_input()
+        });
+        m.update(&CutFrameInput {
+            primary_down: true,
+            ray_origin: Vec3::new(5.0, 0.0, 100.0),
+            ..base_input()
+        });
+        assert_ne!(m.pose(), Some(before));
+
+        assert!(m.cancel_pointer_gesture());
+        assert_eq!(m.pose(), Some(before));
+        assert!(m.is_active() && m.is_planted());
+        assert!(!m.cancel_pointer_gesture(), "the drag was already canceled");
     }
 
     #[test]

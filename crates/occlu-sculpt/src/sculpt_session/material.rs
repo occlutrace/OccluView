@@ -128,5 +128,9 @@ impl SculptSession {
             let value = if redo { edit.after } else { edit.before };
             self.reference_verts[vertex * 3..vertex * 3 + 3].copy_from_slice(&value);
         }
+        // A restored material point invalidates every wall reading: the memo is
+        // keyed on where the point stood when it was measured. Clearing the
+        // whole table costs one pass and cannot leave a stale reserve behind.
+        self.reference_wall_mm.fill(f32::NAN);
     }
 }

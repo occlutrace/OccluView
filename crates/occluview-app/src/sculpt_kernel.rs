@@ -1,10 +1,7 @@
 //! Adapter between the app's sculpt contract and the `occlu-sculpt` kernel.
 //!
-//! The worker, commit, undo and abort paths all speak in [`BrushStroke`] and
-//! [`BrushStrokeOutcome`]: a dab is a mesh-local centre with a radius, a
-//! strength, a view direction and a mode, and a dab reports the vertices and
-//! faces it moved plus whether it changed the topology. This module answers
-//! that contract over [`occlu_sculpt::SculptSession`].
+//! Production input is a viewport ray step; the kernel owns raycast, path
+//! continuity, dose, and remeshing. Point dabs remain only as test fixtures.
 //!
 //! The kernel carries positions and normals only, so this adapter owns the
 //! attribute mirror: it keeps every vertex's colour and texture coordinate, and
@@ -13,7 +10,9 @@
 
 use crate::sculpt_tool::SculptTip;
 use glam::DVec3;
-use occlu_sculpt::{BrushMode as KernelMode, Dab, SculptSession, TipStamp};
+#[cfg(test)]
+use occlu_sculpt::Dab;
+use occlu_sculpt::{BrushMode as KernelMode, SculptRayConstraints, SculptSession, TipStamp};
 use occluview_core::{EditVertex, MeshEditBuffers, MeshEditError, MeshTopology, Vertex};
 use occluview_render::{SculptFaceUpdate, SculptTopologyDelta, SculptVertexUpdate};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -23,15 +22,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub(crate) enum BrushMode {
     /// Relax the surface: iron out grain and even the tessellation.
     Smooth,
-    /// Add material along the camera-depth axis.
+    /// Add material along the sampled dental surface sheet.
     Add,
-    /// Remove material against the camera-depth axis.
+    /// Remove material from the sampled dental surface sheet.
     Remove,
     /// Even small surface detail while preserving the broad form.
     Relax,
 }
 
 /// One brush dab in the layer's mesh-local space.
+#[cfg(test)]
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct BrushStroke {
     /// Mesh-local dab centre, on the surface the pointer hit.
@@ -44,6 +44,59 @@ pub(crate) struct BrushStroke {
     pub(crate) view_dir: [f32; 3],
 }
 
+/// One pointer sample in the active viewport, already transformed into the
+/// sculpt layer's local millimetre space. The kernel owns the raycast and the
+/// swept path between consecutive samples.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct BrushRayStep {
+    pub(crate) origin: [f32; 3],
+    pub(crate) direction: [f32; 3],
+    pub(crate) near_mm: f32,
+    pub(crate) far_mm: f32,
+    /// The renderer has one active section plane. Its local-space halfspace is
+    /// represented as n·p + d >= 0, matching the kernel's visible-side test.
+    pub(crate) clip_plane: Option<[f64; 4]>,
+    pub(crate) radius_mm: f32,
+    pub(crate) strength: f32,
+    pub(crate) mode: BrushMode,
+    pub(crate) tip: SculptTip,
+    pub(crate) axis: Option<[f32; 3]>,
+    /// Button remains down without travel; this controls path stamping, while
+    /// the worker supplies elapsed time independently at dispatch.
+    pub(crate) hold: bool,
+    /// Ctrl preserves the opposite wall for every non-Relax mode.
+    pub(crate) preserve_skirt: bool,
+}
+
+/// Test-only dose input for legacy point-dab fixtures.
+#[cfg(test)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub(crate) struct DabDose {
+    /// Whether this dab repeats the previous position while the button is
+    /// held. A travelled dab is never a hold.
+    pub(crate) hold: bool,
+    /// Dwell this dab stands for, in milliseconds, when `hold`.
+    pub(crate) elapsed_ms: f32,
+}
+
+#[cfg(test)]
+impl DabDose {
+    /// One full dose: a dab that travelled its own spacing, or the first dab of
+    /// a stroke.
+    pub(crate) const FULL: Self = Self {
+        hold: false,
+        elapsed_ms: 0.0,
+    };
+
+    /// `elapsed_ms` of stationary dwell at the current position.
+    pub(crate) fn dwell(elapsed_ms: f32) -> Self {
+        Self {
+            hold: true,
+            elapsed_ms,
+        }
+    }
+}
+
 /// A prepared freeform-sculpting session over one mesh.
 pub(crate) struct BrushSession {
     kernel: SculptSession,
@@ -54,6 +107,15 @@ pub(crate) struct BrushSession {
     /// Whether the kernel has an open stroke. The kernel gates live remeshing
     /// on it, so the first dab of a drag opens one and the commit closes it.
     stroke_open: bool,
+}
+
+struct KernelStepRows {
+    touched: Vec<u32>,
+    added: Vec<(u32, u32, u32)>,
+    dirty: Vec<usize>,
+    topology_changed: bool,
+    base_vertex_count: usize,
+    base_index_count: usize,
 }
 
 /// One dab's result: sparse vertex ids, dirty pick faces, and an optional
@@ -114,45 +176,88 @@ impl BrushSession {
         for vertex in &mesh.vertices {
             positions.extend_from_slice(&vertex.position);
         }
+        let mut kernel = SculptSession::new(positions, mesh.indices.clone());
+        // Erode uses the opposite-wall reserve. Build its immutable opening
+        // probe on this already-background preparation path, never on a dab.
+        kernel.prepare_wall_probe();
         Ok(Self {
-            kernel: SculptSession::new(positions, mesh.indices.clone()),
+            kernel,
             vertices: mesh.vertices.clone(),
             indices: mesh.indices.clone(),
             stroke_open: false,
         })
     }
 
-    /// Apply one dab with `tip`, oriented along `axis` when the tip is the
-    /// knife. See the module docs for the contract.
+    /// Apply one dab with `tip` that stands for `dose` of dwell, oriented along
+    /// `axis` when the tip is the knife. See [`DabDose`] and the module docs for
+    /// the contract.
     // One dab is named by its ray, dose, mode, tip and bearing together.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn apply_stroke(
+    #[cfg(test)]
+    pub(crate) fn apply_stroke_dosed(
         &mut self,
         stroke: BrushStroke,
         mode: BrushMode,
         tip: SculptTip,
         axis: Option<[f32; 3]>,
+        dose: DabDose,
     ) -> BrushStrokeOutcome {
-        self.apply(stroke, mode, tip, axis)
+        self.apply(stroke, mode, tip, axis, dose)
     }
 
-    /// Cancellable form. A cancellation never returns an outcome: the owning
-    /// worker is being torn down, so its partially updated session and mirror
-    /// must be discarded together.
-    // The cancellation flag rides beside the dab's own arguments.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn apply_stroke_cancellable(
+    /// Break the swept pointer path while keeping the current stroke and its
+    /// undo record open across a viewport-owned UI overlay.
+    pub(crate) fn break_ray_path(&mut self) {
+        self.kernel.break_stroke_path();
+    }
+
+    /// Warm the local opposite-wall reserve around an idle hover point.
+    pub(crate) fn prime_wall_region(
         &mut self,
-        stroke: BrushStroke,
-        mode: BrushMode,
-        tip: SculptTip,
-        axis: Option<[f32; 3]>,
+        center: DVec3,
+        radius_mm: f64,
+        budget: usize,
+    ) -> usize {
+        self.kernel.prime_wall_region(center, radius_mm, budget)
+    }
+
+    /// Cancellable worker form of [`Self::apply_ray_step`]. A canceled owner
+    /// discards the entire session and its display mirror together.
+    pub(crate) fn apply_ray_step_cancellable(
+        &mut self,
+        step: &BrushRayStep,
+        elapsed_ms: f64,
         cancel: &AtomicBool,
     ) -> Option<BrushStrokeOutcome> {
         if cancel.load(Ordering::Relaxed) {
             return None;
         }
-        let outcome = self.apply(stroke, mode, tip, axis);
+        let outcome = self.apply_ray(step, elapsed_ms);
+        if cancel.load(Ordering::Relaxed) {
+            return None;
+        }
+        Some(outcome)
+    }
+
+    /// Cancellable form of [`Self::apply_stroke_dosed`]. A cancellation never
+    /// returns an outcome: the owning worker is being torn down, so its
+    /// partially updated session and mirror must be discarded together.
+    // The cancellation flag rides beside the dab's own arguments.
+    #[allow(clippy::too_many_arguments)]
+    #[cfg(test)]
+    pub(crate) fn apply_stroke_cancellable_dosed(
+        &mut self,
+        stroke: BrushStroke,
+        mode: BrushMode,
+        tip: SculptTip,
+        axis: Option<[f32; 3]>,
+        dose: DabDose,
+        cancel: &AtomicBool,
+    ) -> Option<BrushStrokeOutcome> {
+        if cancel.load(Ordering::Relaxed) {
+            return None;
+        }
+        let outcome = self.apply(stroke, mode, tip, axis, dose);
         if cancel.load(Ordering::Relaxed) {
             return None;
         }
@@ -177,12 +282,16 @@ impl BrushSession {
         }
     }
 
+    // One dab is named by its ray, dose, mode, tip and bearing together.
+    #[allow(clippy::too_many_arguments)]
+    #[cfg(test)]
     fn apply(
         &mut self,
         stroke: BrushStroke,
         mode: BrushMode,
         tip: SculptTip,
         axis: Option<[f32; 3]>,
+        dose: DabDose,
     ) -> BrushStrokeOutcome {
         if !self.stroke_open {
             self.kernel.start_stroke();
@@ -221,6 +330,13 @@ impl BrushSession {
         };
         self.kernel
             .set_brush_tip(TipStamp::from_u32(tip.kernel_stamp()).unwrap_or(TipStamp::Ball));
+        let elapsed_ms = if dose.hold {
+            f64::from(dose.elapsed_ms)
+        } else {
+            occlu_sculpt::DWELL_FULL_DOSE_MS
+        };
+        self.kernel.set_dab_elapsed_ms(elapsed_ms);
+        self.kernel.set_preserve_skirt(false);
         self.kernel.set_dab_axis(
             axis.map(|axis| DVec3::new(f64::from(axis[0]), f64::from(axis[1]), f64::from(axis[2]))),
         );
@@ -232,8 +348,98 @@ impl BrushSession {
             .iter()
             .map(|&face| face as usize)
             .collect::<Vec<_>>();
+        self.finish_kernel_step(KernelStepRows {
+            touched,
+            added,
+            dirty,
+            topology_changed: self.kernel.topology_revision() != base_revision,
+            base_vertex_count,
+            base_index_count,
+        })
+    }
+
+    fn apply_ray(&mut self, step: &BrushRayStep, elapsed_ms: f64) -> BrushStrokeOutcome {
+        if !self.stroke_open {
+            self.kernel.start_stroke();
+            self.stroke_open = true;
+        }
+        let base_vertex_count = self.vertices.len();
+        let base_index_count = self.indices.len();
+        let clips = step.clip_plane.iter().copied().collect::<Vec<_>>();
+        self.kernel
+            .set_brush_tip(TipStamp::from_u32(step.tip.kernel_stamp()).unwrap_or(TipStamp::Ball));
+        self.kernel.set_dab_elapsed_ms(elapsed_ms);
+        self.kernel.set_preserve_skirt(step.preserve_skirt);
+        self.kernel
+            .set_dab_axis(step.axis.map(|axis| {
+                DVec3::new(f64::from(axis[0]), f64::from(axis[1]), f64::from(axis[2]))
+            }));
+        let origin = DVec3::new(
+            f64::from(step.origin[0]),
+            f64::from(step.origin[1]),
+            f64::from(step.origin[2]),
+        );
+        let direction = DVec3::new(
+            f64::from(step.direction[0]),
+            f64::from(step.direction[1]),
+            f64::from(step.direction[2]),
+        );
+        let constraints = SculptRayConstraints {
+            near: f64::from(step.near_mm),
+            far: f64::from(step.far_mm),
+            clip_planes: &clips,
+        };
+        let result = self.kernel.dab_at_ray_visible(
+            origin,
+            direction,
+            f64::from(step.radius_mm),
+            f64::from(step.strength),
+            kernel_mode(step.mode),
+            step.hold,
+            constraints,
+        );
+        // One ray step traces an entire swept path and calls `dab` exactly
+        // once, so these per-dab parent and dirty-face rows cover the whole
+        // returned movement/topology slice.
+        // `stroke_step` returns early on a true ray miss, before clearing the
+        // previous dab's scratch rows. Its live record is the per-call source
+        // of truth for whether a dab ran; never mirror stale parent/face rows.
+        let applied = result.live.words[1] > 0;
+        let added = if applied {
+            self.kernel.dab_added_parents().to_vec()
+        } else {
+            Vec::new()
+        };
+        let dirty = if applied {
+            self.kernel
+                .dab_dirty_triangles()
+                .iter()
+                .map(|&face| face as usize)
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        self.finish_kernel_step(KernelStepRows {
+            touched: result.moved,
+            added,
+            dirty,
+            topology_changed: applied && !result.topo.is_empty(),
+            base_vertex_count,
+            base_index_count,
+        })
+    }
+
+    fn finish_kernel_step(&mut self, rows: KernelStepRows) -> BrushStrokeOutcome {
+        let KernelStepRows {
+            touched,
+            added,
+            dirty,
+            topology_changed,
+            base_vertex_count,
+            base_index_count,
+        } = rows;
         self.sync_mirror(&touched, &added);
-        let topology_delta = (self.kernel.topology_revision() != base_revision).then(|| {
+        let topology_delta = topology_changed.then(|| {
             let face_updates = self.sync_indices(base_index_count, &dirty);
             let mut updated_vertices = touched
                 .iter()

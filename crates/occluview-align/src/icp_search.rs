@@ -1,16 +1,22 @@
 //! Bounded coarse pose search for scan registration.
 
-use glam::{DQuat, DVec3, EulerRot};
+use glam::{DMat3, DQuat, DVec3, EulerRot};
+use std::collections::BTreeMap;
 
 use crate::pairs::FitRejection;
 use crate::sample::{bounds_of, sample_vertices, vertex_at};
 use crate::{Rigid, Soup};
 
-use super::icp_overlap::{reciprocal_evidence, reciprocal_evidence_is_usable, ReciprocalSummary};
+use super::icp_overlap::{
+    common_support_coverage, directional_forward_evidence_is_sufficient, fixed_surface_is_smaller,
+    reciprocal_evidence, reciprocal_evidence_is_usable, support_coverage_is_sufficient,
+    ReciprocalSummary,
+};
 use super::icp_solve::{accumulate, correspondences, run_level, summarize, trim};
+use super::icp_unique::principal_axes;
 use super::{
-    forward_coverage_is_sufficient, turn_between, Level, Orientation, RefineSettings, Summary,
-    COARSE_TIE_SEATED, MIN_CORRESPONDENCES, STALL_IMPROVEMENT,
+    turn_between, Level, Orientation, RefineSettings, Summary, COARSE_TIE_SEATED,
+    MIN_CORRESPONDENCES, STALL_IMPROVEMENT,
 };
 
 #[derive(Clone, Copy)]
@@ -38,13 +44,13 @@ struct GlobalSeedContext<'a> {
 
 const COARSE_TIE_RELATIVE_RMS: f64 = 0.02;
 const COARSE_TIE_COVERAGE: f64 = 0.02;
+const COARSE_RECIPROCAL_ADVANTAGE: f64 = 0.01;
+const COARSE_RECIPROCAL_RMS_FACTOR: f64 = 1.25;
 /// Fraction of the incumbent's forward coverage a candidate must keep to win on
 /// residual alone. Relative, not absolute: an absolute allowance would lift the
 /// 1% search floor to an effective 3%, the regime where a small patch competes
 /// with the operator's own start.
 const COARSE_COVERAGE_KEEP_FRACTION: f64 = 0.9;
-const COARSE_RECIPROCAL_ADVANTAGE: f64 = 0.01;
-const COARSE_RECIPROCAL_RMS_FACTOR: f64 = 1.25;
 const COARSE_TIE_SHIFT_MM: f64 = 0.5;
 /// How far two coarse hypotheses may move the scan and still count as one
 /// answer, as a fraction of the correspondence radius.
@@ -63,6 +69,10 @@ const GLOBAL_SEED_SAMPLE_BUDGET: usize = 512;
 /// is a usable surface point even when the moving scan is only a crop of a
 /// larger connected scan.
 const GLOBAL_ANCHOR_BUDGET: usize = 384;
+/// Reciprocal representatives for the cheap seed ranking when the fixed
+/// surface is the smaller side. The retained candidates are re-scored with
+/// the full reciprocal witness before they can enter coarse comparison.
+const GLOBAL_SEED_SUPPORT_SAMPLE_BUDGET: usize = 64;
 /// Full-resolution candidates retained after the cheap anchor pass.
 const GLOBAL_CANDIDATE_BUDGET: usize = 16;
 /// Iterations spent locally refining each global seed before comparing seeds.
@@ -72,7 +82,7 @@ const GLOBAL_CANDIDATE_BUDGET: usize = 16;
 const GLOBAL_SEED_REFINE_ITERATIONS: u32 = 8;
 /// Do not pay for a global anchor sweep when the current pose already explains
 /// most of the moving samples. A weak local overlap still triggers recovery.
-const GLOBAL_SEED_MIN_FORWARD_COVERAGE: f64 = 0.5;
+const GLOBAL_SEED_MIN_SUPPORT_COVERAGE: f64 = 0.5;
 /// A high-coverage but high-residual local patch is still accidental evidence.
 /// The threshold is a fraction of the operator's correspondence radius, so it
 /// scales with the same physical tolerance instead of a mesh-size-independent
@@ -164,7 +174,7 @@ pub(super) fn choose_start_pose(level: &Level<'_>) -> Result<StartPose, FitRejec
         || candidates.is_empty()
         || candidates
             .iter()
-            .all(|candidate| candidate.summary.coverage < GLOBAL_SEED_MIN_FORWARD_COVERAGE);
+            .all(|candidate| candidate.summary.support_coverage < GLOBAL_SEED_MIN_SUPPORT_COVERAGE);
     if needs_global_seed {
         let global = global_seed_candidates(
             level,
@@ -178,6 +188,11 @@ pub(super) fn choose_start_pose(level: &Level<'_>) -> Result<StartPose, FitRejec
         );
         candidates.extend(global);
         refine_seed_candidates(level, &mut candidates, moving_center);
+        candidates.extend(principal_frame_candidates(
+            level,
+            moving_center,
+            max_coarse_shift,
+        ));
     }
 
     let Some(best) = candidates.iter().copied().reduce(|current, candidate| {
@@ -216,7 +231,7 @@ fn coarse_start_candidate(
 ) -> (Option<CoarseCandidate>, bool) {
     let evidence = score_candidate(level, level.start);
     let strong = evidence.is_some_and(|(summary, _)| {
-        summary.coverage >= GLOBAL_SEED_MIN_FORWARD_COVERAGE
+        summary.support_coverage >= GLOBAL_SEED_MIN_SUPPORT_COVERAGE
             && summary.geometric_rms.is_finite()
             && summary.geometric_rms
                 <= level.settings.influence_radius_mm.abs().max(f64::EPSILON)
@@ -243,6 +258,10 @@ fn global_seed_candidates(
     if context.samples.is_empty() {
         return Vec::new();
     }
+    if fixed_surface_is_smaller(level) {
+        return global_seed_candidates_from_small_fixed(level, context);
+    }
+
     let anchor_level = Level {
         moving: level.moving,
         normals: level.normals,
@@ -276,9 +295,14 @@ fn global_seed_candidates(
             if !shift.is_finite() || shift > context.max_shift {
                 continue;
             }
-            let Some(summary) = forward_summary(&anchor_level, candidate) else {
+            let Some(mut summary) = forward_summary(&anchor_level, candidate) else {
                 continue;
             };
+            // This is deliberately provisional: the small side determines
+            // shortlist support in both role orientations, while every
+            // retained hypothesis gets the full reciprocal evidence in
+            // `score_candidate` below.
+            summary.support_coverage = summary.coverage;
             hypotheses.push(CoarseCandidate {
                 rigid: candidate,
                 summary,
@@ -293,6 +317,119 @@ fn global_seed_candidates(
     // a total order. A sort comparator must be one: use a deterministic
     // lexicographic ranking for this cheap shortlist, then return to the
     // tolerance-aware comparator once the full evidence is available.
+    hypotheses.sort_by(coarse_seed_order);
+    hypotheses.truncate(GLOBAL_CANDIDATE_BUDGET);
+    hypotheses
+        .into_iter()
+        .filter_map(|hypothesis| {
+            if level.cancel.is_cancelled() {
+                return None;
+            }
+            score_candidate(level, hypothesis.rigid).map(|(summary, reciprocal)| CoarseCandidate {
+                rigid: hypothesis.rigid,
+                summary,
+                reciprocal,
+                shift: hypothesis.shift,
+                component: hypothesis.component,
+            })
+        })
+        .collect()
+}
+
+/// Seed a large moving arch against a small fixed crop in the reverse frame.
+/// Anchoring the full moving centroid to the crop cannot generate the correct
+/// translation: the crop corresponds to one local arch patch, not its centre.
+/// Instead, align the crop centroid to bounded representatives on the moving
+/// surface under the inverse pose, then score retained candidates in the public
+/// moving-to-fixed direction.
+#[allow(clippy::cast_precision_loss)]
+fn global_seed_candidates_from_small_fixed(
+    level: &Level<'_>,
+    context: GlobalSeedContext<'_>,
+) -> Vec<CoarseCandidate> {
+    let Some(moving_surface) = level.moving_surface else {
+        return Vec::new();
+    };
+    let fixed_anchors = level.fixed.representative_samples(GLOBAL_ANCHOR_BUDGET);
+    if fixed_anchors.is_empty() {
+        return Vec::new();
+    }
+    let fixed_center = fixed_anchors
+        .iter()
+        .fold(DVec3::ZERO, |sum, sample| sum + sample.point)
+        / fixed_anchors.len() as f64;
+    let support_samples = level
+        .fixed
+        .representative_samples(GLOBAL_SEED_SUPPORT_SAMPLE_BUDGET);
+    let moving_anchors = moving_surface.representative_samples(GLOBAL_ANCHOR_BUDGET);
+    if support_samples.is_empty() || moving_anchors.is_empty() {
+        return Vec::new();
+    }
+    let reverse_level = Level {
+        moving: level.moving,
+        normals: level.normals,
+        fixed: level.fixed,
+        moving_surface: Some(moving_surface),
+        fixed_samples: &support_samples,
+        samples: context.samples,
+        settings: level.settings,
+        cancel: level.cancel,
+        start: level.start,
+    };
+    // Every hypothesis is scored once here and only the retained shortlist is
+    // re-scored at full resolution afterwards, so the sweep runs on the cheap
+    // seed level. Scoring it on the caller's level measured the dense coarse
+    // sample set (8,000 points) for all 384 x 24 hypotheses.
+    let anchor_level = Level {
+        moving: level.moving,
+        normals: level.normals,
+        fixed: level.fixed,
+        moving_surface: Some(moving_surface),
+        fixed_samples: level.fixed_samples,
+        samples: context.samples,
+        settings: level.settings,
+        cancel: level.cancel,
+        start: level.start,
+    };
+    let mut hypotheses = Vec::new();
+    for (anchor_index, anchor) in moving_anchors.into_iter().enumerate() {
+        if anchor_index % 32 == 0 && level.cancel.is_cancelled() {
+            break;
+        }
+        for (delta_index, &delta) in context.orientations.iter().enumerate() {
+            if level.settings.orientation == Orientation::Inverted && delta_index != 0 {
+                continue;
+            }
+            let rotation = delta * level.start.rotation;
+            let candidate = Rigid::new(rotation, fixed_center - rotation * anchor.point);
+            let shift = (candidate.apply(context.moving_center)
+                - level.start.apply(context.moving_center))
+            .length();
+            if !shift.is_finite() || shift > context.max_shift {
+                continue;
+            }
+            let Some(mut summary) = forward_seed_summary(&anchor_level, candidate) else {
+                continue;
+            };
+            // Cheap reciprocal support uses only 64 small-side representatives.
+            // It orders the anchor shortlist; full witnesses gate every
+            // retained candidate below and every later ICP trial.
+            let reciprocal = reciprocal_evidence(
+                &reverse_level,
+                candidate,
+                level.settings.influence_radius_mm,
+            );
+            summary.support_coverage = reciprocal.map_or(0.0, |evidence| evidence.coverage);
+            hypotheses.push(CoarseCandidate {
+                rigid: candidate,
+                summary,
+                reciprocal,
+                shift,
+                component: Some(anchor.component),
+            });
+        }
+    }
+
     hypotheses.sort_by(coarse_seed_order);
     hypotheses.truncate(GLOBAL_CANDIDATE_BUDGET);
     hypotheses
@@ -357,8 +494,14 @@ fn refine_seed_candidates(
         if !reciprocal_evidence_is_usable(level, reciprocal) {
             continue;
         }
+        let mut local_summary = local.summary;
+        local_summary.support_coverage =
+            common_support_coverage(level, local_summary.coverage, reciprocal);
+        if !support_coverage_is_sufficient(local_summary.support_coverage) {
+            continue;
+        }
         candidate.rigid = local.pose;
-        candidate.summary = local.summary;
+        candidate.summary = local_summary;
         candidate.reciprocal = reciprocal;
         candidate.shift =
             (local.pose.apply(moving_center) - level.start.apply(moving_center)).length();
@@ -369,16 +512,49 @@ fn refine_seed_candidates(
 /// reverse surface. Keeping this in one function prevents the global seed pass
 /// from accidentally becoming an acceptance path with weaker evidence.
 fn score_candidate(level: &Level<'_>, pose: Rigid) -> Option<(Summary, Option<ReciprocalSummary>)> {
-    let summary = forward_summary(level, pose)?;
+    let mut summary = forward_summary(level, pose)?;
     let reciprocal = reciprocal_evidence(level, pose, level.settings.influence_radius_mm);
-    reciprocal_evidence_is_usable(level, reciprocal).then_some((summary, reciprocal))
+    if !reciprocal_evidence_is_usable(level, reciprocal) {
+        return None;
+    }
+    summary.support_coverage = common_support_coverage(level, summary.coverage, reciprocal);
+    support_coverage_is_sufficient(summary.support_coverage).then_some((summary, reciprocal))
+}
+
+/// Forward objective for the coarse seed sweep.
+///
+/// The sweep runs on a few hundred seed samples while the caller's level holds
+/// the dense coarse set, and the correspondence floors are absolute counts.
+/// Read against a fifteen times smaller sample set those floors are fifteen
+/// times stricter, which drops the true pose of a crop that covers a small
+/// share of the moving scan. The sweep therefore only asks that a hypothesis
+/// explain something: the retained shortlist is re-scored at full resolution,
+/// where the real floors decide.
+fn forward_seed_summary(level: &Level<'_>, pose: Rigid) -> Option<Summary> {
+    let found = correspondences(level, pose, level.settings.influence_radius_mm);
+    let matched = found.iter().flatten().count();
+    if matched == 0 {
+        return None;
+    }
+    let kept = trim(&found, level.settings.matching_ratio);
+    if kept.is_empty() {
+        return None;
+    }
+    let (matrix, _, _) = accumulate(&kept);
+    Some(summarize(
+        &found,
+        &kept,
+        matched,
+        level.samples.len(),
+        &matrix,
+    ))
 }
 
 /// Calculate only the forward objective for a coarse seed or a full candidate.
 fn forward_summary(level: &Level<'_>, pose: Rigid) -> Option<Summary> {
     let found = correspondences(level, pose, level.settings.influence_radius_mm);
     let matched = found.iter().flatten().count();
-    if !forward_coverage_is_sufficient(matched, level.samples.len()) {
+    if !directional_forward_evidence_is_sufficient(level, matched, level.samples.len()) {
         return None;
     }
     let kept = trim(&found, level.settings.matching_ratio);
@@ -395,9 +571,120 @@ fn forward_summary(level: &Level<'_>, pose: Rigid) -> Option<Summary> {
     ))
 }
 
+/// Orientation hypotheses from the two surfaces' principal frames.
+///
+/// The 24 cube rotations recover a scan turned about a coordinate axis. A scan
+/// turned about a tilted axis -- a hand placement turned 45 degrees across the
+/// occlusal plane, say -- stays outside every one of them, and the local
+/// refine cannot leave the basin it starts in. Matching the principal frames
+/// of the two surfaces covers those turns directly, at 24 cheap scores. They
+/// are only hypotheses: the same forward and reciprocal evidence as every
+/// other coarse candidate, and the same ambiguity guard, decide whether one
+/// wins. They are tried only when no coarse candidate already carries a
+/// seatable overlap, so a case the cube sweep can solve keeps its exact result.
+fn principal_frame_candidates(
+    level: &Level<'_>,
+    moving_center: DVec3,
+    max_shift: f64,
+) -> Vec<CoarseCandidate> {
+    // `Inverted` is an explicit winding-repair escape hatch: it must not
+    // manufacture a turned pose just because that would make the surfaces face
+    // each other. The identity candidate remains available to it.
+    if level.settings.orientation == Orientation::Inverted {
+        return Vec::new();
+    }
+    let seed_samples = sample_vertices(level.moving, GLOBAL_SEED_SAMPLE_BUDGET);
+    let moving_points = sampled_points(level.moving, &seed_samples);
+    let Some((moving_centre, moving_axes)) = principal_axes(&moving_points) else {
+        return Vec::new();
+    };
+    let mut fixed_by_component: BTreeMap<usize, Vec<DVec3>> = BTreeMap::new();
+    for sample in level.fixed.representative_samples(GLOBAL_ANCHOR_BUDGET) {
+        fixed_by_component
+            .entry(sample.component)
+            .or_default()
+            .push(sample.point);
+    }
+    let mut candidates = Vec::new();
+    for (component, points) in fixed_by_component {
+        if level.cancel.is_cancelled() {
+            break;
+        }
+        let Some((fixed_centre, fixed_axes)) = principal_axes(&points) else {
+            continue;
+        };
+        for rotation in principal_frame_matches(moving_axes, fixed_axes) {
+            let candidate = Rigid::new(rotation, fixed_centre - rotation * moving_centre);
+            let shift =
+                (candidate.apply(moving_center) - level.start.apply(moving_center)).length();
+            if !shift.is_finite() || shift > max_shift {
+                continue;
+            }
+            let Some((summary, reciprocal)) = score_candidate(level, candidate) else {
+                continue;
+            };
+            candidates.push(CoarseCandidate {
+                rigid: candidate,
+                summary,
+                reciprocal,
+                shift,
+                component: Some(component),
+            });
+        }
+    }
+    candidates
+}
+
+/// The right-handed rotations that carry one principal frame onto another:
+/// every axis permutation with every sign combination that keeps the frame
+/// proper. The axes of a power iteration carry an arbitrary sign, and a nearly
+/// equal spread can leave their order open, so all 24 are tried rather than
+/// trusting one.
+pub(super) fn principal_frame_matches(moving: [DVec3; 3], fixed: [DVec3; 3]) -> Vec<DQuat> {
+    const PERMUTATIONS: [[usize; 3]; 6] = [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ];
+    let moving_frame = DMat3::from_cols(moving[0], moving[1], moving[2]);
+    let mut matches: Vec<DQuat> = Vec::with_capacity(24);
+    for permutation in PERMUTATIONS {
+        for signs in 0..8u8 {
+            let sign = |bit: u8| if signs & (1 << bit) == 0 { 1.0 } else { -1.0 };
+            let target = DMat3::from_cols(
+                fixed[permutation[0]] * sign(0),
+                fixed[permutation[1]] * sign(1),
+                fixed[permutation[2]] * sign(2),
+            );
+            if target.determinant() <= 0.0 {
+                continue;
+            }
+            let rotation = DQuat::from_mat3(&(target * moving_frame.transpose())).normalize();
+            if rotation.is_finite() && !matches.contains(&rotation) {
+                matches.push(rotation);
+            }
+        }
+    }
+    matches
+}
+
 /// A surface crop's bounding-box centre can sit well above its actual surface
 /// when curvature is strong. Use the deterministic sample centroid for global
 /// anchoring, while retaining the bounds centre for displacement bookkeeping.
+fn sampled_points(soup: Soup<'_>, samples: &[u32]) -> Vec<DVec3> {
+    samples
+        .iter()
+        .filter_map(|&raw| {
+            usize::try_from(raw)
+                .ok()
+                .and_then(|vertex| vertex_at(soup.positions, vertex))
+        })
+        .collect()
+}
+
 #[allow(clippy::cast_precision_loss)]
 fn sampled_centroid(soup: Soup<'_>, samples: &[u32]) -> Option<DVec3> {
     let mut sum = DVec3::ZERO;
@@ -428,32 +715,31 @@ fn nearest_component_index(level: &Level<'_>, pose: Rigid, moving_center: DVec3)
         .map(|(index, _)| index)
 }
 
-/// Whether a candidate keeps enough of the incumbent's forward coverage.
+/// Whether a candidate keeps enough of the incumbent's forward moving-side
+/// coverage. This directional witness stays separate from common support.
 fn coarse_keeps_coverage(candidate: f64, current: f64) -> bool {
     candidate >= current * COARSE_COVERAGE_KEEP_FRACTION
 }
 
-/// Whether a candidate explains materially more of the fixed surface.
-///
-/// Missing evidence on either side is not a gain: a point-cloud layer has no
-/// reverse surface to query, and treating that absence as "explains more" would
-/// let a residual-only win discard most of the operator's coverage.
-fn coarse_explains_more_fixed(
-    candidate: Option<ReciprocalSummary>,
-    current: Option<ReciprocalSummary>,
-) -> bool {
-    match (candidate, current) {
-        (Some(candidate), Some(current)) => {
-            candidate.coverage > current.coverage + COARSE_RECIPROCAL_ADVANTAGE
-        }
-        _ => false,
-    }
+/// Whether a candidate retains enough of the incumbent's common smaller-side
+/// support, whichever input role supplies that side.
+fn coarse_keeps_support(candidate: f64, current: f64) -> bool {
+    candidate >= current * COARSE_COVERAGE_KEEP_FRACTION
 }
 
 pub(super) fn coarse_candidate_is_better(
     candidate: &CoarseCandidate,
     current: &CoarseCandidate,
 ) -> bool {
+    // Compare overlap on the smaller indexed surface before any directional
+    // moving-side seating or residual. A large-side seated fraction cannot
+    // compensate for losing most of a small fixed crop.
+    if candidate.summary.support_coverage > current.summary.support_coverage + COARSE_TIE_COVERAGE {
+        return true;
+    }
+    if candidate.summary.support_coverage + COARSE_TIE_COVERAGE < current.summary.support_coverage {
+        return false;
+    }
     // Seating comes before every residual comparison. A candidate that puts
     // materially more of the surface inside the seated band is the better
     // answer even when its trimmed residual is worse, because the residual is
@@ -466,41 +752,28 @@ pub(super) fn coarse_candidate_is_better(
     if candidate.summary.seated_fraction + COARSE_TIE_SEATED < current.summary.seated_fraction {
         return false;
     }
-    // A forward-only low residual can come from a small smooth patch. When
-    // both triangle soups are available, prefer a candidate that explains
-    // materially more of the fixed surface as long as its forward residual is
-    // still within a bounded coarse tolerance. This is what keeps a partial
-    // scan from being attracted to a visually similar but wrong window.
-    if let (Some(candidate_reciprocal), Some(current_reciprocal)) =
-        (candidate.reciprocal, current.reciprocal)
-    {
-        let reciprocal_advantage = candidate_reciprocal.coverage
-            > current_reciprocal.coverage + COARSE_RECIPROCAL_ADVANTAGE
-            && candidate.summary.geometric_rms
-                <= current.summary.geometric_rms * COARSE_RECIPROCAL_RMS_FACTOR
-            && coarse_keeps_coverage(candidate.summary.coverage, current.summary.coverage);
-        if reciprocal_advantage {
-            return true;
-        }
+    // Keep the two directional measures independent during arbitration. A
+    // candidate may be supported by the smaller-side fraction and still only
+    // match a small smooth patch on the other surface; reciprocal growth can
+    // break a residual tie when forward support is retained.
+    if coarse_reciprocal_advantage(candidate, current) {
+        return true;
     }
+    // Residual alone can hide a crop or deformation. Preserve the same common
+    // support in either input role before replacing a lower-residual seating.
     if candidate.summary.geometric_rms < current.summary.geometric_rms * STALL_IMPROVEMENT {
         // A lower residual is only an improvement if it still explains the same
         // surface. A small smooth patch can beat the true seating on residual
         // alone while covering almost none of the moving scan, and the search
-        // floor admits a candidate at 1% coverage. Keep the incumbent unless
-        // the candidate keeps its coverage, or explains materially more of the
-        // fixed surface. Coarse tolerances, not the commitment floor: the trust
-        // gate still decides whether anything may be committed.
-        return coarse_keeps_coverage(candidate.summary.coverage, current.summary.coverage)
-            || coarse_explains_more_fixed(candidate.reciprocal, current.reciprocal);
+        // floor admits a candidate at 1% support. Keep the incumbent unless
+        // the candidate keeps that common support; the trust gate still decides
+        // whether anything may be committed.
+        return coarse_keeps_support(
+            candidate.summary.support_coverage,
+            current.summary.support_coverage,
+        ) || coarse_explains_more_fixed(candidate.reciprocal, current.reciprocal);
     }
     if candidate.summary.geometric_rms > current.summary.geometric_rms * (1.0 / STALL_IMPROVEMENT) {
-        return false;
-    }
-    if candidate.summary.coverage > current.summary.coverage + COARSE_TIE_COVERAGE {
-        return true;
-    }
-    if candidate.summary.coverage + COARSE_TIE_COVERAGE < current.summary.coverage {
         return false;
     }
     let reciprocal_better = match (candidate.reciprocal, current.reciprocal) {
@@ -513,11 +786,37 @@ pub(super) fn coarse_candidate_is_better(
     reciprocal_better || candidate.shift + COARSE_TIE_SHIFT_MM < current.shift
 }
 
+fn coarse_reciprocal_advantage(candidate: &CoarseCandidate, current: &CoarseCandidate) -> bool {
+    match (candidate.reciprocal, current.reciprocal) {
+        (Some(candidate_reciprocal), Some(current_reciprocal)) => {
+            candidate_reciprocal.coverage
+                > current_reciprocal.coverage + COARSE_RECIPROCAL_ADVANTAGE
+                && candidate.summary.geometric_rms
+                    <= current.summary.geometric_rms * COARSE_RECIPROCAL_RMS_FACTOR
+                && coarse_keeps_coverage(candidate.summary.coverage, current.summary.coverage)
+        }
+        _ => false,
+    }
+}
+
+fn coarse_explains_more_fixed(
+    candidate: Option<ReciprocalSummary>,
+    current: Option<ReciprocalSummary>,
+) -> bool {
+    match (candidate, current) {
+        (Some(candidate), Some(current)) => {
+            candidate.coverage > current.coverage + COARSE_RECIPROCAL_ADVANTAGE
+        }
+        (Some(_), None) => true,
+        _ => false,
+    }
+}
+
 fn coarse_seed_order(left: &CoarseCandidate, right: &CoarseCandidate) -> std::cmp::Ordering {
     right
         .summary
-        .coverage
-        .total_cmp(&left.summary.coverage)
+        .support_coverage
+        .total_cmp(&left.summary.support_coverage)
         .then_with(|| {
             left.summary
                 .geometric_rms
@@ -555,8 +854,8 @@ fn coarse_seed_order(left: &CoarseCandidate, right: &CoarseCandidate) -> std::cm
 /// both measures and does not refuse the better pose.
 fn coarse_candidates_are_equivalent(candidate: &CoarseCandidate, best: &CoarseCandidate) -> bool {
     let worse_on_residual = candidate.summary.geometric_rms > best.summary.geometric_rms;
-    let worse_on_coverage = candidate.summary.coverage < best.summary.coverage;
-    if worse_on_residual && worse_on_coverage {
+    let worse_on_support = candidate.summary.support_coverage < best.summary.support_coverage;
+    if worse_on_residual && worse_on_support {
         return false;
     }
     let rms_scale = candidate
@@ -566,10 +865,16 @@ fn coarse_candidates_are_equivalent(candidate: &CoarseCandidate, best: &CoarseCa
         .max(f64::MIN_POSITIVE);
     if (candidate.summary.geometric_rms - best.summary.geometric_rms).abs()
         > rms_scale * COARSE_TIE_RELATIVE_RMS + 1e-6
-        || (candidate.summary.coverage - best.summary.coverage).abs() > COARSE_TIE_COVERAGE
+        || (candidate.summary.support_coverage - best.summary.support_coverage).abs()
+            > COARSE_TIE_COVERAGE
     {
         return false;
     }
+    // Two hypotheses inside both tie bands are the same answer only if they
+    // explain the other surface equally well. Reciprocal coverage is the axis
+    // that separates an upright seating which explains the fixed scan's own
+    // surface from a pose that merely lands on a comparable patch of it;
+    // dropping this comparison made every such pair refuse as ambiguous.
     match (candidate.reciprocal, best.reciprocal) {
         (Some(candidate), Some(best)) => {
             (candidate.coverage - best.coverage).abs() <= COARSE_TIE_COVERAGE

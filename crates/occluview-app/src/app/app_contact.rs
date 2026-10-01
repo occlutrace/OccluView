@@ -5,14 +5,14 @@ use occluview_core::{Scene, SceneMeshId};
 use occluview_render::{ContactFieldTexels, ContactPaintSource};
 use std::sync::Arc;
 
-use super::OccluViewApp;
+use super::SceneContext;
 use crate::contact::{
     can_read_contacts, contact_job_keys, ContactLayerField, ContactPair, ContactRequest,
     ContactState, ContactStatus, CONTACT_FIELD_TEXTURE_WIDTH,
 };
 use crate::contact_worker::{ContactFailure, ContactJob, ContactOutcome};
 
-impl OccluViewApp {
+impl SceneContext<'_> {
     /// Apply a contact action from the layer context menu.
     pub(super) fn apply_contact_context_action(
         &mut self,
@@ -28,13 +28,13 @@ impl OccluViewApp {
         match request.action {
             crate::layer_actions::LayerContextAction::Contacts => {
                 let label = crate::layers_overlay::layer_label(
-                    &self.persistence.current_paths,
+                    &self.document.current_paths,
                     entry,
                     request.index,
                     &self.ui.locale,
                 );
                 if self.begin_contacts_from_layer(scene, request.layer_id) {
-                    self.ui.status_message = Some(self.ui.locale.tr_with(
+                    self.scene_ui.status_message = Some(self.ui.locale.tr_with(
                         crate::i18n::message_id!("contact-opened"),
                         &[("label", &label)],
                     ));
@@ -45,7 +45,7 @@ impl OccluViewApp {
             {
                 let ctx = self.ui.repaint_ctx.clone();
                 self.close_contacts(&ctx);
-                self.ui.status_message = Some(
+                self.scene_ui.status_message = Some(
                     self.ui
                         .locale
                         .tr(crate::i18n::message_id!("contact-closed")),
@@ -59,7 +59,7 @@ impl OccluViewApp {
     pub(super) fn begin_contacts_from_layer(&mut self, scene: &Scene, layer: SceneMeshId) -> bool {
         let Some(antagonist) = crate::contact::antagonist_for(scene, layer) else {
             // The scene may have changed since the menu was drawn.
-            self.ui.status_message = Some(
+            self.scene_ui.status_message = Some(
                 self.ui
                     .locale
                     .tr(crate::i18n::message_id!("contact-status-needs-second")),

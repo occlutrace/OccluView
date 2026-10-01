@@ -5,7 +5,7 @@
 //! any editing surface.
 
 use super::information_dialog::InformationDialog;
-use super::OccluViewApp;
+use super::SceneContext;
 use crate::interaction_hints::{
     contextual_line, contextual_line_key, ContextualHint, HintContext, ALL_SECTIONS,
 };
@@ -19,7 +19,7 @@ use crate::i18n::LocaleManager;
 const HELP_ROW_HEIGHT: f32 = 25.0;
 const HELP_GESTURE_WIDTH: f32 = 196.0;
 
-impl OccluViewApp {
+impl SceneContext<'_> {
     pub(super) fn show_help_dialog(&mut self, ctx: &egui::Context) {
         if self.ui.information_dialog != InformationDialog::KeyboardMouse {
             return;

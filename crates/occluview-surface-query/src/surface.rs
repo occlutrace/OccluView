@@ -150,6 +150,17 @@ pub fn feature_voxel_key(point: DVec3) -> Option<(i32, i32, i32)> {
 
 type ComponentData = (Vec<(DVec3, DVec3)>, Vec<usize>);
 
+fn bounded_grid(extent: DVec3, mean_edge: f64) -> (f64, [i64; 3]) {
+    let diagonal = extent.length().max(1e-3);
+    let mut cell = (mean_edge * CELL_EDGE_FACTOR).clamp(1e-3, diagonal);
+    let mut dims = grid_dims(extent, cell);
+    while cell_count(dims) > MAX_CELLS {
+        cell *= 2.0;
+        dims = grid_dims(extent, cell);
+    }
+    (cell, dims)
+}
+
 /// A spatial index answering "what is the closest surface point to this?".
 #[derive(Clone, Debug)]
 pub struct SurfaceIndex {
@@ -167,6 +178,7 @@ pub struct SurfaceIndex {
     components: Vec<(DVec3, DVec3)>,
     triangle_components: Vec<usize>,
     topology: Topology,
+    surface_area_mm2: f64,
 }
 
 impl SurfaceIndex {
@@ -187,6 +199,7 @@ impl SurfaceIndex {
         let mut min = DVec3::splat(f64::INFINITY);
         let mut max = DVec3::splat(f64::NEG_INFINITY);
         let mut edge_total = 0.0f64;
+        let mut surface_area_mm2 = 0.0f64;
         let mut parent: Vec<usize> = (0..vertex_count).collect();
         // One entry per vertex, so `union` can hang the smaller tree under the
         // larger instead of building a chain whose depth `find` would then have
@@ -244,6 +257,7 @@ impl SurfaceIndex {
             union(&mut parent, &mut component_size, b, c);
             triangle_anchors.push(a);
             edge_total += longest_edge(&vertices);
+            surface_area_mm2 += length * 0.5;
             topology.add_kept(welded, &vertices, normal / length);
             corners.push(vertices);
             normals.push(normal / length);
@@ -269,14 +283,8 @@ impl SurfaceIndex {
         }
 
         let extent = max - min;
-        let diagonal = extent.length().max(1e-3);
         let mean_edge = edge_total / corners.len() as f64;
-        let mut cell = (mean_edge * CELL_EDGE_FACTOR).clamp(1e-3, diagonal);
-        let mut dims = grid_dims(extent, cell);
-        while cell_count(dims) > MAX_CELLS {
-            cell *= 2.0;
-            dims = grid_dims(extent, cell);
-        }
+        let (cell, dims) = bounded_grid(extent, mean_edge);
 
         let (components, triangle_components) =
             component_data(&mut parent, &triangle_anchors, component_bounds)?;
@@ -296,6 +304,7 @@ impl SurfaceIndex {
             components,
             triangle_components,
             topology: topology.finish(),
+            surface_area_mm2,
         };
         Some(index.in_cell_order().with_buckets().with_gaps())
     }
@@ -311,6 +320,13 @@ impl SurfaceIndex {
     #[must_use]
     pub fn triangle_count(&self) -> usize {
         self.corners.len()
+    }
+
+    /// Total area of the indexed, unmasked, non-degenerate surface in square
+    /// millimetres.
+    #[must_use]
+    pub fn surface_area_mm2(&self) -> f64 {
+        self.surface_area_mm2
     }
 
     /// The axis-aligned bounds of the indexed surface in its own frame.

@@ -95,6 +95,18 @@ const NAVIGATION: &[HintRow] = &[
 
 const TOOLS: &[HintRow] = &[
     HintRow {
+        gesture: "F6 / Shift+F6",
+        key: crate::i18n::message_id!("help-workspace-switch"),
+    },
+    HintRow {
+        gesture: "Layers: drag",
+        key: crate::i18n::message_id!("help-workspace-drag"),
+    },
+    HintRow {
+        gesture: "Divider: ← / → / Home",
+        key: crate::i18n::message_id!("help-workspace-divider"),
+    },
+    HintRow {
         gesture: "Ctrl+O",
         key: crate::i18n::message_id!("help-hint-tools-open-a-file"),
     },

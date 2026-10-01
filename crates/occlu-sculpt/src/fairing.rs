@@ -51,10 +51,11 @@ pub trait FairingSurface {
     fn neighbors(&self, vertex: u32) -> &[u32];
 }
 
-/// Reusable row map and solver initial guess, owned by the caller's session.
+/// Reusable row map and solver state, owned by the caller's session.
 ///
-/// Only ids written by the prior selection are cleared. A same-scale local
-/// solve starts from the prior correction on vertices shared by both selections.
+/// General fairing jobs keep a same-scale initial correction for shared
+/// vertices. Brush-preserving jobs reuse row storage but solve cold in input
+/// order so their bounded iterations retain the brush's reference behavior.
 #[derive(Default)]
 pub struct FairingScratch {
     slot_of: Vec<u32>,
@@ -81,6 +82,15 @@ struct Fairing {
     mass: Vec<f64>,
     /// Row index among the free rows, or `u32::MAX`.
     free_row: Vec<u32>,
+}
+
+#[derive(Clone, Copy)]
+enum FairingSolvePolicy {
+    /// Reorder and warm-start long-running shared fairing jobs.
+    General,
+    /// Preserve brush selection order and start each bounded solve at the
+    /// current surface, matching the sculpt brush's finite-iteration contract.
+    Brush,
 }
 
 /// Resolve held rows, column indirection and time scaling once per solve,
@@ -182,6 +192,8 @@ fn dot(a: &[DVec3], b: &[DVec3]) -> f64 {
 
 mod constraint;
 pub use constraint::{fair_selection_with_constraint, FairingContact, FairingContactStats};
+mod preserving;
+pub use preserving::fair_selection_preserving;
 
 /// Fair one selection and report where each vertex should land.
 ///
@@ -210,6 +222,39 @@ pub fn fair_selection<S: FairingSurface + ?Sized>(
     job.recycle(scratch);
 }
 
+/// Solve one fairing selection to a relative residual tolerance and bounded
+/// iteration count. Brush calls preserve input order and start cold so the
+/// two bounded shape-preserving solves match the sculpt kernel's contract.
+#[derive(Clone, Copy)]
+pub(crate) struct FairingSolveBounds {
+    pub(crate) tolerance: f64,
+    pub(crate) steps: usize,
+}
+
+pub(crate) fn fair_selection_within<S: FairingSurface + ?Sized>(
+    surface: &S,
+    selection: &[(u32, f64)],
+    feature_size_mm: f64,
+    scratch: &mut FairingScratch,
+    bounds: FairingSolveBounds,
+) -> Vec<(u32, DVec3)> {
+    let mut out = Vec::new();
+    let Some(mut job) = FairingJob::new_with_policy(
+        surface,
+        selection,
+        feature_size_mm,
+        scratch,
+        FairingSolvePolicy::Brush,
+    ) else {
+        return out;
+    };
+    job.target = dot(&job.r, &job.r) * bounds.tolerance * bounds.tolerance;
+    job.advance(bounds.steps.min(MAX_SOLVE_STEPS));
+    job.targets(&mut out);
+    job.recycle(scratch);
+    out
+}
+
 /// A single immutable fairing problem. Continuations retain CG directions and
 /// residuals; yielding never changes the numerical result or spends strength twice.
 pub struct FairingJob {
@@ -230,14 +275,32 @@ pub struct FairingJob {
     steps: usize,
     done: bool,
     feature_size_mm: f64,
+    persist_warm_start: bool,
 }
 
 impl FairingJob {
+    /// Create a reusable general-purpose fairing job.
     pub fn new<S: FairingSurface + ?Sized>(
         surface: &S,
         selection: &[(u32, f64)],
         feature_size_mm: f64,
         scratch: &mut FairingScratch,
+    ) -> Option<Self> {
+        Self::new_with_policy(
+            surface,
+            selection,
+            feature_size_mm,
+            scratch,
+            FairingSolvePolicy::General,
+        )
+    }
+
+    fn new_with_policy<S: FairingSurface + ?Sized>(
+        surface: &S,
+        selection: &[(u32, f64)],
+        feature_size_mm: f64,
+        scratch: &mut FairingScratch,
+        policy: FairingSolvePolicy,
     ) -> Option<Self> {
         if !feature_size_mm.is_finite()
             || feature_size_mm <= 0.0
@@ -248,7 +311,10 @@ impl FairingJob {
         {
             return None;
         }
-        let ordered_selection = bandwidth_order(surface, selection, scratch);
+        let (ordered_selection, persist_warm_start) = match policy {
+            FairingSolvePolicy::General => (bandwidth_order(surface, selection, scratch), true),
+            FairingSolvePolicy::Brush => (selection.to_vec(), false),
+        };
         let system = build(surface, &ordered_selection, scratch)?;
         let time = TIME_PER_SCALE_SQUARED * feature_size_mm * feature_size_mm;
         let (b, diagonal) = system.right_hand_side(time);
@@ -260,9 +326,10 @@ impl FairingJob {
             .zip(&system.free)
             .filter_map(|(&p, &free)| free.then_some(p))
             .collect();
-        if scratch
-            .warm_feature_size_mm
-            .is_some_and(|previous| previous.to_bits() == feature_size_mm.to_bits())
+        if persist_warm_start
+            && scratch
+                .warm_feature_size_mm
+                .is_some_and(|previous| previous.to_bits() == feature_size_mm.to_bits())
         {
             for (row, &(vertex, _)) in ordered_selection.iter().enumerate() {
                 if !system.free[row] {
@@ -307,6 +374,7 @@ impl FairingJob {
             steps: 0,
             done: false,
             feature_size_mm,
+            persist_warm_start,
         })
     }
 
@@ -389,23 +457,28 @@ impl FairingJob {
         self.done
     }
 
-    /// Store the current correction as an initial guess and recycle row storage.
-    /// The next solve rebuilds its geometric coefficients from the live surface.
+    /// Recycle row storage. General jobs also retain the correction as a warm
+    /// start; brush jobs invalidate it and rebuild from the live surface cold.
     pub fn recycle(self, scratch: &mut FairingScratch) {
-        scratch.warm_start.clear();
-        for (row, &(vertex, _)) in self.selection.iter().enumerate() {
-            if self.system.free_row[row] == u32::MAX {
-                continue;
+        if self.persist_warm_start {
+            scratch.warm_start.clear();
+            for (row, &(vertex, _)) in self.selection.iter().enumerate() {
+                if self.system.free_row[row] == u32::MAX {
+                    continue;
+                }
+                let free_row = self.system.free_row[row] as usize;
+                scratch
+                    .warm_start
+                    .push((vertex, self.x[free_row] - self.system.position[row]));
             }
-            let free_row = self.system.free_row[row] as usize;
             scratch
                 .warm_start
-                .push((vertex, self.x[free_row] - self.system.position[row]));
+                .sort_unstable_by_key(|&(vertex, _)| vertex);
+            scratch.warm_feature_size_mm = Some(self.feature_size_mm);
+        } else {
+            scratch.warm_start.clear();
+            scratch.warm_feature_size_mm = None;
         }
-        scratch
-            .warm_start
-            .sort_unstable_by_key(|&(vertex, _)| vertex);
-        scratch.warm_feature_size_mm = Some(self.feature_size_mm);
         scratch.recycled = Some(self.system);
     }
 

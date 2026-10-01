@@ -1,20 +1,32 @@
-//! One swept stroke step.
+//! One swept stroke step and the dose laws shared by each brush.
 //!
 //! A pointer call covers the short path from the previous step's end to the
-//! pointer (at most `MAX_STEP_TRAVEL_SHARE` radii, see `stroke.rs`). The step
-//! builds one footprint along that path, gives each vertex the tip stamp
-//! integrated along it, counted in dabs of the tip's own spacing, then deforms
-//! and remeshes once. The dose per millimetre is the one a trail of spaced
-//! dabs gives, and every call ends with the brush under the pointer instead
-//! of a backlog of dabs behind it.
+//! pointer (at most `step_reach`, see `stroke.rs`). The step builds one
+//! footprint along that path, deforms and remeshes once, and ends with the
+//! brush under the pointer instead of a backlog of dabs behind it.
+//!
+//! Brush dose is elapsed time, capped to one full interval by the caller.
+//! Each vertex takes the tip stamp averaged over the path, then receives its
+//! share of that call's dose. A still hand concentrates the dose under the
+//! pointer; a fast pass spreads it along the path.
 
 use super::*;
 use crate::RemeshPolicy;
 
-/// Dab budgets one swept step may spend on its remesh. The travel bound
-/// already keeps a step within about fourteen ball spacings; this caps the
-/// denser knife trail at the same order.
+/// Dab budgets one swept step may spend on its remesh. The travel bound keeps
+/// one step within four radii; this caps the denser knife trail's remesh work
+/// at sixteen dab-equivalents.
 const MAX_STEP_DAB_BUDGETS: f64 = 16.0;
+
+/// Per-dab share of Smooth and Relax at the requested strength.
+pub(super) fn smooth_rate(strength: f64) -> f64 {
+    (strength.clamp(0.0, 1.0) * 0.55).min(1.0)
+}
+
+/// Add/Remove material laid at the brush centre by one full-strength dab.
+pub(super) fn layer_depth(radius: f64, strength: f64) -> f64 {
+    (radius * 0.12 * strength.clamp(0.0, 1.0)).max(0.0)
+}
 
 /// The share of the way to its target a vertex has travelled after `dabs`
 /// dab-equivalents, each moving `strength` of the remaining way. One full dab
@@ -94,21 +106,21 @@ impl SculptSession {
             .fold(f64::INFINITY, f64::min)
     }
 
-    /// The tip stamp integrated along the swept path at `point`, in dabs.
-    pub(super) fn path_stamp_weight(&self, point: DVec3, radius: f64) -> f64 {
-        if !(self.dab_path_spacing > 0.0) {
-            return 0.0;
-        }
-        let mut travel = 0.0;
+    /// The tip stamp averaged over the swept path at `point`.
+    pub(super) fn path_mean_stamp(&self, point: DVec3, radius: f64) -> f64 {
+        let mut stamped = 0.0;
+        let mut length = 0.0;
         for pair in self.dab_path.windows(2) {
-            travel += crate::segment_stamp_weight(
-                self.brush_tip,
-                point - pair[0].point,
-                pair[1].point - pair[0].point,
-                radius,
-            );
+            let segment = pair[1].point - pair[0].point;
+            stamped +=
+                crate::segment_stamp_weight(self.brush_tip, point - pair[0].point, segment, radius);
+            length += segment.length();
         }
-        travel / self.dab_path_spacing
+        if length > 1e-12 {
+            (stamped / length).clamp(0.0, 1.0)
+        } else {
+            0.0
+        }
     }
 
     /// Every group within `radius` of the swept path, each once. A point that

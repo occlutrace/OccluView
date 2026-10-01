@@ -70,35 +70,45 @@ fn a_deviation_overlay_forces_unlit_vertex_colors() {
 #[test]
 fn a_failed_offscreen_frame_cannot_start_a_repaint_storm() {
     let mut app = crate::app::app_test_support::test_app("offscreen-failure-does-not-spin");
-    app.document.scene = Some(crate::app::app_test_support::named_scene("scan", 0.0).into());
+    app.workspace.scenes[0].document.scene =
+        Some(crate::app::app_test_support::named_scene("scan", 0.0).into());
     // The state a terminal graphics fault leaves behind.
-    app.render.offscreen_failed = true;
-    assert!(!app.offscreen_available());
+    app.workspace.scenes[0].render.offscreen_failed = true;
+    assert!(!app
+        .active_context()
+        .expect("live test scene")
+        .offscreen_available());
 
     let ctx = egui::Context::default();
     for frame in 0..3 {
-        app.render.invalidation.request_redraw();
+        app.workspace.scenes[0].render.invalidation.request_redraw();
         assert!(
-            app.render.invalidation.redraw_pending(),
+            app.workspace.scenes[0].render.invalidation.redraw_pending(),
             "frame {frame}: the loop was asked to paint"
         );
-        app.render_pending_frame(&ctx);
+        app.active_context()
+            .expect("live test scene")
+            .render_pending_frame(&ctx);
 
         assert!(
-            !app.render.invalidation.redraw_pending(),
+            !app.workspace.scenes[0].render.invalidation.redraw_pending(),
             "frame {frame}: the failed frame must consume its redraw, or the next frame repeats it"
         );
         assert!(
-            app.render.offscreen_failed,
+            app.workspace.scenes[0].render.offscreen_failed,
             "frame {frame}: the fault stays latched until the operator retries"
         );
         assert!(
-            app.ui.status_message.is_none() && app.ui.app_error.is_none(),
+            app.workspace.scenes[0]
+                .presentation
+                .status_message
+                .is_none()
+                && app.ui.app_error.is_none(),
             "frame {frame}: the loop short-circuited instead of asking the dead device for another frame"
         );
     }
     assert!(
-        app.render.rendered.is_none(),
+        app.workspace.scenes[0].render.rendered.is_none(),
         "no frame reached the renderer, so nothing was produced from a broken device"
     );
 }
@@ -115,15 +125,17 @@ fn a_failed_offscreen_frame_cannot_start_a_repaint_storm() {
 fn a_readback_deadline_defers_the_offscreen_path_instead_of_killing_it() {
     let mut app = crate::app::app_test_support::test_app("offscreen-deadline-defers");
 
-    app.note_offscreen_failure(&super::RenderError::ReadbackTimeout {
-        timeout: super::APP_OFFSCREEN_RENDER_TIMEOUT,
-    });
+    app.active_context()
+        .expect("live test scene")
+        .note_offscreen_failure(&super::RenderError::ReadbackTimeout {
+            timeout: super::APP_OFFSCREEN_RENDER_TIMEOUT,
+        });
 
     assert!(
-        !app.render.offscreen_failed,
+        !app.workspace.scenes[0].render.offscreen_failed,
         "a missed deadline is not a device verdict and must not latch the path off"
     );
-    let deadline = app
+    let deadline = app.workspace.scenes[0]
         .render
         .offscreen_retry_after
         .expect("the next attempt must be deferred, not silently dropped");
@@ -137,15 +149,19 @@ fn a_readback_deadline_defers_the_offscreen_path_instead_of_killing_it() {
         "the backoff is bounded by the retry delay"
     );
     assert!(
-        !app.offscreen_available(),
+        !app.active_context()
+            .expect("live test scene")
+            .offscreen_available(),
         "no frame may use the path while the backoff is running"
     );
 
     // The wait ends on its own: recovery must not need the operator to restart
     // the viewer or find a dialog.
-    app.render.offscreen_retry_after = Some(std::time::Instant::now());
+    app.workspace.scenes[0].render.offscreen_retry_after = Some(std::time::Instant::now());
     assert!(
-        app.offscreen_available(),
+        app.active_context()
+            .expect("live test scene")
+            .offscreen_available(),
         "once the backoff has elapsed the offscreen path must be usable again"
     );
 }
@@ -160,26 +176,35 @@ fn a_readback_deadline_defers_the_offscreen_path_instead_of_killing_it() {
 fn retrying_a_graphics_fault_clears_the_offscreen_latch() {
     let mut app = crate::app::app_test_support::test_app("offscreen-retry-clears-latch");
     // The state the latch is in on a machine whose offscreen path died.
-    app.render.offscreen_failed = true;
-    app.render.offscreen_retry_after = Some(std::time::Instant::now());
+    app.workspace.scenes[0].render.offscreen_failed = true;
+    app.workspace.scenes[0].render.offscreen_retry_after = Some(std::time::Instant::now());
     assert!(
-        !app.offscreen_available(),
+        !app.active_context()
+            .expect("live test scene")
+            .offscreen_available(),
         "a latched path must be unavailable before the retry"
     );
 
     let ctx = app.ui.repaint_ctx.clone();
-    app.retry_gpu_after_fault(&ctx);
+    app.active_context()
+        .expect("live test scene")
+        .retry_gpu_after_fault(&ctx);
 
     assert!(
-        !app.render.offscreen_failed,
+        !app.workspace.scenes[0].render.offscreen_failed,
         "the retry must clear the terminal offscreen latch, not leave it set"
     );
     assert!(
-        app.render.offscreen_retry_after.is_none(),
+        app.workspace.scenes[0]
+            .render
+            .offscreen_retry_after
+            .is_none(),
         "and the retry backoff with it, or the next attempt is deferred"
     );
     assert!(
-        app.offscreen_available(),
+        app.active_context()
+            .expect("live test scene")
+            .offscreen_available(),
         "so the offscreen path is usable again"
     );
 }
@@ -198,24 +223,37 @@ fn retrying_a_graphics_fault_clears_the_offscreen_latch() {
 #[test]
 fn a_frame_during_the_retry_wait_cannot_latch_the_offscreen_path_off() {
     let mut app = crate::app::app_test_support::test_app("offscreen-retry-wait-no-latch");
-    app.document.scene = Some(crate::app::app_test_support::named_scene("scan", 0.0).into());
-    app.note_offscreen_failure(&super::RenderError::ReadbackTimeout {
-        timeout: super::APP_OFFSCREEN_RENDER_TIMEOUT,
-    });
-    assert!(!app.offscreen_available(), "the retry wait is armed");
+    app.workspace.scenes[0].document.scene =
+        Some(crate::app::app_test_support::named_scene("scan", 0.0).into());
+    app.active_context()
+        .expect("live test scene")
+        .note_offscreen_failure(&super::RenderError::ReadbackTimeout {
+            timeout: super::APP_OFFSCREEN_RENDER_TIMEOUT,
+        });
+    assert!(
+        !app.active_context()
+            .expect("live test scene")
+            .offscreen_available(),
+        "the retry wait is armed"
+    );
 
     let ctx = egui::Context::default();
     for frame in 0..3 {
-        app.render.invalidation.request_redraw();
-        assert!(app.render.invalidation.redraw_pending());
-        app.render_now(&ctx);
+        app.workspace.scenes[0].render.invalidation.request_redraw();
+        assert!(app.workspace.scenes[0].render.invalidation.redraw_pending());
+        app.active_context()
+            .expect("live test scene")
+            .render_now(&ctx);
 
         assert!(
-            !app.render.offscreen_failed,
+            !app.workspace.scenes[0].render.offscreen_failed,
             "frame {frame}: a frame inside the wait must not latch the path off"
         );
         assert!(
-            app.render.offscreen_retry_after.is_some(),
+            app.workspace.scenes[0]
+                .render
+                .offscreen_retry_after
+                .is_some(),
             "frame {frame}: and the retry must stay armed"
         );
         assert!(
@@ -223,18 +261,23 @@ fn a_frame_during_the_retry_wait_cannot_latch_the_offscreen_path_off() {
             "frame {frame}: a transient failure must not bury the viewport in a modal per attempt"
         );
         assert!(
-            app.ui.status_message.is_some(),
+            app.workspace.scenes[0]
+                .presentation
+                .status_message
+                .is_some(),
             "frame {frame}: the operator is still told the frame failed"
         );
         assert!(
-            !app.render.invalidation.redraw_pending(),
+            !app.workspace.scenes[0].render.invalidation.redraw_pending(),
             "frame {frame}: the failed frame consumed its redraw"
         );
     }
 
-    app.render.offscreen_retry_after = Some(std::time::Instant::now());
+    app.workspace.scenes[0].render.offscreen_retry_after = Some(std::time::Instant::now());
     assert!(
-        app.offscreen_available(),
+        app.active_context()
+            .expect("live test scene")
+            .offscreen_available(),
         "and the wait still ends on its own, so nothing is latched off"
     );
 }
@@ -250,13 +293,19 @@ fn a_frame_during_the_retry_wait_cannot_latch_the_offscreen_path_off() {
 #[test]
 fn the_graphics_fault_dialog_offers_the_retry_action() {
     let mut app = crate::app::app_test_support::test_app("graphics-fault-dialog-offers-retry");
-    app.document.scene = Some(crate::app::app_test_support::named_scene("scan", 0.0).into());
+    app.workspace.scenes[0].document.scene =
+        Some(crate::app::app_test_support::named_scene("scan", 0.0).into());
     // The state a terminal graphics fault leaves behind with no live viewport.
-    app.render.offscreen_failed = true;
-    assert!(!app.offscreen_available());
+    app.workspace.scenes[0].render.offscreen_failed = true;
+    assert!(!app
+        .active_context()
+        .expect("live test scene")
+        .offscreen_available());
 
     let ctx = egui::Context::default();
-    app.render_now(&ctx);
+    app.active_context()
+        .expect("live test scene")
+        .render_now(&ctx);
 
     let dialog = app
         .ui
@@ -274,9 +323,13 @@ fn the_graphics_fault_dialog_offers_the_retry_action() {
     );
 
     // What the dialog handler calls when that button is clicked.
-    app.retry_gpu_after_fault(&ctx);
+    app.active_context()
+        .expect("live test scene")
+        .retry_gpu_after_fault(&ctx);
     assert!(
-        app.offscreen_available(),
+        app.active_context()
+            .expect("live test scene")
+            .offscreen_available(),
         "so pressing it gives the offscreen path back"
     );
 }
@@ -296,10 +349,13 @@ fn the_offscreen_viewport_replays_overlay_vertices_after_scene_upload() {
     /// A colour no scan has, so a frame that shows it is showing the reading.
     const MEASURED: [u8; 4] = [220, 30, 30, 255];
 
-    fn render_frame(app: &mut super::OccluViewApp, ctx: &egui::Context) -> Option<Vec<u8>> {
-        app.render.invalidation.request_redraw();
-        app.render_now(ctx);
-        app.render
+    fn render_frame(app: &mut crate::app::OccluViewApp, ctx: &egui::Context) -> Option<Vec<u8>> {
+        app.workspace.scenes[0].render.invalidation.request_redraw();
+        app.active_context()
+            .expect("live test scene")
+            .render_now(ctx);
+        app.workspace.scenes[0]
+            .render
             .rendered
             .as_ref()
             .map(|frame| frame.pixels.clone())
@@ -308,14 +364,17 @@ fn the_offscreen_viewport_replays_overlay_vertices_after_scene_upload() {
     let mut app = crate::app::app_test_support::test_app("offscreen-replays-measured-colours");
     let scene = crate::app::app_test_support::named_scene("scan", 0.0);
     let layer = scene.meshes()[0].id();
-    app.document.scene = Some(scene.into());
+    app.workspace.scenes[0].document.scene = Some(scene.into());
     let ctx = egui::Context::default();
 
     // The scan's own colours: what the operator sees before a measurement.
-    app.render.invalidation.scene_geometry_changed();
+    app.workspace.scenes[0]
+        .render
+        .invalidation
+        .scene_geometry_changed();
     let Some(scan_frame) = render_frame(&mut app, &ctx) else {
         assert!(
-            app.render.offscreen.is_none(),
+            app.workspace.scenes[0].render.offscreen.is_none(),
             "an initialized offscreen path must produce a frame"
         );
         // No wgpu adapter in this environment, so there is no offscreen frame
@@ -334,7 +393,9 @@ fn the_offscreen_viewport_replays_overlay_vertices_after_scene_upload() {
 
     // A measurement marks every vertex of the layer.
     assert!(
-        app.attach_overlay_colors(layer, vec![MEASURED; 3], AlignOverlay::Map),
+        app.active_context()
+            .expect("live test scene")
+            .attach_overlay_colors(layer, vec![MEASURED; 3], AlignOverlay::Map),
         "the map must attach to a layer whose vertex count it matches"
     );
     let measured_frame = render_frame(&mut app, &ctx).expect("the mapped scan must render");
@@ -345,12 +406,75 @@ fn the_offscreen_viewport_replays_overlay_vertices_after_scene_upload() {
 
     // A structural scene change drops the prepared scene, and the next frame
     // rebuilds it: `prepare_scene` uploads the scan's own vertex colours.
-    app.render.prepared_scene = None;
-    app.render.invalidation.scene_geometry_changed();
+    app.workspace.scenes[0].render.prepared_scene = None;
+    app.workspace.scenes[0]
+        .render
+        .invalidation
+        .scene_geometry_changed();
     let rebuilt_frame = render_frame(&mut app, &ctx).expect("the rebuilt scan must render");
 
     assert_eq!(
         rebuilt_frame, measured_frame,
         "the rebuild must replay the measured colours; falling back to the scan's own colours shows the operator an unmeasured scan"
     );
+}
+
+#[test]
+fn inactive_scene_keeps_its_ruler_visible_without_consuming_escape() {
+    use crate::app::app_test_support::{named_scene, test_app};
+    use crate::app::workspace::commands::SplitSide;
+    use crate::measure_tool::MeasureMode;
+    use eframe::egui;
+    let mut app = test_app("inactive-ruler-annotation");
+    let key = app.workspace.scenes[0].key;
+    app.scene_context(key)
+        .expect("first scene")
+        .set_scene(named_scene("scan", 0.0), true);
+    let ruler = &mut app.workspace.scenes[0].tools.measure;
+    ruler.arm(MeasureMode::Ruler);
+    ruler.place_ruler_point(glam::Vec3::ZERO);
+    ruler.place_ruler_point(glam::Vec3::X);
+    app.active_context()
+        .expect("active scene")
+        .queue_new_scene(SplitSide::Right);
+    let ctx = egui::Context::default();
+    app.apply_workspace_commands(&ctx);
+    let texture = ctx.load_texture(
+        "inactive-scene-frame",
+        egui::ColorImage::filled([2, 2], egui::Color32::BLACK),
+        egui::TextureOptions::LINEAR,
+    );
+    app.workspace.scenes[0].render.rendered = Some(crate::app::state_render::RenderedFrame {
+        texture,
+        pixels: vec![0; 16],
+        size_px: [2, 2],
+    });
+    let bounds = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600.0, 600.0));
+    let output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(bounds),
+            events: vec![egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            ..Default::default()
+        },
+        |ui| {
+            let mut scene = app.scene_context(key).expect("inactive scene");
+            assert!(!scene.is_active);
+            scene.show_pane(ui, bounds, bounds, &ctx);
+            assert!(ctx.input(|input| input.key_pressed(egui::Key::Escape)));
+        },
+    );
+    let expected = crate::measure_tool::format_length(1.0, app.persistence.settings.unit_display);
+    assert!(
+        output.shapes.iter().any(|shape| matches!(&shape.shape,
+        egui::epaint::Shape::Text(text) if text.galley.text().contains(&expected))),
+        "an inactive pane must still paint its ruler reading"
+    );
+    assert_eq!(app.workspace.scenes[0].tools.measure.ruler_count(), 1);
+    output.drop_without_applying_deltas();
 }
