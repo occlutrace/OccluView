@@ -25,5 +25,6 @@ occlu-geometry-math = { workspace = true }
 
 [dev-dependencies]
 image     = { workspace = true }
+occluview-contact = { workspace = true }
 pollster  = { workspace = true }
 naga      = { workspace = true }
