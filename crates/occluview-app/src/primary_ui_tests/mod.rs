@@ -7,6 +7,7 @@ use std::path::Path;
 mod chrome;
 mod documents;
 mod platform;
+mod source_tree;
 mod viewport;
 
 /// Every `.rs` file under `directory`, skipping symlinks and any `target`
