@@ -106,3 +106,75 @@ pub enum FormatError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 }
+
+#[cfg(test)]
+mod error_contract {
+    use super::*;
+
+    /// Names every variant so a new one cannot be added without a case here.
+    fn variant_name(error: &FormatError) -> &'static str {
+        match error {
+            FormatError::BadSignature { .. } => "BadSignature",
+            FormatError::Truncated { .. } => "Truncated",
+            FormatError::Malformed { .. } => "Malformed",
+            FormatError::UnsafePath { .. } => "UnsafePath",
+            FormatError::TooLarge { .. } => "TooLarge",
+            FormatError::MemoryBudgetExceeded { .. } => "MemoryBudgetExceeded",
+            FormatError::Unsupported { .. } => "Unsupported",
+            FormatError::Deferred { .. } => "Deferred",
+            FormatError::Core(_) => "Core",
+            FormatError::Io(_) => "Io",
+        }
+    }
+
+    #[test]
+    fn every_format_error_variant_renders_an_operator_message() {
+        let cause = occluview_core::CoreError::Geometry("a triangle is degenerate".to_string());
+        let variants = [
+            FormatError::BadSignature {
+                format: "STL",
+                offset: 0,
+            },
+            FormatError::Truncated {
+                format: "STL",
+                expected: 84,
+                got: 12,
+            },
+            FormatError::Malformed {
+                format: "PLY",
+                offset: 4,
+                reason: "vertex count is negative".to_string(),
+            },
+            FormatError::UnsafePath {
+                format: "3MF",
+                path: "../outside".to_string(),
+            },
+            FormatError::TooLarge {
+                bytes: 2_147_483_648,
+                limit: 1_073_741_824,
+            },
+            FormatError::MemoryBudgetExceeded {
+                estimated_bytes: 2_147_483_648,
+                limit: 1_073_741_824,
+            },
+            FormatError::Unsupported {
+                extension: "xyz".to_string(),
+            },
+            FormatError::Deferred {
+                format: "3MF",
+                reason: "this build has no 3MF reader".to_string(),
+            },
+            FormatError::Core(cause),
+            FormatError::Io(std::io::Error::other("the source closed early")),
+        ];
+        for variant in &variants {
+            assert!(!variant_name(variant).is_empty());
+            let message = variant.to_string();
+            assert!(!message.trim().is_empty(), "empty message for {variant:?}");
+            assert!(
+                !message.contains("occlu-") && !message.contains("occlu_"),
+                "operator message names an internal crate: {message:?}"
+            );
+        }
+    }
+}

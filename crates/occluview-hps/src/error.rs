@@ -79,3 +79,89 @@ pub enum ReadError<E> {
     #[error("HPS key provider failed: {0}")]
     KeyProvider(E),
 }
+
+#[cfg(test)]
+mod error_contract {
+    use super::*;
+
+    /// Names every variant so a new one cannot be added without a case here.
+    fn hps_variant_name(error: &HpsError) -> &'static str {
+        match error {
+            HpsError::MedicalDicom => "MedicalDicom",
+            HpsError::BadSignature => "BadSignature",
+            HpsError::UnsupportedEncoding { .. } => "UnsupportedEncoding",
+            HpsError::BadContainer { .. } => "BadContainer",
+            HpsError::KeyMissing => "KeyMissing",
+            HpsError::InvalidKey { .. } => "InvalidKey",
+            HpsError::IntegrityFailure { .. } => "IntegrityFailure",
+            HpsError::PackageLocked { .. } => "PackageLocked",
+            HpsError::TextureMalformed { .. } => "TextureMalformed",
+            HpsError::ResourceLimit { .. } => "ResourceLimit",
+        }
+    }
+
+    /// Names every variant so a new one cannot be added without a case here.
+    fn read_error_variant_name<E>(error: &ReadError<E>) -> &'static str {
+        match error {
+            ReadError::Parser(_) => "Parser",
+            ReadError::KeyProvider(_) => "KeyProvider",
+        }
+    }
+
+    #[test]
+    fn every_hps_error_variant_renders_an_operator_message() {
+        let variants = [
+            HpsError::MedicalDicom,
+            HpsError::BadSignature,
+            HpsError::UnsupportedEncoding {
+                reason: "utf-16 is not supported".to_string(),
+            },
+            HpsError::BadContainer {
+                reason: "the payload is truncated".to_string(),
+            },
+            HpsError::KeyMissing,
+            HpsError::InvalidKey {
+                reason: "the key is too short".to_string(),
+            },
+            HpsError::IntegrityFailure {
+                reason: "the marker does not match".to_string(),
+            },
+            HpsError::PackageLocked {
+                reason: "the lock metadata is absent".to_string(),
+            },
+            HpsError::TextureMalformed {
+                reason: "the texture stride is wrong".to_string(),
+            },
+            HpsError::ResourceLimit {
+                resource: "texture bytes",
+                limit: 1_048_576,
+            },
+        ];
+        for variant in &variants {
+            assert!(!hps_variant_name(variant).is_empty());
+            let message = variant.to_string();
+            assert!(!message.trim().is_empty(), "empty message for {variant:?}");
+            assert!(
+                !message.contains("occlu-") && !message.contains("occlu_"),
+                "operator message names an internal crate: {message:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_read_error_variant_renders_an_operator_message() {
+        let variants = [
+            ReadError::<String>::Parser(HpsError::BadSignature),
+            ReadError::<String>::KeyProvider("the provider returned no key".to_string()),
+        ];
+        for variant in &variants {
+            assert!(!read_error_variant_name(variant).is_empty());
+            let message = variant.to_string();
+            assert!(!message.trim().is_empty(), "empty message for {variant:?}");
+            assert!(
+                !message.contains("occlu-") && !message.contains("occlu_"),
+                "operator message names an internal crate: {message:?}"
+            );
+        }
+    }
+}
