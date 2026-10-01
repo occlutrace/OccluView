@@ -1,14 +1,14 @@
 use glam::Vec3;
-use occlu_geometry_math::{coincident_position_key, DUPLICATE_NORMAL_DOT, MAX_DUPLICATE_CLUSTERS};
+use occluview_geometry_math::{coincident_position_key, DUPLICATE_NORMAL_DOT, MAX_DUPLICATE_CLUSTERS};
 
 /// Squared sine of the smallest angle a facet may have and still contribute a
 /// normal. Scale-free: the test compares twice the facet's area against its own
 /// longest edge squared, so it means the same thing on a 10 mm arch and on a
 /// 10 um sliver.
 ///
-/// Owned by `occlu-geometry-math` so this crate, `occluview-core` and
+/// Owned by `occluview-geometry-math` so this crate, `occluview-core` and
 /// `occluview-hps` apply one threshold on every load path.
-pub use occlu_geometry_math::DEGENERATE_AREA_SIN;
+pub use occluview_geometry_math::DEGENERATE_AREA_SIN;
 use std::collections::HashMap;
 
 use super::{validate_triangle_mesh_data, EditVertex, MeshEditError};
@@ -16,8 +16,8 @@ use super::{validate_triangle_mesh_data, EditVertex, MeshEditError};
 /// Past this many vertices at one position, agreement is judged against the
 /// group's mean normal instead of against every other member.
 ///
-/// Owned by `occlu-geometry-math`; core and this crate share the bound.
-pub use occlu_geometry_math::MAX_PAIRWISE_DUPLICATE_GROUP;
+/// Owned by `occluview-geometry-math`; core and this crate share the bound.
+pub use occluview_geometry_math::MAX_PAIRWISE_DUPLICATE_GROUP;
 
 /// Recompute every vertex normal from triangle winding.
 ///
@@ -196,7 +196,7 @@ fn smooth_duplicate_position_normals(vertices: &mut [EditVertex]) {
 #[cfg(test)]
 mod shared_tolerance_tests {
     use super::coincident_position_key;
-    use occlu_geometry_math::COINCIDENT_POSITION_EPS_MM;
+    use occluview_geometry_math::COINCIDENT_POSITION_EPS_MM;
 
     #[test]
     fn one_tolerance_decides_which_vertices_share_a_normal() {

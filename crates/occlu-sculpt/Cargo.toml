@@ -12,7 +12,7 @@ publish.workspace = true
 
 [dependencies]
 glam = { workspace = true }
-occlu-geometry-math = { workspace = true }
+occluview-geometry-math = { workspace = true }
 rayon = { workspace = true, optional = true }
 
 [features]

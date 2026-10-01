@@ -2614,19 +2614,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "occlu-geometry-math"
-version = "1.2.1"
-dependencies = [
- "glam",
-]
-
-[[package]]
 name = "occlu-mesh-edit"
 version = "1.2.1"
 dependencies = [
  "earcutr",
  "glam",
- "occlu-geometry-math",
+ "occluview-geometry-math",
  "rayon",
  "thiserror 2.0.21",
 ]
@@ -2636,7 +2629,7 @@ name = "occlu-sculpt"
 version = "1.2.1"
 dependencies = [
  "glam",
- "occlu-geometry-math",
+ "occluview-geometry-math",
  "rayon",
 ]
 
@@ -2666,13 +2659,13 @@ dependencies = [
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
- "occlu-geometry-math",
  "occlu-sculpt",
  "occluview-align",
  "occluview-contact",
  "occluview-core",
  "occluview-edit",
  "occluview-formats",
+ "occluview-geometry-math",
  "occluview-i18n",
  "occluview-render",
  "occluview-update",
@@ -2727,7 +2720,7 @@ version = "1.2.1"
 dependencies = [
  "bytemuck",
  "glam",
- "occlu-geometry-math",
+ "occluview-geometry-math",
  "rayon",
  "thiserror 2.0.21",
 ]
@@ -2762,6 +2755,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "occluview-geometry-math"
+version = "1.2.1"
+dependencies = [
+ "glam",
+]
+
+[[package]]
 name = "occluview-hps"
 version = "1.2.1"
 dependencies = [
@@ -2770,7 +2770,7 @@ dependencies = [
  "glam",
  "image",
  "md-5",
- "occlu-geometry-math",
+ "occluview-geometry-math",
  "thiserror 2.0.21",
  "tracing",
  "zeroize",
@@ -2794,9 +2794,9 @@ dependencies = [
  "glam",
  "image",
  "naga",
- "occlu-geometry-math",
  "occluview-contact",
  "occluview-core",
+ "occluview-geometry-math",
  "pollster 1.0.1",
  "thiserror 2.0.21",
  "tracing",
@@ -2825,9 +2825,9 @@ name = "occluview-shell"
 version = "1.2.1"
 dependencies = [
  "glam",
- "occlu-geometry-math",
  "occluview-core",
  "occluview-formats",
+ "occluview-geometry-math",
  "occluview-i18n",
  "occluview-render",
  "occluview-thumbnail",
@@ -2846,7 +2846,7 @@ name = "occluview-surface-query"
 version = "1.2.1"
 dependencies = [
  "glam",
- "occlu-geometry-math",
+ "occluview-geometry-math",
 ]
 
 [[package]]
