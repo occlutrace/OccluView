@@ -1,63 +1,79 @@
-//! State and scheduling for the interactive sculpt brushes.
+//! State for interactive sculpt brushes.
 
 use crate::sculpt_kernel::BrushSession;
-use crate::sculpt_kernel::{BrushMode, BrushStroke};
+use crate::sculpt_kernel::{BrushMode, BrushRayStep};
+#[cfg(test)]
+use crate::sculpt_kernel::{BrushStroke, DabDose};
 use crate::sculpt_worker::SculptWorker;
-use glam::{Affine3A, Vec3};
+use eframe::egui;
+use glam::Affine3A;
 use occluview_core::{mesh_edit_buffers_from_mesh, Mesh, Scene, SceneMeshId, Vertex};
 use occluview_render::{PreparedSceneTopology, SculptTopologyDelta};
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, RwLock};
 use std::thread;
 
-/// Brush-size slider bounds and default, mapped to a millimetre radius by
-/// [`size_to_radius_mm`].
-pub(crate) const SCULPT_SIZE_DEFAULT: f32 = 40.0;
-pub(crate) const SCULPT_SIZE_MIN: f32 = 1.0;
-pub(crate) const SCULPT_SIZE_MAX: f32 = 100.0;
-/// Intensity slider bounds/default, 0..100 units, mapped to a 0..1 kernel
-/// strength by dividing by 100.
-pub(crate) const SCULPT_INTENSITY_DEFAULT: f32 = 50.0;
-pub(crate) const SCULPT_INTENSITY_MIN: f32 = 1.0;
-pub(crate) const SCULPT_INTENSITY_MAX: f32 = 100.0;
-/// Mm radius the size slider maps to at its ends.
-const SCULPT_RADIUS_MIN_MM: f32 = 0.4;
-const SCULPT_RADIUS_MAX_MM: f32 = 12.0;
-/// Radius multiplier for Shift+Smooth. The kernel caps per-dab strength, so
-/// the modified tool widens the affected footprint instead.
-pub(crate) const SHIFT_SMOOTH_RADIUS_BOOST: f32 = 1.75;
-/// One notch of the mouse wheel changes a slider by this many units.
-pub(crate) const SCULPT_WHEEL_STEP: f32 = 6.0;
-/// Dab spacing along the drag path, as a fraction of the brush radius: dabs are
-/// laid down every `radius * this` of cursor travel so buildup is even and
-/// framerate-independent (the arc-length stroke spacing sculpting tools use).
-pub(crate) const DAB_SPACING_FRACTION: f32 = 0.15;
-/// While the cursor is (near) stationary and the button held, lay a fresh dab
-/// this often so a held brush keeps depositing on the same spot at a steady,
-/// framerate-independent rate.
+/// Shift Smooth in the donor doubles strength only; brush footprint stays fixed.
+/// How much Shift amplifies the selected Smooth strength.
+const SHIFT_STRENGTH_GAIN: f32 = 2.0;
+const RADIUS_DETENT_RATIO: f64 = 1.2;
+const STRENGTH_DETENT_RATIO: f64 = 1.3;
 pub(crate) const HOLD_DAB_INTERVAL_SEC: f32 = 0.03;
-/// Never emit more than this many dabs in one frame. A long cursor jump is
-/// sampled across this bounded budget and the scheduler advances to the
-/// current cursor, so expensive geometry work cannot accumulate behind input.
-pub(crate) const MAX_DABS_PER_FRAME: usize = 8;
-
-/// Map the 0..100 size slider to a mm brush radius (linear across the usable
-/// dental range).
-pub(crate) fn size_to_radius_mm(size: f32) -> f32 {
-    let t = ((size - SCULPT_SIZE_MIN) / (SCULPT_SIZE_MAX - SCULPT_SIZE_MIN)).clamp(0.0, 1.0);
-    SCULPT_RADIUS_MIN_MM + t * (SCULPT_RADIUS_MAX_MM - SCULPT_RADIUS_MIN_MM)
-}
-
+/// Bound caller-side retries while the worker's smaller queue is saturated.
+pub(crate) const MAX_RETAINED_SCULPT_SAMPLES: usize = 64;
 /// The available sculpt tools.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum SculptToolKind {
-    /// Clay knife: build material, or carve it away with Shift held.
+    /// Shape material, or carve it away with Shift held.
+    #[default]
     AddRemove,
-    /// Relaxer: flatten/even the surface, forced to maximum with Shift held.
+    /// Relaxer: flatten/even the surface; Shift doubles the selected strength.
     Smooth,
 }
 
 impl SculptToolKind {
+    /// Catalog strength range/default for this mode, in the kernel's 0..1
+    /// units. The slider and persisted values use the same physical scale.
+    pub(crate) const fn strength_range(self) -> (f32, f32) {
+        match self {
+            Self::AddRemove => (0.05, 1.0),
+            Self::Smooth => (0.01, 1.0),
+        }
+    }
+
+    pub(crate) const fn default_strength(self) -> f32 {
+        match self {
+            Self::AddRemove => 0.35,
+            Self::Smooth => 0.15,
+        }
+    }
+
+    pub(crate) const fn strength_step(self) -> f32 {
+        match self {
+            Self::AddRemove => 0.05,
+            Self::Smooth => 0.01,
+        }
+    }
+
+    /// Match the donor wheel detent: a 1.3 ratio snapped to the slider step,
+    /// with at least one step of progress at the range boundary.
+    pub(crate) fn step_strength(self, current: f32, direction: f32) -> f32 {
+        let (min, max) = self.strength_range();
+        ratio_detent(
+            current,
+            DetentCatalog {
+                min,
+                max,
+                default: self.default_strength(),
+                step: self.strength_step(),
+            },
+            direction,
+            STRENGTH_DETENT_RATIO,
+        )
+    }
+
     /// Resolve a dab's mode from the active tool and held modifiers.
     pub(crate) fn brush_mode(self, shift: bool, command: bool) -> BrushMode {
         match self {
@@ -69,25 +85,79 @@ impl SculptToolKind {
     }
 
     /// Return the kernel strength for one dab.
+    ///
+    /// Shift strengthens a Smooth brush rather than replacing the slider with a
+    /// maximum pass. The reference tool's Shift amplifies the setting the
+    /// operator chose; a jump to the top of the range flattened whole cusps
+    /// from the bottom of the slider and left the surface rippled.
     pub(crate) fn dab_strength(self, intensity01: f32, shift: bool) -> f32 {
+        let strength = intensity01.clamp(0.0, 1.0);
         match self {
-            Self::Smooth if shift => 1.0,
-            _ => intensity01.clamp(0.0, 1.0),
-        }
-    }
-
-    /// Return the world-space radius for one dab.
-    pub(crate) fn dab_radius_mm(self, base_mm: f32, shift: bool) -> f32 {
-        match self {
-            Self::Smooth if shift => base_mm * SHIFT_SMOOTH_RADIUS_BOOST,
-            _ => base_mm,
+            Self::Smooth if shift => (strength * SHIFT_STRENGTH_GAIN).clamp(0.0, 1.0),
+            _ => strength,
         }
     }
 }
 
+/// One catalog wheel detent. Mirror the reference's decimal snap before
+/// clamping so repeated notches do not accumulate binary-float drift.
+#[derive(Clone, Copy)]
+struct DetentCatalog {
+    min: f32,
+    max: f32,
+    default: f32,
+    step: f32,
+}
+
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "The value is clamped to the catalog's f32 bounds before conversion."
+)]
+fn ratio_detent(value: f32, catalog: DetentCatalog, direction: f32, ratio: f64) -> f32 {
+    let DetentCatalog {
+        min,
+        max,
+        default,
+        step,
+    } = catalog;
+    // Slider values and step sizes are authored as decimal catalog values.
+    // Canonicalize f32 representation noise at the same 1e-6 precision as the
+    // reference before doing ratio and step arithmetic in f64.
+    let catalog_decimal = |value: f32| (f64::from(value) * 1_000_000.0).round() / 1_000_000.0;
+    let min = catalog_decimal(min);
+    let max = catalog_decimal(max);
+    let step = catalog_decimal(step);
+    let current = if value.is_finite() {
+        catalog_decimal(value).clamp(min, max)
+    } else {
+        catalog_decimal(default).clamp(min, max)
+    };
+    let snap = |candidate: f64| {
+        let stepped = (candidate / step).round() * step;
+        (stepped * 1_000_000.0).round() / 1_000_000.0
+    };
+    let scaled = snap(if direction > 0.0 {
+        current * ratio
+    } else {
+        current / ratio
+    });
+    let minimum_move = snap(if direction > 0.0 {
+        current + step
+    } else {
+        current - step
+    });
+    let next = if direction > 0.0 {
+        minimum_move.max(scaled)
+    } else {
+        minimum_move.min(scaled)
+    };
+    next.clamp(min, max) as f32
+}
+
 /// The brush tip a dab is stamped with. The wire discriminants are the
 /// kernel's own, so the UI, the worker and the display agree on one number.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum SculptTip {
     /// Spherical falloff: the all-round shaping stamp.
     #[default]
@@ -101,6 +171,42 @@ pub(crate) enum SculptTip {
 impl SculptTip {
     /// Every tip, in the order the Sculpt panel offers them.
     pub(crate) const ALL: [Self; 3] = [Self::Ball, Self::Knife, Self::Cylinder];
+
+    /// Catalog radius range in physical millimetres.
+    pub(crate) const fn radius_range_mm(self) -> (f32, f32) {
+        match self {
+            Self::Ball => (0.25, 4.0),
+            Self::Knife => (0.25, 2.5),
+            Self::Cylinder => (0.25, 2.0),
+        }
+    }
+
+    pub(crate) const fn default_radius_mm(self) -> f32 {
+        match self {
+            Self::Ball => 0.75,
+            Self::Knife | Self::Cylinder => 0.5,
+        }
+    }
+
+    pub(crate) const fn radius_step_mm() -> f32 {
+        0.05
+    }
+
+    /// Match the donor wheel detent in the selected tip's physical range.
+    pub(crate) fn step_radius_mm(self, current: f32, direction: f32) -> f32 {
+        let (min, max) = self.radius_range_mm();
+        ratio_detent(
+            current,
+            DetentCatalog {
+                min,
+                max,
+                default: self.default_radius_mm(),
+                step: Self::radius_step_mm(),
+            },
+            direction,
+            RADIUS_DETENT_RATIO,
+        )
+    }
 
     /// The kernel's tip discriminant.
     pub(crate) fn kernel_stamp(self) -> u32 {
@@ -141,6 +247,10 @@ pub(crate) struct SculptTool {
     pub(crate) worker: Option<SculptWorker>,
     /// Bookkeeping for the drag currently in flight (button held).
     pub(crate) stroke: Option<StrokeState>,
+    /// Presses that arrived while preparation or a previous stroke was
+    /// finishing. Their rays and brush settings are captured on the input edge
+    /// and completed gestures stay FIFO until the worker can accept them.
+    pub(crate) pending_presses: VecDeque<PendingSculptPress>,
     /// A mesh-edit Done action waits for the background commit before closing
     /// the edit session, so a fast click cannot discard a valid stroke.
     pub(crate) finish_requested: bool,
@@ -156,11 +266,31 @@ pub(crate) struct SculptTool {
     pub(crate) cursor_hit: Option<occluview_core::ScenePickHit>,
     /// Pointer coordinates belonging to [`Self::cursor_hit`].
     pub(crate) cursor_pointer: Option<[f32; 2]>,
+    /// Last completed raw modifier state, used to replay same-frame pointer
+    /// movements around a `ModifiersChanged` event in the correct order.
+    pub(crate) pointer_modifiers: egui::Modifiers,
     pending: Option<PendingSculptPreparation>,
     /// Canceled preparation workers are reaped without blocking the UI. They
     /// remain owned here until their non-cancellable kernel phase finishes,
     /// so dropping a receiver never leaves an untracked CPU/RAM worker behind.
     retired_preparations: Vec<thread::JoinHandle<()>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct PendingSculptPress {
+    pub(crate) layer_id: SceneMeshId,
+    pub(crate) topology_id: u64,
+    pub(crate) world_to_local: Affine3A,
+    pub(crate) local_per_world: f32,
+    pub(crate) press_pointer: [f32; 2],
+    pub(crate) latest_pointer: [f32; 2],
+    pub(crate) start_step: BrushRayStep,
+    pub(crate) latest_step: BrushRayStep,
+    pub(crate) moved: bool,
+    /// An overlay or an offscreen interval was crossed after this press.
+    /// The endpoint must start a fresh kernel path, without closing history.
+    pub(crate) break_before_latest: bool,
+    pub(crate) released: bool,
 }
 
 struct PendingSculptPreparation {
@@ -176,6 +306,7 @@ impl SculptTool {
     /// prepared session for the active layer.
     pub(crate) fn toggle(&mut self, kind: SculptToolKind) {
         self.stroke = None;
+        self.pending_presses.clear();
         self.clear_cursor_hit();
         self.armed = if self.armed == Some(kind) {
             None
@@ -187,6 +318,7 @@ impl SculptTool {
     pub(crate) fn disarm(&mut self) {
         self.armed = None;
         self.stroke = None;
+        self.pending_presses.clear();
         self.clear_cursor_hit();
         self.finish_requested = false;
         self.finish_retry = false;
@@ -199,6 +331,7 @@ impl SculptTool {
     /// Re-prepare after a scene change even when the topology id is unchanged.
     pub(crate) fn invalidate_session(&mut self) {
         self.stroke = None;
+        self.pending_presses.clear();
         self.clear_cursor_hit();
         self.worker = None;
         self.finish_requested = false;
@@ -245,11 +378,27 @@ impl SculptTool {
     /// idle for instant next-stroke reuse, so its presence alone is not busy.
     pub(crate) fn is_busy(&self) -> bool {
         self.stroke.is_some()
+            || !self.pending_presses.is_empty()
             || self.pending.is_some()
             || self.worker_has_pending_work()
             || self.finish_requested
             || self.finish_retry
             || self.pending_history.is_some()
+    }
+
+    pub(crate) fn preparation_in_progress(&self) -> bool {
+        self.pending.is_some() || !self.retired_preparations.is_empty()
+    }
+
+    /// Keep the UI-side backlog in order. A later click never replaces an
+    /// accepted press while a scan-sized session is still preparing.
+    pub(crate) fn queue_pending_press(&mut self, press: PendingSculptPress) -> bool {
+        const MAX_PENDING_SCULPT_PRESSES: usize = 64;
+        if self.pending_presses.len() >= MAX_PENDING_SCULPT_PRESSES {
+            return false;
+        }
+        self.pending_presses.push_back(press);
+        true
     }
 
     /// Queue the O(n) brush preparation. The worker owns the target mesh
@@ -481,7 +630,7 @@ impl SculptSession {
     /// entry (an empty dab does not).
     #[cfg(test)]
     pub(crate) fn apply_dab(&mut self, stroke: BrushStroke, mode: BrushMode) -> DabOutcome {
-        self.apply_dab_inner(stroke, mode, None, SculptTip::Ball, None)
+        self.apply_dab_inner(stroke, mode, None, SculptTip::Ball, None, DabDose::FULL)
             .unwrap_or_default()
     }
 
@@ -494,7 +643,7 @@ impl SculptSession {
         tip: SculptTip,
         axis: Option<[f32; 3]>,
     ) -> DabOutcome {
-        self.apply_dab_inner(stroke, mode, None, tip, axis)
+        self.apply_dab_inner(stroke, mode, None, tip, axis, DabDose::FULL)
             .unwrap_or_default()
     }
 
@@ -503,6 +652,7 @@ impl SculptSession {
     /// and shadow must be discarded together.
     // The cancellation flag rides beside the dab's own arguments.
     #[allow(clippy::too_many_arguments)]
+    #[cfg(test)]
     pub(crate) fn apply_dab_cancellable(
         &mut self,
         stroke: BrushStroke,
@@ -510,12 +660,14 @@ impl SculptSession {
         cancel: &AtomicBool,
         tip: SculptTip,
         axis: Option<[f32; 3]>,
+        dose: DabDose,
     ) -> Option<DabOutcome> {
-        self.apply_dab_inner(stroke, mode, Some(cancel), tip, axis)
+        self.apply_dab_inner(stroke, mode, Some(cancel), tip, axis, dose)
     }
 
     // The cancellation flag rides beside the dab's own arguments.
     #[allow(clippy::too_many_arguments)]
+    #[cfg(test)]
     fn apply_dab_inner(
         &mut self,
         stroke: BrushStroke,
@@ -523,6 +675,7 @@ impl SculptSession {
         cancel: Option<&AtomicBool>,
         tip: SculptTip,
         axis: Option<[f32; 3]>,
+        dose: DabDose,
     ) -> Option<DabOutcome> {
         if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
             return None;
@@ -541,8 +694,10 @@ impl SculptSession {
         let outcome = match cancel {
             Some(cancel) => self
                 .session
-                .apply_stroke_cancellable(stroke, mode, tip, axis, cancel)?,
-            None => self.session.apply_stroke(stroke, mode, tip, axis),
+                .apply_stroke_cancellable_dosed(stroke, mode, tip, axis, dose, cancel)?,
+            None => self
+                .session
+                .apply_stroke_dosed(stroke, mode, tip, axis, dose),
         };
         let topology_changed = outcome.topology_changed();
         if outcome.touched_vertices.is_empty() && !topology_changed {
@@ -571,6 +726,62 @@ impl SculptSession {
         let touched = outcome.touched_vertices;
         Some(DabOutcome {
             touched,
+            dirty_triangles,
+            topology_delta: outcome.topology_delta,
+            failure: None,
+        })
+    }
+
+    /// Execute one real viewport ray sample on the worker. The kernel traces
+    /// the segment from its previous sample and returns the complete moved
+    /// vertex and topology slice for that step.
+    pub(crate) fn apply_ray_step_cancellable(
+        &mut self,
+        step: &BrushRayStep,
+        elapsed_ms: f64,
+        cancel: &AtomicBool,
+    ) -> Option<DabOutcome> {
+        if cancel.load(Ordering::Relaxed) {
+            return None;
+        }
+        if self.stroke_start_mesh.is_none() {
+            match self.snapshot_mesh() {
+                Ok(snapshot) => self.stroke_start_mesh = Some(snapshot),
+                Err(failure) => {
+                    return Some(DabOutcome {
+                        failure: Some(failure),
+                        ..DabOutcome::default()
+                    });
+                }
+            }
+        }
+        let outcome = self
+            .session
+            .apply_ray_step_cancellable(step, elapsed_ms, cancel)?;
+        let topology_changed = outcome.topology_changed();
+        if outcome.touched_vertices.is_empty() && !topology_changed {
+            return Some(DabOutcome::default());
+        }
+        let dirty_triangles = outcome.dirty_triangles;
+        if self
+            .patch_shadow(
+                &outcome.touched_vertices,
+                &[],
+                outcome.topology_delta.as_ref(),
+            )
+            .is_err()
+        {
+            return Some(DabOutcome {
+                touched: Vec::new(),
+                dirty_triangles: Vec::new(),
+                topology_delta: None,
+                failure: Some(DabFailure::ShadowPoisoned),
+            });
+        }
+        self.dirty_stroke = true;
+        self.topology_dirty_stroke |= topology_changed;
+        Some(DabOutcome {
+            touched: outcome.touched_vertices,
             dirty_triangles,
             topology_delta: outcome.topology_delta,
             failure: None,
@@ -665,20 +876,67 @@ impl SculptSession {
     }
 }
 
-/// Bookkeeping for one live drag (button held): the last dab position and the
-/// stationary-hold timer that pace the arc-length dab scheduler.
+/// Bookkeeping for one live drag (button held): the last submitted viewport
+/// ray and the stationary-hold timer used to report dwell to the kernel.
 pub(crate) struct StrokeState {
     /// The layer this drag started on; dabs that land on another layer are
     /// ignored so a drag never bleeds across arches.
     pub(crate) layer_id: SceneMeshId,
-    /// Mesh-local position of the last laid dab, or `None` before the first.
-    pub(crate) last_dab_local: Option<Vec3>,
+    /// Latest screen coordinate whose ray the worker accepted.
+    pub(crate) last_pointer: [f32; 2],
+    /// Latest pointer captured into the worker queue or bounded retry FIFO.
+    pub(crate) input_pointer: [f32; 2],
+    /// Last ray captured by the input layer. The worker owns authoritative
+    /// path continuity; this also drives the cursor while samples are queued.
+    pub(crate) last_ray: Option<BrushRayStep>,
     /// Seconds accumulated since the last dab while (near) stationary.
     pub(crate) hold_seconds: f32,
-    /// Last travel-derived stroke bearing in mesh-local space. The knife stamp
-    /// follows it, and it survives a stroke boundary so a press with no travel
-    /// yet still cuts along the operator's previous gesture.
-    pub(crate) last_axis: Option<Vec3>,
+    /// The pointer crossed a region whose samples are not owned by Sculpt.
+    /// Queue an ordered kernel path break before the next accepted ray.
+    pub(crate) path_break_pending: bool,
+    /// The physical release arrived; retained rays must drain before Finish.
+    pub(crate) release_pending: bool,
+    /// Ordered samples refused by the worker queue. A path break belongs to
+    /// the sample after the gap, so it stays attached to that sample.
+    pub(crate) retained_samples: VecDeque<RetainedSculptSample>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct RetainedSculptSample {
+    pub(crate) step: BrushRayStep,
+    pub(crate) pointer: [f32; 2],
+    pub(crate) break_before: bool,
+}
+
+impl StrokeState {
+    /// Keep one refused sample without advancing the worker-accepted pointer.
+    /// Compatible travel tails collapse to their newest endpoint. Repeated
+    /// held samples at the same ray also collapse; worker dispatch timing
+    /// determines their dose after they leave this bounded input FIFO.
+    pub(crate) fn retain_sample(&mut self, sample: RetainedSculptSample) -> bool {
+        if let Some(previous) = self.retained_samples.back_mut() {
+            let both_travel = !previous.step.hold && !sample.step.hold;
+            let same_stationary_ray = previous.step.hold
+                && sample.step.hold
+                && crate::sculpt_worker::same_ray(&previous.step, &sample.step);
+            if !previous.break_before
+                && !sample.break_before
+                && crate::sculpt_worker::same_brush_and_visibility(&previous.step, &sample.step)
+                && (both_travel || same_stationary_ray)
+            {
+                let input_pointer = sample.pointer;
+                *previous = sample;
+                self.input_pointer = input_pointer;
+                return true;
+            }
+        }
+        if self.retained_samples.len() >= MAX_RETAINED_SCULPT_SAMPLES {
+            return false;
+        }
+        self.input_pointer = sample.pointer;
+        self.retained_samples.push_back(sample);
+        true
+    }
 }
 
 /// Mean scale of a scene transform's linear part — converts the on-model mm

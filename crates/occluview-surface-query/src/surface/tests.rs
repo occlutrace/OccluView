@@ -55,6 +55,39 @@ fn nearest_on_a_plane_is_the_foot_of_the_perpendicular() {
 }
 
 #[test]
+fn surface_area_counts_only_unmasked_non_degenerate_triangles() {
+    let (positions, indices) = plane(8, 1.0);
+    let whole = SurfaceIndex::build(soup(&positions, &indices)).unwrap();
+    assert!((whole.surface_area_mm2() - 64.0).abs() < 1e-9);
+
+    let mut mask = vec![0; positions.len() / 3];
+    for (vertex, excluded) in mask.iter_mut().enumerate() {
+        if positions[vertex * 3] < 4.0 {
+            *excluded = 1;
+        }
+    }
+    let masked = SurfaceIndex::build(Soup {
+        positions: &positions,
+        indices: &indices,
+        mask: Some(&mask),
+    })
+    .unwrap();
+    assert!((masked.surface_area_mm2() - 32.0).abs() < 1e-9);
+
+    let mut with_degenerate = positions.clone();
+    let degenerate_vertex = u32::try_from(with_degenerate.len() / 3).unwrap();
+    with_degenerate.extend_from_slice(&[100.0, 100.0, 0.0, 101.0, 100.0, 0.0, 102.0, 100.0, 0.0]);
+    let mut with_degenerate_indices = indices;
+    with_degenerate_indices.extend_from_slice(&[
+        degenerate_vertex,
+        degenerate_vertex + 1,
+        degenerate_vertex + 2,
+    ]);
+    let degenerate = SurfaceIndex::build(soup(&with_degenerate, &with_degenerate_indices)).unwrap();
+    assert!((degenerate.surface_area_mm2() - 64.0).abs() < 1e-9);
+}
+
+#[test]
 fn the_normal_is_the_geometric_plane_normal() {
     let (positions, indices) = plane(4, 1.0);
     let index = SurfaceIndex::build(soup(&positions, &indices)).unwrap();

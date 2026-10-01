@@ -85,6 +85,18 @@ impl CutTool {
         self.probe_linked = false;
     }
 
+    /// Stop a handle drag interrupted by window focus loss without changing
+    /// the operator's planted cut pose or closing the tool.
+    pub(super) fn cancel_pointer_gesture(&mut self) -> bool {
+        if !self.manipulator.cancel_pointer_gesture() {
+            return false;
+        }
+        self.cached_clip = self.manipulator.clip(Vec3::ZERO);
+        self.section.sync(self.section_frame());
+        self.section.mark_dirty();
+        true
+    }
+
     pub(super) fn enable(&mut self) {
         self.manipulator.arm();
         self.cached_clip = None;

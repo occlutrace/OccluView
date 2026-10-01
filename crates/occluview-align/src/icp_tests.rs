@@ -152,6 +152,7 @@ fn trustworthy_report() -> IcpReport {
         inliers: 800,
         inlier_ratio: 0.8,
         coverage: 0.8,
+        support_coverage: 0.8,
         rms: 0.02,
         geometric_rms: 0.02,
         median_abs: 0.01,
@@ -163,6 +164,7 @@ fn trustworthy_report() -> IcpReport {
         // that lowers it. It is not a gate input, so any benign value will do.
         seated_fraction: 0.25,
         verified_coverage: 0.8,
+        verified_support_coverage: 0.8,
         verified_median_mm: 0.02,
         verified_stability: 0.1,
     }
@@ -196,6 +198,7 @@ fn the_median_limit_holds_at_both_ends_of_the_radius_slider() {
         median_abs: 0.4203,
         p95_abs: 1.0643,
         coverage: 0.3454,
+        support_coverage: 0.3454,
         inlier_ratio: 0.2763,
         ..trustworthy_report()
     };
@@ -239,6 +242,7 @@ fn two_different_jaws_are_not_authorized_as_an_alignment() {
         median_abs: 0.4203,
         p95_abs: 1.0643,
         coverage: 0.3454,
+        support_coverage: 0.3454,
         inlier_ratio: 0.2763,
         ..trustworthy_report()
     };
@@ -277,6 +281,7 @@ fn a_partial_model_on_a_full_scan_is_still_authorized() {
         median_abs: 0.000,
         p95_abs: 0.02,
         coverage: 0.08,
+        support_coverage: 0.08,
         seated_fraction: 0.05,
         ..trustworthy_report()
     };
@@ -287,35 +292,64 @@ fn a_partial_model_on_a_full_scan_is_still_authorized() {
     );
 }
 
-/// A pose whose median is small but whose worst fifth is far away is refused.
+/// A far residual tail is refused until the whole surface confirms a seating.
 ///
 /// The median bounds the typical vertex only; a fit that slid onto a
 /// neighbouring surface keeps most of the sampled patch in place and pushes the
-/// rest away. Without the p95 ceiling, a small median lets the distant tail
-/// through.
+/// rest away, and its untrimmed median is far from the surface because there is
+/// no unchanged region to seat on. A heavy trimmed tail *with* a whole surface
+/// that seats within scanner tolerance is the other case: an operated patch in
+/// an otherwise unchanged pair, which the operator aligns to compare a case and
+/// which must be authorized.
 #[test]
-fn a_small_median_does_not_authorize_a_far_tail() {
-    let far_tail = IcpReport {
+fn a_far_tail_is_refused_until_the_whole_surface_confirms_a_seating() {
+    let unconfirmed = IcpReport {
         median_abs: 0.05,
         p95_abs: 3.0,
+        verified_median_mm: 0.20,
         ..trustworthy_report()
     };
     assert!(
-        !far_tail.is_trustworthy_refinement_for(&settings()),
-        "a 3 mm worst-fifth against the 0.04 mm scan-agreement limit must be refused: {far_tail:?}"
+        !unconfirmed.is_trustworthy_refinement_for(&settings()),
+        "a 3 mm worst-fifth with no unchanged region must be refused: {unconfirmed:?}"
+    );
+
+    let operated_patch = IcpReport {
+        verified_median_mm: 0.02,
+        verified_coverage: 0.95,
+        verified_support_coverage: 0.95,
+        ..unconfirmed
+    };
+    assert!(
+        operated_patch.is_trustworthy_refinement_for(&settings()),
+        "the same tail over a whole surface that seats is an operated patch, \
+         not a distant wrong surface: {operated_patch:?}"
     );
 }
 
+/// The residual tail decides a pose only where the whole surface does not.
+///
+/// The rows are the measured corpus: a correct seating whose tail is tight, the
+/// pre-/post-treatment pair whose unchanged 95 % seats at a 0.023 mm median
+/// while its operated patch drags the trimmed tail to 0.0446 mm, and the same
+/// tail with no unchanged region, which is what a wrong basin looks like.
 #[test]
-fn the_p95_limit_separates_correct_and_wrong_cases_in_the_labelled_corpus() {
+fn the_residual_tail_decides_only_an_unconfirmed_seating() {
     let correct = IcpReport {
         p95_abs: 0.03571,
         ..trustworthy_report()
     };
-    let wrong = IcpReport {
+    let changed_pair = IcpReport {
         median_abs: 0.01633,
         p95_abs: 0.04463,
+        verified_median_mm: 0.023,
+        verified_coverage: 0.947,
+        verified_support_coverage: 0.947,
         ..trustworthy_report()
+    };
+    let wrong_basin = IcpReport {
+        verified_median_mm: 0.20,
+        ..changed_pair
     };
 
     for radius in [0.2_f64, 2.0, 10.0] {
@@ -328,8 +362,12 @@ fn the_p95_limit_separates_correct_and_wrong_cases_in_the_labelled_corpus() {
             "the highest p95 among correct selected cases remains eligible at {radius} mm"
         );
         assert!(
-            !wrong.is_trustworthy_refinement_for(&bounded),
-            "the lowest p95 among wrong accepted selected cases fails at {radius} mm"
+            changed_pair.is_trustworthy_refinement_for(&bounded),
+            "the operated patch of a changed pair is authorized by its unchanged region at {radius} mm"
+        );
+        assert!(
+            !wrong_basin.is_trustworthy_refinement_for(&bounded),
+            "the same tail without a confirmed unchanged region fails at {radius} mm"
         );
     }
 }
@@ -339,11 +377,13 @@ fn scanner_noise_with_a_bounded_residual_tail_is_authorized() {
     let noisy_rescan = IcpReport {
         inlier_ratio: 0.573_511_7,
         coverage: 0.716_889_6,
+        support_coverage: 0.716_889_6,
         rms: 0.039_109_2,
         geometric_rms: 0.039_308,
         median_abs: 0.030_810_1,
         p95_abs: 0.069_800_8,
         verified_coverage: 0.716_311_3,
+        verified_support_coverage: 0.716_311_3,
         verified_median_mm: 0.039_964_3,
         verified_stability: 0.074_424_8,
         ..trustworthy_report()
@@ -354,9 +394,16 @@ fn scanner_noise_with_a_bounded_residual_tail_is_authorized() {
          p95-to-median ratio must pass: {noisy_rescan:?}"
     );
 
+    // The measured corpus row: the lowest-p95 wrong basin accepted by an
+    // earlier gate, which seats 0.737 of its moving surface with a
+    // scanner-noise median. Its heavy tail is what refuses it.
     let wrong_crop = IcpReport {
         median_abs: 0.018_87,
         p95_abs: 0.044_02,
+        verified_median_mm: 0.024_46,
+        verified_coverage: 0.737_5,
+        verified_support_coverage: 0.737_5,
+        verified_stability: 0.004_404,
         ..trustworthy_report()
     };
     assert!(
@@ -377,6 +424,8 @@ fn only_converged_full_rank_coverage_can_authorize_refinement() {
 
     let mut local_patch = trustworthy_report();
     local_patch.coverage = 0.01;
+    local_patch.support_coverage = 0.01;
+    local_patch.verified_support_coverage = 0.01;
     assert!(!local_patch.is_trustworthy_refinement());
 
     let mut rank_deficient = trustworthy_report();
@@ -1200,6 +1249,71 @@ fn a_seated_scan_is_trustworthy_at_every_hand_placement() {
             report.is_trustworthy_refinement_for(&settings()),
             "a pose that seats the scan was rejected by the trust gate, which is what \
              the operator sees as 'could not confirm an improvement': {report:?}"
+        );
+    }
+}
+
+/// A heavy tail is admitted only for a near-complete overlap.
+///
+/// The two rows are the measured corpus: the changed pair explains 0.947 of its
+/// moving surface, the worst wrong basin that keeps a scanner-noise median and
+/// a heavy tail explains 0.737. The coverage minimum sits between them, so the
+/// same residuals are a wrong basin below it.
+#[test]
+fn a_heavy_tail_needs_a_near_complete_overlap() {
+    let changed_pair = IcpReport {
+        median_abs: 0.016_33,
+        p95_abs: 0.044_63,
+        verified_median_mm: 0.023,
+        verified_coverage: 0.947,
+        verified_support_coverage: 0.947,
+        ..trustworthy_report()
+    };
+    assert!(
+        changed_pair.is_trustworthy_refinement_for(&settings()),
+        "a changed pair that explains its whole surface is authorized: {changed_pair:?}"
+    );
+
+    let wrong_basin = IcpReport {
+        verified_coverage: 0.737_5,
+        verified_support_coverage: 0.737_5,
+        ..changed_pair
+    };
+    assert!(
+        !wrong_basin.is_trustworthy_refinement_for(&settings()),
+        "the same residuals over 0.737 of the surface are a wrong basin: {wrong_basin:?}"
+    );
+}
+
+/// A scan turned about a tilted axis is not reachable by the 24 cube
+/// rotations, so the coarse sweep cannot seat it and the local refine cannot
+/// leave the basin it starts in. Matching the two surfaces' principal frames
+/// is what recovers this placement.
+#[test]
+fn best_fit_recovers_from_a_turn_about_a_tilted_axis() {
+    let (positions, indices) = dome(24, 0.5);
+    let mesh = soup(&positions, &indices);
+    let index = SurfaceIndex::build(mesh).unwrap();
+    let centre = DVec3::splat(6.0);
+    for degrees in [35.0_f64, 45.0, 60.0, 100.0, 140.0] {
+        let rotation = DQuat::from_axis_angle(
+            DVec3::new(0.62, 0.55, 0.56).normalize(),
+            degrees.to_radians(),
+        );
+        let start = Rigid::new(rotation, centre - rotation * centre);
+
+        let report = refine(mesh, &index, start, &settings(), &CancelFlag::new()).unwrap();
+        let remaining_rotation = report.rigid.rotation.to_scaled_axis().length();
+
+        assert!(
+            remaining_rotation < 0.05,
+            "a {degrees}-degree turn about a tilted axis stayed sideways: {:?}",
+            report.rigid
+        );
+        assert!(
+            report.rigid.translation.length() < 0.05,
+            "a {degrees}-degree turn about a tilted axis did not return to the source pose: {:?}",
+            report.rigid.translation
         );
     }
 }

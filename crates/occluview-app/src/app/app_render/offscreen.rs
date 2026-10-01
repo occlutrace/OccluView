@@ -1,8 +1,8 @@
 use super::super::selection_overlay::selection_overlay_for_scene;
 use super::super::{
     build_proj_matrix, build_view_matrix, camera_studio_light_dir, egui, AppErrorAction,
-    AppErrorDialog, Context, CutTool, GpuCamera, Instant, OccluViewApp, Offscreen, RenderedFrame,
-    Result, Scene, ThumbnailSpec, ViewportSpec,
+    AppErrorDialog, Context, CutTool, GpuCamera, Instant, Offscreen, RenderedFrame, Result, Scene,
+    SceneContext, ThumbnailSpec, ViewportSpec,
 };
 use super::scene::transformed_bbox;
 use anyhow::Error;
@@ -40,7 +40,7 @@ fn retryable_offscreen_render_error(error: &RenderError) -> bool {
     matches!(error, RenderError::ReadbackTimeout { .. })
 }
 
-impl OccluViewApp {
+impl SceneContext<'_> {
     /// Whether a selection overlay may be drawn over the current scene.
     ///
     /// Sculpt streams a display-only worker shadow into the prepared scene
@@ -131,7 +131,7 @@ impl OccluViewApp {
                         action: AppErrorAction::RetryGraphics,
                     });
                 }
-                self.ui.status_message = Some(
+                self.scene_ui.status_message = Some(
                     self.ui
                         .locale
                         .tr(crate::i18n::message_id!("render-failed-status")),

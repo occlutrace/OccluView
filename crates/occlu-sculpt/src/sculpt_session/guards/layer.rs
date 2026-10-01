@@ -67,7 +67,10 @@ impl SculptSession {
     /// once it reaches groups whose factor already supplies that transition;
     /// disconnected and distant safe parts keep their full dose.
     fn taper_layer_factors(&mut self, seeds: &[u32]) {
-        const MAX_FACTOR_STEP: f32 = 1.0 / MAX_ROLLBACK_ITERS as f32;
+        /// Fall of the rollback field per welded edge. This is the slope the
+        /// taper was designed around, and it stays fixed: tying it to the wave
+        /// count would silently flatten the taper every time the budget changed.
+        const MAX_FACTOR_STEP: f32 = 0.125;
 
         self.rollback_epoch = self.rollback_epoch.wrapping_add(1);
         if self.rollback_epoch == 0 {
@@ -138,26 +141,20 @@ impl SculptSession {
                 !Self::triangle_editable_after_move_measured(pre, now)
             }
             BrushMode::Deposit => {
-                // A lift along the footprint normal may fold or hide a face
-                // near the silhouette; the camera test below refuses exactly
-                // that. Repeated growth legitimately elongates triangles until
-                // the live remesh retessellates them, so an opening-mesh
-                // quality limit is not an Add limit.
+                // Repeated growth legitimately elongates triangles until the
+                // live remesh retessellates them, so an opening-mesh quality
+                // limit is not an Add limit. Keep face winding and its
+                // paintable area independent of the current camera.
                 let reference =
                     TriangleMeasure::new(corners.map(|group| self.reference_group_v(group)));
                 if now.area + tolerance < (reference.area * MIN_SESSION_AREA_RATIO).min(pre.area) {
                     return true;
                 }
-                let camera = self.camera_context();
-                if camera.is_none() && !Self::triangle_editable_after_move_measured(pre, now) {
-                    return true;
-                }
-                Self::triangle_hides_from_camera_measured(pre, now, camera)
+                now.area + 1e-18 < LIVE_PAINTABLE_AREA && now.area + 1e-18 < pre.area
             }
             BrushMode::Erode => {
-                // Removal can compress the remaining wall. Keep the stronger
-                // live shape and immutable apply floors in addition to the
-                // camera-coverage test. An already-damaged opening face must
+                // Removal can compress the remaining wall. Keep the live
+                // shape and immutable apply floors. An already-damaged opening face must
                 // remain editable: the immutable floor applies only while the
                 // pre-dab face still satisfies it; otherwise the live
                 // non-worsening predicate is the authority.
@@ -171,7 +168,7 @@ impl SculptSession {
                 {
                     return true;
                 }
-                Self::triangle_hides_from_camera_measured(pre, now, self.camera_context())
+                false
             }
             BrushMode::Flatten => self.triangle_is_unsafe(triangle, mode),
         }
@@ -180,6 +177,11 @@ impl SculptSession {
     /// Commit one continuous brush field with a local, edge-continuous safety
     /// scale. Unsafe face corners back off together, and the reduction tapers
     /// through their welded neighbours without scaling unrelated regions.
+    // The commit has to state the whole layer rule in one place: the factor
+    // seeding, the bounded rollback waves, the reset, and the outcome
+    // collection are one decision, and splitting them hides which guarantee
+    // each branch keeps.
+    #[allow(clippy::too_many_lines)]
     pub(in super::super) fn commit_even_layer(
         &mut self,
         proposals: &[(u32, DVec3)],
@@ -253,6 +255,9 @@ impl SculptSession {
                 }
             }
             if affected.is_empty() {
+                // No control of the rejecting faces is still moving, so another
+                // wave would repeat this one unchanged. Stop and let the
+                // commit below decide.
                 break;
             }
             self.taper_layer_factors(&affected);
@@ -260,8 +265,9 @@ impl SculptSession {
             self.collect_unsafe_layer_triangles(&triangles, mode, &mut unsafe_triangles);
         }
         if !unsafe_triangles.is_empty() {
-            // Restore the dab's moving controls together when the bounded
-            // active set cannot settle every rejecting face.
+            // The bounded active set ran out of waves while controls were still
+            // moving, so restoring the dab's moving controls together is what
+            // makes the rejecting faces exact identity again.
             for &(group, _) in proposals {
                 self.rollback_factor[group as usize] = 0.0;
             }

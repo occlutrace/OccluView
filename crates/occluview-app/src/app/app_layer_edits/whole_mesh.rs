@@ -2,8 +2,8 @@
 //! content no-ops that leave the mesh untouched, plus the operator status lines.
 
 use super::super::{
-    EditModeCommand, LayerContextAction, LayerContextApply, LayerContextRequest, OccluViewApp,
-    PathBuf, Scene,
+    EditModeCommand, LayerContextAction, LayerContextApply, LayerContextRequest, PathBuf, Scene,
+    SceneContext,
 };
 use super::resolve_layer;
 use super::structural::structural_scene_apply;
@@ -25,7 +25,7 @@ use std::sync::Arc;
 use occluview_core::CLOSE_HOLES_EDGE_CEILING;
 
 pub(super) fn apply_layer_mesh_edit_action_with_status(
-    app: &mut OccluViewApp,
+    app: &mut SceneContext<'_>,
     scene: &mut Scene,
     paths: &[PathBuf],
     request: LayerContextRequest,
@@ -49,7 +49,7 @@ pub(super) fn apply_layer_mesh_edit_action_with_status(
         None
     };
     if request.action == LayerContextAction::CloseHoles && selection.is_none() {
-        app.ui.status_message = Some(
+        app.scene_ui.status_message = Some(
             app.ui
                 .locale
                 .tr(crate::i18n::message_id!("edit-select-faces-first")),
@@ -58,7 +58,7 @@ pub(super) fn apply_layer_mesh_edit_action_with_status(
     }
 
     let Some(token) = app.document.edit_mode.begin_layer_edit(entry, command) else {
-        return super::refuse_busy_layer_edit(&mut app.ui);
+        return super::refuse_busy_layer_edit(app.scene_ui, &app.ui.locale);
     };
 
     // Close Holes is always explicitly selection-scoped in the interactive
@@ -82,8 +82,10 @@ pub(super) fn apply_layer_mesh_edit_action_with_status(
                     &app.ui.locale,
                 );
                 super::commit_layer_edit(
-                    &mut app.document,
-                    &mut app.ui,
+                    app.document,
+                    app.scene_ui,
+                    &app.ui.locale,
+                    &mut app.ui.app_error,
                     token,
                     request.layer_id,
                     super::LayerEditResolution::Applied {
@@ -101,8 +103,10 @@ pub(super) fn apply_layer_mesh_edit_action_with_status(
                     &app.ui.locale,
                 );
                 super::commit_layer_edit(
-                    &mut app.document,
-                    &mut app.ui,
+                    app.document,
+                    app.scene_ui,
+                    &app.ui.locale,
+                    &mut app.ui.app_error,
                     token,
                     request.layer_id,
                     super::LayerEditResolution::Applied {
@@ -115,8 +119,10 @@ pub(super) fn apply_layer_mesh_edit_action_with_status(
         }
         Err(error) => {
             super::commit_layer_edit(
-                &mut app.document,
-                &mut app.ui,
+                app.document,
+                app.scene_ui,
+                &app.ui.locale,
+                &mut app.ui.app_error,
                 token,
                 request.layer_id,
                 super::LayerEditResolution::Failed { error, layer_label },

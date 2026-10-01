@@ -1,7 +1,7 @@
 use super::{
     desired_render_extent_px, egui, mesh_editor_overlay, orbit_delta_from_drag, pick_scene_point,
     render_extent_change_requires_rerender, viewport_orbit_drag_active, viewport_pan_drag_active,
-    zoom_factor_from_scroll, MeshSelectionDrag, OccluViewApp,
+    zoom_factor_from_scroll, MeshSelectionDrag, SceneContext,
 };
 use crate::app_settings::{ScrollBehavior, Settings};
 use glam::Vec2;
@@ -127,7 +127,7 @@ fn orbit_cursor_commands(locked: bool) -> (egui::CursorGrab, bool) {
     (grab, !locked)
 }
 
-impl OccluViewApp {
+impl SceneContext<'_> {
     pub(super) fn grab_viewport_orbit_cursor(&mut self, ctx: &egui::Context) {
         if self.ui.viewport_orbit_cursor_grabbed {
             return;
@@ -200,7 +200,7 @@ impl OccluViewApp {
         sample: SecondaryPointerSample,
     ) {
         if sample.pressed {
-            self.ui.viewport_secondary_gesture_moved_since_press = false;
+            self.scene_ui.viewport_secondary_gesture_moved_since_press = false;
         }
 
         // Any camera motion owns the gesture, including movement below egui's
@@ -211,15 +211,15 @@ impl OccluViewApp {
         // short drag can arrive in one egui frame and still must suppress the
         // context menu.
         if sample.released && !sample.pressed && sample.motion.length_sq() > f32::EPSILON {
-            self.ui.viewport_secondary_gesture_moved_since_press = true;
+            self.scene_ui.viewport_secondary_gesture_moved_since_press = true;
         }
-        let suppress_context_menu =
-            response.secondary_clicked() && self.ui.viewport_secondary_gesture_moved_since_press;
+        let suppress_context_menu = response.secondary_clicked()
+            && self.scene_ui.viewport_secondary_gesture_moved_since_press;
         if !suppress_context_menu {
             self.handle_viewport_context_menu(ctx, response);
         }
         if sample.released {
-            self.ui.viewport_secondary_gesture_moved_since_press = false;
+            self.scene_ui.viewport_secondary_gesture_moved_since_press = false;
         }
     }
 
@@ -262,7 +262,7 @@ impl OccluViewApp {
             secondary_press_owned.then_some(sample.motion),
         );
         if (pan_drag_active || orbit_drag_active) && sample.motion.length_sq() > f32::EPSILON {
-            self.ui.viewport_secondary_gesture_moved_since_press = true;
+            self.scene_ui.viewport_secondary_gesture_moved_since_press = true;
         }
         if orbit_drag_active {
             self.grab_viewport_orbit_cursor(ctx);
@@ -311,9 +311,26 @@ impl OccluViewApp {
             None
         };
 
-        // An armed sculpt brush owns the primary drag ahead of every selection
-        // gesture; RMB orbit / MMB retarget / wheel zoom fall through below.
+        // Modified wheel input changes brush settings only while Sculpt is
+        // idle. A live drag keeps the existing camera-wheel route; after
+        // release, the worker's Finish interval owns the modified wheel.
+        let sculpt_wheel_used = self.adjust_sculpt_brush_from_wheel(ctx, response);
+
+        // An armed sculpt brush owns primary-button gestures ahead of mesh
+        // selection. Keep the viewport's independent camera-wheel path alive.
         if self.handle_sculpt_drag(ctx, response, pan_drag_active) {
+            if response.hovered() && !sculpt_wheel_used {
+                if let Some(camera) = self.render.camera.as_mut() {
+                    if update_camera_from_scroll(
+                        camera,
+                        ctx,
+                        viewport_rect,
+                        &self.persistence.settings,
+                    ) {
+                        self.request_camera_repaint(ctx);
+                    }
+                }
+            }
             return;
         }
 
@@ -341,8 +358,6 @@ impl OccluViewApp {
         // instead of zooming the camera; consume the wheel so the zoom below
         // skips it this frame. Gated to the viewport (like the zoom) so a
         // modified scroll over a panel keeps its own meaning.
-        let sculpt_wheel_used = self.adjust_sculpt_brush_from_wheel(ctx, response.hovered());
-
         let Some(camera) = self.render.camera.as_mut() else {
             return;
         };

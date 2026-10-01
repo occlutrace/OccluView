@@ -3,6 +3,8 @@ use eframe::egui;
 pub(super) const LAYER_ROW_HEIGHT_PX: f32 = 28.0;
 // Title line + hairline separator + breathing room above the first row.
 pub(super) const LAYER_OVERLAY_HEADER_HEIGHT_PX: f32 = 32.0;
+pub(super) const LAYER_SCENE_FOOTER_HEIGHT_PX: f32 = 40.0;
+pub(super) const LAYER_SCENE_FOOTER_BUTTON_HEIGHT_PX: f32 = 22.0;
 pub(super) const LAYER_ROW_GAP_PX: f32 = 8.0;
 pub(super) const LAYER_ROW_CONTROL_HEIGHT_PX: f32 = 18.0;
 pub(super) const LAYER_ROW_EYE_WIDTH_PX: f32 = 18.0;
@@ -18,12 +20,10 @@ pub(super) const LAYER_ROW_CONTROL_WIDTH_PX: f32 = LAYER_ROW_EYE_WIDTH_PX
     + LAYER_ROW_GAP_PX * 3.0
     + LAYER_ROW_ACTION_GAP_PX;
 
-/// The overlay's own chrome stacked on top of its rows: the frame's vertical
-/// inner margins (2 × 8 px) plus the header block (`LAYER_OVERLAY_HEADER_
-/// HEIGHT_PX`) the row list lives under. Both the wanted height and the
-/// scroll-area budget derive from it, so the rows a panel was sized for never
-/// overflow into a scrollbar.
-pub(crate) const LAYER_OVERLAY_CHROME_HEIGHT_PX: f32 = 16.0 + LAYER_OVERLAY_HEADER_HEIGHT_PX;
+/// The overlay's fixed chrome: frame margins, heading, and scene footer. The
+/// row list gets only the remaining height, so it cannot cover the footer.
+pub(crate) const LAYER_OVERLAY_CHROME_HEIGHT_PX: f32 =
+    16.0 + LAYER_OVERLAY_HEADER_HEIGHT_PX + LAYER_SCENE_FOOTER_HEIGHT_PX;
 /// Top offset of the panel inside the viewport (see `layer_overlay_rect`).
 pub(crate) const LAYER_OVERLAY_TOP_OFFSET_PX: f32 = 14.0;
 /// Height kept clear at the bottom of the viewport when the panel stretches
@@ -44,6 +44,16 @@ pub(crate) fn layer_overlay_desired_height(layer_count: usize) -> f32 {
 /// reaches the space between the viewport's top edge and the bottom overlay
 /// band, and only then scrolls. The app grows the OS window past that point.
 pub(crate) fn layer_overlay_rect(viewport_rect: egui::Rect, layer_count: usize) -> egui::Rect {
+    layer_overlay_rect_for_state(viewport_rect, layer_count, true)
+}
+
+/// Fixed corner used by the shared Layers panel. The footer survives when the
+/// layer list is collapsed; its content body does not reserve row height.
+pub(super) fn layer_overlay_rect_for_state(
+    viewport_rect: egui::Rect,
+    layer_count: usize,
+    expanded: bool,
+) -> egui::Rect {
     let max_width = (viewport_rect.width() - 28.0).max(180.0);
     let width = (viewport_rect.width() * 0.22)
         .clamp(280.0, 320.0)
@@ -51,11 +61,17 @@ pub(crate) fn layer_overlay_rect(viewport_rect: egui::Rect, layer_count: usize) 
         // The floors above are aspirations; on a tiny window the viewport wins
         // so the panel never pokes past the window edge.
         .min((viewport_rect.width() - LAYER_OVERLAY_TOP_OFFSET_PX).max(0.0));
+    let min_height = LAYER_OVERLAY_CHROME_HEIGHT_PX;
     let max_height =
         (viewport_rect.height() - LAYER_OVERLAY_TOP_OFFSET_PX - LAYER_OVERLAY_BOTTOM_RESERVE_PX)
-            .max(86.0);
-    let height = layer_overlay_desired_height(layer_count)
-        .clamp(86.0, max_height)
+            .max(min_height);
+    let desired_height = if expanded {
+        layer_overlay_desired_height(layer_count)
+    } else {
+        LAYER_OVERLAY_CHROME_HEIGHT_PX
+    };
+    let height = desired_height
+        .clamp(min_height, max_height)
         .min((viewport_rect.height() - LAYER_OVERLAY_TOP_OFFSET_PX).max(0.0));
     egui::Rect::from_min_size(
         viewport_rect.min + egui::vec2(LAYER_OVERLAY_TOP_OFFSET_PX, LAYER_OVERLAY_TOP_OFFSET_PX),

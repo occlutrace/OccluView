@@ -111,6 +111,8 @@ fn repository_tags() -> Result<std::collections::BTreeSet<String>, String> {
 /// documented shortcut with no handler and a handler an operator cannot find.
 const VIEWER_KEY_BINDINGS: &[(&str, &[&str])] = &[
     ("A", &["**A**", "**Ctrl+A**"]),
+    ("ArrowLeft", &["**Left arrow**"]),
+    ("ArrowRight", &["**Right arrow**"]),
     ("Backspace", &["**Backspace**"]),
     ("C", &["**C**"]),
     ("Delete", &["**Delete**"]),
@@ -119,6 +121,8 @@ const VIEWER_KEY_BINDINGS: &[(&str, &[&str])] = &[
     ("Escape", &["**Esc**"]),
     ("F", &["**F**"]),
     ("F1", &["**F1**"]),
+    ("F6", &["**F6**"]),
+    ("Home", &["**Home**"]),
     ("M", &["**M**"]),
     ("Num1", &["**1**"]),
     ("Num2", &["**2**"]),

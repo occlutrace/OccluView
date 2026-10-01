@@ -7,7 +7,9 @@ use crate::pairs::FitRejection;
 use crate::sample::vertex_at;
 use crate::Rigid;
 
-use super::icp_overlap::{reciprocal_evidence, reciprocal_evidence_is_usable};
+use super::icp_overlap::{
+    common_support_coverage, reciprocal_evidence, reciprocal_evidence_is_usable,
+};
 use super::icp_step::{correspondences_at_radius, try_backtracked_step, TrialState};
 use super::{
     influence_radius_ladder, Level, LevelOutcome, Orientation, Summary, COARSE_TIE_SEATED,
@@ -68,7 +70,6 @@ pub(super) fn run_level(level: &Level<'_>) -> Result<LevelOutcome, FitRejection>
             });
         }
         let (normal_matrix, gradient, centre) = accumulate(&kept);
-        let measured = summarize(&found, &kept, matched, level.samples.len(), &normal_matrix);
         let measured_reciprocal = reciprocal_evidence(level, pose, radii[radius_slot]);
         if !reciprocal_evidence_is_usable(level, measured_reciprocal) {
             // Unusable reciprocal evidence means this iteration cannot be
@@ -80,6 +81,9 @@ pub(super) fn run_level(level: &Level<'_>) -> Result<LevelOutcome, FitRejection>
             }
             break;
         }
+        let mut measured = summarize(&found, &kept, matched, level.samples.len(), &normal_matrix);
+        measured.support_coverage =
+            common_support_coverage(level, measured.coverage, measured_reciprocal);
         summary = Some(measured);
         // The correspondences describe `pose` at the start of the iteration,
         // not the candidate the step below produces. Keep the summary paired.
@@ -191,6 +195,17 @@ pub(super) fn correspondences(
             let local = vertex_at(level.moving.positions, vertex)?;
             let point = pose.apply(local);
             let hit = level.fixed.nearest(point, influence_radius_mm)?;
+            // A border hit on a physically smaller fixed scan is outside the
+            // common surface the registration is meant to explain. In the
+            // reverse crop role, the full moving arch projects many unrelated
+            // vertices onto the crop's open cut edge; those hits overwhelm the
+            // trimmed tail even when the interior crop is seated exactly.
+            // Keep the established forward behavior when the fixed surface is
+            // equal or larger, and make the solver use the same open-edge rule
+            // as final verification for this fragment-as-target case.
+            if hit.on_border && super::icp_overlap::fixed_surface_is_smaller(level) {
+                return None;
+            }
             let moving_normal = pose.apply_normal(level.normals.get(vertex).copied()?);
             let agreement = moving_normal.dot(hit.normal);
             let accepted = match level.settings.orientation {
@@ -332,6 +347,7 @@ pub(super) fn summarize(
     Summary {
         inliers: u32::try_from(kept.len()).unwrap_or(u32::MAX),
         inlier_ratio: count / sampled_count,
+        support_coverage: 0.0,
         #[allow(clippy::cast_precision_loss)]
         coverage: matched as f64 / sampled_count,
         rms: (sum_squares / count).sqrt(),

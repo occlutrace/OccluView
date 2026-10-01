@@ -8,7 +8,7 @@ use occluview_align::{FitRejection, Rigid};
 use occluview_core::SceneMeshId;
 
 use super::app_align_display::AlignOverlay;
-use super::OccluViewApp;
+use super::SceneContext;
 use crate::align_worker::{AlignCompletion, AlignFailure, AlignOutcome, AlignWorker};
 use crate::edit_mode::EditModeCommand;
 
@@ -23,7 +23,7 @@ fn change_affects_pair(
         .any(|layer| changed_layers.contains(&layer))
 }
 
-impl OccluViewApp {
+impl SceneContext<'_> {
     /// Invalidate a fit when one of the two selected surfaces changes
     /// visibility. A material update is cheap, but it changes the set of
     /// surfaces the operator can see and therefore the meaning of a later
@@ -95,6 +95,9 @@ impl OccluViewApp {
                     .locale
                     .tr(crate::i18n::message_id!("align-status-worker-unavailable")),
             );
+            // Drop the stopped worker so the next requested job can create a
+            // fresh one. Its result is discarded, and its thread has exited.
+            self.tools.align.worker = None;
             ctx.request_repaint();
             return;
         }
@@ -352,14 +355,9 @@ impl OccluViewApp {
     /// The map and ghosted layer belong to the Automatically tab; returning to
     /// it restores controls only and requires a new Best fit matching result.
     pub(super) fn settle_align_tab_change(&mut self) {
-        // Either direction: a gesture belongs to the tab it started on. The drag
-        // handler closes one when it finds itself on the wrong tab, but that is a
-        // frame later, and one frame is enough for the release to land somewhere
-        // that no longer expects it.
+        // Commit any open drag before changing which tab owns pointer input.
         self.finish_align_drag();
         self.abandon_align_drag();
-        let entering_automatic =
-            self.tools.align.tab == crate::align_panel::AlignTab::Automatically;
         self.abandon_align_jobs();
         // Manual mode changes the pose without a Best fit result. Both tab
         // directions therefore revoke the old authority: returning to
@@ -376,33 +374,11 @@ impl OccluViewApp {
         if had_derived_overlay {
             self.clear_deviation_overlay();
         }
-        if entering_automatic {
-            if had_derived_overlay {
-                self.tools.align.status = Some(
-                    self.ui
-                        .locale
-                        .tr(crate::i18n::message_id!("align-status-map-elsewhere")),
-                );
-            }
-            return;
-        }
-        // A hand nudge invalidates all points tied to the previous fit. Keep the
-        // selected pair, but clear its derived points.
-        let dropped_arrows = self.tools.align.tool.clear_points();
-        if dropped_arrows {
-            self.tools.align.rejected.clear();
-        }
         if had_derived_overlay {
             self.tools.align.status = Some(
                 self.ui
                     .locale
                     .tr(crate::i18n::message_id!("align-status-map-elsewhere")),
-            );
-        } else if dropped_arrows {
-            self.tools.align.status = Some(
-                self.ui
-                    .locale
-                    .tr(crate::i18n::message_id!("align-status-arrows-cleared")),
             );
         }
     }
@@ -514,7 +490,7 @@ fn fit_rejection_parts(rejection: FitRejection) -> (crate::i18n::MessageId, Stri
     (key, String::new(), String::new())
 }
 
-impl OccluViewApp {
+impl SceneContext<'_> {
     /// The Align worker, replacing one that has died.
     ///
     /// `AlignWorker::submit` refuses every job once the thread has failed, and
@@ -533,10 +509,11 @@ impl OccluViewApp {
             // Dropping it stops the thread and clears its queue.
             self.tools.align.worker = None;
         }
+        let repaint_ctx = self.ui.repaint_ctx.clone();
         self.tools
             .align
             .worker
-            .get_or_insert_with(AlignWorker::spawn)
+            .get_or_insert_with(|| AlignWorker::spawn_with_repaint(repaint_ctx))
     }
 }
 
@@ -652,23 +629,46 @@ mod tests {
         let mut app = test_app("commit-align-pose");
         let mut scene = named_scene("lower", 0.0);
         let moving_id = push_named_layer(&mut scene, "upper", 5.0);
-        app.document.scene = Some(std::sync::Arc::new(scene));
-        app.tools.align.tool.arm();
-        app.tools.align.tool.imply_pair(&[moving_id, moving_id]);
+        app.workspace.scenes[0].document.scene = Some(std::sync::Arc::new(scene));
+        app.workspace.scenes[0].tools.align.tool.arm();
+        app.workspace.scenes[0]
+            .tools
+            .align
+            .tool
+            .imply_pair(&[moving_id, moving_id]);
 
         let pose = Rigid::new(glam::DQuat::IDENTITY, glam::DVec3::new(1.5, -2.0, 0.25));
-        assert!(app.commit_align_pose(pose), "a fit on a live scene commits");
+        assert!(
+            app.active_context()
+                .expect("live test scene")
+                .commit_align_pose(pose),
+            "a fit on a live scene commits"
+        );
 
-        let moved = app.document.scene.as_ref().expect("scene").meshes()[1].transform;
+        let moved = app.workspace.scenes[0]
+            .document
+            .scene
+            .as_ref()
+            .expect("scene")
+            .meshes()[1]
+            .transform;
         assert_eq!(moved, pose.to_affine(), "the pose reaches the live scene");
         assert!(
-            app.document.has_unsaved_mesh_edits(),
+            app.workspace.scenes[0].document.has_unsaved_mesh_edits(),
             "the close guard must see the alignment, or it is lost without asking"
         );
 
-        app.apply_history_navigation_now(false, &egui::Context::default());
+        app.active_context()
+            .expect("live test scene")
+            .apply_history_navigation_now(false, &egui::Context::default());
         assert_eq!(
-            app.document.scene.as_ref().expect("scene").meshes()[1].transform,
+            app.workspace.scenes[0]
+                .document
+                .scene
+                .as_ref()
+                .expect("scene")
+                .meshes()[1]
+                .transform,
             Affine3A::IDENTITY,
             "Ctrl+Z returns the scan to where it was"
         );

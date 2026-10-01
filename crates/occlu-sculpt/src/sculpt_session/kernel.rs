@@ -15,7 +15,7 @@ mod topology_rows;
 mod isotropic;
 mod maintenance;
 mod path;
-use path::compounded_share;
+use path::{compounded_share, layer_depth, smooth_rate};
 mod remesh;
 pub(super) use remesh::input_spacing_mm;
 mod relax;
@@ -25,9 +25,6 @@ mod tests;
 
 pub use topology_journal::{TopoJournal, TopoSlice};
 
-/// Add/Remove displacement per fully weighted dab as a fraction of brush
-/// radius. Face and layer guards constrain the final displacement.
-const ADD_REMOVE_GAIN: f64 = 0.12;
 /// Auto-smooth rim-taper width as a fraction of the radius.
 const AUTOSMOOTH_RIM_TAPER: f64 = 0.35;
 /// Taubin auto-smooth pairs per Add/Remove dab.
@@ -36,9 +33,6 @@ const CLAY_AUTOSMOOTH_PASSES: usize = 2;
 /// removes grain without the volume loss of a plain Laplacian.
 const TAUBIN_LAMBDA: f64 = 0.36;
 const TAUBIN_MU: f64 = -0.38;
-/// The viewer-facing normals must hold at least this share of the sampled
-/// weight for the footprint normal to be trusted.
-const FRONT_BUCKET_TRUST_FRACTION: f64 = 0.6;
 /// Minimum work size for independent Rayon loops over session data.
 #[cfg_attr(not(feature = "parallel"), allow(dead_code))]
 pub(crate) const PAR_FLOOR: usize = 8192;
@@ -61,6 +55,7 @@ impl SculptSession {
         // remesh uses the shape produced by this dab, and relaxation uses the
         // connectivity produced by that remesh.
         let region_points = std::mem::take(&mut self.region_points);
+        self.assign_sheet_axes(dab, &region_points);
         let facing = facing_sign(
             self.hit_triangle.and_then(|t| self.triangle_normal(t)),
             dab.view,
@@ -77,11 +72,11 @@ impl SculptSession {
         // nothing" the operator reports; the weights, not the region, are
         // usually why, so count both.
         match dab.mode {
-            BrushMode::Smooth => self.dab_smooth(dab, &region_points, facing),
+            BrushMode::Smooth => self.dab_smooth(dab, &region_points),
             BrushMode::Deposit => self.dab_clay(dab, &region_points, facing, 1.0),
             BrushMode::Erode => self.dab_clay(dab, &region_points, facing, -1.0),
-            BrushMode::Flatten => self.dab_flatten(dab, &region_points, facing),
-            BrushMode::Relax => self.dab_relax(dab, &region_points, facing),
+            BrushMode::Flatten => self.dab_flatten(dab, &region_points),
+            BrushMode::Relax => self.dab_relax(dab, &region_points),
         }
         self.region_points = region_points;
         // Every mode's field is committed through `commit_even_layer`, which
@@ -145,6 +140,10 @@ impl SculptSession {
     }
 
     pub(super) fn prepare_dab(&mut self, dab: &Dab) -> bool {
+        // The wall axis belongs to one dab. Erode then guarantees its frozen
+        // probe is ready even for direct library callers that skipped the
+        // worker's explicit background preparation hook.
+        self.wall_facing = None;
         if !dab.center.is_finite()
             || !dab.view.is_finite()
             || !dab.radius.is_finite()
@@ -428,13 +427,12 @@ impl SculptSession {
         }
     }
 
-    /// Weight shared by every brush: tip falloff times explicit clinical
-    /// protection. The ray-hit component keeps the footprint on the selected
-    /// sheet; face orientation is handled by `facing_weight`.
-    pub(super) fn weight(&self, point: SurfacePoint, dab: &Dab, facing: f64) -> f64 {
+    /// Weight shared by every brush: tip falloff times the selected sheet's
+    /// camera-independent support.
+    pub(super) fn weight(&self, point: SurfacePoint, dab: &Dab) -> f64 {
         let position = self.group_v(point.group);
         let f = if self.path_active() {
-            self.path_stamp_weight(position, dab.radius)
+            self.path_mean_stamp(position, dab.radius)
         } else {
             Self::stamp_weight_for(
                 self.brush_tip,
@@ -447,20 +445,7 @@ impl SculptSession {
         if f <= 0.0 {
             return 0.0;
         }
-        f * self.facing_weight(point.group, dab.view, facing, dab.mode)
-    }
-
-    /// Weight a vertex from its normal's angle to the view. The signed normal
-    /// follows the clicked sheet, so the silhouette remains active while the
-    /// reverse-facing side fades out.
-    fn facing_weight(&self, group: u32, view: DVec3, facing: f64, _mode: BrushMode) -> f64 {
-        let normal = self.group_n(group);
-        if normal.length() <= 1e-12 || view.length() <= 1e-12 {
-            return 0.0;
-        }
-        let signed = normal * facing;
-        let view = view.normalize_or_zero();
-        frontface_weight(signed, view)
+        f * self.sheet_share(point.group)
     }
 
     /// Move every soup member of a group, recording pre-stroke positions.
@@ -474,44 +459,22 @@ impl SculptSession {
         self.brush_grid.relocate(group, stored_position(position));
     }
 
-    /// The surface normal under the brush: the falloff- and area-weighted
-    /// mean of the footprint's normals, signed by the sheet the operator
-    /// clicked. Only the side facing the viewer votes, so a thin wall's far
-    /// face cannot bend the direction; a footprint too split to trust, or
-    /// one with no usable normal, falls back to the line of sight. Area
-    /// weighting keeps a densely tessellated side from biasing it.
-    fn brush_normal(&self, weighted: &[(u32, f64)], view: DVec3, facing: f64) -> DVec3 {
-        let view = view.normalize_or_zero();
-        let has_view = view.length() > 1e-12;
-        let mut toward = DVec3::ZERO;
-        let mut toward_weight = 0.0f64;
-        let mut total_weight = 0.0f64;
+    /// Area- and falloff-weighted sheet axis of a brush footprint.
+    fn brush_normal(&self, weighted: &[(u32, f64)]) -> DVec3 {
+        let mut sum = DVec3::ZERO;
         for &(group, weight) in weighted {
-            let normal = (self.group_n(group) * facing).normalize_or_zero();
-            if normal.length() <= 1e-12 {
+            let axis = self.sheet_axis_of(group).normalize_or_zero();
+            if axis.length_squared() <= 1e-24 {
                 continue;
             }
             let weight = weight * self.group_area[group as usize].max(1e-12) as f64;
-            total_weight += weight;
-            if !has_view || normal.dot(view) <= 0.0 {
-                toward += normal * weight;
-                toward_weight += weight;
-            }
+            sum += axis * weight;
         }
-        let normal = toward.normalize_or_zero();
-        if has_view {
-            if total_weight > 0.0
-                && toward_weight >= FRONT_BUCKET_TRUST_FRACTION * total_weight
-                && normal.length() > 1e-12
-            {
-                return normal;
-            }
-            return view * (-1.0);
-        }
-        if normal.length() > 1e-12 {
+        let normal = sum.normalize_or_zero();
+        if normal.length_squared() > 1e-24 {
             normal
         } else {
-            DVec3::new(0.0, 0.0, 1.0)
+            self.pointer_sheet_axis()
         }
     }
 

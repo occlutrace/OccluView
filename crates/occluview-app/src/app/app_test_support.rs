@@ -50,7 +50,8 @@ pub(super) fn push_named_layer(scene: &mut Scene, name: &str, x_offset: f32) -> 
 }
 
 pub(super) fn scene_names(app: &OccluViewApp) -> Vec<String> {
-    app.document
+    app.workspace.scenes[0]
+        .document
         .scene
         .as_ref()
         .map(|scene| {
@@ -85,7 +86,8 @@ pub(super) fn delivered_load(
         receiver,
         requested_at: Instant::now(),
         superseded: false,
-        content_revision_at_request: app.document.content_revision,
+        scene_key: app.workspace.scenes[0].key,
+        content_revision_at_request: app.workspace.scenes[0].document.content_revision,
         dirty_at_request: false,
     }
 }

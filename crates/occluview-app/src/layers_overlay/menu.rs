@@ -5,6 +5,8 @@ use crate::ui_theme;
 use eframe::egui;
 use occluview_core::SceneMeshId;
 
+use super::{LayerOverlaySceneAction, LayerSceneTabs};
+
 /// Fixed context-menu width. It gives the elided file-name title and operator
 /// labels room to breathe without turning the menu into a second panel.
 const MENU_WIDTH: f32 = 244.0;
@@ -46,15 +48,59 @@ pub(crate) struct LayerContextMenuTarget {
 }
 
 /// Attach the layer context menu to a widget response (row controls / row body).
+#[allow(clippy::too_many_arguments)]
 pub(super) fn attach_layer_context_menu(
     response: egui::Response,
     target: &LayerContextMenuTarget,
     context_request: &mut Option<LayerContextRequest>,
+    scene_tabs: Option<&LayerSceneTabs<'_>>,
+    scene_action: &mut Option<LayerOverlaySceneAction>,
     locale: &crate::i18n::LocaleManager,
 ) {
     response.context_menu(|ui| {
         show_layer_context_menu(ui, target, context_request, locale);
+        if let Some(scene_tabs) = scene_tabs {
+            show_layer_transfer_action(ui, target.layer_id, scene_tabs, scene_action, locale);
+        }
     });
+}
+
+fn show_layer_transfer_action(
+    ui: &mut egui::Ui,
+    layer_id: SceneMeshId,
+    scene_tabs: &LayerSceneTabs<'_>,
+    scene_action: &mut Option<LayerOverlaySceneAction>,
+    locale: &crate::i18n::LocaleManager,
+) {
+    let other_scene = scene_tabs
+        .scenes
+        .iter()
+        .find(|scene| scene.id != scene_tabs.active_scene_id);
+    let Some(destination) = other_scene else {
+        if !scene_tabs.can_create {
+            return;
+        }
+        ui.separator();
+        let label = locale.tr(crate::i18n::message_id!("workspace-layer-move-new-scene"));
+        if menu_item(ui, AppIcon::MoveLayer, &label, true).clicked() {
+            *scene_action = Some(LayerOverlaySceneAction::TransferToNew { layer_id });
+            ui.close();
+        }
+        return;
+    };
+
+    ui.separator();
+    let label = locale.tr_with(
+        crate::i18n::message_id!("workspace-layer-move-scene"),
+        &[("scene", destination.name)],
+    );
+    if menu_item(ui, AppIcon::MoveLayer, &label, true).clicked() {
+        *scene_action = Some(LayerOverlaySceneAction::Transfer {
+            layer_id,
+            scene_id: destination.id,
+        });
+        ui.close();
+    }
 }
 
 /// Render the layer context menu into `ui`. Used by both the row-attached menu

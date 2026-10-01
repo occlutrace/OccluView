@@ -1,10 +1,10 @@
 use super::super::selection_overlay::selection_overlay_for_scene;
 use super::super::{
     build_proj_matrix, build_view_matrix, camera_studio_light_dir, egui, AppErrorAction,
-    AppErrorDialog, GpuCamera, OccluViewApp,
+    AppErrorDialog, GpuCamera, SceneContext,
 };
 
-impl OccluViewApp {
+impl SceneContext<'_> {
     pub(in crate::app) fn sync_live_viewport(&mut self) {
         // A rebuild uploads the scan's own colours, so a live deviation map
         // has to be pushed again or it vanishes on the next scene change.
@@ -135,7 +135,7 @@ impl OccluViewApp {
             }
         }
         tracing::info!("operator asked to resume drawing after a graphics fault");
-        self.ui.status_message = Some(
+        self.scene_ui.status_message = Some(
             self.ui
                 .locale
                 .tr(crate::i18n::message_id!("gpu-retry-status")),
@@ -164,7 +164,7 @@ impl OccluViewApp {
             return false;
         };
         tracing::error!(gpu_error = %error, "surfacing GPU error to the operator");
-        self.ui.status_message = Some(
+        self.scene_ui.status_message = Some(
             self.ui
                 .locale
                 .tr(crate::i18n::message_id!("gpu-failed-status")),

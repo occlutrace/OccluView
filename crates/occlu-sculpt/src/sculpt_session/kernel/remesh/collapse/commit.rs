@@ -29,6 +29,11 @@ impl SculptSession {
         self.set_v(retired_raw, survivor_target);
         if let Some(material) = survivor_material {
             self.set_group_material(journal, survivor, material);
+            if self.reference_wall_mm[retired as usize].is_nan() {
+                self.reference_wall_mm[survivor as usize] = f32::NAN;
+            } else {
+                self.inherit_wall_reading(survivor, survivor, retired);
+            }
         }
         self.brush_grid.relocate(survivor, survivor_target);
         self.brush_grid.relocate(retired, survivor_target);

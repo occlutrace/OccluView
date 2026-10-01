@@ -3,7 +3,7 @@
 
 use super::app_settings_window::show_information_modal;
 use super::information_dialog::InformationDialog;
-use super::OccluViewApp;
+use super::SceneContext;
 use crate::ui_theme;
 use std::sync::OnceLock;
 
@@ -20,7 +20,7 @@ fn notice_lines() -> &'static [&'static str] {
     LINES.get_or_init(|| THIRD_PARTY_NOTICES.lines().collect())
 }
 
-impl OccluViewApp {
+impl SceneContext<'_> {
     // Canonical title "Third-party licenses".
     pub(super) fn show_third_party_window(&mut self, ctx: &egui::Context) {
         if self.ui.information_dialog != InformationDialog::ThirdPartyNotices {

@@ -1,6 +1,6 @@
 //! UI-side bridge to the persistent sculpt worker.
 
-use super::{egui, AppErrorAction, AppErrorDialog, EditModeCommand, OccluViewApp};
+use super::{egui, AppErrorAction, AppErrorDialog, EditModeCommand, SceneContext};
 use crate::sculpt_worker::{SculptCompletion, SculptFailure, SculptUpdate};
 use occluview_core::{Mesh, SceneMeshId};
 use std::sync::Arc;
@@ -54,7 +54,7 @@ fn describe_sculpt_failure(locale: &crate::i18n::LocaleManager, failure: &Sculpt
     }
 }
 
-impl OccluViewApp {
+impl SceneContext<'_> {
     pub(super) fn complete_pending_mesh_edit_session(&mut self, ctx: &egui::Context) {
         if !self.tools.sculpt.finish_requested || self.tools.sculpt.worker_has_pending_work() {
             return;
@@ -65,6 +65,7 @@ impl OccluViewApp {
 
     fn retry_pending_sculpt_finish(&mut self, ctx: &egui::Context) {
         if self.tools.sculpt.finish_retry {
+            let _ = self.flush_retained_sculpt_samples();
             let _ = self.commit_sculpt_stroke(ctx);
         }
     }
@@ -209,7 +210,7 @@ impl OccluViewApp {
     /// Surface a terminal worker failure and revoke the sculpt session.
     pub(super) fn fail_sculpt_session(&mut self, failure: &SculptFailure, ctx: &egui::Context) {
         let dialog = sculpt_failure_dialog(&self.ui.locale, failure);
-        self.ui.status_message = Some(dialog.summary.clone());
+        self.scene_ui.status_message = Some(dialog.summary.clone());
         self.ui.app_error = Some(dialog);
         self.tools.sculpt.disarm();
         self.invalidate_sculpt_session_silent();
@@ -335,12 +336,24 @@ impl OccluViewApp {
     /// Finish the drag: the worker creates the mesh off the UI thread and the
     /// next worker poll installs it as one undoable layer edit.
     pub(super) fn commit_sculpt_stroke(&mut self, ctx: &egui::Context) -> bool {
+        let _ = self.flush_retained_sculpt_samples();
+        if self
+            .tools
+            .sculpt
+            .stroke
+            .as_ref()
+            .is_some_and(|stroke| !stroke.retained_samples.is_empty())
+        {
+            self.tools.sculpt.finish_retry = true;
+            ctx.request_repaint();
+            return false;
+        }
         let Some(stroke) = self.tools.sculpt.stroke.take() else {
             self.tools.sculpt.finish_retry = false;
             return true;
         };
         let Some(worker) = self.tools.sculpt.worker.as_ref() else {
-            self.ui.status_message = Some(
+            self.scene_ui.status_message = Some(
                 self.ui
                     .locale
                     .tr(crate::i18n::message_id!("sculpt-worker-unavailable")),
@@ -355,7 +368,7 @@ impl OccluViewApp {
             // Preserve the drag and retry after queue pressure clears.
             self.tools.sculpt.stroke = Some(stroke);
             self.tools.sculpt.finish_retry = true;
-            self.ui.status_message = Some(
+            self.scene_ui.status_message = Some(
                 self.ui
                     .locale
                     .tr(crate::i18n::message_id!("sculpt-worker-unavailable")),
@@ -379,6 +392,7 @@ impl OccluViewApp {
         };
         let layer_id = worker.layer_id;
         let topology_id = worker.topology_id;
+        let world_to_local = worker.world_to_local;
         let committed_topology = occluview_render::PreparedSceneTopology::from_mesh(&sculpted);
         let committed_topology_id = sculpted.topology_id();
         let Some(scene) = self.document.scene.clone() else {
@@ -395,7 +409,7 @@ impl OccluViewApp {
             before,
             EditModeCommand::Sculpt,
         ) else {
-            self.ui.status_message = Some(
+            self.scene_ui.status_message = Some(
                 self.ui
                     .locale
                     .tr(crate::i18n::message_id!("repair-edit-busy")),
@@ -404,6 +418,18 @@ impl OccluViewApp {
         };
         drop(scene);
         if self.commit_sculpt_scene(layer_id, sculpted, ctx) {
+            // Later physical clicks captured while this stroke was finishing
+            // still target the same layer and transform. Advance only their
+            // topology fence, and only because this worker's own commit
+            // succeeded; external scene edits continue to invalidate them.
+            for pending in &mut self.tools.sculpt.pending_presses {
+                if pending.layer_id == layer_id
+                    && pending.topology_id == topology_id
+                    && pending.world_to_local == world_to_local
+                {
+                    pending.topology_id = committed_topology_id;
+                }
+            }
             if let Some(worker) = self.tools.sculpt.worker.as_mut() {
                 worker.topology_id = committed_topology_id;
                 worker.topology = committed_topology;
@@ -412,7 +438,7 @@ impl OccluViewApp {
             let _ = self.document.edit_mode.finish_layer_edit_success(token);
             self.document.mark_mesh_edits_unsaved(layer_id);
             // Report whether the pre-edit snapshot was retained.
-            self.ui.status_message = Some(if self.document.edit_mode.last_edit_undoable() {
+            self.scene_ui.status_message = Some(if self.document.edit_mode.last_edit_undoable() {
                 self.ui
                     .locale
                     .tr(crate::i18n::message_id!("sculpt-applied-undo"))

@@ -12,7 +12,7 @@ use super::app_align::layer_of;
 /// shape readable, faint enough that it never covers the coloured surface.
 const GHOST_OPACITY: f32 = 0.16;
 
-use super::OccluViewApp;
+use super::SceneContext;
 
 /// Meaning of the current per-vertex colours.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -26,7 +26,7 @@ pub(crate) enum AlignOverlay {
     Region,
 }
 
-impl OccluViewApp {
+impl SceneContext<'_> {
     /// Attach the measured colours to the mapped layer.
     ///
     /// The upload is left to the viewport sync, which runs once per frame and
@@ -381,6 +381,7 @@ mod tests {
 
     use super::*;
     use crate::app::app_test_support::{named_scene, push_named_layer, test_app};
+    use crate::app::OccluViewApp;
     use occluview_core::OverlayKind;
 
     /// An app holding a named pair of scans, so the display helpers that speak
@@ -390,15 +391,20 @@ mod tests {
         let mut scene = named_scene("lower", 0.0);
         let fixed = scene.meshes()[0].id();
         let moving = push_named_layer(&mut scene, "upper", 5.0);
-        app.document.scene = Some(Arc::new(scene));
-        app.tools.align.tool.arm();
-        app.tools.align.tool.imply_pair(&[moving, fixed]);
+        app.workspace.scenes[0].document.scene = Some(Arc::new(scene));
+        app.workspace.scenes[0].tools.align.tool.arm();
+        app.workspace.scenes[0]
+            .tools
+            .align
+            .tool
+            .imply_pair(&[moving, fixed]);
         (app, moving, fixed)
     }
 
     /// One layer's entry in the document's scene.
     fn layer_entry(app: &OccluViewApp, layer: SceneMeshId) -> &occluview_core::SceneMesh {
-        app.document
+        app.workspace.scenes[0]
+            .document
             .scene
             .as_ref()
             .expect("a scene")
@@ -420,7 +426,9 @@ mod tests {
         let measured = [200u8, 40, 40, 255];
 
         assert!(
-            app.attach_overlay_colors(moving, vec![measured; 3], AlignOverlay::Map),
+            app.active_context()
+                .expect("live test scene")
+                .attach_overlay_colors(moving, vec![measured; 3], AlignOverlay::Map),
             "the map attaches to a layer whose vertex count it matches"
         );
 
@@ -447,8 +455,13 @@ mod tests {
         );
 
         // The upload and the teardown must leave the mesh alone as well.
-        let _ = app.push_deviation_colors();
-        app.clear_deviation_overlay();
+        let _ = app
+            .active_context()
+            .expect("live test scene")
+            .push_deviation_colors();
+        app.active_context()
+            .expect("live test scene")
+            .clear_deviation_overlay();
         assert!(layer_entry(&app, moving).overlay_colors().is_none());
         assert!(
             layer_entry(&app, moving)
@@ -469,8 +482,14 @@ mod tests {
     #[test]
     fn showing_and_hiding_an_overlay_never_replaces_the_scene() {
         let (mut app, moving, _fixed) = app_with_a_pair("align-overlay-scene-identity");
-        let scene_before = Arc::as_ptr(app.document.scene.as_ref().expect("a scene"));
-        let ids_before: Vec<SceneMeshId> = app
+        let scene_before = Arc::as_ptr(
+            app.workspace.scenes[0]
+                .document
+                .scene
+                .as_ref()
+                .expect("a scene"),
+        );
+        let ids_before: Vec<SceneMeshId> = app.workspace.scenes[0]
             .document
             .scene
             .as_ref()
@@ -480,13 +499,22 @@ mod tests {
             .map(occluview_core::SceneMesh::id)
             .collect();
 
-        assert!(app.attach_overlay_colors(moving, vec![[9, 9, 9, 255]; 3], AlignOverlay::Map));
+        assert!(app
+            .active_context()
+            .expect("live test scene")
+            .attach_overlay_colors(moving, vec![[9, 9, 9, 255]; 3], AlignOverlay::Map));
         assert_eq!(
-            Arc::as_ptr(app.document.scene.as_ref().expect("a scene")),
+            Arc::as_ptr(
+                app.workspace.scenes[0]
+                    .document
+                    .scene
+                    .as_ref()
+                    .expect("a scene")
+            ),
             scene_before,
             "re-colouring must edit the live scene, not install a new one"
         );
-        let ids_after: Vec<SceneMeshId> = app
+        let ids_after: Vec<SceneMeshId> = app.workspace.scenes[0]
             .document
             .scene
             .as_ref()
@@ -497,14 +525,23 @@ mod tests {
             .collect();
         assert_eq!(ids_after, ids_before, "and it must not rebuild the layers");
 
-        app.clear_deviation_overlay();
+        app.active_context()
+            .expect("live test scene")
+            .clear_deviation_overlay();
         assert_eq!(
-            Arc::as_ptr(app.document.scene.as_ref().expect("a scene")),
+            Arc::as_ptr(
+                app.workspace.scenes[0]
+                    .document
+                    .scene
+                    .as_ref()
+                    .expect("a scene")
+            ),
             scene_before,
             "taking the map down is an in-place edit too"
         );
         assert!(
-            app.document
+            app.workspace.scenes[0]
+                .document
                 .scene
                 .as_ref()
                 .expect("a scene")
@@ -526,8 +563,14 @@ mod tests {
     fn every_attached_overlay_says_what_it_is() {
         let (mut app, moving, _fixed) = app_with_a_pair("align-overlay-kind");
 
-        assert!(app.attach_overlay_colors(moving, vec![[1, 2, 3, 255]; 3], AlignOverlay::Region));
-        assert_eq!(app.tools.align.overlay, AlignOverlay::Region);
+        assert!(app
+            .active_context()
+            .expect("live test scene")
+            .attach_overlay_colors(moving, vec![[1, 2, 3, 255]; 3], AlignOverlay::Region));
+        assert_eq!(
+            app.workspace.scenes[0].tools.align.overlay,
+            AlignOverlay::Region
+        );
         assert_eq!(
             layer_entry(&app, moving).overlay_kind(),
             Some(OverlayKind::Paint),
@@ -535,25 +578,37 @@ mod tests {
         );
 
         // A map drawn for an older pose is stale; the markings are not.
-        app.invalidate_deviation_map("the scan moved");
+        app.active_context()
+            .expect("live test scene")
+            .invalidate_deviation_map("the scan moved");
         assert_eq!(
-            app.tools.align.overlay,
+            app.workspace.scenes[0].tools.align.overlay,
             AlignOverlay::Region,
             "a stale-map drop must not take the brush's preview down"
         );
         assert!(
-            app.align_overlay_is_up(),
+            app.active_context()
+                .expect("live test scene")
+                .align_overlay_is_up(),
             "the marking colours are still on screen"
         );
 
-        assert!(app.attach_overlay_colors(moving, vec![[4, 5, 6, 255]; 3], AlignOverlay::Map));
-        app.invalidate_deviation_map("the scan moved");
+        assert!(app
+            .active_context()
+            .expect("live test scene")
+            .attach_overlay_colors(moving, vec![[4, 5, 6, 255]; 3], AlignOverlay::Map));
+        app.active_context()
+            .expect("live test scene")
+            .invalidate_deviation_map("the scan moved");
         assert_eq!(
-            app.tools.align.overlay,
+            app.workspace.scenes[0].tools.align.overlay,
             AlignOverlay::Nothing,
             "a map is what the drop is for"
         );
-        assert!(!app.align_overlay_is_up());
+        assert!(!app
+            .active_context()
+            .expect("live test scene")
+            .align_overlay_is_up());
         assert!(layer_entry(&app, moving).overlay_colors().is_none());
     }
 
@@ -568,16 +623,16 @@ mod tests {
         let (mut app, moving, _fixed) = app_with_a_pair("align-upload-buffer");
         let mesh = layer_entry(&app, moving).mesh.clone();
 
-        let first = app
+        let first = app.workspace.scenes[0]
             .tools
             .align
             .painted
             .repaint(&mesh, &[[1, 2, 3, 255]; 3])
             .expect("the array matches the mesh");
         let first_at = first.as_ptr();
-        assert!(app.tools.align.painted.holds(&mesh, 3));
+        assert!(app.workspace.scenes[0].tools.align.painted.holds(&mesh, 3));
 
-        let second = app
+        let second = app.workspace.scenes[0]
             .tools
             .align
             .painted
@@ -593,7 +648,7 @@ mod tests {
         // The brush's sparse path rewrites what it touched and leaves the rest
         // of the array as the last re-colour left it. A patch that rebuilt the
         // array would blank the rest of the scan's painted region.
-        let patched = app
+        let patched = app.workspace.scenes[0]
             .tools
             .align
             .painted
@@ -611,9 +666,11 @@ mod tests {
             "a vertex the dab did not touch keeps the colour the last repaint left"
         );
 
-        app.clear_deviation_overlay();
+        app.active_context()
+            .expect("live test scene")
+            .clear_deviation_overlay();
         assert!(
-            !app.tools.align.painted.holds(&mesh, 3),
+            !app.workspace.scenes[0].tools.align.painted.holds(&mesh, 3),
             "dropping the overlay must drop the scratch buffer with it"
         );
     }
@@ -631,24 +688,37 @@ mod tests {
         let own_opacity = layer_entry(&app, fixed).opacity;
 
         // Nothing was up, so nothing has to reach the GPU.
-        app.clear_deviation_overlay();
+        app.active_context()
+            .expect("live test scene")
+            .clear_deviation_overlay();
         assert!(
-            !app.tools.align.deviation_push_pending,
+            !app.workspace.scenes[0].tools.align.deviation_push_pending,
             "a clear with no overlay must not queue an upload"
         );
 
-        assert!(app.attach_overlay_colors(moving, vec![[7, 7, 7, 255]; 3], AlignOverlay::Map));
-        app.ghost_other_layer();
+        assert!(app
+            .active_context()
+            .expect("live test scene")
+            .attach_overlay_colors(moving, vec![[7, 7, 7, 255]; 3], AlignOverlay::Map));
+        app.active_context()
+            .expect("live test scene")
+            .ghost_other_layer();
         assert!(
-            !app.tools.align.ghosted.is_empty(),
+            !app.workspace.scenes[0].tools.align.ghosted.is_empty(),
             "the companion scan is faded while the map is up"
         );
 
-        app.clear_deviation_overlay();
+        app.active_context()
+            .expect("live test scene")
+            .clear_deviation_overlay();
 
-        assert!(app.tools.align.overlay_colors.is_empty());
+        assert!(app.workspace.scenes[0]
+            .tools
+            .align
+            .overlay_colors
+            .is_empty());
         assert!(
-            app.tools.align.ghosted.is_empty(),
+            app.workspace.scenes[0].tools.align.ghosted.is_empty(),
             "the faded companion must come back with the map"
         );
         assert_eq!(
@@ -657,15 +727,16 @@ mod tests {
             "and at its own opacity, not the ghost's"
         );
         assert!(
-            app.tools.align.stats.is_none(),
+            app.workspace.scenes[0].tools.align.stats.is_none(),
             "the panel must not keep showing the dropped measurement's numbers"
         );
         assert!(
-            app.tools.align.deviation_push_pending,
+            app.workspace.scenes[0].tools.align.deviation_push_pending,
             "the layers' own colours still have to reach the GPU"
         );
         assert!(
-            app.document
+            app.workspace.scenes[0]
+                .document
                 .scene
                 .as_ref()
                 .expect("a scene")
@@ -687,22 +758,27 @@ mod tests {
     fn a_rejected_sparse_overlay_upload_is_not_reported_as_success() {
         let (mut app, moving, _fixed) = app_with_a_pair("align-sparse-reject");
         assert!(
-            app.attach_overlay_colors(moving, vec![[1, 2, 3, 255]; 3], AlignOverlay::Region),
+            app.active_context()
+                .expect("live test scene")
+                .attach_overlay_colors(moving, vec![[1, 2, 3, 255]; 3], AlignOverlay::Region),
             "the preview has to be up before a sparse write can be attempted"
         );
         assert!(
-            app.render.live_viewport.is_none(),
+            app.workspace.scenes[0].render.live_viewport.is_none(),
             "the fixture has no GPU viewport, so the write must be refused"
         );
 
-        let applied = app.patch_overlay_colors(moving, &[0, 1, 2], &[[9, 9, 9, 255]; 3]);
+        let applied = app
+            .active_context()
+            .expect("live test scene")
+            .patch_overlay_colors(moving, &[0, 1, 2], &[[9, 9, 9, 255]; 3]);
 
         assert!(
             !applied,
             "a sparse overlay write with nowhere to land must report failure"
         );
         assert!(
-            app.tools.align.deviation_push_pending,
+            app.workspace.scenes[0].tools.align.deviation_push_pending,
             "and the full repaint stays owed, so the colours are not silently lost"
         );
     }
@@ -716,19 +792,26 @@ mod tests {
 
         // Establish the scratch through the full repaint path.
         let mesh = layer_entry(&app, moving).mesh.clone();
-        app.tools
+        app.workspace.scenes[0]
+            .tools
             .align
             .painted
             .repaint(&mesh, &[[1, 2, 3, 255]; 3])
             .expect("the array matches the mesh");
-        assert!(app.attach_overlay_colors(moving, vec![[1, 2, 3, 255]; 3], AlignOverlay::Region));
+        assert!(app
+            .active_context()
+            .expect("live test scene")
+            .attach_overlay_colors(moving, vec![[1, 2, 3, 255]; 3], AlignOverlay::Region));
 
         // An unsorted touched list is malformed: the renderer's sparse writer
         // coalesces ordered runs, so it must be refused, not reordered.
-        let applied = app.patch_overlay_colors(moving, &[2, 0], &[[9, 9, 9, 255]; 2]);
+        let applied = app
+            .active_context()
+            .expect("live test scene")
+            .patch_overlay_colors(moving, &[2, 0], &[[9, 9, 9, 255]; 2]);
 
         assert!(!applied, "an unsorted touched list must be refused");
-        let scratch = app
+        let scratch = app.workspace.scenes[0]
             .tools
             .align
             .painted
@@ -746,37 +829,56 @@ mod tests {
     fn the_map_fade_is_drawn_not_written_into_the_scene() {
         let (mut app, moving, fixed) = app_with_a_pair("align-fade-is-display");
         let own = layer_entry(&app, fixed).opacity;
-        assert!(app.attach_overlay_colors(moving, vec![[7, 7, 7, 255]; 3], AlignOverlay::Map));
-        app.ghost_other_layer();
+        assert!(app
+            .active_context()
+            .expect("live test scene")
+            .attach_overlay_colors(moving, vec![[7, 7, 7, 255]; 3], AlignOverlay::Map));
+        app.active_context()
+            .expect("live test scene")
+            .ghost_other_layer();
 
         assert_eq!(
             layer_entry(&app, fixed).opacity,
             own,
             "the scene keeps the scan's own opacity"
         );
-        let scene = app.document.scene.clone().expect("a scene");
-        let drawn = |app: &OccluViewApp, scene: &occluview_core::Scene, layer: SceneMeshId| {
+        let scene = app.workspace.scenes[0]
+            .document
+            .scene
+            .clone()
+            .expect("a scene");
+        let drawn = |app: &mut OccluViewApp, scene: &occluview_core::Scene, layer: SceneMeshId| {
             let index = scene
                 .meshes()
                 .iter()
                 .position(|entry| entry.id() == layer)
                 .expect("layer");
-            app.prepared_scene_updates(scene)[index].uniform.opacity
+            app.active_context()
+                .expect("live test scene")
+                .prepared_scene_updates(scene)[index]
+                .uniform
+                .opacity
         };
         assert!(
-            drawn(&app, &scene, fixed) < own,
+            drawn(&mut app, &scene, fixed) < own,
             "while the map is up the other scan is drawn faded"
         );
         assert_eq!(
-            drawn(&app, &scene, moving),
+            drawn(&mut app, &scene, moving),
             layer_entry(&app, moving).opacity
         );
 
         drop(scene);
-        app.clear_deviation_overlay();
-        let scene = app.document.scene.as_deref().expect("a scene");
+        app.active_context()
+            .expect("live test scene")
+            .clear_deviation_overlay();
+        let scene = app.workspace.scenes[0]
+            .document
+            .scene
+            .clone()
+            .expect("a scene");
         assert_eq!(
-            drawn(&app, scene, fixed),
+            drawn(&mut app, &scene, fixed),
             own,
             "and drawn at its own opacity again after"
         );
@@ -788,8 +890,11 @@ mod tests {
     #[test]
     fn a_map_carried_into_a_scene_install_is_not_left_on_screen() {
         let (mut app, moving, _fixed) = app_with_a_pair("align-map-not-restored");
-        assert!(app.attach_overlay_colors(moving, vec![[7, 7, 7, 255]; 3], AlignOverlay::Map));
-        let snapshot = app
+        assert!(app
+            .active_context()
+            .expect("live test scene")
+            .attach_overlay_colors(moving, vec![[7, 7, 7, 255]; 3], AlignOverlay::Map));
+        let snapshot = app.workspace.scenes[0]
             .document
             .scene
             .as_ref()
@@ -806,10 +911,15 @@ mod tests {
             "the snapshot carries the map, as a history step taken now would"
         );
 
-        app.set_scene(snapshot, false);
+        app.active_context()
+            .expect("live test scene")
+            .set_scene(snapshot, false);
 
         assert_eq!(layer_entry(&app, moving).overlay_kind(), None);
-        assert_eq!(app.tools.align.overlay, AlignOverlay::Nothing);
+        assert_eq!(
+            app.workspace.scenes[0].tools.align.overlay,
+            AlignOverlay::Nothing
+        );
     }
 
     /// A scan added while the session is open is part of it: Cancel puts it
@@ -819,11 +929,13 @@ mod tests {
         let mut app = test_app("align-cancel-arrival");
         let mut scene = named_scene("lower", 0.0);
         push_named_layer(&mut scene, "upper", 5.0);
-        app.document.scene = Some(Arc::new(scene));
+        app.workspace.scenes[0].document.scene = Some(Arc::new(scene));
         let ctx = egui::Context::default();
-        app.arm_align_tool(&ctx);
+        app.active_context()
+            .expect("live test scene")
+            .arm_align_tool(&ctx);
 
-        let mut next = app
+        let mut next = app.workspace.scenes[0]
             .document
             .scene
             .as_ref()
@@ -831,10 +943,12 @@ mod tests {
             .as_ref()
             .clone();
         let added = push_named_layer(&mut next, "rescan", 9.0);
-        app.set_scene(next, false);
+        app.active_context()
+            .expect("live test scene")
+            .set_scene(next, false);
         let arrived = layer_entry(&app, added).transform;
 
-        let mut moved = app
+        let mut moved = app.workspace.scenes[0]
             .document
             .scene
             .as_ref()
@@ -847,10 +961,14 @@ mod tests {
                     * entry.transform;
             }
         }
-        app.set_scene(moved, false);
+        app.active_context()
+            .expect("live test scene")
+            .set_scene(moved, false);
         assert_ne!(layer_entry(&app, added).transform, arrived);
 
-        app.cancel_align_session(&ctx);
+        app.active_context()
+            .expect("live test scene")
+            .cancel_align_session(&ctx);
         assert_eq!(layer_entry(&app, added).transform, arrived);
     }
 }

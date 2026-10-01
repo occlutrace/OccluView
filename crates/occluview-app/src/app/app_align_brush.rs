@@ -24,7 +24,7 @@ use occluview_core::{SceneMesh, SceneMeshId};
 
 use super::app_align::layer_of;
 use super::app_align_display::AlignOverlay;
-use super::OccluViewApp;
+use super::SceneContext;
 use crate::align_markings::{AlignSide, AutoKeep, MarkedMesh, MarkedOn, MaskCommand};
 use crate::viewer::pick_layer_hit;
 
@@ -56,7 +56,7 @@ fn resize_align_brush_from_wheel(
     true
 }
 
-impl OccluViewApp {
+impl SceneContext<'_> {
     /// Paint or clear under the pointer. Returns whether the brush owns this
     /// frame's pointer.
     pub(super) fn handle_align_brush(
@@ -64,7 +64,7 @@ impl OccluViewApp {
         response: &egui::Response,
         ctx: &egui::Context,
     ) -> bool {
-        if !self.tools.align.brush.is_armed() {
+        if !self.input_allowed || !self.tools.align.brush.is_armed() {
             return false;
         }
         let primary_down =
@@ -189,7 +189,7 @@ impl OccluViewApp {
         response: &egui::Response,
         ctx: &egui::Context,
     ) -> bool {
-        if !self.tools.align.brush.is_armed() {
+        if !self.input_allowed || !self.tools.align.brush.is_armed() {
             return false;
         }
         // Over the viewport itself, not over a window floating on it: the
@@ -226,7 +226,7 @@ impl OccluViewApp {
         viewport_rect: egui::Rect,
         ctx: &egui::Context,
     ) {
-        if !self.tools.align.brush.is_armed() {
+        if !self.input_allowed || !self.tools.align.brush.is_armed() {
             return;
         }
         let (Some(camera), Some(pointer)) = (self.render.camera.as_ref(), ctx.pointer_hover_pos())
@@ -747,6 +747,7 @@ mod tests {
     /// hand. The markings themselves are the operator's own work and have to
     /// survive the map's removal.
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn a_stroke_drops_the_map_instead_of_recomputing_it() {
         use crate::align_markings::{AlignSide, MarkedMesh};
         use crate::app::app_align_display::AlignOverlay;
@@ -758,24 +759,30 @@ mod tests {
         let mut scene = named_scene("lower", 0.0);
         let fixed = scene.meshes()[0].id();
         let layer = push_named_layer(&mut scene, "upper", 5.0);
-        app.document.scene = Some(scene.into());
-        app.tools.align.brush.set_armed(true);
-        app.tools.align.tool.arm();
-        app.tools.align.tool.imply_pair(&[layer, fixed]);
+        app.workspace.scenes[0].document.scene = Some(scene.into());
+        app.workspace.scenes[0].tools.align.brush.set_armed(true);
+        app.workspace.scenes[0].tools.align.tool.arm();
+        app.workspace.scenes[0]
+            .tools
+            .align
+            .tool
+            .imply_pair(&[layer, fixed]);
         assert!(
-            app.tools.align.tool.can_measure(),
+            app.workspace.scenes[0].tools.align.tool.can_measure(),
             "the pair has to be measurable, or a measurement could not be started anyway"
         );
-        app.tools.align.settings.show_deviation = true;
-        app.tools.align.refined_match_ready = true;
+        app.workspace.scenes[0].tools.align.settings.show_deviation = true;
+        app.workspace.scenes[0].tools.align.refined_match_ready = true;
         assert!(
-            app.attach_overlay_colors(layer, vec![[3, 4, 5, 255]; 3], AlignOverlay::Map),
+            app.active_context()
+                .expect("live test scene")
+                .attach_overlay_colors(layer, vec![[3, 4, 5, 255]; 3], AlignOverlay::Map),
             "a map is up before the stroke, or this proves nothing"
         );
 
         // One dab is what opens a stroke; the map then describes a comparison
         // that no longer exists.
-        let entry = app
+        let entry = app.workspace.scenes[0]
             .document
             .scene
             .as_ref()
@@ -797,7 +804,7 @@ mod tests {
             vertex_count: entry.mesh.vertices().len(),
             geometry: entry.mesh.geometry_id(),
         };
-        let changed = app.tools.align.markings.dab(
+        let changed = app.workspace.scenes[0].tools.align.markings.dab(
             AlignSide::Moving,
             &marked,
             &MaskEdit {
@@ -808,8 +815,8 @@ mod tests {
         );
         assert!(changed > 0, "the dab has to mark something");
 
-        // The release frame: the pointer is no longer down, so the stroke ends.
-        let ctx = egui::Context::default();
+        // The release frame uses the same focus/input context as the workspace.
+        let ctx = app.ui.repaint_ctx.clone();
         let raw = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
@@ -821,31 +828,37 @@ mod tests {
         ctx.run_ui(raw, |ui| {
             let ctx = ui.ctx().clone();
             let response = ui.allocate_response(ui.available_size(), egui::Sense::click());
-            owned = app.handle_align_brush(&response, &ctx);
+            owned = app
+                .active_context()
+                .expect("live test scene")
+                .handle_align_brush(&response, &ctx);
         })
         .drop_without_applying_deltas();
 
         assert!(owned, "the armed brush owns the release frame");
         assert_eq!(
-            app.tools.align.overlay,
+            app.workspace.scenes[0].tools.align.overlay,
             AlignOverlay::Nothing,
             "the map drawn before the stroke is gone"
         );
-        assert!(!app.align_overlay_is_up());
+        assert!(!app
+            .active_context()
+            .expect("live test scene")
+            .align_overlay_is_up());
         assert!(
-            !app.tools.align.settings.show_deviation,
+            !app.workspace.scenes[0].tools.align.settings.show_deviation,
             "the toggle must not keep claiming a map is visible"
         );
         assert!(
-            !app.tools.align.refined_match_ready,
+            !app.workspace.scenes[0].tools.align.refined_match_ready,
             "the fit the map described is revoked with it"
         );
         assert!(
-            app.tools.align.markings.any(),
+            app.workspace.scenes[0].tools.align.markings.any(),
             "the operator's markings survive the map's removal"
         );
         assert!(
-            app.tools.align.worker.is_none(),
+            app.workspace.scenes[0].tools.align.worker.is_none(),
             "a stroke must never start a measurement: a worker here would mean \
              one was submitted"
         );

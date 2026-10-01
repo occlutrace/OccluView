@@ -389,6 +389,7 @@ pub(crate) struct ToolbarToggle<'a> {
     enabled: bool,
     active: bool,
     tooltip: &'a str,
+    compact: bool,
 }
 
 impl<'a> ToolbarToggle<'a> {
@@ -405,8 +406,23 @@ impl<'a> ToolbarToggle<'a> {
             enabled,
             active,
             tooltip,
+            compact: false,
         }
     }
+
+    pub(crate) const fn compact(mut self, compact: bool) -> Self {
+        self.compact = compact;
+        self
+    }
+}
+
+pub(crate) fn toolbar_toggle_width(ui: &egui::Ui, label: &str, active: bool) -> f32 {
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        egui::FontId::proportional(12.5),
+        ui_theme::text(),
+    );
+    35.0 + galley.size().x + if active { 17.0 } else { 0.0 }
 }
 
 /// Compact toolbar toggle with the same active treatment as the tool cells.
@@ -417,6 +433,7 @@ pub(crate) fn toolbar_toggle(ui: &mut egui::Ui, control: ToolbarToggle<'_>) -> e
         enabled,
         active,
         tooltip,
+        compact,
     } = control;
     let ink = if !enabled {
         ui.visuals().weak_text_color()
@@ -430,9 +447,12 @@ pub(crate) fn toolbar_toggle(ui: &mut egui::Ui, control: ToolbarToggle<'_>) -> e
         .painter()
         .layout_no_wrap(label.to_owned(), font.clone(), ink);
     let icon_side = 15.0;
-    let close_width = if active { 17.0 } else { 0.0 };
     let size = egui::vec2(
-        7.0 + icon_side + 5.0 + galley.size().x + 8.0 + close_width,
+        if compact {
+            30.0
+        } else {
+            toolbar_toggle_width(ui, label, active)
+        },
         if active { 26.0 } else { 22.0 },
     );
     let sense = if enabled {
@@ -458,15 +478,17 @@ pub(crate) fn toolbar_toggle(ui: &mut egui::Ui, control: ToolbarToggle<'_>) -> e
         egui::Vec2::splat(icon_side),
     );
     crate::icons::paint(painter, icon_rect, icon, ink);
-    painter.galley(
-        egui::pos2(
-            icon_rect.right() + 5.0,
-            rect.center().y - galley.size().y * 0.5,
-        ),
-        galley,
-        ink,
-    );
-    if active {
+    if !compact {
+        painter.galley(
+            egui::pos2(
+                icon_rect.right() + 5.0,
+                rect.center().y - galley.size().y * 0.5,
+            ),
+            galley,
+            ink,
+        );
+    }
+    if active && !compact {
         let close_rect = egui::Rect::from_center_size(
             egui::pos2(rect.right() - 8.0, rect.center().y),
             egui::vec2(10.0, 10.0),

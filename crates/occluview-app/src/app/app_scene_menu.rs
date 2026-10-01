@@ -2,13 +2,13 @@
 //!
 //! OccluView has no project file, so aligned transforms persist through export.
 
-use super::OccluViewApp;
+use super::SceneContext;
 use crate::edit_mode::EditModeCommand;
 use crate::layers_overlay::SceneContextAction;
 use eframe::egui;
 use glam::Affine3A;
 
-impl OccluViewApp {
+impl SceneContext<'_> {
     /// Whether the scene menu has anything to offer: any layer at all, and any
     /// layer that has actually been moved.
     pub(super) fn scene_menu_state(&self) -> (bool, bool) {
@@ -54,7 +54,7 @@ impl OccluViewApp {
             .iter()
             .all(|entry| entry.transform == Affine3A::IDENTITY)
         {
-            self.ui.status_message = Some(
+            self.scene_ui.status_message = Some(
                 self.ui
                     .locale
                     .tr(crate::i18n::message_id!("scene-already-origin")),
@@ -84,7 +84,7 @@ impl OccluViewApp {
         for layer in moved {
             self.document.mark_mesh_edits_unsaved(layer);
         }
-        self.ui.status_message = Some(
+        self.scene_ui.status_message = Some(
             self.ui
                 .locale
                 .tr(crate::i18n::message_id!("scene-positions-reset")),
@@ -113,11 +113,17 @@ mod tests {
         let moved = [scene.meshes()[0].transform, scene.meshes()[1].transform];
         assert_ne!(moved[0], Affine3A::IDENTITY, "fixture: layer 0 is moved");
         assert_ne!(moved[1], Affine3A::IDENTITY, "fixture: layer 1 is moved");
-        app.document.scene = Some(Arc::new(scene));
+        app.workspace.scenes[0].document.scene = Some(Arc::new(scene));
 
-        app.reset_layer_positions(&egui::Context::default());
+        app.active_context()
+            .expect("live test scene")
+            .reset_layer_positions(&egui::Context::default());
 
-        let scene = app.document.scene.as_ref().expect("scene");
+        let scene = app.workspace.scenes[0]
+            .document
+            .scene
+            .as_ref()
+            .expect("scene");
         assert!(
             scene
                 .meshes()
@@ -126,14 +132,20 @@ mod tests {
             "every layer returns to the identity pose"
         );
         assert!(
-            app.document.has_unsaved_mesh_edits(),
+            app.workspace.scenes[0].document.has_unsaved_mesh_edits(),
             "a reset is unsaved work: the viewer has no project file"
         );
 
         // One step back restores both poses, not just the focused layer's.
-        app.apply_history_navigation_now(false, &egui::Context::default());
+        app.active_context()
+            .expect("live test scene")
+            .apply_history_navigation_now(false, &egui::Context::default());
 
-        let restored = app.document.scene.as_ref().expect("scene");
+        let restored = app.workspace.scenes[0]
+            .document
+            .scene
+            .as_ref()
+            .expect("scene");
         assert_eq!(restored.meshes()[0].transform, moved[0]);
         assert_eq!(restored.meshes()[1].transform, moved[1]);
     }

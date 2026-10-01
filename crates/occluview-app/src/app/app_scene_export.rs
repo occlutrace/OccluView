@@ -6,7 +6,7 @@ use super::app_mesh_export::{
     mesh_export_format_from_path, mesh_export_warning_summary, mesh_write_extension,
     normalize_layer_export_path, representable_export_format,
 };
-use super::{AppErrorAction, AppErrorDialog, OccluViewApp, Scene};
+use super::{AppErrorAction, AppErrorDialog, Scene, SceneContext};
 use crate::i18n::message_id;
 use glam::{Affine3A, DAffine3, DMat3, DVec3};
 use occluview_core::{Mesh, SceneMesh, SceneMeshId, Vertex};
@@ -63,7 +63,7 @@ fn merge_drops_visible_texture(scene: &Scene) -> bool {
             .any(|entry| entry.visible && entry.mesh.texture().is_some())
 }
 
-impl OccluViewApp {
+impl SceneContext<'_> {
     /// Write every visible layer, in its current pose, as one file.
     ///
     /// A merged file carries geometry and vertex colours; a texture belongs to
@@ -80,7 +80,7 @@ impl OccluViewApp {
         let mesh = match merged_scene_mesh(scene.as_ref()) {
             Ok(Some(mesh)) => mesh,
             Ok(None) => {
-                self.ui.status_message =
+                self.scene_ui.status_message =
                     Some(self.ui.locale.tr(message_id!("export-nothing-visible")));
                 return;
             }
@@ -90,7 +90,7 @@ impl OccluViewApp {
                     message_id!("export-scene-failed-summary"),
                     &[("detail", detail.as_str())],
                 );
-                self.ui.status_message = Some(summary.clone());
+                self.scene_ui.status_message = Some(summary.clone());
                 self.ui.app_error = Some(AppErrorDialog {
                     title: self.ui.locale.tr(message_id!("export-scene-failed-title")),
                     summary,
@@ -116,7 +116,7 @@ impl OccluViewApp {
         // Index zero with the neighbour fallback resolves to the first layer
         // that has a file, so a merged scene lands next to its scans.
         if let Some(directory) = default_layer_export_directory(
-            &self.persistence.current_paths,
+            &self.document.current_paths,
             0,
             self.persistence.last_export_dir.as_deref(),
         ) {
@@ -127,7 +127,7 @@ impl OccluViewApp {
         };
         let path = normalize_layer_export_path(selected, default_format);
         let Ok(format) = mesh_export_format_from_path(&path) else {
-            self.ui.status_message =
+            self.scene_ui.status_message =
                 Some(self.ui.locale.tr(message_id!("export-unsupported-format")));
             return;
         };
@@ -159,7 +159,7 @@ impl OccluViewApp {
                 let warnings = mesh_export_warning_summary(&report.warnings, &self.ui.locale);
                 self.document.forget_unsaved_edits(&written);
                 self.remember_export_directory(&path);
-                self.ui.status_message = Some(append_mesh_export_warnings(
+                self.scene_ui.status_message = Some(append_mesh_export_warnings(
                     saved,
                     warnings.as_deref(),
                     &self.ui.locale,
@@ -170,7 +170,7 @@ impl OccluViewApp {
                     message_id!("export-scene-failed-summary"),
                     &[("detail", &error.to_string())],
                 );
-                self.ui.status_message = Some(summary.clone());
+                self.scene_ui.status_message = Some(summary.clone());
                 self.ui.app_error = Some(AppErrorDialog {
                     title: self.ui.locale.tr(message_id!("export-scene-failed-title")),
                     summary,
@@ -198,12 +198,13 @@ impl OccluViewApp {
             return;
         };
         if !scene.meshes().iter().any(|entry| entry.visible) {
-            self.ui.status_message = Some(self.ui.locale.tr(message_id!("export-nothing-visible")));
+            self.scene_ui.status_message =
+                Some(self.ui.locale.tr(message_id!("export-nothing-visible")));
             return;
         }
         let mut dialog = rfd::FileDialog::new();
         if let Some(start) = default_layer_export_directory(
-            &self.persistence.current_paths,
+            &self.document.current_paths,
             0,
             self.persistence.last_export_dir.as_deref(),
         ) {
@@ -213,7 +214,7 @@ impl OccluViewApp {
             return;
         };
 
-        let paths = self.persistence.current_paths.clone();
+        let paths = self.document.current_paths.clone();
         let visible: Vec<(usize, &SceneMesh)> = scene
             .meshes()
             .iter()
@@ -314,7 +315,7 @@ impl OccluViewApp {
             ),
         };
         let warning_text = (!warning_messages.is_empty()).then(|| warning_messages.join("; "));
-        self.ui.status_message = Some(append_mesh_export_warnings(
+        self.scene_ui.status_message = Some(append_mesh_export_warnings(
             status,
             warning_text.as_deref(),
             &self.ui.locale,

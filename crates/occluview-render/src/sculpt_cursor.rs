@@ -1,6 +1,6 @@
 //! Display-only GPU state for the live Sculpt brush cursor.
 //!
-//! The cursor has two independent pieces: a small emissive field projected
+//! The cursor has two independent pieces: a colored footprint projected
 //! onto the picked surface and a translucent tool volume hovering just above
 //! it. Neither piece participates in picking, dab scheduling, or mesh writes.
 //! The app still owns the one authoritative surface hit; this module only
@@ -14,10 +14,13 @@ use occlu_geometry_math::{
 use std::f32::consts::TAU;
 
 pub use occlu_geometry_math::TipStamp as SculptTipStamp;
-pub use occlu_geometry_math::{
-    CYLINDER_PLATEAU as SCULPT_CYLINDER_PLATEAU,
-    KNIFE_CROSS_RADIUS_SHARE as SCULPT_KNIFE_CROSS_SHARE,
-};
+
+/// Cylinder plateau quantized for the GPU's f32 field inputs.
+#[allow(clippy::cast_possible_truncation)]
+pub const SCULPT_CYLINDER_PLATEAU: f32 = CYLINDER_PLATEAU as f32;
+/// Knife transverse reach quantized for the GPU's f32 field inputs.
+#[allow(clippy::cast_possible_truncation)]
+pub const SCULPT_KNIFE_CROSS_SHARE: f32 = KNIFE_CROSS_RADIUS_SHARE as f32;
 
 pub(crate) const SCULPT_FEEDBACK_SHADER_SRC: &str = concat!(
     include_str!("../shaders/sculpt_field.wgsl"),
@@ -46,7 +49,7 @@ pub enum SculptFeedbackStyle {
     Dashed = 1,
 }
 
-/// Surface-light input. The layout is shared by Rust and
+/// Surface-tint input. The layout is shared by Rust and
 /// `sculpt_feedback.wgsl`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -57,7 +60,7 @@ pub struct SculptBrushUniform {
     pub radius: f32,
     /// World-space surface normal, oriented toward the camera.
     pub normal: [f32; 3],
-    /// Surface light intensity, including a non-zero idle glow.
+    /// Surface tint intensity, including a non-zero idle footprint.
     pub intensity: f32,
     /// World-space stroke bearing the knife footprint elongates along. Zero
     /// leaves the knife a narrow radial footprint.
@@ -87,6 +90,8 @@ pub struct SculptBrushUniform {
 
 impl SculptBrushUniform {
     /// A safe no-op value used whenever the pointer has no valid surface hit.
+    // Shared field math stays f64; only the display uniform is quantized.
+    #[allow(clippy::cast_possible_truncation)]
     #[must_use]
     pub const fn hidden() -> Self {
         Self {
@@ -98,9 +103,9 @@ impl SculptBrushUniform {
             tip: SculptTipStamp::Ball as u32,
             color: [0.0; 4],
             visible: 0,
-            knife_cross_share: KNIFE_CROSS_RADIUS_SHARE,
-            cylinder_plateau: CYLINDER_PLATEAU,
-            knife_axis_min_length: KNIFE_AXIS_MIN_LENGTH,
+            knife_cross_share: SCULPT_KNIFE_CROSS_SHARE,
+            cylinder_plateau: SCULPT_CYLINDER_PLATEAU,
+            knife_axis_min_length: KNIFE_AXIS_MIN_LENGTH as f32,
             edge_style: SculptFeedbackStyle::Solid as u32,
             padding_0: 0,
             padding_1: 0,
@@ -127,8 +132,7 @@ pub fn sculpt_footprint_field(
         f64::from(offset[2]),
     );
     let axis = DVec3::new(f64::from(axis[0]), f64::from(axis[1]), f64::from(axis[2]));
-    let axis =
-        (axis.is_finite() && axis.length() > f64::from(KNIFE_AXIS_MIN_LENGTH)).then_some(axis);
+    let axis = (axis.is_finite() && axis.length() > KNIFE_AXIS_MIN_LENGTH).then_some(axis);
     stamp_weight(tip, offset, offset.length(), axis, f64::from(radius)) as f32
 }
 

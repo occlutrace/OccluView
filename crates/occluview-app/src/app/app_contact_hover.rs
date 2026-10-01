@@ -5,14 +5,14 @@ use occluview_contact::{
     format_contact_value_in, ContactLengthUnit, ContactReading, ContactReadingKind,
 };
 
-use super::OccluViewApp;
+use super::SceneContext;
 use crate::contact::{field_value_at, reading_of};
 use crate::ui_theme;
 
 /// The chip's gap from the cursor, in points.
 const READOUT_OFFSET_PX: f32 = 14.0;
 
-impl OccluViewApp {
+impl SceneContext<'_> {
     /// Show the measured contact value under the pointer.
     pub(super) fn show_contact_hover(
         &mut self,

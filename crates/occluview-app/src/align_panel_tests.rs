@@ -79,6 +79,7 @@ fn panel_controls(
         let _ = super::show(
             &ctx,
             viewport,
+            egui::Id::new("align-panel-test-scene"),
             super::AlignPanelView {
                 tool: &tool,
                 layer_count: 2,
@@ -196,4 +197,102 @@ fn the_orientation_rule_is_disabled_while_a_fit_runs() {
         disabled_for(false),
         "a running fit must disable the orientation rule"
     );
+}
+
+/// Read the actual coarse-fit widget after its inputs change, including the
+/// busy/failure states which used to leave a valid pair looking unavailable.
+#[test]
+fn the_coarse_fit_button_recovers_after_busy_and_failed_frames() {
+    use crate::align_tool::{AlignPoint, AlignTool};
+    use glam::Vec3;
+    use occluview_core::{Mesh, Scene, SceneMesh, Vertex};
+
+    let mut scene = Scene::new();
+    for _ in 0..2 {
+        let mesh = Mesh::new(
+            None,
+            vec![
+                Vertex::at(Vec3::ZERO),
+                Vertex::at(Vec3::X),
+                Vertex::at(Vec3::Y),
+            ],
+            vec![0, 1, 2],
+        )
+        .expect("triangle mesh");
+        scene.add(SceneMesh::new(mesh));
+    }
+    let moving = scene.meshes()[0].id();
+    let fixed = scene.meshes()[1].id();
+    let locale = crate::i18n::LocaleManager::for_tests();
+    let target = format!(
+        "1. {}",
+        locale.tr(crate::i18n::message_id!("align-fit-perform"))
+    );
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    let mut observed_disabled = None;
+    let mut rendered_disabled = |tool: &AlignTool, busy: bool, failed: bool| {
+        let raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(400.0, 400.0),
+            )),
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(raw, |ui| {
+            let _ = super::fits(ui, tool, !busy && !failed, busy, &locale);
+        });
+        output.textures_delta.clear();
+        if let Some(update) = output.platform_output.accesskit_update {
+            if let Some((_, node)) = update
+                .nodes
+                .iter()
+                .find(|(_, node)| node.label() == Some(target.as_str()))
+            {
+                observed_disabled = Some(node.is_disabled());
+            }
+        }
+        observed_disabled.expect("the coarse-fit button must register with AccessKit")
+    };
+
+    let mut tool = AlignTool::default();
+    tool.arm();
+    assert!(rendered_disabled(&tool, false, false));
+    for local in [Vec3::ZERO, Vec3::X] {
+        tool.click(AlignPoint {
+            layer: moving,
+            local,
+            normal: Vec3::Z,
+        });
+        tool.click(AlignPoint {
+            layer: fixed,
+            local,
+            normal: Vec3::Z,
+        });
+        if tool.pairs().len() == 1 {
+            assert!(rendered_disabled(&tool, false, false));
+        }
+    }
+    for _ in 0..3 {
+        assert!(
+            !rendered_disabled(&tool, false, false),
+            "two complete pairs enable coarse fit"
+        );
+        assert!(
+            rendered_disabled(&tool, true, false),
+            "a running job owns the pair"
+        );
+        assert!(
+            !rendered_disabled(&tool, false, false),
+            "completion or cancellation releases the button"
+        );
+        assert!(
+            rendered_disabled(&tool, false, true),
+            "a dead worker cannot accept jobs"
+        );
+        assert!(
+            !rendered_disabled(&tool, false, false),
+            "worker replacement restores the button"
+        );
+    }
 }

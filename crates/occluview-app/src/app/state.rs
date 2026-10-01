@@ -1,50 +1,102 @@
-//! `OccluViewApp` itself: the root coordinator over owned state domains.
-//!
-//! Each domain lives in its own module with its invariants (see
-//! `state_render`, `state_document`, `state_persistence`); the root only
-//! orchestrates transitions across domains.
-//!
-//! State ownership by domain:
-//!
-//! - Document: [`DocumentState`].
-//! - Render: [`RenderState`]. Call sites name a semantic invalidation cause;
-//!   each render path consumes its own cursor, so camera-only redraws never
-//!   touch uploaded geometry.
-//! - Tools: [`ToolState`].
-//! - UI: [`UiState`].
-//! - Platform: [`PlatformState`].
-//! - Persistence: [`PersistenceState`].
-//!
+//! The root coordinates independent scene owners through explicit borrowed contexts.
+
 use super::information_dialog::InformationDialog;
 use super::state_document::DocumentState;
 use super::state_persistence::PersistenceState;
 use super::state_platform::{PlatformState, StartupHandles};
 use super::state_render::RenderState;
 use super::state_tool::ToolState;
-use super::state_ui::UiState;
+use super::state_ui::{SceneUiState, UiState};
+use super::workspace::commands::WorkspaceCommand;
+use super::workspace::id::{IdAllocator, PaneId, SceneEpoch, SceneKey};
+use super::workspace::loading::LoadCoordinator;
+use super::workspace::state::{SceneSummary, WorkspaceState};
 use super::{egui, home_camera_for_scene, CutTool, PathBuf};
 use crate::live_viewport::SharedLiveViewport;
+use std::collections::VecDeque;
 
-/// Global egui zoom changes the geometry of every widget. Keep it stable while
-/// a pointer gesture is active so the UI Scale slider cannot move under the
-/// pointer; the next frame after release applies the selected value.
 fn ui_scale_zoom_is_allowed(ctx: &egui::Context) -> bool {
     !ctx.input(|input| input.pointer.any_down())
 }
 
+pub(super) fn restore_sculpt_preferences(
+    ctx: &egui::Context,
+    scene_key: SceneKey,
+    settings: &mut crate::app_settings::Settings,
+) {
+    if !settings.remember_sculpt_brush {
+        settings.last_sculpt_tool = crate::sculpt_tool::SculptToolKind::default();
+        settings.last_sculpt_tip = crate::sculpt_tool::SculptTip::default();
+        crate::mesh_editor_overlay::set_sculpt_tip(ctx, scene_key, settings.last_sculpt_tip);
+        return;
+    }
+
+    let tip = settings.last_sculpt_tip;
+    let tip_index = match tip {
+        crate::sculpt_tool::SculptTip::Ball => 0,
+        crate::sculpt_tool::SculptTip::Knife => 1,
+        crate::sculpt_tool::SculptTip::Cylinder => 2,
+    };
+    crate::mesh_editor_overlay::set_sculpt_tip(ctx, scene_key, tip);
+    if let Some(share) = settings.sculpt_radius_share {
+        crate::mesh_editor_overlay::set_sculpt_radius_share(ctx, scene_key, share);
+    } else {
+        // Older settings only stored rounded millimetres. Seed the shared size
+        // from the active tip's saved radius without passing through Ball.
+        crate::mesh_editor_overlay::set_sculpt_radius_mm(
+            ctx,
+            scene_key,
+            tip,
+            settings.sculpt_radii_mm[tip_index],
+        );
+    }
+    for (kind, strength) in [
+        crate::sculpt_tool::SculptToolKind::AddRemove,
+        crate::sculpt_tool::SculptToolKind::Smooth,
+    ]
+    .into_iter()
+    .zip(settings.sculpt_strengths)
+    {
+        crate::mesh_editor_overlay::set_sculpt_strength(ctx, scene_key, kind, strength);
+    }
+}
+
 pub(crate) struct OccluViewApp {
-    /// Dialogs, transient presentation, notifications; see `state_ui`.
+    pub(super) workspace: WorkspaceState,
+    pub(super) loader: LoadCoordinator,
     pub(super) ui: UiState,
-    /// Renderer mirrors, caches, and invalidation cursors; see `state_render`.
-    pub(super) render: RenderState,
-    /// Scene content, selection, undo, and the load pipeline; see `state_document`.
-    pub(super) document: DocumentState,
-    /// Settings, paths, save/export coordination; see `state_persistence`.
     pub(super) persistence: PersistenceState,
-    /// Tool controllers and cross-tool arbitration; see `state_tool`.
-    pub(super) tools: ToolState,
-    /// Native handles and single-instance handoff; see `state_platform`.
     pub(super) platform: PlatformState,
+}
+
+/// A single scene's operations borrow their exact owner and shared services.
+/// No scene is installed into an active global slot to render or process work.
+pub(crate) struct SceneContext<'a> {
+    pub(super) scene_key: SceneKey,
+    pub(super) lifetime_epoch: &'a mut SceneEpoch,
+    pub(super) pane_id: PaneId,
+    pub(super) preserve_on_transfer_undo: &'a mut bool,
+    pub(super) document: &'a mut DocumentState,
+    pub(super) render: &'a mut RenderState,
+    pub(super) tools: &'a mut ToolState,
+    pub(super) scene_ui: &'a mut SceneUiState,
+    pub(super) ui: &'a mut UiState,
+    pub(super) persistence: &'a mut PersistenceState,
+    pub(super) platform: &'a mut PlatformState,
+    pub(super) loader: &'a mut LoadCoordinator,
+    pub(super) ids: &'a mut IdAllocator,
+    pub(super) commands: &'a mut VecDeque<WorkspaceCommand>,
+    pub(super) layer_drag: &'a mut Option<super::workspace::commands::LayerDragPayload>,
+    pub(super) scene_tab_rects: &'a mut Vec<(SceneKey, egui::Rect)>,
+    pub(super) scene_create_rect: &'a mut Option<egui::Rect>,
+    pub(super) workspace_rect: Option<egui::Rect>,
+    pub(super) saved_split: Option<super::workspace::layout::WorkspaceLayout>,
+    pub(super) scene_summaries: Vec<SceneSummary>,
+    pub(super) retained_scene_bytes: usize,
+    pub(super) append_blocked_scene_keys: Vec<SceneKey>,
+    pub(super) active_layer_count: usize,
+    pub(super) is_active: bool,
+    pub(super) input_allowed: bool,
 }
 
 impl OccluViewApp {
@@ -54,11 +106,7 @@ impl OccluViewApp {
         live_viewport: Option<SharedLiveViewport>,
         startup: StartupHandles,
     ) -> Self {
-        // UI scale is owned by settings, so egui's own keyboard zoom
-        // (Cmd+=/Cmd+-) would fight the per-frame `set_zoom_factor` and blink.
         repaint_ctx.options_mut(|options| options.zoom_with_keyboard = false);
-        // Single locale startup: sidecar preference → OS list → catalog.
-        // Runtime lives in `UiState`, sidecar retry in `PersistenceState`.
         let state_dir = crate::app_paths::app_state_dir();
         let (locale, locale_snapshot) = crate::i18n::LocaleManager::startup(
             state_dir.as_deref(),
@@ -70,29 +118,119 @@ impl OccluViewApp {
                 "language preference sidecar was unusable; using Auto/English"
             );
         }
+        let first_name = locale.tr_with(
+            crate::i18n::message_id!("workspace-scene-name"),
+            &[("number", "1")],
+        );
         let mut app = Self {
+            workspace: WorkspaceState::new(live_viewport, first_name),
+            loader: LoadCoordinator::default(),
             ui: UiState::new(repaint_ctx.clone(), locale),
-            render: RenderState::new(live_viewport),
-            document: DocumentState::new(),
             persistence: PersistenceState::new(),
-            tools: ToolState::new(),
             platform: PlatformState::new(repaint_ctx.clone(), startup),
         };
-        if app.persistence.settings.remember_sculpt_brush {
-            crate::mesh_editor_overlay::set_sculpt_size(
-                &app.ui.repaint_ctx,
-                app.persistence.settings.sculpt_size,
-            );
-            crate::mesh_editor_overlay::set_sculpt_intensity(
-                &app.ui.repaint_ctx,
-                app.persistence.settings.sculpt_intensity,
-            );
-        }
+        restore_sculpt_preferences(
+            &app.ui.repaint_ctx,
+            app.workspace.scenes[0].key,
+            &mut app.persistence.settings,
+        );
         if !startup_paths.is_empty() {
-            app.replace_paths(&startup_paths, "startup");
+            if let Some(mut scene) = app.active_context() {
+                scene.replace_paths(&startup_paths, "startup");
+            }
         }
         app
     }
+
+    pub(super) fn scene_context(&mut self, key: SceneKey) -> Option<SceneContext<'_>> {
+        let summaries = self.workspace.summaries();
+        let append_blocked_scene_keys = self
+            .workspace
+            .scenes
+            .iter()
+            .filter(|scene| {
+                scene.document.edit_mode.has_active_session()
+                    || scene.document.edit_mode.is_busy()
+                    || scene.document.unsaved_sculpt_stroke
+            })
+            .map(|scene| scene.key)
+            .collect();
+        let retained_scene_bytes = self.workspace.scenes.iter().fold(
+            self.workspace.history.borrow().used_bytes(),
+            |bytes, scene| {
+                bytes.saturating_add(scene.document.scene.as_deref().map_or(0, |scene| {
+                    usize::try_from(scene.estimated_memory_bytes()).unwrap_or(usize::MAX)
+                }))
+            },
+        );
+        let active_layer_count = self
+            .workspace
+            .scene(self.workspace.active_id())
+            .and_then(|scene| scene.document.scene.as_ref())
+            .map_or(0, |scene| scene.meshes().len());
+        let is_active = self.workspace.active_id() == key.id;
+        let window_focused = self.ui.repaint_ctx.input(|input| input.focused);
+        let input_allowed = window_focused
+            && is_active
+            && match self.workspace.input.route_pointer(None) {
+                super::workspace::input::PointerRoute::Target(target) => target.scene == key,
+                super::workspace::input::PointerRoute::Captured(owner) => {
+                    owner.target.scene == key && owner.kind.allows_viewport_input()
+                }
+                super::workspace::input::PointerRoute::Suppressed => false,
+            };
+        let scene = self
+            .workspace
+            .scenes
+            .iter_mut()
+            .find(|scene| scene.key == key)?;
+        Some(SceneContext {
+            scene_key: scene.key,
+            lifetime_epoch: &mut scene.key.epoch,
+            pane_id: scene.pane,
+            preserve_on_transfer_undo: &mut scene.preserve_on_transfer_undo,
+            document: &mut scene.document,
+            render: &mut scene.render,
+            tools: &mut scene.tools,
+            scene_ui: &mut scene.presentation,
+            ui: &mut self.ui,
+            persistence: &mut self.persistence,
+            platform: &mut self.platform,
+            loader: &mut self.loader,
+            ids: &mut self.workspace.ids,
+            commands: &mut self.workspace.commands,
+            layer_drag: &mut self.workspace.layer_drag,
+            scene_tab_rects: &mut self.workspace.scene_tab_rects,
+            scene_create_rect: &mut self.workspace.scene_create_rect,
+            workspace_rect: None,
+            saved_split: self.workspace.saved_split,
+            scene_summaries: summaries,
+            retained_scene_bytes,
+            append_blocked_scene_keys,
+            active_layer_count,
+            is_active,
+            input_allowed,
+        })
+    }
+
+    pub(super) fn active_context(&mut self) -> Option<SceneContext<'_>> {
+        let key = self.workspace.scene(self.workspace.active_id())?.key;
+        self.scene_context(key)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_for_tests(repaint_ctx: egui::Context) -> Self {
+        Self {
+            workspace: WorkspaceState::new(None, "Scene 1".to_owned()),
+            loader: LoadCoordinator::default(),
+            ui: UiState::new(repaint_ctx.clone(), crate::i18n::LocaleManager::for_tests()),
+            persistence: PersistenceState::for_tests(),
+            platform: PlatformState::for_tests(repaint_ctx),
+        }
+    }
+}
+
+impl SceneContext<'_> {
     /// Edit hotkeys, refused while a dialog is up.
     ///
     /// The callee is named `_unguarded` rather than `_impl` because it skips
@@ -103,7 +241,11 @@ impl OccluViewApp {
     pub(super) fn handle_edit_shortcuts(&mut self, ctx: &egui::Context) {
         // The bridge tool owns the scene while it is armed, which is not a
         // dialog and so is not part of the shared predicate.
-        if self.ui.modal_dialog_open() || self.tools.bridge_split_active() {
+        if !self.input_allowed
+            || self.ui.modal_dialog_open()
+            || ctx.egui_wants_keyboard_input()
+            || self.tools.bridge_split_active()
+        {
             return;
         }
         self.handle_edit_shortcuts_unguarded(ctx);
@@ -120,21 +262,11 @@ impl OccluViewApp {
 
     pub(super) fn request_camera_repaint(&mut self, ctx: &egui::Context) {
         self.render.invalidation.request_redraw();
-        self.document.mark_camera_modified();
-        ctx.request_repaint();
-    }
-
-    /// Construct an app without process-wide startup side effects for tests.
-    #[cfg(test)]
-    pub(crate) fn new_for_tests(repaint_ctx: egui::Context) -> Self {
-        Self {
-            ui: UiState::new(repaint_ctx.clone(), crate::i18n::LocaleManager::for_tests()),
-            render: RenderState::new(None),
-            document: DocumentState::new(),
-            persistence: PersistenceState::for_tests(),
-            tools: ToolState::new(),
-            platform: PlatformState::for_tests(repaint_ctx),
+        *self.preserve_on_transfer_undo = true;
+        if self.loader.has_work_for(self.scene_key) {
+            self.document.camera_modified_during_load = true;
         }
+        ctx.request_repaint();
     }
 
     pub(super) fn can_render_cut_view(&self) -> bool {
@@ -154,14 +286,6 @@ impl OccluViewApp {
         })
     }
 
-    #[cfg(not(windows))]
-    pub(super) fn schedule_linux_open_request_repaint(ctx: &egui::Context) {
-        ctx.request_repaint_after(super::LINUX_OPEN_REQUEST_REPAINT_INTERVAL);
-    }
-
-    #[cfg(windows)]
-    pub(super) fn schedule_linux_open_request_repaint(_ctx: &egui::Context) {}
-
     /// Render the information route that was active at the start of this UI
     /// pass. A selection inside About therefore replaces it on the following
     /// frame instead of briefly stacking two modal backdrops.
@@ -180,68 +304,175 @@ impl OccluViewApp {
 
 impl eframe::App for OccluViewApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.workspace.retired_frame_textures.clear();
         self.ui.sync_native_title(ctx);
-        // Sync the brush sliders into settings before persisting, so a close
-        // request that flushes the debounce is written by the save on this same
-        // frame. With the save first, the flushed value would wait for the next
-        // frame, which a closing window does not get.
-        self.persistence.sync_sculpt_preferences(ctx);
+        if let Some(active) = self.workspace.scene(self.workspace.active_id()) {
+            self.persistence.sync_sculpt_preferences(ctx, active.key);
+        }
         self.persistence.persist_settings_if_due(ctx);
         let preference = self.ui.locale.snapshot().preference.clone();
         self.persistence.persist_language_if_due(ctx, &preference);
-        self.ui.expire_status_message(ctx);
-        Self::schedule_linux_open_request_repaint(ctx);
-        self.process_scene_loads(ctx);
-        self.poll_sculpt_preparation(ctx);
-        self.poll_sculpt_worker(ctx);
-        self.settle_sculpt_work_marker();
-        self.handle_open_requests(ctx);
-        self.finish_foreground_pulse_if_due(ctx);
+        SceneContext::schedule_linux_open_request_repaint(ctx);
+        self.loader.reap_retired(&self.workspace.keys());
+        for key in self.workspace.keys() {
+            if let Some(mut scene) = self.scene_context(key) {
+                scene.scene_ui.expire_status_message(ctx);
+                scene.process_scene_loads(ctx);
+                scene.poll_sculpt_preparation(ctx);
+                scene.poll_sculpt_worker(ctx);
+                scene.settle_sculpt_work_marker();
+                scene.drain_align_worker(ctx);
+                scene.drain_contacts_worker(ctx);
+                scene.poll_bridge_split_worker(ctx);
+            }
+        }
+        if let Some(active) = self.workspace.scene(self.workspace.active_id()) {
+            if self.workspace.input.active().scene != active.key {
+                self.workspace.input = super::workspace::input::InputArbiter::new(active.target());
+            }
+        }
+        if let Some(mut scene) = self.active_context() {
+            scene.handle_open_requests(ctx);
+            scene.finish_foreground_pulse_if_due(ctx);
+        }
         self.persistence.update_notice.poll(ctx);
-        self.intercept_unsaved_close(ctx);
+        self.intercept_workspace_close(ctx);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         crate::ui_theme::set_active(self.persistence.settings.theme);
         ctx.set_visuals(super::viewer_visuals(self.persistence.settings.theme));
-        // UI scale rides egui's zoom factor: a multiplier over the platform's
-        // own pixel density, so HiDPI setups keep their native baseline.
         let target_ui_scale = self.persistence.settings.ui_scale();
         if ui_scale_zoom_is_allowed(&ctx) && (ctx.zoom_factor() - target_ui_scale).abs() > 1e-3 {
             ctx.set_zoom_factor(target_ui_scale);
         }
-        // Before anything can draw — and therefore before egui's own Escape
-        // handling can close a popup — record whether one was up. Every consumer
-        // of `modal_dialog_open()` this frame then sees the frame the operator
-        // saw, not one already disarmed by this frame's draw.
         self.ui.popup_open_at_frame_start = egui::Popup::is_any_open(&ctx);
-        self.handle_dropped_files(&ctx);
-        self.release_viewport_orbit_cursor_if_inactive(&ctx);
-        self.render_pending_frame(&ctx);
-        self.handle_edit_shortcuts(&ctx);
-        self.show_toolbar(ui);
-        self.maybe_render_cut_view(&ctx);
-        self.show_central_panel(ui);
-        if self.ui.open_dialog_requested {
-            self.ui.open_dialog_requested = false;
-            self.open_files_dialog();
+        self.ui.scene_report_open = self
+            .workspace
+            .scenes
+            .iter()
+            .any(|scene| scene.presentation.repair_report.is_open());
+        if let Some(mut scene) = self.active_context() {
+            scene.release_viewport_orbit_cursor_if_inactive(&ctx);
+            scene.show_toolbar(ui);
         }
-        // Sync camera changes after viewport input so the live paint callback
-        // uses the current frame's pose.
-        self.render_pending_frame(&ctx);
-        // Surface GPU faults before drawing the error dialog.
-        if self.poll_gpu_errors() {
-            // The fault was recorded by the previous submit. Request another
-            // frame so the fail-closed callback and the operator-facing dialog
-            // are both visible even when the normal repaint loop is idle.
-            ctx.request_repaint();
+        self.show_workspace(ui);
+        self.apply_workspace_commands(&ctx);
+        for key in self.visible_scene_keys(&ctx) {
+            if let Some(mut scene) = self.scene_context(key) {
+                scene.render_pending_frame(&ctx);
+                if scene.poll_gpu_errors() {
+                    ctx.request_repaint();
+                }
+            }
         }
-        self.show_error_dialog(&ctx);
-        self.show_information_dialog(&ctx);
-        self.ui.repair_report.ui(&ctx, &self.ui.locale);
+        for key in self.workspace.keys() {
+            if let Some(mut scene) = self.scene_context(key) {
+                if scene.scene_ui.open_dialog_requested {
+                    scene.scene_ui.open_dialog_requested = false;
+                    scene.open_files_dialog();
+                }
+            }
+        }
+        if let Some(mut scene) = self.active_context() {
+            scene.show_error_dialog(&ctx);
+            scene.show_information_dialog(&ctx);
+        }
+        for scene in &mut self.workspace.scenes {
+            scene.presentation.repair_report.ui(&ctx, &self.ui.locale);
+        }
         self.persistence.update_notice.show(&ctx, &self.ui.locale);
-        self.show_unsaved_close_guard(&ctx);
-        self.guard_pending_replace_open(&ctx);
+        self.show_workspace_close_guard(&ctx);
+        if let Some(key) = self
+            .ui
+            .pending_replace_open
+            .as_ref()
+            .map(|pending| pending.scene_key)
+        {
+            if let Some(mut scene) = self.scene_context(key) {
+                scene.guard_pending_replace_open(&ctx);
+            } else {
+                self.ui.pending_replace_open = None;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "Persisted catalog values are exact slider values."
+    )]
+    fn sculpt_preferences_restore_selected_tip_radius_and_tool_values() {
+        let ctx = egui::Context::default();
+        let mut settings = crate::app_settings::Settings::default();
+        settings.last_sculpt_tool = crate::sculpt_tool::SculptToolKind::Smooth;
+        settings.last_sculpt_tip = crate::sculpt_tool::SculptTip::Knife;
+        settings.sculpt_radii_mm = [0.75, 1.0, 0.7];
+        settings.sculpt_radius_share = Some(0.155_555_56);
+        settings.sculpt_strengths = [0.4, 0.3];
+
+        restore_sculpt_preferences(&ctx, SceneKey::INITIAL, &mut settings);
+
+        assert_eq!(
+            crate::mesh_editor_overlay::sculpt_tip(&ctx, SceneKey::INITIAL),
+            crate::sculpt_tool::SculptTip::Knife
+        );
+        assert_eq!(
+            crate::mesh_editor_overlay::sculpt_radius_mm(
+                &ctx,
+                SceneKey::INITIAL,
+                crate::sculpt_tool::SculptTip::Knife
+            ),
+            0.6,
+            "the exact normalized share takes precedence over the rounded snapshots"
+        );
+        assert_eq!(
+            crate::mesh_editor_overlay::sculpt_radius_mm(
+                &ctx,
+                SceneKey::INITIAL,
+                crate::sculpt_tool::SculptTip::Ball
+            ),
+            0.85
+        );
+        assert_eq!(
+            crate::mesh_editor_overlay::sculpt_strength(
+                &ctx,
+                SceneKey::INITIAL,
+                crate::sculpt_tool::SculptToolKind::Smooth
+            ),
+            0.3
+        );
+
+        let legacy_ctx = egui::Context::default();
+        let mut legacy_settings = crate::app_settings::Settings::default();
+        legacy_settings.last_sculpt_tip = crate::sculpt_tool::SculptTip::Knife;
+        legacy_settings.sculpt_radii_mm = [0.75, 0.6, 0.5];
+        restore_sculpt_preferences(&legacy_ctx, SceneKey::INITIAL, &mut legacy_settings);
+        assert_eq!(
+            crate::mesh_editor_overlay::sculpt_radius_mm(
+                &legacy_ctx,
+                SceneKey::INITIAL,
+                crate::sculpt_tool::SculptTip::Knife
+            ),
+            0.6,
+            "legacy millimetres seed the share through the remembered tip"
+        );
+
+        settings.remember_sculpt_brush = false;
+        restore_sculpt_preferences(&ctx, SceneKey::INITIAL, &mut settings);
+        assert_eq!(
+            settings.last_sculpt_tool,
+            crate::sculpt_tool::SculptToolKind::AddRemove
+        );
+        assert_eq!(
+            crate::mesh_editor_overlay::sculpt_tip(&ctx, SceneKey::INITIAL),
+            crate::sculpt_tool::SculptTip::Ball
+        );
     }
 }

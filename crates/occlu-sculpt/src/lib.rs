@@ -49,8 +49,8 @@ mod surface_topology;
 mod tip_stamp;
 
 pub use fairing::{
-    fair_selection, fair_selection_with_constraint, smoothing_scale_mm, FairingContact,
-    FairingContactStats, FairingScratch, FairingSurface,
+    fair_selection, fair_selection_preserving, fair_selection_with_constraint, smoothing_scale_mm,
+    FairingContact, FairingContactStats, FairingScratch, FairingSurface,
 };
 pub use flatten::{flatten_displacement, FlattenSurface};
 

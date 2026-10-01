@@ -41,7 +41,19 @@ use super::{Orientation, RefineSettings, DENSE_BUDGET, MIN_REFINEMENT_COVERAGE_F
 /// one of the two medians to meet this limit admits intentional changes while
 /// refusing that false partial fit. Rival comparison handles low-residual
 /// wrong basins whose two medians overlap the correct range.
-const MAX_VERIFIED_MEDIAN_MM: f64 = 0.05;
+pub(super) const MAX_VERIFIED_MEDIAN_MM: f64 = 0.05;
+
+/// Whether the *whole* surface agrees within scan tolerance.
+///
+/// A confirmed unchanged region is what lets a heavy trimmed residual tail be
+/// read as an intentionally changed region rather than a wrong basin: the
+/// operator's pre- and post-treatment pair seats its unchanged 95 % at a
+/// 0.023 mm median while the operated patch drags the trimmed tail to 0.056 mm.
+/// A pair with no such confirmation has no region to seat on, so its tail has
+/// to be tight.
+pub(super) fn unchanged_region_confirms(median_mm: f64) -> bool {
+    median_mm.is_finite() && median_mm <= MAX_VERIFIED_MEDIAN_MM
+}
 
 /// Smallest stability the tightly seated part must reach. Correct real crop
 /// fits measure at least 0.002847, while a perfectly symmetric cylinder has
@@ -56,11 +68,16 @@ const MIN_VERIFIED_STABILITY: f64 = 0.0005;
 /// median must meet the 0.05 mm scan-agreement limit. This admits a changed
 /// arch when its unchanged region fits, but rejects a partial pair whose two
 /// medians both exceed scan agreement.
-pub(super) fn verification_holds(verification: &Verification, solve_median_mm: f64) -> bool {
+pub(super) fn verification_holds(
+    verification: &Verification,
+    solve_median_mm: f64,
+    support_coverage: f64,
+) -> bool {
     verification.coverage.is_finite()
-        && verification.coverage >= MIN_REFINEMENT_COVERAGE_FRACTION
+        && support_coverage.is_finite()
+        && support_coverage >= MIN_REFINEMENT_COVERAGE_FRACTION
         && verification.median_mm.is_finite()
-        && (verification.median_mm <= MAX_VERIFIED_MEDIAN_MM
+        && (unchanged_region_confirms(verification.median_mm)
             || solve_median_mm.is_finite() && solve_median_mm <= MAX_VERIFIED_MEDIAN_MM)
         && verification.stability.is_finite()
         && verification.stability >= MIN_VERIFIED_STABILITY

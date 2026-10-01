@@ -279,6 +279,7 @@ impl SculptSession {
         let triangles = &self.tris;
         let face_slots = &self.normal_face_slots;
         let face_normals = &self.normal_display_faces;
+        let brush_normals = &self.brush_normals;
         for &group in scope {
             for &triangle in topology.incident_triangles(group) {
                 let offset = triangle as usize * 3;
@@ -313,6 +314,19 @@ impl SculptSession {
                     display_normals[offset + 2],
                 )
                 .normalize_or_zero();
+                // A vertex whose incident faces are all filtered out of the
+                // display field accumulates nothing, and publishing that zero
+                // shades it as a spike. Fall back to the welded brush normal,
+                // which is the geometry the brush itself works from.
+                let normal = if normal.length_squared() > f32::EPSILON {
+                    normal
+                } else {
+                    brush_normals
+                        .get(offset..offset + 3)
+                        .map_or(Vec3::ZERO, |normal| {
+                            Vec3::new(normal[0], normal[1], normal[2]).normalize_or_zero()
+                        })
+                };
                 display_normals[offset..offset + 3].copy_from_slice(&normal.to_array());
             }
             output.resize(members.len(), Vec3::ZERO);

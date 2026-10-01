@@ -26,11 +26,11 @@ impl TipStamp {
 }
 
 /// Cylinder plateau as a share of the brush radius.
-pub const CYLINDER_PLATEAU: f32 = 0.8;
+pub const CYLINDER_PLATEAU: f64 = 0.8;
 /// Transverse knife reach relative to its along-stroke radius.
-pub const KNIFE_CROSS_RADIUS_SHARE: f32 = 0.55;
+pub const KNIFE_CROSS_RADIUS_SHARE: f64 = 0.55;
 /// Minimum stroke-axis length that still defines a knife bearing.
-pub const KNIFE_AXIS_MIN_LENGTH: f32 = 1e-12;
+pub const KNIFE_AXIS_MIN_LENGTH: f64 = 1e-12;
 
 /// Spherical stamp falloff: `t^2` for `t = 1 - d/r`.
 #[must_use]
@@ -52,8 +52,8 @@ pub fn knife_weight(offset: DVec3, axis: Option<DVec3>, radius_mm: f64) -> f64 {
     if !offset.is_finite() {
         return 0.0;
     }
-    let cross_share = f64::from(KNIFE_CROSS_RADIUS_SHARE);
-    let minimum_axis_length = f64::from(KNIFE_AXIS_MIN_LENGTH);
+    let cross_share = KNIFE_CROSS_RADIUS_SHARE;
+    let minimum_axis_length = KNIFE_AXIS_MIN_LENGTH;
     let Some(axis) = axis.filter(|value| value.is_finite() && value.length() > minimum_axis_length)
     else {
         return ball_weight(offset.length(), radius_mm * cross_share.sqrt());
@@ -78,7 +78,7 @@ pub fn cylinder_weight(distance_mm: f64, radius_mm: f64) -> f64 {
     {
         return 0.0;
     }
-    let plateau = radius_mm * f64::from(CYLINDER_PLATEAU);
+    let plateau = radius_mm * CYLINDER_PLATEAU;
     if distance_mm <= plateau {
         return 1.0;
     }
