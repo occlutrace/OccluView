@@ -175,7 +175,7 @@ remain in the Git history.
   had already discarded. A finished reading now has to name the measurement it
   answers and is applied only against those surfaces as they stand now.
 - Align Scans presents rough point alignment before nearby surface refinement. Refinement now stays within the selected correspondence radius instead of launching a global feature search from an already placed scan.
-- The heatmap opens at 0.05–0.20 mm. Its cool and hot limits are editable above and below the colour legend.
+- The heatmap opens at 0.00–0.10 mm. Its cool and hot limits are editable above and below the colour legend.
 - In Mesh Editing, keys 1 and 2 open the Sculpt tab with Add/Remove and Smooth respectively. The sculpt cursor appears as soon as the background picking tree is ready, before brush preparation finishes.
 - Modal text and Mesh Editing headings use readable ink in the light theme.
 - A scan moved by hand in Align Scans and put back before the mouse is released
