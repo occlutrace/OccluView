@@ -488,7 +488,7 @@ fn a_huge_coincident_vertex_group_keeps_finite_normals() {
 
 /// Wall-clock smoke for the quadratic regression. Ignored by default; run it
 /// deliberately with
-/// `cargo test -p occlu-mesh-edit --lib -- --ignored stays_linear_perf_smoke`.
+/// `cargo test -p occluview-mesh-edit --lib -- --ignored stays_linear_perf_smoke`.
 ///
 /// Measured in the test profile at this group size: about 820 ms pairwise against
 /// about 16 ms once the group is clustered, so a 300 ms threshold sits between the

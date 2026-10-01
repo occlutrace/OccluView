@@ -10,6 +10,7 @@
     "occluview-render",
     "occluview-core",
     "occlu-mesh-edit",
+    "occluview-mesh-edit",
     "occlu-geometry-math",
     "occluview-geometry-math"
   ],

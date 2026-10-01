@@ -1,7 +1,7 @@
 # occluview-geometry-math — product-neutral shared geometry constants and math.
 #
 # Bottom layer of the workspace: it imports no other workspace crate, only glam.
-# `occlu-mesh-edit`, `occluview-core` and `occluview-hps` share from it the
+# `occluview-mesh-edit`, `occluview-core` and `occluview-hps` share from it the
 # tolerances that decide which vertices weld and which facets shade, so the
 # three cannot disagree about them.
 [package]

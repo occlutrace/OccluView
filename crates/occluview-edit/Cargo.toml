@@ -1,12 +1,12 @@
 # occluview-edit — mesh-editing façade over the product-neutral
-# `occlu-mesh-edit` kernel. It adapts kernel buffers to `occluview-core` meshes
+# `occluview-mesh-edit` kernel. It adapts kernel buffers to `occluview-core` meshes
 # and owns the world-space bridge split and the scene section assembly, so the
 # core data model stays free of the editing kernel.
 # Layering: depends on occluview-core (rank 1); the optional `robust-csg`
 # feature adds the isolated native CSG fallback.
 [package]
 name = "occluview-edit"
-description = "Mesh-editing façade for OccluView: adapts occlu-mesh-edit to the core mesh model."
+description = "Core-mesh editing façade for OccluView: adapts the occluview-mesh-edit kernel to core meshes."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -24,7 +24,7 @@ workspace = true
 
 [dependencies]
 occluview-core = { workspace = true }
-occlu-mesh-edit = { workspace = true }
+occluview-mesh-edit = { workspace = true }
 occluview-robust-csg = { workspace = true, optional = true }
 glam = { workspace = true }
 thiserror = { workspace = true }

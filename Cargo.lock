@@ -2614,17 +2614,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "occlu-mesh-edit"
-version = "1.2.1"
-dependencies = [
- "earcutr",
- "glam",
- "occluview-geometry-math",
- "rayon",
- "thiserror 2.0.21",
-]
-
-[[package]]
 name = "occlu-sculpt"
 version = "1.2.1"
 dependencies = [
@@ -2730,8 +2719,8 @@ name = "occluview-edit"
 version = "1.2.1"
 dependencies = [
  "glam",
- "occlu-mesh-edit",
  "occluview-core",
+ "occluview-mesh-edit",
  "occluview-robust-csg",
  "thiserror 2.0.21",
 ]
@@ -2784,6 +2773,17 @@ dependencies = [
  "fluent-bundle",
  "sys-locale",
  "unic-langid",
+]
+
+[[package]]
+name = "occluview-mesh-edit"
+version = "1.2.1"
+dependencies = [
+ "earcutr",
+ "glam",
+ "occluview-geometry-math",
+ "rayon",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

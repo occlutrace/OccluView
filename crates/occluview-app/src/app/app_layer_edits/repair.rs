@@ -1,4 +1,4 @@
-//! One-click Repair mesh executor: runs the full occlu-mesh-edit repair
+//! One-click Repair mesh executor: runs the full occluview-mesh-edit repair
 //! pipeline (weld / slivers / duplicates / non-manifold / orientation /
 //! debris / pinholes) on a whole layer as one undo step. A content no-op leaves
 //! the mesh untouched, and a per-pass status line reports only what happened.

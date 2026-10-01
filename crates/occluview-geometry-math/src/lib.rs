@@ -3,7 +3,7 @@
 //! This is the bottom layer of the workspace: it imports nothing but glam, and
 //! higher-level OccluView crates may depend on it without creating cycles. The
 //! constants here decide which vertices weld and which facets shade. They are
-//! defined once and shared by `occlu-mesh-edit`, `occluview-core` and
+//! defined once and shared by `occluview-mesh-edit`, `occluview-core` and
 //! `occluview-hps`, so the three crates cannot diverge on those thresholds.
 
 #![forbid(unsafe_code)]
@@ -93,7 +93,7 @@ fn average_duplicate_normal_clusters(
 /// 10 um sliver.
 ///
 /// A facet is degenerate when its area falls below this fraction of its own
-/// longest edge squared. `DEGENERATE_SIN` in `occlu-mesh-edit`'s repair module
+/// longest edge squared. `DEGENERATE_SIN` in `occluview-mesh-edit`'s repair module
 /// is a different threshold (a relative-sine test, `f64 = 1e-5`) and must not
 /// be merged with this one.
 pub const DEGENERATE_AREA_SIN: f32 = 1e-10;
@@ -138,7 +138,7 @@ pub const MAX_PAIRWISE_DUPLICATE_GROUP: usize = 256;
 pub const MAX_DUPLICATE_CLUSTERS: usize = 16;
 
 /// Dot-product threshold for two normals to count as the same direction when
-/// averaging a coincident-position group. Shared by `occlu-mesh-edit` and
+/// averaging a coincident-position group. Shared by `occluview-mesh-edit` and
 /// `occluview-core` so both apply the same threshold.
 pub const DUPLICATE_NORMAL_DOT: f32 = 0.5;
 
