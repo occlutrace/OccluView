@@ -2,7 +2,10 @@
 //!
 //! The pipeline has three stages:
 //! 1. Align clicked surface point pairs with a rigid fit.
-//! 2. Refine the pose with trimmed point-to-plane ICP.
+//! 2. Refine the pose with trimmed point-to-plane ICP. Unless the start is
+//!    already seated, refinement first tries a global feature seed, then
+//!    decides the pose with a rival-basin pass and a trust gate that can
+//!    refuse it — all three decide the result.
 //! 3. Produce signed deviations along the fixed surface normal.
 //!
 //! # What the deviation number means
@@ -29,9 +32,11 @@
 //!
 //! The alignment kernels depend only on product-neutral surface queries and
 //! numeric libraries: plain slices in, plain values out. They never allocate
-//! unboundedly, never panic on hostile input, and are deterministic — no RNG,
-//! fixed iteration counts, ordered reductions — so the same input yields
-//! bit-identical output across runs and thread counts.
+//! unboundedly, never panic on hostile input, and are deterministic —
+//! deterministically seeded RNG, fixed iteration counts, ordered reductions —
+//! so the same input yields bit-identical output across runs and thread counts.
+//! The feature seed is the stage whose cost is not bounded by sample count: it
+//! runs a fixed RANSAC trial budget over its own seeded draws.
 //!
 //! Units are millimetres. Every transform is rigid: dental scans are metric,
 //! so a scale difference is *detected and reported*, never fitted away.
