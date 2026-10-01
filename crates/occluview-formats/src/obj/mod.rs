@@ -6,7 +6,7 @@
 //! - `v x y z [r g b]` - vertex position, optionally followed by 3 integer
 //!   color channels in `0..=255` (a non-standard but widely-emitted extension;
 //!   dental CAD software and several scanners write it). We honor those colors.
-//! - `vt u [v]` - texture coordinate (parsed, currently unused).
+//! - `vt u [v]` - texture coordinate (parsed and attached to the matching vertex).
 //! - `vn x y z` - vertex normal (parsed and attached to the matching vertex).
 //! - `f a b c ...` - polygonal face; indices are 1-based, may carry
 //!   `/vt/vn` suffixes. We fan-triangulate polygons with `>3` corners.
@@ -132,7 +132,6 @@ pub(crate) fn read_admitted(
     let mut normals: Vec<Vec3> = Vec::new();
     // Parallel to positions; true where a vertex carries a color.
     let mut colors: Vec<[u8; 4]> = Vec::new();
-    let mut has_any_color = false;
     // Texture coordinates (vt lines).
     let mut texcoords: Vec<[f32; 2]> = Vec::new();
     let mut builder = MeshBuilder::new()
@@ -157,7 +156,6 @@ pub(crate) fn read_admitted(
                 let (pos, color) = parse::vertex_line(&mut tokens, line_no, line)?;
                 positions.push(pos);
                 if let Some(c) = color {
-                    has_any_color = true;
                     colors.push(c);
                 } else {
                     colors.push([255, 255, 255, 255]);
@@ -220,6 +218,5 @@ pub(crate) fn read_admitted(
         builder = builder.as_point_cloud();
     }
 
-    let _ = has_any_color; // builder records colors per-vertex; nothing to do here.
     shading.build(builder).map_err(FormatError::Core)
 }
