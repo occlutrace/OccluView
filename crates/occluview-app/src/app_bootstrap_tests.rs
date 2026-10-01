@@ -542,6 +542,35 @@ fn a_crash_report_never_carries_a_scan_path() {
     );
 }
 
+/// The crash ring is attached to public issues and support bundles, so a
+/// tracing field that carries a path must be masked before the ring records
+/// it. The event is planted the way a future regression would write it.
+#[test]
+fn a_path_shaped_field_never_reaches_the_crash_buffer() {
+    // Unique so a line from a parallel test cannot match, and separator-bearing
+    // so the value is path-shaped even without the field name.
+    let secret = "patients/1980-surname-firstname/scan.stl";
+
+    let subscriber = tracing_subscriber::registry().with(CrashLogLayer);
+    tracing::subscriber::with_default(subscriber, || {
+        tracing::warn!(path = %secret, "planted path field");
+    });
+
+    let buffer = recent_log_lines();
+    assert!(
+        !buffer.contains(secret),
+        "a path-shaped field must not reach the crash buffer: {buffer}"
+    );
+    assert!(
+        !buffer.contains("surname-firstname"),
+        "the file name identifies the case and must be masked with the path: {buffer}"
+    );
+    assert!(
+        buffer.contains("path=<redacted>"),
+        "the masked field stays visible so the ring still reads: {buffer}"
+    );
+}
+
 /// Where the installer keeps the shell entries this build ships.
 #[cfg(target_os = "linux")]
 fn installed_shell_entry(name: &str) -> String {

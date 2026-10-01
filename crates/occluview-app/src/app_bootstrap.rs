@@ -515,6 +515,36 @@ struct CrashLogVisitor {
     path_count: Option<String>,
 }
 
+/// A field value that names a location on disk. The crash ring is written to
+/// `crashes/` and shipped in support bundles, so a path-shaped value is masked
+/// before it is recorded: a scan's path names the case it belongs to.
+fn is_path_shaped(rendered: &str) -> bool {
+    let value = rendered.trim_matches('"');
+    value.contains('/') || value.contains('\\')
+}
+
+/// Field names that name a case even without a separator, because a bare file
+/// name is already the scan's identifier.
+fn is_path_field_name(name: &str) -> bool {
+    matches!(
+        name,
+        "path"
+            | "file"
+            | "file_name"
+            | "filename"
+            | "file_path"
+            | "filepath"
+            | "dir"
+            | "directory"
+            | "folder"
+            | "scan"
+            | "scan_path"
+            | "patient"
+            | "patient_name"
+            | "case_path"
+    )
+}
+
 impl tracing::field::Visit for CrashLogVisitor {
     fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
         use std::fmt::Write as _;
@@ -522,11 +552,16 @@ impl tracing::field::Visit for CrashLogVisitor {
             let rendered = format!("{value:?}");
             self.message = Some(rendered.trim_matches('"').to_owned());
             let _ = write!(self.text, " {rendered}");
+            return;
+        }
+        let rendered = format!("{value:?}");
+        if field.name() == "path_count" {
+            self.path_count = Some(rendered.clone());
+        }
+        if is_path_field_name(field.name()) || is_path_shaped(&rendered) {
+            let _ = write!(self.text, " {}=<redacted>", field.name());
         } else {
-            if field.name() == "path_count" {
-                self.path_count = Some(format!("{value:?}"));
-            }
-            let _ = write!(self.text, " {}={value:?}", field.name());
+            let _ = write!(self.text, " {}={rendered}", field.name());
         }
     }
 }
