@@ -5,6 +5,7 @@
 
 pub mod error;
 pub mod fast_thumb;
+pub mod fidelity;
 mod offscreen_factory;
 pub mod placeholder;
 pub mod render_thumb;
