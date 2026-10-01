@@ -6,7 +6,7 @@
 )]
 
 use super::app_layer_edits;
-use super::app_mesh_export::{
+use super::mesh_edit::export::{
     automatic_export_format, default_layer_export_directory, default_layer_export_stem,
 };
 use super::app_test_support::{named_scene, push_named_layer, scene_names, test_app};

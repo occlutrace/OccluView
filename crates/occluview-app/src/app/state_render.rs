@@ -11,7 +11,7 @@
 //! - `rendered` is the last presented frame; `render_extent_px` sizes it.
 //!
 //! Permitted mutation entry points: [`RenderState::new`] for bootstrap, the
-//! render pipeline in `app_render.rs` operating on `&mut RenderState`, and
+//! render pipeline in `render` operating on `&mut RenderState`, and
 //! root orchestration naming a semantic invalidation cause. Worker inputs
 //! arrive as sculpt shadow uploads through the tool→render flush; the
 //! prepared scenes are the cross-domain output the viewport consumes.

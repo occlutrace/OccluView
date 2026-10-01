@@ -5,7 +5,7 @@
 //! `align: AlignState` field.
 //!
 //! The struct is a plain field container; the methods that act on it are
-//! `impl OccluViewApp` blocks in `app_align*.rs` and `align_*.rs` that access
+//! `impl OccluViewApp` blocks in `app/align/*.rs` and `align_*.rs` that access
 //! the fields through `self.align.<field>`.
 
 use crate::align::align_brush::AlignBrush;
@@ -15,8 +15,8 @@ use crate::align::align_markings::AlignMarkings;
 use crate::align::align_panel::AlignTab;
 use crate::align::align_tool::AlignTool;
 use crate::align::align_worker::{AlignSettings, AlignWorker};
-use crate::app::app_align_display::AlignOverlay;
-use crate::app::app_align_drag::AlignDrag;
+use crate::app::align::display::AlignOverlay;
+use crate::app::align::drag::AlignDrag;
 use glam::Affine3A;
 use occluview_align::DeviationStats;
 use occluview_core::SceneMeshId;

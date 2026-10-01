@@ -1,7 +1,7 @@
 use super::app_guard_dialog::{show_guard_dialog, GuardDialogAction, GuardDialogSpec};
 use super::app_help::render_contextual_hint;
 use super::app_recent_popup::RecentFilesAction;
-use super::app_settings_panel::{settings_popup_id, show_settings_toolbar_toggle};
+use super::settings::panel::{settings_popup_id, show_settings_toolbar_toggle};
 use super::information_dialog::InformationDialog;
 use super::{load_app_logo_color_image, status_overlay_rect, PathBuf, OPEN_DIALOG_EXTENSIONS};
 use super::{AppErrorAction, SceneContext};
@@ -664,8 +664,8 @@ impl SceneContext<'_> {
         }
         if do_save {
             match self.save_edited_layers_flow() {
-                super::app_mesh_export::SaveEditedLayersOutcome::AllSaved
-                | super::app_mesh_export::SaveEditedLayersOutcome::NothingToSave => {
+                super::mesh_edit::export::SaveEditedLayersOutcome::AllSaved
+                | super::mesh_edit::export::SaveEditedLayersOutcome::NothingToSave => {
                     if let Some(pending) = self.ui.pending_replace_open.take() {
                         self.replace_paths_confirmed(
                             &pending.paths,
@@ -677,7 +677,7 @@ impl SceneContext<'_> {
                 // A cancelled export dialog or a failed write keeps the open
                 // parked so the operator can retry — never open on top of edits
                 // they believe are saved.
-                super::app_mesh_export::SaveEditedLayersOutcome::Aborted => {}
+                super::mesh_edit::export::SaveEditedLayersOutcome::Aborted => {}
             }
         }
     }

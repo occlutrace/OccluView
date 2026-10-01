@@ -67,7 +67,7 @@ impl DocumentDraft {
             .as_deref()
             .cloned()
             .unwrap_or_else(Scene::new);
-        let paths = crate::app::app_scene_commit::reconcile_scene_paths(
+        let paths = crate::app::scene::commit::reconcile_scene_paths(
             &scene,
             &document.current_paths,
             &scene,
@@ -741,7 +741,7 @@ impl OccluViewApp {
             .scene
             .as_deref()
             .ok_or_else(|| "The source scene has no layers to move.".to_owned())?;
-        let source_paths = crate::app::app_scene_commit::reconcile_scene_paths(
+        let source_paths = crate::app::scene::commit::reconcile_scene_paths(
             source_scene,
             &from.document.current_paths,
             source_scene,
