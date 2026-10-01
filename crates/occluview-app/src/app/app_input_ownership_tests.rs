@@ -2,8 +2,8 @@
 //! pointer gestures reach a tool, and what happens to work already in flight
 //! when another tool takes over.
 //!
-//! A `#[cfg(test)]` child module of `app_sculpt.rs` and `app_align.rs`, so it
-//! drives the real hotkey and drag entry points rather than copies of them.
+//! A `#[cfg(test)]` sibling of `sculpt` and `align`, so it drives the real
+//! hotkey and drag entry points rather than copies of them.
 #![allow(
     clippy::cast_precision_loss,
     clippy::expect_used,

@@ -1,7 +1,7 @@
 #![allow(clippy::expect_used, clippy::panic)]
 
-use super::app_align_drag::AlignDrag;
-use super::app_mesh_export::PendingLayerExports;
+use super::align::drag::AlignDrag;
+use super::mesh_edit::export::PendingLayerExports;
 use super::app_test_support::{named_scene, push_named_layer, test_app};
 use super::layers_overlay::LayerOverlayChanges;
 use super::workspace::commands::SplitSide;

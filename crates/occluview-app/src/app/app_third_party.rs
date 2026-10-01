@@ -1,7 +1,7 @@
 //! The Third-party licenses modal: the generated THIRD-PARTY-NOTICES.md,
 //! readable in place from the About dialog.
 
-use super::app_settings_window::show_information_modal;
+use super::settings::window::show_information_modal;
 use super::information_dialog::InformationDialog;
 use super::SceneContext;
 use crate::ui::ui_theme;

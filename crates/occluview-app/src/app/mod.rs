@@ -36,21 +36,10 @@ const FOREGROUND_PULSE_DURATION: Duration = Duration::from_millis(250);
 #[cfg(not(windows))]
 const LINUX_OPEN_REQUEST_REPAINT_INTERVAL: Duration = Duration::from_millis(50);
 
+pub(crate) mod align;
 #[cfg(test)]
 mod app_accessibility_tests;
-mod app_align;
-mod app_align_brush;
-pub(crate) mod app_align_display;
-pub(crate) mod app_align_drag;
-mod app_align_panel;
-mod app_align_results;
-mod app_align_session;
 mod app_bridge_split;
-mod app_contact;
-mod app_contact_bar;
-mod app_contact_hover;
-#[cfg(test)]
-mod app_contact_tests;
 mod app_cut;
 mod app_dialogs;
 mod app_empty_state;
@@ -66,31 +55,11 @@ mod app_loading;
 #[cfg(test)]
 mod app_loading_tests;
 mod app_measure;
-mod app_mesh_editor;
-mod app_mesh_export;
 #[cfg(test)]
 mod app_provenance_tests;
 mod app_recent_popup;
-mod app_render;
-#[cfg(test)]
-mod app_render_characterization_tests;
-mod app_render_contact;
 mod app_ruler_options;
 mod app_scale_bar;
-mod app_scene_commit;
-mod app_scene_export;
-mod app_scene_menu;
-mod app_sculpt;
-#[cfg(test)]
-mod app_sculpt_abort_tests;
-#[cfg(test)]
-mod app_sculpt_characterization_tests;
-#[cfg(test)]
-mod app_sculpt_lifecycle_tests;
-mod app_sculpt_stroke;
-mod app_sculpt_worker;
-mod app_settings_panel;
-mod app_settings_window;
 #[cfg(test)]
 mod app_test_support;
 mod app_third_party;
@@ -99,10 +68,16 @@ mod app_workspace;
 mod app_workspace_commands;
 #[cfg(test)]
 mod app_workspace_ui_tests;
+mod contact;
 mod disc_frame;
 mod information_dialog;
+mod mesh_edit;
 mod open_dialogs;
+mod render;
+mod scene;
+mod sculpt;
 mod selection_overlay;
+mod settings;
 mod state;
 mod state_document;
 mod state_persistence;
