@@ -2792,6 +2792,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "occluview-repo-contracts"
+version = "1.2.1"
+dependencies = [
+ "serde_json",
+ "serde_yaml_ng",
+]
+
+[[package]]
 name = "occluview-robust-csg"
 version = "1.2.1"
 dependencies = [
