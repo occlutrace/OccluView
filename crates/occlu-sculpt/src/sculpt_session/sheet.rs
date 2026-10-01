@@ -157,6 +157,14 @@ impl SculptSession {
         }
     }
 
+    /// The sheet axis a brush should push along.
+    ///
+    /// A group whose axis the current step assigned reads the stored slot. A
+    /// group the step never reached (a skirt group, or any group after history
+    /// moved the geometry) has no assignment to trust, so the axis is
+    /// transported from the stroke spine and falls back to the live group
+    /// normal. Reading the stored slot blindly there would push along a
+    /// direction measured for geometry that no longer sits in that place.
     pub(super) fn sheet_axis_of(&self, group: u32) -> DVec3 {
         let slot = group as usize;
         if self.sheet_axis_mark.get(slot) == Some(&self.sheet_axis_epoch) {

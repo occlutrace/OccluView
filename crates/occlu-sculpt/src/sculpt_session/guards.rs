@@ -12,7 +12,11 @@ use super::*;
 /// inside the last safe position regardless of how thin the triangle is.
 const MAX_STEP_FRACTION_OF_TRIANGLE: f64 = 0.5;
 /// Passes of the post-dab inversion guard.
-const MAX_ROLLBACK_ITERS: usize = 8;
+/// Waves of the tapered rollback before the layer guard restores the whole
+/// dab. A few more than the reference's 8 let the taper settle on a dense patch
+/// instead of discarding the entire footprint, and the reset still fires when
+/// even these cannot clear a rejecting face.
+const MAX_ROLLBACK_ITERS: usize = 24;
 /// Collapse threshold relative to a facet's own pre-dab area — scan meshes
 /// contain legitimate very small facets.
 const COLLAPSE_FRACTION_SQUARED: f64 = 1e-4;

@@ -154,7 +154,7 @@ impl SculptSession {
             opening_tris,
             wall_probe: None,
             reference_wall_mm: vec![f32::NAN; group_count],
-            reference_wall_at: vec![[0.0; 3]; group_count],
+            reference_wall_at: vec![[f32::NAN; 3]; group_count],
             wall_facing: None,
             input_spacing_mm,
 
@@ -491,10 +491,11 @@ impl SculptSession {
         )
     }
 
-    /// Prepare the immutable opposing-wall ray grid. Native callers should do
-    /// this on their session worker before enabling Remove input; `prepare_dab`
-    /// also calls it defensively so the public Erode path cannot skip the wall
-    /// reserve when an adapter forgets its preparation step.
+    /// Prepare the immutable opposing-wall ray grid. Callers do this on their
+    /// session worker before enabling Remove input; the guard never builds it
+    /// from inside a dab, because that measures a whole-mesh distance field
+    /// during the first carve and stalls the stroke. Without a prepared probe a
+    /// group's opening thickness is unknown and the reserve stays at its widest.
     pub fn prepare_wall_probe(&mut self) {
         self.ensure_wall_probe();
     }
@@ -550,7 +551,6 @@ impl SculptSession {
     /// local limit. A memo loses at least its measured drift when the material
     /// point has moved, making reuse conservative.
     pub(super) fn reference_group_wall_mm(&mut self, group: u32) -> f64 {
-        self.ensure_wall_probe();
         let index = group as usize;
         let cached = self.reference_wall_mm[index];
         let material = self.reference_group_v(group);
@@ -567,12 +567,12 @@ impl SculptSession {
             }
         }
         let Some(probe) = self.wall_probe.as_ref() else {
-            // Missing snapshot data must not disable Remove protection. A
-            // zero reserve stops an inward move at the reference surface.
-            self.reference_wall_mm[index] = 0.8;
-            self.reference_wall_at[index] =
-                [material.x as f32, material.y as f32, material.z as f32];
-            return 0.8;
+            // The probe is built when Remove is armed, never from inside a dab:
+            // a whole-mesh SDF build on the first carve stalls the stroke.
+            // Until it exists the opening thickness is unknown, and an unknown
+            // thickness must not be invented as a thin one, so the reading
+            // stays unknown and the cap keeps the reserve at its widest.
+            return WALL_SDF_CAP_MM;
         };
         let mut wall = f64::INFINITY;
         for &vertex in self.topology.members(group) {
