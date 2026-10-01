@@ -308,3 +308,35 @@ fn malformed(format: &'static str, reason: impl Into<String>) -> FormatError {
         reason: reason.into(),
     }
 }
+
+#[cfg(test)]
+mod error_contract {
+    use super::*;
+
+    /// Names every variant so a new one cannot be added without a case here.
+    fn variant_name(error: &HpsDecodedReadError) -> &'static str {
+        match error {
+            HpsDecodedReadError::Parser(_) => "Parser",
+            HpsDecodedReadError::KeyProvider(_) => "KeyProvider",
+        }
+    }
+
+    #[test]
+    fn every_hps_decoded_read_error_variant_renders_a_message() {
+        let variants = [
+            HpsDecodedReadError::Parser(HpsReadFailure::BadSignature),
+            HpsDecodedReadError::KeyProvider(HpsReadFailure::InvalidKey),
+        ];
+        for variant in &variants {
+            assert!(!variant_name(variant).is_empty());
+            // The wrapper carries a failure classification rather than an
+            // operator sentence, so its rendered message is the debug form.
+            let message = format!("{variant:?}");
+            assert!(!message.trim().is_empty(), "empty message for {variant:?}");
+            assert!(
+                !message.contains("occlu-") && !message.contains("occlu_"),
+                "message names an internal crate: {message:?}"
+            );
+        }
+    }
+}

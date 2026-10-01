@@ -35,3 +35,37 @@ impl From<occluview_thumbnail::ThumbnailError> for ShellError {
         }
     }
 }
+
+#[cfg(test)]
+mod error_contract {
+    use super::*;
+
+    /// Names every variant so a new one cannot be added without a case here.
+    fn variant_name(error: &ShellError) -> &'static str {
+        match error {
+            ShellError::Format(_) => "Format",
+            ShellError::Render(_) => "Render",
+            ShellError::Win32(_) => "Win32",
+        }
+    }
+
+    #[test]
+    fn every_shell_error_variant_renders_an_operator_message() {
+        let variants = [
+            ShellError::Format(occluview_formats::FormatError::Unsupported {
+                extension: "xyz".to_string(),
+            }),
+            ShellError::Render(occluview_render::RenderError::NoAdapter),
+            ShellError::Win32("the shell call failed".to_string()),
+        ];
+        for variant in &variants {
+            assert!(!variant_name(variant).is_empty());
+            let message = variant.to_string();
+            assert!(!message.trim().is_empty(), "empty message for {variant:?}");
+            assert!(
+                !message.contains("occlu-") && !message.contains("occlu_"),
+                "operator message names an internal crate: {message:?}"
+            );
+        }
+    }
+}

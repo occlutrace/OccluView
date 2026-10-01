@@ -140,3 +140,116 @@ pub enum BridgeSplitError {
         requested_mm: f32,
     },
 }
+
+#[cfg(test)]
+mod error_contract {
+    use super::*;
+
+    /// Names every variant so a new one cannot be added without a case here.
+    fn mesh_edit_variant_name(error: &MeshEditError) -> &'static str {
+        match error {
+            MeshEditError::UnsupportedPointCloud => "UnsupportedPointCloud",
+            MeshEditError::InvalidSelectionLength { .. } => "InvalidSelectionLength",
+            MeshEditError::MalformedMesh { .. } => "MalformedMesh",
+            MeshEditError::InvalidOptions { .. } => "InvalidOptions",
+        }
+    }
+
+    /// Names every variant so a new one cannot be added without a case here.
+    fn bridge_split_variant_name(error: &BridgeSplitError) -> &'static str {
+        match error {
+            BridgeSplitError::Mesh(_) => "Mesh",
+            BridgeSplitError::InvalidRequest { .. } => "InvalidRequest",
+            BridgeSplitError::EmptyInput => "EmptyInput",
+            BridgeSplitError::DegenerateInput { .. } => "DegenerateInput",
+            BridgeSplitError::DisconnectedInput { .. } => "DisconnectedInput",
+            BridgeSplitError::OpenOrNonManifold { .. } => "OpenOrNonManifold",
+            BridgeSplitError::NoIntersection => "NoIntersection",
+            BridgeSplitError::TangentContact => "TangentContact",
+            BridgeSplitError::DiscLimitExceeded { .. } => "DiscLimitExceeded",
+            BridgeSplitError::DiscTooSmall { .. } => "DiscTooSmall",
+            BridgeSplitError::DamagedCutRim { .. } => "DamagedCutRim",
+            BridgeSplitError::CapFailed { .. } => "CapFailed",
+            BridgeSplitError::InvalidOutput { .. } => "InvalidOutput",
+            BridgeSplitError::SeparationViolation { .. } => "SeparationViolation",
+        }
+    }
+
+    #[test]
+    fn every_mesh_edit_error_variant_renders_an_operator_message() {
+        let variants = [
+            MeshEditError::UnsupportedPointCloud,
+            MeshEditError::InvalidSelectionLength {
+                expected: 3,
+                actual: 2,
+            },
+            MeshEditError::MalformedMesh {
+                reason: "index out of range".to_string(),
+            },
+            MeshEditError::InvalidOptions {
+                reason: "kerf must be positive".to_string(),
+            },
+        ];
+        for variant in &variants {
+            assert!(!mesh_edit_variant_name(variant).is_empty());
+            let message = variant.to_string();
+            assert!(!message.trim().is_empty(), "empty message for {variant:?}");
+            assert!(
+                !message.contains("occlu-") && !message.contains("occlu_"),
+                "operator message names an internal crate: {message:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_bridge_split_error_variant_renders_an_operator_message() {
+        let variants = [
+            BridgeSplitError::Mesh(MeshEditError::UnsupportedPointCloud),
+            BridgeSplitError::InvalidRequest {
+                reason: "kerf must be positive".to_string(),
+            },
+            BridgeSplitError::EmptyInput,
+            BridgeSplitError::DegenerateInput { faces: 1 },
+            BridgeSplitError::DisconnectedInput { components: 2 },
+            BridgeSplitError::OpenOrNonManifold {
+                boundary_edges: 1,
+                non_manifold_edges: 2,
+                inconsistent_winding_edges: 3,
+                non_manifold_vertices: 4,
+            },
+            BridgeSplitError::NoIntersection,
+            BridgeSplitError::TangentContact,
+            BridgeSplitError::DiscLimitExceeded {
+                required_radius_mm: 2.0,
+                max_radius_mm: 1.0,
+            },
+            BridgeSplitError::DiscTooSmall {
+                disc_radius_mm: 1.0,
+                required_radius_mm: 2.0,
+            },
+            BridgeSplitError::DamagedCutRim {
+                reason: "open rim".to_string(),
+            },
+            BridgeSplitError::CapFailed {
+                reason: "cap did not close".to_string(),
+            },
+            BridgeSplitError::InvalidOutput {
+                side: "Part A",
+                reason: "not manifold".to_string(),
+            },
+            BridgeSplitError::SeparationViolation {
+                observed_mm: 0.1,
+                requested_mm: 0.2,
+            },
+        ];
+        for variant in &variants {
+            assert!(!bridge_split_variant_name(variant).is_empty());
+            let message = variant.to_string();
+            assert!(!message.trim().is_empty(), "empty message for {variant:?}");
+            assert!(
+                !message.contains("occlu-") && !message.contains("occlu_"),
+                "operator message names an internal crate: {message:?}"
+            );
+        }
+    }
+}
