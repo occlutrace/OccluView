@@ -13,7 +13,7 @@
 
 use super::app_test_support::{push_named_layer, test_app};
 use super::*;
-use crate::mesh_editor_overlay::EditorTab;
+use crate::mesh_editor::mesh_editor_overlay::EditorTab;
 use crate::sculpt::sculpt_kernel::{BrushMode, BrushRayStep, BrushSession};
 use crate::sculpt::sculpt_tool::{SculptSession, SculptTip, SculptToolKind, StrokeState};
 use crate::sculpt::sculpt_worker::{SculptWorker, SculptWorkerInput};

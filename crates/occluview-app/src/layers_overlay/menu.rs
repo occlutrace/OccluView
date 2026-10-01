@@ -1,5 +1,5 @@
 use crate::layer_actions::{LayerContextAction, LayerContextRequest};
-use crate::mesh_editor_icons::CELL_ROUNDING;
+use crate::mesh_editor::mesh_editor_icons::CELL_ROUNDING;
 use crate::ui::icons::AppIcon;
 use crate::ui::ui_theme;
 use eframe::egui;

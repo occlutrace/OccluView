@@ -737,7 +737,7 @@ mod viewport_ownership_tests {
 
         let (mut app, base) = flat_sculpt_fixture();
         let ctx = egui::Context::default();
-        crate::mesh_editor_overlay::set_sculpt_radius_mm(
+        crate::mesh_editor::mesh_editor_overlay::set_sculpt_radius_mm(
             &ctx,
             super::super::workspace::id::SceneKey::INITIAL,
             SculptTip::Ball,

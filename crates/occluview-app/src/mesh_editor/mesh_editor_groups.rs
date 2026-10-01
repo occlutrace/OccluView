@@ -11,7 +11,7 @@ use eframe::egui;
 
 use super::{EditorTab, MeshEditorAction, MeshEditorPanelState};
 use crate::app::workspace::id::SceneKey;
-use crate::mesh_editor_icons::{self, CELL_ROUNDING};
+use crate::mesh_editor::mesh_editor_icons::{self, CELL_ROUNDING};
 use crate::sculpt::sculpt_tool::{SculptTip, SculptToolKind};
 use crate::ui::icons::AppIcon;
 use crate::ui::ui_theme;

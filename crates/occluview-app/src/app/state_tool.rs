@@ -24,7 +24,7 @@ use crate::cut::cut_manipulator::CutManipulator;
 use crate::cut::cut_tool::CutTool;
 use crate::cut::section_view::SectionView;
 use crate::measure::measure_tool::MeasureTool;
-use crate::mesh_editor_overlay::EditorTab;
+use crate::mesh_editor::mesh_editor_overlay::EditorTab;
 use crate::sculpt::sculpt_tool::SculptTool;
 
 pub(super) struct ToolState {

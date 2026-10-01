@@ -19,7 +19,7 @@
 //! the application state and the viewport, `scene_loading` brings files in,
 //! `align` registers one scan onto another, `edit_mode` and `sculpt` change
 //! geometry, `cut` slices and probes it, `measure` measures it, `layer_*`
-//! and `mesh_editor_*` drive the panels, `ui` holds the shared theme, icons,
+//! and `mesh_editor` drive the panels, `ui` holds the shared theme, icons,
 //! chrome and accessibility layer, and `desktop` handles the single-instance
 //! handoff, shell surfaces, recent files and update notice around all of it.
 
@@ -57,8 +57,7 @@ mod layer_actions;
 mod layers_overlay;
 mod live_viewport;
 mod measure;
-mod mesh_editor_icons;
-mod mesh_editor_overlay;
+mod mesh_editor;
 mod repair_report;
 mod scene_loading;
 mod sculpt;

@@ -12,7 +12,7 @@ use crate::align::align_drag::DragConstraint;
 use crate::align::align_panel::{AlignPanelView, AlignTab};
 use crate::align::align_tool::{AlignPoint, AlignTool};
 use crate::align::align_worker::AlignSettings;
-use crate::mesh_editor_overlay::{EditorTab, MeshEditorPanelState};
+use crate::mesh_editor::mesh_editor_overlay::{EditorTab, MeshEditorPanelState};
 use crate::sculpt::sculpt_tool::SculptToolKind;
 use eframe::egui;
 use glam::Vec3;
@@ -151,7 +151,7 @@ fn align_and_mesh_editor_wireframes_for_visual_review() {
             ..Default::default()
         };
         let locale = crate::i18n::LocaleManager::for_tests();
-        let _ = crate::mesh_editor_overlay::show(
+        let _ = crate::mesh_editor::mesh_editor_overlay::show(
             ctx,
             crate::app::workspace::id::SceneKey::INITIAL,
             SCREEN,
@@ -169,7 +169,7 @@ fn align_and_mesh_editor_wireframes_for_visual_review() {
             ..Default::default()
         };
         let locale = crate::i18n::LocaleManager::for_tests();
-        let _ = crate::mesh_editor_overlay::show(
+        let _ = crate::mesh_editor::mesh_editor_overlay::show(
             ctx,
             crate::app::workspace::id::SceneKey::INITIAL,
             SCREEN,

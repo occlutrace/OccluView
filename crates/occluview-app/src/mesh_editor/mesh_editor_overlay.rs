@@ -114,15 +114,15 @@ fn default_pos(viewport: egui::Rect) -> egui::Pos2 {
 /// Default and bounds for the optional Close Holes rim-perimeter restraint.
 /// It is off by default: the kernel preserves scan borders and repairs every
 /// safe interior hole, matching the normal dental workflow.
-pub(super) const CLOSE_HOLES_LIMIT_DEFAULT_MM: f32 = 15.0;
-pub(super) const CLOSE_HOLES_LIMIT_MIN_MM: f32 = 1.0;
-pub(super) const CLOSE_HOLES_LIMIT_MAX_MM: f32 = 100.0;
+pub(crate) const CLOSE_HOLES_LIMIT_DEFAULT_MM: f32 = 15.0;
+pub(crate) const CLOSE_HOLES_LIMIT_MIN_MM: f32 = 1.0;
+pub(crate) const CLOSE_HOLES_LIMIT_MAX_MM: f32 = 100.0;
 
 fn scoped_id(label: &'static str, scene_key: SceneKey) -> egui::Id {
     egui::Id::new((label, scene_key))
 }
 
-pub(super) fn close_holes_limit_id(scene_key: SceneKey) -> egui::Id {
+pub(crate) fn close_holes_limit_id(scene_key: SceneKey) -> egui::Id {
     scoped_id("occluview_close_holes_limit_mm", scene_key)
 }
 
@@ -143,7 +143,7 @@ pub(crate) fn close_holes_limit_mm(ctx: &egui::Context, scene_key: SceneKey) -> 
     })
 }
 
-pub(super) fn set_close_holes_limit_enabled(
+pub(crate) fn set_close_holes_limit_enabled(
     ctx: &egui::Context,
     scene_key: SceneKey,
     enabled: bool,
@@ -151,7 +151,7 @@ pub(super) fn set_close_holes_limit_enabled(
     ctx.data_mut(|data| data.insert_temp(close_holes_limit_enabled_id(scene_key), enabled));
 }
 
-pub(super) fn close_holes_limit_enabled(ctx: &egui::Context, scene_key: SceneKey) -> bool {
+pub(crate) fn close_holes_limit_enabled(ctx: &egui::Context, scene_key: SceneKey) -> bool {
     ctx.data(|data| data.get_temp::<bool>(close_holes_limit_enabled_id(scene_key)))
         .unwrap_or(false)
 }

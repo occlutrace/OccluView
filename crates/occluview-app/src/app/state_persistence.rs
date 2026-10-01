@@ -164,14 +164,14 @@ impl PersistenceState {
             self.settings_persistence.mark_dirty();
         }
         let radii = crate::sculpt::sculpt_tool::SculptTip::ALL
-            .map(|tip| crate::mesh_editor_overlay::sculpt_radius_mm(ctx, scene_key, tip));
+            .map(|tip| super::mesh_editor_overlay::sculpt_radius_mm(ctx, scene_key, tip));
         let strengths = [
             crate::sculpt::sculpt_tool::SculptToolKind::AddRemove,
             crate::sculpt::sculpt_tool::SculptToolKind::Smooth,
         ]
-        .map(|kind| crate::mesh_editor_overlay::sculpt_strength(ctx, scene_key, kind));
-        let tip = crate::mesh_editor_overlay::sculpt_tip(ctx, scene_key);
-        let radius_share = crate::mesh_editor_overlay::sculpt_radius_share(ctx, scene_key);
+        .map(|kind| crate::mesh_editor::mesh_editor_overlay::sculpt_strength(ctx, scene_key, kind));
+        let tip = crate::mesh_editor::mesh_editor_overlay::sculpt_tip(ctx, scene_key);
+        let radius_share = super::mesh_editor_overlay::sculpt_radius_share(ctx, scene_key);
         let tip_changed = self.settings.last_sculpt_tip != tip;
         let share_changed = self
             .settings
@@ -239,12 +239,12 @@ mod tests {
     fn sculpt_sync_persists_the_exact_shared_radius_and_active_tip() {
         let ctx = egui::Context::default();
         let share = 0.123_456_7_f32;
-        crate::mesh_editor_overlay::set_sculpt_tip(
+        crate::mesh_editor::mesh_editor_overlay::set_sculpt_tip(
             &ctx,
             crate::app::workspace::id::SceneKey::INITIAL,
             crate::sculpt::sculpt_tool::SculptTip::Cylinder,
         );
-        crate::mesh_editor_overlay::set_sculpt_radius_share(
+        crate::mesh_editor::mesh_editor_overlay::set_sculpt_radius_share(
             &ctx,
             crate::app::workspace::id::SceneKey::INITIAL,
             share,
@@ -263,17 +263,17 @@ mod tests {
             "saved share must not pass through another tip's millimetre step grid"
         );
         let expected_radii = [
-            crate::mesh_editor_overlay::sculpt_radius_mm(
+            crate::mesh_editor::mesh_editor_overlay::sculpt_radius_mm(
                 &ctx,
                 crate::app::workspace::id::SceneKey::INITIAL,
                 crate::sculpt::sculpt_tool::SculptTip::Ball,
             ),
-            crate::mesh_editor_overlay::sculpt_radius_mm(
+            crate::mesh_editor::mesh_editor_overlay::sculpt_radius_mm(
                 &ctx,
                 crate::app::workspace::id::SceneKey::INITIAL,
                 crate::sculpt::sculpt_tool::SculptTip::Knife,
             ),
-            crate::mesh_editor_overlay::sculpt_radius_mm(
+            crate::mesh_editor::mesh_editor_overlay::sculpt_radius_mm(
                 &ctx,
                 crate::app::workspace::id::SceneKey::INITIAL,
                 crate::sculpt::sculpt_tool::SculptTip::Cylinder,
