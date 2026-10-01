@@ -13,7 +13,8 @@ use glam::DVec3;
 #[cfg(test)]
 use occlu_sculpt::Dab;
 use occlu_sculpt::{BrushMode as KernelMode, SculptRayConstraints, SculptSession, TipStamp};
-use occluview_core::{EditVertex, MeshEditBuffers, MeshEditError, MeshTopology, Vertex};
+use occluview_core::Vertex;
+use occluview_edit::{EditVertex, MeshEditBuffers, MeshEditError, MeshTopology};
 use occluview_render::{SculptFaceUpdate, SculptTopologyDelta, SculptVertexUpdate};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -566,7 +567,7 @@ pub(crate) fn vertex_from_edit_vertex(vertex: EditVertex) -> Vertex {
     }
 }
 
-impl occluview_core::SculptSessionBuffers for BrushSession {
+impl occluview_edit::SculptSessionBuffers for BrushSession {
     fn sculpt_vertices(&self) -> &[EditVertex] {
         &self.vertices
     }

@@ -1,9 +1,8 @@
 use super::*;
 use crate::layer_actions::{LayerContextAction, LayerContextRequest};
 use glam::{Affine3A, Vec3};
-use occluview_core::{
-    delete_selected_faces_in_mesh, FaceSelection, Mesh, MeshEditOptions, Scene, SceneMesh, Vertex,
-};
+use occluview_core::{Mesh, Scene, SceneMesh, Vertex};
+use occluview_edit::{delete_selected_faces_in_mesh, FaceSelection, MeshEditOptions};
 use occluview_formats::write::MeshWriteFormat;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};

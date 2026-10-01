@@ -83,9 +83,11 @@ jobs:
         # Linux lane is where that should surface rather than the Windows
         # runner.
         run: |
-          cargo clippy -p occluview-core -p occluview-formats -p occluview-render \
-            -p occluview-repo-contracts \
+          cargo clippy -p occluview-core -p occluview-edit -p occluview-formats \
+            -p occluview-render -p occluview-repo-contracts \
             --all-targets --locked --target x86_64-pc-windows-gnu -- -D warnings
+          cargo clippy -p occluview-edit --all-features --all-targets --locked \
+            --target x86_64-pc-windows-gnu -- -D warnings
 
   windows-only:
     name: build (windows integration)

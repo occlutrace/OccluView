@@ -2,7 +2,8 @@
 
 use std::collections::HashMap;
 
-use occluview_core::{Camera, FaceSelection, Scene, SceneMesh, SceneMeshId, ScenePickHit};
+use occluview_core::{Camera, Scene, SceneMesh, SceneMeshId, ScenePickHit};
+use occluview_edit::FaceSelection;
 
 use super::selection::{FaceSelectionState, ScreenPolygonSelectionRequest};
 

@@ -910,7 +910,7 @@ impl OccluViewApp {
                 scene.render.prepared_scene = None;
                 scene.render.prepared_selection_overlay = None;
                 scene.render.rendered = None;
-                scene.render.section_cache = occluview_core::scene::SectionCache::new();
+                scene.render.section_cache = occluview_edit::scene::SectionCache::new();
                 scene.render.invalidation.scene_geometry_changed();
                 scene.document.mesh_selection_drag = None;
                 let contact_pair = scene.tools.contacts.pair();

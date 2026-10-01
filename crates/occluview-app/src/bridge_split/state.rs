@@ -1,8 +1,7 @@
 use super::job::BridgeSplitJobOutput;
 use glam::{Affine3A, Vec3};
-use occluview_core::{
-    BridgeSplitError, BridgeSplitRequest, CoreBridgeSplitError, SceneMesh, SceneMeshId,
-};
+use occluview_core::{SceneMesh, SceneMeshId};
+use occluview_edit::{BridgeSplitError, BridgeSplitRequest, CoreBridgeSplitError};
 
 pub(crate) const DEFAULT_BRIDGE_SPLIT_KERF_MM: f32 = 0.05;
 pub(crate) const MIN_BRIDGE_SPLIT_KERF_MM: f32 = 0.01;
@@ -96,7 +95,7 @@ pub(crate) enum BridgeSplitMode {
 #[derive(Clone, Debug)]
 pub(crate) struct BridgeSplitPreview {
     pub(crate) guard: BridgeSplitGuard,
-    pub(crate) result: occluview_core::CoreBridgeSplitResult,
+    pub(crate) result: occluview_edit::CoreBridgeSplitResult,
 }
 
 #[derive(Clone, Debug)]

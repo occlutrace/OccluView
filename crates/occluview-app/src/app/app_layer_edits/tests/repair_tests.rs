@@ -127,7 +127,7 @@ fn repair_layer_action_ignores_stale_layer_identity_without_mutating_scene() {
 
 #[test]
 fn repair_status_lines_report_only_what_happened() {
-    use occluview_core::{MeshEditWarning, RepairReport};
+    use occluview_edit::{MeshEditWarning, RepairReport};
 
     // Already clean, no open rims.
     let clean = RepairReport::default();

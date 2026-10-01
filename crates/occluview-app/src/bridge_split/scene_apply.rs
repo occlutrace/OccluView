@@ -4,7 +4,8 @@
 //! layer selection, and structural history remain coherent. Part B is inserted
 //! immediately after it with a fresh identity and the same presentation state.
 
-use occluview_core::{CoreBridgeSplitResult, Scene, SceneMesh, SceneMeshId};
+use occluview_core::{Scene, SceneMesh, SceneMeshId};
+use occluview_edit::CoreBridgeSplitResult;
 use std::sync::Arc;
 
 use super::BridgeSplitTarget;

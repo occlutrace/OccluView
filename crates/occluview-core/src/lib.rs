@@ -50,19 +50,8 @@ pub use camera::{
 };
 pub use error::CoreError;
 pub use mesh::{
-    accumulate_smooth_normals, bridge_split_mesh_in_world, bridge_split_prepared_mesh_in_world,
-    component_at_triangle_in_mesh, crop_mesh_to_selected_faces, delete_selected_faces_in_mesh,
-    fill_holes_in_mesh, fill_selected_holes_in_mesh, invert_mesh_orientation,
-    mesh_edit_buffers_from_mesh, mesh_from_edit_buffers_like, mesh_from_sculpt_session_like,
-    normalize_bridge_split_input, prepare_bridge_split_source, repair_mesh_in_mesh,
-    selected_connected_components_in_mesh, CoreBridgeSplitError, CoreBridgeSplitResult,
-    CoreMeshEditResult, CoreMeshRepairResult, LiveRayPick, Mesh, MeshBuilder, MeshKind,
-    MeshTexture, PreparedBridgeSplitSource, PrincipalFrame, SculptSessionBuffers, Vertex,
-};
-pub use occlu_mesh_edit::{
-    BridgeSplitError, BridgeSplitReport, BridgeSplitRequest, EditVertex, FaceSelection,
-    MeshEditBuffers, MeshEditError, MeshEditOptions, MeshEditReport, MeshEditWarning, MeshTopology,
-    RepairOptions, RepairReport, CLOSE_HOLES_EDGE_CEILING,
+    accumulate_smooth_normals, LiveRayPick, Mesh, MeshBuilder, MeshKind, MeshTexture,
+    PrincipalFrame, Vertex,
 };
 pub use scene::{
     OverlayKind, Scene, SceneMesh, SceneMeshId, ScenePickHit, DEFAULT_UNTEXTURED_MESH_TINT,

@@ -1,7 +1,7 @@
 #![cfg_attr(test, allow(clippy::expect_used))]
 
 use anyhow::{bail, Context, Result};
-use occluview_core::{
+use occluview_edit::{
     fill_holes_in_mesh, MeshEditOptions, MeshEditReport, CLOSE_HOLES_EDGE_CEILING,
 };
 use occluview_formats::dispatch::read_file_with_key_provider;
