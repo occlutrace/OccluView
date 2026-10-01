@@ -977,7 +977,6 @@ mesh-warning-vertex-alpha = vertex alpha was not written
 load-superseded-parked-open = A newer open is waiting: answer its prompt first
 
 shell-preview-open = Open in OccluView
-shell-preview-edit = Edit in OccluView
 shell-preview-front = Front
 shell-preview-top = Top
 shell-preview-side = Side

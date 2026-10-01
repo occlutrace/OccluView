@@ -21,8 +21,6 @@ use icons::PreviewMenuIcon;
 pub(crate) enum PreviewMenuCommand {
     /// Open the file in the OccluView desktop app (double-click parity).
     Open,
-    /// Open the file in the OccluView desktop app for editing.
-    Edit,
     /// Reorient the preview camera to the front view.
     ViewFront,
     /// Reorient the preview camera to the top view.
@@ -44,7 +42,10 @@ impl PreviewMenuCommand {
     pub(crate) const fn id(self) -> u32 {
         match self {
             Self::Open => 1,
-            Self::Edit => 2,
+            // 2 was `Edit`, which launched the viewer with no editing verb, so
+            // it did exactly what Open does. The id is retired rather than
+            // reused: `TrackPopupMenuEx` returns the selected item's `wID`, and
+            // a future keyboard or automation path may key off it.
             Self::ViewFront => 10,
             Self::ViewTop => 11,
             Self::ViewSide => 12,
@@ -64,7 +65,6 @@ impl PreviewMenuCommand {
     pub(crate) const fn label_key(self) -> &'static str {
         match self {
             Self::Open => "shell-preview-open",
-            Self::Edit => "shell-preview-edit",
             Self::ViewFront => "shell-preview-front",
             Self::ViewTop => "shell-preview-top",
             Self::ViewSide => "shell-preview-side",
@@ -79,7 +79,6 @@ impl PreviewMenuCommand {
     pub(crate) const fn icon(self) -> PreviewMenuIcon {
         match self {
             Self::Open => PreviewMenuIcon::Open,
-            Self::Edit => PreviewMenuIcon::Edit,
             Self::ViewFront => PreviewMenuIcon::CubeFront,
             Self::ViewTop => PreviewMenuIcon::CubeTop,
             Self::ViewSide => PreviewMenuIcon::CubeSide,
@@ -114,9 +113,8 @@ impl PreviewMenuCommand {
 }
 
 /// Every command, in id order. Also the lookup table for [`PreviewMenuCommand::from_id`].
-pub(crate) const MENU_COMMANDS: [PreviewMenuCommand; 9] = [
+pub(crate) const MENU_COMMANDS: [PreviewMenuCommand; 8] = [
     PreviewMenuCommand::Open,
-    PreviewMenuCommand::Edit,
     PreviewMenuCommand::ViewFront,
     PreviewMenuCommand::ViewTop,
     PreviewMenuCommand::ViewSide,
@@ -135,11 +133,10 @@ pub(crate) enum PreviewMenuEntry {
     Command(PreviewMenuCommand),
 }
 
-/// The menu, top to bottom. Grouped: launch actions, view presets + fit,
+/// The menu, top to bottom. Grouped: launch action, view presets + fit,
 /// wireframe toggle, then copy image.
 pub(crate) const PREVIEW_MENU_LAYOUT: &[PreviewMenuEntry] = &[
     PreviewMenuEntry::Command(PreviewMenuCommand::Open),
-    PreviewMenuEntry::Command(PreviewMenuCommand::Edit),
     PreviewMenuEntry::Separator,
     PreviewMenuEntry::Command(PreviewMenuCommand::ViewFront),
     PreviewMenuEntry::Command(PreviewMenuCommand::ViewTop),
@@ -192,7 +189,6 @@ mod tests {
             commands,
             vec![
                 PreviewMenuCommand::Open,
-                PreviewMenuCommand::Edit,
                 PreviewMenuCommand::ViewFront,
                 PreviewMenuCommand::ViewTop,
                 PreviewMenuCommand::ViewSide,

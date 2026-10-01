@@ -48,6 +48,9 @@ remain in the Git history.
   keyed on the mesh's topology revision, which a sculpt commit deliberately keeps
   frozen, so the view kept drawing the pre-sculpt contour for the rest of the
   session.
+- The Explorer preview menu no longer offers "Edit in OccluView". The item
+  launched the viewer with no editing verb, so it did exactly what Open does;
+  the menu promised an action the application does not have.
 
 ### Reliability
 

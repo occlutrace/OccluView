@@ -1060,7 +1060,6 @@ mesh-warning-vertex-alpha = альфа вершин не записана
 load-superseded-parked-open = Ожидает более новый запрос на открытие: сначала ответьте на него
 
 shell-preview-open = Открыть в OccluView
-shell-preview-edit = Редактировать в OccluView
 shell-preview-front = Спереди
 shell-preview-top = Сверху
 shell-preview-side = Сбоку
