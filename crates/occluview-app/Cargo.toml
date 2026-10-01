@@ -92,7 +92,14 @@ objc2-foundation = {
     features = ["NSArray", "NSNotification", "NSObject", "NSString", "NSURL", "NSPathUtilities"],
 }
 
-# Windows shell and windowing integration.
+# Windows integration, scoped to the app's Windows modules: the single-instance
+# named pipe and its per-user DACL (Security, Security::Authorization,
+# System::Pipes, System::Threading, Storage::FileSystem with the System::IO
+# overlapped type its pipe calls take, Foundation), Jump List publishing
+# through shell COM (System::Com, System::Com::StructuredStorage,
+# System::Variant, UI::Shell, UI::Shell::Common, UI::Shell::PropertiesSystem,
+# Storage::EnhancedStorage) and the startup failure dialogs
+# (UI::WindowsAndMessaging).
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = [
     "Win32_Foundation",
