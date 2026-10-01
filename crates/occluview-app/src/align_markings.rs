@@ -248,26 +248,6 @@ impl AlignMarkings {
         std::mem::take(&mut self.stroke_open)
     }
 
-    /// What share of the two scans is marked, or nothing if neither carries a
-    /// mask that fits its mesh. Free to call: the counts are maintained here.
-    #[allow(dead_code)]
-    pub(crate) fn marked_fraction(&self, moving: MarkedOn, fixed: MarkedOn) -> Option<f32> {
-        let mut marked = 0usize;
-        let mut total = 0usize;
-        for (side, mesh) in [(AlignSide::Moving, moving), (AlignSide::Fixed, fixed)] {
-            let state = self.side(side);
-            if state.fitting(mesh).is_some() {
-                marked += state.marked;
-                total += mesh.vertex_count;
-            }
-        }
-        if total == 0 {
-            return None;
-        }
-        #[allow(clippy::cast_precision_loss)]
-        Some(marked as f32 / total as f32)
-    }
-
     /// Whether anything at all is marked on either scan.
     pub(crate) fn any(&self) -> bool {
         self.moving.mask.is_some() || self.fixed.mask.is_some()

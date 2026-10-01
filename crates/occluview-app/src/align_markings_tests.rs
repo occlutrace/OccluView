@@ -101,94 +101,6 @@ fn marking_one_scan_leaves_the_other_untouched() {
 }
 
 #[test]
-fn the_marked_count_matches_a_full_recount_after_every_kind_of_change() {
-    // The count is maintained incrementally so the panel never walks the mask.
-    // A count that drifts from the mask makes the panel report a wrong number,
-    // which is worse than reporting none.
-    let positions = grid(24);
-    let handle = mesh(&positions);
-    let vertices = handle.vertex_count;
-    let mut markings = AlignMarkings::default();
-
-    // Compared as fractions, not converted back to counts: a float round-trip
-    // through a count would hide a one-vertex drift behind rounding, and that
-    // drift is what this test catches.
-    #[allow(clippy::cast_precision_loss)]
-    let truth = |markings: &AlignMarkings| -> f32 {
-        let counted = (0..vertices)
-            .filter(|vertex| marked(markings, AlignSide::Moving, vertices, *vertex))
-            .count();
-        counted as f32 / vertices as f32
-    };
-    let reported = |markings: &AlignMarkings| -> f32 {
-        markings
-            .marked_fraction(on(vertices), on(0))
-            .expect("a mask that fits the mesh reports a fraction")
-    };
-    let agrees = |markings: &AlignMarkings, after: &str| {
-        let (reported, truth) = (reported(markings), truth(markings));
-        assert!(
-            (reported - truth).abs() < f32::EPSILON,
-            "{after}: the panel would report {reported} where the mask holds {truth}"
-        );
-    };
-
-    markings.dab(AlignSide::Moving, &handle, &dab_at(DVec3::ZERO, 4.0, false));
-    agrees(&markings, "after a dab");
-
-    markings.dab(
-        AlignSide::Moving,
-        &handle,
-        &dab_at(DVec3::new(1.0, 1.0, 0.0), 2.0, true),
-    );
-    agrees(&markings, "after an erase");
-
-    let _ = markings.command(
-        AlignSide::Moving,
-        MaskCommand::InvertMarkings,
-        &handle,
-        &AutoKeep {
-            centres: &[],
-            radius_mm: 0.0,
-        },
-    );
-    agrees(&markings, "after invert");
-
-    let _ = markings.command(
-        AlignSide::Moving,
-        MaskCommand::FitNowhere,
-        &handle,
-        &AutoKeep {
-            centres: &[],
-            radius_mm: 0.0,
-        },
-    );
-    agrees(&markings, "after fit nowhere");
-
-    let _ = markings.command(
-        AlignSide::Moving,
-        MaskCommand::MarkAutomatic,
-        &handle,
-        &AutoKeep {
-            centres: &[DVec3::ZERO],
-            radius_mm: 3.0,
-        },
-    );
-    agrees(&markings, "after mark automatic");
-
-    let _ = markings.command(
-        AlignSide::Moving,
-        MaskCommand::FitEverywhere,
-        &handle,
-        &AutoKeep {
-            centres: &[],
-            radius_mm: 0.0,
-        },
-    );
-    agrees(&markings, "after fit everywhere");
-}
-
-#[test]
 fn fit_everywhere_leaves_nothing_marked_and_fit_nowhere_leaves_everything() {
     let positions = grid(12);
     let handle = mesh(&positions);
@@ -358,10 +270,6 @@ fn a_mask_taken_on_other_geometry_is_not_a_reading_about_this_mesh() {
         markings.mask_for(AlignSide::Moving, on(999)).is_none(),
         "a mask from a mesh of another size was handed out for this one"
     );
-    assert!(
-        markings.marked_fraction(on(999), on(0)).is_none(),
-        "a mask from other geometry was counted into the coverage"
-    );
 
     // The case a vertex count cannot catch: a repair or a sculpt can hand back
     // a different mesh with the same number of vertices. Checked by length
@@ -430,7 +338,6 @@ fn clearing_drops_the_markings_on_both_scans_together() {
         .is_none());
     assert!(markings.mask_for(AlignSide::Fixed, on(16 * 16)).is_none());
     assert!(!markings.any());
-    assert!(markings.marked_fraction(handle.identity(), on(0)).is_none());
 }
 
 #[test]
