@@ -9,10 +9,10 @@
 
 use eframe::egui;
 
-use crate::align_brush::{AlignBrush, BrushTarget};
-use crate::align_markings::{AlignSide, MaskCommand};
-use crate::align_panel::chip;
-use crate::align_panel_roles::AlignRoles;
+use crate::align::align_brush::{AlignBrush, BrushTarget};
+use crate::align::align_markings::{AlignSide, MaskCommand};
+use crate::align::align_panel::chip;
+use crate::align::align_panel_roles::AlignRoles;
 use crate::ui::icons::AppIcon;
 use crate::ui::ui_theme;
 

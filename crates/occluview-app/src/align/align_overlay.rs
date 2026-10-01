@@ -9,8 +9,8 @@ use glam::Affine3A;
 use occluview_align::RampMode;
 use occluview_core::{Camera, Scene, SceneMeshId};
 
-use crate::align_tool::AlignTool;
-use crate::align_worker::AlignSettings;
+use crate::align::align_tool::AlignTool;
+use crate::align::align_worker::AlignSettings;
 use crate::i18n::catalog::NumberFormat;
 use crate::measure_draw;
 use crate::ui::ui_theme;

@@ -82,7 +82,7 @@ impl SceneContext<'_> {
                                 )
                                 .rect
                                 .width();
-                            let response = crate::align_panel::chip(
+                            let response = crate::align::align_panel::chip(
                                 ui,
                                 text_width + CHIP_GLYPH_PX + CHIP_PADDING_PX,
                                 Some(icon),

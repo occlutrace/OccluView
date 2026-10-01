@@ -17,7 +17,7 @@ pub(super) fn paint_scale_bar(
     locale: &crate::i18n::LocaleManager,
 ) {
     let mm_per_px =
-        crate::align_drag::mm_per_pixel(camera.orthographic_height, image_rect.height());
+        crate::align::align_drag::mm_per_pixel(camera.orthographic_height, image_rect.height());
     let Some(bar) = ScaleBar::for_mm_per_px(mm_per_px) else {
         return;
     };

@@ -6,7 +6,7 @@
 use eframe::egui;
 use occluview_align::Orientation;
 
-use crate::align_worker::AlignSettings;
+use crate::align::align_worker::AlignSettings;
 use crate::ui::ui_theme;
 
 /// The two sliders and the orientation rule that steer best-fit matching.

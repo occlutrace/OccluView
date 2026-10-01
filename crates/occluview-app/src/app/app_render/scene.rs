@@ -343,9 +343,9 @@ impl SceneContext<'_> {
             );
             if self.tools.align.tool.is_armed() {
                 if let Some(scene) = self.document.scene.as_deref() {
-                    crate::align_overlay::paint_pairs(
+                    crate::align::align_overlay::paint_pairs(
                         ui.painter(),
-                        &crate::align_overlay::PairPaint {
+                        &crate::align::align_overlay::PairPaint {
                             camera: &camera,
                             viewport_rect: viewport,
                             scene,

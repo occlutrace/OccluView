@@ -18,7 +18,7 @@
 //! cross-tool arbitration. Cross-domain outputs: committed edits feed the
 //! document, invalidation requests feed the renderer.
 
-use crate::align_state::AlignState;
+use crate::align::align_state::AlignState;
 use crate::bridge_split::{BridgeSplitController, BridgeSplitMode};
 use crate::cut_manipulator::CutManipulator;
 use crate::cut_tool::CutTool;

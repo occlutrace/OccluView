@@ -10,10 +10,10 @@
 
 use eframe::egui;
 
-use crate::align_panel::AlignPanelAction;
-use crate::align_worker::{AlignSettings, WORKING_MAX_MM, WORKING_SCALE_MIN_MM};
+use crate::align::align_panel::AlignPanelAction;
+use crate::align::align_worker::{AlignSettings, WORKING_MAX_MM, WORKING_SCALE_MIN_MM};
 use crate::ui::icons::AppIcon;
-use crate::{align_overlay, ui::ui_theme};
+use crate::{align::align_overlay, ui::ui_theme};
 
 /// Show the Heatmap block; returns what the operator asked for.
 pub(crate) fn show(

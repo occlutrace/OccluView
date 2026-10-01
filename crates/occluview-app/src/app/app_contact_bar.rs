@@ -351,7 +351,7 @@ fn paint_strip(
                 }
                 paint_details_toggle(ui, locale, view.details_open, request);
                 if view.refused
-                    && crate::align_panel::chip(
+                    && crate::align::align_panel::chip(
                         ui,
                         78.0,
                         None,
@@ -416,7 +416,7 @@ fn paint_mode_pair(
     request: &mut ContactBarRequest,
 ) {
     for choice in ContactMode::ALL {
-        if crate::align_panel::chip(
+        if crate::align::align_panel::chip(
             ui,
             MODE_BUTTON_WIDTH,
             None,
@@ -500,7 +500,7 @@ fn paint_details_toggle(
     open: bool,
     request: &mut ContactBarRequest,
 ) {
-    if crate::align_panel::chip(
+    if crate::align::align_panel::chip(
         ui,
         92.0,
         None,
@@ -647,7 +647,7 @@ impl SceneContext<'_> {
             ui_theme::overlay_frame().show(ui, |ui| {
                 ui.set_width(width - 20.0);
                 ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
-                if crate::align_panel::chip(
+                if crate::align::align_panel::chip(
                     ui,
                     ui.available_width(),
                     None,
@@ -746,11 +746,11 @@ fn paint_antagonist_picker(
     )
     .on_hover_text(locale.tr(crate::i18n::message_id!("contact-antagonist-pick-hint")));
     for (id, name) in candidates {
-        if crate::align_panel::chip(
+        if crate::align::align_panel::chip(
             ui,
             ui.available_width(),
             None,
-            &crate::align_panel_roles::shorten(name),
+            &crate::align::align_panel_roles::shorten(name),
             !busy,
             false,
         )

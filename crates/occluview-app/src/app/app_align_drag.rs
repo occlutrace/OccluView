@@ -108,7 +108,7 @@ impl SceneContext<'_> {
         // egui promotes a press to a drag after six pixels or eight tenths of a
         // second, so without this gate a careful click on a cusp would move the
         // scan instead of placing a point.
-        if self.tools.align.tab != crate::align_panel::AlignTab::Manually {
+        if self.tools.align.tab != crate::align::align_panel::AlignTab::Manually {
             return self.finish_align_drag();
         }
         let mut input = ctx.input(|input| AlignDragInput {
@@ -402,15 +402,15 @@ impl SceneContext<'_> {
                 .cross(camera.view_up())
                 .normalize_or_zero();
             let world_per_pixel =
-                crate::align_drag::mm_per_pixel(camera.orthographic_height, viewport.height());
-            let moved = crate::align_drag::screen_delta_to_world(
+                crate::align::align_drag::mm_per_pixel(camera.orthographic_height, viewport.height());
+            let moved = crate::align::align_drag::screen_delta_to_world(
                 motion,
                 right,
                 camera.view_up(),
                 world_per_pixel,
             );
             return Some(Affine3A::from_translation(
-                crate::align_drag::constrain_translation(moved, self.tools.align.constraint),
+                crate::align::align_drag::constrain_translation(moved, self.tools.align.constraint),
             ));
         }
         let right = camera
@@ -418,7 +418,7 @@ impl SceneContext<'_> {
             .cross(camera.view_up())
             .normalize_or_zero();
         let world_per_pixel =
-            crate::align_drag::mm_per_pixel(camera.orthographic_height, viewport.height());
+            crate::align::align_drag::mm_per_pixel(camera.orthographic_height, viewport.height());
         // The clicked point is the rotation anchor in the current pose. Using
         // the current transform matters when the operator begins with a plain
         // translation and presses Ctrl partway through the same held drag.
@@ -433,7 +433,7 @@ impl SceneContext<'_> {
         let centre_local = entry.mesh.bbox_cached().center();
         let radius_local = entry.mesh.bbox_cached().size().length() * 0.5;
         let pivot_local =
-            crate::align_drag::drag_pivot_local(drag.pivot_local, centre_local, radius_local);
+            crate::align::align_drag::drag_pivot_local(drag.pivot_local, centre_local, radius_local);
         let pose_scale = entry
             .transform
             .matrix3
@@ -442,9 +442,9 @@ impl SceneContext<'_> {
             .max(entry.transform.matrix3.y_axis.length())
             .max(entry.transform.matrix3.z_axis.length());
         let radius_world = radius_local * pose_scale;
-        let turn = crate::align_drag::anchored_rotation_from_drag(
+        let turn = crate::align::align_drag::anchored_rotation_from_drag(
             motion,
-            crate::align_drag::AnchoredRotationFrame::new(
+            crate::align::align_drag::AnchoredRotationFrame::new(
                 camera.view_direction(),
                 right,
                 camera.view_up(),
@@ -453,7 +453,7 @@ impl SceneContext<'_> {
             ),
         );
         let pivot_world = entry.transform.transform_point3(pivot_local);
-        Some(crate::align_drag::rotation_about_pivot(turn, pivot_world))
+        Some(crate::align::align_drag::rotation_about_pivot(turn, pivot_world))
     }
 
     /// Apply one drag step directly to the scene, without touching history.
@@ -621,7 +621,7 @@ mod tests {
         egui::Id,
         Vec3,
     ) {
-        use crate::align_panel::AlignTab;
+        use crate::align::align_panel::AlignTab;
         use occluview_core::{Mesh, Scene, SceneMesh, Vertex};
         use std::sync::Arc;
 
@@ -711,8 +711,8 @@ mod tests {
             .cross(camera.view_up())
             .normalize_or_zero();
         let world_per_pixel =
-            crate::align_drag::mm_per_pixel(camera.orthographic_height, viewport.height());
-        crate::align_drag::screen_delta_to_world(motion, right, camera.view_up(), world_per_pixel)
+            crate::align::align_drag::mm_per_pixel(camera.orthographic_height, viewport.height());
+        crate::align::align_drag::screen_delta_to_world(motion, right, camera.view_up(), world_per_pixel)
     }
 
     /// A Ctrl-drag of a transformed scan keeps the clicked world point fixed.
@@ -724,9 +724,9 @@ mod tests {
     fn a_ctrl_drag_step_pins_the_pressed_point_for_every_constraint() {
         let mut steps = Vec::new();
         for constraint in [
-            crate::align_drag::DragConstraint::Free,
-            crate::align_drag::DragConstraint::ZOnly,
-            crate::align_drag::DragConstraint::XyPlane,
+            crate::align::align_drag::DragConstraint::Free,
+            crate::align::align_drag::DragConstraint::ZOnly,
+            crate::align::align_drag::DragConstraint::XyPlane,
         ] {
             let (mut app, id, _) = rig("ctrl-step-anchor");
             app.workspace.scenes[0].tools.align.constraint = constraint;
@@ -1023,7 +1023,7 @@ mod tests {
         reason = "One actual press-drag-release scenario keeps its UI setup and geometry assertions together."
     )]
     fn a_real_ctrl_drag_gesture_pivots_at_the_grabbed_surface_point() {
-        use crate::align_panel::AlignTab;
+        use crate::align::align_panel::AlignTab;
         use occluview_core::{Mesh, Scene, SceneMesh, Vertex};
         use std::sync::Arc;
 
@@ -1521,7 +1521,7 @@ mod tests {
         app.active_context()
             .expect("live test scene")
             .arm_align_tool(&ctx);
-        app.workspace.scenes[0].tools.align.tab = crate::align_panel::AlignTab::Manually;
+        app.workspace.scenes[0].tools.align.tab = crate::align::align_panel::AlignTab::Manually;
         drive_actual_drag_frame(&mut app, &ctx, rect, viewport_id, vec![]);
         let moved_at = press_at + egui::vec2(50.0, -16.0);
         assert!(drive_actual_drag_frame(

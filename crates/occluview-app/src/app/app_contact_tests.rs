@@ -430,7 +430,7 @@ fn the_align_worker_is_replaced_after_it_dies() {
             .align
             .worker
             .as_ref()
-            .is_some_and(crate::align_worker::AlignWorker::has_failed)
+            .is_some_and(crate::align::align_worker::AlignWorker::has_failed)
         {
             break;
         }
@@ -442,7 +442,7 @@ fn the_align_worker_is_replaced_after_it_dies() {
             .align
             .worker
             .as_ref()
-            .is_some_and(crate::align_worker::AlignWorker::has_failed),
+            .is_some_and(crate::align::align_worker::AlignWorker::has_failed),
         "the worker must actually be marked failed, or this test proves nothing"
     );
 

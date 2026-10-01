@@ -59,9 +59,9 @@ fn panel_controls(
     busy: bool,
     locale: &crate::i18n::LocaleManager,
 ) -> Vec<(String, bool)> {
-    use crate::align_drag::DragConstraint;
-    use crate::align_tool::AlignTool;
-    use crate::align_worker::AlignSettings;
+    use crate::align::align_drag::DragConstraint;
+    use crate::align::align_tool::AlignTool;
+    use crate::align::align_worker::AlignSettings;
 
     let tool = AlignTool::default();
     let mut settings = AlignSettings::default();
@@ -203,7 +203,7 @@ fn the_orientation_rule_is_disabled_while_a_fit_runs() {
 /// busy/failure states which used to leave a valid pair looking unavailable.
 #[test]
 fn the_coarse_fit_button_recovers_after_busy_and_failed_frames() {
-    use crate::align_tool::{AlignPoint, AlignTool};
+    use crate::align::align_tool::{AlignPoint, AlignTool};
     use glam::Vec3;
     use occluview_core::{Mesh, Scene, SceneMesh, Vertex};
 

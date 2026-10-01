@@ -10,7 +10,7 @@ use occluview_core::{Scene, SceneMesh, SceneMeshId};
 use occluview_render::ContactFieldTexels;
 use std::sync::Arc;
 
-use crate::align_geometry::{transform_key, AlignGeometry};
+use crate::align::align_geometry::{transform_key, AlignGeometry};
 use crate::contact_worker::{ContactFailure, ContactJobKeys, ContactWorker};
 
 /// Which contact display law is active.

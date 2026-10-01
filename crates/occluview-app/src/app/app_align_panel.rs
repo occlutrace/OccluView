@@ -6,8 +6,8 @@
 use eframe::egui;
 
 use super::SceneContext;
-use crate::align_panel::{AlignPanelAction, AlignTab};
-use crate::align_worker::{matching_inputs_changed, AlignWorker};
+use crate::align::align_panel::{AlignPanelAction, AlignTab};
+use crate::align::align_worker::{matching_inputs_changed, AlignWorker};
 
 fn heatmap_is_authorized(tab: AlignTab, refined_match_ready: bool) -> bool {
     tab == AlignTab::Automatically && refined_match_ready
@@ -97,11 +97,11 @@ impl SceneContext<'_> {
         let moved = self.align_session_moved();
         let panel_roles = self.align_roles();
         let brush_roles = self.align_roles();
-        let action = crate::align_panel::show(
+        let action = crate::align::align_panel::show(
             ctx,
             viewport_rect,
             egui::Id::new(self.scene_key),
-            crate::align_panel::AlignPanelView {
+            crate::align::align_panel::AlignPanelView {
                 tool: &self.tools.align.tool,
                 layer_count: self
                     .document
@@ -130,10 +130,10 @@ impl SceneContext<'_> {
 
         let mut mask_command = None;
         if excluding {
-            match crate::align_panel_brush::show(
+            match crate::align::align_panel_brush::show(
                 ctx,
                 egui::Id::new(self.scene_key),
-                crate::align_panel_brush::BrushPanelView {
+                crate::align::align_panel_brush::BrushPanelView {
                     viewport_rect,
                     brush: &mut brush,
                     roles: brush_roles.as_ref(),
@@ -141,10 +141,10 @@ impl SceneContext<'_> {
                     locale: &self.ui.locale,
                 },
             ) {
-                Some(crate::align_panel_brush::BrushPanelAction::Mask(command)) => {
+                Some(crate::align::align_panel_brush::BrushPanelAction::Mask(command)) => {
                     mask_command = Some(command);
                 }
-                Some(crate::align_panel_brush::BrushPanelAction::Close) => excluding = false,
+                Some(crate::align::align_panel_brush::BrushPanelAction::Close) => excluding = false,
                 None => {}
             }
         }
@@ -223,8 +223,8 @@ impl SceneContext<'_> {
     }
 
     /// Which scan the fit will move, named the way the operator named the files.
-    pub(super) fn align_roles(&self) -> Option<crate::align_panel_roles::AlignRoles> {
-        Some(crate::align_panel_roles::AlignRoles {
+    pub(super) fn align_roles(&self) -> Option<crate::align::align_panel_roles::AlignRoles> {
+        Some(crate::align::align_panel_roles::AlignRoles {
             moving: self.layer_display_name(self.tools.align.tool.moving_layer()?)?,
             fixed: self.layer_display_name(self.tools.align.tool.fixed_layer()?)?,
             implied: self.tools.align.tool.roles_are_implied(),
@@ -319,8 +319,8 @@ impl SceneContext<'_> {
 #[cfg(test)]
 mod tests {
     use super::{action_after_tab_change, align_worker_needs_ui_poll, heatmap_is_authorized};
-    use crate::align_panel::{AlignPanelAction, AlignTab};
-    use crate::align_worker::{AlignFailure, AlignOutcome, AlignWorker};
+    use crate::align::align_panel::{AlignPanelAction, AlignTab};
+    use crate::align::align_worker::{AlignFailure, AlignOutcome, AlignWorker};
     use eframe::egui;
     use std::sync::mpsc;
 

@@ -17,7 +17,7 @@
 //!
 //! Everything above that sits in the `mod` list below: `app` and `viewer` hold
 //! the application state and the viewport, `scene_loading` brings files in,
-//! `align_*` registers one scan onto another, `edit_mode` and `sculpt_*` change
+//! `align` registers one scan onto another, `edit_mode` and `sculpt_*` change
 //! geometry, `cut_*` and `section_view` slice it, `measure_*` and
 //! `probe_section` measure it, `layer_*` and `mesh_editor_*` drive the panels,
 //! `ui` holds the shared theme, icons, chrome and accessibility layer, and
@@ -42,21 +42,7 @@ pub use startup::{
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 
-mod align_brush;
-mod align_drag;
-mod align_geometry;
-mod align_markings;
-mod align_overlay;
-mod align_panel;
-mod align_panel_brush;
-mod align_panel_map;
-mod align_panel_roles;
-mod align_panel_settings;
-mod align_state;
-mod align_tool;
-#[cfg(test)]
-mod align_tool_tests;
-mod align_worker;
+mod align;
 pub(crate) mod app;
 mod app_bootstrap;
 mod app_files;
