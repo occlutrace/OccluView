@@ -1560,35 +1560,46 @@ impl SceneContext<'_> {
             tool: SculptToolUniform {
                 model: tool_model.to_cols_array(),
                 color: color_rgba,
-                opacity: 0.20 + 0.12 * strength,
+                // One fixed body opacity: the strength signal lives in the
+                // surface mark, not in how dense the tool body looks.
+                opacity: SCULPT_TOOL_OPACITY,
                 shape: shape as u32,
                 action,
             },
         }));
-
+        // A CAD crosshair replaces the arrow while a sculpt tool is armed, so
+        // the contact point is readable against the surface mark.
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
         let ortho_height = camera.orthographic_height.max(f32::EPSILON);
         let radius_px = radius_world * viewport_rect.height() / ortho_height;
         if radius_px.is_finite() && radius_px >= 2.0 {
             let canvas = ui.painter();
-            // Preview the effective strength used by the dab.
             let intensity = strength;
-            canvas.circle_filled(
-                pointer,
-                radius_px,
-                color.gamma_multiply(0.025 + intensity * 0.035),
-            );
+            // A hairline circle only: a filled disc at small radii read as a
+            // blob covering the very surface the operator is judging.
             let edge_color = color.gamma_multiply(0.58 + intensity * 0.18);
             if mode == BrushMode::Relax {
                 paint_dashed_cursor_edge(canvas, pointer, radius_px, edge_color);
             } else {
                 canvas.circle_stroke(pointer, radius_px, egui::Stroke::new(1.0_f32, edge_color));
-                canvas.circle_stroke(
-                    pointer,
-                    (radius_px - 2.0).max(1.0),
-                    egui::Stroke::new(1.0_f32, color.gamma_multiply(0.16)),
-                );
             }
-            canvas.circle_filled(pointer, 1.5, color.gamma_multiply(0.62));
+            // A cross marks the centre without hiding it.
+            let cross = color.gamma_multiply(0.62);
+            let stroke = egui::Stroke::new(1.0_f32, cross);
+            canvas.line_segment(
+                [
+                    pointer + egui::vec2(-3.0, 0.0),
+                    pointer + egui::vec2(3.0, 0.0),
+                ],
+                stroke,
+            );
+            canvas.line_segment(
+                [
+                    pointer + egui::vec2(0.0, -3.0),
+                    pointer + egui::vec2(0.0, 3.0),
+                ],
+                stroke,
+            );
         }
     }
 
@@ -1704,6 +1715,10 @@ fn sculpt_target(
 /// Keep the four surface operations visually distinct.
 const SCULPT_CURSOR_TRANSITION_SEC: f32 = 0.07;
 const SCULPT_IRON_HEIGHT_SHARE: f32 = 0.22;
+/// Source opacity of the translucent tool body. The fragment shader shapes it
+/// with the Fresnel rim and the axial fade; the strength signal stays on the
+/// surface mark instead.
+const SCULPT_TOOL_OPACITY: f32 = 0.5;
 
 fn sculpt_cursor_color(mode: BrushMode) -> egui::Color32 {
     match mode {
@@ -1714,8 +1729,24 @@ fn sculpt_cursor_color(mode: BrushMode) -> egui::Color32 {
     }
 }
 
+/// Brush colour for the surface footprint and the tool body, in linear space.
+///
+/// The UI ink colours are dark once converted to linear, and a surface light
+/// needs a pale tint so the tool colour does not erase the strength signal.
+/// Every brush colour is therefore washed a fixed share toward white, which is
+/// what keeps the footprint a pale mark on a bright surface instead of a
+/// saturated dark one that reads as damage.
 fn sculpt_cursor_linear_rgba(color: egui::Color32) -> [f32; 4] {
-    egui::Rgba::from(color).to_array()
+    /// Share of the way to white, in linear space.
+    const WHITE_WASH: f32 = 0.75;
+    let linear = egui::Rgba::from(color);
+    let washed = |channel: f32| channel + (1.0 - channel) * WHITE_WASH;
+    [
+        washed(linear.r()),
+        washed(linear.g()),
+        washed(linear.b()),
+        linear.a(),
+    ]
 }
 
 fn sculpt_cursor_height(mode: BrushMode, strength: f32, radius: f32) -> f32 {
@@ -1811,11 +1842,49 @@ mod cursor_color_tests {
 
     #[test]
     fn cursor_palette_is_published_to_the_linear_gpu_uniform() {
+        // Every mode is washed 75 % toward white, so even the darkest ink
+        // (Smooth) leaves a pale mark that only tints the lit surface.
         let color = sculpt_cursor_linear_rgba(sculpt_cursor_color(BrushMode::Smooth));
-        assert!((color[0] - 0.045_2).abs() < 0.001);
-        assert!((color[1] - 0.056_1).abs() < 0.001);
-        assert!((color[2] - 0.064_8).abs() < 0.001);
+        assert!((color[0] - 0.761).abs() < 0.002, "got {}", color[0]);
+        assert!((color[1] - 0.764).abs() < 0.002, "got {}", color[1]);
+        assert!((color[2] - 0.766).abs() < 0.002, "got {}", color[2]);
         assert!((color[3] - 1.0).abs() < f32::EPSILON);
+    }
+
+    /// Channel indices ordered from smallest to largest.
+    fn channel_order(color: [f32; 3]) -> [usize; 3] {
+        let mut indices = [0, 1, 2];
+        indices.sort_by(|left, right| color[*left].total_cmp(&color[*right]));
+        indices
+    }
+
+    #[test]
+    fn every_cursor_colour_is_washed_and_still_names_its_mode() {
+        for mode in [BrushMode::Add, BrushMode::Remove, BrushMode::Smooth] {
+            let token = egui::Rgba::from(sculpt_cursor_color(mode));
+            let raw = [token.r(), token.g(), token.b()];
+            let washed = sculpt_cursor_linear_rgba(sculpt_cursor_color(mode));
+            for (index, channel) in raw.iter().enumerate() {
+                let expected = channel + (1.0 - channel) * 0.75;
+                assert!(
+                    (washed[index] - expected).abs() < 1e-6,
+                    "the wash is three quarters toward white: {} vs {expected}",
+                    washed[index]
+                );
+                assert!(
+                    washed[index] > 0.7,
+                    "a washed channel must stay pale, got {}",
+                    washed[index]
+                );
+            }
+            // The hue survives: a washed colour keeps its token's channel order,
+            // so green still reads Add, red Remove and grey Smooth.
+            assert_eq!(
+                channel_order([washed[0], washed[1], washed[2]]),
+                channel_order(raw),
+                "the wash keeps the mode's channel order"
+            );
+        }
     }
 }
 
