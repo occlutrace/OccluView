@@ -2,15 +2,18 @@
 //!
 //! These assert what the repository says about itself rather than what a crate
 //! does: that the CI workflows still run the artifact smokes they promise, that
-//! the packaging report survives carriage returns, and that the workspace, the
-//! lockfile and the installer agree on one version. They live outside the shell
-//! crate because the COM shell is an opt-in member; the Windows-only modules it
-//! gates are not what these read, and every platform's CI should run them.
+//! the packaging report survives carriage returns, that the workspace, the
+//! lockfile and the installer agree on one version, and that the MSRV the
+//! toolchain pins is the one the manifest and clippy declare. They live outside
+//! the shell crate because the COM shell is an opt-in member; the Windows-only
+//! modules it gates are not what these read, and every platform's CI should run
+//! them.
 
 #![allow(clippy::expect_used, clippy::panic)] // a missing repository file is a test failure
 
 use occluview_repo_contracts::{
-    cargo_lock_package_version, wix_product_version, workspace_package_version,
+    cargo_lock_package_version, clippy_msrv, toolchain_channel, wix_product_version,
+    workspace_package_version, workspace_rust_version,
 };
 use serde_yaml_ng::Value;
 use std::path::PathBuf;
@@ -727,6 +730,41 @@ fn release_version_is_kept_in_sync_across_workspace_lockfile_and_installer() {
             "{package} version in Cargo.lock must match Cargo workspace version"
         );
     }
+}
+
+/// The major and minor parts of a version, so `1.98` and `1.98.0` compare
+/// equal while a floating channel such as `stable` does not.
+fn major_minor(version: &str) -> (&str, &str) {
+    let mut parts = version.split('.');
+    (parts.next().unwrap_or_default(), parts.next().unwrap_or("0"))
+}
+
+#[test]
+fn msrv_agrees_across_toolchain_manifest_and_clippy() {
+    let cargo_toml = repo_file("Cargo.toml");
+    let toolchain = repo_file("rust-toolchain.toml");
+    let clippy = repo_file("clippy.toml");
+
+    let Some(rust_version) = workspace_rust_version(&cargo_toml) else {
+        panic!("Cargo.toml declares the workspace MSRV");
+    };
+    let Some(channel) = toolchain_channel(&toolchain) else {
+        panic!("rust-toolchain.toml pins a channel");
+    };
+    let Some(msrv) = clippy_msrv(&clippy) else {
+        panic!("clippy.toml declares the MSRV clippy lints against");
+    };
+
+    assert_eq!(
+        major_minor(channel),
+        major_minor(rust_version),
+        "rust-toolchain.toml channel and Cargo.toml rust-version disagree on the MSRV"
+    );
+    assert_eq!(
+        major_minor(rust_version),
+        major_minor(msrv),
+        "Cargo.toml rust-version and clippy.toml msrv disagree on the MSRV"
+    );
 }
 
 fn workspace_crates_dir() -> PathBuf {
