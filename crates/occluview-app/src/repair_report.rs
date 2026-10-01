@@ -145,50 +145,115 @@ pub(crate) fn skipped_rims_line(report: &RepairReport, locale: &LocaleManager) -
 
 /// Full per-pass dump for the clipboard: before/after counts and every pass
 /// including the zeros, so a support ticket carries the whole picture.
+///
+/// Every label comes from the catalog, so the payload reaches the clipboard in
+/// the operator's language rather than in English.
 #[must_use]
-pub(crate) fn copy_details(layer_label: &str, report: &RepairReport) -> String {
+pub(crate) fn copy_details(
+    layer_label: &str,
+    report: &RepairReport,
+    locale: &LocaleManager,
+) -> String {
     use std::fmt::Write as _;
 
     let mut out = String::new();
-    let _ = writeln!(out, "Repair report — {layer_label}");
+    let _ = writeln!(
+        out,
+        "{}",
+        locale.tr_with(
+            crate::i18n::message_id!("repair-copy-title"),
+            &[("layer", layer_label)],
+        )
+    );
     let _ = writeln!(out);
     let _ = writeln!(
         out,
-        "Before: {} vertices, {} triangles",
-        group_thousands(report.input_vertices),
-        group_thousands(report.input_triangles)
+        "{}",
+        locale.tr_with(
+            crate::i18n::message_id!("repair-copy-before"),
+            &[
+                ("vertices", &group_thousands(report.input_vertices)),
+                ("triangles", &group_thousands(report.input_triangles)),
+            ],
+        )
     );
     let _ = writeln!(
         out,
-        "After:  {} vertices, {} triangles",
-        group_thousands(report.output_vertices),
-        group_thousands(report.output_triangles)
+        "{}",
+        locale.tr_with(
+            crate::i18n::message_id!("repair-copy-after"),
+            &[
+                ("vertices", &group_thousands(report.output_vertices)),
+                ("triangles", &group_thousands(report.output_triangles)),
+            ],
+        )
     );
     let _ = writeln!(out);
 
-    let rows: [(&str, usize); 13] = [
-        ("Welded duplicate vertices", report.welded_vertices),
-        ("Removed sliver faces", report.removed_degenerate_triangles),
+    // (catalog key, count) in pipeline order. Unlike the card, the dump keeps
+    // the zero rows: a support ticket wants the passes that did nothing too.
+    let rows: [(crate::i18n::MessageId, usize); 13] = [
         (
-            "Removed duplicate faces",
+            crate::i18n::message_id!("repair-copy-welded"),
+            report.welded_vertices,
+        ),
+        (
+            crate::i18n::message_id!("repair-copy-slivers"),
+            report.removed_degenerate_triangles,
+        ),
+        (
+            crate::i18n::message_id!("repair-copy-duplicate-faces"),
             report.removed_duplicate_triangles,
         ),
-        ("Fixed non-manifold edges", report.split_nonmanifold_edges),
-        ("Split bowtie vertices", report.split_bowtie_vertices),
-        ("Reoriented triangles", report.reoriented_triangles),
-        ("Flipped inside-out parts", report.flipped_components),
-        ("Removed debris parts", report.removed_debris_components),
-        ("Removed debris faces", report.removed_debris_triangles),
-        ("Closed pinholes", report.filled_holes),
         (
-            "Removed unused vertices",
+            crate::i18n::message_id!("repair-copy-nonmanifold"),
+            report.split_nonmanifold_edges,
+        ),
+        (
+            crate::i18n::message_id!("repair-copy-bowtie"),
+            report.split_bowtie_vertices,
+        ),
+        (
+            crate::i18n::message_id!("repair-copy-reoriented"),
+            report.reoriented_triangles,
+        ),
+        (
+            crate::i18n::message_id!("repair-copy-flipped"),
+            report.flipped_components,
+        ),
+        (
+            crate::i18n::message_id!("repair-copy-debris"),
+            report.removed_debris_components,
+        ),
+        (
+            crate::i18n::message_id!("repair-copy-debris-faces"),
+            report.removed_debris_triangles,
+        ),
+        (
+            crate::i18n::message_id!("repair-copy-pinholes"),
+            report.filled_holes,
+        ),
+        (
+            crate::i18n::message_id!("repair-copy-unused"),
             report.removed_unreferenced_vertices,
         ),
-        ("Open rims left (scan boundary)", report.open_rims_left),
-        ("Rims skipped (non-simple)", report.warnings.len()),
+        (
+            crate::i18n::message_id!("repair-copy-open-rims"),
+            report.open_rims_left,
+        ),
+        (
+            crate::i18n::message_id!("repair-copy-skipped-rims"),
+            report.warnings.len(),
+        ),
     ];
-    let width = rows.iter().map(|(label, _)| label.len()).max().unwrap_or(0);
-    for (label, count) in rows {
+    let labels: Vec<String> = rows.iter().map(|(key, _)| locale.tr(*key)).collect();
+    // Pad by characters, not bytes: the labels are translated.
+    let width = labels
+        .iter()
+        .map(|label| label.chars().count())
+        .max()
+        .unwrap_or(0);
+    for (label, (_, count)) in labels.iter().zip(rows) {
         let _ = writeln!(out, "{label:<width$}  {}", group_thousands(count));
     }
     out
@@ -321,7 +386,7 @@ impl RepairReportDialog {
         };
         let open_rims = open_rims_line(&card.report, locale);
         let skipped = skipped_rims_line(&card.report, locale);
-        let details = copy_details(&card.layer_label, &card.report);
+        let details = copy_details(&card.layer_label, &card.report, locale);
         let body_height =
             repair_body_height(changed, lines.len(), open_rims.is_some(), skipped.is_some());
 
@@ -674,16 +739,49 @@ mod tests {
 
     #[test]
     fn copy_details_dumps_before_after_and_every_pass_including_zeros() {
-        let details = copy_details("scan.stl", &multi_report());
-        assert!(details.contains("Repair report — scan.stl"));
-        assert!(details.contains("Before: 10 000 vertices, 20 000 triangles"));
-        assert!(details.contains("After:  8 760 vertices, 19 900 triangles"));
+        let details = copy_details("scan.stl", &multi_report(), &english());
+        // Interpolated variables carry Fluent bidi isolation marks by design; the
+        // dump keeps them like every other rendered message in the app.
+        assert!(
+            details.contains("Repair report — \u{2068}scan.stl\u{2069}"),
+            "{details}"
+        );
+        assert!(
+            details.contains(
+                "Before: \u{2068}10 000\u{2069} vertices, \u{2068}20 000\u{2069} triangles"
+            ),
+            "{details}"
+        );
+        assert!(
+            details.contains(
+                "After:  \u{2068}8 760\u{2069} vertices, \u{2068}19 900\u{2069} triangles"
+            ),
+            "{details}"
+        );
         // A pass that did nothing still appears with a zero (full dump).
         assert!(details.contains("Reoriented triangles"));
         assert!(details.contains("Split bowtie vertices"));
         assert!(details.lines().any(|line| line.trim_end().ends_with(" 0")));
         // Debris triangles ride along with their parts and are shown here.
         assert!(details.contains("Removed debris faces"));
+    }
+
+    /// The clipboard payload used to be hardcoded English in a seven-language
+    /// application.
+    #[test]
+    fn copy_details_reaches_the_clipboard_in_the_active_language() {
+        let details = copy_details("scan.stl", &multi_report(), &russian());
+        assert!(
+            details.contains("Отчёт о ремонте — \u{2068}scan.stl\u{2069}"),
+            "{details}"
+        );
+        assert!(
+            details.contains("Дублирующиеся вершины сварены"),
+            "{details}"
+        );
+        assert!(!details.contains("Welded duplicate vertices"), "{details}");
+        // The counts keep their grouping in every language.
+        assert!(details.contains("10 000"), "{details}");
     }
 
     #[test]

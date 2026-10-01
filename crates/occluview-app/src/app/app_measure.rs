@@ -87,6 +87,7 @@ impl SceneContext<'_> {
                 self.persistence.settings.unit_display,
                 hover,
                 self.ruler_line_angle(ctx),
+                &self.ui.locale,
             );
         }
         consumed

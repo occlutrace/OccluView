@@ -16,6 +16,7 @@ use glam::Vec3;
 use occluview_core::Camera;
 
 use crate::app_settings::{RulerLineAngle, UnitDisplay};
+use crate::i18n::LocaleManager;
 use crate::icons::AppIcon;
 use crate::measure_draw::{self, LABEL_LIFT_PX};
 use crate::measure_ruler::{self, LinePlacement, RulerSegment};
@@ -55,6 +56,7 @@ pub(crate) fn paint_measurements(
     unit: UnitDisplay,
     hover: Option<egui::Pos2>,
     line_angle: RulerLineAngle,
+    locale: &LocaleManager,
 ) {
     let segments = tool.ruler_segments();
     let rulers = RulerPainter {
@@ -90,7 +92,7 @@ pub(crate) fn paint_measurements(
         }
     }
     if let Some(probe) = tool.probe() {
-        paint_probe(painter, camera, viewport_rect, probe, unit);
+        paint_probe(painter, camera, viewport_rect, probe, unit, locale);
     }
 }
 
@@ -346,12 +348,17 @@ impl<P: Fn(Vec3) -> Option<egui::Pos2>> RulerPainter<'_, P> {
 
 /// The thickness probe: entry marker, the wall chord to the exit (when one
 /// exists), and a label that reads "open" when there is no opposite wall.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "a painter, a camera, a viewport rect, the probe, its unit and the locale"
+)]
 fn paint_probe(
     painter: &egui::Painter,
     camera: &Camera,
     viewport_rect: egui::Rect,
     probe: &ThicknessProbe,
     unit: UnitDisplay,
+    locale: &LocaleManager,
 ) {
     let Some((entry, _)) = project_world_to_viewport(camera, viewport_rect, probe.entry) else {
         return;
@@ -376,7 +383,7 @@ fn paint_probe(
             measure_draw::label_chip(
                 painter,
                 label_anchor,
-                "open: no opposite wall",
+                &locale.tr(crate::i18n::message_id!("measure-open-no-opposite-wall")),
                 ui_theme::text_weak(),
             );
         }
@@ -729,6 +736,7 @@ mod tests {
                 UnitDisplay::Millimeters,
                 Some(egui::pos2(100.0, 100.0)),
                 RulerLineAngle::Free,
+                &LocaleManager::for_tests(),
             );
             tool.set_probe(ThicknessProbe {
                 entry: Vec3::new(2.0, 0.0, 0.0),
@@ -742,6 +750,7 @@ mod tests {
                 UnitDisplay::Millimeters,
                 None,
                 RulerLineAngle::Free,
+                &LocaleManager::for_tests(),
             );
             // A pending anchor hovering a ruler line previews the ruler it
             // would place, in either choice; placed ones whose end falls beyond
@@ -758,6 +767,7 @@ mod tests {
                     UnitDisplay::Millimeters,
                     Some(hover),
                     angle,
+                    &LocaleManager::for_tests(),
                 );
             }
             on_lines.place_on_line(0, LinePlacement::Perpendicular);
@@ -781,6 +791,7 @@ mod tests {
                 UnitDisplay::Inches,
                 None,
                 RulerLineAngle::Free,
+                &LocaleManager::for_tests(),
             );
             // Zero-length ruler (same point twice) labels 0.00 mm, never NaN.
             tool.clear_measurements();
@@ -794,6 +805,7 @@ mod tests {
                 UnitDisplay::Millimeters,
                 None,
                 RulerLineAngle::Free,
+                &LocaleManager::for_tests(),
             );
         });
     }
