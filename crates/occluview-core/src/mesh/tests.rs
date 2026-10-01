@@ -514,6 +514,15 @@ fn colored_and_uv_vertices_round_trip_through_buffers() {
 }
 
 #[test]
+#[should_panic(expected = "assertion")]
+fn a_texture_buffer_of_the_wrong_size_is_rejected() {
+    // `MeshTexture::new` states the length requirement in its documentation. A
+    // debug-only check would let a release build hold a buffer shorter than the
+    // dimensions the renderer indexes it with.
+    drop(MeshTexture::new(2, 2, vec![0; 15]));
+}
+
+#[test]
 fn same_position_vertices_with_distinct_attributes_remain_distinct() {
     let mesh = Mesh::new(
         Some("duplicate".into()),
