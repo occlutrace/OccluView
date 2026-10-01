@@ -77,6 +77,7 @@ function Set-ReferenceShellPackageVersion {
     [IO.File]::WriteAllText($referenceCargoToml, $updatedToml, [Text.UTF8Encoding]::new($false))
 
     $lock = [IO.File]::ReadAllText($referenceCargoLock)
+    # The names below belong to the PINNED tree's Cargo.lock and must not follow a workspace rename.
     foreach ($package in @(
         "occlu-mesh-edit",
         "occluview-align",

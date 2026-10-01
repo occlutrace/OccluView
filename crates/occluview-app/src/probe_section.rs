@@ -167,7 +167,7 @@ pub(crate) fn wall_thickness_2d(click: Vec2, segments: &[(Vec2, Vec2)]) -> Optio
 fn nearest_segment_point(click: Vec2, segments: &[(Vec2, Vec2)]) -> Option<(usize, Vec2)> {
     let mut best: Option<(f32, usize, Vec2)> = None;
     for (index, &(a, b)) in segments.iter().enumerate() {
-        let (t, dist_sq) = occlu_geometry_math::closest_param_on_segment_2d(click, a, b);
+        let (t, dist_sq) = occluview_geometry_math::closest_param_on_segment_2d(click, a, b);
         let point = a + (b - a) * t;
         if best.is_none_or(|(best_dist, _, _)| dist_sq < best_dist) {
             best = Some((dist_sq, index, point));

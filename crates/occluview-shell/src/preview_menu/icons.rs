@@ -310,7 +310,7 @@ fn dist_point_segment(px: f32, py: f32, ax: f32, ay: f32, bx: f32, by: f32) -> f
     let point = Vec2::new(px, py);
     let a = Vec2::new(ax, ay);
     let b = Vec2::new(bx, by);
-    let (_, dist_sq) = occlu_geometry_math::closest_param_on_segment_2d(point, a, b);
+    let (_, dist_sq) = occluview_geometry_math::closest_param_on_segment_2d(point, a, b);
     dist_sq.sqrt()
 }
 

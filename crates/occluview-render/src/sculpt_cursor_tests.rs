@@ -342,7 +342,7 @@ fn field_probe_pipeline(device: &wgpu::Device) -> wgpu::ComputePipeline {
 #[allow(clippy::expect_used)]
 fn assert_field_values(probes: &[FieldProbe], actual: &[f32]) {
     use glam::DVec3;
-    use occlu_geometry_math::stamp_weight;
+    use occluview_geometry_math::stamp_weight;
 
     assert_eq!(probes.len(), actual.len());
     for (index, (probe, actual)) in probes.iter().zip(actual).enumerate() {
