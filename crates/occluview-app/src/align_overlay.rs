@@ -29,12 +29,6 @@ fn marker_fill() -> egui::Color32 {
     }
 }
 
-/// The colour a rejected pair is drawn in. It is shown, not hidden: the
-/// operator needs to see which click the fit threw away.
-fn rejected_ink() -> egui::Color32 {
-    ui_theme::danger()
-}
-
 /// Everything one paint pass needs.
 pub(crate) struct PairPaint<'a> {
     /// The live camera the markers re-project through.
@@ -85,7 +79,7 @@ pub(crate) fn paint_pairs(painter: &egui::Painter, view: &PairPaint<'_>) {
         // A rejected pair is drawn in the error colour rather than hidden: the
         // operator needs to see which click the fit threw away.
         let ink = if outlier {
-            rejected_ink()
+            ui_theme::danger()
         } else {
             ui_theme::accent()
         };
