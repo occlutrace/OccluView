@@ -65,6 +65,13 @@ pub const LEGACY_HPS_EXTENSION: &str = "dcm";
 /// This is narrower than every parser that may exist in the crate: v1 only
 /// promises formats that are implemented and product-approved for the native
 /// viewer and shell integration.
+///
+/// `.gltf` (JSON) and `.3mf` are deliberately absent. A `.gltf` is answered
+/// with a message that offers the `.glb` export, because only the GLB binary
+/// container has a reader, and a 3MF container is recognized from its ZIP
+/// magic but has no reader. [`FormatKind::Gltf`] covers both glTF
+/// extensions, so `glb` is the one listed; [`FormatKind::Threemf`] is the
+/// container recognized but not read.
 pub const V1_OPEN_EXTENSIONS: &[&str] = &[
     "stl",
     "ply",

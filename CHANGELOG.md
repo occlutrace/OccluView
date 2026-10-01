@@ -5,6 +5,12 @@ remain in the Git history.
 
 ## Unreleased
 
+### Formats
+
+- Opening or dropping a 3MF (or any ZIP) file now reports that the format is
+  not read and suggests exporting to STL, PLY, OBJ, or GLB. The dialog
+  previously showed an internal error that named an implementation crate.
+
 ### Layers
 
 - Dragging a layer name moves the layer instead of selecting its text. The name

@@ -22,8 +22,8 @@ use occluview_core::Mesh;
 /// Read `bytes` as the format indicated by `kind`, returning a [`Mesh`].
 ///
 /// # Errors
-/// - [`FormatError::Malformed`] for recognized formats whose reader is
-///   intentionally deferred (currently 3MF).
+/// - [`FormatError::Deferred`] for recognized formats this build does not read
+///   (3MF, and the JSON `.gltf` form of glTF).
 pub fn dispatch_by_kind(kind: FormatKind, bytes: &[u8]) -> Result<Mesh, FormatError> {
     dispatch_by_kind_with_key_provider(kind, bytes, &crate::hps::NoHpsKeyProvider)
 }
@@ -109,11 +109,14 @@ pub(crate) fn dispatch_by_kind_loaded_admitted(
         }),
         FormatKind::Gltf => crate::gltf::read_admitted(bytes),
         FormatKind::Off => crate::off::read_admitted(bytes),
-        // 3MF is recognized but has no reader.
-        FormatKind::Threemf => Err(FormatError::Malformed {
-            format: "occluview-formats",
-            offset: 0,
-            reason: format!("reader for {kind:?} not yet implemented"),
+        // 3MF is recognized from the ZIP container, but this build has no
+        // reader. The operator reads this sentence in the load-failure dialog,
+        // so it names the format and an action instead of the crate and the
+        // Rust variant that produced it.
+        FormatKind::Threemf => Err(FormatError::Deferred {
+            format: "3MF",
+            reason: "this build has no 3MF reader; export the model as STL, PLY, OBJ, or GLB"
+                .to_string(),
         }),
         FormatKind::Hps => crate::hps::read_with_key_provider(bytes, key_provider),
     }?;
@@ -399,15 +402,47 @@ mod tests {
     }
 
     #[test]
-    fn unimplemented_reader_returns_malformed() {
-        // 3MF is the remaining stub (PK zip magic; content that won't satisfy
-        // any implemented reader's parser either, so it routes by extension to
-        // the stub arm).
-        let res = dispatch_by_extension("3mf", &[0xA5u8; 16]);
-        let Err(FormatError::Malformed { reason, .. }) = res else {
-            panic!("expected Malformed stub error, got {res:?}");
-        };
-        assert!(reason.contains("not yet implemented"));
+    fn a_zip_without_a_reader_is_deferred_with_a_user_facing_message() {
+        // Every ZIP reaches the 3MF arm: `probe` classifies the container by
+        // its magic, whatever the file is named. The message is shown in the
+        // load-failure dialog, so it must name neither an internal crate nor a
+        // Rust variant.
+        let zip = zip_with_file("[Content_Types].xml", b"<Types/>");
+        let error = dispatch_by_extension("zip", &zip)
+            .expect_err("a recognized container with no reader must not read");
+        assert!(matches!(error, FormatError::Deferred { .. }));
+        let message = error.to_string();
+        assert!(
+            message.contains("3MF"),
+            "the operator message must name the format: {message}"
+        );
+        assert!(
+            !message.contains("occluview"),
+            "the operator message leaks an internal crate name: {message}"
+        );
+        assert!(
+            !message.contains("Threemf"),
+            "the operator message leaks a Rust variant name: {message}"
+        );
+    }
+
+    #[test]
+    fn a_gltf_json_file_is_deferred_with_a_glb_export_hint() {
+        // `.gltf` (JSON) is not among the v1 open extensions because the
+        // reader accepts only the GLB container. The refusal still has to tell
+        // the operator what to do next.
+        let error = dispatch_by_extension("gltf", br#"{"asset":{"version":"2.0"}}"#)
+            .expect_err(".gltf (JSON) has no reader");
+        assert!(matches!(error, FormatError::Deferred { .. }));
+        let message = error.to_string();
+        assert!(
+            message.contains(".glb"),
+            "the operator message must offer the .glb export: {message}"
+        );
+        assert!(
+            !message.contains("occluview"),
+            "the operator message leaks an internal crate name: {message}"
+        );
     }
 
     #[test]
