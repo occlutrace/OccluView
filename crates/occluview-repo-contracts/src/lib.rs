@@ -6,6 +6,7 @@
 //! installer defines. They parse text, so the crate has no dependencies and the
 //! repository-contract tests can assert the three agree without building any
 //! OccluView crate.
+#![forbid(unsafe_code)]
 
 /// The `version` of `[workspace.package]` in a workspace `Cargo.toml`.
 #[must_use]

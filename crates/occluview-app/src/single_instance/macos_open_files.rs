@@ -71,12 +71,16 @@ fn add_open_methods(class: &AnyClass) -> Result<(), &'static str> {
         return Err("the application delegate already owns a document-open selector");
     }
 
+    // SAFETY: `application_open_urls` has the AppKit object-pair ABI the
+    // selector expects, so transmuting it to `Imp` preserves the signature.
     let urls_imp = unsafe {
         std::mem::transmute::<
             unsafe extern "C-unwind" fn(&AnyObject, Sel, &NSApplication, &NSArray<NSURL>),
             Imp,
         >(application_open_urls)
     };
+    // SAFETY: `application_open_files` has the same object-pair ABI, so the
+    // transmute to `Imp` preserves the signature.
     let files_imp = unsafe {
         std::mem::transmute::<
             unsafe extern "C-unwind" fn(&AnyObject, Sel, &NSApplication, &NSArray<NSString>),
@@ -116,8 +120,9 @@ fn register_launch_observer() {
     // of the registered observer class.
     let observer: Retained<LaunchObserver> = unsafe { msg_send![LaunchObserver::class(), new] };
     let center = NSNotificationCenter::defaultCenter();
-    // The notification center does not retain selector-based observers. Keep
-    // this instance alive for the process after registering it.
+    // SAFETY: the notification center does not retain selector-based
+    // observers, so this instance is kept alive for the process by the
+    // `mem::forget` below.
     unsafe {
         center.addObserver_selector_name_object(
             observer.as_super().as_super(),

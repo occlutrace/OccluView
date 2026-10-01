@@ -140,8 +140,9 @@ impl PreviewHandler {
             TPM_RETURNCMD.0 | TPM_NONOTIFY.0 | TPM_LEFTALIGN.0 | TPM_TOPALIGN.0 | TPM_RIGHTBUTTON.0;
         // SAFETY: modal tracking on our own menu/window; TPM_RETURNCMD returns
         // the selected command id in the BOOL's numeric field.
-        let selection =
-            unsafe { TrackPopupMenuEx(menu, flags, screen_point.x, screen_point.y, hwnd, None) };
+        let selection = unsafe {
+            TrackPopupMenuEx(menu, flags, screen_point.x, screen_point.y, hwnd, None)
+        };
 
         // SAFETY: destroy the menu, then the app-owned icon bitmaps it referenced.
         let _ = unsafe { DestroyMenu(menu) };
@@ -370,6 +371,7 @@ fn copy_rgba_to_clipboard(
     if ptr.is_null() {
         // SAFETY: releasing the block we failed to lock, then the clipboard.
         let _ = unsafe { GlobalFree(Some(hglobal)) };
+        // SAFETY: the clipboard was opened above and is still ours.
         let _ = unsafe { CloseClipboard() };
         return Err(e_fail());
     }

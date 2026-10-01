@@ -80,6 +80,8 @@ fn read_token_user_sid(token: HANDLE) -> Option<String> {
     // SAFETY: `sid` is a valid SID from the token; `sid_text` receives a
     // LocalAlloc'd string that is freed below.
     unsafe { ConvertSidToStringSidW(sid, &raw mut sid_text) }.ok()?;
+    // SAFETY: `sid_text` is the NUL-terminated string ConvertSidToStringSidW
+    // just produced.
     let owned = unsafe { sid_text.to_string() }.ok();
     // SAFETY: `sid_text` was allocated by ConvertSidToStringSidW.
     let _ = unsafe {

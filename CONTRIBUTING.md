@@ -34,6 +34,15 @@ diary or to preserve review history, speculation, obsolete behaviour, or
 unverified performance claims. The pull request diff must be checked for these
 artifacts; formatting, tests, and CI do not enforce this rule.
 
+## Unsafe code
+
+Every crate is `#![forbid(unsafe_code)]`. A crate that needs FFI or another
+`unsafe` boundary opts out with `#![deny(unsafe_code)]` and a module-level
+`#![allow(unsafe_code)]` in the boundary module only, with a comment naming the
+boundary. Every `unsafe` block carries a `SAFETY:` comment on the line above it
+that states the invariant that makes the call sound. The repository-contract
+tests enforce the crate gate and the `SAFETY:` comment.
+
 ## Tests
 
 For behaviour changes, add or update tests. Prefer behavioural assertions over

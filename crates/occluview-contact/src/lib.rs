@@ -61,6 +61,7 @@
 //! triangles and put the edge of the painted band wherever the tessellation
 //! happened to fall. The shader re-runs the same interpolation over the same
 //! numbers, so a CPU readout and a GPU pixel agree.
+#![forbid(unsafe_code)]
 
 mod components;
 mod field;

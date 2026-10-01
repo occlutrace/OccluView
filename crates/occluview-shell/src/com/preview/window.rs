@@ -66,6 +66,8 @@ unsafe fn preview_window_proc_body(
             if create.is_null() {
                 return LRESULT(0);
             }
+            // SAFETY: WM_NCCREATE passes a valid CREATESTRUCTW and the pointer
+            // was checked non-null above.
             let handler = unsafe { (*create).lpCreateParams };
             if handler.is_null() {
                 return LRESULT(0);
@@ -91,7 +93,10 @@ unsafe fn preview_window_proc_body(
             if let Some(handler) = preview_handler_from_hwnd(hwnd) {
                 let point = point_from_lparam(lparam);
                 handler.begin_drag(PreviewDragMode::Orbit, point);
+                // SAFETY: `hwnd` is the live preview child window; focus and
+                // capture both act on that window only.
                 let _ = unsafe { SetKeyboardFocus(Some(hwnd)) };
+                // SAFETY: the capture is released on the thread that owns it.
                 unsafe { SetCapture(hwnd) };
                 return LRESULT(0);
             }
@@ -100,7 +105,10 @@ unsafe fn preview_window_proc_body(
             if let Some(handler) = preview_handler_from_hwnd(hwnd) {
                 let point = point_from_lparam(lparam);
                 handler.begin_drag(PreviewDragMode::Pan, point);
+                // SAFETY: `hwnd` is the live preview child window; focus and
+                // capture both act on that window only.
                 let _ = unsafe { SetKeyboardFocus(Some(hwnd)) };
+                // SAFETY: the capture is released on the thread that owns it.
                 unsafe { SetCapture(hwnd) };
                 return LRESULT(0);
             }
@@ -120,6 +128,7 @@ unsafe fn preview_window_proc_body(
                 // opens the context menu, so RMB orbit semantics are preserved.
                 let dragged = handler.drag_moved.get();
                 handler.end_drag();
+                // SAFETY: the capture was set on this thread for this window.
                 let _ = unsafe { ReleaseCapture() };
                 if !dragged {
                     handler.show_context_menu(hwnd, point);
@@ -147,6 +156,7 @@ unsafe fn preview_window_proc_body(
                 let point = point_from_lparam(lparam);
                 let dragged = handler.drag_moved.get();
                 handler.end_drag();
+                // SAFETY: the capture was set on this thread for this window.
                 let _ = unsafe { ReleaseCapture() };
                 if !dragged {
                     let _ = handler.focus_preview_point(point);
@@ -179,6 +189,7 @@ unsafe fn preview_window_proc_body(
             if let Some(handler) = preview_handler_from_hwnd(hwnd) {
                 handler.end_drag();
                 handler.drag_moved.set(false);
+                // SAFETY: the capture was set on this thread for this window.
                 let _ = unsafe { ReleaseCapture() };
                 return LRESULT(0);
             }
@@ -202,6 +213,8 @@ unsafe fn preview_window_proc_body(
         }
         _ => {}
     }
+    // SAFETY: forwarding an unhandled message with this wndproc's own
+    // parameters.
     unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
 }
 
@@ -233,6 +246,8 @@ fn preview_handler_from_hwnd(hwnd: HWND) -> Option<&'static PreviewHandler> {
     if ptr.is_null() {
         None
     } else {
+        // SAFETY: the slot is non-null and was set to the live handler at
+        // WM_NCCREATE.
         Some(unsafe { &*ptr })
     }
 }

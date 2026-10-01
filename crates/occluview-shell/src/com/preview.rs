@@ -716,11 +716,11 @@ impl IInitializeWithFile_Impl for PreviewHandler_Impl {
             "preview IInitializeWithFile",
             || Err(e_fail()),
             || {
-                // `to_string()` on a path with an unpaired surrogate returns
-                // E_FAIL, so a file Explorer can see and hand over would get no
-                // preview and no thumbnail. `initialize_path` takes a `PathBuf`,
-                // so the wide string converts straight into an OS string with no
-                // lossy step to fail on.
+                // SAFETY: `to_string()` on a path with an unpaired surrogate
+                // returns E_FAIL, so a file Explorer can see and hand over would
+                // get no preview and no thumbnail. `initialize_path` takes a
+                // `PathBuf`, so the wide string converts straight into an OS
+                // string with no lossy step to fail on.
                 let path = std::ffi::OsString::from_wide(unsafe { pszfilepath.as_wide() });
                 self.this.initialize_path(PathBuf::from(path));
                 Ok(())
@@ -739,6 +739,8 @@ impl IInitializeWithItem_Impl for PreviewHandler_Impl {
                 // SAFETY: `GetDisplayName(SIGDN_FILESYSPATH)` returns a CoTaskMem
                 // path.
                 let path_ptr = unsafe { item.GetDisplayName(SIGDN_FILESYSPATH)? };
+                // SAFETY: `path_ptr` is the CoTaskMem string GetDisplayName
+                // just returned.
                 let path_string = unsafe { path_ptr.to_string() }.map_err(|_| {
                     // SAFETY: freeing the COM-owned pointer returned by
                     // GetDisplayName.
