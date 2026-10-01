@@ -5,6 +5,42 @@ remain in the Git history.
 
 ## Unreleased
 
+### Layers
+
+- Dragging a layer name moves the layer instead of selecting its text. The name
+  shows a grab cursor, the drag carries a translucent chip with the layer's name
+  and tint, the drop target fades in and out instead of flashing, and the edge
+  band highlights only the strip that will actually take the layer.
+
+### Sculpt
+
+- The brush cursor is a pale wash of the tool colour, matching the brightness of
+  the reference viewer, so the footprint marks the surface instead of covering
+  it. The screen ring is a hairline with a crosshair centre, and the translucent
+  tool body uses its own rim shading and is occluded by geometry in front of it.
+- The pointer becomes a crosshair while a Sculpt tool is armed.
+- The layer guard runs more rollback waves before it restores a whole dab, so a
+  Smooth stroke leaves fewer untouched patches on dense geometry.
+- Remove no longer builds an opening distance field inside a stroke, and a group
+  whose opening thickness was never measured keeps the widest reserve instead of
+  a made-up thin one.
+- Incremental shading no longer publishes a zero normal for a vertex whose faces
+  are all filtered out, which read as a spike on the surface.
+- Relax is warmed with the other brushes, so its first stroke is as responsive.
+
+### Align
+
+- Best-fit matching scores its coarse hypotheses on the seed sample set instead
+  of the dense one, which removes most of the work one press performed. Searching
+  a small scan against a large one no longer takes minutes.
+- Best-fit matching compares what two candidate poses explain about the other
+  scan again, so two placements that explain it equally are still reported as
+  ambiguous while a seating with more support wins outright.
+- The fixed-to-moving overlap signal no longer discards hits on an open border,
+  which is what a small scan's own rim produces.
+- The deviation map opens on the clinical range, 0.000 to 0.100 mm, instead of
+  0.050 to 0.200 mm, so a 0.010 mm gap already reads as a mismatch.
+
 ## 1.2.1 - 2026-09-30
 
 ### Workspace, Sculpt and Align
