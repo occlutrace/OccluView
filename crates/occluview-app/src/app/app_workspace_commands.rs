@@ -767,6 +767,49 @@ mod tests {
         next.drop_without_applying_deltas();
     }
 
+    /// The window-close guard, driven through the production path. A test-only
+    /// copy of this guard used to live in `app_dialogs`, so a regression here was
+    /// invisible to the test that claimed to cover it.
+    #[test]
+    fn a_window_close_with_unsaved_edits_is_cancelled_by_the_guard() {
+        let mut app = test_app("window-close-guard");
+        let first = app.workspace.scenes[0].key;
+        let scene = named_scene("dirty", 0.0);
+        let layer = scene.meshes()[0].id();
+        {
+            let mut owner = app.scene_context(first).expect("first");
+            owner.set_scene(scene, true);
+            owner.document.mark_mesh_edits_unsaved(layer);
+        }
+
+        let ctx = egui::Context::default();
+        let mut input = egui::RawInput::default();
+        let root_viewport = input.viewports.get_mut(&egui::ViewportId::ROOT);
+        assert!(root_viewport.is_some(), "root viewport exists");
+        let Some(root_viewport) = root_viewport else {
+            panic!("required test setup or expected result was missing");
+        };
+        root_viewport.events.push(egui::ViewportEvent::Close);
+
+        let output = ctx.run_logic(&input, |ctx| app.intercept_workspace_close(ctx));
+
+        assert!(
+            app.ui.close_guard_open,
+            "an unsaved window close must open the guard"
+        );
+        assert!(
+            matches!(app.workspace.close_request, Some(CloseRequest::Window)),
+            "the guard must remember that it is answering a window close"
+        );
+        assert!(
+            output
+                .viewport_commands
+                .get(&egui::ViewportId::ROOT)
+                .is_some_and(|commands| { commands.contains(&egui::ViewportCommand::CancelClose) }),
+            "logic-only close must be cancelled before eframe exits"
+        );
+    }
+
     #[test]
     fn closing_hidden_dirty_scene_preserves_it_until_explicit_decision() {
         let mut app = test_app("hidden-scene-close");
