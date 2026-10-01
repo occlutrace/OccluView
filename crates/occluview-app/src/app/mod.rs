@@ -1,5 +1,5 @@
 use super::app_files::{recent_scene_hover, recent_scene_label};
-use super::cut_tool::CutTool;
+use super::cut::cut_tool::CutTool;
 use super::edit_mode::{EditModeCommand, EditModeController, ScreenPolygonSelectionRequest};
 use super::layer_actions::{self, LayerContextAction, LayerContextApply, LayerContextRequest};
 use super::layers_overlay::{self, LayerOverlayChanges};

@@ -6,11 +6,11 @@
 //!
 //! The state machine holds no egui context and does no rendering: the viewport
 //! maps input into [`CutFrameInput`] and applies the returned [`CutUpdate`], and
-//! pure geometry helpers live in [`crate::cut_geometry`]. It does carry egui's
+//! pure geometry helpers live in [`crate::cut::cut_geometry`]. It does carry egui's
 //! [`Pos2`] for the pointer and screen-space fields the viewport hands it, which
 //! is what keeps the disc under the cursor.
 
-use crate::cut_geometry::{
+use crate::cut::cut_geometry::{
     apply_drag, begin_drag, camera_keep_side, follow_plane_normal, hover_cursor, scale_radius,
     smooth_normal,
 };
@@ -535,7 +535,7 @@ mod tests {
         }
     }
 
-    use crate::cut_geometry::scale_radius;
+    use crate::cut::cut_geometry::scale_radius;
     use eframe::egui::pos2;
 
     fn base_input() -> CutFrameInput {

@@ -13,7 +13,7 @@
 //!     segment intersection, not a vertex), reporting the in-slice wall
 //!     thickness. `None` when nothing is hit.
 
-use crate::cut_manipulator::{DiscPose, MAX_DISC_RADIUS_MM, MIN_DISC_RADIUS_MM};
+use crate::cut::cut_manipulator::{DiscPose, MAX_DISC_RADIUS_MM, MIN_DISC_RADIUS_MM};
 use glam::{Vec2, Vec3};
 use occluview_render::slice_view_basis;
 

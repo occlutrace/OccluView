@@ -1,11 +1,13 @@
 //! Viewport-integrated Cut View tool: placement, clipping, and section view.
 //!
-//! The reusable section panel lives in [`crate::section_view`]. Keeping it out
+//! The reusable section panel lives in [`crate::cut::section_view`]. Keeping it out
 //! of this type lets another tool own placement while presenting the same slice.
 
-use crate::cut_manipulator::{CutFrameInput, CutManipulator, CutUpdate, DiscPose};
-use crate::probe_section::SliceProbe;
-use crate::section_view::{SectionMainView, SectionView, SectionViewFrame, SectionViewUiOutcome};
+use crate::cut::cut_manipulator::{CutFrameInput, CutManipulator, CutUpdate, DiscPose};
+use crate::cut::probe_section::SliceProbe;
+use crate::cut::section_view::{
+    SectionMainView, SectionView, SectionViewFrame, SectionViewUiOutcome,
+};
 use eframe::egui;
 use glam::Vec3;
 use occluview_core::{Aabb, SceneMeshId};
@@ -19,66 +21,66 @@ const CUT_PREVIEW_RENDER_SIZE_PX: u16 = 512;
 const CAP_COLOR: [f32; 4] = [0.910, 0.298, 0.294, 1.0];
 
 #[derive(Default)]
-pub(super) struct CutTool {
+pub(crate) struct CutTool {
     manipulator: CutManipulator,
     cached_clip: Option<(Vec3, f32)>,
     section: SectionView,
     probe_linked: bool,
 }
 
-pub(super) type CutToolUiOutcome = SectionViewUiOutcome;
+pub(crate) type CutToolUiOutcome = SectionViewUiOutcome;
 
 impl CutTool {
-    pub(super) fn is_active(&self) -> bool {
+    pub(crate) fn is_active(&self) -> bool {
         self.manipulator.is_active()
     }
 
-    pub(super) fn is_planted(&self) -> bool {
+    pub(crate) fn is_planted(&self) -> bool {
         self.manipulator.is_planted()
     }
 
-    pub(super) fn is_probe_linked(&self) -> bool {
+    pub(crate) fn is_probe_linked(&self) -> bool {
         self.probe_linked
     }
 
-    pub(super) fn pose(&self) -> Option<DiscPose> {
+    pub(crate) fn pose(&self) -> Option<DiscPose> {
         self.manipulator.pose()
     }
 
-    pub(super) fn slice_visible(&self) -> bool {
+    pub(crate) fn slice_visible(&self) -> bool {
         self.section.slice_visible()
     }
 
-    pub(super) fn wants_offscreen_slice(&self) -> bool {
+    pub(crate) fn wants_offscreen_slice(&self) -> bool {
         self.section.wants_offscreen_slice()
     }
 
-    pub(super) fn can_render_bbox(bbox: Aabb) -> bool {
+    pub(crate) fn can_render_bbox(bbox: Aabb) -> bool {
         !bbox.is_empty()
     }
 
-    pub(super) const fn preview_size_px() -> u16 {
+    pub(crate) const fn preview_size_px() -> u16 {
         CUT_PREVIEW_RENDER_SIZE_PX
     }
 
-    pub(super) fn take_needs_render(&mut self) -> bool {
+    pub(crate) fn take_needs_render(&mut self) -> bool {
         self.section.take_needs_render()
     }
 
-    pub(super) fn mark_dirty(&mut self) {
+    pub(crate) fn mark_dirty(&mut self) {
         self.section.mark_dirty();
     }
 
-    pub(super) fn store_slice(
+    pub(crate) fn store_slice(
         &mut self,
         ctx: &egui::Context,
         image: egui::ColorImage,
-        cam: crate::cut_ruler::SliceCam,
+        cam: crate::cut::cut_ruler::SliceCam,
     ) {
         self.section.store_slice(ctx, image, cam);
     }
 
-    pub(super) fn disable(&mut self) {
+    pub(crate) fn disable(&mut self) {
         self.manipulator.disarm();
         self.cached_clip = None;
         self.section.reset();
@@ -87,7 +89,7 @@ impl CutTool {
 
     /// Stop a handle drag interrupted by window focus loss without changing
     /// the operator's planted cut pose or closing the tool.
-    pub(super) fn cancel_pointer_gesture(&mut self) -> bool {
+    pub(crate) fn cancel_pointer_gesture(&mut self) -> bool {
         if !self.manipulator.cancel_pointer_gesture() {
             return false;
         }
@@ -97,14 +99,14 @@ impl CutTool {
         true
     }
 
-    pub(super) fn enable(&mut self) {
+    pub(crate) fn enable(&mut self) {
         self.manipulator.arm();
         self.cached_clip = None;
         self.section.reset();
         self.probe_linked = false;
     }
 
-    pub(super) fn plant_from_probe(
+    pub(crate) fn plant_from_probe(
         &mut self,
         pose: DiscPose,
         keep_positive: bool,
@@ -119,12 +121,12 @@ impl CutTool {
         self.cached_clip = self.manipulator.clip(Vec3::ZERO);
         self.section.sync(self.section_frame());
         self.section
-            .set_measure_mode(crate::cut_ruler::SliceMeasureMode::Thickness);
+            .set_measure_mode(crate::cut::cut_ruler::SliceMeasureMode::Thickness);
         self.section
             .set_thickness(seed.entry, seed.exit, seed.thickness_mm);
     }
 
-    pub(super) fn update(&mut self, frame: &CutFrameInput, eye: Vec3) -> CutUpdate {
+    pub(crate) fn update(&mut self, frame: &CutFrameInput, eye: Vec3) -> CutUpdate {
         let mut out = self.manipulator.update(frame);
         self.cached_clip = self.manipulator.clip(eye);
         out.pose_changed |= self.section.sync(self.section_frame());
@@ -134,19 +136,19 @@ impl CutTool {
         out
     }
 
-    pub(super) fn sync_main_view(&mut self, main_view: SectionMainView) -> bool {
+    pub(crate) fn sync_main_view(&mut self, main_view: SectionMainView) -> bool {
         self.section.sync_main_view(main_view)
     }
 
-    pub(super) fn section_plane(&self) -> Option<SectionPlane> {
+    pub(crate) fn section_plane(&self) -> Option<SectionPlane> {
         self.section.section_plane()
     }
 
-    pub(super) fn cut_view_focus(&self, bbox: Aabb) -> (Vec3, f32) {
+    pub(crate) fn cut_view_focus(&self, bbox: Aabb) -> (Vec3, f32) {
         self.section.focus(bbox)
     }
 
-    pub(super) fn slice_basis(&self) -> crate::cut_ruler::SliceBasis {
+    pub(crate) fn slice_basis(&self) -> crate::cut::cut_ruler::SliceBasis {
         self.section.slice_basis()
     }
 
@@ -156,7 +158,7 @@ impl CutTool {
     /// 3D view resizes to match. The disc is what the window is looking at, so
     /// they move opposite ways — magnify the section and the disc narrows onto
     /// the detail, pull back and it opens out.
-    pub(super) fn zoom_slice_at_cursor(
+    pub(crate) fn zoom_slice_at_cursor(
         &mut self,
         viewport_rect: egui::Rect,
         pointer: Option<egui::Pos2>,
@@ -169,7 +171,7 @@ impl CutTool {
         let after = self.section.slice_zoom();
         if let Some(pose) = self.manipulator.pose() {
             let wanted =
-                crate::cut_manipulator::radius_after_slice_zoom(pose.radius_mm, before, after);
+                crate::cut::cut_manipulator::radius_after_slice_zoom(pose.radius_mm, before, after);
             // The clip plane is untouched: a radius is how much disc is drawn,
             // and the plane it lies in has not moved. Dropping the cached plane
             // here would blank the clipping for a frame.
@@ -180,7 +182,7 @@ impl CutTool {
         true
     }
 
-    pub(super) fn viewport_clip_plane(&self, bbox: Aabb) -> ClipPlane {
+    pub(crate) fn viewport_clip_plane(&self, bbox: Aabb) -> ClipPlane {
         if self.probe_linked {
             return ClipPlane::disabled();
         }
@@ -194,7 +196,7 @@ impl CutTool {
         }
     }
 
-    pub(super) fn cut_view_spec(&self, bbox: Aabb) -> Option<CutViewSpec> {
+    pub(crate) fn cut_view_spec(&self, bbox: Aabb) -> Option<CutViewSpec> {
         if !(self.is_active() && Self::can_render_bbox(bbox)) {
             return None;
         }
@@ -213,7 +215,7 @@ impl CutTool {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn show_section_panel<F>(
+    pub(crate) fn show_section_panel<F>(
         &mut self,
         ui: &mut egui::Ui,
         viewport_rect: egui::Rect,

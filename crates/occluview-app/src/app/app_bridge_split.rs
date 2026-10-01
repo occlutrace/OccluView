@@ -5,9 +5,9 @@ use crate::bridge_split::{apply_preview_to_scene, BridgeSplitMode, BridgeSplitTa
 use crate::bridge_split_overlay::{
     paint_separator_disc, show_panel, BridgeSplitPanelAction, BridgeSplitPanelState, SeparatorDisc,
 };
-use crate::cut_manipulator::{CutCursor, CutFrameInput, SurfaceSample};
+use crate::cut::cut_manipulator::{CutCursor, CutFrameInput, SurfaceSample};
+use crate::cut::section_view::{SectionMainView, SectionViewFrame};
 use crate::edit_mode::state::{BusyFinish, EditModeCommand};
-use crate::section_view::{SectionMainView, SectionViewFrame};
 use crate::viewer::viewport_ray;
 use occluview_core::{Camera, SceneMesh, SceneMeshId};
 
@@ -64,7 +64,7 @@ impl SceneContext<'_> {
         let object_radius = {
             let world_diagonal = entry.mesh.bbox_cached().size().length()
                 * crate::sculpt::sculpt_tool::mean_uniform_scale(&entry.transform);
-            (0.22 * world_diagonal).max(crate::cut_manipulator::DEFAULT_DISC_RADIUS_MM)
+            (0.22 * world_diagonal).max(crate::cut::cut_manipulator::DEFAULT_DISC_RADIUS_MM)
         };
 
         // Align keeps its current poses when the operator switches tools. Close
@@ -166,7 +166,7 @@ impl SceneContext<'_> {
         let update = if self.input_allowed {
             self.update_bridge_split_disc(&frame, entry, ctx)
         } else {
-            crate::cut_manipulator::CutUpdate::default()
+            crate::cut::cut_manipulator::CutUpdate::default()
         };
         let section_consumed = self.show_bridge_split_section(BridgeSectionInput {
             ui,
@@ -193,7 +193,7 @@ impl SceneContext<'_> {
         frame: &CutFrameInput,
         entry: &SceneMesh,
         ctx: &egui::Context,
-    ) -> crate::cut_manipulator::CutUpdate {
+    ) -> crate::cut::cut_manipulator::CutUpdate {
         let update = self.tools.bridge_split_disc.update(frame);
         match update.cursor {
             CutCursor::Grab => ctx.set_cursor_icon(egui::CursorIcon::Grab),
@@ -268,7 +268,7 @@ impl SceneContext<'_> {
         );
         let color_for = super::app_cut::contour_tint(frame_context.scene);
         if let Some(section) = section.as_deref() {
-            crate::cut_overlay::paint_section_contour(
+            crate::cut::cut_overlay::paint_section_contour(
                 ui.painter(),
                 frame_context.camera,
                 frame_context.viewport_rect,
@@ -307,7 +307,7 @@ impl SceneContext<'_> {
                     .tools
                     .bridge_split_disc
                     .pose()
-                    .map_or(crate::cut_manipulator::DEFAULT_DISC_RADIUS_MM, |pose| {
+                    .map_or(crate::cut::cut_manipulator::DEFAULT_DISC_RADIUS_MM, |pose| {
                         pose.radius_mm
                     }),
                 can_apply: self.tools.bridge_split.session().can_apply(),
@@ -626,7 +626,9 @@ fn bridge_surface_sample(
     })
 }
 
-fn to_bridge_pose(pose: crate::cut_manipulator::DiscPose) -> crate::bridge_split::BridgeSplitPose {
+fn to_bridge_pose(
+    pose: crate::cut::cut_manipulator::DiscPose,
+) -> crate::bridge_split::BridgeSplitPose {
     crate::bridge_split::BridgeSplitPose {
         center: pose.center,
         normal: pose.plane_normal,

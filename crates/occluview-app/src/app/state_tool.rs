@@ -20,12 +20,12 @@
 
 use crate::align::align_state::AlignState;
 use crate::bridge_split::{BridgeSplitController, BridgeSplitMode};
-use crate::cut_manipulator::CutManipulator;
-use crate::cut_tool::CutTool;
+use crate::cut::cut_manipulator::CutManipulator;
+use crate::cut::cut_tool::CutTool;
+use crate::cut::section_view::SectionView;
 use crate::measure_tool::MeasureTool;
 use crate::mesh_editor_overlay::EditorTab;
 use crate::sculpt::sculpt_tool::SculptTool;
-use crate::section_view::SectionView;
 
 pub(super) struct ToolState {
     pub(super) cut_view: CutTool,
