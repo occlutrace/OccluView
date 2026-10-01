@@ -223,41 +223,36 @@ fn prepared_scene_rejects_invalid_sparse_vertex_ids() {
     );
 }
 
-#[test]
-fn prepared_scene_draws_into_existing_render_pass() {
-    let _gpu = gpu_test_lock();
-    let mesh = triangle_mesh();
-    let cam = camera_looking_at_origin();
-    let offscreen = pollster::block_on(Offscreen::new()).expect("offscreen init");
-    let prepared = offscreen.prepare_scene(&[PreparedSceneSource {
-        mesh: &mesh,
-        uniform: identity_uniform(),
-        visible: true,
-        wireframe: false,
-        contact: None,
-    }]);
-    let renderer = offscreen.renderer();
+/// Draw `prepared` through a render pass this test owns — the offscreen
+/// convenience path the other tests use is what makes this one different — and
+/// return the color readback.
+fn draw_into_caller_owned_pass(
+    renderer: &Renderer,
+    prepared: &PreparedScene,
+    camera: &GpuCamera,
+) -> wgpu::Buffer {
     let device = renderer.device();
+    // COPY_SRC so the pass's output can be read back.
     let color = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("prepared scene live test color"),
         size: wgpu::Extent3d {
-            width: 32,
-            height: 24,
+            width: SHARED_WIDTH,
+            height: SHARED_HEIGHT,
             depth_or_array_layers: 1,
         },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Rgba8Unorm,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     });
     let color_view = color.create_view(&wgpu::TextureViewDescriptor::default());
     let depth = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("prepared scene live test depth"),
         size: wgpu::Extent3d {
-            width: 32,
-            height: 24,
+            width: SHARED_WIDTH,
+            height: SHARED_HEIGHT,
             depth_or_array_layers: 1,
         },
         mip_level_count: 1,
@@ -269,8 +264,9 @@ fn prepared_scene_draws_into_existing_render_pass() {
     });
     let depth_view = depth.create_view(&wgpu::TextureViewDescriptor::default());
     let fallback = GpuTexture::fallback(renderer, device, renderer.queue());
+    let readback = shared_readback_buffer(device);
 
-    renderer.set_camera(&cam);
+    renderer.set_camera(camera);
     let camera_bg = renderer.camera_bind_group();
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("prepared scene live test encoder"),
@@ -304,8 +300,57 @@ fn prepared_scene_draws_into_existing_render_pass() {
         });
         prepared.draw(renderer, &mut pass, &camera_bg, &fallback.bind_group);
     }
+    encoder.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture: &color,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &readback,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(SHARED_PADDED_BYTES_PER_ROW),
+                rows_per_image: Some(SHARED_HEIGHT),
+            },
+        },
+        wgpu::Extent3d {
+            width: SHARED_WIDTH,
+            height: SHARED_HEIGHT,
+            depth_or_array_layers: 1,
+        },
+    );
     renderer.queue().submit(std::iter::once(encoder.finish()));
-    let _ = device.poll(wgpu::PollType::wait_indefinitely());
+    readback
+}
+
+#[test]
+fn prepared_scene_draws_into_existing_render_pass() {
+    let _gpu = gpu_test_lock();
+    let mesh = triangle_mesh();
+    let cam = camera_looking_at_origin();
+    let offscreen = pollster::block_on(Offscreen::new()).expect("offscreen init");
+    let prepared = offscreen.prepare_scene(&[PreparedSceneSource {
+        mesh: &mesh,
+        uniform: identity_uniform(),
+        visible: true,
+        wireframe: false,
+        contact: None,
+    }]);
+    let renderer = offscreen.renderer();
+
+    let readback = draw_into_caller_owned_pass(renderer, &prepared, &cam);
+    let lit_pixels = count_lit_shared_pixels(renderer, &readback);
+
+    assert!(
+        lit_pixels > 16,
+        "a prepared scene drawn into a caller-owned pass must light pixels, got {lit_pixels}"
+    );
+    assert!(
+        renderer.take_gpu_error().is_none(),
+        "drawing into a caller-owned pass must not raise a wgpu error"
+    );
 }
 
 fn renderer_from_shared_handles(owner: &Renderer) -> Renderer {
