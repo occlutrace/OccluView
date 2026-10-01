@@ -49,6 +49,13 @@ remain in the Git history.
   frozen, so the view kept drawing the pre-sculpt contour for the rest of the
   session.
 
+### Reliability
+
+- The viewer stops polling for hand-off requests once no listener is left. The
+  fallback listener only noticed a closed channel when it had something to send,
+  so an idle listener kept a 50 ms directory poll and its repaint bursts running
+  for the life of the process on Linux and macOS.
+
 ## 1.2.1 - 2026-09-30
 
 ### Workspace, Sculpt and Align
