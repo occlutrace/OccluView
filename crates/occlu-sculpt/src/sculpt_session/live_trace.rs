@@ -53,9 +53,14 @@ pub(crate) struct LiveKinematics {
     pub mode: u32,
     pub radius: f32,
     pub strength: f32,
+    /// RESERVED. Never written: no code counts densify work for this wire any
+    /// more. The slot is kept so the published layout below stays stable for
+    /// the native decoder; always zero.
     pub pre_densify_ops: u32,
     pub remesh_ops: u32,
+    /// RESERVED. Never written; always zero. See `pre_densify_ops`.
     pub keep_restored: u32,
+    /// RESERVED. Never written; always zero. See `pre_densify_ops`.
     pub keep_candidates: u32,
     pub weighted: u32,
     pub proposals: u32,
@@ -123,6 +128,9 @@ impl SculptSession {
         if hit {
             flags |= 16;
         }
+        // Reserved slot: `keep_candidates` is never written, so bit 5 never
+        // sets. The branch stays so the published flag word keeps its meaning
+        // for the native decoder.
         if kin.keep_candidates > 0 {
             flags |= 32;
         }
@@ -137,6 +145,9 @@ impl SculptSession {
         if kin.local_normal {
             flags |= 512;
         }
+        // Reserved slot: `keep_restored` is never written, so bit 10 never
+        // sets. The branch stays so the published flag word keeps its meaning
+        // for the native decoder.
         if kin.keep_restored > 0 {
             flags |= 1024;
         }
