@@ -5,6 +5,7 @@ use super::{
 use crate::fast_thumb::{
     try_read_fast_thumbnail_mesh_for_kind, try_read_fast_thumbnail_mesh_from_file_with_limit,
 };
+use crate::fidelity::THUMBNAIL_FULL_FIDELITY_FILE_BYTES;
 use crate::thumbnail_format::infer_thumbnail_format;
 use glam::Vec3;
 use occluview_core::Mesh;
@@ -39,12 +40,9 @@ const THUMBNAIL_SHADING: occluview_formats::MeshShading = occluview_formats::Mes
 // What the decimating reader buys is memory. A full read of that 186 MB scan
 // is 3.9 million triangles, about 420 MB of vertices resident, and the shell
 // hosts several of these at once in a process it does not own. The cutoffs
-// are sized to hold that resident cost inside a surrogate, and OBJ and PLY
-// share the STL line: the fast reader declines a faced PLY anyway, so a lower
-// PLY cutoff would read such a file twice.
-const FULL_FIDELITY_STL_THUMBNAIL_FILE_BYTES: u64 = 40 * 1024 * 1024;
-const FULL_FIDELITY_OBJ_THUMBNAIL_FILE_BYTES: u64 = 40 * 1024 * 1024;
-const FULL_FIDELITY_PLY_THUMBNAIL_FILE_BYTES: u64 = 40 * 1024 * 1024;
+// is sized to hold that resident cost inside a surrogate, and it is one number
+// for every format: `crate::fidelity` owns the table and records why STL alone
+// differs between this surface and the preview.
 
 fn reject_oversize_input(bytes: &[u8]) -> Result<(), ThumbnailError> {
     if bytes.len() > MAX_THUMBNAIL_INPUT_BYTES {
@@ -68,7 +66,7 @@ pub(super) fn load_thumbnail_mesh_from_bytes_kind(
 ) -> Result<Mesh, ThumbnailError> {
     select_thumbnail_mesh(
         kind,
-        prefers_full_fidelity_thumbnail_kind(kind, bytes.len() as u64),
+        bytes.len() as u64 <= THUMBNAIL_FULL_FIDELITY_FILE_BYTES,
         || dispatch_by_kind_shaded(kind, bytes, &RuntimeHpsKeyProvider, THUMBNAIL_SHADING),
         || try_read_fast_thumbnail_mesh_for_kind(kind, bytes),
     )
@@ -88,7 +86,7 @@ pub(super) fn load_thumbnail_mesh_from_file(
     // the extension rather than re-probing.
     select_thumbnail_mesh(
         thumbnail_kind_from_extension(path),
-        prefers_full_fidelity_thumbnail_parse(path, &metadata),
+        metadata.byte_len <= THUMBNAIL_FULL_FIDELITY_FILE_BYTES,
         || read_file_shaded(path, &RuntimeHpsKeyProvider, THUMBNAIL_SHADING),
         || try_read_fast_thumbnail_mesh_from_file_with_limit(path, MAX_THUMBNAIL_FILE_BYTES as u64),
     )
@@ -281,37 +279,4 @@ pub(super) fn prepare_stream_thumbnail_render(
         kind,
         cache_key: cache::ThumbnailStreamCacheKey::new(kind, bytes),
     })
-}
-
-fn prefers_full_fidelity_thumbnail_parse(
-    path: &Path,
-    metadata: &cache::ThumbnailFileMetadata,
-) -> bool {
-    let Some(extension) = path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .map(str::to_ascii_lowercase)
-    else {
-        return false;
-    };
-
-    let byte_limit = match extension.as_str() {
-        "stl" => FULL_FIDELITY_STL_THUMBNAIL_FILE_BYTES,
-        "obj" => FULL_FIDELITY_OBJ_THUMBNAIL_FILE_BYTES,
-        "ply" => FULL_FIDELITY_PLY_THUMBNAIL_FILE_BYTES,
-        _ => return false,
-    };
-
-    metadata.byte_len <= byte_limit
-}
-
-fn prefers_full_fidelity_thumbnail_kind(kind: FormatKind, byte_len: u64) -> bool {
-    let byte_limit = match kind {
-        FormatKind::Stl => FULL_FIDELITY_STL_THUMBNAIL_FILE_BYTES,
-        FormatKind::Obj => FULL_FIDELITY_OBJ_THUMBNAIL_FILE_BYTES,
-        FormatKind::Ply => FULL_FIDELITY_PLY_THUMBNAIL_FILE_BYTES,
-        _ => return true,
-    };
-
-    byte_len <= byte_limit
 }
