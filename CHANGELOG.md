@@ -42,6 +42,13 @@ remain in the Git history.
   0.050 to 0.200 mm. The hottest colour is now 100 um rather than 200 um, and the
   bar starts at zero instead of hiding everything below 50 um.
 
+### Viewer
+
+- The section view recomputes its contour after a sculpt. The section cache was
+  keyed on the mesh's topology revision, which a sculpt commit deliberately keeps
+  frozen, so the view kept drawing the pre-sculpt contour for the rest of the
+  session.
+
 ## 1.2.1 - 2026-09-30
 
 ### Workspace, Sculpt and Align
