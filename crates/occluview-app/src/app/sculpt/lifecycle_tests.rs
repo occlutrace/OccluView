@@ -68,6 +68,10 @@ fn worker_for(mesh: &Mesh, layer_id: SceneMeshId) -> SculptWorker {
     })
 }
 
+fn wait_for_worker_idle(worker: &SculptWorker, deadline: Instant) -> bool {
+    worker.wait_until_idle(deadline.saturating_duration_since(Instant::now()))
+}
+
 fn app_with_a_live_stroke(name: &str) -> (OccluViewApp, SceneMeshId) {
     let mut app = test_app(name);
     let mesh = coarse_ridge_mesh();
@@ -149,7 +153,10 @@ fn lay_densifying_dab(app: &mut OccluViewApp) {
             Instant::now() < deadline,
             "the densifying dab never settled"
         );
-        std::thread::sleep(Duration::from_millis(1));
+        assert!(
+            wait_for_worker_idle(worker, deadline),
+            "the densifying dab never settled"
+        );
     }
 }
 
@@ -181,7 +188,16 @@ fn wait_for_shadow_growth(app: &OccluViewApp, above: usize) -> usize {
             Instant::now() < deadline,
             "the densifying dab never published (shadow stayed at {above})"
         );
-        std::thread::sleep(Duration::from_millis(1));
+        let worker = app.workspace.scenes[0]
+            .tools
+            .sculpt
+            .worker
+            .as_ref()
+            .expect("worker");
+        assert!(
+            wait_for_worker_idle(worker, deadline),
+            "the densifying dab never published (shadow stayed at {above})"
+        );
     }
 }
 
@@ -204,7 +220,16 @@ fn pump_sculpt_worker_until_idle(app: &mut OccluViewApp) {
             return;
         }
         assert!(Instant::now() < deadline, "the sculpt work never settled");
-        std::thread::sleep(Duration::from_millis(1));
+        let worker = app.workspace.scenes[0]
+            .tools
+            .sculpt
+            .worker
+            .as_ref()
+            .expect("worker");
+        assert!(
+            wait_for_worker_idle(worker, deadline),
+            "the sculpt work never settled"
+        );
     }
 }
 
@@ -259,7 +284,10 @@ fn wait_for_topology_delta_and_sparse_update(app: &OccluViewApp) {
             Instant::now() < deadline,
             "the fixture never queued a topology delta and a sparse update together"
         );
-        std::thread::sleep(Duration::from_millis(1));
+        assert!(
+            worker.wait_until_idle(deadline.saturating_duration_since(Instant::now())),
+            "the fixture never queued a topology delta and a sparse update together"
+        );
     }
 }
 
@@ -301,7 +329,16 @@ fn topology_deltas_flush_before_sparse_writes_and_commit_at_finish() {
             Instant::now() < deadline,
             "the dab never published its delta"
         );
-        std::thread::sleep(Duration::from_millis(1));
+        let worker = app.workspace.scenes[0]
+            .tools
+            .sculpt
+            .worker
+            .as_ref()
+            .expect("worker");
+        assert!(
+            wait_for_worker_idle(worker, deadline),
+            "the dab never published its delta"
+        );
     }
     // The vertex IDs remain stable across appended topology, so both outputs
     // can safely share one frame.
@@ -339,7 +376,16 @@ fn topology_deltas_flush_before_sparse_writes_and_commit_at_finish() {
             Instant::now() < deadline,
             "sculpt deltas were never drained"
         );
-        std::thread::sleep(Duration::from_millis(1));
+        let worker = app.workspace.scenes[0]
+            .tools
+            .sculpt
+            .worker
+            .as_ref()
+            .expect("worker");
+        assert!(
+            wait_for_worker_idle(worker, deadline),
+            "sculpt deltas were never drained"
+        );
     }
 
     let worker = app.workspace.scenes[0]
@@ -509,7 +555,16 @@ fn an_empty_stroke_does_not_leave_the_guards_latched() {
             Instant::now() < deadline,
             "an empty stroke must not hold the guards forever"
         );
-        std::thread::sleep(Duration::from_millis(1));
+        let worker = app.workspace.scenes[0]
+            .tools
+            .sculpt
+            .worker
+            .as_ref()
+            .expect("worker");
+        assert!(
+            wait_for_worker_idle(worker, deadline),
+            "an empty stroke must not hold the guards forever"
+        );
     }
 
     assert!(
@@ -851,7 +906,16 @@ fn an_active_stroke_keeps_its_finish_boundary_at_queue_capacity() {
             Instant::now() < deadline,
             "the queued boundaries never drained"
         );
-        std::thread::sleep(Duration::from_millis(1));
+        let worker = app.workspace.scenes[0]
+            .tools
+            .sculpt
+            .worker
+            .as_ref()
+            .expect("worker");
+        assert!(
+            wait_for_worker_idle(worker, deadline),
+            "the queued boundaries never drained"
+        );
     }
     assert!(
         app.ui.app_error.is_none(),
@@ -955,7 +1019,16 @@ fn a_finished_stroke_commits_before_a_later_live_topology_delta() {
             break;
         }
         assert!(Instant::now() < deadline, "stroke 1 was never committed");
-        std::thread::sleep(Duration::from_millis(1));
+        let worker = app.workspace.scenes[0]
+            .tools
+            .sculpt
+            .worker
+            .as_ref()
+            .expect("worker");
+        assert!(
+            wait_for_worker_idle(worker, deadline),
+            "stroke 1 was never committed"
+        );
     }
 
     assert!(app.ui.app_error.is_none(), "no terminal failure");
@@ -1030,7 +1103,16 @@ fn multiple_completions_commit_before_the_latest_live_delta() {
             Instant::now() < deadline,
             "both completions never committed"
         );
-        std::thread::sleep(Duration::from_millis(1));
+        let worker = app.workspace.scenes[0]
+            .tools
+            .sculpt
+            .worker
+            .as_ref()
+            .expect("worker");
+        assert!(
+            wait_for_worker_idle(worker, deadline),
+            "both completions never committed"
+        );
     }
 
     assert!(app.ui.app_error.is_none(), "no terminal failure");
