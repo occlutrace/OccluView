@@ -52,6 +52,73 @@ fn wait_for_worker_idle(worker: &SculptWorker, deadline: Instant) -> bool {
     worker.wait_until_idle(deadline.saturating_duration_since(Instant::now()))
 }
 
+#[test]
+fn sculpt_press_on_another_layer_is_ignored_after_hiding_the_edit_target() {
+    let (mut app, layer_id) = app_with_a_live_stroke("sculpt-hidden-target");
+    app.active_context()
+        .expect("live test scene")
+        .abort_sculpt_stroke();
+    app.workspace.scenes[0].tools.sculpt.armed = Some(SculptToolKind::AddRemove);
+    let mut scene = app.workspace.scenes[0]
+        .document
+        .scene
+        .as_ref()
+        .expect("scene")
+        .as_ref()
+        .clone();
+    scene.meshes_mut()[0].visible = false;
+    scene.add(SceneMesh::new(
+        coarse_ridge_mesh().expect("other visible mesh"),
+    ));
+    app.active_context()
+        .expect("live test scene")
+        .update_scene_materials(scene);
+    assert!(app.workspace.scenes[0]
+        .document
+        .edit_mode
+        .has_active_session());
+    assert_eq!(
+        app.workspace.scenes[0]
+            .document
+            .edit_mode
+            .session_layer_id(),
+        Some(layer_id)
+    );
+    app.workspace.scenes[0].render.camera = Some(Camera::default());
+    let ctx = egui::Context::default();
+    let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 400.0));
+    ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(viewport),
+            events: vec![
+                egui::Event::PointerMoved(viewport.center()),
+                egui::Event::PointerButton {
+                    pos: viewport.center(),
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+            ..Default::default()
+        },
+        |ui| {
+            let response = ui.allocate_rect(viewport, egui::Sense::click_and_drag());
+            app.active_context()
+                .expect("live test scene")
+                .handle_sculpt_drag(ui.ctx(), &response, false);
+        },
+    )
+    .drop_without_applying_deltas();
+    assert!(app.workspace.scenes[0]
+        .tools
+        .sculpt
+        .pending_presses
+        .is_empty());
+    assert!(app.workspace.scenes[0].tools.sculpt.worker.is_none());
+    assert!(app.workspace.scenes[0].tools.sculpt.stroke.is_none());
+    assert_eq!(app.workspace.scenes[0].document.edit_mode.undo_len(), 0);
+}
+
 fn app_with_a_live_stroke(name: &str) -> (OccluViewApp, SceneMeshId) {
     let mut app = test_app(name);
     let mesh = coarse_ridge_mesh().expect("ridge mesh");

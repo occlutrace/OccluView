@@ -153,21 +153,11 @@ pub(super) fn sculpt_target(
     let valid = |entry: &occluview_core::SceneMesh| {
         entry.visible && !entry.mesh.is_point_cloud() && entry.mesh.triangle_count() > 0
     };
-    preferred
-        .and_then(|layer_id| {
-            scene
-                .meshes()
-                .iter()
-                .enumerate()
-                .find(|(_, entry)| entry.id() == layer_id && valid(entry))
-                .map(|(index, _)| (index, layer_id))
-        })
-        .or_else(|| {
-            scene
-                .meshes()
-                .iter()
-                .enumerate()
-                .find(|(_, entry)| valid(entry))
-                .map(|(index, entry)| (index, entry.id()))
-        })
+    // A session owns one layer even while that layer is hidden or unavailable.
+    scene
+        .meshes()
+        .iter()
+        .enumerate()
+        .find(|(_, entry)| preferred.is_none_or(|layer_id| entry.id() == layer_id) && valid(entry))
+        .map(|(index, entry)| (index, entry.id()))
 }
