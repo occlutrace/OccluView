@@ -3,6 +3,7 @@ use super::app_help::render_contextual_hint;
 use super::app_recent_popup::RecentFilesAction;
 use super::information_dialog::InformationDialog;
 use super::settings::panel::{settings_popup_id, show_settings_toolbar_toggle};
+use super::state_tool::ViewportTool;
 use super::{load_app_logo_color_image, status_overlay_rect, PathBuf, OPEN_DIALOG_EXTENSIONS};
 use super::{AppErrorAction, SceneContext};
 use crate::measure::measure_overlay::{toolbar_toggle, toolbar_toggle_width, ToolbarToggle};
@@ -83,11 +84,10 @@ impl SceneContext<'_> {
         let thickness_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::T);
         let align_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::A);
         let edit_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::E);
-        let can_cut = self.can_render_cut_view();
-        let edit_session_active = self.document.edit_mode.has_active_session();
+        let can_switch_tools = !self.document.edit_mode.is_busy() && !self.tools.sculpt.is_busy();
+        let can_cut = self.can_render_cut_view() && can_switch_tools;
         let has_pickable_layer = self.has_measurable_layer();
-        let can_measure =
-            measure_tool::measure_menu_enabled(has_pickable_layer, edit_session_active);
+        let can_measure = measure_tool::measure_menu_enabled(has_pickable_layer, !can_switch_tools);
         let can_edit_mesh = has_pickable_layer;
         let mut toggle_cut_view = false;
         let mut toggle_measure: Option<MeasureMode> = None;
@@ -292,10 +292,10 @@ impl SceneContext<'_> {
                     ];
                     for (icon, mode, label, hint_key, shortcut) in entries {
                         let shortcut_text = ui.ctx().format_shortcut(&shortcut);
-                        let tooltip = if edit_session_active {
+                        let tooltip = if !can_switch_tools {
                             self.ui
                                 .locale
-                                .tr(crate::i18n::message_id!("toolbar-measure-blocked"))
+                                .tr(crate::i18n::message_id!("repair-edit-busy"))
                         } else if !has_pickable_layer {
                             self.ui
                                 .locale
@@ -400,22 +400,24 @@ impl SceneContext<'_> {
         // one's selection.
         if toggle_edit_mesh {
             let edit_active = self.document.edit_mode.has_active_session();
-            if let (false, true, Some(scene)) =
-                (edit_active, can_edit_mesh, self.document.scene.clone())
-            {
-                for entry in scene.meshes() {
-                    if !entry.mesh.is_point_cloud() && entry.visible {
-                        self.document.capture_edit_metadata();
-                        if !self.document.edit_mode.begin_face_selection(entry, &scene) {
-                            self.document.discard_edit_metadata();
-                            if matches!(self.document.edit_mode.take_session_start_failure(),
-                                Some(crate::edit_mode::EditSessionStartFailure::HistoryCapacityUnavailable)) {
-                                self.scene_ui.status_message = Some(self.ui.locale.tr(
-                                    crate::i18n::message_id!("workspace-history-budget"),
-                                ));
-                            }
-                        }
-                        break;
+            let first_layer = self.document.scene.as_ref().and_then(|scene| {
+                scene
+                    .meshes()
+                    .iter()
+                    .find(|entry| !entry.mesh.is_point_cloud() && entry.visible)
+                    .map(occluview_core::SceneMesh::id)
+            });
+            if let (false, true, Some(layer_id)) = (edit_active, can_edit_mesh, first_layer) {
+                if !self.begin_mesh_edit_session(layer_id) {
+                    if matches!(
+                        self.document.edit_mode.take_session_start_failure(),
+                        Some(crate::edit_mode::EditSessionStartFailure::HistoryCapacityUnavailable)
+                    ) {
+                        self.scene_ui.status_message = Some(
+                            self.ui
+                                .locale
+                                .tr(crate::i18n::message_id!("workspace-history-budget")),
+                        );
                     }
                 }
             }
@@ -433,18 +435,10 @@ impl SceneContext<'_> {
         if toggle_cut_view {
             if self.tools.cut_view.is_active() {
                 self.tools.cut_view.disable();
-            } else {
-                // The viewport-owning tools are mutually exclusive: entering
-                // the cut view stands the measurement tool down cleanly.
-                self.tools.measure.disarm();
+            } else if self.prepare_viewport_tool_entry(ViewportTool::Cut, &ctx) {
                 self.tools.cut_view.enable();
             }
             self.render.invalidation.overlay_tools_changed();
-        }
-        // Arming a measurement or the cut view closes Align, the same way
-        // arming Align closes them. Two tools cannot share the primary click.
-        if (toggle_measure.is_some() || toggle_cut_view) && self.align_active() {
-            self.cancel_align_session(&ctx);
         }
         if let Some(clicked) = toggle_measure {
             let (next, disable_cut) = measure_tool::apply_menu_toggle(
@@ -457,7 +451,11 @@ impl SceneContext<'_> {
                 self.render.invalidation.overlay_tools_changed();
             }
             match next {
-                Some(mode) => self.tools.measure.arm(mode),
+                Some(mode) => {
+                    if self.prepare_viewport_tool_entry(ViewportTool::Measure, &ctx) {
+                        self.tools.measure.arm(mode);
+                    }
+                }
                 None => self.tools.measure.disarm(),
             }
             ctx.request_repaint();
@@ -833,9 +831,11 @@ mod tests {
     }
 
     #[test]
-    fn toolbar_shortcuts_keep_measurement_and_alignment_blocked_during_mesh_editing(
-    ) -> anyhow::Result<()> {
-        for key in [egui::Key::M, egui::Key::T, egui::Key::A] {
+    fn toolbar_shortcuts_finish_idle_editing_and_preserve_busy_editing() -> anyhow::Result<()> {
+        for (key, busy) in [egui::Key::M, egui::Key::T, egui::Key::A, egui::Key::C]
+            .into_iter()
+            .flat_map(|key| [(key, false), (key, true)])
+        {
             let ctx = egui::Context::default();
             let mut app = crate::app::OccluViewApp::new_for_tests(ctx.clone());
             let model =
@@ -845,6 +845,17 @@ mod tests {
                 .document
                 .edit_mode
                 .begin_face_selection(&model.meshes()[0], &model));
+            if busy {
+                assert!(app.workspace.scenes[0]
+                    .document
+                    .edit_mode
+                    .begin_scene_edit(
+                        &model,
+                        model.meshes()[0].id(),
+                        crate::edit_mode::EditModeCommand::MoveLayer,
+                    )
+                    .is_some());
+            }
             ctx.run_ui(
                 egui::RawInput {
                     events: vec![egui::Event::Key {
@@ -865,15 +876,17 @@ mod tests {
             )
             .drop_without_applying_deltas();
             let scene = app.active_context().context("scene missing")?;
-            assert!(
-                !scene.tools.measure.is_active(),
-                "{key:?} must leave mesh editing in control"
+            assert_eq!(
+                scene.tools.measure.is_active(),
+                !busy && matches!(key, egui::Key::M | egui::Key::T)
             );
-            assert!(
-                !scene.align_active(),
-                "{key:?} must leave mesh editing in control"
+            assert_eq!(scene.align_active(), !busy && key == egui::Key::A);
+            assert_eq!(
+                scene.tools.cut_view.is_active(),
+                !busy && key == egui::Key::C
             );
-            assert!(scene.document.edit_mode.has_active_session());
+            assert_eq!(scene.document.edit_mode.has_active_session(), busy);
+            assert_eq!(scene.document.edit_mode.is_busy(), busy);
         }
         Ok(())
     }

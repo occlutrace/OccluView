@@ -291,6 +291,7 @@ impl SceneContext<'_> {
                 request.action,
                 crate::layer_actions::LayerContextAction::Contacts
                     | crate::layer_actions::LayerContextAction::HideContacts
+                    | crate::layer_actions::LayerContextAction::EditMesh
             ) {
                 // The draft is a copy of the scene, so it carries the layers the
                 // action needs while being no handle on the live one. Dropping
@@ -299,6 +300,7 @@ impl SceneContext<'_> {
                 let mut draft = scene.as_ref().clone();
                 drop(scene);
                 super::apply_layer_context_action_with_status(self, &mut draft, paths, request);
+                self.apply_layer_material_edits(&changes.layer_edits, ctx);
                 // A reading is app state, not a change to a scene, so nothing
                 // below applies to it.
                 return;

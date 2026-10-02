@@ -140,17 +140,9 @@ impl SceneContext<'_> {
     /// Two tools sharing the primary click would fight over every gesture, so
     /// arming one disarms the rest.
     pub(super) fn arm_align_tool(&mut self, ctx: &egui::Context) {
-        if self.tools.bridge_split_active() {
-            let reason = self
-                .ui
-                .locale
-                .tr(crate::i18n::message_id!("bridge-canceled"));
-            self.cancel_bridge_split(&reason);
+        if !self.prepare_viewport_tool_entry(super::state_tool::ViewportTool::Align, ctx) {
+            return;
         }
-        self.abort_sculpt_stroke();
-        self.tools.sculpt.disarm();
-        self.tools.measure.disarm();
-        self.tools.cut_view.disable();
         self.tools.align.tool.arm();
         // Remember where every scan started, so Cancel has something to go
         // back to.

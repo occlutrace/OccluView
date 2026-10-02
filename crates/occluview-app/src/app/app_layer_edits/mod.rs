@@ -47,7 +47,7 @@ pub(super) fn apply_layer_context_action_with_status(
     paths: &[PathBuf],
     request: LayerContextRequest,
 ) -> LayerContextApply {
-    if app.tools.bridge_split_active() {
+    if app.tools.bridge_split_active() && request.action != LayerContextAction::EditMesh {
         app.scene_ui.status_message =
             Some(app.ui.locale.tr(crate::i18n::message_id!("bridge-busy")));
         return LayerContextApply::default();
@@ -158,12 +158,7 @@ fn begin_face_selection_with_status(
     };
     let switching_target = app.document.edit_mode.selected_layer_id() != Some(entry.id());
     let starting_session = !app.document.edit_mode.has_active_session();
-    if starting_session {
-        app.document.capture_edit_metadata();
-    }
-    if app.document.edit_mode.begin_face_selection(entry, scene) {
-        // Open on the Edit Mesh tab so the session starts in selection/repair.
-        app.tools.editor_tab = crate::mesh_editor::mesh_editor_overlay::EditorTab::EditMesh;
+    if app.begin_mesh_edit_session(entry.id()) {
         if switching_target {
             // A lasso's screen points belong to its previous mesh. Do not let
             // a layer-row context action carry that outline into a new target.
