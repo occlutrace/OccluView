@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Sculpt leaves non-manifold edges unchanged instead of creating partial splits.
+
 - File-open handoff publishes complete requests before the running window reads them.
 
 

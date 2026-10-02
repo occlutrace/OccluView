@@ -280,6 +280,9 @@ impl SculptSession {
         new_tris: &mut Vec<u32>,
         fresh_groups: &mut Vec<(u32, u32)>,
     ) -> Option<u32> {
+        if self.topology.edge_triangles(a_group, b_group).len() > 2 {
+            return None;
+        }
         // Plan first: a stale edge (or a midpoint that rounds onto an
         // endpoint) mints nothing — no vertex without a rewire behind it,
         // so a skipped split can never strand a row-less group.
@@ -693,4 +696,38 @@ mod tests {
         );
     }
 
+    #[test]
+    fn split_refuses_non_manifold_edge_without_partial_rewires() {
+        for faces in [3u32, 9] {
+            let mut verts = vec![-1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+            let mut tris = Vec::new();
+            for face in 0..faces {
+                let angle = f64::from(face) * std::f64::consts::TAU / f64::from(faces);
+                verts.extend_from_slice(&[0.0, angle.cos() as f32, angle.sin() as f32]);
+                tris.extend_from_slice(&[0, 1, face + 2]);
+            }
+            let mut session = SculptSession::new(verts.clone(), tris.clone());
+            session.start_stroke();
+            let mut journal = std::mem::take(&mut session.topo_journal);
+            let mut added_faces = Vec::new();
+            let mut fresh_groups = Vec::new();
+            assert_eq!(
+                session.split_welded_edge(
+                    &mut journal,
+                    &HashMap::default(),
+                    0,
+                    1,
+                    &mut added_faces,
+                    &mut fresh_groups,
+                ),
+                None,
+                "an edge with {faces} faces must remain untouched",
+            );
+            assert_eq!(session.verts, verts);
+            assert_eq!(session.faces(), tris);
+            assert!(journal.is_empty());
+            assert!(added_faces.is_empty());
+            assert!(fresh_groups.is_empty());
+        }
+    }
 }
