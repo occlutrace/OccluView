@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Shape-preserving smoothing rejects invalid selection weights before changing the surface.
+
 - PLY imports consume vertex list properties correctly in ASCII and both binary byte orders.
 
 - Sculpt queries handle very large brush radii without overflowing the spatial grid.

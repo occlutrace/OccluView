@@ -22,6 +22,9 @@ pub fn fair_selection_preserving<S: FairingSurface + ?Sized>(
     out: &mut Vec<(u32, DVec3)>,
 ) {
     out.clear();
+    if !selection_is_valid(surface, selection) {
+        return;
+    }
     let whole: Vec<(u32, f64)> = selection
         .iter()
         .map(|&(vertex, weight)| (vertex, if weight > 0.0 { 1.0 } else { 0.0 }))
@@ -93,5 +96,62 @@ impl<S: FairingSurface + ?Sized> FairingSurface for Smoothed<'_, S> {
 
     fn neighbors(&self, vertex: u32) -> &[u32] {
         self.surface.neighbors(vertex)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Cusp;
+
+    impl FairingSurface for Cusp {
+        fn vertex_count(&self) -> usize {
+            3
+        }
+
+        fn position(&self, vertex: u32) -> DVec3 {
+            match vertex {
+                0 => -DVec3::X,
+                1 => DVec3::Z,
+                _ => DVec3::X,
+            }
+        }
+
+        fn vertex_area(&self, _vertex: u32) -> f64 {
+            1.0
+        }
+
+        fn neighbors(&self, vertex: u32) -> &[u32] {
+            match vertex {
+                0 | 2 => &[1],
+                _ => &[0, 2],
+            }
+        }
+    }
+
+    #[test]
+    fn preserving_fairing_refuses_invalid_weights_like_general_fairing() {
+        let surface = Cusp;
+        let mut scratch = FairingScratch::default();
+        let mut out = Vec::new();
+        fair_selection_preserving(
+            &surface,
+            &[(0, 0.0), (1, 1.0), (2, 0.0)],
+            1.0,
+            &mut scratch,
+            &mut out,
+        );
+        assert!(!out.is_empty(), "the cusp must respond to valid smoothing");
+        for weight in [1.5, -0.5, f64::NAN, f64::INFINITY] {
+            let selection = [(0, 1.0), (1, weight), (2, 0.0)];
+            fair_selection(&surface, &selection, 1.0, &mut scratch, &mut out);
+            assert!(out.is_empty());
+            fair_selection_preserving(&surface, &selection, 1.0, &mut scratch, &mut out);
+            assert!(
+                out.is_empty(),
+                "invalid weight {weight} must refuse the selection"
+            );
+        }
     }
 }
