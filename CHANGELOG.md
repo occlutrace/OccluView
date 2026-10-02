@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Thumbnail stream copying refuses impossible byte counts instead of returning fabricated data.
+
 - Preserve STL face normals for very small and very large triangles.
 
 - Sculpt accepts small positive uniform layer scales instead of incorrectly treating them as unsupported transforms.

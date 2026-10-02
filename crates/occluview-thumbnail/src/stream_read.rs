@@ -10,7 +10,7 @@ pub enum StreamRead {
         /// The observed or declared byte length that exceeded the cap.
         byte_len: usize,
     },
-    /// A read operation failed or the configured chunk size was zero.
+    /// A read failed, reported an invalid byte count, or had a zero chunk size.
     ReadFailed,
     /// The caller's absolute request deadline elapsed before another bounded
     /// shell-stream read could begin.
@@ -97,6 +97,9 @@ fn read_capped_stream_inner(
         let Ok(read) = read_chunk(&mut buf[write_offset..write_offset + want]) else {
             return StreamRead::ReadFailed;
         };
+        if read > want {
+            return StreamRead::ReadFailed;
+        }
         if read == 0 {
             buf.truncate(write_offset);
             break;
@@ -122,6 +125,22 @@ mod tests {
         min_buffer_bytes: 4,
         chunk_bytes: 8,
     };
+
+    #[test]
+    fn an_impossible_read_count_cannot_become_a_complete_payload() {
+        for invalid_count in [BOUNDS.chunk_bytes + 1, usize::MAX] {
+            let mut first = true;
+            let result = read_capped_stream(BOUNDS, |_| {
+                if first {
+                    first = false;
+                    Ok(invalid_count)
+                } else {
+                    Ok(0)
+                }
+            });
+            assert_eq!(result, StreamRead::ReadFailed);
+        }
+    }
 
     #[test]
     fn a_zero_chunk_limit_cannot_report_an_unread_stream_as_complete() {
