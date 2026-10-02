@@ -173,23 +173,23 @@ pub(crate) fn legend_value_mm(step: usize, steps: usize, mode: RampMode, scale_m
 fn legend_bounds(mode: RampMode, scale_mm: f64, number_format: NumberFormat) -> (String, String) {
     match mode {
         // A zero maximum still has a hot side: everything past exact zero. The
-        // right label says so instead of repeating "0.00 mm", which would
+        // right label says so instead of repeating "0.000 mm", which would
         // claim the bar has no range at all.
         RampMode::Magnitude if scale_mm <= 0.0 => (
-            format!("{} mm", number_format.decimal(0.0, 2)),
-            format!("> {} mm", number_format.decimal(0.0, 2)),
+            format!("{} mm", number_format.decimal(0.0, 3)),
+            format!("> {} mm", number_format.decimal(0.0, 3)),
         ),
         // The ramp clamps every value at the upper stop, so the hot end also
         // represents all deviations above that stop. Showing the inequality
         // prevents an operator from reading a saturated red patch as exactly
         // the endpoint.
         RampMode::Magnitude => (
-            format!("{} mm", number_format.decimal(0.0, 2)),
-            format!("≥ {} mm", number_format.decimal(scale_mm, 2)),
+            format!("{} mm", number_format.decimal(0.0, 3)),
+            format!("≥ {} mm", number_format.decimal(scale_mm, 3)),
         ),
         RampMode::Signed => (
-            format!("−{} mm", number_format.decimal(scale_mm, 2)),
-            format!("+{} mm", number_format.decimal(scale_mm, 2)),
+            format!("−{} mm", number_format.decimal(scale_mm, 3)),
+            format!("+{} mm", number_format.decimal(scale_mm, 3)),
         ),
     }
 }
@@ -291,7 +291,7 @@ pub(crate) fn paint_legend(
         let number_format = locale.number_format();
         let (mut low, high) = legend_bounds(settings.ramp_mode, settings.scale_mm, number_format);
         if settings.ramp_mode == RampMode::Magnitude {
-            low = format!("≤ {} mm", number_format.decimal(settings.min_display_mm, 2));
+            low = format!("≤ {} mm", number_format.decimal(settings.min_display_mm, 3));
         }
         label(ui, low);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -331,6 +331,14 @@ fn no_data_key(ui: &mut egui::Ui, locale: &crate::i18n::LocaleManager) {
 mod tests {
     use super::{legend_bounds, legend_color_at, legend_value_mm, NumberFormat, LEGEND_STEPS};
     use occluview_align::{ramp_color, RampMode, RampSettings};
+
+    #[test]
+    fn legend_labels_preserve_the_range_controls_micrometre_precision() {
+        for (tag, expected) in [("en", "0.001"), ("de", "0,001")] {
+            let (_, high) = legend_bounds(RampMode::Magnitude, 0.001, NumberFormat::for_tag(tag));
+            assert_eq!(high, format!("≥ {expected} mm"));
+        }
+    }
 
     fn ramp(mode: RampMode, scale_mm: f64) -> RampSettings {
         RampSettings {
@@ -388,7 +396,7 @@ mod tests {
         );
         assert_eq!(
             legend_bounds(RampMode::Magnitude, 0.0, NumberFormat::for_tag("en")),
-            ("0.00 mm".to_owned(), "> 0.00 mm".to_owned()),
+            ("0.000 mm".to_owned(), "> 0.000 mm".to_owned()),
             "the open end has to be labelled as such"
         );
     }
@@ -503,12 +511,12 @@ mod tests {
     fn the_bounds_name_the_scale_the_bar_was_drawn_over() {
         assert_eq!(
             legend_bounds(RampMode::Magnitude, 0.5, NumberFormat::for_tag("en")),
-            ("0.00 mm".to_owned(), "≥ 0.50 mm".to_owned()),
+            ("0.000 mm".to_owned(), "≥ 0.500 mm".to_owned()),
             "a magnitude bar starts at nothing, never at a negative distance"
         );
         assert_eq!(
             legend_bounds(RampMode::Signed, 0.5, NumberFormat::for_tag("en")),
-            ("−0.50 mm".to_owned(), "+0.50 mm".to_owned())
+            ("−0.500 mm".to_owned(), "+0.500 mm".to_owned())
         );
     }
 }
