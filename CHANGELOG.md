@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Binary PLY imports reject negative or fractional list counts and indices instead of silently coercing them.
+
 - Thumbnail stream copying handles zero and maximum byte limits without overflowing.
 
 - Scan alignment previews uncertain candidates and changes the scan only after Accept alignment.
