@@ -358,6 +358,9 @@ impl eframe::App for OccluViewApp {
             scene.show_toolbar(ui);
         }
         self.show_workspace(ui);
+        if let Some(mut scene) = self.active_context() {
+            scene.show_viewport_context_menu(&ctx);
+        }
         self.apply_workspace_commands(&ctx);
         for key in self.visible_scene_keys(&ctx) {
             if let Some(mut scene) = self.scene_context(key) {

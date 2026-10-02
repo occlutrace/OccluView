@@ -29,6 +29,7 @@ fn frame(
     ctx: &egui::Context,
     events: Vec<egui::Event>,
 ) -> egui::FullOutput {
+    app.ui.popup_open_at_frame_start = egui::Popup::is_any_open(ctx);
     let mut output = ctx.run_ui(
         egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -41,11 +42,242 @@ fn frame(
         },
         |ui| {
             app.show_workspace(ui);
+            if let Some(mut scene) = app.active_context() {
+                scene.show_viewport_context_menu(ctx);
+            }
             app.apply_workspace_commands(ctx);
         },
     );
     output.textures_delta.clear();
     output
+}
+
+fn app_with_viewport(ctx: &egui::Context) -> OccluViewApp {
+    let mut app = OccluViewApp::new_for_tests(ctx.clone());
+    let model = super::app_test_support::named_scene("surface", 0.0);
+    let scene = &mut app.workspace.scenes[0];
+    scene.render.camera = Some(super::home_camera_for_scene(&model));
+    scene.document.scene = Some(std::sync::Arc::new(model));
+    scene.render.rendered = Some(super::RenderedFrame {
+        texture: ctx.load_texture(
+            "viewport",
+            egui::ColorImage::filled([1, 1], egui::Color32::GRAY),
+            egui::TextureOptions::LINEAR,
+        ),
+        pixels: vec![128, 128, 128, 255],
+        size_px: [1, 1],
+    });
+    app
+}
+
+fn pointer_button(point: egui::Pos2, button: egui::PointerButton, pressed: bool) -> egui::Event {
+    egui::Event::PointerButton {
+        pos: point,
+        button,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    }
+}
+
+#[test]
+fn viewport_right_click_menu_remains_visible_on_following_frames() {
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    let mut app = app_with_viewport(&ctx);
+    let point = egui::pos2(500.0, 400.0);
+    frame(&mut app, &ctx, vec![]);
+    frame(&mut app, &ctx, vec![egui::Event::PointerMoved(point)]);
+    frame(
+        &mut app,
+        &ctx,
+        vec![pointer_button(point, egui::PointerButton::Secondary, true)],
+    );
+    frame(
+        &mut app,
+        &ctx,
+        vec![pointer_button(point, egui::PointerButton::Secondary, false)],
+    );
+    assert!(egui::Popup::is_any_open(&ctx), "RMB must open its menu");
+    let output = frame(&mut app, &ctx, vec![]);
+    let update = output
+        .platform_output
+        .accesskit_update
+        .expect("menu output");
+    assert!(
+        update.nodes.iter().any(|(_, node)| {
+            matches!(
+                node.role(),
+                egui::accesskit::Role::Button | egui::accesskit::Role::MenuItem
+            ) && node.label().is_some_and(|label| label.contains("Save"))
+        }),
+        "the open viewport menu must still draw its actions on the next frame"
+    );
+}
+
+#[test]
+fn viewport_right_drag_orbits_and_does_not_open_a_menu() {
+    let ctx = egui::Context::default();
+    let mut app = app_with_viewport(&ctx);
+    let start = egui::pos2(500.0, 400.0);
+    let end = egui::pos2(560.0, 430.0);
+    frame(&mut app, &ctx, vec![]);
+    frame(&mut app, &ctx, vec![egui::Event::PointerMoved(start)]);
+    let before = app.workspace.scenes[0].render.camera.expect("camera");
+    frame(
+        &mut app,
+        &ctx,
+        vec![pointer_button(start, egui::PointerButton::Secondary, true)],
+    );
+    frame(&mut app, &ctx, vec![egui::Event::PointerMoved(end)]);
+    let after = app.workspace.scenes[0].render.camera.expect("camera");
+    assert_ne!(before.yaw, after.yaw, "RMB motion must reach the camera");
+    frame(
+        &mut app,
+        &ctx,
+        vec![pointer_button(end, egui::PointerButton::Secondary, false)],
+    );
+    assert!(
+        !egui::Popup::is_any_open(&ctx),
+        "orbit must not open a menu"
+    );
+    assert!(!app.ui.viewport_orbit_cursor_grabbed);
+}
+
+#[test]
+fn viewport_right_click_layer_menu_toggles_the_picked_layer_wireframe() {
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    let mut app = app_with_viewport(&ctx);
+    let camera = app.workspace.scenes[0].render.camera.expect("camera");
+    let canvas = egui::Rect::from_min_max(egui::pos2(0.0, 30.0), egui::pos2(1000.0, 800.0));
+    let (point, _) =
+        crate::viewer::project_world_to_viewport(&camera, canvas, glam::vec3(0.25, 0.25, 0.0))
+            .expect("surface projects");
+    frame(&mut app, &ctx, vec![]);
+    frame(&mut app, &ctx, vec![egui::Event::PointerMoved(point)]);
+    for pressed in [true, false] {
+        frame(
+            &mut app,
+            &ctx,
+            vec![pointer_button(
+                point,
+                egui::PointerButton::Secondary,
+                pressed,
+            )],
+        );
+    }
+    let output = frame(&mut app, &ctx, vec![]);
+    let update = output
+        .platform_output
+        .accesskit_update
+        .expect("menu output");
+    let toggle = update
+        .nodes
+        .iter()
+        .find_map(|(_, node)| {
+            (node.label() == Some("Wireframe overlay"))
+                .then(|| node.bounds())
+                .flatten()
+        })
+        .expect("picked layer offers a wireframe toggle");
+    let toggle = accessible_center(toggle);
+    for pressed in [true, false] {
+        frame(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(toggle),
+                pointer_button(toggle, egui::PointerButton::Primary, pressed),
+            ],
+        );
+    }
+    assert!(
+        app.workspace.scenes[0]
+            .document
+            .scene
+            .as_ref()
+            .expect("scene")
+            .meshes()[0]
+            .wireframe
+    );
+    assert!(!egui::Popup::is_any_open(&ctx));
+}
+
+#[test]
+fn viewport_middle_drag_and_wheel_change_only_the_target_scene() {
+    let ctx = egui::Context::default();
+    let mut app = app_with_viewport(&ctx);
+    app.active_context()
+        .expect("scene")
+        .queue_new_scene(SplitSide::Right);
+    app.apply_workspace_commands(&ctx);
+    let camera = app.workspace.scenes[0].render.camera;
+    let texture = app.workspace.scenes[0]
+        .render
+        .rendered
+        .as_ref()
+        .expect("texture")
+        .texture
+        .clone();
+    let model = super::app_test_support::named_scene("peer", 5.0);
+    app.workspace.scenes[1].render.camera = camera;
+    app.workspace.scenes[1].document.scene = Some(std::sync::Arc::new(model));
+    app.workspace.scenes[1].render.rendered = Some(super::RenderedFrame {
+        texture,
+        pixels: vec![128, 128, 128, 255],
+        size_px: [1, 1],
+    });
+    frame(&mut app, &ctx, vec![]);
+    let before_left = app.workspace.scenes[0].render.camera.expect("left");
+    let before_right = app.workspace.scenes[1].render.camera.expect("right");
+    let start = egui::pos2(850.0, 400.0);
+    frame(&mut app, &ctx, vec![egui::Event::PointerMoved(start)]);
+    frame(
+        &mut app,
+        &ctx,
+        vec![pointer_button(start, egui::PointerButton::Middle, true)],
+    );
+    let end = egui::pos2(900.0, 440.0);
+    frame(&mut app, &ctx, vec![egui::Event::PointerMoved(end)]);
+    frame(
+        &mut app,
+        &ctx,
+        vec![pointer_button(end, egui::PointerButton::Middle, false)],
+    );
+    assert_eq!(
+        app.workspace.scenes[0].render.camera.expect("left").target,
+        before_left.target
+    );
+    assert_ne!(
+        app.workspace.scenes[1].render.camera.expect("right").target,
+        before_right.target
+    );
+    frame(
+        &mut app,
+        &ctx,
+        vec![egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: egui::vec2(0.0, 1.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        }],
+    );
+    assert_eq!(
+        app.workspace.scenes[0]
+            .render
+            .camera
+            .expect("left")
+            .orthographic_height,
+        before_left.orthographic_height
+    );
+    assert!(
+        app.workspace.scenes[1]
+            .render
+            .camera
+            .expect("right")
+            .orthographic_height
+            < before_right.orthographic_height
+    );
 }
 
 fn start_rename(app: &mut OccluViewApp, ctx: &egui::Context) {

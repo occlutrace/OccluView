@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Viewport right-click menus remain visible and respond to actions while mouse navigation stays confined to its scene.
+
 - Mesh edits preserve correct facet normals for very small and very large geometry.
 
 - Section contours remain visible on layers with small nonzero scales.

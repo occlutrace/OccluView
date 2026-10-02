@@ -522,10 +522,35 @@ impl SceneContext<'_> {
                 Some(self.ui.locale.tr(crate::i18n::message_id!("lasso-dropped")));
             ctx.request_repaint();
         }
+        if response.secondary_clicked() {
+            let menu_id = self.viewport_menu_target_id();
+            let picked = self.pick_viewport_menu_target(response);
+            ctx.data_mut(|data| match picked {
+                Some(target) => {
+                    data.insert_temp(menu_id, target);
+                }
+                None => {
+                    data.remove::<layers_overlay::LayerContextMenuTarget>(menu_id);
+                }
+            });
+            self.scene_ui.viewport_context_menu = Some((response.clone(), true));
+        }
+    }
+
+    /// Draw the menu independently of viewport input: an open popup blocks
+    /// tools, but must continue receiving its own clicks and Escape.
+    pub(super) fn show_viewport_context_menu(&mut self, ctx: &egui::Context) {
+        let Some((response, open_requested)) = self.scene_ui.viewport_context_menu.take() else {
+            return;
+        };
+        let popup_id = egui::Popup::default_response_id(&response);
+        if self.ui.command_dialog_open() || self.tools.bridge_split_active() {
+            egui::Popup::close_id(ctx, popup_id);
+            return;
+        }
         let menu_id = self.viewport_menu_target_id();
-        // A target removed or reordered since the click must not keep serving
-        // stale menu actions: validate the stashed index/id pair against the
-        // live scene every frame the menu (or its next open) is served.
+        // Validate identity each time the menu is drawn, including frames
+        // where popup ownership has blocked viewport input.
         let stored =
             ctx.data(|data| data.get_temp::<layers_overlay::LayerContextMenuTarget>(menu_id));
         if let Some(target) = &stored {
@@ -539,17 +564,6 @@ impl SceneContext<'_> {
                 ctx.data_mut(|data| data.remove::<layers_overlay::LayerContextMenuTarget>(menu_id));
             }
         }
-        if response.secondary_clicked() {
-            let picked = self.pick_viewport_menu_target(response);
-            ctx.data_mut(|data| match picked {
-                Some(target) => {
-                    data.insert_temp(menu_id, target);
-                }
-                None => {
-                    data.remove::<layers_overlay::LayerContextMenuTarget>(menu_id);
-                }
-            });
-        }
 
         let target =
             ctx.data(|data| data.get_temp::<layers_overlay::LayerContextMenuTarget>(menu_id));
@@ -559,18 +573,29 @@ impl SceneContext<'_> {
         // of them — saving — is the only way a moved scan survives the session,
         // because the viewer has no project file.
         let (has_layers, any_moved) = self.scene_menu_state();
-        response.context_menu(|ui| match target {
-            Some(target) => {
-                layers_overlay::show_layer_context_menu(ui, &target, &mut request, &self.ui.locale);
-            }
-            None => layers_overlay::show_scene_context_menu(
-                ui,
-                has_layers,
-                any_moved,
-                &mut scene_request,
-                &self.ui.locale,
-            ),
-        });
+        egui::Popup::context_menu(&response)
+            .open_memory(open_requested.then_some(egui::SetOpenCommand::Bool(true)))
+            .show(|ui| match target {
+                Some(target) => {
+                    layers_overlay::show_layer_context_menu(
+                        ui,
+                        &target,
+                        &mut request,
+                        &self.ui.locale,
+                    );
+                }
+                None => layers_overlay::show_scene_context_menu(
+                    ui,
+                    has_layers,
+                    any_moved,
+                    &mut scene_request,
+                    &self.ui.locale,
+                ),
+            });
+
+        if egui::Popup::is_id_open(ctx, popup_id) {
+            self.scene_ui.viewport_context_menu = Some((response, false));
+        }
 
         if let Some(action) = scene_request {
             self.apply_scene_context_action(action, ctx);
