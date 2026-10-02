@@ -163,20 +163,19 @@ impl FitBounds {
     ///
     /// Returns the transformed centre separation and the maximum separation
     /// allowed for the two bounding spheres to overlap.
-    fn miss(&self, rigid: &Rigid) -> Option<(f64, f64)> {
+    fn miss(&self, rigid: &Rigid) -> Result<Option<(f64, f64)>, FitRejection> {
         let separation = (rigid.apply(self.moving_center) - self.fixed_center).length();
         #[expect(
             clippy::manual_midpoint,
             reason = "preserve established last-bit overlap threshold"
         )]
         let allowed = ((self.moving_extent + self.fixed_extent) * 0.5).max(MIN_OVERLAP_MM);
-        // Non-finite bounds cannot be judged. The comparison below would
-        // quietly answer "no miss" for a NaN either way; making the pass
-        // explicit keeps it a decision instead of an accident.
+        // Finite inputs can still overflow while measuring separation or
+        // adding extents. An uncomputable overlap cannot validate a pose.
         if !separation.is_finite() || !allowed.is_finite() {
-            return None;
+            return Err(FitRejection::NonFinite);
         }
-        (separation > allowed).then_some((separation, allowed))
+        Ok((separation > allowed).then_some((separation, allowed)))
     }
 }
 
@@ -263,7 +262,7 @@ fn finish(
     if !rigid.is_finite() {
         return Err(FitRejection::NonFinite);
     }
-    if let Some((separation, allowed)) = bounds.miss(&rigid) {
+    if let Some((separation, allowed)) = bounds.miss(&rigid)? {
         return Err(FitRejection::Apart {
             separation,
             allowed,
