@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 #[cfg(test)]
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use occluview_align::CancelFlag;
 use occluview_contact::{compute_contact_field, ContactDiagnostics, ContactSettings, ContactStats};
