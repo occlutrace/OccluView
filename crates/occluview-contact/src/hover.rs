@@ -128,13 +128,11 @@ pub fn interpolate_field_at_triangle(
     let mut total = 0.0_f64;
     let mut measured = false;
     for (corner, weight) in corners.iter().zip(barycentric) {
+        let vertex = usize::try_from(*corner).ok()?;
+        let value = *values.get(vertex)?;
         if !weight.is_finite() || weight == 0.0 {
             continue;
         }
-        let vertex = usize::try_from(*corner).ok()?;
-        let Some(&value) = values.get(vertex) else {
-            continue;
-        };
         let finite = if value.is_finite() {
             measured = true;
             value

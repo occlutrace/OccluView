@@ -126,3 +126,12 @@ fn an_extreme_triangle_index_reports_nothing_without_panicking() {
         );
     }
 }
+
+#[test]
+fn a_missing_triangle_corner_reports_nothing() {
+    assert_eq!(
+        interpolate_field_at_triangle(&[-0.2, -0.1, 0.0], &[0, 1, 9], 0, [1.0 / 3.0; 3]),
+        None,
+        "a missing corner cannot be omitted from the measured triangle"
+    );
+}
