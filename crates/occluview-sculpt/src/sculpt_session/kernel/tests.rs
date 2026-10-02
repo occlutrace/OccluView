@@ -840,7 +840,32 @@ fn gentle_relax_moves_a_cusp_far_less_than_smooth() {
 }
 
 #[test]
-fn long_low_strength_relax_uses_one_pair_for_one_timed_path_step() {
+fn single_relax_step_applies_one_bilaplacian_pair() {
+    let mut session = grid_session(1, 1.0, 0.1);
+    let center = grid_vertex(1, 0, 0);
+    let before = session.v(center);
+    let dab = Dab {
+        center: before,
+        ..centered_dab(3.0, BrushMode::Relax, 1.0)
+    };
+    let _ = session.dab(&dab);
+    // The only interior vertex moves; its boundary neighbours stay at z=0.
+    // A +1/2 then -1/2 pair leaves 3/4 of the initial height. One full
+    // brush interval applies 0.55 of that correction.
+    let expected_z = before.z * (1.0 - 0.55 * 0.25);
+    let after = session.v(center);
+    assert!((after.z - expected_z).abs() < 1e-8);
+    assert_eq!(after.x, before.x);
+    assert_eq!(after.y, before.y);
+    for vertex in 0..session.vertex_count() as u32 {
+        if vertex != center {
+            assert_eq!(session.v(vertex).z, 0.0);
+        }
+    }
+}
+
+#[test]
+fn long_low_strength_relax_reduces_a_cusp_with_a_bounded_swept_stamp() {
     let center = grid_vertex(8, 0, 0);
     let radius = 2.5;
     // A long traveled step carries one capped time interval; its average stamp
