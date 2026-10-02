@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Edit is disabled when no visible triangle mesh can be opened.
+
 - Mesh selection shortcuts keep face marks unchanged while a mesh operation is running.
 
 - Mesh editing preserves the current undo and redo history when an outdated operation finishes.
