@@ -408,17 +408,17 @@ impl SceneContext<'_> {
                     .map(occluview_core::SceneMesh::id)
             });
             if let (false, true, Some(layer_id)) = (edit_active, can_edit_mesh, first_layer) {
-                if !self.begin_mesh_edit_session(layer_id) {
-                    if matches!(
+                if !self.begin_mesh_edit_session(layer_id)
+                    && matches!(
                         self.document.edit_mode.take_session_start_failure(),
                         Some(crate::edit_mode::EditSessionStartFailure::HistoryCapacityUnavailable)
-                    ) {
-                        self.scene_ui.status_message = Some(
-                            self.ui
-                                .locale
-                                .tr(crate::i18n::message_id!("workspace-history-budget")),
-                        );
-                    }
+                    )
+                {
+                    self.scene_ui.status_message = Some(
+                        self.ui
+                            .locale
+                            .tr(crate::i18n::message_id!("workspace-history-budget")),
+                    );
                 }
             }
         }

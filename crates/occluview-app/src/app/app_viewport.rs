@@ -517,7 +517,7 @@ mod tests {
                 * point.extend(1.0);
             let ndc = clip.truncate() / clip.w;
             let rendered = egui::pos2(
-                viewport.left() + (ndc.x + 1.0) * 0.5 * size.x,
+                viewport.left() + ndc.x.midpoint(1.0) * size.x,
                 viewport.top() + (1.0 - ndc.y) * 0.5 * size.y,
             );
             assert!(
