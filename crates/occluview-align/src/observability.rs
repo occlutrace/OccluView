@@ -12,7 +12,7 @@
 use glam::DVec3;
 use rayon::prelude::*;
 
-use crate::deviation::DeviationSettings;
+use crate::deviation::{measured_hit, DeviationSettings};
 use crate::sample::{sample_vertices, vertex_at};
 use crate::{CancelFlag, Rigid, Soup, SurfaceIndex};
 
@@ -23,9 +23,6 @@ const SAMPLE_BUDGET: usize = 40_000;
 /// Fewer measured samples than this cannot determine six degrees of freedom
 /// with any margin.
 const MIN_SAMPLES: usize = 32;
-
-/// Below this normal length a hit carries no usable direction.
-const MIN_NORMAL_LENGTH: f64 = 1e-9;
 
 /// A Cholesky pivot at or below this means the sampled points do not span the
 /// six rigid degrees of freedom — a single point, or a line of them.
@@ -145,10 +142,7 @@ pub fn observability(
             }
             let local = vertex_at(moving.positions, raw as usize)?;
             let point = pose.apply(local);
-            let hit = fixed.nearest(point, settings.influence_radius_mm)?;
-            if hit.normal.length() < MIN_NORMAL_LENGTH {
-                return None;
-            }
+            let hit = measured_hit(fixed, point, settings.influence_radius_mm).ok()?;
             Some((point, hit.normal.normalize()))
         })
         .collect();

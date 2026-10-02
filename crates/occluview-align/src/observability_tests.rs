@@ -254,6 +254,43 @@ fn nothing_in_reach_reports_no_sensitivity_rather_than_a_made_up_one() {
 }
 
 #[test]
+fn vertices_beyond_the_fixed_border_carry_no_sensitivity() {
+    let (positions, indices) = plane(20.0, 12);
+    let mesh = soup(&positions, &indices);
+    let index = SurfaceIndex::build(mesh).unwrap();
+    let pose = Rigid::new(DQuat::IDENTITY, DVec3::X * 21.0);
+    let settings = DeviationSettings {
+        influence_radius_mm: 50.0,
+        ..settings()
+    };
+    let cancel = CancelFlag::new();
+    let map = deviation(mesh, &index, pose, &settings, &cancel);
+    assert!(map
+        .validity
+        .iter()
+        .all(|state| *state == crate::Validity::BeyondBorder));
+    assert!(
+        observability(mesh, &index, pose, &settings, &cancel).is_none(),
+        "unmeasured overhang cannot contribute sensitivity to the map"
+    );
+}
+
+#[test]
+fn sensitivity_samples_count_only_the_measured_overlap() {
+    let (positions, indices) = plane(20.0, 12);
+    let mesh = soup(&positions, &indices);
+    let index = SurfaceIndex::build(mesh).unwrap();
+    let pose = Rigid::new(DQuat::IDENTITY, DVec3::X * 10.0);
+    let cancel = CancelFlag::new();
+    let map = deviation(mesh, &index, pose, &settings(), &cancel);
+    let measured = deviation_stats(&map, 0.01).measured;
+    assert!(measured >= crate::MIN_MEASURED);
+    assert!(usize::try_from(measured).unwrap() < mesh.vertex_count());
+    let seen = observability(mesh, &index, pose, &settings(), &cancel).unwrap();
+    assert_eq!(seen.samples, measured);
+}
+
+#[test]
 fn a_cancelled_run_reports_nothing() {
     let (positions, indices) = sphere(5.0, 48, 24, 0.4);
     let mesh = soup(&positions, &indices);

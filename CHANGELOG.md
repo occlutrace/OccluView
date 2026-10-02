@@ -38,6 +38,7 @@ remain in the Git history.
 
 ### Align
 
+- Deviation sensitivity uses only measured overlap, excluding vertices beyond the fixed scan's border.
 - Best-fit matching scores its coarse hypotheses on the seed sample set instead
   of the dense one, which removes most of the work one press performed. Searching
   a small scan against a large one no longer takes minutes.
