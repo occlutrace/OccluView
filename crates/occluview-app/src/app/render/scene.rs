@@ -51,7 +51,9 @@ impl SceneContext<'_> {
         self.clear_live_viewport();
         self.render.prepared_scene = None;
         self.render.prepared_selection_overlay = None;
-        if reset_camera {
+        // Preserving a view requires an existing camera. The first mesh in a
+        // new pane must be framed even when automatic framing is disabled.
+        if reset_camera || self.render.camera.is_none() {
             self.reset_camera_to_home();
         }
         self.render.invalidation.scene_geometry_changed();
@@ -697,5 +699,49 @@ mod input_tests {
         assert!(has_control(&frame(&mut app, &ctx, vec![]), "All"));
         click_control(&mut app, &ctx, "All")?;
         Ok(())
+    }
+
+    #[test]
+    fn loading_without_auto_framing_initializes_only_a_missing_camera() {
+        use crate::scene_loading::SceneLoadMode;
+
+        for (mode, existing_camera) in [
+            (SceneLoadMode::Append, false),
+            (SceneLoadMode::Replace, false),
+            (SceneLoadMode::Append, true),
+            (SceneLoadMode::Replace, true),
+        ] {
+            let ctx = egui::Context::default();
+            let mut app = input_app(&ctx);
+            app.persistence.settings.frame_scene_on_open = false;
+            if existing_camera {
+                app.workspace.scenes[0].render.camera = Some(crate::app::Camera {
+                    target: glam::vec3(8.0, 9.0, 10.0),
+                    orthographic_height: 77.0,
+                    ..Default::default()
+                });
+            }
+            let previous = app.workspace.scenes[0].render.camera;
+            let model = crate::app::app_test_support::named_scene("surface", 0.0);
+            let pending =
+                crate::app::app_test_support::delivered_load(&app, model, mode, "input-test.stl");
+            app.loader.install_active(pending);
+            frame(&mut app, &ctx, vec![]);
+            let camera = app.workspace.scenes[0].render.camera;
+            assert!(
+                camera.is_some(),
+                "{mode:?}: a first load always needs a camera"
+            );
+            if let Some(previous) = previous {
+                assert_eq!(camera.map(|camera| camera.target), Some(previous.target));
+                assert!(
+                    camera.is_some_and(|camera| {
+                        (camera.orthographic_height - previous.orthographic_height).abs()
+                            < f32::EPSILON
+                    }),
+                    "{mode:?}: preserve the existing view when auto framing is off"
+                );
+            }
+        }
     }
 }
