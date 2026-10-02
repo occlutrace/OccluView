@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- GLB imports reject overflowing or out-of-bounds accessor layouts before decoding.
+
 - Contact hover refuses invalid triangles instead of crashing or inventing a partial reading.
 
 - Malformed Unicode STL signatures return an error instead of crashing the reader.
