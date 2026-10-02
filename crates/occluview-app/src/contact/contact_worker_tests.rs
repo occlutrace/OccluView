@@ -10,7 +10,6 @@
 use super::*;
 use occluview_contact::ContactSettings;
 use std::sync::Arc;
-use std::thread;
 use std::time::{Duration, Instant};
 
 /// A flat square, two triangles, all vertices on `z`, in world coordinates.
@@ -268,15 +267,21 @@ fn a_generation_bump_discards_in_flight_work() {
     worker.bump_generation();
     // The cancelled job must not publish: the completion list is cleared and the
     // worker's own flag stops the compute at its next checkpoint.
-    let mut waited = Duration::ZERO;
-    // The elapsed window checks that cancellation suppresses late publication.
-    while waited < Duration::from_millis(300) {
+    let deadline = Instant::now() + Duration::from_millis(300);
+    // The quiet window checks that cancellation suppresses late publication.
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        let notified = worker.wait_for_output(remaining);
         assert!(
             worker.drain().is_empty(),
             "a superseded job must not republish a measurement"
         );
-        thread::sleep(Duration::from_millis(10));
-        waited += Duration::from_millis(10);
+        if !notified || worker.has_failed() {
+            break;
+        }
     }
     // The worker still works afterwards.
     let _ = worker.submit(job(&worker, 2, -0.1));
