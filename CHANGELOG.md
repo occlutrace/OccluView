@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Sculpt shows a complete localized message when its preparation worker cannot start.
+
 - Thumbnail stream copying rejects a zero chunk limit instead of reporting unread data as complete.
 
 - OBJ imports retain textures named on the first line of BOM-prefixed material libraries.
