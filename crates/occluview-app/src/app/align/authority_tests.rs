@@ -38,28 +38,6 @@ fn app_with_a_landed_fit(name: &str) -> (OccluViewApp, SceneMeshId, SceneMeshId)
     (app, moving_id, fixed_id)
 }
 
-fn wait_for_align_output(app: &OccluViewApp, timeout: Duration) -> bool {
-    let worker = app.workspace.scenes[0]
-        .tools
-        .align
-        .worker
-        .as_ref()
-        .expect("worker");
-    if worker.has_pending_output() {
-        return true;
-    }
-
-    let (repaint_tx, repaint_rx) = std::sync::mpsc::channel();
-    app.ui.repaint_ctx.set_request_repaint_callback(move |_| {
-        let _ = repaint_tx.send(());
-    });
-    if worker.has_pending_output() {
-        return true;
-    }
-
-    repaint_rx.recv_timeout(timeout).is_ok() && worker.has_pending_output()
-}
-
 /// Manual pose changes do not invalidate local point correspondences. Repeated
 /// tab trips must leave the coarse fit available.
 #[test]
@@ -163,6 +141,18 @@ fn a_failed_align_worker_recovers_without_disabling_the_coarse_fit() {
         .expect("live test scene")
         .align_worker_mut()
         .poison_queue_for_tests();
+    for _ in 0..200 {
+        if app.workspace.scenes[0]
+            .tools
+            .align
+            .worker
+            .as_ref()
+            .is_some_and(AlignWorker::has_failed)
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
     assert!(
         app.workspace.scenes[0]
             .tools
@@ -504,12 +494,25 @@ fn dropping_a_stale_map_also_drops_the_work_behind_it() {
         .expect("live test scene")
         .run_align_measure();
 
-    // A published result requests a repaint, and the worker keeps it queued
-    // until the scene drains it.
-    assert!(
-        wait_for_align_output(&app, Duration::from_secs(30)),
-        "the measurement never ran"
-    );
+    // Wait for the job to finish and publish: the queue is empty and nothing is
+    // running exactly when its completion is waiting to be drained.
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        let worker = app.workspace.scenes[0]
+            .tools
+            .align
+            .worker
+            .as_ref()
+            .expect("worker");
+        if !worker.is_busy() {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the measurement never ran"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
 
     let reason = app
         .ui
@@ -541,10 +544,23 @@ fn dropping_a_stale_map_also_drops_the_work_behind_it() {
     app.active_context()
         .expect("live test scene")
         .run_align_measure();
-    assert!(
-        wait_for_align_output(&app, Duration::from_secs(30)),
-        "the second measurement never ran"
-    );
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        let worker = app.workspace.scenes[0]
+            .tools
+            .align
+            .worker
+            .as_ref()
+            .expect("worker");
+        if !worker.is_busy() {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the second measurement never ran"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
     assert!(
         !app.workspace.scenes[0]
             .tools
