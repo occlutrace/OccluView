@@ -81,14 +81,23 @@ impl EditModeController {
     }
 
     pub(crate) fn clear_visible_selections(&mut self, scene: &Scene) -> bool {
+        if self.is_busy() {
+            return false;
+        }
         self.selections.clear_visible(scene)
     }
 
     pub(crate) fn select_all_visible_selections(&mut self, scene: &Scene) -> bool {
+        if self.is_busy() {
+            return false;
+        }
         self.selections.select_all_visible(scene)
     }
 
     pub(crate) fn invert_visible_selections(&mut self, scene: &Scene) -> bool {
+        if self.is_busy() {
+            return false;
+        }
         self.selections.invert_visible(scene)
     }
 
