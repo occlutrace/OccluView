@@ -7,7 +7,8 @@ use crate::Soup;
 
 /// Read one vertex position, or `None` when it is out of range or not finite.
 pub(crate) fn vertex_at(positions: &[f32], vertex: usize) -> Option<DVec3> {
-    let xyz = positions.get(vertex * 3..vertex * 3 + 3)?;
+    let start = vertex.checked_mul(3)?;
+    let xyz = positions.get(start..start.checked_add(3)?)?;
     let point = DVec3::new(f64::from(xyz[0]), f64::from(xyz[1]), f64::from(xyz[2]));
     point.is_finite().then_some(point)
 }
@@ -153,6 +154,13 @@ mod tests {
     use super::{bounds_of, sample_vertices, vertex_normals};
     use crate::Soup;
     use glam::DVec3;
+
+    #[test]
+    fn vertex_lookup_rejects_overflowing_indices() {
+        for vertex in [usize::MAX, usize::MAX / 3, usize::MAX / 3 + 1] {
+            assert_eq!(super::vertex_at(&[0.0, 0.0, 0.0], vertex), None);
+        }
+    }
 
     fn quad() -> (Vec<f32>, Vec<u32>) {
         (
