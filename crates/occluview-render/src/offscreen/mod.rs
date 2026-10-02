@@ -85,6 +85,16 @@ mod adapter_policy_tests {
             Ok(None)
         ));
     }
+
+    #[test]
+    fn unrepresentable_render_timeout_is_refused_without_panicking() {
+        let deadline = RenderDeadline::after(Duration::MAX);
+        assert!(matches!(
+            deadline.remaining(),
+            Err(RenderError::ReadbackTimeout { timeout }) if timeout == Duration::MAX
+        ));
+        assert!(deadline.poll_timeout().is_err());
+    }
 }
 
 /// Absolute deadline supplied by the caller that owns an offscreen render.
@@ -103,10 +113,13 @@ pub struct RenderDeadline {
 
 impl RenderDeadline {
     /// Create a deadline relative to the current instant.
+    /// An interval outside the platform clock's range expires immediately;
+    /// the request stays bounded and returns its normal timeout error.
     #[must_use]
     pub fn after(timeout: Duration) -> Self {
+        let now = Instant::now();
         Self {
-            deadline: Instant::now() + timeout,
+            deadline: now.checked_add(timeout).unwrap_or(now),
             requested_timeout: timeout,
             unbounded: false,
         }
