@@ -71,6 +71,8 @@ impl BridgeSplitSourceCache {
 pub(crate) struct BridgeSplitWorker {
     request_tx: Option<mpsc::SyncSender<BridgeSplitJobInput>>,
     result_rx: mpsc::Receiver<BridgeSplitJobOutput>,
+    #[cfg(test)]
+    pending_outputs: VecDeque<BridgeSplitJobOutput>,
     active: Option<BridgeSplitGuard>,
     queued: Option<BridgeSplitJobInput>,
     /// The compute this worker was built with, kept so `abandon` can restart the
@@ -128,6 +130,8 @@ impl BridgeSplitWorker {
         Self {
             request_tx: Some(request_tx),
             result_rx,
+            #[cfg(test)]
+            pending_outputs: VecDeque::new(),
             active: None,
             queued: None,
             compute,
@@ -164,6 +168,13 @@ impl BridgeSplitWorker {
 
     pub(crate) fn poll(&mut self) -> Vec<BridgeSplitJobOutput> {
         let mut outputs = Vec::new();
+        #[cfg(test)]
+        while let Some(output) = self.pending_outputs.pop_front() {
+            if let Some(extra) = self.finish_active(output.guard) {
+                outputs.push(extra);
+            }
+            outputs.push(output);
+        }
         loop {
             match self.result_rx.try_recv() {
                 Ok(output) => {
@@ -192,6 +203,20 @@ impl BridgeSplitWorker {
             }
         }
         outputs
+    }
+
+    #[cfg(test)]
+    pub(crate) fn wait_for_output(&mut self, timeout: std::time::Duration) -> bool {
+        if !self.pending_outputs.is_empty() {
+            return true;
+        }
+        match self.result_rx.recv_timeout(timeout) {
+            Ok(output) => {
+                self.pending_outputs.push_back(output);
+                true
+            }
+            Err(_) => false,
+        }
     }
 
     #[cfg(test)]
