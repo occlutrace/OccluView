@@ -52,6 +52,13 @@ pub(super) fn emit_primitive(
         transform,
         builder,
     );
+    // Positions are baked into the mesh, so a reflection must also reverse
+    // corners to retain glTF's front-facing side in the stored geometry.
+    let mirrored = transform.determinant() < 0.0;
+    let mut push_triangle = |a, b, c| {
+        let (b, c) = if mirrored { (c, b) } else { (b, c) };
+        builder.push_triangle(a, b, c);
+    };
 
     if let Some(idx_acc) = prim.indices {
         let indices = read_indices(doc, idx_acc, bin_chunk)?;
@@ -72,11 +79,11 @@ pub(super) fn emit_primitive(
             if a >= limit || b >= limit || c >= limit {
                 return Err(malformed("index out of range for this primitive"));
             }
-            builder.push_triangle(base + a, base + b, base + c);
+            push_triangle(base + a, base + b, base + c);
         }
     } else if vertex_count % 3 == 0 {
         for i in (0..vertex_count).step_by(3) {
-            builder.push_triangle(
+            push_triangle(
                 base + i as u32,
                 base + (i + 1) as u32,
                 base + (i + 2) as u32,
