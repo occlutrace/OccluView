@@ -189,6 +189,39 @@ fn face_collapsed_by_geometric_seam_recovery_is_rejected() {
 }
 
 #[test]
+fn collinear_faces_are_rejected_before_splitting() {
+    let mesh = collinear_tetrahedron();
+    assert_eq!(
+        validate_bridge_split(&mesh, request()),
+        Err(BridgeSplitError::DegenerateInput { faces: 4 })
+    );
+}
+
+#[test]
+fn collinear_faces_are_rejected_in_closed_output_parts() {
+    assert_eq!(
+        validate_bridge_split_part(&collinear_tetrahedron()),
+        Err(BridgeSplitError::DegenerateInput { faces: 4 })
+    );
+}
+
+fn collinear_tetrahedron() -> MeshEditBuffers {
+    MeshEditBuffers {
+        vertices: [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [3.0, 0.0, 0.0],
+        ]
+        .into_iter()
+        .map(EditVertex::at)
+        .collect(),
+        indices: vec![0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3],
+        topology: MeshTopology::TriangleMesh,
+    }
+}
+
+#[test]
 fn inconsistent_winding_is_rejected() {
     let mut mesh = closed_cube();
     mesh.indices.swap(0, 1);
