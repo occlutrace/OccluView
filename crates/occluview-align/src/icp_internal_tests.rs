@@ -714,3 +714,58 @@ fn principal_frame_matches_contain_the_true_rotation() {
         "no hypothesis matched the true rotation; the closest was {closest} off"
     );
 }
+
+#[test]
+fn cancellation_after_the_dense_solve_never_authorizes_a_pose() {
+    let (positions, indices) = dome_for_level(24, 0.5);
+    let moving = Soup {
+        positions: &positions,
+        indices: &indices,
+        mask: None,
+    };
+    let fixed = SurfaceIndex::build(moving).expect("a dome indexes");
+    let normals = vertex_normals(moving);
+    let samples = sample_vertices(moving, 1_000);
+    let fixed_samples = fixed.representative_samples(256);
+    let settings = RefineSettings::default();
+    let cancel = CancelFlag::new();
+    let level = Level {
+        moving,
+        normals: &normals,
+        fixed: &fixed,
+        moving_surface: Some(&fixed),
+        fixed_samples: &fixed_samples,
+        samples: &samples,
+        settings: &settings,
+        cancel: &cancel,
+        start: crate::Rigid::IDENTITY,
+    };
+    let outcome = run_level(&level).expect("a seated dome has usable evidence");
+    assert!(outcome.converged);
+    cancel.cancel();
+    let report = super::finalize_refinement(
+        super::FinalizeContext {
+            rivalry: super::RivalContext {
+                moving,
+                normals: &normals,
+                fixed: &fixed,
+                moving_surface: Some(&fixed),
+                fixed_samples: &fixed_samples,
+                settings: &settings,
+                cancel: &cancel,
+            },
+            settings: &settings,
+            start: crate::Rigid::IDENTITY,
+            center: DVec3::ZERO,
+            allowed: 100.0,
+            feature_seed: None,
+            matching_ratio: settings.matching_ratio,
+        },
+        outcome,
+    )
+    .expect("cancellation can return diagnostics");
+    assert!(
+        !report.is_trustworthy_refinement_for(&settings),
+        "cancellation during final verification must revoke convergence: {report:?}"
+    );
+}

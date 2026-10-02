@@ -57,6 +57,7 @@ remain in the Git history.
 
 - Best-fit ambiguity checks remain consistent when a scan is stored far from the coordinate origin.
 - Point-pair alignment rejects bounds whose overlap calculations overflow instead of accepting an unchecked pose.
+- Cancelled surface refinement cannot report a trustworthy pose after the dense solve.
 
 ### Viewer
 
