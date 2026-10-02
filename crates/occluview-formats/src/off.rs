@@ -97,9 +97,16 @@ fn read_binary(bytes: &[u8]) -> Result<Mesh, FormatError> {
         Ok(i32::from_le_bytes(arr))
     };
 
-    let v_count = read_i32(bytes, &mut cur)?.max(0) as usize;
-    let f_count = read_i32(bytes, &mut cur)?.max(0) as usize;
-    let _e_count = read_i32(bytes, &mut cur)? as usize; // edges: unused
+    let read_count = |off: &mut usize| -> Result<usize, FormatError> {
+        usize::try_from(read_i32(bytes, off)?).map_err(|_| FormatError::Malformed {
+            format: "OFF (binary)",
+            offset: *off - 4,
+            reason: "structural counts must be nonnegative integers".to_string(),
+        })
+    };
+    let v_count = read_count(&mut cur)?;
+    let f_count = read_count(&mut cur)?;
+    let _e_count = read_count(&mut cur)?;
 
     let mut positions: Vec<Vec3> = Vec::with_capacity(bounded_capacity::<Vec3>(
         v_count,
@@ -121,7 +128,7 @@ fn read_binary(bytes: &[u8]) -> Result<Mesh, FormatError> {
     }
 
     for _ in 0..f_count {
-        let n = read_i32(bytes, &mut cur)?.max(0) as usize;
+        let n = read_count(&mut cur)?;
         if n < 3 {
             // Skip degenerate face's indices.
             for _ in 0..n {
@@ -182,7 +189,7 @@ fn read_ascii(bytes: &[u8]) -> Result<Mesh, FormatError> {
         .trim_start()
         .strip_prefix("OFF")
         .map(|rest| rest.trim().trim_start_matches("ST").trim())
-        .filter(|rest| rest.starts_with(|c: char| c.is_ascii_digit()));
+        .filter(|rest| rest.starts_with(|c: char| c.is_ascii_digit() || c == '-' || c == '+'));
     let counts_line = match keyword_tail {
         Some(tail) => tail.to_string(),
         None => lines
@@ -240,11 +247,10 @@ fn read_ascii(bytes: &[u8]) -> Result<Mesh, FormatError> {
     }
 
     for _ in 0..f_count {
-        let n_tok = lexer.next_f32()?;
-        let n = n_tok as usize;
+        let n = lexer.next_u32()? as usize;
         if n < 3 {
             for _ in 0..n {
-                let _ = lexer.next_f32()?;
+                let _ = lexer.next_u32()?;
             }
             continue;
         }
@@ -504,10 +510,40 @@ mod tests {
     fn ascii_negative_face_degree_is_rejected_not_reserved() {
         // A negative n-gon degree must not cast to a giant usize.
         let text = "OFF\n3 1 0\n0 0 0\n1 0 0\n0 1 0\n-9 0 1 2\n";
-        // Degenerate (n<3 after clamping) faces are skipped; the file still
-        // parses to its 3 vertices with no faces rather than crashing.
-        let mesh = read(text.as_bytes()).expect("negative degree is skipped, not fatal");
-        assert_eq!(mesh.triangle_count(), 0);
+        assert!(matches!(
+            read(text.as_bytes()),
+            Err(FormatError::Malformed { .. })
+        ));
+    }
+
+    #[test]
+    fn off_structural_counts_reject_negative_binary_values() {
+        for counts in [[-1i32, 0, 0], [0, -1, 0], [0, 0, -1]] {
+            let mut bytes = b"OFF BINARY\n".to_vec();
+            for count in counts {
+                bytes.extend_from_slice(&count.to_le_bytes());
+            }
+            assert!(
+                matches!(read(&bytes), Err(FormatError::Malformed { .. })),
+                "{counts:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn off_structural_counts_reject_invalid_face_degrees() {
+        for degree in ["-1", "3.5", "4294967296"] {
+            let text = format!("OFF\n3 1 0\n0 0 0\n1 0 0\n0 1 0\n{degree} 0 1 2\n");
+            assert!(
+                matches!(read(text.as_bytes()), Err(FormatError::Malformed { .. })),
+                "{degree}"
+            );
+        }
+        let mut bytes = b"OFF BINARY\n".to_vec();
+        for value in [0i32, 1, 0, -1] {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        assert!(matches!(read(&bytes), Err(FormatError::Malformed { .. })));
     }
 
     #[test]
