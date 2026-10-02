@@ -196,8 +196,8 @@ impl PersistenceState {
             self.settings.sculpt_radius_share = Some(radius_share);
             self.settings.sculpt_strengths = strengths;
             self.settings.last_sculpt_tip = tip;
-            self.sculpt_settings_dirty_since
-                .get_or_insert(Instant::now());
+            self.sculpt_settings_dirty_since = Some(Instant::now());
+            ctx.request_repaint_after(SCULPT_SETTINGS_PERSIST_DELAY);
         } else if let Some(since) = self.sculpt_settings_dirty_since {
             let settled = SCULPT_SETTINGS_PERSIST_DELAY.saturating_sub(since.elapsed());
             if settled.is_zero() {
@@ -233,6 +233,32 @@ mod tests {
         assert!(persistence.recent_files.is_empty());
         persistence.push_recent_scene(&[PathBuf::from("/tmp/a.stl")]);
         assert!(!persistence.recent_files.is_empty());
+    }
+
+    #[test]
+    fn brush_preferences_wait_for_the_last_slider_change_before_saving() {
+        let ctx = egui::Context::default();
+        let key = super::super::workspace::id::SceneKey::INITIAL;
+        let mut persistence = empty_persistence();
+        persistence.sync_sculpt_preferences(&ctx, key);
+        persistence.sculpt_settings_dirty_since = Some(Instant::now() - Duration::from_secs(2));
+        super::super::mesh_editor_overlay::set_sculpt_radius_share(&ctx, key, 0.5);
+        persistence.sync_sculpt_preferences(&ctx, key);
+        persistence.sync_sculpt_preferences(&ctx, key);
+        assert!(
+            !persistence
+                .settings_persistence
+                .should_attempt(Instant::now()),
+            "the last brush change has not settled yet"
+        );
+        persistence.sculpt_settings_dirty_since = Some(Instant::now() - Duration::from_secs(2));
+        persistence.sync_sculpt_preferences(&ctx, key);
+        assert!(
+            persistence
+                .settings_persistence
+                .should_attempt(Instant::now()),
+            "a settled change must become saveable"
+        );
     }
 
     #[test]

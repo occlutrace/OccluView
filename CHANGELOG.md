@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Sculpt brush preferences save after the last slider change settles.
+
 - Cut View zoom keeps the section point under the cursor fixed while resizing the disc.
 
 - Scale bars retain nonzero millimeter and inch labels when zoomed in.
