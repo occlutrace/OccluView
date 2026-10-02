@@ -3,6 +3,7 @@
 #![allow(clippy::expect_used)]
 
 use occluview_core::Mesh;
+use occluview_formats::hps::parser::DecodedSurface;
 use occluview_formats::{
     hps::{
         mesh_from_decoded_surface, read, read_with_key_provider, HpsKeyProvider, HpsSecretKey,
@@ -10,7 +11,6 @@ use occluview_formats::{
     },
     FormatError,
 };
-use occluview_formats::hps::parser::DecodedSurface;
 
 struct ExternalProvider;
 

@@ -223,9 +223,7 @@ pub fn read_decoded_surface_bytes_with_runtime_key_provider(
 /// # Errors
 /// Returns [`FormatError`] when the validated surface cannot be represented by
 /// [`Mesh`].
-pub fn mesh_from_decoded_surface(
-    surface: parser::DecodedSurface,
-) -> Result<Mesh, FormatError> {
+pub fn mesh_from_decoded_surface(surface: parser::DecodedSurface) -> Result<Mesh, FormatError> {
     mesh::build_mesh(surface)
 }
 
@@ -299,8 +297,9 @@ fn classify_parser_error(error: &parser::HpsError) -> HpsReadFailure {
 
 fn classify_key_provider_error(error: &parser::HpsError) -> HpsReadFailure {
     match error {
-        parser::HpsError::InvalidKey { .. }
-        | parser::HpsError::BadContainer { .. } => HpsReadFailure::InvalidKey,
+        parser::HpsError::InvalidKey { .. } | parser::HpsError::BadContainer { .. } => {
+            HpsReadFailure::InvalidKey
+        }
         _ => HpsReadFailure::KeyProviderFailed,
     }
 }

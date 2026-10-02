@@ -124,7 +124,10 @@ fn point_cloud_round_trip_stays_point_cloud() {
     );
 
     let buffers = mesh_edit_buffers_from_mesh(&mesh);
-    assert_eq!(buffers.topology, occluview_mesh_edit::MeshTopology::PointCloud);
+    assert_eq!(
+        buffers.topology,
+        occluview_mesh_edit::MeshTopology::PointCloud
+    );
     assert!(buffers.indices.is_empty());
 
     let rebuilt = mesh_from_edit_buffers_like(&mesh, buffers).expect("round trip");

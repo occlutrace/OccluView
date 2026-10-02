@@ -418,10 +418,10 @@ fn parse_color_bytes(bytes: &[u8], vertex_count: usize) -> Result<Vec<[u8; 4]>, 
 
 #[cfg(test)]
 mod tests {
+    use super::super::{texture::SurfaceTexture, HpsError};
     use super::{
         build_surface, checked_aggregate_uncompressed_size, MAX_PACKAGE_UNCOMPRESSED_BYTES,
     };
-    use super::super::{texture::SurfaceTexture, HpsError};
 
     #[test]
     fn aggregate_zip_uncompressed_size_is_bounded() {
