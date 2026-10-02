@@ -12,7 +12,8 @@
     "occlu-mesh-edit",
     "occluview-mesh-edit",
     "occlu-geometry-math",
-    "occluview-geometry-math"
+    "occluview-geometry-math",
+    "occluview-geometry"
   ],
   "retire_when": "The shell built from the current tree has been used in Explorer on a real machine through the thumbnail, preview-pane, file-association and uninstall paths, and nothing in the pin-to-HEAD delta for the crates above is still wanted.",
   "backport": "A fix that matters to Explorer (a parser, thumbnail, or COM defect) is cherry-picked onto the pinned revision and the pin moves forward to the new commit; the pin never moves to a revision that has not been exercised in Explorer.",

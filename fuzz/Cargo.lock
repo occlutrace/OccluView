@@ -378,7 +378,7 @@ version = "1.2.1"
 dependencies = [
  "bytemuck",
  "glam",
- "occluview-geometry-math",
+ "occluview-geometry",
  "rayon",
  "thiserror",
 ]
@@ -408,7 +408,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "occluview-geometry-math"
+name = "occluview-geometry"
 version = "1.2.1"
 dependencies = [
  "glam",
@@ -423,7 +423,7 @@ dependencies = [
  "glam",
  "image",
  "md-5",
- "occluview-geometry-math",
+ "occluview-geometry",
  "thiserror",
  "tracing",
  "zeroize",
