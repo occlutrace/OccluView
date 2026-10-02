@@ -131,6 +131,19 @@ pub fn textured_render_triangle_mesh() -> Result<Mesh, CoreError> {
     builder.build()
 }
 
+/// Reports a GPU-test skip, or fails when the test lane requires GPU coverage.
+#[allow(clippy::panic, clippy::print_stderr)]
+pub fn report_gpu_test_skip(test_name: &str, reason: &str) {
+    let reason = reason.replace('\n', " ").replace('\r', " ");
+    let may_skip = std::env::var_os("OCCLUVIEW_REQUIRE_GPU_TESTS")
+        .is_none_or(|value| value == "0");
+    assert!(
+        may_skip,
+        "OCCLUVIEW_REQUIRE_GPU_TESTS is set, but {test_name} cannot run: {reason}"
+    );
+    eprintln!("SKIPPED ({reason}): {test_name}");
+}
+
 /// Returns the shared one-triangle GLB fixture's JSON and BIN chunk payloads.
 pub fn minimal_triangle_glb_chunks() -> (&'static [u8], Vec<u8>) {
     let json = br#"{"asset":{"version":"2.0"},
