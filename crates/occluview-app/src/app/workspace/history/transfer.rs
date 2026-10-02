@@ -1,7 +1,10 @@
 //! The two-scene transfer: prepare, commit, and linked navigation.
 
 use super::journal::{EntryOwner, HistoryEntry, PendingReservation};
-use super::*;
+use super::{
+    HistoryCommandId, HistoryDirection, HistoryError, HistoryStepKind, NavigationError, SceneKey,
+    TransferRecord, WorkspaceHistory,
+};
 
 impl WorkspaceHistory {
     pub(crate) fn prepare_transfer(

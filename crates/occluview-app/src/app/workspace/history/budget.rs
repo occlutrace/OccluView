@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use super::*;
+use super::{HistoryCommandId, WorkspaceHistory};
 
 impl WorkspaceHistory {
     pub(crate) fn constrain_limits(&mut self, max_count: usize, max_bytes: usize) {

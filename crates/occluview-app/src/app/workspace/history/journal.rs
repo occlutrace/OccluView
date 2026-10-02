@@ -1,11 +1,11 @@
 //! The command store: entry records, identity allocation, and eviction.
 
 use std::any::Any;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use occluview_core::Scene;
 
-use super::*;
+use super::{EditCheckpointId, HistoryCommandId, HistoryStepKind, SceneKey, WorkspaceHistory};
 
 pub(super) struct HistoryEntry {
     pub(super) id: HistoryCommandId,
