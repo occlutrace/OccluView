@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Reject non-finite OBJ vertex color channels instead of silently changing their color.
+
 - Thumbnail stream copying refuses impossible byte counts instead of returning fabricated data.
 
 - Preserve STL face normals for very small and very large triangles.
