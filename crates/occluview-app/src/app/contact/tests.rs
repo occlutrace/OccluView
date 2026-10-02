@@ -56,6 +56,14 @@ fn pending(app: &OccluViewApp) -> ContactRequest {
         .expect("a submitted reading waits for its answer")
 }
 
+fn wait_for_contact_worker(app: &OccluViewApp, timeout: Duration) -> bool {
+    app.workspace.scenes[0]
+        .tools
+        .contacts
+        .worker()
+        .is_some_and(|worker| worker.wait_for_output(timeout))
+}
+
 fn deliver_answer(app: &OccluViewApp, request: ContactRequest, failure: ContactFailure) {
     let worker = app.workspace.scenes[0]
         .tools
@@ -198,14 +206,13 @@ fn a_worker_that_dies_with_a_job_in_flight_releases_the_reading() {
     assert!(open_contacts_on(&mut app, first));
     let keys = pending(&app).keys;
 
-    let mut waited = Duration::ZERO;
-    while app.workspace.scenes[0].tools.contacts.is_busy() && waited < Duration::from_secs(10) {
-        app.active_context()
-            .expect("live test scene")
-            .drain_contacts_worker(&ctx);
-        std::thread::sleep(Duration::from_millis(5));
-        waited += Duration::from_millis(5);
-    }
+    assert!(
+        wait_for_contact_worker(&app, Duration::from_secs(10)),
+        "the contact worker publishes its result"
+    );
+    app.active_context()
+        .expect("live test scene")
+        .drain_contacts_worker(&ctx);
 
     assert!(
         !app.workspace.scenes[0].tools.contacts.is_busy(),
@@ -246,14 +253,13 @@ fn read_again_after_a_worker_death_reaches_a_new_worker() {
         .install_worker_for_tests(ContactWorker::spawn_panicking());
 
     assert!(open_contacts_on(&mut app, first));
-    let mut waited = Duration::ZERO;
-    while app.workspace.scenes[0].tools.contacts.is_busy() && waited < Duration::from_secs(10) {
-        app.active_context()
-            .expect("live test scene")
-            .drain_contacts_worker(&ctx);
-        std::thread::sleep(Duration::from_millis(5));
-        waited += Duration::from_millis(5);
-    }
+    assert!(
+        wait_for_contact_worker(&app, Duration::from_secs(10)),
+        "the failed contact worker exits"
+    );
+    app.active_context()
+        .expect("live test scene")
+        .drain_contacts_worker(&ctx);
     assert!(
         app.workspace.scenes[0].tools.contacts.refused(),
         "the death is reported"
@@ -292,14 +298,13 @@ fn showing_a_scan_again_clears_the_unusable_sentence() {
     app.workspace.scenes[0].document.scene = Some(Arc::new(scene));
 
     assert!(open_contacts_on(&mut app, first));
-    let mut waited = Duration::ZERO;
-    while app.workspace.scenes[0].tools.contacts.is_busy() && waited < Duration::from_secs(10) {
-        app.active_context()
-            .expect("live test scene")
-            .drain_contacts_worker(&ctx);
-        std::thread::sleep(Duration::from_millis(5));
-        waited += Duration::from_millis(5);
-    }
+    assert!(
+        wait_for_contact_worker(&app, Duration::from_secs(10)),
+        "the failed contact worker exits"
+    );
+    app.active_context()
+        .expect("live test scene")
+        .drain_contacts_worker(&ctx);
 
     // Hide the antagonist: the reading cannot be measured right now.
     app.workspace.scenes[0]
@@ -426,18 +431,6 @@ fn the_align_worker_is_replaced_after_it_dies() {
         .expect("live test scene")
         .align_worker_mut()
         .poison_queue_for_tests();
-    for _ in 0..200 {
-        if app.workspace.scenes[0]
-            .tools
-            .align
-            .worker
-            .as_ref()
-            .is_some_and(crate::align::align_worker::AlignWorker::has_failed)
-        {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(5));
-    }
     assert!(
         app.workspace.scenes[0]
             .tools
