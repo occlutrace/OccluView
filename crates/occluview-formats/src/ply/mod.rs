@@ -50,13 +50,12 @@ use occluview_core::{Mesh, MeshBuilder, MeshTexture};
 /// vertices are being read — it arrives with the faces, after them — so it is
 /// gathered here and applied to the builder before the mesh is finalized.
 ///
-/// The first corner that names a vertex wins. A vertex whose corners disagree
-/// has no single coordinate in a per-vertex model, and splitting it into
-/// several vertices is a change the reader must not make behind the operator's
-/// back.
+/// Conflicting corners are refused: a vertex has one UV slot, and changing
+/// topology to represent a seam would alter the source geometry.
 #[derive(Default)]
 pub(crate) struct FaceUvs {
     per_vertex: Vec<Option<[f32; 2]>>,
+    conflicting: bool,
     /// Corners seen before the vertex element was read.
     ///
     /// A header may declare `face` before `vertex`, and the table is sized from
@@ -96,19 +95,29 @@ impl FaceUvs {
             return;
         };
         if let Some(slot) = self.per_vertex.get_mut(index) {
-            if slot.is_none() {
+            if let Some(existing) = *slot {
+                self.conflicting |= existing != uv;
+            } else {
                 *slot = Some(uv);
             }
         }
     }
 
     /// Move the gathered coordinates onto the vertices they belong to.
-    pub(crate) fn apply(self, builder: &mut MeshBuilder) {
+    pub(crate) fn apply(self, builder: &mut MeshBuilder) -> Result<(), FormatError> {
+        if self.conflicting {
+            return Err(FormatError::Malformed {
+                format: "PLY",
+                offset: 0,
+                reason: "per-corner texture seams cannot be represented without changing the source topology".to_string(),
+            });
+        }
         for (index, uv) in self.per_vertex.into_iter().enumerate() {
             if let (Some(uv), Ok(index)) = (uv, u32::try_from(index)) {
                 builder.set_vertex_uv(index, uv);
             }
         }
+        Ok(())
     }
 }
 
@@ -262,6 +271,105 @@ fn embedded_texture(comments: &header::TextureComments) -> Option<MeshTexture> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn face_uv_file(format: &str, faces: &[([u32; 3], Vec<f32>)], faces_first: bool) -> Vec<u8> {
+        let vertices = "element vertex 4\nproperty float x\nproperty float y\nproperty float z\n";
+        let face_header = format!("element face {}\nproperty list uchar int vertex_indices\nproperty list uchar float texcoord\n", faces.len());
+        let mut bytes = format!(
+            "ply\nformat {format} 1.0\n{}{}end_header\n",
+            if faces_first {
+                face_header.as_str()
+            } else {
+                vertices
+            },
+            if faces_first {
+                vertices
+            } else {
+                face_header.as_str()
+            }
+        )
+        .into_bytes();
+        for face_rows in if faces_first {
+            [true, false]
+        } else {
+            [false, true]
+        } {
+            if face_rows {
+                for (corners, coords) in faces {
+                    if format == "ascii" {
+                        bytes.extend_from_slice(
+                            format!(
+                                "3 {} {} {} {}",
+                                corners[0],
+                                corners[1],
+                                corners[2],
+                                coords.len()
+                            )
+                            .as_bytes(),
+                        );
+                        for coord in coords {
+                            bytes.extend_from_slice(format!(" {coord}").as_bytes());
+                        }
+                        bytes.push(b'\n');
+                    } else {
+                        bytes.push(3);
+                        for corner in corners {
+                            bytes.extend_from_slice(&if format == "binary_big_endian" {
+                                corner.to_be_bytes()
+                            } else {
+                                corner.to_le_bytes()
+                            });
+                        }
+                        bytes.push(u8::try_from(coords.len()).expect("small UV list"));
+                        for coord in coords {
+                            bytes.extend_from_slice(&if format == "binary_big_endian" {
+                                coord.to_be_bytes()
+                            } else {
+                                coord.to_le_bytes()
+                            });
+                        }
+                    }
+                }
+            } else if format == "ascii" {
+                bytes.extend_from_slice(b"0 0 0\n1 0 0\n0 1 0\n1 1 0\n");
+            } else {
+                for value in [
+                    0.0f32, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0,
+                ] {
+                    bytes.extend_from_slice(&if format == "binary_big_endian" {
+                        value.to_be_bytes()
+                    } else {
+                        value.to_le_bytes()
+                    });
+                }
+            }
+        }
+        bytes
+    }
+
+    #[test]
+    fn face_uv_seams_are_refused_without_changing_topology() {
+        for format in ["ascii", "binary_little_endian", "binary_big_endian"] {
+            for faces_first in [false, true] {
+                let faces = [
+                    ([0, 1, 2], vec![0.0, 0.0, 1.0, 0.0, 0.0, 1.0]),
+                    ([0, 2, 3], vec![0.5, 0.5, 0.0, 1.0, 1.0, 1.0]),
+                ];
+                assert!(
+                    read(&face_uv_file(format, &faces, faces_first)).is_err(),
+                    "{format}, faces_first={faces_first}"
+                );
+                let matching = [
+                    faces[0].clone(),
+                    ([0, 2, 3], vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0]),
+                ];
+                let mesh =
+                    read(&face_uv_file(format, &matching, faces_first)).expect("consistent UVs");
+                assert_eq!(mesh.vertices().len(), 4);
+                assert_eq!(mesh.triangle_count(), 2);
+            }
+        }
+    }
 
     #[test]
     fn integer_vertex_fields_are_preserved_in_every_encoding() {

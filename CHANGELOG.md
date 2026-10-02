@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Refuse PLY texture seams that cannot preserve the original mesh topology.
+
 - Sculpt refuses malformed mesh buffers before preparing a session instead of crashing.
 
 - Solid section caps remain visible when a mesh is translated away from the origin.
