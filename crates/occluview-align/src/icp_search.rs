@@ -112,7 +112,6 @@ pub(super) fn choose_start_pose(level: &Level<'_>) -> Result<StartPose, FitRejec
     };
     let seed_samples = sample_vertices(level.moving, GLOBAL_SEED_SAMPLE_BUDGET);
     let moving_anchor = sampled_centroid(level.moving, &seed_samples).unwrap_or(moving_center);
-    let score = |pose: Rigid| score_candidate(level, pose);
     let mut candidates = Vec::new();
     // Remember whether the operator's pose itself produced usable evidence.
     // A centered component seed can see a neighbouring surface through a
@@ -157,7 +156,7 @@ pub(super) fn choose_start_pose(level: &Level<'_>) -> Result<StartPose, FitRejec
             if !shift.is_finite() || shift > max_coarse_shift {
                 continue;
             }
-            let Some((summary, reciprocal)) = score(candidate) else {
+            let Some((summary, reciprocal)) = score_candidate(level, candidate) else {
                 continue;
             };
             candidates.push(CoarseCandidate {
