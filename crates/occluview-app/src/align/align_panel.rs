@@ -636,7 +636,11 @@ fn chip_with_accessibility(
     } else {
         egui::Sense::hover()
     };
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, CHIP_HEIGHT), sense);
+    let (rect, response) = ui
+        .add_enabled_ui(enabled, |ui| {
+            ui.allocate_exact_size(egui::vec2(width, CHIP_HEIGHT), sense)
+        })
+        .inner;
     let ink = if enabled {
         if active {
             ui_theme::accent()
@@ -721,7 +725,11 @@ fn fit_button(
     } else {
         egui::Sense::hover()
     };
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, FIT_BUTTON_HEIGHT), sense);
+    let (rect, response) = ui
+        .add_enabled_ui(enabled, |ui| {
+            ui.allocate_exact_size(egui::vec2(width, FIT_BUTTON_HEIGHT), sense)
+        })
+        .inner;
     let ink = if enabled {
         if primary {
             ui_theme::accent()

@@ -1,5 +1,29 @@
 #![allow(clippy::expect_used, clippy::panic)]
 
+#[test]
+fn unavailable_alignment_controls_expose_disabled_responses_for_tooltips() {
+    let ctx = egui::Context::default();
+    let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+        for enabled in [false, true, false] {
+            let chip = super::chip(ui, 100.0, None, "Back", enabled, false);
+            let fit = super::fit_button(
+                ui,
+                200.0,
+                crate::ui::icons::AppIcon::AlignFit,
+                "Perform alignment",
+                enabled,
+                true,
+            );
+            assert_eq!(chip.enabled(), enabled, "history and brush controls");
+            assert_eq!(fit.enabled(), enabled, "fit refusal tooltips");
+            if !enabled {
+                assert!(!chip.clicked() && !fit.clicked());
+            }
+        }
+    });
+    output.textures_delta.clear();
+}
+
 /// The window has to be draggable like the mesh editor: a panel pinned to a
 /// corner covers the very geometry the operator is clicking on.
 #[test]
