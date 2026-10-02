@@ -65,3 +65,17 @@ pub fn validate_mesh_edit_options(
 ) -> Result<MeshEditOptions, MeshEditError> {
     options.validate()
 }
+
+/// Refuse invalid coordinates before a geometry-changing operation starts.
+pub(super) fn validate_finite_positions(vertices: &[EditVertex]) -> Result<(), MeshEditError> {
+    if let Some((index, _)) = vertices
+        .iter()
+        .enumerate()
+        .find(|(_, vertex)| vertex.position.iter().any(|value| !value.is_finite()))
+    {
+        return Err(MeshEditError::MalformedMesh {
+            reason: format!("vertex {index} has a non-finite position"),
+        });
+    }
+    Ok(())
+}

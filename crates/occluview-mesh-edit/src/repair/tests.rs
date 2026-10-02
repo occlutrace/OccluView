@@ -461,3 +461,21 @@ fn invalid_options_are_rejected() {
         assert!(matches!(err, MeshEditError::InvalidOptions { .. }));
     }
 }
+
+#[test]
+fn repair_rejects_nonfinite_positions_without_mutating_input() {
+    for invalid in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        for lane in 0..3 {
+            let mut input = cube();
+            input.vertices[0].position[lane] = invalid;
+            let before = input.vertices[0].position.map(f32::to_bits);
+            let result = repair_mesh(&input, RepairOptions::default());
+            assert!(
+                matches!(result, Err(MeshEditError::MalformedMesh { .. })),
+                "invalid coordinate must be refused before welding: {result:?}"
+            );
+            assert_eq!(input.vertices[0].position.map(f32::to_bits), before);
+            assert_eq!(input.indices, cube().indices);
+        }
+    }
+}
