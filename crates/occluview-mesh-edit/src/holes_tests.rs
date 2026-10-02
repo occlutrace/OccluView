@@ -165,9 +165,7 @@ fn mm_perimeter_cap_gates_the_unselected_button() {
 }
 
 #[test]
-fn selection_overrides_the_mm_perimeter_cap() {
-    // A 15 mm-perimeter rim exceeds a 5 mm cap, but an explicit full selection
-    // is intent and the mm cap is ignored for the selected path.
+fn selection_respects_the_mm_perimeter_cap_when_enabled() {
     let mesh = fan_mesh(16, 1.0); // perimeter ~6.2 mm
     let tiny_cap = MeshEditOptions {
         max_rim_perimeter_mm: Some(5.0),
@@ -178,8 +176,13 @@ fn selection_overrides_the_mm_perimeter_cap() {
     assert_eq!(button.report.filled_holes, 0);
 
     let selection = first_n_selected(16, 16);
-    let lasso = fill_holes(&mesh, Some(&selection), tiny_cap).expect("selection ignores mm cap");
-    assert_eq!(lasso.report.filled_holes, 1);
+    let lasso = fill_holes(&mesh, Some(&selection), tiny_cap).expect("selected rim exceeds mm cap");
+    assert_eq!(lasso.report.filled_holes, 0);
+    assert_eq!(lasso.report.skipped_oversize_rims, 1);
+    assert_eq!(lasso.mesh.indices, mesh.indices);
+    let unlimited = fill_holes(&mesh, Some(&selection), MeshEditOptions::default())
+        .expect("selection with the perimeter limit off");
+    assert_eq!(unlimited.report.filled_holes, 1);
 }
 
 #[test]

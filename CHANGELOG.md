@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Close Holes honors an enabled perimeter limit for selected rims and reports holes left open because of it.
+
 - Surface bridge splits leave regions open when a damaged inner contour prevents safe capping.
 
 - Hole-cap fairing uses the full outside support count for large vertex fans.
