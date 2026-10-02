@@ -276,7 +276,7 @@ pub fn closest_feature_on_triangle(
     }
     if vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 {
         let denominator = d1 - d3;
-        if denominator.abs() > f64::EPSILON {
+        if denominator > 0.0 {
             return (a + ab * (d1 / denominator), Edge(0));
         }
         return (a, Corner(0));
@@ -290,7 +290,7 @@ pub fn closest_feature_on_triangle(
     let vb = d5 * d2 - d1 * d6;
     if vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0 {
         let denominator = d2 - d6;
-        if denominator.abs() > f64::EPSILON {
+        if denominator > 0.0 {
             return (a + ac * (d2 / denominator), Edge(2));
         }
         return (a, Corner(0));
@@ -298,13 +298,13 @@ pub fn closest_feature_on_triangle(
     let va = d3 * d6 - d5 * d4;
     if va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0 {
         let denominator = (d4 - d3) + (d5 - d6);
-        if denominator.abs() > f64::EPSILON {
+        if denominator > 0.0 {
             return (b + (c - b) * ((d4 - d3) / denominator), Edge(1));
         }
         return (b, Corner(1));
     }
     let total = va + vb + vc;
-    if total.abs() <= f64::EPSILON {
+    if total <= 0.0 {
         return (a, Corner(0));
     }
     (a + ab * (vb / total) + ac * (vc / total), Face)
@@ -413,5 +413,30 @@ mod tests {
         let positions = [Vec3::ZERO, Vec3::X, Vec3::Y];
         let normals = accumulate_smooth_normals(2, &[0, 1, 2], |i| positions.get(i).copied());
         assert_eq!(normals, vec![Vec3::ZERO; 2]);
+    }
+
+    #[test]
+    fn closest_triangle_feature_is_independent_of_triangle_scale() {
+        for scale in [1e-8, 1e-4, 1.0, 1e8] {
+            let a = DVec3::ZERO;
+            let b = DVec3::X * scale;
+            let c = DVec3::Y * scale;
+            for (query, expected, feature) in [
+                (
+                    DVec3::new(0.25, 0.25, 1.0),
+                    DVec3::new(0.25, 0.25, 0.0),
+                    ClosestTriangleFeature::Face,
+                ),
+                (
+                    DVec3::new(0.5, -1.0, 0.0),
+                    DVec3::new(0.5, 0.0, 0.0),
+                    ClosestTriangleFeature::Edge(0),
+                ),
+            ] {
+                let (closest, actual_feature) = closest_feature_on_triangle(query * scale, a, b, c);
+                assert_eq!(actual_feature, feature, "scale={scale}, query={query}");
+                assert!((closest / scale - expected).length() < 1e-12);
+            }
+        }
     }
 }
