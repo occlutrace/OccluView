@@ -476,7 +476,22 @@ pub(super) fn render_coalesced_thumbnail(
     timeout: Duration,
     render: impl FnOnce() -> ThumbnailAttempt,
 ) -> ThumbnailAttempt {
-    render_coalesced_thumbnail_by(key, Instant::now() + timeout, render)
+    render_coalesced_thumbnail_by_inner(key, Instant::now() + timeout, render, || {})
+}
+
+#[cfg(test)]
+pub(super) fn render_coalesced_thumbnail_with_follower_notice(
+    key: ThumbnailRequestKey,
+    timeout: Duration,
+    render: impl FnOnce() -> ThumbnailAttempt,
+    follower_waiting: impl FnOnce(),
+) -> ThumbnailAttempt {
+    render_coalesced_thumbnail_by_inner(
+        key,
+        Instant::now() + timeout,
+        render,
+        follower_waiting,
+    )
 }
 
 /// Run or join a coalesced render until a deadline fixed by the caller.
@@ -484,6 +499,15 @@ pub(super) fn render_coalesced_thumbnail_by(
     key: ThumbnailRequestKey,
     deadline: Instant,
     render: impl FnOnce() -> ThumbnailAttempt,
+) -> ThumbnailAttempt {
+    render_coalesced_thumbnail_by_inner(key, deadline, render, || {})
+}
+
+fn render_coalesced_thumbnail_by_inner(
+    key: ThumbnailRequestKey,
+    deadline: Instant,
+    render: impl FnOnce() -> ThumbnailAttempt,
+    follower_waiting: impl FnOnce(),
 ) -> ThumbnailAttempt {
     // `render` is an infallible producer of a verdict: a full-size bitmap (a
     // real thumbnail or a deterministic placeholder) or an explicit transient
@@ -503,6 +527,7 @@ pub(super) fn render_coalesced_thumbnail_by(
             result.into()
         }
         InflightThumbnailLease::Follower(entry) => {
+            follower_waiting();
             if let Some(result) = wait_for_inflight_thumbnail_by(&entry, deadline) {
                 result.into()
             } else {
