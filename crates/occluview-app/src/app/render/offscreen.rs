@@ -400,10 +400,8 @@ impl SceneContext<'_> {
         cam.fit_clip_planes_to_bbox(bbox);
         self.ensure_offscreen()?;
 
-        let [width_px, height_px] = self.render.render_extent_px;
-        let aspect = f32::from(width_px) / f32::from(height_px.max(1));
         let view = build_view_matrix(&cam);
-        let proj = build_proj_matrix(&cam, aspect);
+        let proj = build_proj_matrix(&cam, self.render.viewport_aspect);
         let gpu_cam = GpuCamera::new(view, proj, camera_studio_light_dir(&cam), cam.eye());
         let spec = ViewportSpec {
             size_px: self.render.render_extent_px,

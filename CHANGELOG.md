@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Viewport projections follow pane and window resizing even when the render texture keeps its previous size.
+
 - Blocked viewport presses report focus, dialogs, and the scene input owner in debug logs.
 
 - Switching between Mesh Editing and viewport tools releases the previous tool and preserves completed edits.

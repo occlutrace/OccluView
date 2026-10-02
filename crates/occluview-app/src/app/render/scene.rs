@@ -179,7 +179,7 @@ impl SceneContext<'_> {
             // The callback paints into the egui render pass at this rect. Its
             // camera and GPU peer belong only to this SceneContext.
             let live_px = response.rect.size() * ctx.pixels_per_point();
-            self.render.live_viewport_px = Some([
+            let live_viewport_px = [
                 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 {
                     live_px.x.round().max(1.0) as u32
@@ -188,7 +188,11 @@ impl SceneContext<'_> {
                 {
                     live_px.y.round().max(1.0) as u32
                 },
-            ]);
+            ];
+            if self.render.live_viewport_px != Some(live_viewport_px) {
+                self.render.live_viewport_px = Some(live_viewport_px);
+                self.render.invalidation.request_redraw();
+            }
             root_ui
                 .painter()
                 .add(live_viewport::paint_callback(response.rect, live_viewport));
@@ -481,11 +485,18 @@ mod input_tests {
         events: Vec<egui::Event>,
         focused: bool,
     ) -> egui::FullOutput {
+        sized_frame(app, ctx, events, focused, egui::vec2(1000.0, 800.0))
+    }
+
+    fn sized_frame(
+        app: &mut OccluViewApp,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        focused: bool,
+        size: egui::Vec2,
+    ) -> egui::FullOutput {
         let input = egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(1000.0, 800.0),
-            )),
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
             events,
             focused,
             ..Default::default()
@@ -1233,6 +1244,119 @@ mod input_tests {
         fn flush(&mut self) -> std::io::Result<()> {
             Ok(())
         }
+    }
+
+    #[test]
+    fn loads_scene_switches_resize_and_layout_changes_keep_the_camera_in_its_pane(
+    ) -> anyhow::Result<()> {
+        use crate::app::workspace::commands::{SplitSide, WorkspaceCommand};
+        use crate::app::workspace::layout::WorkspaceLayout;
+        use crate::scene_loading::SceneLoadMode;
+
+        let ctx = egui::Context::default();
+        let mut app = input_app(&ctx);
+        app.persistence.settings.frame_scene_on_open = false;
+        let size = egui::vec2(1000.0, 800.0);
+        for offset in [0.0, 10.0] {
+            let model = crate::app::app_test_support::named_scene("surface", offset);
+            app.loader
+                .install_active(crate::app::app_test_support::delivered_load(
+                    &app,
+                    model,
+                    SceneLoadMode::Append,
+                    "surface.stl",
+                ));
+            frame(&mut app, &ctx, vec![]);
+            let camera = app.workspace.scenes[0]
+                .render
+                .camera
+                .ok_or_else(|| anyhow::anyhow!("first camera"))?;
+            assert_eq!(camera.target, glam::vec3(0.5, 0.5, 0.0));
+            assert_camera_in_pane(&mut app, &ctx, egui::pos2(900.0, 700.0), size)?;
+        }
+        let first = app.workspace.scenes[0].target();
+        let first_camera = app.workspace.scenes[0].render.camera;
+        app.active_context()
+            .ok_or_else(|| anyhow::anyhow!("active scene"))?
+            .queue_new_scene(SplitSide::Right);
+        frame(&mut app, &ctx, vec![]);
+        app.active_context()
+            .ok_or_else(|| anyhow::anyhow!("second scene"))?
+            .set_scene(
+                crate::app::app_test_support::named_scene("peer", 20.0),
+                false,
+            );
+        frame(&mut app, &ctx, vec![]);
+        assert_eq!(
+            app.workspace.scenes[1]
+                .render
+                .camera
+                .map(|camera| camera.target),
+            Some(glam::vec3(20.5, 0.5, 0.0))
+        );
+        assert_camera_in_pane(&mut app, &ctx, egui::pos2(900.0, 700.0), size)?;
+        frame(&mut app, &ctx, vec![key(egui::Key::F6)]);
+        assert_eq!(app.workspace.input.active(), first);
+        assert_camera_in_pane(&mut app, &ctx, egui::pos2(400.0, 700.0), size)?;
+        let split = app.workspace.layout;
+        app.workspace
+            .commands
+            .push_back(WorkspaceCommand::SetLayout(WorkspaceLayout::single(
+                first.pane,
+            )));
+        frame(&mut app, &ctx, vec![]);
+        assert_camera_in_pane(&mut app, &ctx, egui::pos2(900.0, 700.0), size)?;
+        let resized = egui::vec2(1010.0, 810.0);
+        sized_frame(&mut app, &ctx, vec![], true, resized);
+        assert_camera_in_pane(&mut app, &ctx, egui::pos2(900.0, 700.0), resized)?;
+        app.workspace
+            .commands
+            .push_back(WorkspaceCommand::SetLayout(split));
+        sized_frame(&mut app, &ctx, vec![], true, resized);
+        assert_camera_in_pane(&mut app, &ctx, egui::pos2(400.0, 700.0), resized)?;
+        assert_eq!(
+            app.workspace.scenes[0]
+                .render
+                .camera
+                .map(|camera| camera.target),
+            first_camera.map(|camera| camera.target)
+        );
+        Ok(())
+    }
+
+    fn assert_camera_in_pane(
+        app: &mut OccluViewApp,
+        ctx: &egui::Context,
+        point: egui::Pos2,
+        size: egui::Vec2,
+    ) -> anyhow::Result<()> {
+        sized_frame(app, ctx, vec![egui::Event::PointerMoved(point)], true, size);
+        for pressed in [true, false] {
+            sized_frame(app, ctx, vec![secondary_button(point, pressed)], true, size);
+        }
+        let scene = app
+            .workspace
+            .scene(app.workspace.active_id())
+            .ok_or_else(|| anyhow::anyhow!("active scene"))?;
+        let viewport = scene
+            .presentation
+            .viewport_context_menu
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("viewport response"))?
+            .0
+            .rect;
+        let camera = scene
+            .render
+            .camera
+            .ok_or_else(|| anyhow::anyhow!("camera"))?;
+        let (center, _) =
+            crate::viewer::project_world_to_viewport(&camera, viewport, camera.target)
+                .ok_or_else(|| anyhow::anyhow!("target projection"))?;
+        assert!(center.distance(viewport.center()) < 0.01);
+        assert!((scene.render.viewport_aspect - viewport.aspect_ratio()).abs() < 1e-6);
+        sized_frame(app, ctx, vec![key(egui::Key::Escape)], true, size);
+        sized_frame(app, ctx, vec![], true, size);
+        Ok(())
     }
 
     #[test]

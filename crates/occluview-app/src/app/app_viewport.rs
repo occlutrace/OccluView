@@ -187,6 +187,14 @@ impl SceneContext<'_> {
         let Some(desired) = desired_render_extent_px(viewport_points, pixels_per_point) else {
             return;
         };
+        let aspect = viewport_points.x / viewport_points.y;
+        if !aspect.is_finite() || aspect <= 0.0 {
+            return;
+        }
+        if self.render.viewport_aspect.to_bits() != aspect.to_bits() {
+            self.render.viewport_aspect = aspect;
+            self.render.invalidation.request_redraw();
+        }
         if render_extent_change_requires_rerender(self.render.render_extent_px, desired) {
             self.render.render_extent_px = desired;
             self.render.invalidation.request_redraw();
@@ -447,6 +455,96 @@ mod tests {
     use super::{pan_camera_from_point_scroll, zoom_camera_from_wheel, ScrollBehavior};
     use eframe::egui;
     use occluview_core::Camera;
+
+    #[test]
+    fn projection_invalidates_when_viewport_aspect_changes_below_texture_threshold(
+    ) -> anyhow::Result<()> {
+        let ctx = egui::Context::default();
+        let mut app = crate::app::OccluViewApp::new_for_tests(ctx);
+        let mut scene = app
+            .active_context()
+            .ok_or_else(|| anyhow::anyhow!("active scene"))?;
+        scene.set_scene(
+            crate::app::app_test_support::named_scene("surface", 0.0),
+            true,
+        );
+        scene.sync_render_extent(egui::vec2(1000.0, 700.0), 1.0);
+        scene.render.invalidation.consume_redraw();
+        let extent = scene.render.render_extent_px;
+        let target = scene.render.camera.map(|camera| camera.target);
+        scene.sync_render_extent(egui::vec2(1010.0, 700.0), 1.0);
+        assert_eq!(
+            scene.render.render_extent_px, extent,
+            "small resizes retain the texture allocation"
+        );
+        assert!(
+            scene.render.invalidation.redraw_pending(),
+            "a changed viewport aspect must upload a new projection"
+        );
+        assert_eq!(scene.render.camera.map(|camera| camera.target), target);
+        Ok(())
+    }
+
+    #[test]
+    fn rendered_projection_matches_picking_after_resizing_and_texture_clamping(
+    ) -> anyhow::Result<()> {
+        let mut app = crate::app::OccluViewApp::new_for_tests(egui::Context::default());
+        let mut scene = app
+            .active_context()
+            .ok_or_else(|| anyhow::anyhow!("active scene"))?;
+        scene.set_scene(
+            crate::app::app_test_support::named_scene("surface", 0.0),
+            true,
+        );
+        let camera = scene
+            .render
+            .camera
+            .ok_or_else(|| anyhow::anyhow!("camera"))?;
+        let point = camera.target + glam::vec3(0.25, 0.25, 0.0);
+        for size in [
+            egui::vec2(1000.0, 700.0),
+            egui::vec2(1010.0, 700.0),
+            egui::vec2(496.0, 740.0),
+            egui::vec2(1000.0, 740.0),
+            egui::vec2(5120.0, 250.0),
+        ] {
+            scene.sync_render_extent(size, 1.0);
+            let viewport = egui::Rect::from_min_size(egui::pos2(300.0, 60.0), size);
+            let (picked, _) = crate::viewer::project_world_to_viewport(&camera, viewport, point)
+                .ok_or_else(|| anyhow::anyhow!("pointer projection"))?;
+            let clip = crate::viewer::build_proj_matrix(&camera, scene.render.viewport_aspect)
+                * crate::viewer::build_view_matrix(&camera)
+                * point.extend(1.0);
+            let ndc = clip.truncate() / clip.w;
+            let rendered = egui::pos2(
+                viewport.left() + (ndc.x + 1.0) * 0.5 * size.x,
+                viewport.top() + (1.0 - ndc.y) * 0.5 * size.y,
+            );
+            assert!(
+                rendered.distance(picked) < 0.01,
+                "{size:?}: rendered {rendered:?}, picked {picked:?}"
+            );
+            assert_eq!(
+                scene.render.camera.map(|camera| camera.target),
+                Some(camera.target)
+            );
+        }
+        let aspect = scene.render.viewport_aspect;
+        let extent = scene.render.render_extent_px;
+        for size in [
+            egui::Vec2::ZERO,
+            egui::vec2(f32::NAN, 500.0),
+            egui::vec2(500.0, f32::INFINITY),
+            egui::vec2(-5.0, 500.0),
+        ] {
+            scene.render.invalidation.consume_redraw();
+            scene.sync_render_extent(size, 1.0);
+            assert_eq!(scene.render.viewport_aspect.to_bits(), aspect.to_bits());
+            assert_eq!(scene.render.render_extent_px, extent);
+            assert!(!scene.render.invalidation.redraw_pending());
+        }
+        Ok(())
+    }
 
     /// Locking the orbit has to grab the pointer and hide it as one decision,
     /// and releasing has to give both back. Separate branches for the two

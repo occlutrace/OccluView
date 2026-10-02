@@ -26,10 +26,8 @@ impl SceneContext<'_> {
         };
         cam.fit_clip_planes_to_bbox(bbox);
 
-        let [width_px, height_px] = self.render.render_extent_px;
-        let aspect = f32::from(width_px) / f32::from(height_px.max(1));
         let view = build_view_matrix(&cam);
-        let proj = build_proj_matrix(&cam, aspect);
+        let proj = build_proj_matrix(&cam, self.render.viewport_aspect);
         let gpu_cam = GpuCamera::new(view, proj, camera_studio_light_dir(&cam), cam.eye());
         let clip_plane = self.active_viewport_clip_plane(bbox);
         let selection_overlay_visible = self.selection_overlay_visible();
