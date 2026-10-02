@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- ASCII STL imports accept solid names containing spaces.
+
 - GLB imports preserve front-face winding when node transforms mirror the geometry.
 
 - PLY imports preserve integer positions, normals, and UVs and reject invalid integer vertex fields.
