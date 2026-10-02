@@ -781,6 +781,95 @@ fn msrv_agrees_across_toolchain_manifest_and_clippy() {
     );
 }
 
+/// The crate names listed in the `## Workspace layout` table in `README.md`,
+/// in table order. Each row names its crate in backticks; rows without an
+/// `occluview-` name (the header and the separator) contribute nothing, so a
+/// moved table still fails closed through the member comparison below.
+fn readme_layout_crates(readme: &str) -> Vec<&str> {
+    let section = readme
+        .split("## Workspace layout")
+        .nth(1)
+        .expect("README declares a Workspace layout section");
+    section
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if !line.starts_with('|') {
+                return None;
+            }
+            let open = line.find('`')?;
+            let rest = &line[open + 1..];
+            let close = rest.find('`')?;
+            let name = &rest[..close];
+            if name.starts_with("occluview-") {
+                Some(name)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Whether `name` matches `^occluview-[a-z0-9]+(-[a-z0-9]+)*$` without a regex
+/// engine. The character class admits digits for the retained `occluview-i18n`
+/// numeronym; anything else (uppercase, underscores, dots) still fails.
+fn is_plain_crate_name(name: &str) -> bool {
+    let Some(short) = name.strip_prefix("occluview-") else {
+        return false;
+    };
+    if short.is_empty() {
+        return false;
+    }
+    short.split('-').all(|segment| {
+        !segment.is_empty()
+            && segment
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+    })
+}
+
+/// Split-family suffixes retired by the plain-naming merges. `occluview-core`
+/// is the single-noun data-model crate in the final list, not a split family,
+/// so the member test exempts that one name.
+const RETIRED_FAMILY_SUFFIXES: [&str; 7] = [
+    "-kernel", "-math", "-core", "-index", "-csg", "-query", "-session",
+];
+
+#[test]
+fn workspace_members_match_readme_layout_and_plain_naming() {
+    let cargo_toml = repo_file("Cargo.toml");
+    let readme = repo_file("README.md");
+    let members = workspace_member_packages(&cargo_toml);
+    let table = readme_layout_crates(&readme);
+    assert!(
+        !table.is_empty(),
+        "README workspace layout table lists at least one crate"
+    );
+    let mut members_sorted = members.clone();
+    members_sorted.sort_unstable();
+    let mut table_sorted = table.clone();
+    table_sorted.sort_unstable();
+    assert_eq!(
+        members_sorted, table_sorted,
+        "workspace members must equal the crates listed in the README layout table"
+    );
+    for name in &members_sorted {
+        assert!(
+            is_plain_crate_name(name),
+            "{name} must match ^occluview-[a-z0-9]+(-[a-z0-9]+)*$"
+        );
+        if *name == "occluview-core" {
+            continue;
+        }
+        for suffix in RETIRED_FAMILY_SUFFIXES {
+            assert!(
+                !name.ends_with(suffix),
+                "{name} reintroduces retired split-family suffix {suffix}"
+            );
+        }
+    }
+}
+
 fn workspace_crates_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
