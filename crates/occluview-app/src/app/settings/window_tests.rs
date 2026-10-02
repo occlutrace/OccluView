@@ -3,7 +3,6 @@ use crate::app::app_dialogs::{recent_files_popup_id, show_recent_files_popup};
 use crate::app::settings::panel::show_settings_toolbar_toggle;
 #[cfg(target_os = "macos")]
 use crate::app::settings::panel::SettingsAction;
-#[cfg(target_os = "macos")]
 use crate::app::OccluViewApp;
 #[cfg(target_os = "macos")]
 use crate::app_settings::ScrollBehavior;
@@ -115,7 +114,6 @@ fn run_toolbar_frame_at_with_settings(
     })
 }
 
-#[cfg(target_os = "macos")]
 fn run_app_settings_frame(
     ctx: &egui::Context,
     events: Vec<egui::Event>,
@@ -135,10 +133,12 @@ fn run_app_settings_frame(
             .show(ui, |ui| {
                 let response = show_settings_toolbar_toggle(ui, true, &app.ui.locale, false);
                 trigger = Some(response.rect);
-                app.active_context()
-                    .expect("live test scene")
-                    .show_settings_popup(&response);
+                let Some(mut scene) = app.active_context() else {
+                    panic!("live test scene missing");
+                };
+                scene.show_settings_popup(&response);
             });
+        app.apply_workspace_commands(ui.ctx());
     });
     output.textures_delta.clear();
     Ok((
@@ -173,7 +173,6 @@ fn click(ctx: &egui::Context, position: egui::Pos2) -> anyhow::Result<ToolbarFra
     )
 }
 
-#[cfg(target_os = "macos")]
 fn click_app_settings(
     ctx: &egui::Context,
     screen: egui::Rect,
@@ -198,6 +197,44 @@ fn click_app_settings(
         screen,
         app,
     )?;
+    Ok(())
+}
+
+#[test]
+fn render_preferences_redraw_every_scene() -> anyhow::Result<()> {
+    for label in ["White", "Ghost the cut-away side"] {
+        let ctx = egui::Context::default();
+        let screen = tall_test_screen();
+        let mut app = OccluViewApp::new_for_tests(ctx.clone());
+        let Some(mut scene) = app.active_context() else {
+            panic!("live test scene missing");
+        };
+        scene.queue_new_scene(crate::app::workspace::commands::SplitSide::Right);
+        app.apply_workspace_commands(&ctx);
+        for scene in &mut app.workspace.scenes {
+            scene.render.invalidation.reset();
+        }
+        let (trigger, _) = run_app_settings_frame(&ctx, Vec::new(), screen, &mut app)?;
+        click_app_settings(&ctx, screen, &mut app, trigger.center())?;
+        let (_, visible) = run_app_settings_frame(&ctx, Vec::new(), screen, &mut app)?;
+        let control = direct_control_center(&visible, label)?;
+        click_app_settings(&ctx, screen, &mut app, control)?;
+        if label == "White" {
+            assert_eq!(
+                app.persistence.settings.viewport_background,
+                crate::app_settings::ViewportBackground::White
+            );
+        } else {
+            assert!(!app.persistence.settings.show_cut_ghost);
+        }
+        assert!(
+            app.workspace
+                .scenes
+                .iter()
+                .all(|scene| scene.render.invalidation.redraw_pending()),
+            "{label} must redraw both cached scenes"
+        );
+    }
     Ok(())
 }
 
