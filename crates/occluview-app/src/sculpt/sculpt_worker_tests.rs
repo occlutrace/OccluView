@@ -148,16 +148,13 @@ fn poisoned_live_shadow_stops_worker_without_publishing_a_stale_update() {
         view_dir: [0.0, 0.0, -1.0],
     };
     assert!(worker.try_apply(stroke, BrushMode::Add));
-    for _ in 0..2_000 {
-        if let Some(failure) = worker.take_error() {
-            assert_eq!(failure, SculptFailure::ShadowPoisoned);
-            assert!(worker.take_update().is_none());
-            assert!(worker.take_completion().is_none());
-            return;
-        }
-        thread::sleep(Duration::from_millis(1));
-    }
-    panic!("poisoned shadow did not stop the sculpt worker");
+    assert!(
+        worker.wait_until_idle(Duration::from_secs(2)),
+        "poisoned shadow did not stop the sculpt worker"
+    );
+    assert_eq!(worker.take_error(), Some(SculptFailure::ShadowPoisoned));
+    assert!(worker.take_update().is_none());
+    assert!(worker.take_completion().is_none());
 }
 
 #[test]
@@ -590,37 +587,39 @@ fn coarse_ridge_mesh() -> Mesh {
 }
 
 fn wait_for_topology_delta(worker: &SculptWorker) -> SculptTopologyDelta {
-    for _ in 0..2_000 {
-        if let Ok(Some(delta)) = worker.try_take_topology_delta() {
-            return delta;
-        }
-        thread::sleep(Duration::from_millis(1));
+    if let Ok(Some(delta)) = worker.try_take_topology_delta() {
+        return delta;
+    }
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    assert!(worker.wait_until_idle(remaining), "the sculpt worker did not settle");
+    if let Ok(Some(delta)) = worker.try_take_topology_delta() {
+        return delta;
     }
     panic!("the densifying dab never produced a topology delta");
 }
 
 fn wait_for_completions(worker: &SculptWorker, expected: usize) -> usize {
     let mut completed = 0;
-    for _ in 0..2_000 {
-        if worker.take_completion().is_some() {
-            completed += 1;
-            if completed == expected {
-                return completed;
-            }
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while completed < expected {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
         }
-        thread::sleep(Duration::from_millis(1));
+        if worker.wait_take_completion(remaining).is_some() {
+            completed += 1;
+        } else {
+            break;
+        }
     }
     completed
 }
 
 fn wait_for_completion(worker: &SculptWorker) -> SculptCompletion {
-    for _ in 0..2_000 {
-        if let Some(completion) = worker.take_completion() {
-            return completion;
-        }
-        thread::sleep(Duration::from_millis(1));
-    }
-    panic!("sculpt worker did not complete the stroke");
+    worker
+        .wait_take_completion(Duration::from_secs(2))
+        .expect("sculpt worker did not complete the stroke")
 }
 
 #[test]
@@ -931,7 +930,7 @@ fn terminal_finish_invariant_errors_stop_the_worker_command_loop() {
 /// replace.
 #[test]
 fn worker_passes_its_cancellation_token_into_the_kernel() {
-    let worker = test_worker();
+    let mut worker = test_worker();
     let shadow = worker.shadow();
     let before = shadow.read().expect("the display shadow").clone();
 
@@ -941,38 +940,21 @@ fn worker_passes_its_cancellation_token_into_the_kernel() {
         .write()
         .expect("the test holds the shadow write lock");
     assert!(worker.try_apply(a_dab(), BrushMode::Add));
-    for _ in 0..2_000 {
-        if worker.queue.active.load(Ordering::Acquire) {
-            break;
-        }
-        thread::sleep(Duration::from_millis(1));
-    }
     assert!(
-        worker.queue.active.load(Ordering::Acquire),
+        worker.wait_until_active(Duration::from_secs(2)),
         "the worker has to pick the dab up"
     );
+    // This interval confirms the worker remains parked on the held shadow before cancellation.
     thread::sleep(Duration::from_millis(200));
     // The same store `Drop` makes when the session goes away.
     worker.state.stopping.store(true, Ordering::Release);
     drop(held);
 
-    for _ in 0..2_000 {
-        if worker
-            .worker_thread
-            .as_ref()
-            .is_some_and(JoinHandle::is_finished)
-        {
-            break;
-        }
-        thread::sleep(Duration::from_millis(1));
-    }
-    assert!(
-        worker
-            .worker_thread
-            .as_ref()
-            .is_some_and(JoinHandle::is_finished),
-        "a cancelled dab must let the worker stop"
-    );
+    let _ = worker
+        .worker_thread
+        .take()
+        .expect("worker thread")
+        .join();
 
     let after = shadow.read().expect("the display shadow").clone();
     assert_eq!(after.len(), before.len());
@@ -993,13 +975,15 @@ fn worker_passes_its_cancellation_token_into_the_kernel() {
 /// Wait for a terminal worker failure, or give up so a wedged worker fails the
 /// test instead of hanging the suite.
 fn wait_for_error(worker: &SculptWorker) -> Option<SculptFailure> {
-    for _ in 0..2_000 {
-        if let Some(failure) = worker.take_error() {
-            return Some(failure);
-        }
-        thread::sleep(Duration::from_millis(1));
-    }
-    None
+    let Ok(queue_state) = worker.queue.state.lock() else {
+        return worker.take_error();
+    };
+    let _ = worker.queue.wake.wait_timeout_while(
+        queue_state,
+        Duration::from_secs(2),
+        |_| worker.state.error.lock().is_ok_and(|error| error.is_none()),
+    );
+    worker.take_error()
 }
 
 /// After a terminal failure the loop has stopped: a command queued behind it is
@@ -1007,6 +991,7 @@ fn wait_for_error(worker: &SculptWorker) -> Option<SculptFailure> {
 fn assert_no_further_output(worker: &SculptWorker) {
     assert!(worker.try_apply(a_dab(), BrushMode::Add));
     assert!(worker.finish_stroke());
+    // Elapsed time verifies that a stopped worker never consumes queued commands.
     for _ in 0..60 {
         assert!(
             worker.take_completion().is_none(),
