@@ -301,12 +301,11 @@ workspace.
 
 | crate | role | rank |
 |---|---|---|
-| `occluview-geometry` | Shared geometry constants and pure math; the bottom leaf, importing no other workspace crate. | 0 |
+| `occluview-geometry` | Shared geometry constants, pure math, and triangle-surface queries; the bottom leaf, importing no other workspace crate. | 0 |
 | `occluview-i18n` | Fluent catalogs and locale resolution shared by the app and the shell. | 0 |
 | `occluview-repo-contracts` | Repository contract tests: CI workflows, packaging reports and the release version. | 0 |
 | `occluview-update` | Signed update-manifest checks; the only crate carrying HTTP and signature verification. | 0 |
 | `occluview-sculpt` | Surface sculpting kernel with its own `parallel` feature. | 1 |
-| `occluview-surface-query` | Shared triangle-surface indexing and cooperative cancellation. | 1 |
 | `occluview-hps` | HPS parser; isolates the archive, cipher and image dependencies. | 1 |
 | `occluview-core` | Pure data model: math, units, mesh, scene and camera, with no I/O, GPU or platform code. | 1 |
 | `occluview-mesh-edit` | Product-neutral mesh-editing kernel plus the adapter to core meshes; the `robust` module owns the optional native CSG fallback (feature `robust-csg`). | 2 |

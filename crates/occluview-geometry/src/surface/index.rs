@@ -10,7 +10,7 @@ use std::ops::Range;
 
 use glam::DVec3;
 
-use crate::Soup;
+use super::Soup;
 
 #[path = "surface_geometry.rs"]
 mod surface_geometry;
@@ -864,4 +864,5 @@ impl SurfaceIndex {
 }
 
 #[cfg(test)]
+#[path = "tests.rs"]
 mod tests;

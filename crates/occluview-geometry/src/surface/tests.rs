@@ -7,7 +7,7 @@
 #![allow(clippy::expect_used, clippy::panic)]
 
 use super::{closest_feature_on_triangle, Feature, SurfaceHit, SurfaceIndex};
-use crate::Soup;
+use super::Soup;
 use glam::DVec3;
 
 /// A flat `n` x `n` grid of quads on z = 0, spacing `step`, as a soup.

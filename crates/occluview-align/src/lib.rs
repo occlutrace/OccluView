@@ -65,7 +65,7 @@ pub use deviation::{
 pub use icp::{refine, IcpReport, Orientation, RefineSettings};
 pub use mask::{apply_brush, invert, set_all, MaskEdit, EXCLUDED, INCLUDED};
 pub use observability::{observability, Observability};
-pub use occluview_surface_query::{CancelFlag, Soup, SurfaceHit, SurfaceIndex};
+pub use occluview_geometry::surface::{CancelFlag, Soup, SurfaceHit, SurfaceIndex};
 pub use pairs::{fit_pairs, FitBounds, FitRejection, PairFit};
 pub use rigid::Rigid;
 pub use sample::bounds_of;
