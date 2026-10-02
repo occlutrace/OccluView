@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Sculpt queries handle very large brush radii without overflowing the spatial grid.
+
 - OFF imports reject negative and non-integer face indices instead of changing their vertex references.
 
 - Sculpt keeps its editing target when that layer is hidden or removed, preventing strokes on another layer.
