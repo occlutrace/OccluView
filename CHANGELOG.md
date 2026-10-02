@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Contact hover refuses invalid triangles instead of crashing or inventing a partial reading.
+
 - Malformed Unicode STL signatures return an error instead of crashing the reader.
 
 - Viewport projections follow pane and window resizing even when the render texture keeps its previous size.
