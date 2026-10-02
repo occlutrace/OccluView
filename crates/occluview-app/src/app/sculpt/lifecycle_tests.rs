@@ -1291,3 +1291,159 @@ fn modified_wheel_waits_for_queued_finish_then_works_when_worker_is_idle() {
         "the next idle notch changes the selected catalog strength"
     );
 }
+
+#[test]
+fn a_pointer_click_creates_one_undo_unit_across_discard_passes() {
+    let (mut app, _) = app_with_a_live_stroke("sculpt-pointer-discard");
+    app.workspace.scenes[0].tools.sculpt.stroke = None;
+    app.workspace.scenes[0].document.unsaved_sculpt_stroke = false;
+    app.workspace.scenes[0].tools.sculpt.armed = Some(SculptToolKind::AddRemove);
+    app.workspace.scenes[0].render.camera = Some(Camera {
+        target: Vec3::new(0.0, 0.0, 4.0),
+        orientation: Some(glam::Quat::IDENTITY),
+        distance: 20.0,
+        orthographic_height: 20.0,
+        near: 0.0,
+        far: 100.0,
+        ..Camera::default()
+    });
+    app.workspace.scenes[0]
+        .tools
+        .sculpt
+        .worker
+        .as_ref()
+        .expect("worker")
+        .set_queue_paused_for_tests(true);
+    let ctx = app.ui.repaint_ctx.clone();
+    let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 400.0));
+    let mut ownership = Vec::new();
+    let output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(viewport),
+            events: vec![
+                egui::Event::PointerMoved(viewport.center()),
+                egui::Event::PointerButton {
+                    pos: viewport.center(),
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos: viewport.center(),
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+            ..Default::default()
+        },
+        |ui| {
+            let response = ui.allocate_rect(viewport, egui::Sense::click_and_drag());
+            ownership.push(
+                app.active_context()
+                    .expect("live test scene")
+                    .handle_sculpt_drag(ui.ctx(), &response, false),
+            );
+            if ui.ctx().current_pass_index() == 0 {
+                ui.ctx().request_discard("exercise pointer replay");
+            }
+        },
+    );
+    assert_eq!(output.platform_output.num_completed_passes, 2);
+    output.drop_without_applying_deltas();
+    // Raw button events belong to the first pass; the next pass has no click.
+    assert_eq!(ownership, [true, false]);
+    assert!(
+        app.workspace.scenes[0]
+            .tools
+            .sculpt
+            .pending_presses
+            .is_empty(),
+        "replaying the frame must not enqueue another physical click"
+    );
+    app.workspace.scenes[0]
+        .tools
+        .sculpt
+        .worker
+        .as_ref()
+        .expect("worker")
+        .set_queue_paused_for_tests(false);
+    pump_sculpt_worker_until_idle(&mut app);
+    assert_eq!(app.workspace.scenes[0].document.edit_mode.undo_len(), 1);
+}
+
+#[test]
+fn a_held_brush_counts_frame_time_once_across_discard_passes() {
+    let (mut app, _) = app_with_a_live_stroke("sculpt-dwell-discard");
+    app.workspace.scenes[0].tools.sculpt.stroke = None;
+    app.workspace.scenes[0].tools.sculpt.armed = Some(SculptToolKind::AddRemove);
+    app.workspace.scenes[0].render.camera = Some(Camera::default());
+    app.workspace.scenes[0]
+        .tools
+        .sculpt
+        .worker
+        .as_ref()
+        .expect("worker")
+        .set_queue_paused_for_tests(true);
+    let ctx = app.ui.repaint_ctx.clone();
+    let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 400.0));
+    ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(viewport),
+            time: Some(0.0),
+            events: vec![
+                egui::Event::PointerMoved(viewport.center()),
+                egui::Event::PointerButton {
+                    pos: viewport.center(),
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+            ..Default::default()
+        },
+        |ui| {
+            let response = ui.allocate_rect(viewport, egui::Sense::click_and_drag());
+            assert!(app
+                .active_context()
+                .expect("live test scene")
+                .handle_sculpt_drag(ui.ctx(), &response, false));
+        },
+    )
+    .drop_without_applying_deltas();
+    let mut first_pass_hold = None;
+    let output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(viewport),
+            time: Some(0.001),
+            predicted_dt: 0.001,
+            ..Default::default()
+        },
+        |ui| {
+            let response = ui.allocate_rect(viewport, egui::Sense::click_and_drag());
+            assert!(app
+                .active_context()
+                .expect("live test scene")
+                .handle_sculpt_drag(ui.ctx(), &response, false));
+            let hold = app.workspace.scenes[0]
+                .tools
+                .sculpt
+                .stroke
+                .as_ref()
+                .expect("held stroke")
+                .hold_seconds;
+            if ui.ctx().current_pass_index() == 0 {
+                assert!(hold > 0.0, "the first pass must advance brush dwell");
+                first_pass_hold = Some(hold);
+                ui.ctx().request_discard("exercise dwell replay");
+            } else {
+                assert!(
+                    (hold - first_pass_hold.expect("first pass")).abs() < f32::EPSILON,
+                    "a repeated UI pass must not advance physical brush dwell"
+                );
+            }
+        },
+    );
+    assert_eq!(output.platform_output.num_completed_passes, 2);
+    output.drop_without_applying_deltas();
+}
