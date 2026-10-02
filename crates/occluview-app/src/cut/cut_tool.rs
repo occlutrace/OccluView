@@ -11,7 +11,7 @@ use crate::cut::section_view::{
 use eframe::egui;
 use glam::Vec3;
 use occluview_core::{Aabb, SceneMeshId};
-use occluview_edit::scene::{SceneSection, SectionPlane};
+use occluview_mesh_edit::scene::{SceneSection, SectionPlane};
 use occluview_render::{ClipPlane, CutViewSpec};
 
 const CUT_PREVIEW_RENDER_SIZE_PX: u16 = 512;

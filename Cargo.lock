@@ -2642,10 +2642,10 @@ dependencies = [
  "occluview-align",
  "occluview-contact",
  "occluview-core",
- "occluview-edit",
  "occluview-formats",
  "occluview-geometry-math",
  "occluview-i18n",
+ "occluview-mesh-edit",
  "occluview-render",
  "occluview-sculpt",
  "occluview-update",
@@ -2676,8 +2676,8 @@ dependencies = [
  "glam",
  "image",
  "occluview-core",
- "occluview-edit",
  "occluview-formats",
+ "occluview-mesh-edit",
  "occluview-render",
  "occluview-thumbnail",
  "tempfile",
@@ -2702,17 +2702,6 @@ dependencies = [
  "glam",
  "occluview-geometry-math",
  "rayon",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "occluview-edit"
-version = "1.2.1"
-dependencies = [
- "glam",
- "occluview-core",
- "occluview-mesh-edit",
- "occluview-robust-csg",
  "thiserror 2.0.21",
 ]
 
@@ -2772,7 +2761,9 @@ version = "1.2.1"
 dependencies = [
  "earcutr",
  "glam",
+ "occluview-core",
  "occluview-geometry-math",
+ "occluview-robust-csg",
  "thiserror 2.0.21",
 ]
 

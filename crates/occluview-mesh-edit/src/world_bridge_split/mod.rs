@@ -1,9 +1,9 @@
-use glam::{Affine3A, DAffine3, DMat3, DVec3, Vec3};
-use occluview_mesh_edit::{
+use crate::{
     fill_holes, repair_mesh, split_bridge, split_bridge_surface, validate_bridge_split,
     validate_bridge_split_part, validate_bridge_split_request, BridgeSplitError, BridgeSplitReport,
     BridgeSplitRequest, MeshEditBuffers, MeshEditOptions, RepairOptions, RepairReport,
 };
+use glam::{Affine3A, DAffine3, DMat3, DVec3, Vec3};
 #[cfg(feature = "robust-csg")]
 use occluview_robust_csg::PreparedRobustSolid;
 use std::sync::Arc;

@@ -28,7 +28,7 @@ occluview-align = { workspace = true }
 occluview-contact = { workspace = true }
 occluview-sculpt  = { workspace = true }
 occluview-core    = { workspace = true }
-occluview-edit    = { workspace = true, features = ["robust-csg"] }
+occluview-mesh-edit = { workspace = true, features = ["robust-csg"] }
 occluview-formats = { workspace = true }
 occluview-i18n    = { workspace = true }
 occluview-render  = { workspace = true }

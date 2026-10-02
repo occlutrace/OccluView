@@ -1,15 +1,15 @@
 //! Scene-level section assembly and caching.
 //!
-//! [`SceneSection::compute`] runs the [`occluview_mesh_edit`] plane–mesh kernel over
-//! every included triangle layer and maps each layer's contour into world space
+//! [`SceneSection::compute`] runs the plane–mesh section kernel over every
+//! included triangle layer and maps each layer's contour into world space
 //! using that layer's `Affine3A` transform in `f64`. Point-cloud layers carry no
 //! faces and contribute no contour. [`SectionCache`] memoizes the result so
 //! camera motion never recomputes it; only geometry, transform, visibility, or
 //! plane changes invalidate it.
 
+use crate::{plane_section, SectionPlane, SectionPolyline};
 use glam::{Affine3A, DAffine3, DMat3};
 use occluview_core::{Scene, SceneMesh, SceneMeshId};
-use occluview_mesh_edit::{plane_section, SectionPlane, SectionPolyline};
 use std::sync::Arc;
 
 /// Whether `entry` contributes a contour. Never true for point clouds.

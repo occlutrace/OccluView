@@ -19,7 +19,7 @@ use crate::sculpt::sculpt_tool::{PendingSculptPress, SculptSession, SculptTip, S
 use crate::sculpt::sculpt_worker::SculptWorker;
 use glam::{Affine3A, Vec3};
 use occluview_core::{Mesh, Scene, SceneMesh, SceneMeshId, Vertex};
-use occluview_edit::mesh_edit_buffers_from_mesh;
+use occluview_mesh_edit::mesh_edit_buffers_from_mesh;
 use occluview_render::PreparedSceneTopology;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
