@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Refuse GLB base color factors and texture transforms that cannot be represented faithfully.
+
 - Sculpt cursor and stroke rays use the rendered scene depth range, including visible geometry behind the orbital eye.
 
 - Close Holes honors an enabled perimeter limit for selected rims and reports holes left open because of it.

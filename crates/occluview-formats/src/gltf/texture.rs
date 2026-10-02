@@ -9,8 +9,8 @@ use occluview_core::MeshTexture;
 /// glTF material → `pbrMetallicRoughness.baseColorTexture.index` →
 /// `textures[idx].source` → `images[source].bufferView` → decode PNG/JPEG.
 ///
-/// Returns `None` if the material has no base-color texture, or if the texture
-/// chain references an external URI (out of scope for v1).
+/// Returns `None` when the material has no base-color texture. Unsupported
+/// color factors, coordinate transforms and external image sources are errors.
 pub(super) fn resolve_material_texture(
     doc: &json::GltfDoc,
     material_idx: usize,
@@ -24,9 +24,31 @@ pub(super) fn resolve_material_texture(
     let Some(pbr) = material.get("pbrMetallicRoughness") else {
         return Ok(None);
     };
+    if pbr.get("baseColorFactor").is_some_and(|factor| {
+        factor.as_array().is_none_or(|values| {
+            values.len() != 4 || values.iter().any(|value| value.as_f64() != Some(1.0))
+        })
+    }) {
+        return Err(malformed(
+            "non-default baseColorFactor is unsupported; material color cannot be discarded",
+        ));
+    }
     let Some(base_color_tex) = pbr.get("baseColorTexture") else {
         return Ok(None); // no texture on this material
     };
+    if base_color_tex
+        .get("texCoord")
+        .is_some_and(|value| value.as_u64() != Some(0))
+        || base_color_tex.get("extensions").is_some_and(|value| {
+            value
+                .as_object()
+                .is_none_or(|extensions| !extensions.is_empty())
+        })
+    {
+        return Err(malformed(
+            "alternate or transformed base-color coordinates are unsupported",
+        ));
+    }
     let tex_idx = base_color_tex
         .get("index")
         .and_then(serde_json::Value::as_u64)

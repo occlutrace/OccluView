@@ -44,6 +44,22 @@ fn incompatible_glb_materials_are_refused() {
 }
 
 #[test]
+fn unrepresented_glb_base_color_properties_are_refused() {
+    let (json, bin) = occluview_core::test_support::minimal_triangle_glb_chunks();
+    let mut doc: serde_json::Value = serde_json::from_slice(json).expect("JSON");
+    doc["meshes"][0]["primitives"][0]["material"] = serde_json::json!(0);
+    for pbr in [
+        serde_json::json!({"baseColorFactor":[0.2,0.3,0.4,1.0]}),
+        serde_json::json!({"baseColorTexture":{"index":0,"texCoord":1}}),
+        serde_json::json!({"baseColorTexture":{"index":0,"extensions":{"KHR_texture_transform":{"offset":[0.5,0.0]}}}}),
+    ] {
+        doc["materials"] = serde_json::json!([{"pbrMetallicRoughness":pbr}]);
+        let bytes = glb::build_glb(&serde_json::to_vec(&doc).expect("JSON"), &bin);
+        assert!(read(&bytes).is_err(), "discarded base color properties");
+    }
+}
+
+#[test]
 fn unsupported_glb_geometry_features_are_refused() {
     let (json, bin) = occluview_core::test_support::minimal_triangle_glb_chunks();
     for feature in [
