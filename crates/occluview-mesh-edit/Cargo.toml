@@ -18,5 +18,4 @@ workspace = true
 earcutr = { workspace = true }
 glam = { workspace = true }
 occluview-geometry-math = { workspace = true }
-rayon = { workspace = true }
 thiserror = { workspace = true }
