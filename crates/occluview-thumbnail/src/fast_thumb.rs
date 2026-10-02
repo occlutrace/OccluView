@@ -307,6 +307,12 @@ mod tests {
     use std::io::Write;
 
     #[test]
+    fn fast_obj_refuses_the_minimum_signed_face_index_without_panicking() {
+        let bytes = b"v 0 0 0\nv 1 0 0\nv 0 1 0\nf -2147483648 2 3\n";
+        assert!(try_read_fast_thumbnail_mesh_for_kind(FormatKind::Obj, bytes).is_none());
+    }
+
+    #[test]
     fn binary_stl_fast_path_clusters_dense_surface_into_a_solid_reduced_mesh() {
         // A finely tessellated 10x10 plane with far more triangles than the
         // cluster grid can resolve. The fast path must weld onto the grid (a

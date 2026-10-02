@@ -141,7 +141,7 @@ fn obj_face_indices<'a>(
         let index = match raw.cmp(&0) {
             Ordering::Greater => usize::try_from(raw - 1).ok()?,
             Ordering::Less => {
-                let from_end = usize::try_from(-raw).ok()?;
+                let from_end = usize::try_from(raw.unsigned_abs()).ok()?;
                 vertex_count.checked_sub(from_end)?
             }
             Ordering::Equal => return None,

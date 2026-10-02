@@ -5,6 +5,9 @@ remain in the Git history.
 
 ## Unreleased
 
+- OBJ thumbnails reject extreme relative face indices without crashing.
+
+
 - Sculpt preserves the live preview of a later stroke when an earlier stroke is saved.
 
 - Shape-preserving smoothing rejects invalid selection weights before changing the surface.
