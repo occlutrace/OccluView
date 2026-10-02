@@ -197,3 +197,42 @@ fn repair_stale_index_resolves_without_touching_undo() {
     assert_eq!(document.edit_mode.undo_len(), 0);
     assert!(!document.has_unsaved_mesh_edits());
 }
+
+#[test]
+fn layer_context_mesh_edit_waits_for_pending_sculpt() {
+    use super::super::apply_layer_context_action_with_status;
+    use crate::app::OccluViewApp;
+    use std::sync::Arc;
+
+    let mut scene = commit_scene().expect("valid scene");
+    let before = scene.meshes()[0].mesh.clone();
+    let request = LayerContextRequest {
+        index: 0,
+        layer_id: scene.meshes()[0].id(),
+        action: LayerContextAction::InvertNormals,
+    };
+    let mut app = OccluViewApp::new_for_tests(egui::Context::default());
+    let mut context = app.active_context().expect("active scene");
+    context.document.scene = Some(Arc::new(scene.clone()));
+    let _ = context
+        .tools
+        .sculpt
+        .queue_preparation(Arc::new(scene.clone()), 0);
+    assert!(context
+        .tools
+        .sculpt
+        .pending_matches(request.layer_id, before.topology_id()));
+    assert!(context.tools.sculpt.is_busy());
+    assert!(!context.document.edit_mode.is_busy());
+
+    let apply = apply_layer_context_action_with_status(&mut context, &mut scene, &[], request);
+
+    assert!(
+        !apply.scene_changed,
+        "mesh edits must wait for Sculpt to settle"
+    );
+    assert!(Arc::ptr_eq(&before, &scene.meshes()[0].mesh));
+    assert_eq!(context.document.edit_mode.undo_len(), 0);
+    assert!(!context.document.has_unsaved_mesh_edits());
+    assert!(context.scene_ui.status_message.is_some());
+}

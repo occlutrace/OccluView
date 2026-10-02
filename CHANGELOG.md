@@ -59,6 +59,7 @@ remain in the Git history.
 
 - Selection actions ignore stale layer-menu requests before changing any marked layer.
 - Undo and redo keep every restored mesh, including cut parts, in the next save operation.
+- Layer-menu mesh edits wait for pending Sculpt work to settle.
 
 ### Formats
 

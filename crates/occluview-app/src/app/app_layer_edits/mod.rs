@@ -53,6 +53,26 @@ pub(super) fn apply_layer_context_action_with_status(
         return LayerContextApply::default();
     }
 
+    if app.tools.sculpt.is_busy()
+        && matches!(
+            request.action,
+            LayerContextAction::DeleteSelectedFaces
+                | LayerContextAction::CropToSelectedFaces
+                | LayerContextAction::CutSelectionToNewLayer
+                | LayerContextAction::SeparateSelectedComponents
+                | LayerContextAction::CloseHoles
+                | LayerContextAction::InvertNormals
+                | LayerContextAction::RepairMesh
+        )
+    {
+        app.scene_ui.status_message = Some(
+            app.ui
+                .locale
+                .tr(crate::i18n::message_id!("sculpt-finishing")),
+        );
+        return LayerContextApply::default();
+    }
+
     if request.action == LayerContextAction::UndoLastMeshEdit {
         return apply_layer_mesh_undo_action_with_status(app, scene, paths, request);
     }
