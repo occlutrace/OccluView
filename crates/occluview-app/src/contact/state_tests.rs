@@ -20,6 +20,24 @@ use glam::{Affine3A, Vec3};
 use occluview_core::{Mesh, Scene, SceneMesh, Vertex};
 use occluview_render::ContactFieldTexels;
 
+#[test]
+fn packed_contact_fields_respect_both_device_dimensions() {
+    for limit in [1_u32, 2, 64] {
+        for count in 1..=limit * limit {
+            let width = contact_field_width(count as usize, limit).expect("field fits");
+            assert!(
+                width <= limit,
+                "{count} texels: width {width} exceeds {limit}"
+            );
+            assert!(
+                count.div_ceil(width) <= limit,
+                "{count} texels exceed row limit"
+            );
+        }
+        assert!(contact_field_width((limit * limit + 1) as usize, limit).is_none());
+    }
+}
+
 /// A small triangle in a plane, at `z`, offset in x.
 fn slab(z: f32, x: f32) -> Mesh {
     Mesh::new(

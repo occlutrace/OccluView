@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Contact overlays respect the graphics device limit on both texture dimensions.
+
 - GLB imports reject attribute streams whose counts differ from the position stream.
 
 - Binary PLY imports reject negative or fractional list counts and indices instead of silently coercing them.

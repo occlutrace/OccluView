@@ -667,8 +667,9 @@ pub(crate) fn contact_field_width(vertex_count: usize, device_limit: u32) -> Opt
     if count == 0 || device_limit == 0 {
         return None;
     }
-    if count <= CONTACT_FIELD_TEXTURE_WIDTH.saturating_mul(device_limit) {
-        return Some(CONTACT_FIELD_TEXTURE_WIDTH.min(count));
+    let preferred_width = CONTACT_FIELD_TEXTURE_WIDTH.min(device_limit);
+    if count <= preferred_width.saturating_mul(device_limit) {
+        return Some(preferred_width.min(count));
     }
     // Rows would not fit one * texel each: widen until they do.
     let width = count.div_ceil(device_limit);
