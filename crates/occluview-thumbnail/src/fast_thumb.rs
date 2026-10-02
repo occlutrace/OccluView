@@ -326,6 +326,15 @@ mod tests {
     }
 
     #[test]
+    fn fast_ascii_ply_refuses_a_truncated_vertex_body() {
+        let bytes = b"ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\nend_header\n0 0 0\n1 0 0\n";
+        assert!(
+            try_read_fast_thumbnail_mesh_for_kind(FormatKind::Ply, bytes).is_none(),
+            "a partial point cloud must not become a successful thumbnail"
+        );
+    }
+
+    #[test]
     fn binary_stl_fast_path_clusters_dense_surface_into_a_solid_reduced_mesh() {
         // A finely tessellated 10x10 plane with far more triangles than the
         // cluster grid can resolve. The fast path must weld onto the grid (a

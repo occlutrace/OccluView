@@ -5,6 +5,9 @@ remain in the Git history.
 
 ## Unreleased
 
+- PLY thumbnails refuse files whose ASCII vertex body ends before the declared count.
+
+
 - ASCII STL imports accept solid names containing spaces.
 
 - GLB imports preserve front-face winding when node transforms mirror the geometry.

@@ -138,7 +138,13 @@ fn fast_ply_ascii_vertices(
         reason: "ASCII body is not valid UTF-8".to_string(),
     })?;
     let vertex_count = parsed.elements[0].count;
-    for (index, line) in text.lines().take(vertex_count).enumerate() {
+    let mut lines = text.lines();
+    for index in 0..vertex_count {
+        let line = lines.next().ok_or(FormatError::Malformed {
+            format: "PLY",
+            offset: parsed.data.len(),
+            reason: "vertex body ended before the declared count".to_string(),
+        })?;
         if index % stride != 0 {
             continue;
         }
