@@ -1501,20 +1501,29 @@ fn add_remove_amplitude_is_radius_relative_and_time_scaled() {
 #[test]
 fn smooth_and_relax_have_a_shared_full_time_rate() {
     let center = grid_vertex(6, 0, 0);
-    let mut partial_smooth = grid_session(6, 0.5, 1.5);
-    let mut full_smooth = grid_session(6, 0.5, 1.5);
-    partial_smooth.remesh_armed = false;
-    full_smooth.remesh_armed = false;
-    let dab = centered_dab(2.5, BrushMode::Smooth, 0.4);
-    partial_smooth.set_dab_elapsed_ms(DWELL_FULL_DOSE_MS * 0.5);
-    full_smooth.set_dab_elapsed_ms(DWELL_FULL_DOSE_MS);
-    let _ = partial_smooth.dab(&dab);
-    let _ = full_smooth.dab(&dab);
-    let partial = partial_smooth
-        .group_v(partial_smooth.topology.group_of(center))
-        .z;
-    let full = full_smooth.group_v(full_smooth.topology.group_of(center)).z;
-    assert!(full < partial && partial < 1.5);
+    for mode in [BrushMode::Smooth, BrushMode::Relax] {
+        let mut partial_session = grid_session(6, 0.5, 1.5);
+        let mut full_session = grid_session(6, 0.5, 1.5);
+        partial_session.remesh_armed = false;
+        full_session.remesh_armed = false;
+        let dab = centered_dab(2.5, mode, 0.4);
+        partial_session.set_dab_elapsed_ms(DWELL_FULL_DOSE_MS * 0.5);
+        full_session.set_dab_elapsed_ms(DWELL_FULL_DOSE_MS);
+        let _ = partial_session.dab(&dab);
+        let _ = full_session.dab(&dab);
+        let partial = partial_session
+            .group_v(partial_session.topology.group_of(center))
+            .z;
+        let full = full_session
+            .group_v(full_session.topology.group_of(center))
+            .z;
+        assert!(
+            full < partial && partial < 1.5,
+            "{mode:?} must scale with time"
+        );
+        assert!((full_session.live_kin.gain - 0.22).abs() < 1e-7);
+        assert!((partial_session.live_kin.gain - 0.11).abs() < 1e-7);
+    }
 }
 
 #[test]
