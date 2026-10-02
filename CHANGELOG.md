@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Close Holes stays disabled until faces are selected, matching the repair operation and its tooltip.
+
 - Edit is disabled when no visible triangle mesh can be opened.
 
 - Mesh selection shortcuts keep face marks unchanged while a mesh operation is running.

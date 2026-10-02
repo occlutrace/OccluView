@@ -315,7 +315,13 @@ fn window_action(
         EditorTab::EditMesh => {
             action = action.or(groups::selection(ui, &state, ops_enabled, locale));
             action = action.or(groups::edit_selection(ui, &state, ops_enabled, locale));
-            action = action.or(groups::close_holes(ui, scene_key, ops_enabled, locale));
+            action = action.or(groups::close_holes(
+                ui,
+                scene_key,
+                &state,
+                ops_enabled,
+                locale,
+            ));
         }
         EditorTab::Sculpt => {
             action = action.or(groups::sculpt(ui, scene_key, &state, ops_enabled, locale));
@@ -339,6 +345,304 @@ mod tests {
     use crate::app::workspace::id::SceneKey;
     use crate::sculpt::sculpt_tool::{SculptTip, SculptToolKind};
     use eframe::egui;
+
+    fn panel_frame(
+        ctx: &egui::Context,
+        state: &super::MeshEditorPanelState,
+        events: Vec<egui::Event>,
+    ) -> (egui::FullOutput, Option<super::MeshEditorAction>) {
+        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 1024.0));
+        let mut action = None;
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(viewport),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                ui.allocate_rect(viewport, egui::Sense::click_and_drag());
+                action = super::show(
+                    ui.ctx(),
+                    SceneKey::INITIAL,
+                    viewport,
+                    state.clone(),
+                    &crate::i18n::LocaleManager::for_tests(),
+                );
+            },
+        );
+        (output, action)
+    }
+
+    fn control_bounds(
+        output: &egui::FullOutput,
+        label: &str,
+        role: egui::accesskit::Role,
+    ) -> egui::Rect {
+        let update = output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .expect("control tree");
+        let bounds = update
+            .nodes
+            .iter()
+            .find_map(|(_, node)| {
+                let name = node.label().map(str::to_owned).unwrap_or_else(|| {
+                    node.labelled_by()
+                        .iter()
+                        .filter_map(|id| {
+                            update
+                                .nodes
+                                .iter()
+                                .find(|(candidate, _)| candidate == id)
+                                .and_then(|(_, label)| label.value())
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                });
+                (node.role() == role && name == label)
+                    .then(|| node.bounds())
+                    .flatten()
+            })
+            .expect("named control bounds");
+        let min = glam::DVec2::new(bounds.x0, bounds.y0).as_vec2();
+        let max = glam::DVec2::new(bounds.x1, bounds.y1).as_vec2();
+        egui::Rect::from_min_max(egui::pos2(min.x, min.y), egui::pos2(max.x, max.y))
+    }
+
+    fn click_panel_control(
+        state: &super::MeshEditorPanelState,
+        label: &str,
+    ) -> Option<super::MeshEditorAction> {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        click_live_control(&ctx, state, label, egui::accesskit::Role::Button)
+    }
+
+    fn click_live_control(
+        ctx: &egui::Context,
+        state: &super::MeshEditorPanelState,
+        label: &str,
+        role: egui::accesskit::Role,
+    ) -> Option<super::MeshEditorAction> {
+        for _ in 0..2 {
+            panel_frame(ctx, state, vec![])
+                .0
+                .drop_without_applying_deltas();
+        }
+        let (output, _) = panel_frame(ctx, state, vec![]);
+        let point = control_bounds(&output, label, role).center();
+        output.drop_without_applying_deltas();
+        let mut action = None;
+        for pressed in [true, false] {
+            let (output, emitted) = panel_frame(
+                ctx,
+                state,
+                vec![
+                    egui::Event::PointerMoved(point),
+                    egui::Event::PointerButton {
+                        pos: point,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+            output.drop_without_applying_deltas();
+            action = action.or(emitted);
+        }
+        action
+    }
+
+    #[test]
+    fn close_holes_requires_a_visible_face_selection() {
+        assert_eq!(
+            click_panel_control(&super::MeshEditorPanelState::default(), "Close holes"),
+            None,
+            "a repair needing selected rim faces must be disabled without marks",
+        );
+        assert_eq!(
+            click_panel_control(
+                &super::MeshEditorPanelState {
+                    selected_face_count: 1,
+                    ..Default::default()
+                },
+                "Close holes"
+            ),
+            Some(super::MeshEditorAction::CloseHoles),
+        );
+    }
+
+    #[test]
+    fn edit_mesh_buttons_emit_their_actions_on_pointer_clicks() {
+        use super::{EditorTab, MeshEditorAction, MeshEditorPanelState};
+        let state = MeshEditorPanelState {
+            selected_face_count: 1,
+            can_undo: true,
+            can_redo: true,
+            through_mesh: true,
+            ..Default::default()
+        };
+        for (label, expected) in [
+            (
+                "Mesh Editing",
+                MeshEditorAction::SwitchTab(EditorTab::EditMesh),
+            ),
+            ("Sculpt", MeshEditorAction::SwitchTab(EditorTab::Sculpt)),
+            (
+                "Cancel the session (edits are reverted)",
+                MeshEditorAction::Cancel,
+            ),
+            ("Lasso", MeshEditorAction::ToggleLasso),
+            ("Object", MeshEditorAction::ToggleObject),
+            ("Surface", MeshEditorAction::ToggleThroughMesh),
+            ("All", MeshEditorAction::SelectAll),
+            ("None", MeshEditorAction::ClearSelection),
+            ("Invert", MeshEditorAction::InvertSelection),
+            ("Delete", MeshEditorAction::Delete),
+            ("Crop", MeshEditorAction::Crop),
+            ("Cut", MeshEditorAction::Cut),
+            ("Separate", MeshEditorAction::Separate),
+            ("Close holes", MeshEditorAction::CloseHoles),
+            ("Undo", MeshEditorAction::Undo),
+            ("Redo", MeshEditorAction::Redo),
+            ("Cancel", MeshEditorAction::Cancel),
+            ("Done", MeshEditorAction::Done),
+        ] {
+            assert_eq!(
+                click_panel_control(&state, label),
+                Some(expected),
+                "{label}"
+            );
+        }
+        assert_eq!(click_panel_control(&state, "Through"), None);
+        let surface_state = MeshEditorPanelState {
+            through_mesh: false,
+            ..state
+        };
+        assert_eq!(
+            click_panel_control(&surface_state, "Through"),
+            Some(MeshEditorAction::ToggleThroughMesh)
+        );
+        assert_eq!(click_panel_control(&surface_state, "Surface"), None);
+    }
+
+    #[test]
+    fn edit_mesh_controls_respect_busy_and_sculpt_pending_gates() {
+        use super::{MeshEditorAction, MeshEditorPanelState};
+        for state in [
+            MeshEditorPanelState {
+                selected_face_count: 1,
+                can_undo: true,
+                can_redo: true,
+                busy: true,
+                ..Default::default()
+            },
+            MeshEditorPanelState {
+                selected_face_count: 1,
+                can_undo: true,
+                can_redo: true,
+                sculpt_pending: true,
+                ..Default::default()
+            },
+        ] {
+            for label in [
+                "Lasso",
+                "Object",
+                "Surface",
+                "Through",
+                "All",
+                "None",
+                "Invert",
+                "Delete",
+                "Crop",
+                "Cut",
+                "Separate",
+                "Close holes",
+                "Undo",
+                "Redo",
+            ] {
+                assert_eq!(
+                    click_panel_control(&state, label),
+                    None,
+                    "{label}, {state:?}"
+                );
+            }
+            for (label, action) in [
+                ("Done", MeshEditorAction::Done),
+                ("Cancel", MeshEditorAction::Cancel),
+            ] {
+                let expected = (!state.busy).then_some(action);
+                assert_eq!(
+                    click_panel_control(&state, label),
+                    expected,
+                    "{label}, {state:?}"
+                );
+            }
+        }
+        let state = MeshEditorPanelState::default();
+        for label in ["Delete", "Crop", "Cut", "Separate", "Undo", "Redo"] {
+            assert_eq!(
+                click_panel_control(&state, label),
+                None,
+                "{label} without selection/history"
+            );
+        }
+        let state = MeshEditorPanelState {
+            object_mode: true,
+            ..Default::default()
+        };
+        for label in ["Surface", "Through"] {
+            assert_eq!(
+                click_panel_control(&state, label),
+                None,
+                "{label} in Object mode"
+            );
+        }
+    }
+
+    #[test]
+    fn sculpt_buttons_emit_their_actions_on_pointer_clicks() {
+        use super::{EditorTab, MeshEditorAction, MeshEditorPanelState};
+        let state = MeshEditorPanelState {
+            active_tab: EditorTab::Sculpt,
+            ..Default::default()
+        };
+        for (label, kind) in [
+            ("Add / Remove  [1]", SculptToolKind::AddRemove),
+            ("Smooth  [2]", SculptToolKind::Smooth),
+        ] {
+            assert_eq!(
+                click_panel_control(&state, label),
+                Some(MeshEditorAction::ToggleSculpt(kind))
+            );
+        }
+    }
+
+    #[test]
+    fn close_holes_limit_clicks_toggle_the_live_option_only_when_enabled() {
+        for busy in [false, true] {
+            let ctx = egui::Context::default();
+            ctx.enable_accesskit();
+            let state = super::MeshEditorPanelState {
+                busy,
+                ..Default::default()
+            };
+            assert_eq!(
+                click_live_control(&ctx, &state, "limit", egui::accesskit::Role::CheckBox),
+                None
+            );
+            assert_eq!(
+                close_holes_limit_mm(&ctx, SceneKey::INITIAL),
+                (!busy).then_some(CLOSE_HOLES_LIMIT_DEFAULT_MM)
+            );
+            assert_eq!(
+                click_live_control(&ctx, &state, "limit", egui::accesskit::Role::CheckBox),
+                None
+            );
+            assert_eq!(close_holes_limit_mm(&ctx, SceneKey::INITIAL), None);
+        }
+    }
 
     #[test]
     fn mesh_editor_live_settings_are_isolated_by_scene_lifetime() {
