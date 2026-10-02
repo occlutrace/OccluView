@@ -2,8 +2,8 @@
 //!
 //! Field names are camelCase to match the glTF spec; we apply
 //! `#[serde(rename_all = "camelCase")]` per struct. Only fields the v1 reader
-//! consumes are present; unknown fields are ignored, so we tolerate extensions
-//! we don't ship yet.
+//! consumes are present. Unsupported features that change geometry or require
+//! extension support are retained so the reader can refuse them explicitly.
 
 #![allow(clippy::missing_docs_in_private_items)]
 
@@ -13,6 +13,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GltfDoc {
+    /// Extensions without which the asset cannot be interpreted correctly.
+    #[serde(default)]
+    pub extensions_required: Vec<String>,
+    /// Animation data; animated poses are unsupported by the static reader.
+    #[serde(default)]
+    pub animations: Vec<serde_json::Value>,
     /// All scenes in the file.
     #[serde(default)]
     pub scenes: Vec<Scene>,
@@ -63,6 +69,9 @@ pub struct Scene {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Node {
+    /// Skin deformation is unsupported by the static reader.
+    #[serde(default)]
+    pub skin: Option<usize>,
     /// Mesh index referenced by this node, if any.
     #[serde(default)]
     pub mesh: Option<usize>,
@@ -101,6 +110,9 @@ pub struct Mesh {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Primitive {
+    /// Morph targets cannot be discarded when importing source geometry.
+    #[serde(default)]
+    pub targets: Vec<serde_json::Value>,
     /// Vertex attributes (`POSITION`, `NORMAL`, `COLOR_0`, ...).
     #[serde(default)]
     pub attributes: Attributes,
@@ -137,6 +149,9 @@ pub struct Attributes {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Accessor {
+    /// Sparse replacements must be applied to the base accessor values.
+    #[serde(default)]
+    pub sparse: Option<serde_json::Value>,
     /// Buffer-view index.
     #[serde(default)]
     pub buffer_view: usize,

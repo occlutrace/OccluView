@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Refuse GLB sparse, required-extension, animated, skinned and morph-target assets that cannot be preserved.
+
 - Reject incomplete or surplus PLY face UV lists and fractional integer UV tokens.
 
 - A failed final file append preserves camera navigation made while the load was running.

@@ -17,6 +17,39 @@ fn one_triangle_glb() -> Vec<u8> {
 }
 
 #[test]
+fn unsupported_glb_geometry_features_are_refused() {
+    let (json, bin) = occluview_core::test_support::minimal_triangle_glb_chunks();
+    for feature in [
+        "sparse",
+        "extensionsRequired",
+        "targets",
+        "skin",
+        "animations",
+    ] {
+        let mut doc: serde_json::Value = serde_json::from_slice(json).expect("JSON");
+        match feature {
+            "sparse" => {
+                doc["accessors"][0]["sparse"] = serde_json::json!({"count":1,"indices":{"bufferView":1,"componentType":5125},"values":{"bufferView":0}})
+            }
+            "extensionsRequired" => {
+                doc[feature] = serde_json::json!(["KHR_draco_mesh_compression"])
+            }
+            "targets" => {
+                doc["meshes"][0]["primitives"][0][feature] = serde_json::json!([{"POSITION":0}])
+            }
+            "skin" => doc["nodes"][0][feature] = serde_json::json!(0),
+            "animations" => doc[feature] = serde_json::json!([{"channels":[],"samplers":[]}]),
+            _ => unreachable!(),
+        }
+        let bytes = glb::build_glb(&serde_json::to_vec(&doc).expect("JSON"), &bin);
+        assert!(
+            matches!(read(&bytes), Err(FormatError::Malformed { .. })),
+            "silently accepted {feature}"
+        );
+    }
+}
+
+#[test]
 fn optional_attribute_counts_must_match_positions() {
     let (json, bin) = occluview_core::test_support::minimal_triangle_glb_chunks();
     for attribute in ["NORMAL", "TEXCOORD_0", "COLOR_0"] {
