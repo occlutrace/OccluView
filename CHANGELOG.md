@@ -46,6 +46,7 @@ remain in the Git history.
 
 ### Align
 
+- Unavailable alignment controls now show their refusal tooltips and expose the correct disabled state.
 - Cancel preserves the save prompt for restored scan positions, including an unfinished drag or a position already exported during the session.
 - Deviation sensitivity uses only measured overlap, excluding vertices beyond the fixed scan's border.
 - Best-fit matching scores its coarse hypotheses on the seed sample set instead
