@@ -115,8 +115,8 @@ impl Observability {
 ///
 /// Returns `None` when too little of the moving mesh reaches the fixed surface,
 /// or when the samples that do reach it do not span six degrees of freedom — a
-/// single patch of a plane, or a line of points. Both are cases where no
-/// sensitivity exists to report.
+/// single point, or a line of points. Both are cases where no sensitivity
+/// exists to report. A planar patch has a valid estimate with three blind modes.
 ///
 /// Deterministic: the correspondence search is parallel because it is pure, and
 /// the two matrices are folded **serially in sample order**, so the answer is
