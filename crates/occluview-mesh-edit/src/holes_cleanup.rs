@@ -267,9 +267,18 @@ fn weld_boundary_vertices(mesh: &MeshEditBuffers, alive: &[bool]) -> (Vec<u32>, 
         let pv = Vec3::from_array(mesh.vertices[v as usize].position);
         let base = cell_of(pv, tol);
         for dx in -1..=1 {
+            let Some(x) = base[0].checked_add(dx) else {
+                continue;
+            };
             for dy in -1..=1 {
+                let Some(y) = base[1].checked_add(dy) else {
+                    continue;
+                };
                 for dz in -1..=1 {
-                    let key = [base[0] + dx, base[1] + dy, base[2] + dz];
+                    let Some(z) = base[2].checked_add(dz) else {
+                        continue;
+                    };
+                    let key = [x, y, z];
                     let Some(members) = grid.get(&key) else {
                         continue;
                     };
@@ -305,9 +314,8 @@ fn weld_boundary_vertices(mesh: &MeshEditBuffers, alive: &[bool]) -> (Vec<u32>, 
     (remap, welded)
 }
 
-/// Integer grid cell of a position at side `tol`. The coordinates of a dental
-/// mesh (millimetres, bounded to a few hundred) divided by a positive `tol`
-/// land far inside `i64`, so the post-`floor` narrowing cast cannot overflow.
+/// Integer grid cell of a position at side `tol`. Distant coordinates saturate
+/// at the integer limits; neighbor traversal checks additions at those limits.
 #[allow(clippy::cast_possible_truncation)]
 fn cell_of(p: Vec3, tol: f32) -> [i64; 3] {
     [
