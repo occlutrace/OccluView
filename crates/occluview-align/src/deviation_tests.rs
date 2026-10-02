@@ -256,6 +256,24 @@ fn non_finite_readings_are_excluded_from_statistics() {
 }
 
 #[test]
+fn an_even_sized_map_uses_both_middle_values_for_its_median() {
+    let mut map = all_measured(MIN_MEASURED);
+    for (slot, value) in map.signed_mm.iter_mut().enumerate() {
+        *value = if slot < map.validity.len() / 2 {
+            -0.04
+        } else {
+            0.08
+        };
+    }
+    let summary = deviation_stats(&map, 0.1).summary.unwrap();
+    assert!((summary.median - 0.02).abs() < 1e-7, "{summary:?}");
+    map.signed_mm.push(0.12);
+    map.validity.push(Validity::Measured);
+    let summary = deviation_stats(&map, 0.1).summary.unwrap();
+    assert!((summary.median - 0.08).abs() < 1e-7, "{summary:?}");
+}
+
+#[test]
 fn the_magnitude_ramp_is_cool_at_nothing_and_hot_at_the_scale() {
     let map = DeviationMap {
         signed_mm: vec![0.0, 0.5, -0.5],

@@ -104,6 +104,7 @@ remain in the Git history.
 - Typing a matching percentage now sets the intended ratio, including values with a percent sign or decimal comma.
 - Painting exclusion regions immediately cancels fits computed with the old markings.
 - Changing or removing alignment points cancels fits that used the previous points.
+- Deviation summaries average both middle readings when computing an even-count median.
 - Deviation maps and statistics exclude distances that overflow storage and non-finite readings.
 - Closing the exclusion brush without changing markings restores the deviation map.
 - Cancel preserves the save prompt for restored scan positions, including an unfinished drag or a position already exported during the session.
