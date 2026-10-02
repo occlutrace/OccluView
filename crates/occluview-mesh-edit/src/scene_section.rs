@@ -7,8 +7,9 @@
 //! camera motion never recomputes it; only geometry, transform, visibility, or
 //! plane changes invalidate it.
 
-use crate::{plane_section, SectionPlane, SectionPolyline};
-use glam::{Affine3A, DAffine3, DMat3};
+use crate::section::plane_section_f64;
+use crate::{SectionPlane, SectionPolyline};
+use glam::{Affine3A, DAffine3, DMat3, DVec3};
 use occluview_core::{Scene, SceneMesh, SceneMeshId};
 use std::sync::Arc;
 
@@ -46,7 +47,7 @@ impl SceneSection {
                 continue;
             };
             let positions = layer_positions(entry);
-            let result = plane_section(&positions, entry.mesh.indices(), local);
+            let result = plane_section_f64(&positions, entry.mesh.indices(), local.0, local.1);
             if result.polylines.is_empty() {
                 continue;
             }
@@ -75,8 +76,7 @@ fn layer_positions(entry: &SceneMesh) -> Vec<[f32; 3]> {
 /// and an `f32` subtraction there would shift the local plane by a visible
 /// amount (~0.1 unit at a 1e6 offset). This matches the module's `f64`
 /// arithmetic contract and the `f64` forward map in [`to_world`].
-#[allow(clippy::cast_possible_truncation)] // f64 pull-back stored back into the f32 SectionPlane
-fn world_plane_to_local(plane: SectionPlane, transform: &Affine3A) -> Option<SectionPlane> {
+fn world_plane_to_local(plane: SectionPlane, transform: &Affine3A) -> Option<(DVec3, f64)> {
     let normal = plane.normal.as_dvec3();
     let m = transform.matrix3;
     let matrix = DMat3::from_cols(
@@ -90,11 +90,10 @@ fn world_plane_to_local(plane: SectionPlane, transform: &Affine3A) -> Option<Sec
     if !length.is_finite() || length <= 0.0 {
         return None;
     }
-    SectionPlane::new(
-        (local_normal / length).as_vec3(),
-        (local_distance / length) as f32,
-    )
-    .ok()
+    let offset = local_distance / length;
+    offset
+        .is_finite()
+        .then_some((local_normal / length, offset))
 }
 
 /// Apply a layer transform to its contour polylines in `f64`.
@@ -216,7 +215,7 @@ impl SectionCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use glam::{DVec3, Vec3};
+    use glam::Vec3;
     use occluview_core::{Mesh, Scene, SceneMesh, Vertex};
 
     /// Closed unit cube [0,1]^3 with two triangles per face.
@@ -404,5 +403,40 @@ mod tests {
             max_off < 1.0e-3,
             "contour drifted {max_off} off the world plane (f32 cancellation)"
         );
+    }
+    #[test]
+    fn intersecting_section_keeps_a_local_offset_beyond_f32_range() {
+        let source = cube();
+        let mut vertices = source.vertices().to_vec();
+        for vertex in &mut vertices {
+            vertex.position = vertex.position.map(|lane| (0.8 + 0.15 * lane) * f32::MAX);
+        }
+        let mesh = Mesh::new(None, vertices, source.indices().to_vec()).expect("finite corners");
+        let transform = Affine3A::from_scale_rotation_translation(
+            Vec3::splat(1.0e-30),
+            glam::Quat::IDENTITY,
+            Vec3::new(1.0e8, 2.0e8, -3.0e8),
+        );
+        let normal = Vec3::ONE.normalize();
+        let center =
+            daffine3(&transform).transform_point3(DVec3::splat(f64::from(f32::MAX) * 0.875));
+        let plane =
+            SectionPlane::new(normal, normal.dot(center.as_vec3())).expect("finite world plane");
+        let mut scene = Scene::new();
+        scene.add(SceneMesh::new(mesh).with_transform(transform));
+        let result = SceneSection::compute(&scene, plane);
+        assert_eq!(
+            result.per_layer.len(),
+            1,
+            "the plane intersects the finite transformed cube"
+        );
+        assert!(result.per_layer[0].polylines.iter().any(|line| line.closed));
+        for point in result.per_layer[0]
+            .polylines
+            .iter()
+            .flat_map(|line| &line.points)
+        {
+            assert!((normal.as_dvec3().dot(*point) - f64::from(plane.distance)).abs() < 1.0);
+        }
     }
 }

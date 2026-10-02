@@ -119,8 +119,21 @@ pub fn plane_section(
     indices: &[u32],
     plane: SectionPlane,
 ) -> SectionResult {
-    let normal = plane.normal_f64();
-    let offset = f64::from(plane.distance);
+    plane_section_f64(
+        positions,
+        indices,
+        plane.normal_f64(),
+        f64::from(plane.distance),
+    )
+}
+
+/// Intersect using normalized coefficients retained in double precision.
+pub(crate) fn plane_section_f64(
+    positions: &[[f32; 3]],
+    indices: &[u32],
+    normal: DVec3,
+    offset: f64,
+) -> SectionResult {
     let mut segments = Vec::new();
     for tri in indices.as_chunks::<3>().0 {
         if let Some(segment) = triangle_segment(positions, [tri[0], tri[1], tri[2]], normal, offset)
@@ -207,6 +220,14 @@ fn edge_point(from: DVec3, to: DVec3, proj_from: f64, proj_to: f64, offset: f64)
     if proj_to == offset {
         return to;
     }
+    // Adjacent faces may traverse the same edge in opposite directions.
+    // Evaluate it in one coordinate order so their endpoints are bit-identical
+    // even when the absolute roundoff is larger than the stitching grid.
+    let (from, to, proj_from, proj_to) = if cmp_point(from, to).is_gt() {
+        (to, from, proj_to, proj_from)
+    } else {
+        (from, to, proj_from, proj_to)
+    };
     let denom = proj_from - proj_to;
     if denom == 0.0 {
         // Parallel edge guard; the caller drops the zero-length segment.
