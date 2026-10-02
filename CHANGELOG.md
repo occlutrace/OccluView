@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Contact pointer readouts refuse extreme triangle indices without overflowing.
+
 - Thickness probing refuses extreme triangle indices instead of overflowing.
 
 - Update checks ignore build metadata when deciding whether a release is newer.
