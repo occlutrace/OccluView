@@ -1,7 +1,7 @@
 use eframe::egui;
 use glam::Vec3;
 use occluview_core::SceneMeshId;
-use occluview_edit::scene::SceneSection;
+use occluview_mesh_edit::scene::SceneSection;
 
 use super::model::{CutRuler, SliceBasis, SliceCam, SlicePlaneMap};
 use crate::cut::cut_geometry::snap_to_contour;

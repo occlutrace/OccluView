@@ -34,7 +34,7 @@ use super::super::{EditModeController, LayerContextAction, LayerContextApply, Sc
 use super::selection_ops::selected_face_edit_result;
 use super::SelectedFaceEditContext;
 use occluview_core::{CoreError, Mesh, SceneMesh, Vertex};
-use occluview_edit::{selected_connected_components_in_mesh, FaceSelection};
+use occluview_mesh_edit::{selected_connected_components_in_mesh, FaceSelection};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 

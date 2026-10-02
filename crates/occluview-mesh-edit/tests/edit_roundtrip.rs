@@ -1,9 +1,8 @@
-//! Mesh-edit round trips through `occluview-edit`.
+//! Mesh-edit round trips through the core-mesh adapter.
 //!
-//! These cover the edit façade itself: buffer conversion, the two rebuild
-//! normal policies, metadata preservation, and the error surface. The core
-//! mesh model's own construction, caching, and normal-repair tests stay in
-//! `occluview-core`.
+//! These cover buffer conversion, the two rebuild normal policies, metadata
+//! preservation, and the error surface. The core mesh model's own
+//! construction, caching, and normal-repair tests stay in `occluview-core`.
 
 #![allow(
     clippy::unwrap_used,
@@ -18,7 +17,7 @@
 
 use glam::Vec3;
 use occluview_core::{CoreError, Mesh, MeshTexture, Vertex};
-use occluview_edit::{
+use occluview_mesh_edit::{
     delete_selected_faces_in_mesh, invert_mesh_orientation, mesh_edit_buffers_from_mesh,
     mesh_from_edit_buffers_like, mesh_from_sculpt_session_like, repair_mesh_in_mesh, EditVertex,
     FaceSelection, MeshEditOptions, RepairOptions, SculptSessionBuffers,
@@ -125,7 +124,7 @@ fn point_cloud_round_trip_stays_point_cloud() {
     );
 
     let buffers = mesh_edit_buffers_from_mesh(&mesh);
-    assert_eq!(buffers.topology, occluview_edit::MeshTopology::PointCloud);
+    assert_eq!(buffers.topology, occluview_mesh_edit::MeshTopology::PointCloud);
     assert!(buffers.indices.is_empty());
 
     let rebuilt = mesh_from_edit_buffers_like(&mesh, buffers).expect("round trip");

@@ -18,7 +18,7 @@
 
 use glam::{Affine3A, Vec3};
 use occluview_core::{Mesh, Vertex};
-use occluview_edit::{
+use occluview_mesh_edit::{
     bridge_split_mesh_in_world, bridge_split_prepared_mesh_in_world, mesh_edit_buffers_from_mesh,
     normalize_bridge_split_input, prepare_bridge_split_source, CoreBridgeSplitError,
     CoreBridgeSplitResult, PreparedBridgeSplitSource,

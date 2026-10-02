@@ -9,7 +9,7 @@ use crate::cut::cut_overlay;
 use crate::cut::section_view::SectionMainView;
 use crate::measure::measure_tool::{self, ThicknessProbe, ThicknessReading};
 use glam::{Vec3, Vec3A};
-use occluview_edit::scene::SceneSection;
+use occluview_mesh_edit::scene::SceneSection;
 use std::sync::Arc;
 
 /// Wheel travel (screen px) mapped to one disc-radius scale notch in cut mode.
@@ -394,7 +394,7 @@ impl SceneContext<'_> {
     pub(super) fn section_for_plane(
         &mut self,
         scene: &Scene,
-        plane: Option<occluview_edit::scene::SectionPlane>,
+        plane: Option<occluview_mesh_edit::scene::SectionPlane>,
     ) -> Option<Arc<SceneSection>> {
         plane.map(|plane| self.render.section_cache.get_or_compute(scene, plane))
     }
@@ -630,7 +630,7 @@ mod viewport_ownership_tests {
         use crate::sculpt::sculpt_worker::SculptWorker;
         use glam::{Affine3A, Quat};
         use occluview_core::{Mesh, SceneMesh, Vertex};
-        use occluview_edit::mesh_edit_buffers_from_mesh;
+        use occluview_mesh_edit::mesh_edit_buffers_from_mesh;
         use occluview_render::PreparedSceneTopology;
         use std::sync::RwLock;
 

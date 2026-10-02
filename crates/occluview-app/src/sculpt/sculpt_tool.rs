@@ -8,7 +8,7 @@ use crate::sculpt::sculpt_worker::SculptWorker;
 use eframe::egui;
 use glam::Affine3A;
 use occluview_core::{Mesh, Scene, SceneMeshId, Vertex};
-use occluview_edit::mesh_edit_buffers_from_mesh;
+use occluview_mesh_edit::mesh_edit_buffers_from_mesh;
 use occluview_render::{PreparedSceneTopology, SculptTopologyDelta};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};

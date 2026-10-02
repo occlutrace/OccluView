@@ -21,7 +21,7 @@ path = "src/main.rs"
 
 [dependencies]
 occluview-core    = { workspace = true }
-occluview-edit    = { workspace = true }
+occluview-mesh-edit = { workspace = true }
 occluview-formats = { workspace = true }
 occluview-render  = { workspace = true }
 occluview-thumbnail = { workspace = true }

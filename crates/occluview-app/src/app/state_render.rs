@@ -65,7 +65,7 @@ pub(super) struct RenderState {
     /// Render paths consume their own cursors.
     pub(super) invalidation: RenderInvalidation,
     /// Content-keyed cache of the section contour for the active cut plane.
-    pub(super) section_cache: occluview_edit::scene::SectionCache,
+    pub(super) section_cache: occluview_mesh_edit::scene::SectionCache,
 }
 
 impl RenderState {
@@ -106,7 +106,7 @@ impl RenderState {
             render_extent_px: DEFAULT_RENDER_EXTENT_PX,
             rendered: None,
             invalidation: RenderInvalidation::new(),
-            section_cache: occluview_edit::scene::SectionCache::new(),
+            section_cache: occluview_mesh_edit::scene::SectionCache::new(),
         }
     }
 }

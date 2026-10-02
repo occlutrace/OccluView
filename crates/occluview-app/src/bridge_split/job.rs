@@ -1,7 +1,7 @@
 use super::state::{BridgeSplitGuard, BridgeSplitToolError};
 use glam::Affine3A;
 use occluview_core::Mesh;
-use occluview_edit::{
+use occluview_mesh_edit::{
     bridge_split_prepared_mesh_in_world, prepare_bridge_split_source, BridgeSplitRequest,
     CoreBridgeSplitResult, PreparedBridgeSplitSource,
 };

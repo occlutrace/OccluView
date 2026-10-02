@@ -14,7 +14,7 @@ use crate::sculpt::sculpt_tool::{SculptSession, SculptTip, SculptToolKind, Strok
 use crate::sculpt::sculpt_worker::SculptWorker;
 use glam::{Affine3A, Vec3};
 use occluview_core::{Mesh, Scene, SceneMesh, SceneMeshId, Vertex};
-use occluview_edit::mesh_edit_buffers_from_mesh;
+use occluview_mesh_edit::mesh_edit_buffers_from_mesh;
 use occluview_render::PreparedSceneTopology;
 use std::collections::VecDeque;
 use std::sync::{Arc, RwLock};

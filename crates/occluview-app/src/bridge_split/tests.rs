@@ -6,7 +6,7 @@ use super::{
 };
 use glam::{Affine3A, Vec3};
 use occluview_core::{Mesh, Scene, SceneMesh};
-use occluview_edit::{
+use occluview_mesh_edit::{
     BridgeSplitError, BridgeSplitReport, BridgeSplitRequest, CoreBridgeSplitResult,
 };
 use std::sync::{mpsc, Arc, Mutex};

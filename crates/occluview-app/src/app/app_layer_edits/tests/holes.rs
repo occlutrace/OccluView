@@ -181,7 +181,7 @@ fn mesh_editor_close_holes_scopes_to_selected_visible_layers() {
 fn non_face_edit_action_errors_instead_of_aborting() {
     use super::super::selection_ops::selected_face_edit_result;
     use occluview_core::CoreError;
-    use occluview_edit::FaceSelection;
+    use occluview_mesh_edit::FaceSelection;
 
     let Ok(mesh) = Mesh::new(
         Some("m".into()),

@@ -17,7 +17,7 @@ use crate::sculpt::sculpt_tool::mean_uniform_scale;
 use crate::sculpt::sculpt_tool::SculptTip;
 use glam::{DVec3, Vec3};
 use occluview_core::{Mesh, Scene, SceneMesh};
-use occluview_edit::mesh_edit_buffers_from_mesh;
+use occluview_mesh_edit::mesh_edit_buffers_from_mesh;
 use std::time::{Duration, Instant};
 
 fn session_for(mesh: &Mesh) -> SculptSession {

@@ -8,7 +8,7 @@ use super::structural::{
 };
 use super::whole_mesh::{close_holes_in_mesh, edit_command_for_layer_action};
 use occluview_core::{CoreError, Mesh, SceneMeshId};
-use occluview_edit::{selected_connected_components_in_mesh, FaceSelection};
+use occluview_mesh_edit::{selected_connected_components_in_mesh, FaceSelection};
 use std::sync::Arc;
 
 enum PlannedEdit {

@@ -1,6 +1,6 @@
 # occluview-core — pure data model. NO I/O, NO GPU, NO Win32, NO panics.
 # Layering: this crate is the product data model and carries no editing kernel.
-# Mesh editing lives in the higher-ranked `occluview-edit` crate.
+# Mesh editing lives in the higher-ranked `occluview-mesh-edit` crate.
 [package]
 name = "occluview-core"
 description = "Pure logic for OccluView: math, units, mesh data model, scene graph, camera."

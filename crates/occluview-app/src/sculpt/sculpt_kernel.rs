@@ -11,7 +11,7 @@
 use crate::sculpt::sculpt_tool::SculptTip;
 use glam::DVec3;
 use occluview_core::Vertex;
-use occluview_edit::{EditVertex, MeshEditBuffers, MeshEditError, MeshTopology};
+use occluview_mesh_edit::{EditVertex, MeshEditBuffers, MeshEditError, MeshTopology};
 use occluview_render::{SculptFaceUpdate, SculptTopologyDelta, SculptVertexUpdate};
 #[cfg(test)]
 use occluview_sculpt::Dab;
@@ -567,7 +567,7 @@ pub(crate) fn vertex_from_edit_vertex(vertex: EditVertex) -> Vertex {
     }
 }
 
-impl occluview_edit::SculptSessionBuffers for BrushSession {
+impl occluview_mesh_edit::SculptSessionBuffers for BrushSession {
     fn sculpt_vertices(&self) -> &[EditVertex] {
         &self.vertices
     }

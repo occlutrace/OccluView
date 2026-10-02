@@ -9,7 +9,7 @@ use super::super::{
 use super::resolve_layer;
 use super::structural::structural_scene_apply;
 use occluview_core::CoreError;
-use occluview_edit::{repair_mesh_in_mesh, RepairOptions, RepairReport};
+use occluview_mesh_edit::{repair_mesh_in_mesh, RepairOptions, RepairReport};
 use std::sync::Arc;
 
 /// What one repair run did to the requested layer.
