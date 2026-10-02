@@ -431,7 +431,7 @@ impl AlignWorker {
     /// which cannot be provoked from outside without a job that panics.
     #[cfg(test)]
     #[allow(clippy::expect_used, clippy::panic)]
-    pub(crate) fn poison_queue_for_tests(&self) {
+    pub(crate) fn poison_queue_for_tests(&mut self) {
         let queue = Arc::clone(&self.queue);
         let _ = thread::spawn(move || {
             let _guard = queue.state.lock().expect("queue lock before poisoning");
@@ -439,6 +439,9 @@ impl AlignWorker {
         })
         .join();
         self.queue.wake.notify_one();
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
     }
 
     pub(crate) fn has_failed(&self) -> bool {
