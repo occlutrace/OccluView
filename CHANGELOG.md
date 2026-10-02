@@ -50,6 +50,7 @@ remain in the Git history.
 
 ### Align
 
+- Invalid or overflowing manual drag input no longer writes a non-finite scan position.
 - Deviation legend labels retain 0.001 mm precision instead of rounding small limits to zero.
 - Typing a matching percentage now sets the intended ratio, including values with a percent sign or decimal comma.
 - Painting exclusion regions immediately cancels fits computed with the old markings.
