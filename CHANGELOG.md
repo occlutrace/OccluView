@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Sculpt rejects non-finite vertex data in topology history before replay.
+
 - PLY thumbnails refuse files whose ASCII vertex body ends before the declared count.
 
 
