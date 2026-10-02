@@ -707,19 +707,16 @@ impl SculptSession {
         let dirty_triangles = outcome.dirty_triangles;
         // The kernel reports every vertex whose position or normal changed in
         // one list, so there is no separate normal-only scope to patch.
-        if self
-            .patch_shadow(
-                &outcome.touched_vertices,
-                &[],
-                outcome.topology_delta.as_ref(),
-            )
-            .is_err()
-        {
+        if let Err(failure) = self.patch_shadow(
+            &outcome.touched_vertices,
+            &[],
+            outcome.topology_delta.as_ref(),
+        ) {
             return Some(DabOutcome {
                 touched: Vec::new(),
                 dirty_triangles: Vec::new(),
                 topology_delta: None,
-                failure: Some(DabFailure::ShadowPoisoned),
+                failure: Some(failure),
             });
         }
         self.dirty_stroke = true;
@@ -764,19 +761,16 @@ impl SculptSession {
             return Some(DabOutcome::default());
         }
         let dirty_triangles = outcome.dirty_triangles;
-        if self
-            .patch_shadow(
-                &outcome.touched_vertices,
-                &[],
-                outcome.topology_delta.as_ref(),
-            )
-            .is_err()
-        {
+        if let Err(failure) = self.patch_shadow(
+            &outcome.touched_vertices,
+            &[],
+            outcome.topology_delta.as_ref(),
+        ) {
             return Some(DabOutcome {
                 touched: Vec::new(),
                 dirty_triangles: Vec::new(),
                 topology_delta: None,
-                failure: Some(DabFailure::ShadowPoisoned),
+                failure: Some(failure),
             });
         }
         self.dirty_stroke = true;

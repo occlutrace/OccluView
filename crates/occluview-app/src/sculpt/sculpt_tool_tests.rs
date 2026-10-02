@@ -469,6 +469,46 @@ fn session_over(mesh: &Mesh) -> (SculptSession, Arc<RwLock<Vec<Vertex>>>) {
     (session, shadow)
 }
 
+#[test]
+fn ray_dab_preserves_the_shadow_shape_failure_reason() {
+    let mesh = quad_mesh(None).expect("mesh");
+    let (mut session, shadow) = session_over(&mesh);
+    // An open stroke already captured its baseline before a later shadow failure.
+    session.stroke_start_mesh = Some(Arc::clone(&session.base_mesh));
+    shadow.write().expect("shadow").clear();
+    let step = BrushRayStep {
+        origin: [0.0, 0.0, 5.0],
+        direction: [0.0, 0.0, -1.0],
+        near_mm: 0.0,
+        far_mm: 10.0,
+        clip_plane: None,
+        radius_mm: 2.0,
+        strength: 1.0,
+        mode: BrushMode::Add,
+        tip: SculptTip::Ball,
+        axis: None,
+        hold: false,
+        preserve_skirt: false,
+    };
+    let outcome = session
+        .apply_ray_step_cancellable(
+            &step,
+            occluview_sculpt::DWELL_FULL_DOSE_MS,
+            &AtomicBool::new(false),
+        )
+        .expect("uncancelled ray dab");
+    assert_eq!(
+        outcome.failure,
+        Some(DabFailure::ShadowShapeMismatch {
+            shadow_count: 0,
+            live_count: session.session.vertices().len(),
+        })
+    );
+    assert!(outcome.touched.is_empty());
+    assert!(outcome.topology_delta.is_none());
+    assert!(!session.dirty_stroke);
+}
+
 /// How far the vertices the dab actually moved spread along x and along y
 /// from the dab centre. Read from the live shadow rather than the touched list,
 /// because a dab that also retessellated the patch reports a topology delta.
