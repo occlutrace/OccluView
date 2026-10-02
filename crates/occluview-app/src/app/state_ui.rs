@@ -20,6 +20,8 @@
 use super::egui;
 use super::information_dialog::InformationDialog;
 use super::open_dialogs::OpenDialogs;
+use super::workspace::id::SceneKey;
+use super::workspace::input::{GestureOwner, PointerRoute};
 use std::time::Instant;
 
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
@@ -94,7 +96,7 @@ pub(super) struct UiState {
 /// A replace-scene open request parked behind the unsaved-edit guard dialog.
 #[derive(Clone)]
 pub(super) struct PendingReplaceOpen {
-    pub(super) scene_key: super::workspace::id::SceneKey,
+    pub(super) scene_key: SceneKey,
     pub(super) paths: Vec<std::path::PathBuf>,
     pub(super) source: &'static str,
     /// When this request was made.
@@ -119,9 +121,49 @@ pub(super) struct SceneUiState {
     pub(super) viewport_secondary_gesture_moved_since_press: bool,
     pub(super) viewport_context_menu: Option<(egui::Response, bool)>,
     pub(super) layers_window_layer_count: Option<usize>,
+    tool_gate_state: Option<ToolGateState>,
+    tool_gate_logged: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct ToolGateState {
+    pub(super) scene_key: SceneKey,
+    pub(super) active_scene_key: SceneKey,
+    pub(super) is_active: bool,
+    pub(super) window_focused: bool,
+    pub(super) modal_dialog_open: bool,
+    pub(super) input_route: PointerRoute,
+    pub(super) capture_owner: Option<GestureOwner>,
 }
 
 impl SceneUiState {
+    /// Record the first blocked viewport press for each input-gate state.
+    pub(super) fn log_skipped_tool_input(&mut self, state: ToolGateState, pressed: bool) {
+        if self.tool_gate_state != Some(state) {
+            self.tool_gate_state = Some(state);
+            self.tool_gate_logged = false;
+        }
+        if !pressed
+            || self.tool_gate_logged
+            || (state.is_active && state.window_focused && !state.modal_dialog_open)
+        {
+            return;
+        }
+        self.tool_gate_logged = true;
+        tracing::debug!(
+            scene_id = state.scene_key.id.get(),
+            scene_epoch = state.scene_key.epoch.get(),
+            active_scene_id = state.active_scene_key.id.get(),
+            active_scene_epoch = state.active_scene_key.epoch.get(),
+            is_active = state.is_active,
+            window_focused = state.window_focused,
+            modal_dialog_open = state.modal_dialog_open,
+            input_route = ?state.input_route,
+            capture_owner = ?state.capture_owner,
+            "viewport tool input skipped"
+        );
+    }
+
     /// Expire transient status text after the shared display interval.
     pub(super) fn expire_status_message(&mut self, ctx: &egui::Context) {
         const STATUS_MESSAGE_TTL: std::time::Duration = std::time::Duration::from_secs(4);

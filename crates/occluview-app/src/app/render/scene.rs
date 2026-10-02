@@ -276,6 +276,7 @@ impl SceneContext<'_> {
         }
         let tool_ui_allowed =
             self.is_active && ctx.input(|input| input.focused) && !self.ui.modal_dialog_open();
+        self.log_tool_gate_for_viewport(ctx, response.rect);
         if !tool_ui_allowed {
             self.publish_sculpt_cursor(None);
             self.paint_passive_tool_overlays(ui, response.rect, ctx);
@@ -317,6 +318,27 @@ impl SceneContext<'_> {
         // visual cursor then reuses it for held drags and publishes its GPU
         // uniforms before the callback's render pass executes.
         self.paint_sculpt_cursor_impl(ui, response);
+    }
+
+    fn log_tool_gate_for_viewport(&mut self, ctx: &egui::Context, viewport: egui::Rect) {
+        let pressed = ctx.input(|input| {
+            input.raw.events.iter().any(|event| {
+                matches!(event, egui::Event::PointerButton { pos, pressed: true, .. }
+                if viewport.contains(*pos))
+            })
+        });
+        self.scene_ui.log_skipped_tool_input(
+            super::super::state_ui::ToolGateState {
+                scene_key: self.scene_key,
+                active_scene_key: self.active_scene_key,
+                is_active: self.is_active,
+                window_focused: ctx.input(|input| input.focused),
+                modal_dialog_open: self.ui.modal_dialog_open(),
+                input_route: self.input_route,
+                capture_owner: self.input_capture,
+            },
+            pressed,
+        );
     }
 
     /// Keep scene annotations visible while controls belong to another pane.
@@ -1084,6 +1106,133 @@ mod input_tests {
         assert!(!scene.tools.align.tool.is_armed());
         assert!(scene.tools.align.session_poses.is_empty());
         Ok(())
+    }
+
+    #[test]
+    fn blocked_viewport_presses_log_once_until_the_gate_changes() -> anyhow::Result<()> {
+        let buffer = Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+        let log_buffer = buffer.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::DEBUG)
+            .with_writer(move || DiagnosticWriter(log_buffer.clone()))
+            .finish();
+        tracing::subscriber::with_default(subscriber, || -> anyhow::Result<()> {
+            let ctx = egui::Context::default();
+            let mut app = input_app(&ctx);
+            let point = egui::pos2(900.0, 700.0);
+            focused_frame(&mut app, &ctx, vec![], false);
+            for _ in 0..2 {
+                for pressed in [true, false] {
+                    focused_frame(
+                        &mut app,
+                        &ctx,
+                        vec![pointer_button(point, egui::PointerButton::Primary, pressed)],
+                        false,
+                    );
+                }
+            }
+            let text = diagnostic_text(&buffer)?;
+            assert_eq!(text.matches("viewport tool input skipped").count(), 1);
+            assert!(text.contains("DEBUG") && text.contains("window_focused=false"));
+            assert!(text.contains("active_scene_id=1") && text.contains("scene_id=1"));
+            assert!(
+                text.contains("modal_dialog_open=false") && text.contains("input_route=Suppressed")
+            );
+            assert!(text.contains("capture_owner=None"));
+            app.ui.information_dialog = crate::app::information_dialog::InformationDialog::About;
+            for pressed in [true, false] {
+                focused_frame(
+                    &mut app,
+                    &ctx,
+                    vec![secondary_button(point, pressed)],
+                    false,
+                );
+            }
+            let text = diagnostic_text(&buffer)?;
+            assert_eq!(text.matches("viewport tool input skipped").count(), 2);
+            assert!(text.contains("modal_dialog_open=true"));
+            app.ui.information_dialog = crate::app::information_dialog::InformationDialog::None;
+            focused_frame(&mut app, &ctx, vec![egui::Event::WindowFocused(true)], true);
+            for pressed in [true, false] {
+                focused_frame(
+                    &mut app,
+                    &ctx,
+                    vec![secondary_button(point, pressed)],
+                    false,
+                );
+            }
+            assert_eq!(
+                diagnostic_text(&buffer)?
+                    .matches("viewport tool input skipped")
+                    .count(),
+                3
+            );
+            for pressed in [true, false] {
+                focused_frame(
+                    &mut app,
+                    &ctx,
+                    vec![secondary_button(egui::pos2(900.0, 5.0), pressed)],
+                    false,
+                );
+            }
+            assert_eq!(
+                diagnostic_text(&buffer)?
+                    .matches("viewport tool input skipped")
+                    .count(),
+                3
+            );
+            focused_frame(&mut app, &ctx, vec![egui::Event::WindowFocused(true)], true);
+            app.active_context()
+                .ok_or_else(|| anyhow::anyhow!("active scene"))?
+                .queue_new_scene(crate::app::workspace::commands::SplitSide::Right);
+            frame(&mut app, &ctx, vec![]);
+            frame(&mut app, &ctx, vec![secondary_button(point, true)]);
+            frame(
+                &mut app,
+                &ctx,
+                vec![pointer_button(
+                    egui::pos2(400.0, 700.0),
+                    egui::PointerButton::Primary,
+                    true,
+                )],
+            );
+            let text = diagnostic_text(&buffer)?;
+            assert!(
+                text.lines().any(|line| line.contains("scene_id=1")
+                    && line.contains("active_scene_id=2")
+                    && line.contains("is_active=false")
+                    && line.contains("input_route=Captured")
+                    && line.contains("capture_owner=Some")),
+                "a blocked peer press must identify the captured scene: {text}"
+            );
+            Ok(())
+        })
+    }
+
+    fn diagnostic_text(buffer: &std::sync::Mutex<Vec<u8>>) -> anyhow::Result<String> {
+        let bytes = buffer
+            .lock()
+            .map_err(|_| anyhow::anyhow!("log buffer lock"))?
+            .clone();
+        Ok(String::from_utf8(bytes)?)
+    }
+
+    struct DiagnosticWriter(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for DiagnosticWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .map_err(|_| std::io::Error::other("log buffer lock"))?
+                .extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
 
     #[test]
