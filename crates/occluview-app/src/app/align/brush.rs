@@ -84,7 +84,11 @@ impl SceneContext<'_> {
                 // it, or one dab would also drop an alignment arrow.
                 return true;
             }
-            return false;
+            // A complete tap may arrive within one frame with the button up.
+            // It still belongs to the brush and must not place an arrow.
+            if !response.clicked_by(egui::PointerButton::Primary) {
+                return false;
+            }
         }
         let Some(pointer) = response
             .interact_pointer_pos()
@@ -168,6 +172,9 @@ impl SceneContext<'_> {
                     painted.push((layer_id, side));
                 }
             }
+        }
+        if !primary_down {
+            self.tools.align.markings.close_stroke();
         }
         if painted.is_empty() {
             // A side that exists but is not under the pointer is not an error:
@@ -789,6 +796,101 @@ mod tests {
         );
         assert_eq!(scene.document.edit_mode.undo_len(), 0);
         assert!(scene.tools.align.markings.any());
+    }
+
+    #[test]
+    fn a_coalesced_brush_tap_paints_without_placing_a_landmark() {
+        use crate::app::app_test_support::{named_scene, push_named_layer, test_app};
+
+        let mut app = test_app("align-coalesced-brush-tap");
+        let mut scene = named_scene("moving", 0.0);
+        let moving = scene.meshes()[0].id();
+        let fixed = push_named_layer(&mut scene, "fixed", 5.0);
+        let camera = crate::viewer::home_camera_for_scene(&scene);
+        app.workspace.scenes[0].document.scene = Some(scene.into());
+        app.workspace.scenes[0].render.camera = Some(camera);
+        let ctx = app.ui.repaint_ctx.clone();
+        let mut scene = app.active_context().expect("live scene");
+        scene.tools.align.tool.arm();
+        scene.tools.align.tool.imply_pair(&[moving, fixed]);
+        scene.tools.align.brush.set_armed(true);
+        let generation = scene.align_worker_mut().generation();
+        drop(scene);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let (pointer, _) =
+            crate::viewer::project_world_to_viewport(&camera, screen, Vec3::new(0.25, 0.25, 0.0))
+                .expect("surface projects into viewport");
+        for events in [
+            vec![],
+            vec![
+                egui::Event::PointerMoved(pointer),
+                egui::Event::PointerButton {
+                    pos: pointer,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos: pointer,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        ] {
+            let tap_frame = !events.is_empty();
+            ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let response = ui.interact(
+                        screen,
+                        egui::Id::new("paint-viewport"),
+                        egui::Sense::click_and_drag(),
+                    );
+                    if tap_frame {
+                        assert!(
+                            response.clicked_by(egui::PointerButton::Primary),
+                            "the complete tap reaches the viewport as a click"
+                        );
+                    }
+                    let mut scene = app.active_context().expect("live scene");
+                    assert!(scene.input_allowed, "the brush has focused viewport input");
+                    if !scene.handle_align_brush(&response, ui.ctx()) {
+                        scene.handle_align_click(&response, ui.ctx());
+                    }
+                },
+            )
+            .drop_without_applying_deltas();
+        }
+        let scene = app.active_context().expect("live scene");
+        assert!(!ctx.input(|input| input.pointer.primary_down()));
+        assert!(
+            scene.tools.align.markings.any(),
+            "a complete brush tap must paint a region"
+        );
+        assert!(
+            scene.tools.align.tool.pending().is_none(),
+            "a brush tap must not place an alignment landmark"
+        );
+        assert!(
+            !scene.tools.align.markings.close_stroke(),
+            "a released tap must close its stroke in the same frame"
+        );
+        assert!(
+            scene
+                .tools
+                .align
+                .worker
+                .as_ref()
+                .expect("worker")
+                .generation()
+                > generation
+        );
+        assert_eq!(scene.document.edit_mode.undo_len(), 0);
     }
 
     /// Every whole-mesh command has a one-scan report. The report keys are
