@@ -550,6 +550,19 @@ fn the_suggested_scale_follows_a_badly_aligned_pair_instead_of_capping() {
 }
 
 #[test]
+fn the_suggested_scale_reaches_measurements_above_its_last_predefined_step() {
+    let mut stats = deviation_stats(&all_measured(MIN_MEASURED), 0.1);
+    for p95 in [10.01, 12.34, 1_000.01, f64::from(f32::MAX)] {
+        stats.summary.as_mut().unwrap().p95 = p95;
+        let scale = suggested_scale_mm(&stats);
+        assert!(
+            scale.is_finite() && scale >= p95,
+            "scale {scale} cannot display p95 {p95}"
+        );
+    }
+}
+
+#[test]
 fn a_cancelled_run_marks_everything_unmeasured() {
     let (positions, indices) = sheet();
     let (fixed_positions, fixed_indices) = sheet();

@@ -206,7 +206,7 @@ pub fn suggested_scale_mm(stats: &DeviationStats) -> f64 {
     STEPS
         .into_iter()
         .find(|step| *step >= wanted)
-        .unwrap_or(10.0)
+        .unwrap_or_else(|| wanted.ceil())
 }
 
 impl Default for RampSettings {
