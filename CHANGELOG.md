@@ -56,6 +56,7 @@ remain in the Git history.
 
 ### Align
 
+- Disabled Heatmap controls explain whether refinement is missing or deviation measurement is running.
 - Cancel keeps alignment open for retry when another layer edit temporarily prevents restoring scan positions.
 - Invalid or overflowing manual drag input no longer writes a non-finite scan position.
 - Deviation legend labels retain 0.001 mm precision instead of rounding small limits to zero.
