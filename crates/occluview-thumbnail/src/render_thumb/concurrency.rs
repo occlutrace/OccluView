@@ -486,12 +486,7 @@ pub(super) fn render_coalesced_thumbnail_with_follower_notice(
     render: impl FnOnce() -> ThumbnailAttempt,
     follower_waiting: impl FnOnce(),
 ) -> ThumbnailAttempt {
-    render_coalesced_thumbnail_by_inner(
-        key,
-        Instant::now() + timeout,
-        render,
-        follower_waiting,
-    )
+    render_coalesced_thumbnail_by_inner(key, Instant::now() + timeout, render, follower_waiting)
 }
 
 /// Run or join a coalesced render until a deadline fixed by the caller.

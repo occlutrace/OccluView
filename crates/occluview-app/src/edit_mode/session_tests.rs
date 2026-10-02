@@ -2,40 +2,12 @@
 //! Session-lifecycle, sync re-arming, redo, and no-op controller tests.
 
 use super::*;
-use occluview_core::{Mesh, Scene, SceneMesh, Vertex};
-
-pub(super) fn triangle_mesh(name: &str) -> Option<Mesh> {
-    Mesh::new(
-        Some(name.to_string()),
-        vec![
-            Vertex::at(glam::Vec3::new(0.0, 0.0, 0.0)),
-            Vertex::at(glam::Vec3::new(1.0, 0.0, 0.0)),
-            Vertex::at(glam::Vec3::new(0.0, 1.0, 0.0)),
-        ],
-        vec![0, 1, 2],
-    )
-    .ok()
-}
-
-pub(super) fn two_triangle_mesh(name: &str) -> Option<Mesh> {
-    Mesh::new(
-        Some(name.to_string()),
-        vec![
-            Vertex::at(glam::Vec3::new(0.0, 0.0, 0.0)),
-            Vertex::at(glam::Vec3::new(1.0, 0.0, 0.0)),
-            Vertex::at(glam::Vec3::new(0.0, 1.0, 0.0)),
-            Vertex::at(glam::Vec3::new(2.0, 0.0, 0.0)),
-            Vertex::at(glam::Vec3::new(3.0, 0.0, 0.0)),
-            Vertex::at(glam::Vec3::new(2.0, 1.0, 0.0)),
-        ],
-        vec![0, 1, 2, 3, 4, 5],
-    )
-    .ok()
-}
+use occluview_core::test_support::{simple_triangle_mesh, two_triangle_mesh};
+use occluview_core::{Mesh, Scene, SceneMesh};
 
 #[test]
 fn begin_face_selection_captures_baseline_scene_once_per_session() {
-    let Some(mesh) = two_triangle_mesh("baseline") else {
+    let Some(mesh) = two_triangle_mesh(Some("baseline")) else {
         panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
@@ -59,7 +31,7 @@ fn begin_face_selection_captures_baseline_scene_once_per_session() {
 
 #[test]
 fn begin_face_selection_refuses_when_history_cannot_retain_baseline() {
-    let Some(mesh) = triangle_mesh("budget-limited") else {
+    let Some(mesh) = simple_triangle_mesh(Some("budget-limited")) else {
         panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
@@ -94,10 +66,10 @@ fn begin_face_selection_refuses_when_history_cannot_retain_baseline() {
 
 #[test]
 fn finish_edit_session_keeps_undo_history_for_stepwise_undo() {
-    let Some(before_mesh) = triangle_mesh("before") else {
+    let Some(before_mesh) = simple_triangle_mesh(Some("before")) else {
         panic!("required test setup or expected result was missing");
     };
-    let Some(after_mesh) = triangle_mesh("after") else {
+    let Some(after_mesh) = simple_triangle_mesh(Some("after")) else {
         panic!("required test setup or expected result was missing");
     };
     let layer = SceneMesh::new(before_mesh);
@@ -134,7 +106,7 @@ fn finish_edit_session_keeps_undo_history_for_stepwise_undo() {
 
 #[test]
 fn cancel_edit_session_reverts_structural_edit_and_clears_history() {
-    let Some(mesh) = two_triangle_mesh("session") else {
+    let Some(mesh) = two_triangle_mesh(Some("session")) else {
         panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
@@ -192,7 +164,7 @@ fn is_busy_reflected_in_panel_state_machine() {
 
 #[test]
 fn sync_to_scene_rearms_empty_selection_between_session_ops() {
-    let Some(mesh) = two_triangle_mesh("session") else {
+    let Some(mesh) = two_triangle_mesh(Some("session")) else {
         panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
@@ -213,7 +185,7 @@ fn sync_to_scene_rearms_empty_selection_between_session_ops() {
         controller.finish_layer_edit_success(token),
         BusyFinish::Applied
     );
-    let Some(single_triangle) = triangle_mesh("after-op") else {
+    let Some(single_triangle) = simple_triangle_mesh(Some("after-op")) else {
         panic!("required test setup or expected result was missing");
     };
     scene.meshes_mut()[layer_index].mesh = std::sync::Arc::new(single_triangle);
@@ -243,10 +215,10 @@ fn sync_to_scene_rearms_empty_selection_between_session_ops() {
 
 #[test]
 fn redo_reapplies_undone_layer_edit_and_new_op_clears_redo() {
-    let Some(before_mesh) = triangle_mesh("before") else {
+    let Some(before_mesh) = simple_triangle_mesh(Some("before")) else {
         panic!("required test setup or expected result was missing");
     };
-    let Some(after_mesh) = two_triangle_mesh("after") else {
+    let Some(after_mesh) = two_triangle_mesh(Some("after")) else {
         panic!("required test setup or expected result was missing");
     };
     let layer = SceneMesh::new(before_mesh);
@@ -292,7 +264,7 @@ fn redo_reapplies_undone_layer_edit_and_new_op_clears_redo() {
 
 #[test]
 fn noop_finish_discards_snapshot_and_keeps_marks() {
-    let Some(mesh) = two_triangle_mesh("noop") else {
+    let Some(mesh) = two_triangle_mesh(Some("noop")) else {
         panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
@@ -340,7 +312,7 @@ fn noop_finish_clears_busy_state() {
 
 #[test]
 fn sync_to_scene_does_not_rearm_selection_after_done_or_cancel() {
-    let Some(mesh) = two_triangle_mesh("done") else {
+    let Some(mesh) = two_triangle_mesh(Some("done")) else {
         panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
@@ -361,7 +333,7 @@ fn sync_to_scene_does_not_rearm_selection_after_done_or_cancel() {
 
 #[test]
 fn mixed_structural_and_layer_history_unwinds_in_order_and_cancel_reverts_all() {
-    let Some(mesh) = two_triangle_mesh("mixed") else {
+    let Some(mesh) = two_triangle_mesh(Some("mixed")) else {
         panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
@@ -418,7 +390,7 @@ fn mixed_structural_and_layer_history_unwinds_in_order_and_cancel_reverts_all() 
 
 #[test]
 fn oversized_snapshot_applies_edit_without_phantom_undo() {
-    let Some(mesh) = two_triangle_mesh("huge") else {
+    let Some(mesh) = two_triangle_mesh(Some("huge")) else {
         panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
@@ -456,7 +428,7 @@ fn append_preserves_active_session_and_undo_on_original_layer() {
     // Begin a session on A, then simulate appending layer B (a second load).
     // The session — selection, dirty state, undo history — is keyed by
     // SceneMeshId, so it survives the append and still applies to A.
-    let Some(mesh_a) = two_triangle_mesh("A") else {
+    let Some(mesh_a) = two_triangle_mesh(Some("A")) else {
         panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
@@ -478,7 +450,7 @@ fn append_preserves_active_session_and_undo_on_original_layer() {
     );
 
     // Append B (append_scene keeps A's id and gives B a fresh unique id).
-    let Some(mesh_b) = triangle_mesh("B") else {
+    let Some(mesh_b) = simple_triangle_mesh(Some("B")) else {
         panic!("required test setup or expected result was missing");
     };
     scene.add(SceneMesh::new(mesh_b));
@@ -502,10 +474,10 @@ fn edit_on_other_layer_during_session_keeps_session_on_original() {
     // Session active on A; a whole-mesh op runs on a different layer B. The
     // global undo stack records B's edit (LIFO), but the session's recoverable
     // identity — selection and baseline — stays anchored to A.
-    let Some(mesh_a) = two_triangle_mesh("A") else {
+    let Some(mesh_a) = two_triangle_mesh(Some("A")) else {
         panic!("required test setup or expected result was missing");
     };
-    let Some(mesh_b) = two_triangle_mesh("B") else {
+    let Some(mesh_b) = two_triangle_mesh(Some("B")) else {
         panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
@@ -549,7 +521,7 @@ fn edit_on_other_layer_during_session_keeps_session_on_original() {
 
 #[test]
 fn begin_face_selection_arms_lasso_by_default_and_resets_between_sessions() {
-    let Some(mesh) = two_triangle_mesh("armed") else {
+    let Some(mesh) = two_triangle_mesh(Some("armed")) else {
         panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
@@ -585,7 +557,7 @@ fn begin_face_selection_arms_lasso_by_default_and_resets_between_sessions() {
 
 #[test]
 fn begin_face_selection_defaults_to_through_mesh_and_resets_between_sessions() {
-    let Some(mesh) = two_triangle_mesh("through") else {
+    let Some(mesh) = two_triangle_mesh(Some("through")) else {
         panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
@@ -617,7 +589,7 @@ fn begin_face_selection_defaults_to_through_mesh_and_resets_between_sessions() {
 
 #[test]
 fn sync_to_scene_preserves_baseline_when_active_layer_disappears() {
-    let Some(mesh) = triangle_mesh("gone") else {
+    let Some(mesh) = simple_triangle_mesh(Some("gone")) else {
         panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();

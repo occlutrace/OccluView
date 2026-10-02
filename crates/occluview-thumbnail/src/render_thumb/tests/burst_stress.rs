@@ -224,11 +224,8 @@ fn render_that_outran_the_callers_deadline_still_populates_the_cache() {
     let metadata = cache::thumbnail_file_metadata(&path).expect("fixture metadata");
     let key = ThumbnailFileCacheKey::new(&path, &metadata);
 
-    let _early = render_thumbnail_file_or_placeholder_with_timeout(
-        &path,
-        spec,
-        Duration::from_millis(20),
-    );
+    let _early =
+        render_thumbnail_file_or_placeholder_with_timeout(&path, spec, Duration::from_millis(20));
     assert!(
         wait_for_thumbnail_file_cache(Duration::from_secs(15), || {
             thumbnail_file_cache()

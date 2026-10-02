@@ -50,11 +50,9 @@ fn wait_for_align_output(app: &OccluViewApp, timeout: Duration) -> bool {
     }
 
     let (repaint_tx, repaint_rx) = std::sync::mpsc::channel();
-    app.ui
-        .repaint_ctx
-        .set_request_repaint_callback(move |_| {
-            let _ = repaint_tx.send(());
-        });
+    app.ui.repaint_ctx.set_request_repaint_callback(move |_| {
+        let _ = repaint_tx.send(());
+    });
     if worker.has_pending_output() {
         return true;
     }

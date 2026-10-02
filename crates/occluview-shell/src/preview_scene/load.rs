@@ -40,7 +40,7 @@ impl PreviewSceneState {
 
     fn from_scene(scene: Scene) -> Result<Self, ShellError> {
         #[cfg(test)]
-        let _guard = crate::acquire_render_test_guard();
+        let _guard = occluview_core::test_support::acquire_render_test_guard("shell");
 
         let bbox = scene.bbox();
         let camera = Camera::default().frame_occlusal(bbox, PREVIEW_FOV_RADIANS);

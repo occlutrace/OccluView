@@ -32,15 +32,13 @@ fn binary_stl(triangles: usize) -> Vec<u8> {
             [step + 0.01, 0.0, 0.0],
             [step, 0.01, (index % 97) as f32 * 0.001],
         ];
-        bytes.extend_from_slice(&0.0_f32.to_le_bytes());
-        bytes.extend_from_slice(&0.0_f32.to_le_bytes());
-        bytes.extend_from_slice(&1.0_f32.to_le_bytes());
-        for corner in corners {
-            for value in corner {
-                bytes.extend_from_slice(&value.to_le_bytes());
-            }
-        }
-        bytes.extend_from_slice(&0_u16.to_le_bytes());
+        occluview_core::test_support::append_binary_stl_facet(
+            &mut bytes,
+            [0.0, 0.0, 1.0],
+            corners[0],
+            corners[1],
+            corners[2],
+        );
     }
     bytes
 }

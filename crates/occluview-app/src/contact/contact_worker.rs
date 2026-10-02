@@ -417,9 +417,9 @@ fn wait_for_queued_job(queue: &JobQueue, timeout: Duration) {
     let Ok(state) = queue.state.lock() else {
         return;
     };
-    let _ = queue.wake.wait_timeout_while(state, timeout, |state| {
-        state.jobs.is_empty()
-    });
+    let _ = queue
+        .wake
+        .wait_timeout_while(state, timeout, |state| state.jobs.is_empty());
 }
 
 #[cfg(test)]

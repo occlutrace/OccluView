@@ -2,12 +2,12 @@
 
 use occluview_core::{Scene, SceneMesh, ScenePickHit};
 
-use super::session_tests::{triangle_mesh, two_triangle_mesh};
 use super::*;
+use occluview_core::test_support::{simple_triangle_mesh, two_triangle_mesh};
 
 #[test]
 fn controller_sync_to_scene_clears_stale_or_hidden_selection() {
-    let Some(mesh) = two_triangle_mesh("sync") else {
+    let Some(mesh) = two_triangle_mesh(Some("sync")) else {
         panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
@@ -34,7 +34,7 @@ fn controller_sync_to_scene_clears_stale_or_hidden_selection() {
 
 #[test]
 fn controller_sync_to_scene_clears_selection_when_topology_changes() {
-    let Some(mesh) = two_triangle_mesh("sync") else {
+    let Some(mesh) = two_triangle_mesh(Some("sync")) else {
         panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
@@ -53,7 +53,7 @@ fn controller_sync_to_scene_clears_selection_when_topology_changes() {
         },
     ));
 
-    let Some(single_triangle) = triangle_mesh("single") else {
+    let Some(single_triangle) = simple_triangle_mesh(Some("single")) else {
         panic!("required test setup or expected result was missing");
     };
     scene.meshes_mut()[0].mesh = std::sync::Arc::new(single_triangle);
@@ -63,10 +63,10 @@ fn controller_sync_to_scene_clears_selection_when_topology_changes() {
 
 #[test]
 fn controller_sync_to_scene_discards_active_state_and_undo_for_removed_layer() {
-    let Some(first_mesh) = triangle_mesh("first") else {
+    let Some(first_mesh) = simple_triangle_mesh(Some("first")) else {
         panic!("required test setup or expected result was missing");
     };
-    let Some(second_mesh) = triangle_mesh("second") else {
+    let Some(second_mesh) = simple_triangle_mesh(Some("second")) else {
         panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();

@@ -138,7 +138,7 @@ fn topology_deltas_keep_append_order_with_the_matching_completion() {
     let worker = test_worker();
     let first = append_triangle_delta(&worker);
     queue_face_delta(&worker, 2, [1, 2, 4]);
-    let mesh = Arc::new(coarse_ridge_mesh());
+    let mesh = Arc::new(coarse_ridge_mesh().expect("ridge mesh"));
     assert!(worker.state.push_completion(SculptCompletion {
         before: Arc::clone(&mesh),
         mesh,

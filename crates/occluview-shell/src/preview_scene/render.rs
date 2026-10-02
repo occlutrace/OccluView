@@ -46,7 +46,7 @@ impl PreviewSceneState {
         background: [f64; 4],
     ) -> Result<Vec<u8>, ShellError> {
         #[cfg(test)]
-        let _guard = crate::acquire_render_test_guard();
+        let _guard = occluview_core::test_support::acquire_render_test_guard("shell");
 
         let width = size_px[0].max(1);
         let height = size_px[1].max(1);

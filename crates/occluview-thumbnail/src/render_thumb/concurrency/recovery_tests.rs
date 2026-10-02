@@ -120,7 +120,7 @@ mod poison_recovery_tests {
 
     #[test]
     fn poisoned_renderer_pool_still_serves_and_returns_renderers() {
-        let _guard = crate::acquire_render_test_guard();
+        let _guard = occluview_core::test_support::acquire_render_test_guard("thumbnail");
         let pool = ThumbnailRendererPool::new(2);
         poison(&pool.state);
 
@@ -240,7 +240,7 @@ mod renderer_pool_recovery_tests {
     #[allow(clippy::expect_used)]
     #[allow(clippy::print_stderr)]
     fn a_panicking_render_retires_its_device_instead_of_reusing_it() {
-        let _guard = crate::acquire_render_test_guard();
+        let _guard = occluview_core::test_support::acquire_render_test_guard("thumbnail");
         let pool = ThumbnailRendererPool::new(1);
         let renderer = match pool.checkout_renderer_within(Duration::from_secs(20)) {
             Ok(renderer) => renderer,

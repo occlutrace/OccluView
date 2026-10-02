@@ -34,7 +34,7 @@ pub(super) fn render_mesh_thumbnail_with_adapter_policy(
     adapter_policy: AdapterPolicy,
 ) -> Result<Vec<u8>, ThumbnailError> {
     #[cfg(test)]
-    let _guard = crate::acquire_render_test_guard();
+    let _guard = occluview_core::test_support::acquire_render_test_guard("thumbnail");
 
     let pool = ThumbnailRendererPool::shared();
     match pool.with_renderer(deadline, adapter_policy, |offscreen| {

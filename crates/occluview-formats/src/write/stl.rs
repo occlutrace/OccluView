@@ -75,19 +75,6 @@ mod tests {
     use super::*;
     use occluview_core::{Mesh, Vertex};
 
-    fn triangle_mesh() -> Mesh {
-        Mesh::new(
-            Some("sample".to_string()),
-            vec![
-                Vertex::at(glam::Vec3::new(0.0, 0.0, 0.0)),
-                Vertex::at(glam::Vec3::new(1.0, 0.0, 0.0)),
-                Vertex::at(glam::Vec3::new(0.0, 1.0, 0.0)),
-            ],
-            vec![0, 1, 2],
-        )
-        .expect("sample mesh")
-    }
-
     #[test]
     fn rejects_point_clouds() {
         let mesh = Mesh::point_cloud(
@@ -121,7 +108,8 @@ mod tests {
 
     #[test]
     fn writes_expected_binary_length_for_one_triangle() {
-        let mesh = triangle_mesh();
+        let mesh = occluview_core::test_support::simple_triangle_mesh(Some("sample"))
+            .expect("sample mesh");
         let mut bytes = Vec::new();
         let report = crate::write::write_mesh(
             &mut bytes,

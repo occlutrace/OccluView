@@ -23,10 +23,7 @@ fn binary_stl(coordinates: &[f32]) -> Vec<u8> {
     let mut bytes = vec![0u8; 80];
     bytes.extend_from_slice(&u32::try_from(triangles).unwrap_or(0).to_le_bytes());
     for triangle in coordinates.as_chunks::<12>().0 {
-        for value in triangle {
-            bytes.extend_from_slice(&value.to_le_bytes());
-        }
-        bytes.extend_from_slice(&[0, 0]);
+        occluview_core::test_support::append_binary_stl_triangle(&mut bytes, triangle);
     }
     bytes
 }
@@ -178,12 +175,10 @@ mod byte_order_mark {
         let mut bytes = BOM.to_vec();
         bytes.extend_from_slice(&[0u8; 80]);
         bytes.extend_from_slice(&1u32.to_le_bytes());
-        for value in [
+        let triangle = [
             0.0f32, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0,
-        ] {
-            bytes.extend_from_slice(&value.to_le_bytes());
-        }
-        bytes.extend_from_slice(&0u16.to_le_bytes());
+        ];
+        occluview_core::test_support::append_binary_stl_triangle(&mut bytes, &triangle);
         let mesh = occluview_formats::dispatch_by_extension("stl", &bytes)
             .expect("a BOM-prefixed binary STL by extension");
         assert_eq!(mesh.triangle_count(), 1);
