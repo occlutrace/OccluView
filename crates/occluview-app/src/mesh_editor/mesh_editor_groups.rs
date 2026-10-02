@@ -490,7 +490,7 @@ fn sculpt_settings_row(
     let number_format = locale.number_format();
     let radius_label = format!("{} mm", number_format.decimal(f64::from(radius), 2));
     let strength_label = format!("{}%", number_format.decimal(f64::from(strength * 100.0), 0));
-    sculpt_slider_row(
+    let radius_changed = sculpt_slider_row(
         ui,
         enabled,
         SculptSliderControl {
@@ -501,9 +501,10 @@ fn sculpt_settings_row(
             step: SculptTip::radius_step_mm(),
             tooltip: &locale.tr(crate::i18n::message_id!("meshedit-slider-size-hint")),
         },
-    );
+    )
+    .changed();
     ui.add_space(2.0);
-    sculpt_slider_row(
+    let strength_changed = sculpt_slider_row(
         ui,
         enabled,
         SculptSliderControl {
@@ -514,9 +515,14 @@ fn sculpt_settings_row(
             step: kind.strength_step(),
             tooltip: &locale.tr(crate::i18n::message_id!("meshedit-slider-force-hint")),
         },
-    );
-    super::set_sculpt_radius_mm(&ctx, scene_key, tip, radius);
-    super::set_sculpt_strength(&ctx, scene_key, kind, strength);
+    )
+    .changed();
+    if radius_changed {
+        super::set_sculpt_radius_mm(&ctx, scene_key, tip, radius);
+    }
+    if strength_changed {
+        super::set_sculpt_strength(&ctx, scene_key, kind, strength);
+    }
     ui.add_space(2.0);
 }
 
@@ -555,6 +561,7 @@ fn sculpt_slider_row(
             ui.add_sized(
                 [slider_width, row_height],
                 egui::Slider::new(control.value, control.range)
+                    .clamping(egui::SliderClamping::Edits)
                     .show_value(false)
                     .step_by(f64::from(control.step))
                     .trailing_fill(true),

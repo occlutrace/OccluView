@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Switching Sculpt tips or redrawing the panel preserves the chosen brush size until the size control is changed.
+
 - GPU vertex updates reject changed vertex counts before uploading data.
 
 - Close Holes stays disabled until faces are selected, matching the repair operation and its tooltip.
