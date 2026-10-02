@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Background and cut-ghost preference changes refresh every scene.
+
 - Bridge Split remembers size-slider changes before placement and displays the selected disc size.
 
 - Orthographic scene picking selects visible surfaces even when they lie behind the orbit camera.

@@ -57,14 +57,12 @@ impl SceneContext<'_> {
             }
             SettingsAction::SetViewportBackground(background) => {
                 self.persistence.settings.viewport_background = background;
-                // Prepared scenes cache the clear color on both paths.
-                self.mark_scene_materials_changed();
+                self.ui.render_preferences_changed = true;
                 self.persistence.settings_persistence.mark_dirty();
             }
             SettingsAction::SetShowCutGhost(enabled) => {
                 self.persistence.settings.show_cut_ghost = enabled;
-                // Both render paths cache the ghost decision.
-                self.render.invalidation.overlay_tools_changed();
+                self.ui.render_preferences_changed = true;
                 self.persistence.settings_persistence.mark_dirty();
             }
             SettingsAction::SetUnitDisplay(unit) => {

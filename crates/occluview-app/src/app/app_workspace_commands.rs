@@ -67,6 +67,12 @@ impl OccluViewApp {
 
     #[allow(clippy::too_many_lines)]
     pub(super) fn apply_workspace_commands(&mut self, ctx: &egui::Context) {
+        if std::mem::take(&mut self.ui.render_preferences_changed) {
+            for scene in &mut self.workspace.scenes {
+                scene.render.invalidation.request_redraw();
+            }
+            ctx.request_repaint();
+        }
         let had_commands = !self.workspace.commands.is_empty();
         while let Some(command) = self.workspace.commands.pop_front() {
             if self.ui.command_dialog_open() && !matches!(command, WorkspaceCommand::RetryGraphics)

@@ -55,6 +55,8 @@ pub(super) struct UiState {
     pub(super) repaint_ctx: egui::Context,
     pub(super) scene_report_open: bool,
     pub(super) workspace_modal_open: bool,
+    /// Shared display preferences require every scene's cached frame to redraw.
+    pub(super) render_preferences_changed: bool,
     /// Runtime localizer: one catalog generation per frame. UI/presentation
     /// ownership; persisted preference lives in [`PersistenceState`](super::state_persistence::PersistenceState).
     pub(super) locale: crate::i18n::LocaleManager,
@@ -148,6 +150,7 @@ impl UiState {
             repaint_ctx,
             scene_report_open: false,
             workspace_modal_open: false,
+            render_preferences_changed: false,
             locale,
             native_title_sent: false,
             app_error: None,
