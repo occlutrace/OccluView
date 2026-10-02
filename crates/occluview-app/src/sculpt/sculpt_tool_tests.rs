@@ -263,16 +263,16 @@ fn sculpt_preparation_counts_as_busy_before_the_worker_exists() {
     );
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    let session = loop {
-        if let Some(result) = tool.poll_preparation() {
-            break result.expect("the preparation worker succeeds");
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "preparation never landed"
-        );
-        thread::sleep(std::time::Duration::from_millis(1));
-    };
+    let result = tool
+        .pending
+        .as_ref()
+        .expect("preparation worker")
+        .receiver
+        .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+        .expect("preparation never landed");
+    let pending = tool.pending.take().expect("preparation worker");
+    let _ = pending.thread.join();
+    let session = result.expect("the preparation worker succeeds");
     assert_eq!(session.layer_id, layer_id);
     assert!(
         !tool.is_busy(),
