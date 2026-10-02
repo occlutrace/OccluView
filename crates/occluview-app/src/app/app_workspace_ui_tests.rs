@@ -130,7 +130,10 @@ fn viewport_right_drag_orbits_and_does_not_open_a_menu() {
     );
     frame(&mut app, &ctx, vec![egui::Event::PointerMoved(end)]);
     let after = app.workspace.scenes[0].render.camera.expect("camera");
-    assert_ne!(before.yaw, after.yaw, "RMB motion must reach the camera");
+    assert!(
+        (after.yaw - before.yaw).abs() > f32::EPSILON,
+        "RMB motion must reach the camera"
+    );
     frame(
         &mut app,
         &ctx,
@@ -267,8 +270,9 @@ fn viewport_middle_drag_and_wheel_change_only_the_target_scene() {
             .render
             .camera
             .expect("left")
-            .orthographic_height,
-        before_left.orthographic_height
+            .orthographic_height
+            .to_bits(),
+        before_left.orthographic_height.to_bits()
     );
     assert!(
         app.workspace.scenes[1]
