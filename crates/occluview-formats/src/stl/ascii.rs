@@ -98,11 +98,11 @@ pub(crate) fn read_admitted(
 
     // Expect: solid [name]
     expect_keyword(&mut tokens, "solid")?;
-    // Optional name token (anything until the next `facet`).
-    if let Some(&next) = tokens.peek() {
-        if !next.eq_ignore_ascii_case("facet") {
-            tokens.next();
-        }
+    // Optional name (anything until the next `facet` or `endsolid`).
+    while tokens.peek().is_some_and(|next| {
+        !next.eq_ignore_ascii_case("facet") && !next.eq_ignore_ascii_case("endsolid")
+    }) {
+        tokens.next();
     }
 
     while let Some(&kw) = tokens.peek() {
@@ -231,6 +231,17 @@ fn unexpected(expected: &str, got: &str) -> FormatError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_solid_names_containing_spaces() {
+        let text = SINGLE_FACET.replace("solid example", "solid upper jaw archive");
+        assert_eq!(
+            read(text.as_bytes())
+                .expect("multiword solid name")
+                .triangle_count(),
+            1
+        );
+    }
 
     const SINGLE_FACET: &str = "solid example
   facet normal 0 0 1
