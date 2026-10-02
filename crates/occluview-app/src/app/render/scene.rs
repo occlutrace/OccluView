@@ -497,6 +497,22 @@ mod input_tests {
         pointer_button(point, egui::PointerButton::Secondary, pressed)
     }
 
+    fn secondary_menu(
+        app: &mut OccluViewApp,
+        ctx: &egui::Context,
+        point: egui::Pos2,
+    ) -> egui::FullOutput {
+        frame(app, ctx, vec![egui::Event::PointerMoved(point)]);
+        for pressed in [true, false] {
+            frame(app, ctx, vec![secondary_button(point, pressed)]);
+        }
+        assert!(
+            egui::Popup::is_any_open(ctx),
+            "secondary click opens its menu"
+        );
+        frame(app, ctx, vec![])
+    }
+
     fn pointer_button(
         point: egui::Pos2,
         button: egui::PointerButton,
@@ -663,6 +679,36 @@ mod input_tests {
                     scene.document.edit_mode.visible_selected_face_count(model) == 1
                 })
             }));
+            let output = secondary_menu(&mut app, &ctx, egui::pos2(900.0, 700.0));
+            assert!(
+                has_control(&output, "Save scene as…"),
+                "{source}: empty-space menu"
+            );
+            let scene = &app.workspace.scenes[0];
+            let viewport = scene
+                .presentation
+                .viewport_context_menu
+                .as_ref()
+                .map(|(response, _)| response.rect)
+                .ok_or_else(|| anyhow::anyhow!("{source}: viewport menu response"))?;
+            let camera = scene
+                .render
+                .camera
+                .ok_or_else(|| anyhow::anyhow!("{source}: loaded camera"))?;
+            let (on_model, _) = crate::viewer::project_world_to_viewport(
+                &camera,
+                viewport,
+                glam::vec3(0.25, 0.25, 0.0),
+            )
+            .ok_or_else(|| anyhow::anyhow!("{source}: projected mesh point"))?;
+            frame(&mut app, &ctx, vec![key(egui::Key::Escape)]);
+            frame(&mut app, &ctx, vec![]);
+            let output = secondary_menu(&mut app, &ctx, on_model);
+            assert!(
+                has_control(&output, "Wireframe overlay"),
+                "{source}: picked-layer menu"
+            );
+            frame(&mut app, &ctx, vec![key(egui::Key::Escape)]);
         }
         Ok(())
     }
@@ -698,6 +744,69 @@ mod input_tests {
         assert!(!app.ui.information_dialog.is_open());
         assert!(has_control(&frame(&mut app, &ctx, vec![]), "All"));
         click_control(&mut app, &ctx, "All")?;
+        Ok(())
+    }
+
+    #[test]
+    fn scene_creation_switching_and_close_keep_the_active_input_target() -> anyhow::Result<()> {
+        use crate::app::workspace::commands::{SplitSide, WorkspaceCommand};
+
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut app = input_app(&ctx);
+        let first_key = app.workspace.scenes[0].key;
+        let first_name = app.workspace.scenes[0].name.clone();
+        app.active_context()
+            .ok_or_else(|| anyhow::anyhow!("initial scene"))?
+            .set_scene(
+                crate::app::app_test_support::named_scene("first", 0.0),
+                true,
+            );
+        frame(&mut app, &ctx, vec![key(egui::Key::E)]);
+        click_control(&mut app, &ctx, "All")?;
+        app.active_context()
+            .ok_or_else(|| anyhow::anyhow!("first active scene"))?
+            .queue_new_scene(SplitSide::Right);
+        frame(&mut app, &ctx, vec![]);
+        let second_key = app.workspace.input.active().scene;
+        assert_ne!(second_key, first_key);
+        assert_eq!(app.workspace.scenes.len(), 2);
+        app.active_context()
+            .ok_or_else(|| anyhow::anyhow!("new active scene"))?
+            .set_scene(
+                crate::app::app_test_support::named_scene("second", 0.0),
+                true,
+            );
+        frame(&mut app, &ctx, vec![key(egui::Key::E)]);
+        click_control(&mut app, &ctx, "All")?;
+        frame(&mut app, &ctx, vec![key(egui::Key::F6)]);
+        assert_eq!(app.workspace.input.active().scene, first_key);
+        assert!(app
+            .active_context()
+            .is_some_and(|scene| scene.is_active && scene.input_allowed));
+        click_control(&mut app, &ctx, "None")?;
+        frame(&mut app, &ctx, vec![key(egui::Key::F6)]);
+        assert_eq!(app.workspace.input.active().scene, second_key);
+        click_control(&mut app, &ctx, &first_name)?;
+        assert_eq!(app.workspace.input.active().scene, first_key);
+        app.workspace
+            .commands
+            .push_back(WorkspaceCommand::CloseScene { scene: second_key });
+        frame(&mut app, &ctx, vec![]);
+        assert_eq!(app.workspace.scenes.len(), 1);
+        assert_eq!(app.workspace.input.active().scene, first_key);
+        click_control(&mut app, &ctx, "All")?;
+        app.workspace
+            .commands
+            .push_back(WorkspaceCommand::CloseScene { scene: first_key });
+        frame(&mut app, &ctx, vec![]);
+        assert_eq!(app.workspace.scenes.len(), 1);
+        assert_ne!(app.workspace.input.active().scene, first_key);
+        assert!(app
+            .active_context()
+            .is_some_and(|scene| scene.is_active && scene.input_allowed));
+        let output = secondary_menu(&mut app, &ctx, egui::pos2(850.0, 500.0));
+        assert!(has_control(&output, "Save scene as…"));
         Ok(())
     }
 
@@ -743,5 +852,76 @@ mod input_tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn decision_dialogs_block_layer_controls_until_dismissed() -> anyhow::Result<()> {
+        for dialog in ["close", "replace", "error"] {
+            let ctx = egui::Context::default();
+            ctx.enable_accesskit();
+            let mut app = input_app(&ctx);
+            app.active_context()
+                .ok_or_else(|| anyhow::anyhow!("initial scene"))?
+                .set_scene(
+                    crate::app::app_test_support::named_scene("surface", 0.0),
+                    true,
+                );
+            frame(&mut app, &ctx, vec![]);
+            frame(&mut app, &ctx, vec![]);
+            let scene_key = app.workspace.scenes[0].key;
+            match dialog {
+                "close" => {
+                    app.workspace.close_request =
+                        Some(crate::app::workspace::state::CloseRequest::Scene(scene_key));
+                    app.ui.close_guard_open = true;
+                }
+                "replace" => {
+                    app.ui.pending_replace_open = Some(crate::app::state_ui::PendingReplaceOpen {
+                        scene_key,
+                        paths: vec![std::path::PathBuf::from("replacement.stl")],
+                        source: "open",
+                        requested_at: Instant::now(),
+                    });
+                }
+                _ => {
+                    app.ui.app_error = Some(crate::app::state_ui::AppErrorDialog {
+                        title: "Load error".to_owned(),
+                        summary: "The file could not be loaded.".to_owned(),
+                        details: "Invalid mesh".to_owned(),
+                        action: crate::app::state_ui::AppErrorAction::None,
+                    });
+                }
+            }
+            frame(&mut app, &ctx, vec![]);
+            click_control(&mut app, &ctx, "Hide layer: surface")?;
+            assert!(
+                app.workspace.scenes[0]
+                    .document
+                    .scene
+                    .as_deref()
+                    .is_some_and(|scene| scene.meshes()[0].visible),
+                "{dialog}: the decision must block layer changes behind it"
+            );
+            click_control(
+                &mut app,
+                &ctx,
+                if dialog == "error" { "Close" } else { "Cancel" },
+            )?;
+            assert!(
+                !app.ui.command_dialog_open(),
+                "{dialog}: dismissal clears its gate"
+            );
+            assert!(app.workspace.close_request.is_none());
+            click_control(&mut app, &ctx, "Hide layer: surface")?;
+            assert!(
+                app.workspace.scenes[0]
+                    .document
+                    .scene
+                    .as_deref()
+                    .is_some_and(|scene| !scene.meshes()[0].visible),
+                "{dialog}: dismissing the dialog must restore layer input"
+            );
+        }
+        Ok(())
     }
 }

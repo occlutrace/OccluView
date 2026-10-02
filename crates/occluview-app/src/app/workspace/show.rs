@@ -150,11 +150,16 @@ impl OccluViewApp {
 
             // Layers belongs to the active document, but its one overlay uses
             // the full shared work area rather than stealing half of a split.
-            if let Some(mut scene) = self.active_context() {
-                scene.workspace_rect = Some(canvas_bounds);
-                scene.input_allowed &= ctx.input(|input| input.focused) && !modal_open;
-                scene.show_layers_overlay(ui, canvas_bounds, &ctx);
-            }
+            // Its own popup must remain interactive; decision dialogs and
+            // window focus gate the controls as well as viewport gestures.
+            let layers_enabled = ctx.input(|input| input.focused) && !self.ui.command_dialog_open();
+            ui.add_enabled_ui(layers_enabled, |ui| {
+                if let Some(mut scene) = self.active_context() {
+                    scene.workspace_rect = Some(canvas_bounds);
+                    scene.input_allowed &= ctx.input(|input| input.focused) && !modal_open;
+                    scene.show_layers_overlay(ui, canvas_bounds, &ctx);
+                }
+            });
 
             self.show_divider(ui, effective, &ctx, modal_open);
             self.finish_layer_drag(&ctx, &input_frame);
