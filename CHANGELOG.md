@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Sculpt welds equal coordinates consistently when one corner uses negative zero.
+
 - OBJ thumbnails reject extreme relative face indices without crashing.
 
 

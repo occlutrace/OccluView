@@ -36,11 +36,7 @@ fn midpoint_f32(a: DVec3, b: DVec3) -> Option<DVec3> {
 }
 
 fn position_bits(p: DVec3) -> (u32, u32, u32) {
-    (
-        (p.x as f32).to_bits(),
-        (p.y as f32).to_bits(),
-        (p.z as f32).to_bits(),
-    )
+    crate::surface_topology::position_key([p.x as f32, p.y as f32, p.z as f32])
 }
 
 impl SculptSession {
@@ -106,7 +102,7 @@ impl SculptSession {
     /// Triangles of the welded edge (a, b) split at `split_vertex` /
     /// `split_group`: rewire in place (winding-preserving, see unit tests),
     /// append the second halves, patch rows. The split point is either a
-    /// brand-new midpoint vertex or a snapped bit-identical existing group.
+    /// brand-new midpoint vertex or a snapped exact-position existing group.
     /// Refuses the whole edge when any child would be born below the
     /// quality floor: a half-split edge is a T-junction crack, so there is
     /// no per-triangle fallback.
@@ -241,9 +237,9 @@ impl SculptSession {
         true
     }
 
-    /// Region-independent T-junction weld: a bit-identical surface vertex
+    /// Region-independent T-junction weld: an exact-position surface vertex
     /// anywhere in the spatial index (not just the path-connected region)
-    /// welds instead of duplicating. Same-bit positions are already one
+    /// welds instead of duplicating. Equal positions are already one
     /// surface point under the session's exact-weld law; minting a twin
     /// would crack under the next dab. Fully masked vertices never weld:
     /// protection gains no new incident faces through the back door.
@@ -272,7 +268,7 @@ impl SculptSession {
     }
 
     /// Split the welded edge (a, b) at its midpoint. Returns the split
-    /// group (new, or a snapped bit-identical existing one).
+    /// group (new, or a snapped exact-position existing one).
     // the edge, its groups, the target list and the plan buffers are one split step.
     #[allow(clippy::too_many_arguments)]
     fn split_welded_edge(
@@ -679,4 +675,22 @@ impl SculptSession {
             self.normal_scope = scope;
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn midpoint_weld_matches_signed_zero_coordinates() {
+        let session = SculptSession::new(
+            vec![-1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, -0.0, 0.0, 0.0, 1.0, 0.0],
+            vec![0, 2, 3, 2, 1, 3],
+        );
+        assert_eq!(
+            session.grid_snapped_group(DVec3::new(-0.0, 0.0, 0.0), 0, 1),
+            Some(2)
+        );
+    }
+
 }

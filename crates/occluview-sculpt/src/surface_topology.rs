@@ -11,6 +11,17 @@
 
 use crate::hash::FxHashMap;
 
+pub(crate) fn position_key(point: [f32; 3]) -> (u32, u32, u32) {
+    let bits = point.map(|coordinate| {
+        if coordinate == 0.0 {
+            0
+        } else {
+            coordinate.to_bits()
+        }
+    });
+    (bits[0], bits[1], bits[2])
+}
+
 #[derive(Clone, Copy, Debug)]
 /// A welded group and its distance from a dab centre.
 pub struct SurfacePoint {
@@ -85,7 +96,7 @@ impl SurfaceTopology {
         let mut vertex_group = vec![0u32; vertex_count];
         let mut group_count = 0u32;
         for (index, point) in verts.as_chunks::<3>().0.iter().enumerate() {
-            let key = (point[0].to_bits(), point[1].to_bits(), point[2].to_bits());
+            let key = position_key(*point);
             let group = *key_to_group.entry(key).or_insert_with(|| {
                 let next = group_count;
                 group_count += 1;
@@ -484,5 +495,29 @@ impl SurfaceTopology {
                 .filter_map(|(group, included)| included.then_some(group as u32))
                 .collect(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn signed_zero_corners_share_welded_adjacency_and_protection_rings() {
+        let verts = [
+            -0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, -0.0, 0.0, 0.0, 1.0, -0.0, -1.0,
+            0.0, 0.0,
+        ];
+        let topology = SurfaceTopology::new(&verts, &[0, 1, 2, 3, 4, 5]);
+        assert_eq!(topology.group_count(), 4);
+        assert_eq!(topology.group_of(0), topology.group_of(3));
+        assert_eq!(topology.group_of(2), topology.group_of(4));
+        assert_eq!(topology.members(topology.group_of(0)), &[0, 3]);
+        assert_eq!(topology.incident_triangles(topology.group_of(0)), &[0, 1]);
+        assert_eq!(
+            topology.vertex_ring_groups(&[0], 0),
+            topology.vertex_ring_groups(&[3], 0),
+        );
+        assert_eq!(topology.vertex_ring_groups(&[0], 1), Some(vec![0, 1, 2, 3]));
     }
 }
