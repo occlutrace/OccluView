@@ -10,12 +10,12 @@
 
 use crate::sculpt::sculpt_tool::SculptTip;
 use glam::DVec3;
-#[cfg(test)]
-use occluview_sculpt::Dab;
-use occluview_sculpt::{BrushMode as KernelMode, SculptRayConstraints, SculptSession, TipStamp};
 use occluview_core::Vertex;
 use occluview_edit::{EditVertex, MeshEditBuffers, MeshEditError, MeshTopology};
 use occluview_render::{SculptFaceUpdate, SculptTopologyDelta, SculptVertexUpdate};
+#[cfg(test)]
+use occluview_sculpt::Dab;
+use occluview_sculpt::{BrushMode as KernelMode, SculptRayConstraints, SculptSession, TipStamp};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Which sculpting operation a dab performs.

@@ -303,10 +303,12 @@ impl OccluViewApp {
             })?;
         match self.workspace.input.request_activation(target) {
             crate::app::workspace::input::ActivationResult::DeferredUntilGestureEnds
-            | crate::app::workspace::input::ActivationResult::IgnoredWhileGestureCaptured => Err(self
-                .ui
-                .locale
-                .tr(crate::i18n::message_id!("workspace-wait-gesture"))),
+            | crate::app::workspace::input::ActivationResult::IgnoredWhileGestureCaptured => {
+                Err(self
+                    .ui
+                    .locale
+                    .tr(crate::i18n::message_id!("workspace-wait-gesture")))
+            }
             crate::app::workspace::input::ActivationResult::Activated
             | crate::app::workspace::input::ActivationResult::Unchanged => Ok(()),
         }
@@ -348,7 +350,10 @@ fn history_error_text(error: HistoryError, locale: &crate::i18n::LocaleManager) 
         }
     }
 }
-pub(super) fn navigation_error_text(error: NavigationError, locale: &crate::i18n::LocaleManager) -> String {
+pub(super) fn navigation_error_text(
+    error: NavigationError,
+    locale: &crate::i18n::LocaleManager,
+) -> String {
     match error {
         NavigationError::EditSessionActive(_) => {
             locale.tr(crate::i18n::message_id!("workspace-wait-edit"))

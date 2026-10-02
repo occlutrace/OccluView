@@ -337,11 +337,9 @@ impl SceneContext<'_> {
                 &[("len", length.as_str())],
             ),
             Some(foot) if foot.angle_deg.is_some() => {
-                let angle = foot
-                    .angle_deg
-                    .map_or_else(String::new, |degrees| {
-                        measure_tool::format_angle(degrees, number_format)
-                    });
+                let angle = foot.angle_deg.map_or_else(String::new, |degrees| {
+                    measure_tool::format_angle(degrees, number_format)
+                });
                 self.ui.locale.tr_with(
                     crate::i18n::message_id!("measure-to-line"),
                     &[("len", length.as_str()), ("angle", angle.as_str())],

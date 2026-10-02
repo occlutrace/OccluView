@@ -4,9 +4,9 @@
 // module-level allow is the crate gate's only relaxation here.
 #![allow(unsafe_code)]
 
-use crate::APP_USER_MODEL_ID;
 use crate::desktop::jump_list_model::JumpListItem;
 use crate::desktop::recent_files::RecentFiles;
+use crate::APP_USER_MODEL_ID;
 use std::mem::ManuallyDrop;
 use std::path::Path;
 use windows::core::{Interface, BSTR, HSTRING};

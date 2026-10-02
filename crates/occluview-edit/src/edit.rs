@@ -1,10 +1,10 @@
+use occluview_core::{CoreError, Mesh, MeshKind, MeshTexture, Vertex};
 use occluview_mesh_edit::{
     component_at_triangle, crop_to_selected_faces, delete_selected_faces, fill_holes,
     fill_selected_holes, invert_orientation, repair_mesh, selected_connected_components,
     EditVertex, FaceSelection, MeshEditBuffers, MeshEditError, MeshEditOptions, MeshEditReport,
     MeshEditResult as RawMeshEditResult, MeshTopology, RepairOptions, RepairReport,
 };
-use occluview_core::{CoreError, Mesh, MeshKind, MeshTexture, Vertex};
 
 /// Result of applying a mesh edit to a core [`Mesh`].
 #[derive(Clone, Debug)]

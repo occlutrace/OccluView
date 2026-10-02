@@ -18,9 +18,9 @@ mod budget;
 mod checkpoint;
 mod edit;
 mod journal;
-mod transfer;
 #[cfg(test)]
 mod tests;
+mod transfer;
 
 use self::journal::{EditCheckpoint, HistoryEntry, PendingEntry, SceneTimeline};
 

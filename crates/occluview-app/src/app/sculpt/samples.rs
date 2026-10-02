@@ -2,7 +2,9 @@
 
 use super::super::{egui, mesh_editor_overlay, SceneContext};
 use super::geometry::sculpt_target;
-use super::input::{pointer_changed, SculptRaySample, SculptSampleAdmission, SculptTargetRaySample};
+use super::input::{
+    pointer_changed, SculptRaySample, SculptSampleAdmission, SculptTargetRaySample,
+};
 use super::stroke::{local_brush_ray_step, LocalBrushRayInput};
 use crate::sculpt::sculpt_kernel::BrushRayStep;
 use crate::sculpt::sculpt_tool::{uniform_scene_scale, PendingSculptPress, RetainedSculptSample};

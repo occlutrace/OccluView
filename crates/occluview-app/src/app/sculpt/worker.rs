@@ -208,7 +208,11 @@ impl SceneContext<'_> {
     }
 
     /// Surface a terminal worker failure and revoke the sculpt session.
-    pub(in crate::app) fn fail_sculpt_session(&mut self, failure: &SculptFailure, ctx: &egui::Context) {
+    pub(in crate::app) fn fail_sculpt_session(
+        &mut self,
+        failure: &SculptFailure,
+        ctx: &egui::Context,
+    ) {
         let dialog = sculpt_failure_dialog(&self.ui.locale, failure);
         self.scene_ui.status_message = Some(dialog.summary.clone());
         self.ui.app_error = Some(dialog);

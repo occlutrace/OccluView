@@ -586,8 +586,11 @@ impl SceneContext<'_> {
         match drag {
             MeshSelectionDrag::Rect { .. } => {
                 let rect = drag.rect();
-                ui.painter()
-                    .rect_filled(rect, 3.0, crate::ui::ui_theme::accent().gamma_multiply(0.08));
+                ui.painter().rect_filled(
+                    rect,
+                    3.0,
+                    crate::ui::ui_theme::accent().gamma_multiply(0.08),
+                );
                 ui.painter().rect_stroke(
                     rect,
                     3.0,
