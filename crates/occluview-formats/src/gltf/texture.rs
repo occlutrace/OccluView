@@ -50,12 +50,79 @@ pub(super) fn resolve_material_texture(
         .buffer_views
         .get(bv_idx)
         .ok_or_else(|| malformed("image bufferView out of range"))?;
+    let buffer = doc
+        .buffers
+        .get(bv.buffer)
+        .ok_or_else(|| malformed("image buffer out of range"))?;
+    if bv.buffer != 0 || buffer.uri.is_some() {
+        return Err(malformed(
+            "external image buffers are unsupported (GLB only)",
+        ));
+    }
     let offset = bv.byte_offset.unwrap_or(0);
-    let end = offset + bv.byte_length as usize;
+    let end = offset
+        .checked_add(bv.byte_length as usize)
+        .ok_or_else(|| malformed("image bufferView byte range overflows"))?;
+    if end > buffer.byte_length as usize {
+        return Err(malformed(
+            "image bufferView extends past its declared buffer",
+        ));
+    }
     let img_bytes = bin_chunk.get(offset..end).ok_or(FormatError::Truncated {
         format: "glTF",
         expected: end,
         got: bin_chunk.len(),
     })?;
     decode_embedded_raster(img_bytes, "glTF").map(Some)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn image_document() -> (json::GltfDoc, Vec<u8>) {
+        let png = crate::glb_writer::encode_png(&MeshTexture::new(1, 1, vec![255, 0, 0, 255]))
+            .expect("PNG");
+        let doc = serde_json::from_value(serde_json::json!({
+            "asset": {"version": "2.0"},
+            "materials": [{"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}],
+            "textures": [{"source": 0}],
+            "images": [{"bufferView": 0, "mimeType": "image/png"}],
+            "bufferViews": [{"buffer": 0, "byteLength": png.len()}],
+            "buffers": [{"byteLength": png.len()}]
+        }))
+        .expect("document");
+        (doc, png)
+    }
+
+    #[test]
+    fn image_view_rejects_offset_overflow() {
+        let (mut doc, png) = image_document();
+        doc.buffer_views[0].byte_offset = Some(usize::MAX);
+        doc.buffer_views[0].byte_length = 1;
+        assert!(resolve_material_texture(&doc, 0, &png).is_err());
+    }
+
+    #[test]
+    fn image_view_rejects_the_wrong_buffer() {
+        let (mut doc, png) = image_document();
+        doc.buffer_views[0].buffer = 1;
+        assert!(resolve_material_texture(&doc, 0, &png).is_err());
+    }
+
+    #[test]
+    fn image_view_cannot_read_past_its_declared_buffer() {
+        let (mut doc, png) = image_document();
+        doc.buffers[0].byte_length = 1;
+        assert!(resolve_material_texture(&doc, 0, &png).is_err());
+    }
+
+    #[test]
+    fn image_view_reads_a_valid_embedded_image() {
+        let (doc, png) = image_document();
+        let texture = resolve_material_texture(&doc, 0, &png)
+            .expect("valid view")
+            .expect("image");
+        assert_eq!(texture.rgba, [255, 0, 0, 255]);
+    }
 }
