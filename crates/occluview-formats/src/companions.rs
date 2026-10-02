@@ -177,10 +177,9 @@ fn directives(bytes: &[u8], keyword: &str) -> Vec<String> {
 
 /// Drop the options that may precede a `map_Kd` file name.
 ///
-/// The MTL specification gives each option a fixed number of arguments, and a
-/// file name is whatever is left — which is how a name containing spaces
-/// survives. An unknown option is dropped on its own: guessing how many
-/// arguments it takes would eat the file name.
+/// Vector options take one to three numeric components; other known options
+/// have fixed arity. The remaining tokens form the filename, including spaces.
+/// An unknown option is dropped on its own.
 fn strip_options(tokens: &mut Vec<&str>) {
     loop {
         let Some(option) = tokens.first().copied() else {
@@ -190,10 +189,21 @@ fn strip_options(tokens: &mut Vec<&str>) {
             return;
         }
         tokens.remove(0);
+        if matches!(option, "-s" | "-o" | "-t") {
+            for _ in 0..3 {
+                if !tokens
+                    .first()
+                    .is_some_and(|value| value.parse::<f64>().is_ok())
+                {
+                    break;
+                }
+                tokens.remove(0);
+            }
+            continue;
+        }
         let arguments = match option {
-            "-s" | "-o" | "-t" => 3,
             "-mm" => 2,
-            "-bm" | "-clamp" | "-blendu" | "-blendv" | "-texres" | "-imfchan" | "-type"
+            "-bm" | "-cc" | "-clamp" | "-blendu" | "-blendv" | "-texres" | "-imfchan" | "-type"
             | "-boost" => 1,
             _ => 0,
         };
@@ -254,6 +264,21 @@ fn same_stem_image(path: &Path, directory: &Path) -> Option<PathBuf> {
 mod tests {
     use super::*;
     use occluview_core::{MeshTexture, Vertex};
+
+    #[test]
+    fn material_options_keep_optional_components_out_of_the_filename() {
+        for (line, expected) in [
+            ("map_Kd -s 2 atlas.png", "atlas.png"),
+            (
+                "map_Kd -o -1 0 textures/atlas file.png",
+                "textures/atlas file.png",
+            ),
+            ("map_Kd -t 0 -clamp on atlas.png", "atlas.png"),
+            ("map_Kd -cc on atlas.png", "atlas.png"),
+        ] {
+            assert_eq!(directives(line.as_bytes(), "map_Kd"), [expected], "{line}");
+        }
+    }
 
     #[test]
     fn a_bom_prefixed_obj_loads_its_named_companion() {

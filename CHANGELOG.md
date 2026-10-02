@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- OBJ companion textures retain filenames after MTL options with optional vector components.
+
 - Mesh imports reject non-finite coordinates and GLB transform overflow before constructing geometry.
 
 - Sculpt rejects invalid remesh vertex indices before changing any display geometry.
