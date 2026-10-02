@@ -80,7 +80,9 @@ pub(crate) fn read_admitted(
     })?;
 
     // Accept any-case `solid` prefix; reject otherwise.
-    let starts_solid = text.len() >= 5 && text[..5].eq_ignore_ascii_case("solid");
+    let starts_solid = bytes
+        .get(..5)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"solid"));
     if !starts_solid {
         return Err(FormatError::BadSignature {
             format: "STL (ascii)",
@@ -275,6 +277,12 @@ endsolid example\n";
         let mut bytes = SINGLE_FACET.as_bytes().to_vec();
         bytes[20] = 0xFF;
         assert!(read(&bytes).is_err());
+    }
+
+    #[test]
+    fn rejects_a_multibyte_character_in_the_signature_without_panicking() {
+        let error = read("soliя\n".as_bytes()).expect_err("invalid STL signature");
+        assert!(matches!(error, FormatError::BadSignature { .. }));
     }
 
     #[test]

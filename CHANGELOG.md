@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Malformed Unicode STL signatures return an error instead of crashing the reader.
+
 - Viewport projections follow pane and window resizing even when the render texture keeps its previous size.
 
 - Blocked viewport presses report focus, dialogs, and the scene input owner in debug logs.
