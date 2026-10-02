@@ -164,7 +164,7 @@ impl PreparedScene {
         else {
             return false;
         };
-        if u32::try_from(vertices.len()).is_ok_and(|count| count < entry.mesh.vertex_count) {
+        if u32::try_from(vertices.len()) != Ok(entry.mesh.vertex_count) {
             return false;
         }
         renderer
@@ -209,7 +209,7 @@ impl PreparedScene {
         else {
             return false;
         };
-        if u32::try_from(vertices.len()).is_ok_and(|count| count < entry.mesh.vertex_count) {
+        if u32::try_from(vertices.len()) != Ok(entry.mesh.vertex_count) {
             return false;
         }
         let queue = renderer.queue();

@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- GPU vertex updates reject changed vertex counts before uploading data.
+
 - Close Holes stays disabled until faces are selected, matching the repair operation and its tooltip.
 
 - Edit is disabled when no visible triangle mesh can be opened.
