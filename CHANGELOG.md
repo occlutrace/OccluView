@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Mesh Editor and layer menus explain whole-selection, component-limit and undo-capacity refusals and retain Close Holes reports.
+
 - Preserve GLB normals and mirrored winding at extreme node scales.
 
 - Large mesh streams with different interior content no longer share a cached thumbnail.

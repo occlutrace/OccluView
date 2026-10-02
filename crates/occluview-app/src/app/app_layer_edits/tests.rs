@@ -172,7 +172,7 @@ fn apply_batch(
 ) -> Option<LayerContextApply> {
     let result = apply_visible_selected_face_mesh_edit_action(scene, edit_mode, action);
     assert!(result.is_ok(), "visible batch edit failed: {result:?}");
-    result.ok()
+    result.ok().map(|outcome| outcome.apply)
 }
 
 #[test]

@@ -8,8 +8,49 @@ use super::structural::{
 };
 use super::whole_mesh::{close_holes_in_mesh, edit_command_for_layer_action};
 use occluview_core::{CoreError, Mesh, SceneMeshId};
-use occluview_mesh_edit::{selected_connected_components_in_mesh, FaceSelection};
+use occluview_mesh_edit::{selected_connected_components_in_mesh, FaceSelection, MeshEditReport};
 use std::sync::Arc;
+
+#[derive(Debug)]
+pub(crate) struct SelectionBatchOutcome {
+    pub(crate) apply: LayerContextApply,
+    pub(crate) refusal: Option<SelectionBatchRefusal>,
+    pub(crate) holes: Vec<(SceneMeshId, MeshEditReport)>,
+    pub(crate) changed_layers: Vec<SceneMeshId>,
+}
+
+#[derive(Debug)]
+pub(crate) enum SelectionBatchRefusal {
+    NoSelection,
+    StaleSelection,
+    WholeSelection(SceneMeshId),
+    TooManyComponents(SceneMeshId, usize),
+    HistoryBudget,
+    Busy,
+}
+
+impl SelectionBatchOutcome {
+    fn refused(reason: SelectionBatchRefusal) -> Self {
+        Self {
+            apply: LayerContextApply::default(),
+            refusal: Some(reason),
+            holes: Vec::new(),
+            changed_layers: Vec::new(),
+        }
+    }
+    fn completed(
+        apply: LayerContextApply,
+        holes: Vec<(SceneMeshId, MeshEditReport)>,
+        changed_layers: Vec<SceneMeshId>,
+    ) -> Self {
+        Self {
+            apply,
+            refusal: None,
+            holes,
+            changed_layers,
+        }
+    }
+}
 
 enum PlannedEdit {
     Replace {
@@ -28,6 +69,16 @@ enum PlannedEdit {
     },
 }
 
+impl PlannedEdit {
+    fn layer_id(&self) -> SceneMeshId {
+        match self {
+            Self::Replace { layer_id, .. }
+            | Self::Cut { layer_id, .. }
+            | Self::Separate { layer_id, .. } => *layer_id,
+        }
+    }
+}
+
 /// Apply one selection operation to every visible, selected layer.
 ///
 /// The canonical plan is read from the controller in scene order. All target
@@ -40,7 +91,7 @@ pub(crate) fn apply_visible_selected_face_mesh_edit_action(
     scene: &mut Scene,
     edit_mode: &mut EditModeController,
     action: LayerContextAction,
-) -> Result<LayerContextApply, CoreError> {
+) -> Result<SelectionBatchOutcome, CoreError> {
     apply_visible_selected_face_mesh_edit_action_with_limit(scene, edit_mode, action, None)
 }
 
@@ -53,12 +104,17 @@ pub(crate) fn apply_visible_selected_face_mesh_edit_action_with_limit(
     edit_mode: &mut EditModeController,
     action: LayerContextAction,
     close_holes_limit_mm: Option<f32>,
-) -> Result<LayerContextApply, CoreError> {
+) -> Result<SelectionBatchOutcome, CoreError> {
+    if edit_mode.is_busy() {
+        return Ok(SelectionBatchOutcome::refused(SelectionBatchRefusal::Busy));
+    }
     if action == LayerContextAction::CloseHoles {
         return apply_visible_close_holes(scene, edit_mode, close_holes_limit_mm);
     }
     let Some(command) = edit_command_for_layer_action(action) else {
-        return Ok(LayerContextApply::default());
+        return Ok(SelectionBatchOutcome::refused(
+            SelectionBatchRefusal::StaleSelection,
+        ));
     };
     if !matches!(
         action,
@@ -67,12 +123,16 @@ pub(crate) fn apply_visible_selected_face_mesh_edit_action_with_limit(
             | LayerContextAction::CutSelectionToNewLayer
             | LayerContextAction::SeparateSelectedComponents
     ) {
-        return Ok(LayerContextApply::default());
+        return Ok(SelectionBatchOutcome::refused(
+            SelectionBatchRefusal::StaleSelection,
+        ));
     }
 
     let plan = edit_mode.visible_selection_plan(scene);
     let Some(focus_layer_id) = plan.first().map(|selection| selection.layer_id) else {
-        return Ok(LayerContextApply::default());
+        return Ok(SelectionBatchOutcome::refused(
+            SelectionBatchRefusal::NoSelection,
+        ));
     };
     let mut planned = Vec::with_capacity(plan.len());
     for selection in &plan {
@@ -82,12 +142,19 @@ pub(crate) fn apply_visible_selected_face_mesh_edit_action_with_limit(
                 && entry.mesh.topology_id() == selection.topology_id
                 && entry.mesh.triangle_count() == selection.selection.len()
         }) else {
-            return Ok(LayerContextApply::default());
+            return Ok(SelectionBatchOutcome::refused(
+                SelectionBatchRefusal::StaleSelection,
+            ));
         };
-        if selection.selection.selected_count() == 0
-            || selection.selection.selected_count() == source.mesh.triangle_count()
-        {
-            return Ok(LayerContextApply::default());
+        if selection.selection.selected_count() == 0 {
+            return Ok(SelectionBatchOutcome::refused(
+                SelectionBatchRefusal::NoSelection,
+            ));
+        }
+        if selection.selection.selected_count() == source.mesh.triangle_count() {
+            return Ok(SelectionBatchOutcome::refused(
+                SelectionBatchRefusal::WholeSelection(source.id()),
+            ));
         }
 
         planned.push(match action {
@@ -110,7 +177,9 @@ pub(crate) fn apply_visible_selected_face_mesh_edit_action_with_limit(
                 let components =
                     selected_connected_components_in_mesh(&source.mesh, &selection.selection)?;
                 if components.len() > MAX_SEPARATE_COMPONENTS {
-                    return Ok(LayerContextApply::default());
+                    return Ok(SelectionBatchOutcome::refused(
+                        SelectionBatchRefusal::TooManyComponents(source.id(), components.len()),
+                    ));
                 }
                 let split = split_selection_into_meshes(&source.mesh, &components)?;
                 PlannedEdit::Separate {
@@ -119,63 +188,86 @@ pub(crate) fn apply_visible_selected_face_mesh_edit_action_with_limit(
                     components: split.components,
                 }
             }
-            _ => return Ok(LayerContextApply::default()),
+            _ => {
+                return Ok(SelectionBatchOutcome::refused(
+                    SelectionBatchRefusal::StaleSelection,
+                ))
+            }
         });
     }
 
     let Some(token) = edit_mode.begin_scene_edit(scene, focus_layer_id, command) else {
-        return Ok(LayerContextApply::default());
+        return Ok(SelectionBatchOutcome::refused(SelectionBatchRefusal::Busy));
     };
     if !edit_mode.last_edit_undoable() {
         let _ = edit_mode.finish_layer_edit_noop(token);
-        return Ok(LayerContextApply::default());
+        return Ok(SelectionBatchOutcome::refused(
+            SelectionBatchRefusal::HistoryBudget,
+        ));
     }
 
+    let changed_layers = planned.iter().map(PlannedEdit::layer_id).collect();
     let mut draft = scene.clone();
     for edit in planned {
         if !apply_planned_edit(&mut draft, edit) {
             // This can only indicate an internal stale-plan mismatch. The
             // caller's scene is still untouched, so discard the token cleanly.
             let _ = edit_mode.finish_layer_edit_noop(token);
-            return Ok(LayerContextApply::default());
+            return Ok(SelectionBatchOutcome::refused(
+                SelectionBatchRefusal::StaleSelection,
+            ));
         }
     }
 
     let _ = edit_mode.finish_scene_edit_success(token, &draft);
     *scene = draft;
-    Ok(structural_scene_apply())
+    Ok(SelectionBatchOutcome::completed(
+        structural_scene_apply(),
+        Vec::new(),
+        changed_layers,
+    ))
 }
 
 fn apply_visible_close_holes(
     scene: &mut Scene,
     edit_mode: &mut EditModeController,
     close_holes_limit_mm: Option<f32>,
-) -> Result<LayerContextApply, CoreError> {
+) -> Result<SelectionBatchOutcome, CoreError> {
     let selection_plan = edit_mode.visible_selection_plan(scene);
     let targets = selection_plan
         .into_iter()
         .map(|selection| (selection.layer_id, selection.selection))
         .collect::<Vec<(SceneMeshId, FaceSelection)>>();
     let Some(focus_layer_id) = targets.first().map(|(layer_id, _)| *layer_id) else {
-        return Ok(LayerContextApply::default());
+        return Ok(SelectionBatchOutcome::refused(
+            SelectionBatchRefusal::NoSelection,
+        ));
     };
 
     let mut planned = Vec::with_capacity(targets.len());
+    let mut holes = Vec::with_capacity(targets.len());
     for (layer_id, selection) in targets {
         let Some(source) = scene
             .meshes()
             .iter()
             .find(|entry| entry.id() == layer_id && entry.visible)
         else {
-            return Ok(LayerContextApply::default());
+            return Ok(SelectionBatchOutcome::refused(
+                SelectionBatchRefusal::StaleSelection,
+            ));
         };
         if source.mesh.is_point_cloud() || source.mesh.triangle_count() == 0 {
-            return Ok(LayerContextApply::default());
+            return Ok(SelectionBatchOutcome::refused(
+                SelectionBatchRefusal::StaleSelection,
+            ));
         }
         if selection.len() != source.mesh.triangle_count() {
-            return Ok(LayerContextApply::default());
+            return Ok(SelectionBatchOutcome::refused(
+                SelectionBatchRefusal::StaleSelection,
+            ));
         }
         let repaired = close_holes_in_mesh(&source.mesh, &selection, close_holes_limit_mm)?;
+        holes.push((layer_id, repaired.report.clone()));
         if repaired.report.filled_holes > 0 {
             planned.push(PlannedEdit::Replace {
                 layer_id,
@@ -184,7 +276,11 @@ fn apply_visible_close_holes(
         }
     }
     if planned.is_empty() {
-        return Ok(LayerContextApply::default());
+        return Ok(SelectionBatchOutcome::completed(
+            LayerContextApply::default(),
+            holes,
+            Vec::new(),
+        ));
     }
 
     let Some(token) = edit_mode.begin_scene_edit(
@@ -192,23 +288,32 @@ fn apply_visible_close_holes(
         focus_layer_id,
         super::super::EditModeCommand::CloseHoles,
     ) else {
-        return Ok(LayerContextApply::default());
+        return Ok(SelectionBatchOutcome::refused(SelectionBatchRefusal::Busy));
     };
     if !edit_mode.last_edit_undoable() {
         let _ = edit_mode.finish_layer_edit_noop(token);
-        return Ok(LayerContextApply::default());
+        return Ok(SelectionBatchOutcome::refused(
+            SelectionBatchRefusal::HistoryBudget,
+        ));
     }
 
+    let changed_layers = planned.iter().map(PlannedEdit::layer_id).collect();
     let mut draft = scene.clone();
     for edit in planned {
         if !apply_planned_edit(&mut draft, edit) {
             let _ = edit_mode.finish_layer_edit_noop(token);
-            return Ok(LayerContextApply::default());
+            return Ok(SelectionBatchOutcome::refused(
+                SelectionBatchRefusal::StaleSelection,
+            ));
         }
     }
     let _ = edit_mode.finish_scene_edit_success(token, &draft);
     *scene = draft;
-    Ok(structural_scene_apply())
+    Ok(SelectionBatchOutcome::completed(
+        structural_scene_apply(),
+        holes,
+        changed_layers,
+    ))
 }
 
 fn apply_planned_edit(scene: &mut Scene, edit: PlannedEdit) -> bool {

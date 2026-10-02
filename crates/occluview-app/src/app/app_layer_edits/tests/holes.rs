@@ -125,7 +125,10 @@ fn mesh_editor_close_holes_requires_face_selection() {
     assert!(result.is_ok(), "mesh-editor close holes failed: {result:?}");
     let Ok(apply) = result else { return };
 
-    assert!(!apply.scene_changed, "empty selection must be a no-op");
+    assert!(
+        !apply.apply.scene_changed,
+        "empty selection must be a no-op"
+    );
     assert_eq!(
         scene.meshes()[0].mesh.indices(),
         before.meshes()[0].mesh.indices()
@@ -171,7 +174,7 @@ fn mesh_editor_close_holes_scopes_to_selected_visible_layers() {
     assert!(result.is_ok(), "mesh-editor close holes failed: {result:?}");
     let Ok(apply) = result else { return };
 
-    assert!(apply.scene_changed);
+    assert!(apply.apply.scene_changed);
     assert!(scene.meshes()[0].mesh.triangle_count() > visible_before);
     assert_eq!(boundary_edge_count(scene.meshes()[0].mesh.indices()), 8);
     assert_eq!(format!("{:?}", scene.meshes()[1]), hidden_before);

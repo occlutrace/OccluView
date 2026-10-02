@@ -190,7 +190,7 @@ impl SceneContext<'_> {
             layer_action,
             close_holes_limit_mm,
         ) {
-            Ok(apply) if apply.scene_changed => {
+            Ok(outcome) if outcome.apply.scene_changed => {
                 let spawned = draft
                     .meshes()
                     .iter()
@@ -198,27 +198,29 @@ impl SceneContext<'_> {
                     .filter(|id| !ids_before.contains(id))
                     .collect::<Vec<_>>();
                 self.commit_scene_draft(Some(scene.as_ref()), draft, ctx);
-                for layer_id in target_layers.iter().chain(&spawned) {
+                for layer_id in outcome.changed_layers.iter().chain(&spawned) {
                     self.document.mark_mesh_edits_unsaved(*layer_id);
                 }
-                self.scene_ui.status_message = Some(self.ui.locale.tr_plural(
-                    crate::i18n::message_id!("batchedit-status"),
-                    &[(
-                        "label",
-                        &super::super::app_layer_edits::whole_mesh::batch_action_label(
-                            layer_action,
-                            &self.ui.locale,
-                        ),
-                    )],
-                    &[("n", target_layers.len())],
-                ));
+                self.scene_ui.status_message =
+                    Some(super::super::app_layer_edits::selection_batch_status(
+                        &outcome,
+                        scene.as_ref(),
+                        &self.document.current_paths,
+                        layer_action,
+                        close_holes_limit_mm,
+                        &self.ui.locale,
+                    ));
             }
-            Ok(_) => {
-                self.scene_ui.status_message = Some(
-                    self.ui
-                        .locale
-                        .tr(crate::i18n::message_id!("edit-no-changes-hidden")),
-                );
+            Ok(outcome) => {
+                self.scene_ui.status_message =
+                    Some(super::super::app_layer_edits::selection_batch_status(
+                        &outcome,
+                        scene.as_ref(),
+                        &self.document.current_paths,
+                        layer_action,
+                        close_holes_limit_mm,
+                        &self.ui.locale,
+                    ));
                 ctx.request_repaint();
             }
             Err(error) => {
@@ -1032,6 +1034,80 @@ mod tests {
                 .iter()
                 .all(|entry| entry.mesh.triangle_count() == 1));
             assert_eq!(context.document.unsaved_edit_layer_ids, edited_ids);
+        }
+    }
+    #[test]
+    fn whole_selection_refusal_is_visible_from_panel_and_menu() {
+        for action in [
+            LayerContextAction::DeleteSelectedFaces,
+            LayerContextAction::CropToSelectedFaces,
+            LayerContextAction::CutSelectionToNewLayer,
+            LayerContextAction::SeparateSelectedComponents,
+        ] {
+            for from_menu in [false, true] {
+                let ctx = egui::Context::default();
+                let (mut app, _) = marked_app(&ctx);
+                let Some(mut context) = app.active_context() else {
+                    panic!("active scene")
+                };
+                let Some(original) = context.document.scene.clone() else {
+                    panic!("scene")
+                };
+                assert!(context
+                    .document
+                    .edit_mode
+                    .select_all_visible_selections(&original));
+                let labels = original
+                    .meshes()
+                    .iter()
+                    .enumerate()
+                    .map(|(index, entry)| {
+                        crate::layers_overlay::layer_label(&[], entry, index, &context.ui.locale)
+                    })
+                    .collect::<Vec<_>>();
+                if from_menu {
+                    let mut draft = original.as_ref().clone();
+                    let request = crate::layer_actions::LayerContextRequest {
+                        index: 0,
+                        layer_id: original.meshes()[0].id(),
+                        action,
+                    };
+                    let apply = crate::app::app_layer_edits::apply_layer_context_action_with_status(
+                        &mut context,
+                        &mut draft,
+                        &[],
+                        request,
+                    );
+                    assert!(!apply.scene_changed);
+                } else {
+                    context.request_edit_session_action(action, &ctx);
+                }
+                let key = if action == LayerContextAction::CropToSelectedFaces {
+                    crate::i18n::message_id!("select-covers-all")
+                } else {
+                    crate::i18n::message_id!("select-covers-remove")
+                };
+                assert_eq!(
+                    context.scene_ui.status_message.as_deref(),
+                    Some(
+                        context
+                            .ui
+                            .locale
+                            .tr_with(key, &[("layer", &labels[0])])
+                            .as_str()
+                    )
+                );
+                assert_eq!(context.document.edit_mode.undo_len(), 0);
+                assert!(context.document.unsaved_edit_layer_ids.is_empty());
+                assert_eq!(
+                    context
+                        .document
+                        .scene
+                        .as_ref()
+                        .map(|scene| scene.meshes().len()),
+                    Some(2)
+                );
+            }
         }
     }
 }

@@ -270,7 +270,7 @@ fn close_holes_aware_status(
 /// happens (some rims close while others are skipped), skips name the mm budget
 /// so the operator knows why a rim stayed open, and it must not claim "no holes"
 /// when loops were found but refused.
-fn close_holes_status(
+pub(super) fn close_holes_status(
     layer_label: &str,
     report: Option<&MeshEditReport>,
     close_holes_limit_mm: Option<f32>,

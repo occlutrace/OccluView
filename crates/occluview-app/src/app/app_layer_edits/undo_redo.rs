@@ -280,7 +280,7 @@ mod tests {
             ) else {
                 panic!("selection edit");
             };
-            assert!(apply.scene_changed);
+            assert!(apply.apply.scene_changed);
             let edited_ids = scene
                 .meshes()
                 .iter()

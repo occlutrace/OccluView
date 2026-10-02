@@ -5,7 +5,10 @@ use super::super::{
     AppErrorAction, AppErrorDialog, EditModeController, LayerContextAction, LayerContextApply,
     LayerContextRequest, PathBuf, Scene, SceneContext,
 };
-use super::selection_batch::apply_visible_selected_face_mesh_edit_action_with_limit;
+use super::selection_batch::{
+    apply_visible_selected_face_mesh_edit_action_with_limit, SelectionBatchOutcome,
+    SelectionBatchRefusal,
+};
 use super::structural::{
     apply_cut_selection_to_new_layer, apply_separate_selected_components, structural_scene_apply,
     MAX_SEPARATE_COMPONENTS,
@@ -19,6 +22,74 @@ use occluview_mesh_edit::{
     selected_connected_components_in_mesh, MeshEditOptions,
 };
 use std::sync::Arc;
+
+pub(crate) fn selection_batch_status(
+    outcome: &SelectionBatchOutcome,
+    scene: &Scene,
+    paths: &[PathBuf],
+    action: LayerContextAction,
+    limit: Option<f32>,
+    locale: &crate::i18n::LocaleManager,
+) -> String {
+    let label = |id| {
+        scene
+            .meshes()
+            .iter()
+            .enumerate()
+            .find(|(_, layer)| layer.id() == id)
+            .map_or_else(
+                || locale.tr(message_id!("batch-edited")),
+                |(index, layer)| crate::layers_overlay::layer_label(paths, layer, index, locale),
+            )
+    };
+    if let Some(reason) = &outcome.refusal {
+        return match reason {
+            SelectionBatchRefusal::WholeSelection(id) => locale.tr_with(
+                if action == LayerContextAction::CropToSelectedFaces {
+                    message_id!("select-covers-all")
+                } else {
+                    message_id!("select-covers-remove")
+                },
+                &[("layer", &label(*id))],
+            ),
+            SelectionBatchRefusal::TooManyComponents(id, parts) => locale.tr_with(
+                message_id!("select-splits"),
+                &[("layer", &label(*id)), ("parts", &parts.to_string())],
+            ),
+            SelectionBatchRefusal::HistoryBudget => {
+                locale.tr(message_id!("workspace-history-budget"))
+            }
+            SelectionBatchRefusal::Busy => locale.tr(message_id!("repair-edit-busy")),
+            SelectionBatchRefusal::NoSelection | SelectionBatchRefusal::StaleSelection => {
+                locale.tr(message_id!("edit-select-faces-first"))
+            }
+        };
+    }
+    if !outcome.holes.is_empty() {
+        return outcome
+            .holes
+            .iter()
+            .map(|(id, report)| {
+                super::whole_mesh::close_holes_status(
+                    &label(*id),
+                    Some(report),
+                    limit,
+                    report.filled_holes > 0,
+                    locale,
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+    }
+    locale.tr_plural(
+        message_id!("batchedit-status"),
+        &[(
+            "label",
+            &super::whole_mesh::batch_action_label(action, locale),
+        )],
+        &[("n", outcome.changed_layers.len())],
+    )
+}
 
 pub(super) fn apply_selected_face_mesh_edit_action_with_status(
     app: &mut SceneContext<'_>,
@@ -160,7 +231,6 @@ pub(super) fn apply_visible_selection_action_with_status(
         // Fall back to the single-layer path so the refusal copy stays exact.
         return apply_selected_face_mesh_edit_action_with_status(app, scene, paths, request);
     }
-    let target_layers: Vec<SceneMeshId> = plan.iter().map(|selection| selection.layer_id).collect();
     let ids_before: Vec<SceneMeshId> = scene
         .meshes()
         .iter()
@@ -173,8 +243,9 @@ pub(super) fn apply_visible_selection_action_with_status(
         action,
         None,
     ) {
-        Ok(apply) if apply.scene_changed => {
-            for layer_id in &target_layers {
+        Ok(outcome) if outcome.apply.scene_changed => {
+            let apply = outcome.apply;
+            for layer_id in &outcome.changed_layers {
                 app.document.mark_mesh_edits_unsaved(*layer_id);
             }
             for id in scene
@@ -185,19 +256,25 @@ pub(super) fn apply_visible_selection_action_with_status(
             {
                 app.document.mark_mesh_edits_unsaved(id);
             }
-            app.scene_ui.status_message = Some(app.ui.locale.tr_plural(
-                message_id!("batchedit-status"),
-                &[(
-                    "label",
-                    &super::whole_mesh::batch_action_label(action, &app.ui.locale),
-                )],
-                &[("n", target_layers.len())],
+            app.scene_ui.status_message = Some(selection_batch_status(
+                &outcome,
+                scene,
+                paths,
+                action,
+                None,
+                &app.ui.locale,
             ));
             apply
         }
-        Ok(_) => {
-            app.scene_ui.status_message =
-                Some(app.ui.locale.tr(message_id!("edit-no-changes-hidden")));
+        Ok(outcome) => {
+            app.scene_ui.status_message = Some(selection_batch_status(
+                &outcome,
+                scene,
+                paths,
+                action,
+                None,
+                &app.ui.locale,
+            ));
             LayerContextApply::default()
         }
         Err(error) => {

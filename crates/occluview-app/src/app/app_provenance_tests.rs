@@ -301,7 +301,7 @@ fn cut_one_triangle(app: &mut OccluViewApp, index: usize) {
         LayerContextAction::CutSelectionToNewLayer,
     )
     .expect("cut ok");
-    assert!(apply.scene_changed, "the cut must change the scene");
+    assert!(apply.apply.scene_changed, "the cut must change the scene");
     let ids_before: Vec<_> = scene.meshes().iter().map(SceneMesh::id).collect();
     for id in draft
         .meshes()
@@ -446,7 +446,10 @@ fn run_selection_action(app: &mut OccluViewApp, index: usize, action: LayerConte
         action,
     )
     .expect("action ok");
-    assert!(apply.scene_changed, "the action must change the scene");
+    assert!(
+        apply.apply.scene_changed,
+        "the action must change the scene"
+    );
     let ids_before: Vec<_> = scene.meshes().iter().map(SceneMesh::id).collect();
     for id in draft
         .meshes()
