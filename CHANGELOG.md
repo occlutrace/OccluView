@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Sculpt protection skirts keep one weight per vertex when a shorter surface path is found.
+
 - Sculpt rejects non-finite vertex data in topology history before replay.
 
 - PLY thumbnails refuse files whose ASCII vertex body ends before the declared count.
