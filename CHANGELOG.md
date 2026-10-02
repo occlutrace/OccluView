@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Preserve STL face normals for very small and very large triangles.
+
 - Sculpt accepts small positive uniform layer scales instead of incorrectly treating them as unsupported transforms.
 
 - Sculpt rejects overflowing vertex and group counts in topology history instead of crashing.

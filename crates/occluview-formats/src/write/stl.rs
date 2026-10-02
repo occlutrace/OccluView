@@ -73,6 +73,31 @@ pub(super) fn write_mesh<W: Write>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn writes_unit_normals_at_small_and_large_coordinate_scales() {
+        for scale in [1.0e-6, 1.0e12, f32::MAX] {
+            let mesh = Mesh::new(
+                None,
+                vec![
+                    Vertex::at(glam::Vec3::ZERO),
+                    Vertex::at(glam::Vec3::Y * scale),
+                    Vertex::at(glam::Vec3::Z * scale),
+                ],
+                vec![0, 1, 2],
+            )
+            .expect("a finite triangle");
+            let mut bytes = Vec::new();
+            let mut report = MeshWriteReport::new(MeshWriteFormat::StlBinary, &mesh);
+            write_mesh(&mut bytes, &mesh, MeshWriteOptions::default(), &mut report)
+                .expect("write a finite triangle");
+            let normal: Vec<f32> = bytes[84..96]
+                .chunks_exact(4)
+                .map(|chunk| f32::from_le_bytes(chunk.try_into().expect("a float")))
+                .collect();
+            assert_eq!(normal, [1.0, 0.0, 0.0], "scale {scale}");
+        }
+    }
     use occluview_core::{Mesh, Vertex};
 
     #[test]
