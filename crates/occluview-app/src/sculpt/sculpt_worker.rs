@@ -720,6 +720,8 @@ impl WorkerState {
             return false;
         }
         completions.push_back(completion);
+        #[cfg(test)]
+        self.completion_wake.notify_all();
         true
     }
 
@@ -1259,6 +1261,21 @@ impl SculptWorker {
             return false;
         };
         state.commands.is_empty() && !self.queue.active.load(Ordering::Acquire)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn wait_for_completion(&self, timeout: Duration) -> bool {
+        let Ok(completions) = self.state.completions.lock() else {
+            return false;
+        };
+        let Ok((completions, _)) = self.state.completion_wake.wait_timeout_while(
+            completions,
+            timeout,
+            |completions| completions.is_empty(),
+        ) else {
+            return false;
+        };
+        !completions.is_empty()
     }
 }
 
