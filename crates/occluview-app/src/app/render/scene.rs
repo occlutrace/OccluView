@@ -552,11 +552,11 @@ mod input_tests {
         clippy::cast_possible_truncation,
         reason = "AccessKit exposes f64 bounds for the bounded f32 test viewport."
     )]
-    fn click_control(
+    fn control_point(
         app: &mut OccluViewApp,
         ctx: &egui::Context,
         label: &str,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<egui::Pos2> {
         let output = frame(app, ctx, vec![]);
         let bounds = output
             .platform_output
@@ -569,10 +569,18 @@ mod input_tests {
                 })
             })
             .ok_or_else(|| anyhow::anyhow!("missing control {label}"))?;
-        let point = egui::pos2(
+        Ok(egui::pos2(
             bounds.x0.midpoint(bounds.x1) as f32,
             bounds.y0.midpoint(bounds.y1) as f32,
-        );
+        ))
+    }
+
+    fn click_control(
+        app: &mut OccluViewApp,
+        ctx: &egui::Context,
+        label: &str,
+    ) -> anyhow::Result<()> {
+        let point = control_point(app, ctx, label)?;
         frame(app, ctx, vec![egui::Event::PointerMoved(point)]);
         for pressed in [true, false] {
             frame(
@@ -852,6 +860,230 @@ mod input_tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn edit_entry_releases_competing_tools_and_accepts_a_face_click() -> anyhow::Result<()> {
+        for route in ["toolbar", "key", "layer"] {
+            for previous in ["align", "cut", "measure", "bridge"] {
+                let ctx = egui::Context::default();
+                ctx.enable_accesskit();
+                let mut app = input_app(&ctx);
+                let model = crate::app::app_test_support::named_scene("surface", 0.0);
+                app.active_context()
+                    .ok_or_else(|| anyhow::anyhow!("active scene"))?
+                    .set_scene(model.clone(), true);
+                secondary_menu(&mut app, &ctx, egui::pos2(900.0, 700.0));
+                let viewport = app.workspace.scenes[0]
+                    .presentation
+                    .viewport_context_menu
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("viewport response"))?
+                    .0
+                    .rect;
+                frame(&mut app, &ctx, vec![key(egui::Key::Escape)]);
+                frame(&mut app, &ctx, vec![]);
+                arm_previous_tool(&mut app, &ctx, previous, &model)?;
+                // A retained Sculpt tab must not determine the new session's owner.
+                app.workspace.scenes[0].tools.editor_tab =
+                    crate::mesh_editor::mesh_editor_overlay::EditorTab::Sculpt;
+                match route {
+                    "toolbar" => click_control(&mut app, &ctx, "Edit")?,
+                    "key" => {
+                        frame(&mut app, &ctx, vec![key(egui::Key::E)]);
+                    }
+                    _ => {
+                        let row = control_point(&mut app, &ctx, "surface")?;
+                        secondary_menu(&mut app, &ctx, row);
+                        click_control(&mut app, &ctx, "Mesh Editing")?;
+                    }
+                }
+                let scene = &app.workspace.scenes[0];
+                assert!(
+                    scene.document.edit_mode.has_active_session(),
+                    "{previous} -> {route}"
+                );
+                assert!(
+                    !scene.tools.align.tool.is_armed(),
+                    "{previous} -> {route}: Align owns clicks"
+                );
+                assert!(
+                    !scene.tools.cut_view.is_active(),
+                    "{previous} -> {route}: Cut owns clicks"
+                );
+                assert!(
+                    !scene.tools.measure.is_active(),
+                    "{previous} -> {route}: Measure owns clicks"
+                );
+                assert_eq!(
+                    scene.tools.bridge_split.session().mode(),
+                    crate::bridge_split::BridgeSplitMode::Off
+                );
+                assert_eq!(
+                    scene.tools.editor_tab,
+                    crate::mesh_editor::mesh_editor_overlay::EditorTab::EditMesh
+                );
+                click_control(&mut app, &ctx, "Lasso")?;
+                let camera = app.workspace.scenes[0]
+                    .render
+                    .camera
+                    .ok_or_else(|| anyhow::anyhow!("camera"))?;
+                let (point, _) = crate::viewer::project_world_to_viewport(
+                    &camera,
+                    viewport,
+                    glam::vec3(0.25, 0.25, 0.0),
+                )
+                .ok_or_else(|| anyhow::anyhow!("mesh projection"))?;
+                frame(&mut app, &ctx, vec![egui::Event::PointerMoved(point)]);
+                for pressed in [true, false] {
+                    frame(
+                        &mut app,
+                        &ctx,
+                        vec![pointer_button(point, egui::PointerButton::Primary, pressed)],
+                    );
+                }
+                assert_eq!(
+                    app.workspace.scenes[0]
+                        .document
+                        .edit_mode
+                        .visible_selected_face_count(&model),
+                    1,
+                    "{previous} -> {route}: the primary gesture must select"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn arm_previous_tool(
+        app: &mut OccluViewApp,
+        ctx: &egui::Context,
+        tool: &str,
+        model: &Scene,
+    ) -> anyhow::Result<()> {
+        let mut scene = app
+            .active_context()
+            .ok_or_else(|| anyhow::anyhow!("active scene"))?;
+        match tool {
+            "align" => scene.arm_align_tool(ctx),
+            "cut" => scene.tools.cut_view.enable(),
+            "measure" => scene
+                .tools
+                .measure
+                .arm(crate::measure::measure_tool::MeasureMode::Ruler),
+            _ => scene.begin_bridge_split_from_layer(model, model.meshes()[0].id()),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn entering_a_viewport_tool_finishes_edit_selection() -> anyhow::Result<()> {
+        for ((tool, shortcut), route) in [
+            ("align", egui::Key::A),
+            ("cut", egui::Key::C),
+            ("measure", egui::Key::M),
+        ]
+        .into_iter()
+        .flat_map(|tool| [(tool, "key"), (tool, "toolbar")])
+        {
+            let ctx = egui::Context::default();
+            ctx.enable_accesskit();
+            let mut app = input_app(&ctx);
+            let model = crate::app::app_test_support::named_scene("surface", 0.0);
+            app.active_context()
+                .ok_or_else(|| anyhow::anyhow!("active scene"))?
+                .set_scene(model.clone(), true);
+            frame(&mut app, &ctx, vec![key(egui::Key::E)]);
+            click_control(&mut app, &ctx, "All")?;
+            match route {
+                "key" => {
+                    frame(&mut app, &ctx, vec![key(shortcut)]);
+                }
+                _ => click_control(
+                    &mut app,
+                    &ctx,
+                    match tool {
+                        "align" => "Align",
+                        "cut" => "Cut View",
+                        _ => "Ruler",
+                    },
+                )?,
+            }
+            let scene = &app.workspace.scenes[0];
+            assert!(
+                !scene.document.edit_mode.has_active_session(),
+                "Edit -> {tool}: checkpoint remains open"
+            );
+            assert_eq!(
+                scene.document.edit_mode.visible_selected_face_count(&model),
+                0
+            );
+            assert!(scene.document.mesh_selection_drag.is_none());
+            assert!(scene.tools.sculpt.armed.is_none());
+            assert!(
+                match tool {
+                    "align" => scene.tools.align.tool.is_armed(),
+                    "cut" => scene.tools.cut_view.is_active(),
+                    _ => scene.tools.measure.is_active(),
+                },
+                "Edit -> {tool}: requested tool never entered"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn editing_keeps_alignment_poses_without_restoring_its_display_on_cancel() -> anyhow::Result<()>
+    {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut app = input_app(&ctx);
+        app.active_context()
+            .ok_or_else(|| anyhow::anyhow!("active scene"))?
+            .set_scene(
+                crate::app::app_test_support::named_scene("surface", 0.0),
+                true,
+            );
+        {
+            let mut scene = app
+                .active_context()
+                .ok_or_else(|| anyhow::anyhow!("active scene"))?;
+            scene.arm_align_tool(&ctx);
+            let layer = scene
+                .document
+                .scene
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("mesh"))?
+                .meshes()[0]
+                .id();
+            assert!(scene.attach_overlay_colors(
+                layer,
+                vec![[255, 0, 0, 255]; 3],
+                crate::app::align::display::AlignOverlay::Map
+            ));
+            scene
+                .document
+                .live_scene_mut()
+                .ok_or_else(|| anyhow::anyhow!("live mesh"))?
+                .meshes_mut()[0]
+                .transform = glam::Affine3A::from_translation(glam::vec3(4.0, 5.0, 6.0));
+        }
+        frame(&mut app, &ctx, vec![key(egui::Key::E)]);
+        click_control(&mut app, &ctx, "Cancel")?;
+        let scene = &app.workspace.scenes[0];
+        let model = scene
+            .document
+            .scene
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("mesh"))?;
+        assert_eq!(
+            model.meshes()[0].transform.translation,
+            glam::vec3a(4.0, 5.0, 6.0)
+        );
+        assert!(model.meshes()[0].overlay_kind().is_none());
+        assert!(!scene.tools.align.tool.is_armed());
+        assert!(scene.tools.align.session_poses.is_empty());
+        Ok(())
     }
 
     #[test]

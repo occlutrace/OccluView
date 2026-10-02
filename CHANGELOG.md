@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Switching between Mesh Editing and viewport tools releases the previous tool and preserves completed edits.
+
 - Layer controls pause while a decision dialog is open and resume when it is dismissed.
 
 - The first mesh in a scene gets a camera even when automatic framing is disabled; existing views stay unchanged.
