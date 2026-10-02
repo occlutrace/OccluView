@@ -31,7 +31,7 @@ impl LiveTrace {
 
 /// Native OccluView trace version, independent of the donor's Cut Engine
 /// version. Bump it when this crate's brush or remesh law changes.
-pub const SCULPT_LIVE_KERNEL: u32 = 521;
+pub const SCULPT_LIVE_KERNEL: u32 = 522;
 
 impl Default for LiveTrace {
     fn default() -> Self {
