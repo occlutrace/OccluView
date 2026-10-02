@@ -627,25 +627,39 @@ fn line_measure_job(generation: u64) -> super::AlignJob {
     }
 }
 
-/// Poll until a result arrives, or give up. Bounded so a wedged worker fails the
-/// test instead of hanging the suite. `is_busy` cannot be used here: it is
-/// still false in the moment between submitting and the thread picking the job
-/// up.
-fn harvest_one(worker: &super::AlignWorker) -> Vec<super::AlignCompletion> {
-    for _ in 0..600 {
+fn worker_with_repaint() -> (super::AlignWorker, std::sync::mpsc::Receiver<()>) {
+    let ctx = egui::Context::default();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    ctx.set_request_repaint_callback(move |_| {
+        let _ = sender.send(());
+    });
+    (super::AlignWorker::spawn_with_repaint(ctx), receiver)
+}
+
+/// Wait for the worker's completion repaint, bounded so a wedged worker fails
+/// the test instead of hanging the suite.
+fn harvest_one(
+    worker: &super::AlignWorker,
+    repaint_rx: &std::sync::mpsc::Receiver<()>,
+) -> Vec<super::AlignCompletion> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(6);
+    loop {
         let batch = worker.drain();
         if !batch.is_empty() {
             return batch;
         }
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() || repaint_rx.recv_timeout(remaining).is_err() {
+            return Vec::new();
+        }
     }
-    Vec::new()
 }
 
 /// Poll for a fixed stretch and return everything that turned up. Used where the
 /// expected answer is "nothing", which needs a wait rather than one look.
 fn harvest_quiet(worker: &super::AlignWorker) -> Vec<super::AlignCompletion> {
     let mut out = Vec::new();
+    // Give canceled work time to expose a late result before asserting silence.
     for _ in 0..60 {
         out.extend(worker.drain());
         std::thread::sleep(std::time::Duration::from_millis(10));
@@ -657,10 +671,10 @@ fn harvest_quiet(worker: &super::AlignWorker) -> Vec<super::AlignCompletion> {
 /// worker that simply never returns anything.
 #[test]
 fn a_job_of_the_current_generation_comes_back() {
-    let worker = super::AlignWorker::spawn();
+    let (worker, repaint_rx) = worker_with_repaint();
     let generation = worker.generation();
     worker.submit(observable_measure_job(generation));
-    let completions = harvest_one(&worker);
+    let completions = harvest_one(&worker, &repaint_rx);
     assert_eq!(
         completions.len(),
         1,
@@ -728,21 +742,15 @@ fn a_worker_lock_failure_is_observable() {
     .join();
     worker.queue.wake.notify_one();
 
-    for _ in 0..60 {
-        if worker.has_failed() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    assert!(
-        worker.has_failed(),
-        "a dead Align worker must be visible to the UI"
-    );
     assert!(
         receiver
             .recv_timeout(std::time::Duration::from_secs(1))
             .is_ok(),
         "a terminal worker failure must wake the UI after `busy` clears"
+    );
+    assert!(
+        worker.has_failed(),
+        "a dead Align worker must be visible to the UI"
     );
 }
 
@@ -771,7 +779,7 @@ fn a_result_from_an_abandoned_generation_is_dropped() {
 /// afterwards — abandoning is not shutting down.
 #[test]
 fn abandoning_clears_work_that_had_not_started() {
-    let worker = super::AlignWorker::spawn();
+    let (worker, repaint_rx) = worker_with_repaint();
     let generation = worker.generation();
     for _ in 0..4 {
         worker.submit(measure_job(generation));
@@ -781,7 +789,11 @@ fn abandoning_clears_work_that_had_not_started() {
 
     let fresh = worker.generation();
     worker.submit(measure_job(fresh));
-    assert_eq!(harvest_one(&worker).len(), 1, "the worker still takes work");
+    assert_eq!(
+        harvest_one(&worker, &repaint_rx).len(),
+        1,
+        "the worker still takes work"
+    );
 }
 
 /// Measurements queued back to back collapse. Dragging a slider must not queue a
