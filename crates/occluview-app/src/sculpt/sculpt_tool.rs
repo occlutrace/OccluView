@@ -966,7 +966,7 @@ pub(crate) fn uniform_scene_scale(transform: &Affine3A) -> Option<f32> {
         || !min.is_finite()
         || (max - min) > max * RELATIVE_TOLERANCE
         || !m.determinant().is_finite()
-        || m.determinant() <= f32::EPSILON
+        || m.determinant() <= 0.0
     {
         return None;
     }

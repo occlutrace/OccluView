@@ -96,6 +96,17 @@ fn sculpt_accepts_only_a_positive_orthogonal_uniform_scale() {
 }
 
 #[test]
+fn sculpt_accepts_small_positive_uniform_scales() {
+    for scale in [0.001_f32, 0.01, 0.1] {
+        let transform = Affine3A::from_scale(Vec3::splat(scale));
+        let actual = uniform_scene_scale(&transform)
+            .expect("a finite positive uniform scale has a valid scalar brush metric");
+        assert!((actual - scale).abs() <= f32::EPSILON * scale);
+        assert!(transform.inverse().is_finite());
+    }
+}
+
+#[test]
 fn persistent_session_accepts_a_second_stroke_after_first_commit() {
     let mesh = Mesh::new(
         Some("sculpt-test".to_string()),
