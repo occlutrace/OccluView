@@ -82,7 +82,7 @@ fn locate(path: &Path, kind: LocateKind, bytes: &[u8]) -> Option<PathBuf> {
                 .texture
                 .file
                 .as_deref()
-                .and_then(|name| inside(directory, name))
+                .and_then(|name| inside(directory, directory, name))
         }
         LocateKind::None => None,
     }
@@ -122,7 +122,7 @@ impl LocateKind {
 /// found loses the texture whenever that value is the one without a file.
 fn material_image(directory: &Path, obj: &[u8]) -> Option<PathBuf> {
     for library in directives(obj, "mtllib") {
-        let Some(library) = inside(directory, &library) else {
+        let Some(library) = inside(directory, directory, &library) else {
             continue;
         };
         // The library is read through the same bounded helper as everything
@@ -134,7 +134,7 @@ fn material_image(directory: &Path, obj: &[u8]) -> Option<PathBuf> {
             continue;
         };
         for image in directives(&text, "map_Kd") {
-            if let Some(found) = inside(directory, &image) {
+            if let Some(found) = inside(directory, library.parent()?, &image) {
                 return Some(found);
             }
         }
@@ -216,17 +216,17 @@ fn strip_options(tokens: &mut Vec<&str>) {
     }
 }
 
-/// Resolve a name the file mentions against the folder the file is in.
+/// Resolve a name against its source folder, confined to the mesh folder.
 ///
 /// A name that climbs out of that folder is refused. The mesh came from
 /// somewhere — a lab partner, a download — and a line inside it must not be
 /// able to read an arbitrary file from the operator's disk, whatever the
 /// program that wrote it intended.
-fn inside(directory: &Path, name: &str) -> Option<PathBuf> {
+fn inside(root: &Path, directory: &Path, name: &str) -> Option<PathBuf> {
     // Windows separators in a file written on Windows.
     let name = name.replace('\\', "/");
     let candidate = directory.join(name);
-    let directory = directory.canonicalize().ok()?;
+    let directory = root.canonicalize().ok()?;
     let resolved = candidate.canonicalize().ok()?;
     resolved.starts_with(&directory).then_some(resolved)
 }
@@ -264,6 +264,26 @@ fn same_stem_image(path: &Path, directory: &Path) -> Option<PathBuf> {
 mod tests {
     use super::*;
     use occluview_core::{MeshTexture, Vertex};
+
+    #[test]
+    fn material_images_are_relative_to_their_library_within_the_mesh_folder() {
+        let directory = tempfile::tempdir().expect("directory");
+        let materials = directory.path().join("materials");
+        std::fs::create_dir(&materials).expect("materials directory");
+        std::fs::write(materials.join("atlas.png"), textured_png()).expect("nested image");
+        std::fs::write(directory.path().join("atlas.png"), textured_png()).expect("root image");
+        for (name, expected) in [
+            ("atlas.png", materials.join("atlas.png")),
+            ("../atlas.png", directory.path().join("atlas.png")),
+        ] {
+            std::fs::write(materials.join("scan.mtl"), format!("map_Kd {name}\n")).expect("MTL");
+            assert_eq!(
+                material_image(directory.path(), b"mtllib materials/scan.mtl\n"),
+                Some(expected.canonicalize().expect("image path")),
+                "{name}"
+            );
+        }
+    }
 
     #[test]
     fn material_options_keep_optional_components_out_of_the_filename() {

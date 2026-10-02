@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- OBJ imports resolve companion images relative to their material library while retaining folder confinement.
+
 - GLB imports transform normals correctly for small nonuniform scales.
 
 - Contact overlays respect the graphics device limit on both texture dimensions.
