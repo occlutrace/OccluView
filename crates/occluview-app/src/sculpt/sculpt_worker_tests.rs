@@ -906,6 +906,7 @@ fn worker_passes_its_cancellation_token_into_the_kernel() {
     worker.state.stopping.store(true, Ordering::Release);
     drop(held);
 
+    wait_for_worker_stop(&worker);
     let _ = worker.worker_thread.take().expect("worker thread").join();
 
     let after = shadow.read().expect("the display shadow").clone();
@@ -946,6 +947,7 @@ fn assert_no_further_output(worker: &SculptWorker) {
         worker.wait_until_idle(Duration::from_secs(2)),
         "the failed worker did not become idle"
     );
+    wait_for_worker_stop(worker);
     assert!(worker.try_apply(a_dab(), BrushMode::Add));
     assert!(worker.finish_stroke());
     assert!(
@@ -953,6 +955,29 @@ fn assert_no_further_output(worker: &SculptWorker) {
         "a stopped worker must consume no later command"
     );
     assert!(worker.take_update().is_none());
+}
+
+fn wait_for_worker_stop(worker: &SculptWorker) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while worker
+        .worker_thread
+        .as_ref()
+        .is_some_and(|thread| !thread.is_finished())
+    {
+        assert!(
+            Instant::now() < deadline,
+            "a terminal worker must have stopped"
+        );
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
+#[test]
+#[should_panic(expected = "a terminal worker must have stopped")]
+fn terminal_output_guard_rejects_a_worker_that_is_only_idle() {
+    let worker = test_worker();
+    worker.set_queue_paused_for_tests(true);
+    assert_no_further_output(&worker);
 }
 
 /// A topology patch must match the current index prefix before it changes the
