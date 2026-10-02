@@ -142,6 +142,7 @@ fn topology_deltas_keep_append_order_with_the_matching_completion() {
     assert!(worker.state.push_completion(SculptCompletion {
         before: Arc::clone(&mesh),
         mesh,
+        geometry_revision: worker.state.geometry_revision.load(Ordering::Acquire),
     }));
 
     let (deltas, completions, update) = worker

@@ -125,8 +125,12 @@ impl SceneContext<'_> {
             }
         }
         for completion in completions {
-            let SculptCompletion { before, mesh } = completion;
-            if !self.commit_sculpt_result(before, mesh, ctx) {
+            let SculptCompletion {
+                before,
+                mesh,
+                geometry_revision,
+            } = completion;
+            if !self.commit_sculpt_result(before, mesh, geometry_revision, ctx) {
                 self.invalidate_sculpt_session_silent();
                 break;
             }
@@ -389,6 +393,7 @@ impl SceneContext<'_> {
         &mut self,
         before: Arc<Mesh>,
         sculpted: Arc<Mesh>,
+        geometry_revision: u64,
         ctx: &egui::Context,
     ) -> bool {
         let Some(worker) = self.tools.sculpt.worker.as_ref() else {
@@ -437,7 +442,7 @@ impl SceneContext<'_> {
             if let Some(worker) = self.tools.sculpt.worker.as_mut() {
                 worker.topology_id = committed_topology_id;
                 worker.topology = committed_topology;
-                worker.mark_geometry_committed();
+                worker.mark_geometry_committed(geometry_revision);
             }
             let _ = self.document.edit_mode.finish_layer_edit_success(token);
             self.document.mark_mesh_edits_unsaved(layer_id);

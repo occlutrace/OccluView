@@ -150,7 +150,12 @@ pub(super) fn run_worker(
                     state
                         .reset_pick_geometry(Arc::clone(&mesh), session.session.indices().to_vec());
                     state.finish_geometry_update();
-                    if !state.push_completion(SculptCompletion { before, mesh }) {
+                    let geometry_revision = state.geometry_revision.load(Ordering::Acquire);
+                    if !state.push_completion(SculptCompletion {
+                        before,
+                        mesh,
+                        geometry_revision,
+                    }) {
                         queue.mark_idle();
                         break;
                     }
