@@ -177,6 +177,8 @@ fn transient_failure_still_heals_from_the_background_render_on_retry() {
     let spec = spec_64();
     let bytes = fixtures::large_binary_stl_tessellated_plane(4 * 1024 * 1024);
     let path = write_verdict_fixture("verdict-heals.stl", &bytes);
+    let metadata = cache::thumbnail_file_metadata(&path).expect("fixture metadata");
+    let key = ThumbnailFileCacheKey::new(&path, &metadata);
 
     let _early = try_render_thumbnail_file(&path, spec, Duration::from_millis(20));
     assert!(
@@ -227,7 +229,7 @@ fn inflight_followers_inherit_the_leaders_transient_failure() {
         .expect("leader should enter its render closure");
     let (follower_waiting, wait_for_follower) = std::sync::mpsc::channel::<()>();
     let follower = thread::spawn(move || {
-        super::super::concurrency::render_coalesced_thumbnail_with_follower_notice(
+        concurrency::render_coalesced_thumbnail_with_follower_notice(
             key,
             Duration::from_millis(500),
             || ThumbnailAttempt::Bitmap(vec![7, 7, 7, 7]),
@@ -241,6 +243,7 @@ fn inflight_followers_inherit_the_leaders_transient_failure() {
         .expect("follower should join the in-flight render");
     let _ = release_leader.send(());
 
+    let follower = follower.join().expect("follower should complete");
     assert_eq!(
         leader.join().expect("leader should complete"),
         ThumbnailAttempt::TransientFailure
