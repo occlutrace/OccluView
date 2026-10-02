@@ -48,7 +48,7 @@ pub(super) fn grid_dims(extent: DVec3, cell: f64) -> [i64; 3] {
     let mut dims = [1i64; 3];
     for (dim, raw) in dims.iter_mut().zip(extent.to_array()) {
         let span = if raw.is_finite() { raw.max(0.0) } else { 0.0 };
-        *dim = ((span / cell).floor() as i64 + 1).max(1);
+        *dim = ((span / cell).floor() as i64).saturating_add(1).max(1);
     }
     dims
 }

@@ -10,6 +10,27 @@ use super::Soup;
 use super::{closest_feature_on_triangle, Feature, SurfaceHit, SurfaceIndex};
 use glam::DVec3;
 
+#[test]
+fn widely_separated_small_triangles_keep_a_bounded_surface_grid() {
+    let positions = [
+        0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0e30, 0.0, 0.0, 1.0e30, 1.0, 0.0, 1.0e30,
+        0.0, 1.0,
+    ];
+    let indices = [0, 1, 2, 3, 4, 5];
+    let index = SurfaceIndex::build(Soup {
+        positions: &positions,
+        indices: &indices,
+        mask: None,
+    })
+    .expect("two finite triangles");
+    assert_eq!(index.triangle_count(), 2);
+    let hit = index
+        .nearest(DVec3::new(0.1, 0.25, 0.25), 1.0)
+        .expect("near triangle");
+    assert_eq!(hit.triangle, 0);
+    assert!((hit.point - DVec3::new(0.0, 0.25, 0.25)).length() < 1.0e-12);
+}
+
 /// A flat `n` x `n` grid of quads on z = 0, spacing `step`, as a soup.
 fn plane(n: usize, step: f64) -> (Vec<f32>, Vec<u32>) {
     let mut positions = Vec::with_capacity((n + 1) * (n + 1) * 3);

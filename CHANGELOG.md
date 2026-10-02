@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Surface queries handle small triangles separated by very large distances without overflowing their grid.
+
 - Resizing a short scene pane with the Section panel open no longer crashes the axis gizmo.
 
 - Malformed triangles are skipped safely when calculating surface normals.
