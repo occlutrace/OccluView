@@ -57,8 +57,8 @@ fn fuzz_lock_does_not_drift() {
         .expect("crate manifest is inside the workspace");
     let workspace_text =
         std::fs::read_to_string(root.join("Cargo.lock")).expect("workspace lockfile is readable");
-    let fuzz_text = std::fs::read_to_string(root.join("fuzz/Cargo.lock"))
-        .expect("fuzz lockfile is readable");
+    let fuzz_text =
+        std::fs::read_to_string(root.join("fuzz/Cargo.lock")).expect("fuzz lockfile is readable");
     let workspace = lock_packages(&workspace_text);
     let fuzz = lock_packages(&fuzz_text);
     assert!(

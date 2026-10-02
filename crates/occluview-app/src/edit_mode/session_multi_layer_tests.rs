@@ -2,8 +2,8 @@
 
 use occluview_core::{Mesh, Scene, SceneMesh, SceneMeshId, ScenePickHit, Vertex};
 
-use super::session_tests::{triangle_mesh, two_triangle_mesh};
 use super::*;
+use occluview_core::test_support::{simple_triangle_mesh, two_triangle_mesh};
 
 fn pick_hit(layer_index: usize, layer_id: SceneMeshId, triangle_index: usize) -> ScenePickHit {
     ScenePickHit {
@@ -17,10 +17,10 @@ fn pick_hit(layer_index: usize, layer_id: SceneMeshId, triangle_index: usize) ->
 
 #[test]
 fn switching_targets_restores_cached_marks_per_layer() {
-    let Some(mesh_a) = two_triangle_mesh("A") else {
+    let Some(mesh_a) = two_triangle_mesh(Some("A")) else {
         panic!("required test setup or expected result was missing");
     };
-    let Some(mesh_b) = two_triangle_mesh("B") else {
+    let Some(mesh_b) = two_triangle_mesh(Some("B")) else {
         panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
@@ -59,10 +59,10 @@ fn switching_targets_restores_cached_marks_per_layer() {
 
 #[test]
 fn cached_marks_reset_when_same_layer_topology_changes_with_same_triangle_count() {
-    let Some(mesh_a) = two_triangle_mesh("A") else {
+    let Some(mesh_a) = two_triangle_mesh(Some("A")) else {
         panic!("required test setup or expected result was missing");
     };
-    let Some(mesh_b) = two_triangle_mesh("B") else {
+    let Some(mesh_b) = two_triangle_mesh(Some("B")) else {
         panic!("required test setup or expected result was missing");
     };
     let Some(rebuilt_a) = Mesh::new(
@@ -111,16 +111,16 @@ fn cached_marks_reset_when_same_layer_topology_changes_with_same_triangle_count(
 
 #[test]
 fn switching_targets_keeps_original_session_baseline_for_cancel() {
-    let Some(mesh_a) = two_triangle_mesh("A") else {
+    let Some(mesh_a) = two_triangle_mesh(Some("A")) else {
         panic!("required test setup or expected result was missing");
     };
-    let Some(mesh_b) = two_triangle_mesh("B") else {
+    let Some(mesh_b) = two_triangle_mesh(Some("B")) else {
         panic!("required test setup or expected result was missing");
     };
-    let Some(edited_a) = triangle_mesh("A-edited") else {
+    let Some(edited_a) = simple_triangle_mesh(Some("A-edited")) else {
         panic!("required test setup or expected result was missing");
     };
-    let Some(edited_b) = triangle_mesh("B-edited") else {
+    let Some(edited_b) = simple_triangle_mesh(Some("B-edited")) else {
         panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
@@ -174,10 +174,10 @@ fn switching_targets_keeps_original_session_baseline_for_cancel() {
 
 #[test]
 fn hidden_or_removed_active_target_never_retargets_silently() {
-    let Some(mesh) = two_triangle_mesh("hidden") else {
+    let Some(mesh) = two_triangle_mesh(Some("hidden")) else {
         panic!("required test setup or expected result was missing");
     };
-    let Some(other_mesh) = two_triangle_mesh("other") else {
+    let Some(other_mesh) = two_triangle_mesh(Some("other")) else {
         panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
@@ -195,10 +195,10 @@ fn hidden_or_removed_active_target_never_retargets_silently() {
     assert!(controller.cancel_edit_session().is_some());
 
     let mut scene = Scene::new();
-    let Some(mesh) = two_triangle_mesh("hidden") else {
+    let Some(mesh) = two_triangle_mesh(Some("hidden")) else {
         panic!("required test setup or expected result was missing");
     };
-    let Some(other_mesh) = two_triangle_mesh("other") else {
+    let Some(other_mesh) = two_triangle_mesh(Some("other")) else {
         panic!("required test setup or expected result was missing");
     };
     let layer_index = scene.add(SceneMesh::new(mesh));
@@ -218,10 +218,10 @@ fn hidden_or_removed_active_target_never_retargets_silently() {
 
 #[test]
 fn hidden_layers_cannot_become_the_active_editor_target() {
-    let Some(visible_mesh) = two_triangle_mesh("visible") else {
+    let Some(visible_mesh) = two_triangle_mesh(Some("visible")) else {
         panic!("required test setup or expected result was missing");
     };
-    let Some(hidden_mesh) = two_triangle_mesh("hidden") else {
+    let Some(hidden_mesh) = two_triangle_mesh(Some("hidden")) else {
         panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
@@ -240,13 +240,13 @@ fn hidden_layers_cannot_become_the_active_editor_target() {
 
 #[test]
 fn cancel_restores_dirty_session_after_its_active_layer_is_removed_then_switched() {
-    let Some(mesh_a) = two_triangle_mesh("A") else {
+    let Some(mesh_a) = two_triangle_mesh(Some("A")) else {
         panic!("required test setup or expected result was missing");
     };
-    let Some(mesh_b) = two_triangle_mesh("B") else {
+    let Some(mesh_b) = two_triangle_mesh(Some("B")) else {
         panic!("required test setup or expected result was missing");
     };
-    let Some(edited_a) = triangle_mesh("A-edited") else {
+    let Some(edited_a) = simple_triangle_mesh(Some("A-edited")) else {
         panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();

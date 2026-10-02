@@ -209,22 +209,8 @@ pub(crate) fn estimate_peak_bytes(bytes: &[u8]) -> Result<u64, FormatError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use occluview_core::test_support::binary_stl_with_header as build_binary_stl;
     use proptest::prelude::*;
-
-    /// Build an in-memory binary STL from explicit triangles for tests.
-    fn build_binary_stl(header: &[u8; 80], triangles: &[[f32; 12]]) -> Vec<u8> {
-        assert_eq!(header.len(), 80);
-        let mut out = Vec::with_capacity(84 + triangles.len() * 50);
-        out.extend_from_slice(header);
-        out.extend_from_slice(&(triangles.len() as u32).to_le_bytes());
-        for t in triangles {
-            for &f in t {
-                out.extend_from_slice(&f.to_le_bytes());
-            }
-            out.extend_from_slice(&[0, 0]); // attribute byte count
-        }
-        out
-    }
 
     /// Build an 80-byte header: ASCII `text` left-aligned, zero-padded.
     fn header_with_text(text: &str) -> [u8; 80] {

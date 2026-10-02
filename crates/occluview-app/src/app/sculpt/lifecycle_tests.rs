@@ -13,33 +13,13 @@ use crate::sculpt::sculpt_kernel::{BrushMode, BrushRayStep, BrushSession, BrushS
 use crate::sculpt::sculpt_tool::{SculptSession, SculptTip, SculptToolKind, StrokeState};
 use crate::sculpt::sculpt_worker::SculptWorker;
 use glam::{Affine3A, Vec3};
+use occluview_core::test_support::coarse_ridge_mesh;
 use occluview_core::{Mesh, Scene, SceneMesh, SceneMeshId, Vertex};
 use occluview_mesh_edit::mesh_edit_buffers_from_mesh;
 use occluview_render::PreparedSceneTopology;
 use std::collections::VecDeque;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
-
-fn coarse_ridge_mesh() -> Mesh {
-    let mut vertices = Vec::new();
-    for j in 0..3usize {
-        for i in 0..5usize {
-            let x = i as f32 * 4.0 - 8.0;
-            let y = j as f32 * 4.0 - 4.0;
-            let z = if j == 1 { 4.0 } else { 0.0 };
-            vertices.push(Vertex::at(Vec3::new(x, y, z)));
-        }
-    }
-    let mut indices = Vec::new();
-    let idx = |i: usize, j: usize| (j * 5 + i) as u32;
-    for j in 0..2usize {
-        for i in 0..4usize {
-            indices.extend_from_slice(&[idx(i, j), idx(i + 1, j), idx(i + 1, j + 1)]);
-            indices.extend_from_slice(&[idx(i, j), idx(i + 1, j + 1), idx(i, j + 1)]);
-        }
-    }
-    Mesh::new(Some("coarse-ridge".to_string()), vertices, indices).expect("ridge mesh")
-}
 
 fn densifying_stroke() -> BrushStroke {
     BrushStroke {
@@ -74,7 +54,7 @@ fn wait_for_worker_idle(worker: &SculptWorker, deadline: Instant) -> bool {
 
 fn app_with_a_live_stroke(name: &str) -> (OccluViewApp, SceneMeshId) {
     let mut app = test_app(name);
-    let mesh = coarse_ridge_mesh();
+    let mesh = coarse_ridge_mesh().expect("ridge mesh");
     let mut scene = Scene::new();
     let index = scene.add(SceneMesh::new(mesh));
     app.workspace.scenes[0].document.scene = Some(Arc::new(scene));

@@ -16,6 +16,7 @@ use crate::sculpt::sculpt_kernel::BrushSession;
 use crate::sculpt::sculpt_tool::mean_uniform_scale;
 use crate::sculpt::sculpt_tool::SculptTip;
 use glam::{DVec3, Vec3};
+use occluview_core::test_support::{coarse_ridge_mesh, quad_mesh};
 use occluview_core::{Mesh, Scene, SceneMesh};
 use occluview_mesh_edit::mesh_edit_buffers_from_mesh;
 use std::time::{Duration, Instant};
@@ -86,23 +87,8 @@ fn queue_face_delta(worker: &SculptWorker, triangle: u32, indices: [u32; 3]) {
     worker.queue_topology_delta_for_tests(delta);
 }
 
-/// The four-vertex quad every stroke test below sculpts on.
-fn test_mesh() -> Mesh {
-    Mesh::new(
-        Some("worker-test".to_string()),
-        vec![
-            Vertex::at(Vec3::new(-1.0, -1.0, 0.0)),
-            Vertex::at(Vec3::new(1.0, -1.0, 0.0)),
-            Vertex::at(Vec3::new(1.0, 1.0, 0.0)),
-            Vertex::at(Vec3::new(-1.0, 1.0, 0.0)),
-        ],
-        vec![0, 1, 2, 0, 2, 3],
-    )
-    .expect("test mesh")
-}
-
 fn test_worker() -> SculptWorker {
-    worker_for(&test_mesh())
+    worker_for(&quad_mesh(Some("worker-test")).expect("test mesh"))
 }
 
 fn a_dab() -> BrushStroke {
@@ -539,7 +525,7 @@ fn live_picker_follows_a_triangle_that_left_the_original_bvh_bounds() {
 fn ordered_output_snapshot_keeps_topology_and_completion_together() {
     let worker = test_worker();
     queue_face_delta(&worker, 0, [0, 2, 1]);
-    let mesh = Arc::new(coarse_ridge_mesh());
+    let mesh = Arc::new(coarse_ridge_mesh().expect("ridge mesh"));
     assert!(worker.state.push_completion(SculptCompletion {
         before: Arc::clone(&mesh),
         mesh,
@@ -562,37 +548,16 @@ fn ordered_output_snapshot_keeps_topology_and_completion_together() {
         .is_empty());
 }
 
-/// A 5x3 lattice at 4mm spacing folded along a sharp ridge — far coarser
-/// than the 3.5mm brush below, so a Smooth dab has to densify before it can
-/// relax anything.
-fn coarse_ridge_mesh() -> Mesh {
-    let mut vertices = Vec::new();
-    for j in 0..3usize {
-        for i in 0..5usize {
-            let x = i as f32 * 4.0 - 8.0;
-            let y = j as f32 * 4.0 - 4.0;
-            let z = if j == 1 { 4.0 } else { 0.0 };
-            vertices.push(Vertex::at(Vec3::new(x, y, z)));
-        }
-    }
-    let mut indices = Vec::new();
-    let idx = |i: usize, j: usize| (j * 5 + i) as u32;
-    for j in 0..2usize {
-        for i in 0..4usize {
-            indices.extend_from_slice(&[idx(i, j), idx(i + 1, j), idx(i + 1, j + 1)]);
-            indices.extend_from_slice(&[idx(i, j), idx(i + 1, j + 1), idx(i, j + 1)]);
-        }
-    }
-    Mesh::new(Some("coarse-ridge".to_string()), vertices, indices).expect("ridge mesh")
-}
-
 fn wait_for_topology_delta(worker: &SculptWorker) -> SculptTopologyDelta {
     if let Ok(Some(delta)) = worker.try_take_topology_delta() {
         return delta;
     }
     let deadline = Instant::now() + Duration::from_secs(2);
     let remaining = deadline.saturating_duration_since(Instant::now());
-    assert!(worker.wait_until_idle(remaining), "the sculpt worker did not settle");
+    assert!(
+        worker.wait_until_idle(remaining),
+        "the sculpt worker did not settle"
+    );
     if let Ok(Some(delta)) = worker.try_take_topology_delta() {
         return delta;
     }
@@ -693,17 +658,7 @@ fn repeated_completions_survive_scene_and_edit_state_commit() {
         strength: 1.0,
         view_dir: [0.0, 0.0, -1.0],
     };
-    let mesh = Mesh::new(
-        Some("scene-commit-test".to_string()),
-        vec![
-            Vertex::at(Vec3::new(-1.0, -1.0, 0.0)),
-            Vertex::at(Vec3::new(1.0, -1.0, 0.0)),
-            Vertex::at(Vec3::new(1.0, 1.0, 0.0)),
-            Vertex::at(Vec3::new(-1.0, 1.0, 0.0)),
-        ],
-        vec![0, 1, 2, 0, 2, 3],
-    )
-    .expect("scene mesh");
+    let mesh = quad_mesh(Some("scene-commit-test")).expect("scene mesh");
     let entry = SceneMesh::new(mesh);
     let layer_id = entry.id();
     let mut scene = Scene::new();
@@ -741,7 +696,7 @@ fn repeated_completions_survive_scene_and_edit_state_commit() {
 /// committed mesh receives a new topology identity.
 #[test]
 fn a_densifying_stroke_publishes_local_rows_and_keeps_a_coarse_undo_baseline() {
-    let mesh = coarse_ridge_mesh();
+    let mesh = coarse_ridge_mesh().expect("ridge mesh");
     let original_vertices = mesh.vertices().len();
     let original_triangles = mesh.triangle_count();
     let original_topology_id = mesh.topology_id();
@@ -779,7 +734,7 @@ fn a_densifying_stroke_publishes_local_rows_and_keeps_a_coarse_undo_baseline() {
 
 #[test]
 fn second_ray_stroke_undo_baseline_matches_the_previous_add_commit() {
-    let mesh = coarse_ridge_mesh();
+    let mesh = coarse_ridge_mesh().expect("ridge mesh");
     let worker = worker_for(&mesh);
     let mut add = a_ray_step(0.0, BrushMode::Add, 3.5, DabDose::FULL);
     add.strength = 1.0;
@@ -818,7 +773,7 @@ fn second_ray_stroke_undo_baseline_matches_the_previous_add_commit() {
 /// dirty-face list.
 #[test]
 fn a_densified_layer_is_still_pickable_so_the_next_stroke_can_land() {
-    let mesh = coarse_ridge_mesh();
+    let mesh = coarse_ridge_mesh().expect("ridge mesh");
     let worker = worker_for(&mesh);
     let stroke = BrushStroke {
         center: [0.0, 0.0, 4.0],
@@ -893,7 +848,7 @@ fn terminal_finish_invariant_errors_stop_the_worker_command_loop() {
     };
 
     // A stroke that changed geometry with nothing recorded to undo back to.
-    let mut session = session_for(&test_mesh());
+    let mut session = session_for(&quad_mesh(Some("worker-test")).expect("test mesh"));
     session.dirty_stroke = true;
     session.stroke_start_mesh = None;
     let worker = SculptWorker::spawn(session);
@@ -908,7 +863,7 @@ fn terminal_finish_invariant_errors_stop_the_worker_command_loop() {
 
     // A display shadow that no longer has the shape of the kernel mesh: the
     // committed mesh would disagree with the vertices already on the GPU.
-    let mesh = test_mesh();
+    let mesh = quad_mesh(Some("worker-test")).expect("test mesh");
     let mut session = session_for(&mesh);
     session.dirty_stroke = true;
     session.stroke_start_mesh = Some(Arc::new(mesh.clone()));
@@ -950,11 +905,7 @@ fn worker_passes_its_cancellation_token_into_the_kernel() {
     worker.state.stopping.store(true, Ordering::Release);
     drop(held);
 
-    let _ = worker
-        .worker_thread
-        .take()
-        .expect("worker thread")
-        .join();
+    let _ = worker.worker_thread.take().expect("worker thread").join();
 
     let after = shadow.read().expect("the display shadow").clone();
     assert_eq!(after.len(), before.len());
@@ -978,11 +929,12 @@ fn wait_for_error(worker: &SculptWorker) -> Option<SculptFailure> {
     let Ok(queue_state) = worker.queue.state.lock() else {
         return worker.take_error();
     };
-    let _ = worker.queue.wake.wait_timeout_while(
-        queue_state,
-        Duration::from_secs(2),
-        |_| worker.state.error.lock().is_ok_and(|error| error.is_none()),
-    );
+    let _ = worker
+        .queue
+        .wake
+        .wait_timeout_while(queue_state, Duration::from_secs(2), |_| {
+            worker.state.error.lock().is_ok_and(|error| error.is_none())
+        });
     worker.take_error()
 }
 
@@ -1035,7 +987,9 @@ fn malformed_topology_delta_is_rejected_before_publication() {
 /// so the test-only trigger panics the worker at its command boundary.
 #[test]
 fn worker_entry_converts_panics_to_a_visible_failure() {
-    let worker = SculptWorker::spawn_panicking(session_for(&test_mesh()));
+    let worker = SculptWorker::spawn_panicking(session_for(
+        &quad_mesh(Some("worker-test")).expect("test mesh"),
+    ));
 
     // Any command drives the worker into its body; the panic happens there.
     assert!(worker.try_apply(a_dab(), BrushMode::Add));

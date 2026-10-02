@@ -65,6 +65,7 @@ fluent-syntax = { workspace = true }
 
 # Test-only: catalog contract validation (AST walk) + font-coverage probing.
 [dev-dependencies]
+occluview-core      = { workspace = true, features = ["test-support"] }
 fluent-syntax        = { workspace = true }
 epaint_default_fonts = { workspace = true }
 skrifa               = { workspace = true }

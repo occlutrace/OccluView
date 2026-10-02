@@ -1,11 +1,11 @@
 #![allow(clippy::expect_used)]
 //! Controller tests: state machine, sessions, selection, undo/redo, sync.
 
-use super::session_tests::{triangle_mesh, two_triangle_mesh};
 use super::*;
 use crate::app::workspace::history::{
     HistoryDirection, HistorySnapshot, HistoryStepKind, WorkspaceHistory,
 };
+use occluview_core::test_support::{simple_triangle_mesh, two_triangle_mesh};
 use occluview_core::{Mesh, Scene, SceneMesh, SceneMeshId, ScenePickHit, Vertex};
 
 /// A two-object soup mesh: object A (soup triangles 0,1) near the origin and
@@ -250,10 +250,10 @@ fn controller_records_layer_edit_undo_and_dirty_state() {
 
 #[test]
 fn controller_undo_restores_last_snapshot_for_matching_layer() {
-    let Some(before_mesh) = triangle_mesh("before") else {
+    let Some(before_mesh) = simple_triangle_mesh(Some("before")) else {
         panic!("required test setup or expected result was missing");
     };
-    let Some(after_mesh) = triangle_mesh("after") else {
+    let Some(after_mesh) = simple_triangle_mesh(Some("after")) else {
         panic!("required test setup or expected result was missing");
     };
     let layer = SceneMesh::new(before_mesh);
@@ -284,10 +284,10 @@ fn controller_undo_restores_last_snapshot_for_matching_layer() {
 
 #[test]
 fn controller_undo_rejects_stale_layer_without_popping_history() {
-    let Some(before_mesh) = triangle_mesh("before") else {
+    let Some(before_mesh) = simple_triangle_mesh(Some("before")) else {
         panic!("required test setup or expected result was missing");
     };
-    let Some(other_mesh) = triangle_mesh("other") else {
+    let Some(other_mesh) = simple_triangle_mesh(Some("other")) else {
         panic!("required test setup or expected result was missing");
     };
     let layer = SceneMesh::new(before_mesh);
@@ -308,10 +308,10 @@ fn controller_undo_rejects_stale_layer_without_popping_history() {
 
 #[test]
 fn controller_undo_is_lifo_across_layer_edits() {
-    let Some(first_mesh) = triangle_mesh("first") else {
+    let Some(first_mesh) = simple_triangle_mesh(Some("first")) else {
         panic!("required test setup or expected result was missing");
     };
-    let Some(second_mesh) = triangle_mesh("second") else {
+    let Some(second_mesh) = simple_triangle_mesh(Some("second")) else {
         panic!("required test setup or expected result was missing");
     };
     let first = SceneMesh::new(first_mesh);
@@ -354,10 +354,10 @@ fn controller_undo_is_lifo_across_layer_edits() {
 
 #[test]
 fn controller_restores_scene_snapshot_when_layer_set_is_unchanged() {
-    let Some(first_mesh) = triangle_mesh("first") else {
+    let Some(first_mesh) = simple_triangle_mesh(Some("first")) else {
         panic!("required test setup or expected result was missing");
     };
-    let Some(second_mesh) = triangle_mesh("second") else {
+    let Some(second_mesh) = simple_triangle_mesh(Some("second")) else {
         panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
@@ -399,10 +399,10 @@ fn controller_restores_scene_snapshot_when_layer_set_is_unchanged() {
 fn controller_refuses_scene_snapshot_when_layer_was_removed_since() {
     // Structural-history guard: a whole-scene restore is refused when the live
     // scene lost a layer since the structural step, rather than resurrecting it.
-    let Some(first_mesh) = triangle_mesh("first") else {
+    let Some(first_mesh) = simple_triangle_mesh(Some("first")) else {
         panic!("required test setup or expected result was missing");
     };
-    let Some(second_mesh) = triangle_mesh("second") else {
+    let Some(second_mesh) = simple_triangle_mesh(Some("second")) else {
         panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
@@ -439,7 +439,7 @@ fn controller_refuses_scene_snapshot_when_layer_was_removed_since() {
 fn controller_refuses_scene_snapshot_when_layer_was_appended_since() {
     // Data-loss case: a layer appended after a structural op must not be
     // deleted by an undo that restores the pre-append whole-scene snapshot.
-    let Some(mesh) = triangle_mesh("source") else {
+    let Some(mesh) = simple_triangle_mesh(Some("source")) else {
         panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
@@ -453,7 +453,7 @@ fn controller_refuses_scene_snapshot_when_layer_was_appended_since() {
         panic!("required test setup or expected result was missing");
     };
     // Simulate the structural product being inserted before the op finishes.
-    let Some(product) = triangle_mesh("product") else {
+    let Some(product) = simple_triangle_mesh(Some("product")) else {
         panic!("required test setup or expected result was missing");
     };
     scene.add(SceneMesh::new(product));
@@ -463,7 +463,7 @@ fn controller_refuses_scene_snapshot_when_layer_was_appended_since() {
     );
 
     // The operator now appends a fresh layer (a separate load) after the op.
-    let Some(appended) = triangle_mesh("appended") else {
+    let Some(appended) = simple_triangle_mesh(Some("appended")) else {
         panic!("required test setup or expected result was missing");
     };
     scene.add(SceneMesh::new(appended));
@@ -503,7 +503,7 @@ fn controller_records_failed_layer_edit_as_recoverable_error() {
 
 #[test]
 fn controller_records_face_selection_from_scene_pick_hit() {
-    let Some(mesh) = two_triangle_mesh("selectable") else {
+    let Some(mesh) = two_triangle_mesh(Some("selectable")) else {
         panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
@@ -533,7 +533,7 @@ fn controller_records_face_selection_from_scene_pick_hit() {
 
 #[test]
 fn controller_rejects_stale_face_selection_hit_without_clearing_current_selection() {
-    let Some(mesh) = two_triangle_mesh("selectable") else {
+    let Some(mesh) = two_triangle_mesh(Some("selectable")) else {
         panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
@@ -573,7 +573,7 @@ fn controller_rejects_stale_face_selection_hit_without_clearing_current_selectio
 
 #[test]
 fn controller_can_accumulate_invert_and_clear_selection_without_leaving_edit_mode() {
-    let Some(mesh) = two_triangle_mesh("selectable") else {
+    let Some(mesh) = two_triangle_mesh(Some("selectable")) else {
         panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();

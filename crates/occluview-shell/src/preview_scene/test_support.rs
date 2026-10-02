@@ -1,16 +1,5 @@
+use occluview_core::test_support::binary_stl;
 use std::fmt::Write as _;
-
-pub(super) fn binary_stl(triangles: &[[f32; 12]]) -> Vec<u8> {
-    let mut out = vec![0u8; 84];
-    out[80..84].copy_from_slice(&(triangles.len() as u32).to_le_bytes());
-    for triangle in triangles {
-        for f in triangle {
-            out.extend_from_slice(&f.to_le_bytes());
-        }
-        out.extend_from_slice(&[0, 0]);
-    }
-    out
-}
 
 pub(super) fn binary_stl_triangle() -> Vec<u8> {
     binary_stl(&[[

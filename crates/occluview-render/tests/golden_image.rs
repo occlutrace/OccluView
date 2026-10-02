@@ -16,6 +16,7 @@
 mod common;
 
 use glam::Vec3;
+use occluview_core::test_support::render_triangle_mesh;
 use occluview_core::{Mesh, MeshBuilder, MeshTexture, Vertex};
 use occluview_render::{
     ClipPlane, ClippedMeshRequest, CutMeshRequest, GpuCamera, GpuMeshUniform, GpuTexture,
@@ -39,15 +40,6 @@ fn gpu_test_lock() -> MutexGuard<'static, ()> {
 
 fn test_render_deadline() -> RenderDeadline {
     RenderDeadline::after(Duration::from_secs(5))
-}
-
-fn triangle_mesh() -> Mesh {
-    let mut b = MeshBuilder::new();
-    let a = b.push_vertex(Vertex::at(Vec3::new(-0.5, -0.5, 0.0)).with_normal(Vec3::Z));
-    let c = b.push_vertex(Vertex::at(Vec3::new(0.5, -0.5, 0.0)).with_normal(Vec3::Z));
-    let d = b.push_vertex(Vertex::at(Vec3::new(0.0, 0.5, 0.0)).with_normal(Vec3::Z));
-    b.push_triangle(a, c, d);
-    b.build().expect("valid triangle mesh")
 }
 
 fn closed_cube_mesh() -> Mesh {
@@ -112,7 +104,7 @@ fn camera_looking_from_negative_z() -> GpuCamera {
 
 fn render_to_pixels() -> Vec<u8> {
     let _gpu = gpu_test_lock();
-    let mesh = triangle_mesh();
+    let mesh = render_triangle_mesh().expect("valid triangle mesh");
     let cam = camera_looking_at_origin();
     let offscreen = pollster::block_on(Offscreen::new()).expect("offscreen init");
     pollster::block_on(offscreen.render_with_deadline(
@@ -223,7 +215,7 @@ fn golden_triangle_matches_baseline() {
 #[test]
 fn prepared_viewport_renders_rectangular_extent() {
     let _gpu = gpu_test_lock();
-    let mesh = triangle_mesh();
+    let mesh = render_triangle_mesh().expect("valid triangle mesh");
     let uniform = identity_uniform([1.0, 1.0, 1.0, 1.0], 1.0);
     let cam = camera_looking_at_origin();
     let offscreen = pollster::block_on(Offscreen::new()).expect("offscreen init");
@@ -253,7 +245,7 @@ fn prepared_viewport_renders_rectangular_extent() {
 #[test]
 fn prepared_scene_opacity_blends_with_background() {
     let _gpu = gpu_test_lock();
-    let mesh = triangle_mesh();
+    let mesh = render_triangle_mesh().expect("valid triangle mesh");
     let cam = camera_looking_at_origin();
     let offscreen = pollster::block_on(Offscreen::new()).expect("offscreen init");
     let spec = ViewportSpec {
@@ -443,7 +435,7 @@ fn textured_triangle_renders_checkerboard() {
 #[test]
 fn cut_triangle_discard_removes_pixels() {
     let _gpu = gpu_test_lock();
-    let mesh = triangle_mesh();
+    let mesh = render_triangle_mesh().expect("valid triangle mesh");
     let cam = camera_looking_at_origin();
     let offscreen = pollster::block_on(Offscreen::new()).expect("offscreen init");
 
@@ -524,7 +516,7 @@ fn cut_triangle_discard_removes_pixels() {
 #[test]
 fn cut_triangle_capped_renders() {
     let _gpu = gpu_test_lock();
-    let mesh = triangle_mesh();
+    let mesh = render_triangle_mesh().expect("valid triangle mesh");
     let cam = camera_looking_at_origin();
     let offscreen = pollster::block_on(Offscreen::new()).expect("offscreen init");
 
@@ -594,7 +586,7 @@ fn solid_cut_paints_the_cap_of_a_closed_mesh() {
 #[test]
 fn render_cut_view_end_to_end() {
     let _gpu = gpu_test_lock();
-    let mesh = triangle_mesh();
+    let mesh = render_triangle_mesh().expect("valid triangle mesh");
     let offscreen = pollster::block_on(Offscreen::new()).expect("offscreen init");
     let cut = occluview_render::CutViewSpec {
         plane: ClipPlane::new([0.0, 0.0, 1.0], 0.0),

@@ -23,9 +23,3 @@ pub use render_thumb::{
     render_thumbnail_or_placeholder, render_thumbnail_or_placeholder_with_timeout,
     try_render_thumbnail_file, try_render_thumbnail_shared, ThumbnailAttempt,
 };
-
-#[cfg(test)]
-mod test_support;
-
-#[cfg(test)]
-pub(crate) use test_support::acquire_render_test_guard;

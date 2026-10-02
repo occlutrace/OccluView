@@ -452,10 +452,7 @@ pub(super) fn poll_controller_until(
     controller: &mut BridgeSplitController,
     live_target: Option<BridgeSplitTarget>,
 ) -> bool {
-    if !controller
-        .worker
-        .wait_for_output(Duration::from_secs(1))
-    {
+    if !controller.worker.wait_for_output(Duration::from_secs(1)) {
         return false;
     }
     controller.poll(live_target)

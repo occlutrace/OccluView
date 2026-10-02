@@ -12,23 +12,7 @@ fn assert_vec3_close(actual: [f32; 3], expected: [f32; 3]) {
 
 /// Build a minimal GLB: one triangle, FLOAT VEC3 positions + UINT indices.
 fn one_triangle_glb() -> Vec<u8> {
-    let json = br#"{"asset":{"version":"2.0"},
-"scenes":[{"nodes":[0]}],
-"nodes":[{"mesh":0}],
-"meshes":[{"primitives":[{"attributes":{"POSITION":0},"indices":1}]}],
-"accessors":[{"bufferView":0,"count":3,"type":"VEC3","componentType":5126},
-             {"bufferView":1,"count":3,"type":"SCALAR","componentType":5125}],
-"bufferViews":[{"buffer":0,"byteLength":36},{"buffer":0,"byteOffset":36,"byteLength":12}],
-"buffers":[{"byteLength":48}]}"#;
-    let mut bin = Vec::new();
-    // 3 positions: (0,0,0),(1,0,0),(0,1,0)
-    for f in [0.0f32, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0] {
-        bin.extend_from_slice(&f.to_le_bytes());
-    }
-    // 3 indices
-    for i in 0u32..3 {
-        bin.extend_from_slice(&i.to_le_bytes());
-    }
+    let (json, bin) = occluview_core::test_support::minimal_triangle_glb_chunks();
     glb::build_glb(json, &bin)
 }
 

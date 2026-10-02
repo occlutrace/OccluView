@@ -22,15 +22,13 @@ fn binary_stl(triangles: &[[[f32; 3]; 3]]) -> Vec<u8> {
     let count = u32::try_from(triangles.len()).expect("fixture triangle count");
     bytes.extend_from_slice(&count.to_le_bytes());
     for corners in triangles {
-        for value in [0.0f32, 0.0, 1.0] {
-            bytes.extend_from_slice(&value.to_le_bytes());
-        }
-        for corner in corners {
-            for value in corner {
-                bytes.extend_from_slice(&value.to_le_bytes());
-            }
-        }
-        bytes.extend_from_slice(&0u16.to_le_bytes());
+        occluview_core::test_support::append_binary_stl_facet(
+            &mut bytes,
+            [0.0, 0.0, 1.0],
+            corners[0],
+            corners[1],
+            corners[2],
+        );
     }
     bytes
 }

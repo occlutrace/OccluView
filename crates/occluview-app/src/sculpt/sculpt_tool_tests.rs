@@ -1,6 +1,7 @@
 #![allow(clippy::expect_used, clippy::float_cmp, clippy::panic)]
 use super::*;
 use glam::{Quat, Vec3};
+use occluview_core::test_support::quad_mesh;
 use occluview_core::{Mesh, SceneMesh};
 use std::thread;
 
@@ -242,7 +243,9 @@ fn invalid_shadow_mapping_fails_before_partial_publish() {
 fn sculpt_preparation_counts_as_busy_before_the_worker_exists() {
     let mut tool = SculptTool::default();
     let mut scene = Scene::new();
-    let index = scene.add(SceneMesh::new(quad_mesh("prepare-busy")));
+    let index = scene.add(SceneMesh::new(
+        quad_mesh(Some("prepare-busy")).expect("test mesh"),
+    ));
     let scene = Arc::new(scene);
     let layer_id = scene.meshes()[index].id();
     let topology_id = scene.meshes()[index].mesh.topology_id();
@@ -285,7 +288,7 @@ fn sculpt_preparation_counts_as_busy_before_the_worker_exists() {
 /// the first dab of every stroke, where the operator is waiting.
 #[test]
 fn the_stroke_baseline_is_snapshotted_cold() {
-    let mesh = quad_mesh("cold-baseline");
+    let mesh = quad_mesh(Some("cold-baseline")).expect("test mesh");
     mesh.warm_bvh();
     let original = mesh.vertices().to_vec();
     let topology_id = mesh.topology_id();
@@ -340,22 +343,6 @@ fn the_stroke_baseline_is_snapshotted_cold() {
     );
 }
 
-/// A four-vertex quad: small enough to sculpt immediately, real enough that a
-/// dab moves something.
-fn quad_mesh(name: &str) -> Mesh {
-    Mesh::new(
-        Some(name.to_string()),
-        vec![
-            Vertex::at(Vec3::new(-1.0, -1.0, 0.0)),
-            Vertex::at(Vec3::new(1.0, -1.0, 0.0)),
-            Vertex::at(Vec3::new(1.0, 1.0, 0.0)),
-            Vertex::at(Vec3::new(-1.0, 1.0, 0.0)),
-        ],
-        vec![0, 1, 2, 0, 2, 3],
-    )
-    .expect("test mesh")
-}
-
 #[test]
 fn shadow_shape_mismatch_is_not_treated_as_an_empty_dab() {
     let mesh = Mesh::new(
@@ -405,7 +392,9 @@ fn shadow_shape_mismatch_is_not_treated_as_an_empty_dab() {
 fn an_abandoned_preparation_never_installs_its_session() {
     let mut tool = SculptTool::default();
     let mut scene = Scene::new();
-    let index = scene.add(SceneMesh::new(quad_mesh("abandoned-preparation")));
+    let index = scene.add(SceneMesh::new(
+        quad_mesh(Some("abandoned-preparation")).expect("test mesh"),
+    ));
     let scene = Arc::new(scene);
     let layer_id = scene.meshes()[index].id();
     let topology_id = scene.meshes()[index].mesh.topology_id();

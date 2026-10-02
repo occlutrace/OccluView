@@ -24,6 +24,7 @@ occluview-core = { workspace = true }
 occluview-geometry = { workspace = true }
 
 [dev-dependencies]
+occluview-core = { workspace = true, features = ["test-support"] }
 image     = { workspace = true }
 occluview-contact = { workspace = true }
 pollster  = { workspace = true }

@@ -1,9 +1,9 @@
 //! Canonical multi-layer selection behavior.
 
-use super::session_tests::{triangle_mesh, two_triangle_mesh};
 use super::*;
 use crate::app::app_layer_edits::apply_visible_selected_face_mesh_edit_action_with_limit;
 use crate::layer_actions::LayerContextAction;
+use occluview_core::test_support::{simple_triangle_mesh, two_triangle_mesh};
 use occluview_core::{CameraProjection, Scene, SceneMesh, SceneMeshId, ScenePickHit};
 
 fn hit(layer_index: usize, layer_id: SceneMeshId, triangle_index: usize) -> ScenePickHit {
@@ -43,7 +43,7 @@ fn full_viewport_request(polygon_px: &[egui::Pos2]) -> ScreenPolygonSelectionReq
 
 #[test]
 fn hidden_selection_is_retained_but_visible_plan_excludes_it() {
-    let Some(mesh) = triangle_mesh("hidden") else {
+    let Some(mesh) = simple_triangle_mesh(Some("hidden")) else {
         panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
@@ -71,10 +71,10 @@ fn hidden_selection_is_retained_but_visible_plan_excludes_it() {
 
 #[test]
 fn lasso_accumulates_selection_across_two_visible_layers() {
-    let Some(mesh_a) = triangle_mesh("A") else {
+    let Some(mesh_a) = simple_triangle_mesh(Some("A")) else {
         panic!("required test setup or expected result was missing");
     };
-    let Some(mesh_b) = triangle_mesh("B") else {
+    let Some(mesh_b) = simple_triangle_mesh(Some("B")) else {
         panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
@@ -102,10 +102,10 @@ fn lasso_accumulates_selection_across_two_visible_layers() {
 
 #[test]
 fn face_clicks_accumulate_by_hit_layer_without_switching_state() {
-    let Some(mesh_a) = two_triangle_mesh("A") else {
+    let Some(mesh_a) = two_triangle_mesh(Some("A")) else {
         panic!("required test setup or expected result was missing");
     };
-    let Some(mesh_b) = two_triangle_mesh("B") else {
+    let Some(mesh_b) = two_triangle_mesh(Some("B")) else {
         panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
@@ -128,10 +128,10 @@ fn face_clicks_accumulate_by_hit_layer_without_switching_state() {
 
 #[test]
 fn object_picks_accumulate_components_across_two_visible_layers() {
-    let Some(mesh_a) = two_triangle_mesh("A") else {
+    let Some(mesh_a) = two_triangle_mesh(Some("A")) else {
         panic!("required test setup or expected result was missing");
     };
-    let Some(mesh_b) = two_triangle_mesh("B") else {
+    let Some(mesh_b) = two_triangle_mesh(Some("B")) else {
         panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
@@ -154,13 +154,13 @@ fn object_picks_accumulate_components_across_two_visible_layers() {
 
 #[test]
 fn topology_sync_invalidates_only_the_affected_layer() {
-    let Some(mesh_a) = two_triangle_mesh("A") else {
+    let Some(mesh_a) = two_triangle_mesh(Some("A")) else {
         panic!("required test setup or expected result was missing");
     };
-    let Some(mesh_b) = two_triangle_mesh("B") else {
+    let Some(mesh_b) = two_triangle_mesh(Some("B")) else {
         panic!("required test setup or expected result was missing");
     };
-    let Some(rebuilt_a) = triangle_mesh("A-rebuilt") else {
+    let Some(rebuilt_a) = simple_triangle_mesh(Some("A-rebuilt")) else {
         panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
@@ -183,10 +183,10 @@ fn topology_sync_invalidates_only_the_affected_layer() {
 
 #[test]
 fn visible_bulk_operations_ignore_hidden_layers() {
-    let Some(mesh_a) = two_triangle_mesh("A") else {
+    let Some(mesh_a) = two_triangle_mesh(Some("A")) else {
         panic!("required test setup or expected result was missing");
     };
-    let Some(mesh_b) = two_triangle_mesh("B") else {
+    let Some(mesh_b) = two_triangle_mesh(Some("B")) else {
         panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();
@@ -212,10 +212,10 @@ fn visible_bulk_operations_ignore_hidden_layers() {
 /// decides the target set.
 #[test]
 fn a_menu_action_targets_every_marked_visible_layer() {
-    let Some(mesh_a) = two_triangle_mesh("A") else {
+    let Some(mesh_a) = two_triangle_mesh(Some("A")) else {
         panic!("required test setup or expected result was missing");
     };
-    let Some(mesh_b) = two_triangle_mesh("B") else {
+    let Some(mesh_b) = two_triangle_mesh(Some("B")) else {
         panic!("required test setup or expected result was missing");
     };
     let mut scene = Scene::new();

@@ -11,34 +11,14 @@ use crate::app::app_test_support::test_app;
 use crate::sculpt::sculpt_kernel::{BrushMode, BrushSession, BrushStroke};
 use crate::sculpt::sculpt_tool::{SculptSession, StrokeState};
 use crate::sculpt::sculpt_worker::SculptWorker;
-use glam::{Affine3A, Vec3};
-use occluview_core::{Mesh, Scene, SceneMesh, SceneMeshId, Vertex};
+use glam::Affine3A;
+use occluview_core::test_support::coarse_ridge_mesh;
+use occluview_core::{Mesh, Scene, SceneMesh, SceneMeshId};
 use occluview_mesh_edit::mesh_edit_buffers_from_mesh;
 use occluview_render::PreparedSceneTopology;
 use std::collections::VecDeque;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
-
-fn coarse_ridge_mesh() -> Mesh {
-    let mut vertices = Vec::new();
-    for j in 0..3usize {
-        for i in 0..5usize {
-            let x = i as f32 * 4.0 - 8.0;
-            let y = j as f32 * 4.0 - 4.0;
-            let z = if j == 1 { 4.0 } else { 0.0 };
-            vertices.push(Vertex::at(Vec3::new(x, y, z)));
-        }
-    }
-    let mut indices = Vec::new();
-    let idx = |i: usize, j: usize| (j * 5 + i) as u32;
-    for j in 0..2usize {
-        for i in 0..4usize {
-            indices.extend_from_slice(&[idx(i, j), idx(i + 1, j), idx(i + 1, j + 1)]);
-            indices.extend_from_slice(&[idx(i, j), idx(i + 1, j + 1), idx(i, j + 1)]);
-        }
-    }
-    Mesh::new(Some("coarse-ridge".to_string()), vertices, indices).expect("ridge mesh")
-}
 
 fn densifying_stroke() -> BrushStroke {
     BrushStroke {
@@ -210,7 +190,10 @@ fn sculpt_shadow_len(app: &OccluViewApp) -> usize {
 
 #[test]
 fn aborting_a_densified_stroke_leaves_no_partial_geometry_in_the_document() {
-    let (mut app, layer_id) = app_sculpting("sculpt-abort-after-densify", coarse_ridge_mesh());
+    let (mut app, layer_id) = app_sculpting(
+        "sculpt-abort-after-densify",
+        coarse_ridge_mesh().expect("ridge mesh"),
+    );
     let committed = layer_mesh(&app, layer_id);
     let committed_vertices = committed.vertices().len();
     let committed_triangles = committed.triangle_count();
@@ -271,7 +254,10 @@ fn aborting_a_densified_stroke_leaves_no_partial_geometry_in_the_document() {
 
 #[test]
 fn aborting_a_densified_second_stroke_keeps_the_first_stroke_result() {
-    let (mut app, layer_id) = app_sculpting("sculpt-abort-keeps-first", coarse_ridge_mesh());
+    let (mut app, layer_id) = app_sculpting(
+        "sculpt-abort-keeps-first",
+        coarse_ridge_mesh().expect("ridge mesh"),
+    );
 
     let first_base = layer_mesh(&app, layer_id);
     lay_and_release_one_dab(&mut app, &first_base, additive_stroke(), BrushMode::Add);
@@ -331,7 +317,10 @@ fn aborting_a_densified_second_stroke_keeps_the_first_stroke_result() {
 
 #[test]
 fn a_committed_densifying_stroke_keeps_its_geometry() {
-    let (mut app, layer_id) = app_sculpting("sculpt-commit-after-densify", coarse_ridge_mesh());
+    let (mut app, layer_id) = app_sculpting(
+        "sculpt-commit-after-densify",
+        coarse_ridge_mesh().expect("ridge mesh"),
+    );
     let base = layer_mesh(&app, layer_id);
 
     lay_and_release_one_dab(&mut app, &base, densifying_stroke(), BrushMode::Smooth);
@@ -364,7 +353,10 @@ fn a_committed_densifying_stroke_keeps_its_geometry() {
 
 #[test]
 fn undo_and_redo_a_committed_densifying_stroke() {
-    let (mut app, layer_id) = app_sculpting("sculpt-undo-densify", coarse_ridge_mesh());
+    let (mut app, layer_id) = app_sculpting(
+        "sculpt-undo-densify",
+        coarse_ridge_mesh().expect("ridge mesh"),
+    );
     let base = layer_mesh(&app, layer_id);
     let base_vertices = base.vertices().len();
     let base_triangles = base.triangle_count();
@@ -410,7 +402,10 @@ fn undo_and_redo_a_committed_densifying_stroke() {
 fn a_worker_failure_after_densification_leaves_no_partial_geometry() {
     use crate::sculpt::sculpt_worker::SculptFailure;
 
-    let (mut app, layer_id) = app_sculpting("sculpt-failure-after-densify", coarse_ridge_mesh());
+    let (mut app, layer_id) = app_sculpting(
+        "sculpt-failure-after-densify",
+        coarse_ridge_mesh().expect("ridge mesh"),
+    );
     let committed = layer_mesh(&app, layer_id);
     let committed_vertices = committed.vertices().len();
     let committed_triangles = committed.triangle_count();
