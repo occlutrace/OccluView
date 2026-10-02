@@ -2773,7 +2773,6 @@ dependencies = [
  "earcutr",
  "glam",
  "occluview-geometry-math",
- "rayon",
  "thiserror 2.0.21",
 ]
 
