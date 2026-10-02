@@ -8,6 +8,7 @@ use crate::app_settings::{UnitDisplay, ViewportBackground};
 /// that is the only number the bar can be built from accurately. A bar derived
 /// from the mesh's bounding box would be correct for the first frame after a
 /// file opens and wrong from the first scroll onwards.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn paint_scale_bar(
     ui: &egui::Ui,
     image_rect: egui::Rect,
