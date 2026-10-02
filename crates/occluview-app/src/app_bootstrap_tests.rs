@@ -5,6 +5,51 @@ use super::*;
 use roxmltree::Document;
 
 #[test]
+fn preflight_candidates_fall_back_after_every_hardware_probe_fails() {
+    let (working, failures) = graphics::probe_preflight_candidates(vec![0], vec![1], |candidate| {
+        if candidate == 0 {
+            Err("hardware failed".to_owned())
+        } else {
+            Ok(candidate)
+        }
+    });
+    assert_eq!(
+        working,
+        vec![1],
+        "a usable software adapter must remain reachable"
+    );
+    assert_eq!(failures, vec!["hardware failed"]);
+}
+
+#[test]
+fn preflight_candidates_skip_software_when_hardware_is_usable() {
+    let mut probed = Vec::new();
+    let (working, failures) =
+        graphics::probe_preflight_candidates(vec![0, 1], vec![2], |candidate| {
+            probed.push(candidate);
+            Ok(candidate)
+        });
+    assert_eq!(working, vec![0, 1]);
+    assert_eq!(
+        probed,
+        vec![0, 1],
+        "healthy hardware must avoid software worker startup"
+    );
+    assert!(failures.is_empty());
+}
+
+#[test]
+fn preflight_candidates_handle_software_only_and_empty_lists() {
+    let (working, failures) = graphics::probe_preflight_candidates(Vec::<u8>::new(), vec![1], Ok);
+    assert_eq!(working, vec![1]);
+    assert!(failures.is_empty());
+    let (working, failures) =
+        graphics::probe_preflight_candidates(Vec::<u8>::new(), Vec::new(), Ok);
+    assert!(working.is_empty());
+    assert!(failures.is_empty());
+}
+
+#[test]
 fn native_options_use_the_low_latency_surface_contract() {
     let options = native_options(&GraphicsPreflight::default());
 

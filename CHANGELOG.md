@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Graphics startup retains software fallback when every hardware adapter fails to create a device.
+
 - Background and cut-ghost preference changes refresh every scene.
 
 - Bridge Split remembers size-slider changes before placement and displays the selected disc size.
