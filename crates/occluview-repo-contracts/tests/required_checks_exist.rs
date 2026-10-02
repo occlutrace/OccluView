@@ -33,10 +33,16 @@ fn workflow_runs_on_pull_request(workflow: &str) -> bool {
 
 fn scalar_value<'a>(line: &'a str, key: &str) -> Option<&'a str> {
     let value = line.trim().strip_prefix(key)?.trim();
-    if let Some(value) = value.strip_prefix('"').and_then(|value| value.strip_suffix('"')) {
+    if let Some(value) = value
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+    {
         return Some(value);
     }
-    if let Some(value) = value.strip_prefix('\'').and_then(|value| value.strip_suffix('\'')) {
+    if let Some(value) = value
+        .strip_prefix('\'')
+        .and_then(|value| value.strip_suffix('\''))
+    {
         return Some(value);
     }
     Some(value)
