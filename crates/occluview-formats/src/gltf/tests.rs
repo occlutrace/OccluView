@@ -17,6 +17,33 @@ fn one_triangle_glb() -> Vec<u8> {
 }
 
 #[test]
+fn incompatible_glb_materials_are_refused() {
+    let (json, bin) = occluview_core::test_support::minimal_triangle_glb_chunks();
+    for second_material in [Some(1), None] {
+        let mut doc: serde_json::Value = serde_json::from_slice(json).expect("JSON");
+        doc["materials"] = serde_json::json!([{}, {}]);
+        doc["meshes"][0]["primitives"][0]["material"] = serde_json::json!(0);
+        let mut second = doc["meshes"][0]["primitives"][0].clone();
+        second
+            .as_object_mut()
+            .expect("primitive")
+            .remove("material");
+        if let Some(material) = second_material {
+            second["material"] = serde_json::json!(material);
+        }
+        doc["meshes"][0]["primitives"]
+            .as_array_mut()
+            .expect("primitives")
+            .push(second);
+        let bytes = glb::build_glb(&serde_json::to_vec(&doc).expect("JSON"), &bin);
+        assert!(
+            read(&bytes).is_err(),
+            "merged incompatible material identities"
+        );
+    }
+}
+
+#[test]
 fn unsupported_glb_geometry_features_are_refused() {
     let (json, bin) = occluview_core::test_support::minimal_triangle_glb_chunks();
     for feature in [
