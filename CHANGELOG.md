@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- The first mesh in a scene gets a camera even when automatic framing is disabled; existing views stay unchanged.
+
 - Empty scene panes respond to right-clicks before a viewport image is rendered.
 
 - Graphics startup retains software fallback when every hardware adapter fails to create a device.
