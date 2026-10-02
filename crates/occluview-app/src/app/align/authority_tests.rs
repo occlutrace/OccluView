@@ -813,3 +813,66 @@ fn cancel_marks_restored_layers_unsaved_after_an_open_drag_or_export() {
         );
     }
 }
+
+#[test]
+fn cancel_keeps_the_session_retryable_when_another_edit_is_busy() {
+    let mut app = test_app("align-cancel-busy");
+    let mut scene = named_scene("fixed", 0.0);
+    let moving = push_named_layer(&mut scene, "moving", 5.0);
+    app.workspace.scenes[0].document.scene = Some(Arc::new(scene));
+    let ctx = app.ui.repaint_ctx.clone();
+    let mut scene = app.active_context().expect("live scene");
+    scene.arm_align_tool(&ctx);
+    scene.tools.align.drag = Some(crate::app::align::drag::AlignDrag {
+        layer: moving,
+        start: glam::Affine3A::IDENTITY,
+        pivot_local: Vec3::ZERO,
+    });
+    scene.nudge_align_layer(moving, glam::Affine3A::from_translation(Vec3::X));
+    let current = scene.document.scene.clone().expect("scene");
+    let token = scene
+        .document
+        .edit_mode
+        .begin_scene_edit(&current, moving, EditModeCommand::MoveLayer)
+        .expect("another edit owns the scene");
+    drop(current);
+    let generation = scene.align_worker_mut().generation();
+
+    scene.cancel_align_session(&ctx);
+
+    assert!(
+        scene.tools.align.tool.is_armed(),
+        "a refused restoration must keep the session available for retry"
+    );
+    assert!(scene.tools.align.drag.is_some());
+    assert!(!scene.tools.align.session_poses.is_empty());
+    assert!(scene.align_worker_mut().generation() > generation);
+    assert_eq!(
+        scene.scene_ui.status_message.as_deref(),
+        Some(
+            scene
+                .ui
+                .locale
+                .tr(crate::i18n::message_id!("repair-edit-busy"))
+                .as_str()
+        )
+    );
+    scene
+        .document
+        .edit_mode
+        .finish_layer_edit_error(token, "Canceled".into());
+    scene.cancel_align_session(&ctx);
+
+    assert!(!scene.tools.align.tool.is_armed());
+    assert!(scene.tools.align.drag.is_none());
+    assert!(scene
+        .document
+        .scene
+        .as_ref()
+        .expect("scene")
+        .meshes()
+        .iter()
+        .all(|entry| entry.transform == glam::Affine3A::IDENTITY));
+    assert_eq!(scene.document.edit_mode.undo_len(), 1);
+    assert!(scene.document.unsaved_edit_layer_ids.contains(&moving));
+}
