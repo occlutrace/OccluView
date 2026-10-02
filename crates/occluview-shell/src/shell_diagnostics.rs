@@ -476,9 +476,9 @@ fn query_registry_dword(key: HKEY, name: PCWSTR) -> Option<u32> {
 
 #[cfg(all(windows, feature = "diagnostic-logs"))]
 fn local_app_data_low_directory() -> Option<std::path::PathBuf> {
-    // SAFETY: Windows allocates a NUL-terminated result on success and the
-    // current token is selected by passing None.
     let raw_directory =
+        // SAFETY: Windows allocates a NUL-terminated result on success and the
+        // current token is selected by passing None.
         unsafe { SHGetKnownFolderPath(&FOLDERID_LocalAppDataLow, KF_FLAG_DEFAULT, None).ok()? };
     // SAFETY: `raw_directory` is the NUL-terminated buffer returned above.
     let directory = unsafe { raw_directory.to_string().ok() };

@@ -3,10 +3,10 @@
 use super::super::*;
 use crate::app::align::display::AlignOverlay;
 use crate::app::app_test_support::test_app;
-use crate::contact::state::{ContactLayerField, ContactRequest};
 use crate::contact::contact_worker::{
     ContactCompletion, ContactFailure, ContactOutcome, ContactWorker,
 };
+use crate::contact::state::{ContactLayerField, ContactRequest};
 use glam::Vec3;
 use occluview_contact::ContactStats;
 use occluview_core::{Mesh, Scene, SceneMesh, SceneMeshId, Vertex};

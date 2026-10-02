@@ -11,11 +11,11 @@ use occluview_render::{ContactFieldTexels, ContactPaintSource};
 use std::sync::Arc;
 
 use super::SceneContext;
+use crate::contact::contact_worker::{ContactFailure, ContactJob, ContactOutcome};
 use crate::contact::state::{
     can_read_contacts, contact_job_keys, ContactLayerField, ContactPair, ContactRequest,
     ContactState, ContactStatus, CONTACT_FIELD_TEXTURE_WIDTH,
 };
-use crate::contact::contact_worker::{ContactFailure, ContactJob, ContactOutcome};
 
 impl SceneContext<'_> {
     /// Apply a contact action from the layer context menu.
