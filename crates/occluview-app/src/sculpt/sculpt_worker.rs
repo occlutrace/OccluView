@@ -17,6 +17,8 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock, TryLockError};
 use std::thread::{self, JoinHandle};
+#[cfg(test)]
+use std::time::Duration;
 use std::time::Instant;
 
 #[path = "sculpt_worker_loop.rs"]
@@ -381,6 +383,8 @@ impl SculptCommandQueue {
             }
             if let Some(command) = state.commands.pop_front() {
                 self.active.store(true, Ordering::Release);
+                #[cfg(test)]
+                self.wake.notify_all();
                 return Some(command);
             }
             state = if let Ok(state) = self.wake.wait(state) {
@@ -405,6 +409,10 @@ impl SculptCommandQueue {
 
     fn mark_idle(&self) {
         self.active.store(false, Ordering::Release);
+        #[cfg(test)]
+        if let Ok(_state) = self.state.lock() {
+            self.wake.notify_all();
+        }
     }
 
     #[cfg(test)]
@@ -1225,6 +1233,32 @@ impl SculptWorker {
                 .topology_deltas
                 .try_lock()
                 .is_ok_and(|deltas| deltas.is_empty())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn wait_until_active(&self, timeout: Duration) -> bool {
+        let Ok(state) = self.queue.state.lock() else {
+            return false;
+        };
+        let Ok((_state, _)) = self.queue.wake.wait_timeout_while(state, timeout, |_| {
+            !self.queue.active.load(Ordering::Acquire)
+        }) else {
+            return false;
+        };
+        self.queue.active.load(Ordering::Acquire)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn wait_until_idle(&self, timeout: Duration) -> bool {
+        let Ok(state) = self.queue.state.lock() else {
+            return false;
+        };
+        let Ok((state, _)) = self.queue.wake.wait_timeout_while(state, timeout, |state| {
+            !state.commands.is_empty() || self.queue.active.load(Ordering::Acquire)
+        }) else {
+            return false;
+        };
+        state.commands.is_empty() && !self.queue.active.load(Ordering::Acquire)
     }
 }
 
