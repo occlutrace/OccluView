@@ -417,6 +417,12 @@ pub fn deviation_stats(map: &DeviationMap, tolerance_mm: f64) -> DeviationStats 
     let mut magnitudes: Vec<f64> = values.iter().map(|value| value.abs()).collect();
     magnitudes.sort_by(f64::total_cmp);
     values.sort_by(f64::total_cmp);
+    let middle = values.len() / 2;
+    let median = if values.len().is_multiple_of(2) {
+        (values[middle - 1] + values[middle]) * 0.5
+    } else {
+        values[middle]
+    };
     #[allow(
         clippy::cast_precision_loss,
         clippy::cast_possible_truncation,
@@ -432,7 +438,7 @@ pub fn deviation_stats(map: &DeviationMap, tolerance_mm: f64) -> DeviationStats 
             within_tolerance: inside as f64 / count,
             mean_abs,
             rms,
-            median: values.get(values.len() / 2).copied().unwrap_or(0.0),
+            median,
             p95: magnitudes
                 .get(p95_slot.clamp(1, magnitudes.len()) - 1)
                 .copied()
