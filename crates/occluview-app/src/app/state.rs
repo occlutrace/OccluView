@@ -97,6 +97,9 @@ pub(crate) struct SceneContext<'a> {
     pub(super) active_layer_count: usize,
     pub(super) is_active: bool,
     pub(super) input_allowed: bool,
+    pub(super) active_scene_key: SceneKey,
+    pub(super) input_route: super::workspace::input::PointerRoute,
+    pub(super) input_capture: Option<super::workspace::input::GestureOwner>,
 }
 
 impl OccluViewApp {
@@ -169,10 +172,13 @@ impl OccluViewApp {
             .and_then(|scene| scene.document.scene.as_ref())
             .map_or(0, |scene| scene.meshes().len());
         let is_active = self.workspace.active_id() == key.id;
+        let active_scene_key = self.workspace.input.active().scene;
+        let input_route = self.workspace.input.route_pointer(None);
+        let input_capture = self.workspace.input.capture();
         let window_focused = self.ui.repaint_ctx.input(|input| input.focused);
         let input_allowed = window_focused
             && is_active
-            && match self.workspace.input.route_pointer(None) {
+            && match input_route {
                 super::workspace::input::PointerRoute::Target(target) => target.scene == key,
                 super::workspace::input::PointerRoute::Captured(owner) => {
                     owner.target.scene == key && owner.kind.allows_viewport_input()
@@ -210,6 +216,9 @@ impl OccluViewApp {
             active_layer_count,
             is_active,
             input_allowed,
+            active_scene_key,
+            input_route,
+            input_capture,
         })
     }
 

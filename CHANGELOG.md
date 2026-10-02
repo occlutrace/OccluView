@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Blocked viewport presses report focus, dialogs, and the scene input owner in debug logs.
+
 - Switching between Mesh Editing and viewport tools releases the previous tool and preserves completed edits.
 
 - Layer controls pause while a decision dialog is open and resume when it is dismissed.
