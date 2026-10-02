@@ -50,6 +50,7 @@ remain in the Git history.
 
 ### Align
 
+- Deviation legend labels retain 0.001 mm precision instead of rounding small limits to zero.
 - Typing a matching percentage now sets the intended ratio, including values with a percent sign or decimal comma.
 - Painting exclusion regions immediately cancels fits computed with the old markings.
 - Changing or removing alignment points cancels fits that used the previous points.
