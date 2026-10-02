@@ -419,7 +419,7 @@ fn inflight_thumbnail_coalesces_duplicate_requests() {
     let follower_key = key;
     let follower_count = run_count.clone();
     let follower = thread::spawn(move || {
-        super::super::concurrency::render_coalesced_thumbnail_with_follower_notice(
+        concurrency::render_coalesced_thumbnail_with_follower_notice(
             follower_key,
             Duration::from_millis(250),
             move || {
