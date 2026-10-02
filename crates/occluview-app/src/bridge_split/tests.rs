@@ -134,6 +134,44 @@ fn submit_rejects_wrong_topology_on_same_layer() {
 }
 
 #[test]
+fn submit_and_result_reject_position_edits_with_unchanged_topology() {
+    let Ok(mesh) = Mesh::new(
+        None,
+        vec![
+            occluview_core::Vertex::at(Vec3::ZERO),
+            occluview_core::Vertex::at(Vec3::X),
+            occluview_core::Vertex::at(Vec3::Y),
+        ],
+        vec![0, 1, 2],
+    ) else {
+        panic!("missing triangle fixture");
+    };
+    let entry = SceneMesh::new(mesh);
+    let mut controller = planted_controller(&entry);
+    let Some(guard) = controller.session().current_guard() else {
+        panic!("planted session must have a guard");
+    };
+    let mut vertices = entry.mesh.vertices().to_vec();
+    vertices[0].position[2] += 0.5;
+    let Some(sculpted) = entry.mesh.with_sculpted_vertices(vertices) else {
+        panic!("position-only edit must preserve vertex count");
+    };
+    assert_eq!(sculpted.topology_id(), entry.mesh.topology_id());
+    let mut changed = entry.clone();
+    changed.mesh = Arc::new(sculpted);
+
+    assert!(!submit_scene_entry(&mut controller, &changed));
+    assert!(!controller.session_mut().apply_job_output(
+        Some(BridgeSplitTarget::capture(&changed)),
+        BridgeSplitJobOutput {
+            guard,
+            result: Ok(sample_result(8.0)),
+        },
+    ));
+    assert!(!controller.session().can_apply());
+}
+
+#[test]
 fn submit_rejects_wrong_transform_on_same_layer_and_topology() {
     let entry = sample_entry();
     let mut controller = planted_controller(&entry);
