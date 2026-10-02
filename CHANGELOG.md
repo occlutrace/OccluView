@@ -11,8 +11,6 @@ remain in the Git history.
 
 - Mesh Editor and layer menus explain whole-selection, component-limit and undo-capacity refusals and retain Close Holes reports.
 
-- A failed final file append preserves camera navigation made while the load was running.
-
 - Preserve GLB normals and mirrored winding at extreme node scales.
 
 - Large mesh streams with different interior content no longer share a cached thumbnail.
@@ -23,9 +21,11 @@ remain in the Git history.
 
 - Preserve STL face normals for very small and very large triangles.
 
+- Sculpt accepts small positive uniform layer scales instead of incorrectly treating them as unsupported transforms.
+
 - Sculpt rejects overflowing vertex and group counts in topology history instead of crashing.
 
-- Sculpt accepts small positive uniform layer scales instead of incorrectly treating them as unsupported transforms.
+- Sculpt shows a complete localized message when its preparation worker cannot start.
 
 - Thumbnail stream copying rejects a zero chunk limit instead of reporting unread data as complete.
 
@@ -63,8 +63,6 @@ remain in the Git history.
 
 - Mesh imports reject non-finite coordinates and GLB transform overflow before constructing geometry.
 
-- Sculpt shows a complete localized message when its preparation worker cannot start.
-
 - Sculpt rejects invalid remesh vertex indices before changing any display geometry.
 
 - GLB imports reject incomplete, misordered, duplicate, or unaligned chunks and inconsistent file lengths.
@@ -99,12 +97,12 @@ remain in the Git history.
 
 - GLB texture decoding validates image buffer sources and byte ranges without overflowing.
 
+- Sculpt reports the actual display-geometry failure instead of always reporting a poisoned lock.
+
 - Sculpt welds equal coordinates consistently when one corner uses negative zero.
 
 - OBJ thumbnails reject extreme relative face indices without crashing.
 
-
-- Sculpt reports the actual display-geometry failure instead of always reporting a poisoned lock.
 
 - Sculpt preserves the live preview of a later stroke when an earlier stroke is saved.
 
@@ -116,9 +114,9 @@ remain in the Git history.
 
 - OFF imports reject negative and non-integer face indices instead of changing their vertex references.
 
-- GLB imports reject overflowing or out-of-bounds accessor layouts before decoding.
-
 - Sculpt keeps its editing target when that layer is hidden or removed, preventing strokes on another layer.
+
+- GLB imports reject overflowing or out-of-bounds accessor layouts before decoding.
 
 - Contact hover refuses invalid triangles instead of crashing or inventing a partial reading.
 
@@ -176,9 +174,9 @@ remain in the Git history.
 
 - Closing the Bridge Split Section window cancels the separator and preserves the scene.
 
-- Tool keyboard shortcuts obey the same availability rules as their toolbar buttons.
-
 - Bridge Split discards previews after position edits, including sculpt changes that preserve mesh topology.
+
+- Tool keyboard shortcuts obey the same availability rules as their toolbar buttons.
 
 - Viewport right-click menus remain visible and respond to actions while mouse navigation stays confined to its scene.
 
@@ -252,17 +250,17 @@ remain in the Git history.
 - Perform alignment explains its two-arrow requirement when only one complete arrow is placed.
 - A quick exclusion-brush tap paints the mesh even when press and release arrive in the same frame, without placing an alignment point.
 - Disabled Heatmap controls explain whether refinement is missing or deviation measurement is running.
+- Cancel keeps alignment open for retry when another layer edit temporarily prevents restoring scan positions.
 - Invalid or overflowing manual drag input no longer writes a non-finite scan position.
 - Deviation legend labels retain 0.001 mm precision instead of rounding small limits to zero.
 - Typing a matching percentage now sets the intended ratio, including values with a percent sign or decimal comma.
-- Deviation summaries average both middle readings when computing an even-count median.
 - Painting exclusion regions immediately cancels fits computed with the old markings.
-- Deviation maps and statistics exclude distances that overflow storage and non-finite readings.
-- Cancel keeps alignment open for retry when another layer edit temporarily prevents restoring scan positions.
 - Changing or removing alignment points cancels fits that used the previous points.
-- Unavailable alignment controls now show their refusal tooltips and expose the correct disabled state.
+- Deviation summaries average both middle readings when computing an even-count median.
+- Deviation maps and statistics exclude distances that overflow storage and non-finite readings.
 - Closing the exclusion brush without changing markings restores the deviation map.
 - Cancel preserves the save prompt for restored scan positions, including an unfinished drag or a position already exported during the session.
+- Unavailable alignment controls now show their refusal tooltips and expose the correct disabled state.
 - Deviation sensitivity uses only measured overlap, excluding vertices beyond the fixed scan's border.
 - Best-fit matching scores its coarse hypotheses on the seed sample set instead
   of the dense one, which removes most of the work one press performed. Searching
