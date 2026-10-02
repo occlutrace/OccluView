@@ -243,6 +243,7 @@ pub(crate) fn sculpt_strength(
 ) -> f32 {
     let (min, max) = kind.strength_range();
     ctx.data(|data| data.get_temp::<f32>(sculpt_strength_id(scene_key, kind)))
+        .filter(|strength| strength.is_finite())
         .unwrap_or_else(|| kind.default_strength())
         .clamp(min, max)
 }
@@ -254,11 +255,13 @@ pub(crate) fn set_sculpt_strength(
     strength: f32,
 ) {
     let (min, max) = kind.strength_range();
+    let strength = if strength.is_finite() {
+        strength.clamp(min, max)
+    } else {
+        kind.default_strength()
+    };
     ctx.data_mut(|data| {
-        data.insert_temp(
-            sculpt_strength_id(scene_key, kind),
-            strength.clamp(min, max),
-        );
+        data.insert_temp(sculpt_strength_id(scene_key, kind), strength);
     });
 }
 
@@ -747,6 +750,36 @@ mod tests {
                         != force_before,
                     !pending && label == "force"
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn sculpt_strength_keeps_live_settings_finite_and_in_range() {
+        let ctx = egui::Context::default();
+        for kind in [SculptToolKind::AddRemove, SculptToolKind::Smooth] {
+            for invalid in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+                set_sculpt_strength(&ctx, SceneKey::INITIAL, kind, invalid);
+                assert_eq!(
+                    sculpt_strength(&ctx, SceneKey::INITIAL, kind),
+                    kind.default_strength()
+                );
+                ctx.data_mut(|data| {
+                    data.insert_temp(super::sculpt_strength_id(SceneKey::INITIAL, kind), invalid)
+                });
+                assert_eq!(
+                    sculpt_strength(&ctx, SceneKey::INITIAL, kind),
+                    kind.default_strength()
+                );
+            }
+            let (min, max) = kind.strength_range();
+            for (input, expected) in [
+                (-1.0, min),
+                (2.0, max),
+                (kind.default_strength(), kind.default_strength()),
+            ] {
+                set_sculpt_strength(&ctx, SceneKey::INITIAL, kind, input);
+                assert_eq!(sculpt_strength(&ctx, SceneKey::INITIAL, kind), expected);
             }
         }
     }
