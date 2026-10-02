@@ -655,16 +655,20 @@ fn harvest_one(
     }
 }
 
-/// Poll for a fixed stretch and return everything that turned up. Used where the
-/// expected answer is "nothing", which needs a wait rather than one look.
-fn harvest_quiet(worker: &super::AlignWorker) -> Vec<super::AlignCompletion> {
+/// Wait for a fixed quiet stretch, using completion repaints instead of polling.
+fn harvest_quiet(
+    worker: &super::AlignWorker,
+    repaint_rx: &std::sync::mpsc::Receiver<()>,
+) -> Vec<super::AlignCompletion> {
     let mut out = Vec::new();
-    // Give canceled work time to expose a late result before asserting silence.
-    for _ in 0..60 {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(600);
+    loop {
         out.extend(worker.drain());
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() || repaint_rx.recv_timeout(remaining).is_err() {
+            return out;
+        }
     }
-    out
 }
 
 /// The positive control. Without this the staleness test below could pass on a
@@ -761,7 +765,7 @@ fn a_worker_lock_failure_is_observable() {
 /// from, as a fresh history step, with nothing on screen to say why.
 #[test]
 fn a_result_from_an_abandoned_generation_is_dropped() {
-    let worker = super::AlignWorker::spawn();
+    let (worker, repaint_rx) = worker_with_repaint();
     let generation = worker.generation();
     worker.submit(measure_job(generation));
     // What a hand drag, a step through history, or a turned-around pair
@@ -769,7 +773,7 @@ fn a_result_from_an_abandoned_generation_is_dropped() {
     let next = worker.bump_generation();
     assert!(next > generation, "the generation has to move");
     assert!(
-        harvest_quiet(&worker).is_empty(),
+        harvest_quiet(&worker, &repaint_rx).is_empty(),
         "a measurement of a pose the operator has left must not be applied"
     );
 }
@@ -785,7 +789,7 @@ fn abandoning_clears_work_that_had_not_started() {
         worker.submit(measure_job(generation));
     }
     worker.bump_generation();
-    assert!(harvest_quiet(&worker).is_empty());
+    assert!(harvest_quiet(&worker, &repaint_rx).is_empty());
 
     let fresh = worker.generation();
     worker.submit(measure_job(fresh));
@@ -800,12 +804,12 @@ fn abandoning_clears_work_that_had_not_started() {
 /// hundred measurements of an arch.
 #[test]
 fn a_second_job_of_the_same_kind_replaces_the_one_still_queued() {
-    let worker = super::AlignWorker::spawn();
+    let (worker, repaint_rx) = worker_with_repaint();
     let generation = worker.generation();
     for _ in 0..5 {
         worker.submit(measure_job(generation));
     }
-    let completions = harvest_quiet(&worker);
+    let completions = harvest_quiet(&worker, &repaint_rx);
     assert!(
         completions.len() <= 2,
         "five submissions produced {} results — the queue is not collapsing",
@@ -819,12 +823,12 @@ fn a_second_job_of_the_same_kind_replaces_the_one_still_queued() {
 /// latest-wins guard for that same-generation race.
 #[test]
 fn an_older_same_generation_completion_is_not_applied() {
-    let worker = super::AlignWorker::spawn();
+    let (worker, repaint_rx) = worker_with_repaint();
     let generation = worker.generation();
     worker.submit(measure_job(generation));
     worker.submit(measure_job(generation));
 
-    let completions = harvest_quiet(&worker);
+    let completions = harvest_quiet(&worker, &repaint_rx);
     assert_eq!(
         completions.len(),
         1,
