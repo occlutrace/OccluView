@@ -45,6 +45,10 @@ remain in the Git history.
 
 - Knife strokes keep their radial fallback when a bearing cannot be normalized.
 
+### Mesh editing
+
+- Selection actions ignore stale layer-menu requests before changing any marked layer.
+
 ### Formats
 
 - Opening or dropping a 3MF (or any ZIP) file now reports that the format is

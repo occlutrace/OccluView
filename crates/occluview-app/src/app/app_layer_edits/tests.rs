@@ -1,7 +1,7 @@
 //! Layer-edit orchestration tests.
 
 use super::super::{
-    EditModeCommand, LayerContextAction, LayerContextApply, LayerContextRequest, Scene,
+    egui, EditModeCommand, LayerContextAction, LayerContextApply, LayerContextRequest, Scene,
 };
 use super::apply_visible_selected_face_mesh_edit_action;
 use super::repair::{apply_layer_repair_action, LayerRepairOutcome};
@@ -424,6 +424,62 @@ fn visible_selection_batch_cut_and_separate_keep_deterministic_source_order() {
 }
 
 mod commit_tests;
+
+#[test]
+fn visible_selection_context_action_refuses_stale_request() {
+    use super::apply_layer_context_action_with_status;
+    use crate::app::OccluViewApp;
+    use std::sync::Arc;
+
+    for action in [
+        LayerContextAction::DeleteSelectedFaces,
+        LayerContextAction::CropToSelectedFaces,
+        LayerContextAction::CutSelectionToNewLayer,
+        LayerContextAction::SeparateSelectedComponents,
+    ] {
+        for missing_index in [false, true] {
+            let Some(mut scene) = batch_scene_with_two_layers() else {
+                panic!("valid scene");
+            };
+            let before = batch_scene_signature(&scene);
+            let mut app = OccluViewApp::new_for_tests(egui::Context::default());
+            let Some(mut context) = app.active_context() else {
+                panic!("active scene");
+            };
+            context.document.scene = Some(Arc::new(scene.clone()));
+            select_batch_faces(&scene, &mut context.document.edit_mode, 0);
+            let stale_request = LayerContextRequest {
+                index: if missing_index {
+                    scene.meshes().len()
+                } else {
+                    0
+                },
+                layer_id: SceneMesh::new(Mesh::empty()).id(),
+                action,
+            };
+
+            let apply = apply_layer_context_action_with_status(
+                &mut context,
+                &mut scene,
+                &[],
+                stale_request,
+            );
+
+            assert!(!apply.scene_changed, "stale {action:?} must be ignored");
+            assert_eq!(batch_scene_signature(&scene), before);
+            assert_eq!(context.document.edit_mode.undo_len(), 0);
+            assert!(!context.document.has_unsaved_mesh_edits());
+            assert_eq!(
+                context
+                    .document
+                    .edit_mode
+                    .visible_selected_face_count(&scene),
+                2
+            );
+        }
+    }
+}
+
 mod holes;
 mod operations;
 #[path = "tests/repair_tests.rs"]
