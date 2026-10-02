@@ -82,6 +82,7 @@ remain in the Git history.
 - Point-pair alignment rejects bounds whose overlap calculations overflow instead of accepting an unchecked pose.
 - Cancelled surface refinement cannot report a trustworthy pose after the dense solve.
 - Alignment vertex lookup rejects overflowing indices without panicking.
+- Exclusion brushes with very large finite coordinates keep vertices outside their radius unchanged.
 
 ### Viewer
 
