@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- OBJ fallback textures cannot escape the mesh folder through symbolic links.
+
 - Contact pointer readouts refuse extreme triangle indices without overflowing.
 
 - Thickness probing refuses extreme triangle indices instead of overflowing.

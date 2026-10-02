@@ -257,13 +257,27 @@ fn same_stem_image(path: &Path, directory: &Path) -> Option<PathBuf> {
         .collect();
     // Deterministic when several spellings exist side by side.
     found.sort();
-    found.into_iter().next()
+    found
+        .into_iter()
+        .find_map(|candidate| inside(directory, directory, candidate.file_name()?.to_str()?))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use occluview_core::{MeshTexture, Vertex};
+
+    #[cfg(unix)]
+    #[test]
+    fn same_stem_images_cannot_escape_through_a_symlink() {
+        let directory = tempfile::tempdir().expect("directory");
+        let folder = directory.path().join("mesh");
+        std::fs::create_dir(&folder).expect("mesh folder");
+        let external = directory.path().join("external.png");
+        std::fs::write(&external, textured_png()).expect("image");
+        std::os::unix::fs::symlink(external, folder.join("scan.png")).expect("link");
+        assert!(same_stem_image(&folder.join("scan.obj"), &folder).is_none());
+    }
 
     #[test]
     fn material_images_are_relative_to_their_library_within_the_mesh_folder() {
