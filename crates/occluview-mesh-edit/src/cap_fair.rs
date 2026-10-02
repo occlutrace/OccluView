@@ -250,3 +250,64 @@ fn cap_scale(positions: &[Vec3]) -> f32 {
         1.0
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cap_support::rim_outside_support;
+    use crate::{EditVertex, MeshEditBuffers, MeshTopology};
+
+    #[test]
+    fn cap_fairing_mean_keeps_large_outside_valence_and_translation_invariance() {
+        let count = 70_000;
+        let mut vertices = vec![
+            EditVertex::at(Vec3::ZERO.to_array()),
+            EditVertex::at(Vec3::X.to_array()),
+            EditVertex::at(Vec3::Y.to_array()),
+        ];
+        vertices.extend((0..count).map(|index| {
+            EditVertex::at(if index % 2 == 0 {
+                [2.0, 0.0, 1.0]
+            } else {
+                [2.0, 1.0, 0.0]
+            })
+        }));
+        let indices = (0..count)
+            .flat_map(|index| {
+                [
+                    0,
+                    u32::try_from(index + 3).expect("bounded vertex"),
+                    u32::try_from((index + 1) % count + 3).expect("bounded vertex"),
+                ]
+            })
+            .collect();
+        let mesh = MeshEditBuffers {
+            vertices,
+            indices,
+            topology: MeshTopology::TriangleMesh,
+        };
+        let adjacency = vec![(3..count + 3).collect(), vec![], vec![]];
+        let support = rim_outside_support(&mesh, &[0, 1, 2], &adjacency);
+        assert_eq!(support[0].outside.len(), count);
+        let mut original = vec![Vec3::ZERO, Vec3::X, Vec3::Y, (Vec3::X + Vec3::Y) / 3.0];
+        let mut translated = original
+            .iter()
+            .map(|point| *point + Vec3::splat(4.0))
+            .collect::<Vec<_>>();
+        let shifted = support
+            .iter()
+            .map(|ring| RimSupport {
+                outside: ring
+                    .outside
+                    .iter()
+                    .map(|point| *point + Vec3::splat(4.0))
+                    .collect(),
+            })
+            .collect::<Vec<_>>();
+        let triangles = [[0, 1, 3], [1, 2, 3], [2, 0, 3]];
+        fair_cap_interior(&mut original, 3, &triangles, &support);
+        fair_cap_interior(&mut translated, 3, &triangles, &shifted);
+        assert!(original[3].distance(translated[3] - Vec3::splat(4.0)) < 1.0e-4,
+            "outside support averages must not depend on the position of the mesh: {original:?} vs {translated:?}");
+    }
+}
