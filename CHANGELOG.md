@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Closing holes with an empty face selection now preserves the complete mesh.
+
 - Section contours skip triangles containing invalid coordinates instead of emitting NaN points.
 
 - Repeated faces no longer turn open section contours into artificial closed loops.

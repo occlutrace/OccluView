@@ -181,8 +181,11 @@ pub(crate) fn fill_holes_with_outcome(
 ) -> Result<(MeshEditResult, FillLoopStats), MeshEditError> {
     let (options, counts) = accept_fill_inputs(mesh, selection, options)?;
 
-    if counts.triangles == 0 {
-        return Ok((empty_fill_result(mesh, counts), FillLoopStats::default()));
+    if counts.triangles == 0 || selection.is_some_and(|mask| mask.selected_count() == 0) {
+        return Ok((
+            unchanged_fill_result(mesh, counts),
+            FillLoopStats::default(),
+        ));
     }
 
     // The weld runs first, and the soup refusal is decided on its result. The
@@ -411,15 +414,15 @@ fn apply_rim_healing(
     }
 }
 
-/// Result for a mesh with no triangles: nothing to fill, everything zeroed.
-fn empty_fill_result(mesh: &MeshEditBuffers, counts: FillInputCounts) -> MeshEditResult {
+/// Result when no faces request filling: preserve every input buffer.
+fn unchanged_fill_result(mesh: &MeshEditBuffers, counts: FillInputCounts) -> MeshEditResult {
     MeshEditResult {
         mesh: mesh.clone(),
         report: MeshEditReport {
             input_vertices: counts.vertices,
             input_triangles: counts.triangles,
             output_vertices: counts.vertices,
-            output_triangles: 0,
+            output_triangles: counts.triangles,
             removed_triangles: 0,
             filled_holes: 0,
             skipped_border_rims: 0,
