@@ -25,7 +25,6 @@ The workspace contains these crates:
 
 - `occluview-geometry` — Shared geometry constants, pure math, and triangle-surface queries; the bottom leaf, importing no other workspace crate.
 - `occluview-i18n` — Fluent catalogs and locale resolution shared by the app and the shell.
-- `occluview-repo-contracts` — Repository contract tests: CI workflows, packaging reports and the release version.
 - `occluview-update` — Signed update-manifest checks; the only crate carrying HTTP and signature verification.
 - `occluview-sculpt` — Surface sculpting kernel with its own `parallel` feature.
 - `occluview-core` — Pure data model: math, units, mesh, scene and camera, with no I/O, GPU or platform code.
@@ -137,12 +136,6 @@ contract; it must inspect a narrow seam and fail closed if that seam moves.
 Remove cosmetic wording pins, deleted-feature negative checks, and tests that
 only duplicate the implementation's current string layout. Report-only
 inventory counts are preferred to arbitrary repository-wide test caps.
-
-The repository-contract tests live in `crates/occluview-repo-contracts`. They
-run with `cargo test --workspace` and assert what the repository says about
-itself: the CI workflows, the packaging reports, the release version that
-`Cargo.toml`, `Cargo.lock` and the installer share, and the MSRV that
-`rust-toolchain.toml`, `Cargo.toml` and `clippy.toml` share.
 
 ## Commits
 
