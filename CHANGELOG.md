@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Close Holes refuses a fully zero-area minimum-area cover while retaining supported indexed seams.
+
 - Automatic section views face the exposed cross-section instead of the retained exterior.
 
 - Reject malformed HPS base64 tails and padding before decoding geometry.
