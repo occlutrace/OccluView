@@ -208,7 +208,7 @@ fn a_worker_that_dies_with_a_job_in_flight_releases_the_reading() {
 
     assert!(
         wait_for_contact_worker(&app, Duration::from_secs(10)),
-        "the contact worker publishes its result"
+        "the contact worker reports output or failure"
     );
     app.active_context()
         .expect("live test scene")
@@ -255,7 +255,7 @@ fn read_again_after_a_worker_death_reaches_a_new_worker() {
     assert!(open_contacts_on(&mut app, first));
     assert!(
         wait_for_contact_worker(&app, Duration::from_secs(10)),
-        "the failed contact worker exits"
+        "the contact worker reports output or failure"
     );
     app.active_context()
         .expect("live test scene")
@@ -300,7 +300,7 @@ fn showing_a_scan_again_clears_the_unusable_sentence() {
     assert!(open_contacts_on(&mut app, first));
     assert!(
         wait_for_contact_worker(&app, Duration::from_secs(10)),
-        "the failed contact worker exits"
+        "the contact worker reports output or failure"
     );
     app.active_context()
         .expect("live test scene")
