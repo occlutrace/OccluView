@@ -44,7 +44,6 @@ pub fn apply_brush(
         return 0;
     }
     let target = if edit.erase { INCLUDED } else { EXCLUDED };
-    let limit = edit.radius_mm * edit.radius_mm;
     let hits: Vec<Vec<u32>> = mask
         .par_chunks(CHUNK)
         .enumerate()
@@ -59,7 +58,8 @@ pub fn apply_brush(
                 let Some(position) = vertex_at(positions, vertex) else {
                     continue;
                 };
-                if (pose.apply(position) - edit.center).length_squared() <= limit {
+                let relative = (pose.apply(position) - edit.center) / edit.radius_mm;
+                if relative.length_squared() <= 1.0 {
                     if let Ok(index) = u32::try_from(vertex) {
                         local.push(index);
                     }
@@ -235,6 +235,22 @@ mod tests {
             0
         );
         assert!(mask.iter().all(|slot| *slot == INCLUDED));
+    }
+
+    #[test]
+    fn a_large_finite_brush_does_not_paint_vertices_outside_its_radius() {
+        let mut mask = [INCLUDED];
+        let mut touched = Vec::new();
+        let changed = apply_brush(
+            &mut mask,
+            &[0.0, 0.0, 0.0],
+            Rigid::IDENTITY,
+            &dab(1e300, 1e200, false),
+            &mut touched,
+        );
+        assert_eq!(changed, 0);
+        assert_eq!(mask, [INCLUDED]);
+        assert!(touched.is_empty());
     }
     /// The indices are what lets the caller upload only what changed. A dab
     /// that reported the wrong ones would leave the surface showing a marking
