@@ -1,5 +1,42 @@
 use super::*;
 
+#[test]
+fn empty_hole_selection_contract_regression() {
+    let source = bowl_mesh();
+    let mut mesh = MeshEditBuffers {
+        vertices: Vec::new(),
+        indices: Vec::new(),
+        topology: MeshTopology::TriangleMesh,
+    };
+    for &index in &source.indices {
+        mesh.indices.push(mesh.vertices.len() as u32);
+        mesh.vertices.push(source.vertices[index as usize]);
+    }
+    mesh.vertices.push(EditVertex::at([10.0, 10.0, 10.0]));
+    let selection = FaceSelection::new(vec![false; mesh.triangle_count()]);
+    let result = fill_selected_holes(
+        &mesh,
+        &selection,
+        MeshEditOptions {
+            heal_boundary_rims: true,
+            compact_vertices: true,
+            ..MeshEditOptions::default()
+        },
+    )
+    .expect("empty selection is valid");
+
+    assert_eq!(
+        result.mesh, mesh,
+        "empty selection must not alter any buffer"
+    );
+    assert_eq!(result.report.output_vertices, mesh.vertices.len());
+    assert_eq!(result.report.output_triangles, mesh.triangle_count());
+    assert_eq!(result.report.filled_holes, 0);
+    assert_eq!(result.report.healed_rims, 0);
+    assert_eq!(result.report.removed_triangles, 0);
+    assert!(result.report.warnings.is_empty());
+}
+
 fn wavy_fan_mesh(rim_color: [u8; 4]) -> MeshEditBuffers {
     let rim_len = 12usize;
     let mut vertices: Vec<EditVertex> = (0..rim_len)
