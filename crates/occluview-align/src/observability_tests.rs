@@ -302,8 +302,7 @@ fn a_cancelled_run_reports_nothing() {
 
 #[test]
 fn a_surface_too_small_to_span_six_freedoms_reports_nothing() {
-    // One triangle: not enough samples, and no six-dimensional span even if
-    // there were.
+    // One triangle does not clear the sample-count floor.
     let positions = vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
     let indices = vec![0u32, 1, 2];
     let mesh = soup(&positions, &indices);
@@ -316,6 +315,17 @@ fn a_surface_too_small_to_span_six_freedoms_reports_nothing() {
         &CancelFlag::new()
     )
     .is_none());
+
+    // Enough measured samples on a line reach the metric factorization.
+    // Rotation about the line moves none of them, making that metric singular.
+    let line: Vec<f32> = (0..32u16)
+        .flat_map(|step| [0.1 + f32::from(step) / 50.0, 0.25, 0.0])
+        .collect();
+    let moving = soup(&line, &[]);
+    let cancel = CancelFlag::new();
+    let map = deviation(moving, &index, Rigid::IDENTITY, &settings(), &cancel);
+    assert_eq!(deviation_stats(&map, 0.01).measured, crate::MIN_MEASURED);
+    assert!(observability(moving, &index, Rigid::IDENTITY, &settings(), &cancel).is_none());
 }
 
 #[test]
