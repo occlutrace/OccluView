@@ -212,6 +212,9 @@ pub fn accumulate_smooth_normals(
         let ia = triangle[0] as usize;
         let ib = triangle[1] as usize;
         let ic = triangle[2] as usize;
+        if ia >= vertex_count || ib >= vertex_count || ic >= vertex_count {
+            continue;
+        }
         let (Some(a), Some(b), Some(c)) = (position(ia), position(ib), position(ic)) else {
             continue;
         };
@@ -403,5 +406,12 @@ mod tests {
             _ => None,
         });
         assert_eq!(normals, vec![Vec3::ZERO; 3]);
+    }
+
+    #[test]
+    fn out_of_range_triangle_is_skipped_when_lookup_has_extra_positions() {
+        let positions = [Vec3::ZERO, Vec3::X, Vec3::Y];
+        let normals = accumulate_smooth_normals(2, &[0, 1, 2], |i| positions.get(i).copied());
+        assert_eq!(normals, vec![Vec3::ZERO; 2]);
     }
 }
