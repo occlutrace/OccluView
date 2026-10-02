@@ -436,8 +436,8 @@ fn read_faces(
         }
         // The coordinate list is `u v` per corner, in the same order as the
         // corner indices, and may have been declared before or after them.
-        for (corner, uv) in corners.iter().zip(coords.as_chunks::<2>().0) {
-            uvs.set(*corner, [uv[0], uv[1]]);
+        if texcoord_prop_idx.is_some() && indices_prop_idx != usize::MAX {
+            uvs.face(&corners, &coords)?;
         }
     }
     Ok(())

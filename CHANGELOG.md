@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Reject incomplete or surplus PLY face UV lists and fractional integer UV tokens.
+
 - A failed final file append preserves camera navigation made while the load was running.
 
 - Refuse PLY texture seams that cannot preserve the original mesh topology.

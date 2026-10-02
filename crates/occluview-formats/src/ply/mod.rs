@@ -66,6 +66,22 @@ pub(crate) struct FaceUvs {
 }
 
 impl FaceUvs {
+    /// Record a complete coordinate pair for each polygon corner.
+    pub(crate) fn face(&mut self, corners: &[u32], coords: &[f32]) -> Result<(), FormatError> {
+        if corners.len().checked_mul(2) != Some(coords.len()) {
+            return Err(FormatError::Malformed {
+                format: "PLY",
+                offset: 0,
+                reason: "face texcoord list must contain exactly two coordinates per corner"
+                    .to_string(),
+            });
+        }
+        for (corner, uv) in corners.iter().zip(coords.as_chunks::<2>().0) {
+            self.set(*corner, *uv);
+        }
+        Ok(())
+    }
+
     /// Size the table for the vertices actually read.
     ///
     /// Called once the vertex element has been consumed, because a corner index
@@ -369,6 +385,41 @@ mod tests {
                 assert_eq!(mesh.triangle_count(), 2);
             }
         }
+    }
+
+    #[test]
+    fn face_uv_lists_require_two_coordinates_per_corner() {
+        for format in ["ascii", "binary_little_endian", "binary_big_endian"] {
+            for count in [0, 1, 4, 5, 7, 8] {
+                let faces = [([0, 1, 2], vec![0.0; count])];
+                assert!(
+                    read(&face_uv_file(format, &faces, false)).is_err(),
+                    "{format}: {count}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn integer_face_uvs_require_integer_values() {
+        let faces = vec![([0, 1, 2], vec![0.0, 0.0, 1.0, 0.0, 0.0, 1.0])];
+        let bytes = face_uv_file("ascii", &faces, false);
+        let text = String::from_utf8(bytes)
+            .expect("ASCII")
+            .replace("uchar float texcoord", "uchar int texcoord");
+        assert!(
+            read(text.as_bytes()).is_ok(),
+            "integer coordinates remain supported"
+        );
+        let fractional = text.replace("6 0 0 1 0 0 1", "6 0.5 0 1 0 0 1");
+        assert_ne!(
+            fractional, text,
+            "fixture includes a fractional integer token"
+        );
+        assert!(
+            read(fractional.as_bytes()).is_err(),
+            "integer UV property accepted a fraction"
+        );
     }
 
     #[test]

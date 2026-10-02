@@ -316,11 +316,9 @@ where
                         builder.push_triangle(f0, pair[0], pair[1]);
                     }
                 }
-            } else if Some(i) == texcoord_prop_idx
-                && matches!(*elem_ty, ScalarType::Float | ScalarType::Double)
-            {
+            } else if Some(i) == texcoord_prop_idx {
                 for _ in 0..n {
-                    coords.push(read_face_float(tokens)?);
+                    coords.push(read_face_float(tokens, *elem_ty)?);
                 }
             } else {
                 // Non-geometry list (confidence, …) — discard n values.
@@ -338,15 +336,15 @@ where
         }
         // The coordinate list is `u v` per corner, in the same order as the
         // corner indices, and may have been declared before or after them.
-        for (corner, uv) in corners.iter().zip(coords.as_chunks::<2>().0) {
-            uvs.set(*corner, [uv[0], uv[1]]);
+        if texcoord_prop_idx.is_some() {
+            uvs.face(&corners, &coords)?;
         }
     }
     Ok(())
 }
 
 /// Read one texture-coordinate token.
-fn read_face_float<'a, I>(tokens: &mut I) -> Result<f32, FormatError>
+fn read_face_float<'a, I>(tokens: &mut I, ty: ScalarType) -> Result<f32, FormatError>
 where
     I: Iterator<Item = &'a str>,
 {
@@ -355,6 +353,13 @@ where
         expected: 0,
         got: 0,
     })?;
+    if !matches!(ty, ScalarType::Float | ScalarType::Double) && tok.parse::<i64>().is_err() {
+        return Err(FormatError::Malformed {
+            format: "PLY (ascii)",
+            offset: 0,
+            reason: format!("texture coordinate {tok:?} is not an integer"),
+        });
+    }
     tok.parse::<f32>()
         .map_err(|_| FormatError::Malformed {
             format: "PLY (ascii)",
