@@ -369,6 +369,15 @@ fn the_field_sentinel_is_one_number_in_both_crates() {
 /// beside the pointer matches the colour under it instead of jumping at vertex
 /// spacing.
 #[test]
+fn contact_readout_refuses_extreme_triangle_indices() {
+    let scene = scene_of(vec![slab(0.0, 0.0)]);
+    let entry = &scene.meshes()[0];
+    for triangle in [usize::MAX / 3, usize::MAX] {
+        assert!(field_value_at(&[0.0, 0.1, 0.2], entry, triangle, Vec3::ZERO).is_none());
+    }
+}
+
+#[test]
 fn the_readout_interpolates_across_the_triangle() {
     let scene = scene_of(vec![slab(0.0, 0.0)]);
     let entry = &scene.meshes()[0];

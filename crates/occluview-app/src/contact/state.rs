@@ -694,7 +694,9 @@ pub(crate) fn field_value_at(
     world_point: Vec3,
 ) -> Option<f32> {
     let indices = entry.mesh.indices();
-    let corners = indices.get(triangle * 3..triangle * 3 + 3)?;
+    let start = triangle.checked_mul(3)?;
+    let end = start.checked_add(3)?;
+    let corners = indices.get(start..end)?;
     let position = |index: u32| -> Option<Vec3> {
         let vertex = entry.mesh.vertices().get(index as usize)?;
         Some(
