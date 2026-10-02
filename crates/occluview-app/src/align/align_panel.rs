@@ -485,7 +485,7 @@ fn fits(
         align = align.on_disabled_hover_text(reason);
     } else {
         align = align
-            .on_disabled_hover_text(locale.tr(crate::i18n::message_id!("align-reject-unpaired")));
+            .on_disabled_hover_text(locale.tr(crate::i18n::message_id!("align-fit-perform-hint")));
     }
     if align.clicked() {
         action = Some(AlignPanelAction::Align);

@@ -320,3 +320,81 @@ fn the_coarse_fit_button_recovers_after_busy_and_failed_frames() {
         );
     }
 }
+
+fn fit_frame(
+    ctx: &egui::Context,
+    tool: &crate::align::align_tool::AlignTool,
+    events: Vec<egui::Event>,
+) -> egui::FullOutput {
+    let mut output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(400.0, 400.0),
+            )),
+            events,
+            ..Default::default()
+        },
+        |ui| {
+            let _ = super::fits(
+                ui,
+                tool,
+                true,
+                false,
+                &crate::i18n::LocaleManager::for_tests(),
+            );
+        },
+    );
+    output.textures_delta.clear();
+    output
+}
+
+#[test]
+fn a_single_complete_pair_explains_that_two_pairs_are_required() {
+    use crate::align::align_tool::{AlignPoint, AlignTool};
+    use glam::Vec3;
+    use occluview_core::{test_support::simple_triangle_mesh, Scene, SceneMesh};
+
+    let mut scene = Scene::new();
+    for _ in 0..2 {
+        scene.add(SceneMesh::new(
+            simple_triangle_mesh(None).expect("triangle mesh"),
+        ));
+    }
+    let mut tool = AlignTool::default();
+    tool.arm();
+    for entry in scene.meshes() {
+        tool.click(AlignPoint {
+            layer: entry.id(),
+            local: Vec3::ZERO,
+            normal: Vec3::Z,
+        });
+    }
+    assert_eq!(tool.pairs().len(), 1);
+    assert!(tool.pending().is_none());
+    let ctx = egui::Context::default();
+    ctx.all_styles_mut(|style| {
+        style.interaction.tooltip_delay = 0.0;
+        style.interaction.show_tooltips_only_when_still = false;
+    });
+    let output = fit_frame(&ctx, &tool, Vec::new());
+    let pos = output
+        .shapes
+        .iter()
+        .find_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) if text.galley.text() == "1. Perform alignment" => {
+                Some(text.pos + text.galley.rect.center().to_vec2())
+            }
+            _ => None,
+        })
+        .expect("the coarse-fit button must be rendered");
+    let _ = fit_frame(&ctx, &tool, vec![egui::Event::PointerMoved(pos)]);
+    let output = fit_frame(&ctx, &tool, Vec::new());
+    assert!(
+        output.shapes.iter().any(|shape| matches!(
+            &shape.shape,
+            egui::Shape::Text(text) if text.galley.text().contains("needs at least two arrows")
+        )),
+        "a complete first pair must be told why it cannot fit yet"
+    );
+}

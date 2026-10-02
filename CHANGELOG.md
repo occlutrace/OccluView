@@ -94,6 +94,7 @@ remain in the Git history.
 
 ### Align
 
+- Perform alignment explains its two-arrow requirement when only one complete arrow is placed.
 - A quick exclusion-brush tap paints the mesh even when press and release arrive in the same frame, without placing an alignment point.
 - Disabled Heatmap controls explain whether refinement is missing or deviation measurement is running.
 - Cancel keeps alignment open for retry when another layer edit temporarily prevents restoring scan positions.
