@@ -85,10 +85,21 @@ pub(crate) fn screen_delta_to_world(
     camera_up: Vec3,
     world_per_pixel: f32,
 ) -> Vec3 {
-    if !world_per_pixel.is_finite() || world_per_pixel <= 0.0 {
+    if !delta_px.is_finite()
+        || !camera_right.is_finite()
+        || !camera_up.is_finite()
+        || !world_per_pixel.is_finite()
+        || world_per_pixel <= 0.0
+    {
         return Vec3::ZERO;
     }
-    camera_right * (delta_px.x * world_per_pixel) - camera_up * (delta_px.y * world_per_pixel)
+    let delta =
+        camera_right * (delta_px.x * world_per_pixel) - camera_up * (delta_px.y * world_per_pixel);
+    if delta.is_finite() {
+        delta
+    } else {
+        Vec3::ZERO
+    }
 }
 
 /// Camera and mesh scale for one anchored Ctrl-drag turn.
@@ -326,6 +337,31 @@ mod tests {
             screen_delta_to_world(egui::vec2(50.0, 50.0), Vec3::X, Vec3::Y, f32::NAN),
             Vec3::ZERO
         );
+    }
+
+    #[test]
+    fn invalid_or_overflowing_translation_input_cannot_poison_a_layer_pose() {
+        for (motion, right, up, scale) in [
+            (egui::vec2(f32::NAN, 0.0), Vec3::X, Vec3::Y, 0.1),
+            (egui::vec2(0.0, f32::INFINITY), Vec3::X, Vec3::Y, 0.1),
+            (egui::vec2(1.0, 0.0), Vec3::splat(f32::NAN), Vec3::Y, 0.1),
+            (
+                egui::vec2(0.0, 1.0),
+                Vec3::X,
+                Vec3::splat(f32::INFINITY),
+                0.1,
+            ),
+            (egui::vec2(f32::MAX, 0.0), Vec3::X, Vec3::Y, 2.0),
+        ] {
+            let delta = screen_delta_to_world(motion, right, up, scale);
+            assert_eq!(
+                delta,
+                Vec3::ZERO,
+                "unusable motion must leave the scan still"
+            );
+            let pose = Affine3A::from_translation(Vec3::new(1.0, 2.0, 3.0));
+            assert_eq!(Affine3A::from_translation(delta) * pose, pose);
+        }
     }
 
     /// A Ctrl-drag at rest produces no rotation.
