@@ -628,11 +628,16 @@ fn active_move_uses_its_modifier_state_even_when_release_clears_shift_same_frame
                 .poll_sculpt_worker(&ctx);
             break;
         }
+        let worker = app.workspace.scenes[0]
+            .tools
+            .sculpt
+            .worker
+            .as_ref()
+            .expect("worker");
         assert!(
-            Instant::now() < deadline,
+            worker.wait_until_idle(deadline.saturating_duration_since(Instant::now())),
             "the worker did not finish the ray"
         );
-        std::thread::sleep(Duration::from_millis(1));
     }
     assert!(app.ui.app_error.is_none(), "the worker accepted the ray");
 }
@@ -834,8 +839,16 @@ fn saturated_active_input_retains_modifier_samples_across_a_path_break_before_fi
                 .poll_sculpt_worker(&ctx);
             break;
         }
-        assert!(Instant::now() < deadline, "retained samples did not finish");
-        std::thread::sleep(Duration::from_millis(1));
+        let worker = app.workspace.scenes[0]
+            .tools
+            .sculpt
+            .worker
+            .as_ref()
+            .expect("worker");
+        assert!(
+            worker.wait_until_idle(deadline.saturating_duration_since(Instant::now())),
+            "retained samples did not finish"
+        );
     }
 
     let trace = app.workspace.scenes[0]
