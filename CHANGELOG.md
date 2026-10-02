@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Sculpt cursor and stroke rays use the rendered scene depth range, including visible geometry behind the orbital eye.
+
 - Close Holes honors an enabled perimeter limit for selected rims and reports holes left open because of it.
 
 - Surface bridge splits leave regions open when a damaged inner contour prevents safe capping.

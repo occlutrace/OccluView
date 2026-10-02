@@ -7,6 +7,76 @@ use glam::Vec3;
 use occluview_core::{Mesh, Scene, SceneMesh, Vertex};
 
 #[test]
+fn sculpt_rays_include_visible_geometry_behind_the_orbital_eye() -> anyhow::Result<()> {
+    use super::input::{SculptRaySample, SculptTargetRaySample};
+    use crate::sculpt::sculpt_tool::SculptToolKind;
+    use glam::Affine3A;
+    use occluview_core::Camera;
+
+    let mesh = Mesh::new(
+        None,
+        vec![
+            Vertex::at(Vec3::new(-1.0, -1.0, 150.0)),
+            Vertex::at(Vec3::new(1.0, -1.0, 150.0)),
+            Vertex::at(Vec3::new(0.0, 1.0, 150.0)),
+        ],
+        vec![0, 1, 2],
+    )?;
+    mesh.warm_bvh();
+    let mut scene = Scene::new();
+    scene.add(SceneMesh::new(mesh));
+    let camera = Camera {
+        target: Vec3::ZERO,
+        orbit_pivot: Vec3::ZERO,
+        yaw: 0.0,
+        pitch: 0.0,
+        orientation: None,
+        distance: 100.0,
+        near: 0.1,
+        far: 1000.0,
+        orthographic_height: 10.0,
+        ..Camera::default()
+    };
+    let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 400.0));
+    assert!(crate::viewer::pick_scene_point(&camera, rect, rect.center(), &scene).is_some());
+    let mut app = crate::app::app_test_support::test_app("sculpt-behind-eye");
+    app.workspace.scenes[0].document.scene = Some(scene.into());
+    app.workspace.scenes[0].render.camera = Some(camera);
+    let ctx = egui::Context::default();
+    let context = app
+        .active_context()
+        .ok_or_else(|| anyhow::anyhow!("active scene"))?;
+    let hit = context.sculpt_surface_hit(rect, rect.center());
+    assert!(
+        hit.is_some(),
+        "a surface visible to picking and rendering must accept a sculpt press"
+    );
+    let step = context
+        .sculpt_pending_ray_step(
+            &ctx,
+            SculptTargetRaySample {
+                sample: SculptRaySample::new(
+                    rect,
+                    rect.center(),
+                    SculptToolKind::AddRemove,
+                    egui::Modifiers::NONE,
+                    false,
+                ),
+                world_to_local: Affine3A::IDENTITY,
+                local_per_world: 1.0,
+            },
+        )
+        .ok_or_else(|| anyhow::anyhow!("sculpt step"))?;
+    let distance = (Vec3::new(0.0, 0.0, 150.0) - Vec3::from_array(step.origin))
+        .dot(Vec3::from_array(step.direction));
+    assert!(
+        distance >= step.near_mm && distance <= step.far_mm,
+        "worker ray must contain the visible surface"
+    );
+    Ok(())
+}
+
+#[test]
 fn a_cold_mesh_can_be_resolved_for_background_preparation() -> anyhow::Result<()> {
     let mesh = Mesh::new(
         None,

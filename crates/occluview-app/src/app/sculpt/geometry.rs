@@ -13,8 +13,10 @@ impl SceneContext<'_> {
         viewport_rect: egui::Rect,
         pointer: egui::Pos2,
     ) -> Option<ScenePickHit> {
-        let camera = self.render.camera?;
+        let mut camera = self.render.camera?;
         let scene = self.document.scene.as_ref()?;
+        let bounds = self.effective_scene_bbox(scene);
+        camera.fit_clip_planes_to_bbox(bounds);
         let layer_id = self.sculpt_target_layer_id(scene)?;
         let entry = scene.meshes().iter().find(|entry| entry.id() == layer_id)?;
         let (ray_origin, direction) = viewport_ray(&camera, viewport_rect, pointer)?;
@@ -34,7 +36,7 @@ impl SceneContext<'_> {
             |w| Some(w.local_per_world),
         )?;
         let far_mm = (camera.far - camera.near) * local_per_world;
-        let clip_plane = local_clip_plane(inverse, self.active_viewport_clip_plane(scene.bbox()));
+        let clip_plane = local_clip_plane(inverse, self.active_viewport_clip_plane(bounds));
         let keep = |point| {
             local_ray_hit_is_visible(point, local_origin, local_direction, far_mm, clip_plane)
         };
