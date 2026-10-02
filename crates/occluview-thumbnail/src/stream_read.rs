@@ -75,17 +75,20 @@ fn read_capped_stream_inner(
         None => 0,
     };
 
+    let min_capacity = bounds.min_buffer_bytes.min(bounds.max_bytes);
     let initial_capacity = if declared_cap == 0 {
-        bounds.min_buffer_bytes
+        min_capacity
     } else {
-        declared_cap.clamp(bounds.min_buffer_bytes, bounds.max_bytes)
+        declared_cap.clamp(min_capacity, bounds.max_bytes)
     };
     let mut buf = Vec::with_capacity(initial_capacity);
     while buf.len() <= bounds.max_bytes {
         if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
             return StreamRead::TimedOut;
         }
-        let want = (bounds.max_bytes + 1 - buf.len()).min(bounds.chunk_bytes);
+        let want = (bounds.max_bytes - buf.len())
+            .saturating_add(1)
+            .min(bounds.chunk_bytes);
         let write_offset = buf.len();
         buf.resize(write_offset + want, 0);
         let Ok(read) = read_chunk(&mut buf[write_offset..write_offset + want]) else {
@@ -116,6 +119,22 @@ mod tests {
         min_buffer_bytes: 4,
         chunk_bytes: 8,
     };
+
+    #[test]
+    fn stream_bounds_are_safe_at_zero_and_maximum_caps() {
+        for max_bytes in [0, 2, usize::MAX] {
+            let result = read_capped_stream(
+                StreamReadBounds {
+                    declared_len: Some(0),
+                    max_bytes,
+                    min_buffer_bytes: 4,
+                    chunk_bytes: 8,
+                },
+                |_| Ok(0),
+            );
+            assert_eq!(result, StreamRead::Complete(Vec::new()));
+        }
+    }
 
     #[test]
     fn expired_deadline_prevents_the_next_shell_stream_read() {

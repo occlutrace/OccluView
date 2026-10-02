@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Thumbnail stream copying handles zero and maximum byte limits without overflowing.
+
 - Scan alignment previews uncertain candidates and changes the scan only after Accept alignment.
 
 - OBJ thumbnails retain positive face references to vertices declared later in the file.
