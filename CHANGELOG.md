@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- GLB texture decoding validates image buffer sources and byte ranges without overflowing.
+
 - Sculpt reports the actual display-geometry failure instead of always reporting a poisoned lock.
 
 - Sculpt welds equal coordinates consistently when one corner uses negative zero.
