@@ -210,11 +210,7 @@ impl SceneContext<'_> {
             .is_none_or(|scene| scene.meshes().is_empty())
         {
             let response = root_ui.allocate_rect(viewport_rect, sense);
-            Self::set_drop_hover_cursor_if_hovering(ctx);
-            self.show_empty_state(root_ui, &response, ctx);
-            if self.is_active {
-                self.show_status_overlay(root_ui, viewport_rect);
-            }
+            self.show_viewport_overlays(root_ui, &response, ctx, input_allowed);
         } else {
             root_ui.scope_builder(egui::UiBuilder::new().max_rect(viewport_rect), |ui| {
                 ui.centered_and_justified(egui::Ui::spinner);
@@ -432,5 +428,274 @@ pub(in crate::app) fn scene_mesh_uniform(entry: &SceneMesh) -> GpuMeshUniform {
         measured_map: u32::from(measured),
         overlay_paint: u32::from(paint),
         ..GpuMeshUniform::identity()
+    }
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::*;
+    use crate::app::OccluViewApp;
+    use eframe::App;
+
+    fn input_app(ctx: &egui::Context) -> OccluViewApp {
+        let mut app = crate::app::app_test_support::test_app("scene-input");
+        app.ui.repaint_ctx = ctx.clone();
+        app
+    }
+
+    fn frame(
+        app: &mut OccluViewApp,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
+        focused_frame(app, ctx, events, true)
+    }
+
+    fn focused_frame(
+        app: &mut OccluViewApp,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        focused: bool,
+    ) -> egui::FullOutput {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1000.0, 800.0),
+            )),
+            events,
+            focused,
+            ..Default::default()
+        };
+        let mut native_frame = eframe::Frame::_new_kittest();
+        let _ = ctx.run_logic(&input, |ctx| app.logic(ctx, &mut native_frame));
+        // Input tests supply a cached image instead of creating a GPU device.
+        for scene in &mut app.workspace.scenes {
+            if scene.document.scene.is_some() {
+                scene.render.offscreen_retry_after =
+                    Some(Instant::now() + std::time::Duration::from_secs(600));
+                if scene.render.rendered.is_none() {
+                    scene.render.rendered = Some(crate::app::RenderedFrame {
+                        texture: ctx.load_texture(
+                            "input-test-viewport",
+                            egui::ColorImage::filled([1, 1], egui::Color32::GRAY),
+                            egui::TextureOptions::LINEAR,
+                        ),
+                        pixels: vec![128, 128, 128, 255],
+                        size_px: [1, 1],
+                    });
+                }
+            }
+        }
+        let mut output = ctx.run_ui(input, |ui| app.ui(ui, &mut native_frame));
+        output.textures_delta.clear();
+        output
+    }
+
+    fn secondary_button(point: egui::Pos2, pressed: bool) -> egui::Event {
+        pointer_button(point, egui::PointerButton::Secondary, pressed)
+    }
+
+    fn pointer_button(
+        point: egui::Pos2,
+        button: egui::PointerButton,
+        pressed: bool,
+    ) -> egui::Event {
+        egui::Event::PointerButton {
+            pos: point,
+            button,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    fn key(key: egui::Key) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    fn has_control(output: &egui::FullOutput, label: &str) -> bool {
+        output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .is_some_and(|update| {
+                update.nodes.iter().any(|(_, node)| {
+                    node.role() == egui::accesskit::Role::Button && node.label() == Some(label)
+                })
+            })
+    }
+
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "AccessKit exposes f64 bounds for the bounded f32 test viewport."
+    )]
+    fn click_control(
+        app: &mut OccluViewApp,
+        ctx: &egui::Context,
+        label: &str,
+    ) -> anyhow::Result<()> {
+        let output = frame(app, ctx, vec![]);
+        let bounds = output
+            .platform_output
+            .accesskit_update
+            .and_then(|update| {
+                update.nodes.into_iter().find_map(|(_, node)| {
+                    (node.role() == egui::accesskit::Role::Button && node.label() == Some(label))
+                        .then(|| node.bounds())
+                        .flatten()
+                })
+            })
+            .ok_or_else(|| anyhow::anyhow!("missing control {label}"))?;
+        let point = egui::pos2(
+            bounds.x0.midpoint(bounds.x1) as f32,
+            bounds.y0.midpoint(bounds.y1) as f32,
+        );
+        frame(app, ctx, vec![egui::Event::PointerMoved(point)]);
+        for pressed in [true, false] {
+            frame(
+                app,
+                ctx,
+                vec![pointer_button(point, egui::PointerButton::Primary, pressed)],
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn empty_pane_right_click_opens_scene_menu_before_any_render() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut app = input_app(&ctx);
+        let point = egui::pos2(650.0, 350.0);
+        frame(&mut app, &ctx, vec![]);
+        frame(&mut app, &ctx, vec![egui::Event::PointerMoved(point)]);
+        for pressed in [true, false] {
+            frame(&mut app, &ctx, vec![secondary_button(point, pressed)]);
+        }
+        assert!(
+            egui::Popup::is_any_open(&ctx),
+            "an empty pane must route secondary clicks before it has a rendered texture"
+        );
+        let output = frame(&mut app, &ctx, vec![]);
+        assert!(output
+            .platform_output
+            .accesskit_update
+            .is_some_and(|update| {
+                update.nodes.iter().any(|(_, node)| {
+                    node.role() == egui::accesskit::Role::Button
+                        && node.label().is_some_and(|label| label.contains("Save"))
+                })
+            }));
+        assert!(!app.workspace.scenes[0].presentation.open_dialog_requested);
+        assert!(app.workspace.input.capture().is_none());
+    }
+
+    #[test]
+    fn decoded_open_routes_restore_active_input_and_panel_buttons() -> anyhow::Result<()> {
+        use crate::scene_loading::{PendingSceneLoad, SceneLoadMode};
+
+        for (source, mode) in [
+            ("startup", SceneLoadMode::Replace),
+            ("open", SceneLoadMode::Replace),
+            ("recent", SceneLoadMode::Replace),
+            ("single-instance", SceneLoadMode::Replace),
+            ("add", SceneLoadMode::Append),
+            ("drop", SceneLoadMode::Append),
+        ] {
+            let ctx = egui::Context::default();
+            ctx.enable_accesskit();
+            let mut app = input_app(&ctx);
+            let original_key = app.workspace.scenes[0].key;
+            let (sender, receiver) = std::sync::mpsc::channel();
+            sender.send(Ok(crate::app::app_test_support::named_scene(
+                "surface", 0.0,
+            )))?;
+            app.loader.install_active(PendingSceneLoad {
+                scene_key: original_key,
+                paths: vec![std::path::PathBuf::from("input-test.stl")],
+                source,
+                mode,
+                started_at: Instant::now(),
+                receiver,
+                superseded: false,
+                content_revision_at_request: 0,
+                dirty_at_request: false,
+                requested_at: Instant::now(),
+            });
+            frame(&mut app, &ctx, vec![]);
+            let target = app.workspace.scenes[0].target();
+            assert_eq!(app.workspace.input.active(), target, "{source}: live epoch");
+            assert!(app
+                .active_context()
+                .is_some_and(|scene| scene.is_active && scene.input_allowed));
+            assert!(!app.ui.modal_dialog_open(), "{source}: no stale modal");
+            frame(&mut app, &ctx, vec![key(egui::Key::E)]);
+            assert!(app.workspace.scenes[0]
+                .document
+                .edit_mode
+                .has_active_session());
+            frame(&mut app, &ctx, vec![]);
+            click_control(&mut app, &ctx, "All")?;
+            assert!(
+                app.active_context().is_some_and(|scene| {
+                    scene.document.scene.as_deref().is_some_and(|model| {
+                        scene.document.edit_mode.visible_selected_face_count(model) == 1
+                    })
+                }),
+                "{source}: All changes selection through the actual panel"
+            );
+            click_control(&mut app, &ctx, "None")?;
+            assert!(app.active_context().is_some_and(|scene| {
+                scene.document.scene.as_deref().is_some_and(|model| {
+                    scene.document.edit_mode.visible_selected_face_count(model) == 0
+                })
+            }));
+            click_control(&mut app, &ctx, "Invert")?;
+            assert!(app.active_context().is_some_and(|scene| {
+                scene.document.scene.as_deref().is_some_and(|model| {
+                    scene.document.edit_mode.visible_selected_face_count(model) == 1
+                })
+            }));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn window_focus_and_information_dialog_release_the_edit_panel() -> anyhow::Result<()> {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut app = input_app(&ctx);
+        let mut scene = app
+            .active_context()
+            .ok_or_else(|| anyhow::anyhow!("initial scene"))?;
+        scene.set_scene(
+            crate::app::app_test_support::named_scene("surface", 0.0),
+            true,
+        );
+        frame(&mut app, &ctx, vec![key(egui::Key::E)]);
+        frame(&mut app, &ctx, vec![]);
+        assert!(has_control(&frame(&mut app, &ctx, vec![]), "All"));
+        let unfocused = focused_frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::WindowFocused(false)],
+            false,
+        );
+        assert!(!has_control(&unfocused, "All"));
+        let focused = focused_frame(&mut app, &ctx, vec![egui::Event::WindowFocused(true)], true);
+        assert!(has_control(&focused, "All"));
+        app.ui.information_dialog =
+            crate::app::information_dialog::InformationDialog::KeyboardMouse;
+        assert!(!has_control(&frame(&mut app, &ctx, vec![]), "All"));
+        frame(&mut app, &ctx, vec![key(egui::Key::Escape)]);
+        assert!(!app.ui.information_dialog.is_open());
+        assert!(has_control(&frame(&mut app, &ctx, vec![]), "All"));
+        click_control(&mut app, &ctx, "All")?;
+        Ok(())
     }
 }
