@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use occluview_core::Scene;
 
 use super::journal::EditCheckpoint;
-use super::*;
+use super::{EditCheckpointId, SceneKey, WorkspaceHistory};
 
 impl WorkspaceHistory {
     pub(crate) fn has_active_edit_checkpoint(&self, scope: SceneKey) -> bool {

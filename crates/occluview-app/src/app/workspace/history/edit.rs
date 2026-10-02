@@ -4,7 +4,10 @@ use std::any::Any;
 use std::collections::HashSet;
 
 use super::journal::{EntryOwner, HistoryEntry, PendingReservation};
-use super::*;
+use super::{
+    HistoryCommandId, HistoryDirection, HistorySnapshot, HistoryStepInfo, HistoryStepKind, SceneKey,
+    WorkspaceHistory,
+};
 
 impl WorkspaceHistory {
     pub(crate) fn push_pending_edit<T: Any>(
