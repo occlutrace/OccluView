@@ -5,7 +5,7 @@ use crate::{
 };
 use glam::{Affine3A, DAffine3, DMat3, DVec3, Vec3};
 #[cfg(feature = "robust-csg")]
-use occluview_robust_csg::PreparedRobustSolid;
+use crate::robust::PreparedRobustSolid;
 use std::sync::Arc;
 use thiserror::Error;
 

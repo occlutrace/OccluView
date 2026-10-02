@@ -1,5 +1,3 @@
-#![forbid(unsafe_code)]
-
 //! Robust finite-disc CSG fallback for closed triangle meshes.
 
 use thiserror::Error;
