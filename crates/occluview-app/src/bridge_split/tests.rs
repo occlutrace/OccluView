@@ -10,7 +10,7 @@ use occluview_mesh_edit::{
     BridgeSplitError, BridgeSplitReport, BridgeSplitRequest, CoreBridgeSplitResult,
 };
 use std::sync::{mpsc, Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[test]
 fn default_kerf_and_clamp_use_one_source_of_truth() {
@@ -452,13 +452,13 @@ pub(super) fn poll_controller_until(
     controller: &mut BridgeSplitController,
     live_target: Option<BridgeSplitTarget>,
 ) -> bool {
-    for _ in 0..100 {
-        if controller.poll(live_target) {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(10));
+    if !controller
+        .worker
+        .wait_for_output(Duration::from_secs(1))
+    {
+        return false;
     }
-    false
+    controller.poll(live_target)
 }
 
 pub(super) fn poll_controller_until_job_started(
@@ -466,26 +466,25 @@ pub(super) fn poll_controller_until_job_started(
     live_target: BridgeSplitTarget,
     started_rx: &mpsc::Receiver<BridgeSplitGuard>,
 ) -> Option<BridgeSplitGuard> {
-    for _ in 0..100 {
-        let _ = controller.poll(Some(live_target));
-        match started_rx.try_recv() {
-            Ok(guard) => return Some(guard),
-            Err(mpsc::TryRecvError::Disconnected) => return None,
-            Err(mpsc::TryRecvError::Empty) => std::thread::sleep(Duration::from_millis(10)),
-        }
+    let deadline = Instant::now() + Duration::from_secs(1);
+    if !controller
+        .worker
+        .wait_for_output(deadline.saturating_duration_since(Instant::now()))
+    {
+        return None;
     }
-    None
+    let _ = controller.poll(Some(live_target));
+    started_rx
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        .ok()
 }
 
 fn poll_worker_until(worker: &mut BridgeSplitWorker) -> Vec<BridgeSplitJobOutput> {
-    for _ in 0..100 {
-        let outputs = worker.poll();
-        if !outputs.is_empty() {
-            return outputs;
-        }
-        std::thread::sleep(Duration::from_millis(10));
+    if worker.wait_for_output(Duration::from_secs(1)) {
+        worker.poll()
+    } else {
+        Vec::new()
     }
-    Vec::new()
 }
 
 struct ThreadExitSignal(mpsc::Sender<()>);
