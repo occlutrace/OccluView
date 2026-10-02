@@ -65,8 +65,8 @@ pub(in crate::app) fn apply_last_mesh_edit_redo_with_status(
 
     match app.document.edit_mode.redo_last_scene_edit(scene, layer_id) {
         StructuralHistoryStep::Restored(restored_scene) => {
+            mark_restored_scene_unsaved(app.document, scene, &restored_scene);
             *scene = restored_scene;
-            app.document.mark_mesh_edits_unsaved(layer_id);
             app.scene_ui.status_message = Some(app.ui.locale.tr_with(
                 crate::i18n::message_id!("redo-redid"),
                 &[("layer", &layer_label)],
@@ -106,6 +106,26 @@ pub(in crate::app) fn apply_last_mesh_edit_redo_with_status(
     structural_scene_apply()
 }
 
+fn mark_restored_scene_unsaved(
+    document: &mut super::super::state_document::DocumentState,
+    current: &Scene,
+    restored: &Scene,
+) {
+    let previous = current
+        .meshes()
+        .iter()
+        .map(|entry| (entry.id(), entry))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for entry in restored.meshes() {
+        if previous.get(&entry.id()).is_none_or(|before| {
+            !std::sync::Arc::ptr_eq(&before.mesh, &entry.mesh)
+                || before.transform != entry.transform
+        }) {
+            document.mark_mesh_edits_unsaved(entry.id());
+        }
+    }
+}
+
 pub(super) fn apply_layer_mesh_undo_action_with_status(
     app: &mut SceneContext<'_>,
     scene: &mut Scene,
@@ -124,8 +144,8 @@ pub(super) fn apply_layer_mesh_undo_action_with_status(
         .undo_last_scene_edit(scene, request.layer_id)
     {
         StructuralHistoryStep::Restored(restored) => {
+            mark_restored_scene_unsaved(app.document, scene, &restored);
             *scene = restored;
-            app.document.mark_mesh_edits_unsaved(request.layer_id);
             app.scene_ui.status_message = Some(app.ui.locale.tr_with(
                 crate::i18n::message_id!("undo-undid"),
                 &[("layer", &layer_label)],
@@ -197,4 +217,89 @@ pub(super) fn apply_layer_mesh_undo_action(
     // for the rest of the session.
     let _ = entry.mesh.bbox();
     structural_scene_apply()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::OccluViewApp;
+    use glam::Vec3;
+    use occluview_core::{Mesh, SceneMesh, ScenePickHit, Vertex};
+    use std::collections::BTreeSet;
+    use std::sync::Arc;
+
+    #[test]
+    fn scene_history_marks_every_restored_mesh_unsaved() {
+        for action in [
+            LayerContextAction::DeleteSelectedFaces,
+            LayerContextAction::CutSelectionToNewLayer,
+        ] {
+            let Ok(mesh) = Mesh::new(
+                Some("scan".into()),
+                vec![
+                    Vertex::at(Vec3::ZERO),
+                    Vertex::at(Vec3::X),
+                    Vertex::at(Vec3::Y),
+                    Vertex::at(Vec3::Z),
+                ],
+                vec![0, 1, 2, 0, 3, 1],
+            ) else {
+                panic!("valid mesh");
+            };
+            let mut scene = Scene::new();
+            for _ in 0..3 {
+                scene.add(SceneMesh::new(mesh.clone()));
+            }
+            let untouched_id = scene.meshes()[2].id();
+            let original_ids = scene.meshes()[..2]
+                .iter()
+                .map(SceneMesh::id)
+                .collect::<BTreeSet<_>>();
+            let mut app = OccluViewApp::new_for_tests(egui::Context::default());
+            let Some(mut context) = app.active_context() else {
+                panic!("active scene");
+            };
+            context.document.scene = Some(Arc::new(scene.clone()));
+            for (index, entry) in scene.meshes().iter().take(2).enumerate() {
+                assert!(context.document.edit_mode.select_face_hit(
+                    &scene,
+                    ScenePickHit {
+                        layer_index: index,
+                        layer_id: entry.id(),
+                        triangle_index: 0,
+                        point: Vec3::ZERO,
+                        distance: 1.0,
+                    },
+                ));
+            }
+            let Ok(apply) = super::super::selection_batch::apply_visible_selected_face_mesh_edit_action_with_limit(
+                &mut scene,
+                &mut context.document.edit_mode,
+                action,
+                None,
+            ) else {
+                panic!("selection edit");
+            };
+            assert!(apply.scene_changed);
+            let edited_ids = scene
+                .meshes()
+                .iter()
+                .map(SceneMesh::id)
+                .filter(|id| *id != untouched_id)
+                .collect::<BTreeSet<_>>();
+
+            // A completed export clears dirty flags, but keeps the history.
+            context.document.clear_unsaved_mesh_edits();
+            assert!(
+                apply_last_mesh_edit_undo_with_status(&mut context, &mut scene, &[]).scene_changed
+            );
+            assert_eq!(context.document.unsaved_edit_layer_ids, original_ids);
+
+            context.document.clear_unsaved_mesh_edits();
+            assert!(
+                apply_last_mesh_edit_redo_with_status(&mut context, &mut scene, &[]).scene_changed
+            );
+            assert_eq!(context.document.unsaved_edit_layer_ids, edited_ids);
+        }
+    }
 }

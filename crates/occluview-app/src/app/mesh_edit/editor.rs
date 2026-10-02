@@ -913,3 +913,125 @@ impl SceneContext<'_> {
         true
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::OccluViewApp;
+    use glam::Vec3;
+    use occluview_core::{Mesh, SceneMesh, ScenePickHit, Vertex};
+    use std::collections::BTreeSet;
+    use std::sync::Arc;
+
+    fn marked_app(ctx: &egui::Context) -> (OccluViewApp, BTreeSet<occluview_core::SceneMeshId>) {
+        let Ok(mesh) = Mesh::new(
+            Some("scan".into()),
+            vec![
+                Vertex::at(Vec3::ZERO),
+                Vertex::at(Vec3::X),
+                Vertex::at(Vec3::Y),
+                Vertex::at(Vec3::Z),
+            ],
+            vec![0, 1, 2, 0, 3, 1],
+        ) else {
+            panic!("valid mesh");
+        };
+        let mut scene = Scene::new();
+        scene.add(SceneMesh::new(mesh.clone()));
+        scene.add(SceneMesh::new(mesh));
+        let original_ids = scene
+            .meshes()
+            .iter()
+            .map(SceneMesh::id)
+            .collect::<BTreeSet<_>>();
+        let mut app = OccluViewApp::new_for_tests(ctx.clone());
+        {
+            let Some(context) = app.active_context() else {
+                panic!("active scene");
+            };
+            context.document.scene = Some(Arc::new(scene.clone()));
+            assert!(context
+                .document
+                .edit_mode
+                .begin_face_selection(&scene.meshes()[0], &scene));
+            for (index, entry) in scene.meshes().iter().enumerate() {
+                assert!(context.document.edit_mode.select_face_hit(
+                    &scene,
+                    ScenePickHit {
+                        layer_index: index,
+                        layer_id: entry.id(),
+                        triangle_index: 0,
+                        point: Vec3::ZERO,
+                        distance: 1.0,
+                    },
+                ));
+            }
+        }
+        (app, original_ids)
+    }
+
+    #[test]
+    fn mesh_editor_session_actions_apply_and_restore_every_layer() {
+        for action in [
+            LayerContextAction::DeleteSelectedFaces,
+            LayerContextAction::CropToSelectedFaces,
+            LayerContextAction::CutSelectionToNewLayer,
+            LayerContextAction::SeparateSelectedComponents,
+        ] {
+            let ctx = egui::Context::default();
+            let (mut app, original_ids) = marked_app(&ctx);
+            let Some(mut context) = app.active_context() else {
+                panic!("active scene");
+            };
+
+            context.request_edit_session_action(action, &ctx);
+            let Some(edited) = context.document.scene.as_ref() else {
+                panic!("edited live scene");
+            };
+            assert!(edited
+                .meshes()
+                .iter()
+                .all(|entry| entry.mesh.triangle_count() == 1));
+            let expected_layers = if matches!(
+                action,
+                LayerContextAction::DeleteSelectedFaces | LayerContextAction::CropToSelectedFaces
+            ) {
+                2
+            } else {
+                4
+            };
+            assert_eq!(edited.meshes().len(), expected_layers);
+            let edited_ids = edited
+                .meshes()
+                .iter()
+                .map(SceneMesh::id)
+                .collect::<BTreeSet<_>>();
+            assert_eq!(context.document.unsaved_edit_layer_ids, edited_ids);
+            assert_eq!(context.document.edit_mode.undo_len(), 1);
+
+            context.document.clear_unsaved_mesh_edits();
+            context.apply_history_navigation(false, &ctx);
+            let Some(restored) = context.document.scene.as_ref() else {
+                panic!("restored live scene");
+            };
+            assert_eq!(restored.meshes().len(), 2);
+            assert!(restored
+                .meshes()
+                .iter()
+                .all(|entry| entry.mesh.triangle_count() == 2));
+            assert_eq!(context.document.unsaved_edit_layer_ids, original_ids);
+
+            context.document.clear_unsaved_mesh_edits();
+            context.apply_history_navigation(true, &ctx);
+            let Some(restored) = context.document.scene.as_ref() else {
+                panic!("redone live scene");
+            };
+            assert_eq!(restored.meshes().len(), expected_layers);
+            assert!(restored
+                .meshes()
+                .iter()
+                .all(|entry| entry.mesh.triangle_count() == 1));
+            assert_eq!(context.document.unsaved_edit_layer_ids, edited_ids);
+        }
+    }
+}
