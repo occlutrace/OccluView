@@ -237,11 +237,12 @@ where
         offset: line_no,
         reason: format!("missing number in: {raw:?}"),
     })?;
-    tok.parse::<f32>().map_err(|_| FormatError::Malformed {
+    let value = tok.parse::<f32>().map_err(|_| FormatError::Malformed {
         format: "OBJ",
         offset: line_no,
         reason: format!("bad number {tok:?} in: {raw:?}"),
-    })
+    })?;
+    crate::finite_coordinate(value, "OBJ", line_no)
 }
 
 fn parse_color_channel(s: &str, line_no: usize, raw: &str) -> Result<u8, FormatError> {

@@ -291,6 +291,7 @@ impl<'a> Lexer<'a> {
         token
             .parse::<f32>()
             .map_err(|_| malformed(&format!("bad number {token:?}")))
+            .and_then(|value| crate::finite_coordinate(value, "OFF (ascii)", 0))
     }
 
     fn next_u32(&mut self) -> Result<u32, FormatError> {
@@ -331,7 +332,9 @@ fn read_f64_le(b: &[u8], off: &mut usize) -> Result<f64, FormatError> {
             got: b.len(),
         })?;
     *off += 8;
-    Ok(f64::from_le_bytes(arr))
+    let value = f64::from_le_bytes(arr);
+    crate::finite_coordinate(value as f32, "OFF (binary)", *off - 8)?;
+    Ok(value)
 }
 
 fn malformed(reason: &str) -> FormatError {

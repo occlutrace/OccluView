@@ -126,13 +126,21 @@ impl<'a> Cursor<'a> {
             }
             ScalarType::Float => {
                 let a = self.take_array::<4>()?;
-                ScalarValue::Float(self.endian.read_f32(a))
+                ScalarValue::Float(crate::finite_coordinate(
+                    self.endian.read_f32(a),
+                    "PLY (binary)",
+                    self.pos - 4,
+                )?)
             }
             // Double -> f32 is a deliberately lossy narrowing; PLY doubles are
             // vanishingly rare in dental files, and our internal type is f32.
             ScalarType::Double => {
                 let a = self.take_array::<8>()?;
-                ScalarValue::Float(self.endian.read_f64(a) as f32)
+                ScalarValue::Float(crate::finite_coordinate(
+                    self.endian.read_f64(a) as f32,
+                    "PLY (binary)",
+                    self.pos - 8,
+                )?)
             }
         })
     }

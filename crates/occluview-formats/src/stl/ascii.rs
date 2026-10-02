@@ -208,11 +208,12 @@ where
             expected: 0,
             got: 0,
         })?;
-        tok.parse::<f32>().map_err(|_| FormatError::Malformed {
+        let value = tok.parse::<f32>().map_err(|_| FormatError::Malformed {
             format: "STL (ascii)",
             offset: 0,
             reason: format!("not a number: {tok:?}"),
-        })
+        })?;
+        crate::finite_coordinate(value, "STL (ascii)", 0)
     };
     let x = parse(tokens)?;
     let y = parse(tokens)?;
