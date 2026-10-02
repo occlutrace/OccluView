@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Layer controls pause while a decision dialog is open and resume when it is dismissed.
+
 - The first mesh in a scene gets a camera even when automatic framing is disabled; existing views stay unchanged.
 
 - Empty scene panes respond to right-clicks before a viewport image is rendered.
