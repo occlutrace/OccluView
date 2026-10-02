@@ -163,9 +163,28 @@ fn builder_push_vertices(
 }
 
 fn normal_transform_for(transform: Mat4) -> Mat4 {
-    if transform.determinant().abs() > f32::EPSILON {
+    if transform.determinant() != 0.0 {
         transform.inverse().transpose()
     } else {
         transform
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn small_nonsingular_scales_use_inverse_transpose_normals() {
+        let transform = Mat4::from_scale(Vec3::new(0.0001, 0.0002, 0.0001));
+        let normal = Vec3::new(1.0, 1.0, 0.0).normalize();
+        let actual = normal_transform_for(transform)
+            .transform_vector3(normal)
+            .normalize();
+        let expected = Vec3::new(2.0, 1.0, 0.0).normalize();
+        assert!(
+            actual.abs_diff_eq(expected, 1.0e-6),
+            "{actual:?} != {expected:?}"
+        );
     }
 }

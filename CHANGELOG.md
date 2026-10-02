@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- GLB imports transform normals correctly for small nonuniform scales.
+
 - Contact overlays respect the graphics device limit on both texture dimensions.
 
 - GLB imports reject attribute streams whose counts differ from the position stream.
