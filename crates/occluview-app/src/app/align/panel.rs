@@ -67,7 +67,11 @@ impl SceneContext<'_> {
     // Keep panel state capture, window rendering, and action application in one
     // ordered UI transaction; changing that order can submit stale settings.
     #[expect(clippy::too_many_lines)]
-    pub(in crate::app) fn show_align_panel(&mut self, ctx: &egui::Context, viewport_rect: egui::Rect) {
+    pub(in crate::app) fn show_align_panel(
+        &mut self,
+        ctx: &egui::Context,
+        viewport_rect: egui::Rect,
+    ) {
         let busy = self
             .tools
             .align
@@ -223,7 +227,9 @@ impl SceneContext<'_> {
     }
 
     /// Which scan the fit will move, named the way the operator named the files.
-    pub(in crate::app) fn align_roles(&self) -> Option<crate::align::align_panel_roles::AlignRoles> {
+    pub(in crate::app) fn align_roles(
+        &self,
+    ) -> Option<crate::align::align_panel_roles::AlignRoles> {
         Some(crate::align::align_panel_roles::AlignRoles {
             moving: self.layer_display_name(self.tools.align.tool.moving_layer()?)?,
             fixed: self.layer_display_name(self.tools.align.tool.fixed_layer()?)?,

@@ -95,7 +95,10 @@ fn privacy_offenders(path: &Path, text: &str) -> Vec<String> {
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or_default();
-    for case_number in case_numbers_in(text).into_iter().chain(case_numbers_in(file_name)) {
+    for case_number in case_numbers_in(text)
+        .into_iter()
+        .chain(case_numbers_in(file_name))
+    {
         offenders.push(format!("{}: {case_number}", path.display()));
     }
     offenders

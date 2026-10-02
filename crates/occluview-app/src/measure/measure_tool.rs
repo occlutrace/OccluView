@@ -19,7 +19,9 @@ use glam::{Vec3, Vec3A};
 use occluview_core::SceneMesh;
 
 use crate::i18n::catalog::NumberFormat;
-use crate::measure::measure_ruler::{self, LinePlacement, RulerEnd, RulerMeasurement, RulerSegment};
+use crate::measure::measure_ruler::{
+    self, LinePlacement, RulerEnd, RulerMeasurement, RulerSegment,
+};
 
 /// Ignore intersections closer than this to the probe origin (mm), so the probe
 /// never reports the entry triangle's edge-neighbors as an "exit".

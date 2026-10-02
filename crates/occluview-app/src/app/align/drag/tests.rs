@@ -131,18 +131,19 @@ fn drive_actual_drag_frame(
     consumed
 }
 
-fn expected_free_translation(
-    camera: &Camera,
-    viewport: egui::Rect,
-    motion: egui::Vec2,
-) -> Vec3 {
+fn expected_free_translation(camera: &Camera, viewport: egui::Rect, motion: egui::Vec2) -> Vec3 {
     let right = camera
         .view_direction()
         .cross(camera.view_up())
         .normalize_or_zero();
     let world_per_pixel =
         crate::align::align_drag::mm_per_pixel(camera.orthographic_height, viewport.height());
-    crate::align::align_drag::screen_delta_to_world(motion, right, camera.view_up(), world_per_pixel)
+    crate::align::align_drag::screen_delta_to_world(
+        motion,
+        right,
+        camera.view_up(),
+        world_per_pixel,
+    )
 }
 
 /// A Ctrl-drag of a transformed scan keeps the clicked world point fixed.
@@ -295,8 +296,7 @@ fn changing_between_translation_and_tilt_keeps_the_current_grab_point() {
         .transform;
     let translated_anchor = translated.transform_point3(anchor_local);
     assert!(
-        (translated_anchor - anchor_before - Vec3::from(translation.translation)).length()
-            < 1e-3,
+        (translated_anchor - anchor_before - Vec3::from(translation.translation)).length() < 1e-3,
         "plain movement should carry the grabbed point with the layer"
     );
 
@@ -356,8 +356,7 @@ fn changing_between_translation_and_tilt_keeps_the_current_grab_point() {
         .transform;
     let moved_anchor = moved_pose.transform_point3(anchor_local);
     assert!(
-        (moved_anchor - turned_anchor - Vec3::from(next_translation.translation)).length()
-            < 1e-3,
+        (moved_anchor - turned_anchor - Vec3::from(next_translation.translation)).length() < 1e-3,
         "plain movement after Ctrl should carry the same grabbed point"
     );
 

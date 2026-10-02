@@ -36,7 +36,11 @@ enum GestureCancelReason {
 }
 
 impl OccluViewApp {
-    pub(super) fn route_pointer_input(&mut self, ctx: &egui::Context, frame: &WorkspaceInputFrame<'_>) {
+    pub(super) fn route_pointer_input(
+        &mut self,
+        ctx: &egui::Context,
+        frame: &WorkspaceInputFrame<'_>,
+    ) {
         let (focused, buttons, primary_pressed, secondary_pressed, middle_pressed, wheel) = ctx
             .input(|input| {
                 (
@@ -176,7 +180,11 @@ impl OccluViewApp {
             }
         }
     }
-    pub(super) fn pointer_over_workspace_chrome(&self, pointer: egui::Pos2, panes: &[VisiblePane]) -> bool {
+    pub(super) fn pointer_over_workspace_chrome(
+        &self,
+        pointer: egui::Pos2,
+        panes: &[VisiblePane],
+    ) -> bool {
         panes
             .iter()
             .any(|pane| pane_header_rect(pane.frame).contains(pointer))
@@ -384,10 +392,7 @@ fn pointer_buttons(input: &egui::InputState) -> PointerButtons {
 /// (Cut and Bridge Split both have one). The workspace only consumes Escape
 /// for gestures whose transient state it can cancel, or a standalone layer
 /// drag with no competing tool capture.
-pub(super) fn workspace_owns_escape(
-    layer_drag_active: bool,
-    owner: Option<GestureOwner>,
-) -> bool {
+pub(super) fn workspace_owns_escape(layer_drag_active: bool, owner: Option<GestureOwner>) -> bool {
     let owner_needs_cancel = owner.is_some_and(|owner| {
         matches!(
             owner.kind,
@@ -406,10 +411,7 @@ pub(super) fn workspace_owns_escape(
     owner_needs_cancel || (layer_drag_active && owner.is_none())
 }
 
-pub(super) fn restore_divider_ratio(
-    layout: &mut WorkspaceLayout,
-    owner: GestureOwner,
-) -> bool {
+pub(super) fn restore_divider_ratio(layout: &mut WorkspaceLayout, owner: GestureOwner) -> bool {
     let Some(ratio) = owner.divider_initial_ratio() else {
         return false;
     };

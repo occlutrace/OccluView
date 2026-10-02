@@ -97,8 +97,8 @@ impl SceneContext<'_> {
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use crate::app::app_test_support::{named_scene, push_named_layer, test_app};
     use super::*;
+    use crate::app::app_test_support::{named_scene, push_named_layer, test_app};
     use glam::Vec3;
     use std::sync::Arc;
 

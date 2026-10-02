@@ -4,6 +4,6 @@
 //! request types; `contact_worker` runs the measurement off the frame thread.
 
 pub(crate) mod contact;
-pub(crate) mod contact_worker;
 #[cfg(test)]
 mod contact_render_tests;
+pub(crate) mod contact_worker;

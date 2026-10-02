@@ -278,11 +278,12 @@ fn automatically(
     enabled: bool,
     locale: &crate::i18n::LocaleManager,
 ) -> Option<AlignPanelAction> {
-    let mut action = if crate::align::align_panel_roles::show(ui, view.roles.as_ref(), enabled, locale) {
-        Some(AlignPanelAction::SwapRoles)
-    } else {
-        None
-    };
+    let mut action =
+        if crate::align::align_panel_roles::show(ui, view.roles.as_ref(), enabled, locale) {
+            Some(AlignPanelAction::SwapRoles)
+        } else {
+            None
+        };
     action = action.or(fits(ui, view.tool, enabled, view.busy, locale));
     ui.add_space(4.0);
     prompt(ui, view.tool, locale);

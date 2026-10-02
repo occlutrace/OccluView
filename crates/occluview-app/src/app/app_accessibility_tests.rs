@@ -1,8 +1,8 @@
 #![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
 
 use super::*;
-use crate::app::settings::panel::settings_popup_id;
 use crate::app::information_dialog::InformationDialog;
+use crate::app::settings::panel::settings_popup_id;
 use crate::contact::contact::ContactMode;
 use crate::i18n::preference::UiLanguagePreference;
 use crate::measure::measure_tool::MeasureMode;

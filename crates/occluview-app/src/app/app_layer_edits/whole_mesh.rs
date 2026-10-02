@@ -306,7 +306,10 @@ fn close_holes_status(
                 crate::i18n::message_id!("holes-seg-oversize-limit"),
                 &[
                     ("n", &oversize.to_string()),
-                    ("limit", &locale.number_format().decimal(f64::from(limit_mm), 0)),
+                    (
+                        "limit",
+                        &locale.number_format().decimal(f64::from(limit_mm), 0),
+                    ),
                 ],
             ),
             None => locale.tr_plural(

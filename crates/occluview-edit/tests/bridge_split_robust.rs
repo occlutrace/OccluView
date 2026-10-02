@@ -17,13 +17,13 @@
 )]
 
 use glam::{Affine3A, Vec3};
-use occluview_mesh_edit::{BridgeSplitError, BridgeSplitRequest};
 use occluview_core::{Mesh, Vertex};
 use occluview_edit::{
     bridge_split_mesh_in_world, bridge_split_prepared_mesh_in_world, mesh_edit_buffers_from_mesh,
     normalize_bridge_split_input, prepare_bridge_split_source, CoreBridgeSplitError,
     CoreBridgeSplitResult, PreparedBridgeSplitSource,
 };
+use occluview_mesh_edit::{BridgeSplitError, BridgeSplitRequest};
 use std::sync::Arc;
 
 fn cube_with_precision_sliver() -> Mesh {
@@ -230,11 +230,15 @@ fn robust_split_unions_overlaps_and_preserves_logical_side_components() {
         .expect("overlapping dental shells split");
 
     assert_eq!(
-        occluview_mesh_edit::validate_bridge_split_part(&mesh_edit_buffers_from_mesh(&result.part_a)),
+        occluview_mesh_edit::validate_bridge_split_part(&mesh_edit_buffers_from_mesh(
+            &result.part_a
+        )),
         Ok(2)
     );
     assert_eq!(
-        occluview_mesh_edit::validate_bridge_split_part(&mesh_edit_buffers_from_mesh(&result.part_b)),
+        occluview_mesh_edit::validate_bridge_split_part(&mesh_edit_buffers_from_mesh(
+            &result.part_b
+        )),
         Ok(1)
     );
     assert!((world_gap(&result, Affine3A::IDENTITY, request) - request.kerf_mm).abs() < 1e-4);

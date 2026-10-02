@@ -129,7 +129,8 @@ fn a_generated_manifest_round_trips_through_the_client_parser() {
             }
         }
     }"#;
-    let manifest: Manifest = serde_json::from_str(generated).expect("the generated manifest parses");
+    let manifest: Manifest =
+        serde_json::from_str(generated).expect("the generated manifest parses");
     assert_eq!(manifest.schema, MANIFEST_SCHEMA);
     assert_eq!(manifest.version, "1.3.0");
     assert!(manifest.notes.is_some());
@@ -157,8 +158,7 @@ fn a_manifest_without_a_schema_field_is_read_as_the_current_schema() {
 #[test]
 fn unknown_manifest_fields_do_not_break_the_parser() {
     let extended = br#"{"schema": 1, "version": "1.3.0", "platforms": {}, "future": 7}"#;
-    let manifest: Manifest =
-        serde_json::from_slice(extended).expect("an unknown field is ignored");
+    let manifest: Manifest = serde_json::from_slice(extended).expect("an unknown field is ignored");
     assert_eq!(manifest.version, "1.3.0");
 }
 

@@ -1,6 +1,6 @@
 use super::{
-    AutoCreatedDestination, HistoryDirection, HistorySnapshot, HistoryStepKind,
-    NavigationError, TransferRecord, TransferredLayer, WorkspaceHistory,
+    AutoCreatedDestination, HistoryDirection, HistorySnapshot, HistoryStepKind, NavigationError,
+    TransferRecord, TransferredLayer, WorkspaceHistory,
 };
 use crate::app::workspace::id::{PaneId, SceneKey};
 use crate::app::workspace::layout::WorkspaceLayout;
@@ -44,11 +44,7 @@ fn workspace_layout() -> WorkspaceLayout {
     }
 }
 
-fn transfer_record(
-    source: SceneKey,
-    destination: SceneKey,
-    auto_created: bool,
-) -> TransferRecord {
+fn transfer_record(source: SceneKey, destination: SceneKey, auto_created: bool) -> TransferRecord {
     let pane = pane_id(2);
     let layout = workspace_layout();
     TransferRecord {
@@ -85,11 +81,10 @@ fn commit_transfer(
     destination: SceneKey,
     auto_created: bool,
 ) -> u64 {
-    let id =
-        match history.prepare_transfer(transfer_record(source, destination, auto_created), 1) {
-            Ok(id) => id,
-            Err(error) => panic!("test transfer must be accepted: {error:?}"),
-        };
+    let id = match history.prepare_transfer(transfer_record(source, destination, auto_created), 1) {
+        Ok(id) => id,
+        Err(error) => panic!("test transfer must be accepted: {error:?}"),
+    };
     assert_eq!(history.commit_transfer(id), Ok(()));
     id
 }
@@ -342,11 +337,10 @@ fn discarding_a_prepared_transfer_does_not_apply_its_eviction_plan() {
     let mut history = WorkspaceHistory::new(1, 4);
     let existing = layer_edit(&mut history, source, "a");
     let used_bytes = history.used_bytes();
-    let transfer =
-        match history.prepare_transfer(transfer_record(source, destination, false), 1) {
-            Ok(id) => id,
-            Err(error) => panic!("the pending transfer should fit after eviction: {error:?}"),
-        };
+    let transfer = match history.prepare_transfer(transfer_record(source, destination, false), 1) {
+        Ok(id) => id,
+        Err(error) => panic!("the pending transfer should fit after eviction: {error:?}"),
+    };
 
     assert_eq!(history.used_bytes(), used_bytes + 1);
     assert_eq!(
@@ -425,11 +419,7 @@ fn auto_created_destination_redo_rekeys_to_a_fresh_scene_epoch() {
         Ok(())
     );
     assert_eq!(
-        history.replace_transfer_scene_key(
-            transfer,
-            removed_destination,
-            recreated_destination
-        ),
+        history.replace_transfer_scene_key(transfer, removed_destination, recreated_destination),
         Ok(())
     );
     let Some(record) = history.transfer_payload(transfer) else {

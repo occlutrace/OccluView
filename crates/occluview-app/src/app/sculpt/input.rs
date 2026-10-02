@@ -130,4 +130,3 @@ pub(super) fn collect_sculpt_pointer_events(
     }
     pointer_events
 }
-

@@ -94,7 +94,10 @@ impl DocumentDraft {
 }
 
 impl OccluViewApp {
-    pub(super) fn make_transfer_record(&self, intent: TransferIntent<'_>) -> Result<TransferRecord, String> {
+    pub(super) fn make_transfer_record(
+        &self,
+        intent: TransferIntent<'_>,
+    ) -> Result<TransferRecord, String> {
         let TransferIntent {
             source,
             destination,

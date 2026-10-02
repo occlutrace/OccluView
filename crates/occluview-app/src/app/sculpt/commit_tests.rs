@@ -15,9 +15,7 @@ use crate::app::align::display::AlignOverlay;
 use crate::app::app_test_support::test_app;
 use crate::app::OccluViewApp;
 use crate::sculpt::sculpt_kernel::{BrushMode, BrushRayStep, BrushSession, BrushStroke};
-use crate::sculpt::sculpt_tool::{
-    PendingSculptPress, SculptSession, SculptTip, SculptToolKind,
-};
+use crate::sculpt::sculpt_tool::{PendingSculptPress, SculptSession, SculptTip, SculptToolKind};
 use crate::sculpt::sculpt_worker::SculptWorker;
 use glam::{Affine3A, Vec3};
 use occluview_core::{Mesh, Scene, SceneMesh, SceneMeshId, Vertex};

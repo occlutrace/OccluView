@@ -140,9 +140,8 @@ impl PreviewHandler {
             TPM_RETURNCMD.0 | TPM_NONOTIFY.0 | TPM_LEFTALIGN.0 | TPM_TOPALIGN.0 | TPM_RIGHTBUTTON.0;
         // SAFETY: modal tracking on our own menu/window; TPM_RETURNCMD returns
         // the selected command id in the BOOL's numeric field.
-        let selection = unsafe {
-            TrackPopupMenuEx(menu, flags, screen_point.x, screen_point.y, hwnd, None)
-        };
+        let selection =
+            unsafe { TrackPopupMenuEx(menu, flags, screen_point.x, screen_point.y, hwnd, None) };
 
         // SAFETY: destroy the menu, then the app-owned icon bitmaps it referenced.
         let _ = unsafe { DestroyMenu(menu) };

@@ -359,8 +359,7 @@ fn auto_created_destination_with_later_transfer_redo_keeps_both_commands_navigab
     let layer_b = SceneMesh::new(Arc::new(Mesh::empty()));
     let layer_b_id = layer_b.id();
     let source_document = &mut app.workspace.scenes[0].document;
-    source_document.current_paths =
-        vec![PathBuf::from("scan-a.stl"), PathBuf::from("scan-b.stl")];
+    source_document.current_paths = vec![PathBuf::from("scan-a.stl"), PathBuf::from("scan-b.stl")];
     source_document.live_scene_mut().unwrap().add(layer_b);
 
     let (destination, _) = move_to_new_scene(&mut app, source, layer_a);

@@ -222,10 +222,9 @@ impl WaylandActivator {
 
         // SAFETY: `surface` is the live winit Wayland surface; importing its
         // id borrows the object without taking ownership.
-        let surface_id = unsafe {
-            ObjectId::from_ptr(WlSurface::interface(), surface.as_ptr().cast())
-        }
-        .context("importing the eframe Wayland surface")?;
+        let surface_id =
+            unsafe { ObjectId::from_ptr(WlSurface::interface(), surface.as_ptr().cast()) }
+                .context("importing the eframe Wayland surface")?;
         let surface = WlSurface::from_id(&connection, surface_id)
             .context("creating a Wayland surface proxy")?;
 

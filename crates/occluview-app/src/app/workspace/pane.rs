@@ -53,7 +53,12 @@ impl OccluViewApp {
                                 .truncate(),
                         )
                         .on_hover_text(&pane.name);
-                    crate::ui::accessibility::button(&title, &pane.name, !modal_open, Some(is_active));
+                    crate::ui::accessibility::button(
+                        &title,
+                        &pane.name,
+                        !modal_open,
+                        Some(is_active),
+                    );
                     if title.has_focus() && !modal_open {
                         ui.painter().rect_stroke(
                             title.rect,

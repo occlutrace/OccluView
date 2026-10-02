@@ -339,7 +339,10 @@ impl SceneContext<'_> {
         ctx: &egui::Context,
     ) {
         let measure_owned = self.tools.cut_view.is_probe_linked();
-        if matches!(panel.command, crate::cut::cut_ruler::SectionPanelCommand::Close) {
+        if matches!(
+            panel.command,
+            crate::cut::cut_ruler::SectionPanelCommand::Close
+        ) {
             if measure_owned {
                 self.disarm_measure_and_probe_cut();
             } else {

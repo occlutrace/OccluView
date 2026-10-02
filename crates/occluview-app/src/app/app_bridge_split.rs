@@ -303,13 +303,10 @@ impl SceneContext<'_> {
             BridgeSplitPanelState {
                 mode: self.tools.bridge_split.session().mode(),
                 kerf_mm: self.tools.bridge_split.session().kerf_mm(),
-                disc_radius_mm: self
-                    .tools
-                    .bridge_split_disc
-                    .pose()
-                    .map_or(crate::cut::cut_manipulator::DEFAULT_DISC_RADIUS_MM, |pose| {
-                        pose.radius_mm
-                    }),
+                disc_radius_mm: self.tools.bridge_split_disc.pose().map_or(
+                    crate::cut::cut_manipulator::DEFAULT_DISC_RADIUS_MM,
+                    |pose| pose.radius_mm,
+                ),
                 can_apply: self.tools.bridge_split.session().can_apply(),
                 failure: self.tools.bridge_split.session().failure(),
             },

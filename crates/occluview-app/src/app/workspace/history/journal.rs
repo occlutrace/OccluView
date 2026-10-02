@@ -170,7 +170,10 @@ impl WorkspaceHistory {
         }
         self.remove_commands_with_linked_prefixes(ids);
     }
-    pub(super) fn remove_commands_with_linked_prefixes(&mut self, remove: HashSet<HistoryCommandId>) {
+    pub(super) fn remove_commands_with_linked_prefixes(
+        &mut self,
+        remove: HashSet<HistoryCommandId>,
+    ) {
         let remove = Self::collect_linked_prefixes(&self.entries, &mut self.timelines, remove);
         for id in remove {
             self.remove_single_command(id);

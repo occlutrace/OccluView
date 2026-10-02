@@ -1,7 +1,7 @@
 #![allow(clippy::expect_used, clippy::float_cmp, clippy::unwrap_used)]
 
-use crate::app::align::display::AlignOverlay;
 use super::super::*;
+use crate::app::align::display::AlignOverlay;
 use crate::app::app_test_support::test_app;
 use crate::contact::contact::{ContactLayerField, ContactRequest};
 use crate::contact::contact_worker::{

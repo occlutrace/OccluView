@@ -7,8 +7,8 @@ use eframe::egui;
 use occluview_align::{FitRejection, Rigid};
 use occluview_core::SceneMeshId;
 
-use super::display::AlignOverlay;
 use super::super::SceneContext;
+use super::display::AlignOverlay;
 use crate::align::align_worker::{AlignCompletion, AlignFailure, AlignOutcome, AlignWorker};
 use crate::edit_mode::EditModeCommand;
 
