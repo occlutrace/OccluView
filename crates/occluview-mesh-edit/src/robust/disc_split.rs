@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use glam::DVec3;
 use manifold_csg::Manifold;
 
-use crate::native_mesh::{extract_part, manifold_from_mesh};
-use crate::{
+use super::native_mesh::{extract_part, manifold_from_mesh};
+use super::{
     invalid_input, kernel_error, position_bounds, prepare_robust_solid, PreparedRobustSolid,
     RobustCsgError, RobustMesh, RobustMeshPart, RobustSplit, RobustSplitReport, SeparatorDisc,
 };

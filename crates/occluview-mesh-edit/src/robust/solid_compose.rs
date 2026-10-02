@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use manifold_csg::Manifold;
 
-use crate::{invalid_input, kernel_error, RobustCsgError};
+use super::{invalid_input, kernel_error, RobustCsgError};
 
 pub(crate) fn union_overlapping_clusters(
     manifolds: &[Manifold],

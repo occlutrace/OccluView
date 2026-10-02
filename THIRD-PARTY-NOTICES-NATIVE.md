@@ -3,7 +3,8 @@
 `THIRD-PARTY-NOTICES.md` is generated from `Cargo.lock` and therefore covers
 only the Rust dependency graph. The shipped binaries also statically link a C++
 geometry kernel and its own dependencies, which no Cargo tool can see: the
-`occluview-robust-csg` crate wraps Manifold through `manifold-csg-sys`, whose
+`robust` module of `occluview-mesh-edit` (feature `robust-csg`) wraps Manifold
+through `manifold-csg-sys`, whose
 build script fetches and builds Manifold from source, and Manifold's CMake in
 turn fetches oneTBB and Clipper2.
 
