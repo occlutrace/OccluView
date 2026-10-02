@@ -1,6 +1,28 @@
 use super::*;
 
 #[test]
+fn selected_hole_honors_an_explicit_perimeter_limit() {
+    let mesh = bowl_mesh();
+    let selection = FaceSelection::new(vec![true; mesh.triangle_count()]);
+    let limited = fill_selected_holes(
+        &mesh,
+        &selection,
+        MeshEditOptions {
+            compact_vertices: false,
+            max_rim_perimeter_mm: Some(1.0),
+            ..MeshEditOptions::default()
+        },
+    )
+    .expect("valid explicit limit");
+    assert_eq!(limited.report.filled_holes, 0);
+    assert_eq!(limited.report.skipped_oversize_rims, 1);
+    assert_eq!(limited.mesh.indices, mesh.indices);
+    let unlimited = fill_selected_holes(&mesh, &selection, MeshEditOptions::default())
+        .expect("an unrestrained selected hole still closes");
+    assert_eq!(unlimited.report.filled_holes, 1);
+}
+
+#[test]
 fn empty_hole_selection_contract_regression() {
     let source = bowl_mesh();
     let mut mesh = MeshEditBuffers {

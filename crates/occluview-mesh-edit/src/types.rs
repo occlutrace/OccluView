@@ -92,11 +92,10 @@ pub struct MeshEditOptions {
     pub max_boundary_loop: usize,
     /// Attribute policy for generated vertices.
     pub attribute_policy: MeshEditAttributePolicy,
-    /// Optional cap on a boundary rim's perimeter, in mesh units (mm), for
-    /// whole-mesh (unselected) hole filling. `None` means no perimeter
-    /// restraint: every interior hole closes (the scan border is protected by
-    /// `protect_scan_border` instead). When a face selection is present the
-    /// operator's explicit intent wins and this mm cap is ignored.
+    /// Optional cap on a boundary rim's perimeter, in mesh units (mm).
+    /// An explicit limit applies to both whole-mesh and selected hole filling.
+    /// `None` means no perimeter restraint; `protect_scan_border` independently
+    /// protects natural scan borders during whole-mesh filling.
     pub max_rim_perimeter_mm: Option<f32>,
     /// Whole-mesh (unselected) fill only: protect the scan's natural outer
     /// boundary. A rim is treated as scan border when its perimeter is both

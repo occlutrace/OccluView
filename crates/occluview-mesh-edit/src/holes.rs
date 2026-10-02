@@ -94,8 +94,8 @@ pub(crate) struct FillLoopStats {
 ///
 /// When `selection` is present, a rim is capped when the operator has marked at
 /// least half of its owning faces (explicit intent): the selection loop ceiling
-/// is lifted, and neither the border guard nor
-/// the mm restraint applies.
+/// is lifted and the border guard is bypassed. An explicitly enabled mm
+/// perimeter restraint still applies to the marked rim.
 ///
 /// Two rims that meet at a single vertex are pre-split during pinch handling so
 /// both become independent simple loops that fill; an unsplit shared junction

@@ -129,8 +129,8 @@ fn referenced_bbox_diagonal(mesh: &MeshEditBuffers) -> f32 {
 }
 
 /// Whether a rim is too large to cap under the effective size policy: the edge
-/// ceiling (lifted for selection-scoped intent) always applies; the optional
-/// mm perimeter restraint applies only to the whole-mesh (unselected) path.
+/// ceiling (lifted for selection-scoped intent) always applies, as does an
+/// explicitly supplied mm perimeter restraint.
 pub(super) fn rim_exceeds_size_cap(
     boundary_loop: &[usize],
     perimeter_mm: f64,
@@ -145,14 +145,9 @@ pub(super) fn rim_exceeds_size_cap(
     if boundary_loop.len() > edge_cap {
         return true;
     }
-    if !has_selection {
-        if let Some(limit_mm) = options.max_rim_perimeter_mm {
-            if perimeter_mm > f64::from(limit_mm) {
-                return true;
-            }
-        }
-    }
-    false
+    options
+        .max_rim_perimeter_mm
+        .is_some_and(|limit_mm| perimeter_mm > f64::from(limit_mm))
 }
 
 /// A rim qualifies for selection-scoped filling when at least half of its
