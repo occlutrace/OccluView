@@ -190,7 +190,7 @@ fn the_measurement_is_bit_identical_across_runs_and_thread_counts() {
             subject.soup(),
             antagonist.soup(),
             ContactSettings::default(),
-            &occluview_surface_query::CancelFlag::new(),
+            &occluview_geometry::surface::CancelFlag::new(),
         )
     });
     assert_eq!(

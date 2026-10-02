@@ -10,7 +10,7 @@ use glam::DVec3;
 use crate::pairs::FitRejection;
 use crate::sample::{bounds_of, sample_vertices, vertex_at, vertex_normals};
 use crate::{CancelFlag, Rigid, Soup, SurfaceIndex};
-use occluview_surface_query::SurfaceSample;
+use occluview_geometry::surface::SurfaceSample;
 
 #[path = "feature_seed.rs"]
 mod feature_seed;

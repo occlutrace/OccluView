@@ -10,7 +10,7 @@
 #![allow(dead_code)]
 
 use occluview_contact::{compute_contact_field, ContactField, ContactSettings};
-use occluview_surface_query::{CancelFlag, Soup};
+use occluview_geometry::surface::{CancelFlag, Soup};
 
 /// A mesh under construction: positions as xyz triples, triangle indices.
 #[derive(Clone, Debug, Default)]

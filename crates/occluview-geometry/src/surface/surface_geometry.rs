@@ -2,6 +2,6 @@
 
 // Feature information feeds border and pseudonormal queries, while the
 // geometric closest-point calculation is shared by mesh kernels.
-pub(crate) use occluview_geometry::{
+pub(crate) use crate::{
     closest_feature_on_triangle, ClosestTriangleFeature as Feature,
 };
