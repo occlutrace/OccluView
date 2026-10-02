@@ -92,7 +92,18 @@ fn validate_closed_topology(
     mesh: &MeshEditBuffers,
 ) -> Result<(crate::topology::CanonicalTopology, usize), BridgeSplitError> {
     let position_topology = canonical_topology(mesh, TopologyWeldPolicy::PositionOnly)?;
-    let collapsed_faces = degenerate_face_count(&position_topology);
+    let collapsed_faces = mesh
+        .indices
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .filter(|face| {
+            let [a, b, c] = [face[0], face[1], face[2]].map(|index| {
+                glam::DVec3::from_array(mesh.vertices[index as usize].position.map(f64::from))
+            });
+            (b - a).cross(c - a).length_squared() == 0.0
+        })
+        .count();
     if collapsed_faces > 0 {
         return Err(BridgeSplitError::DegenerateInput {
             faces: collapsed_faces,

@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Bridge Split rejects zero-area triangles before accepting an input or output as a closed mesh.
+
 - Knife strokes keep their radial fallback when a bearing cannot be normalized.
 
 ### Formats
