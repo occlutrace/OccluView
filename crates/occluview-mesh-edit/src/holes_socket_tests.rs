@@ -11,6 +11,26 @@ use crate::{EditVertex, FaceSelection, MeshEditBuffers, MeshEditOptions, MeshTop
 use glam::Vec3;
 use std::collections::{HashMap, HashSet};
 
+#[test]
+fn far_boundary_healing_contract_regression() {
+    for offset in [1.0e30_f32, -1.0e30] {
+        let mesh = MeshEditBuffers {
+            vertices: vec![
+                EditVertex::at([offset, 0.0, 0.0]),
+                EditVertex::at([offset, 1.0, 0.0]),
+                EditVertex::at([offset, 1.0, 1.0]),
+                EditVertex::at([offset, 0.0, 1.0]),
+            ],
+            indices: vec![0, 1, 2, 0, 2, 3],
+            topology: MeshTopology::TriangleMesh,
+        };
+        assert!(
+            heal_boundary_rims(&mesh).is_none(),
+            "clean rim stays intact"
+        );
+    }
+}
+
 /// Curved arch and raised tooth dome; the socket rim is non-planar.
 fn dome_with_tooth(nu: usize, nv: usize) -> MeshEditBuffers {
     let (width, depth, vault) = (20.0_f32, 14.0_f32, 6.0_f32);
