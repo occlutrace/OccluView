@@ -121,7 +121,7 @@ fn persistent_session_accepts_a_second_stroke_after_first_commit() {
     .expect("test mesh");
     let layer_id = SceneMesh::new(mesh.clone()).id();
     let brush = BrushSession::prepare(&mesh_edit_buffers_from_mesh(&mesh)).expect("prepare");
-    let mut session = SculptSession {
+    let session = SculptSession {
         layer_id,
         topology_id: mesh.topology_id(),
         session: brush,
@@ -140,17 +140,27 @@ fn persistent_session_accepts_a_second_stroke_after_first_commit() {
         strength: 1.0,
         view_dir: [0.0, 0.0, -1.0],
     };
-    let first = session.apply_dab(stroke, BrushMode::Add);
-    assert!(
-        !first.touched.is_empty() || first.topology_delta.is_some(),
-        "the first dab must reach the surface"
+    let worker = SculptWorker::spawn(session);
+    assert!(worker.try_apply(stroke, BrushMode::Add));
+    assert!(worker.finish_stroke());
+    let first = worker
+        .wait_take_completion(std::time::Duration::from_secs(2))
+        .expect("the first stroke must finish");
+    assert_eq!(first.before.vertices(), mesh.vertices());
+    assert_ne!(first.mesh.vertices(), mesh.vertices());
+
+    assert!(worker.try_apply(stroke, BrushMode::Add));
+    assert!(worker.finish_stroke());
+    let second = worker
+        .wait_take_completion(std::time::Duration::from_secs(2))
+        .expect("the persistent session must finish a second stroke");
+    assert_eq!(
+        second.before.vertices(),
+        first.mesh.vertices(),
+        "the second stroke must start from the committed first stroke"
     );
-    session.dirty_stroke = false;
-    let second = session.apply_dab(stroke, BrushMode::Add);
-    assert!(
-        !second.touched.is_empty() || second.topology_delta.is_some(),
-        "the persistent session must accept a second stroke"
-    );
+    assert_eq!(second.before.indices(), first.mesh.indices());
+    assert_ne!(second.mesh.vertices(), first.mesh.vertices());
 }
 
 #[test]
