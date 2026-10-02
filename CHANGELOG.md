@@ -108,6 +108,7 @@ remain in the Git history.
 ### Align
 
 - Non-finite heatmap limits recover to a finite working range instead of interrupting alignment or panel rendering.
+- Signed deviation bands use matching distance intervals above and below zero.
 - Perform alignment explains its two-arrow requirement when only one complete arrow is placed.
 - A quick exclusion-brush tap paints the mesh even when press and release arrive in the same frame, without placing an alignment point.
 - Disabled Heatmap controls explain whether refinement is missing or deviation measurement is running.

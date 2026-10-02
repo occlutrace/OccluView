@@ -486,14 +486,15 @@ pub fn ramp_color(value_mm: f64, ramp: &RampSettings) -> [u8; 4] {
     } else {
         1.0
     };
-    let (ramp_stops, mut position) = match ramp.mode {
-        RampMode::Magnitude => (&MAGNITUDE_RAMP, beyond),
-        RampMode::Signed => (&SIGNED_RAMP, beyond.copysign(value_mm)),
-    };
+    let mut position = beyond;
     if let Some(bands) = ramp.bands.filter(|count| *count > 0) {
         let quantum = f64::from(bands);
-        position = ((position * quantum).floor() / quantum).clamp(-1.0, 1.0);
+        position = ((position * quantum).floor() / quantum).clamp(0.0, 1.0);
     }
+    let (ramp_stops, position) = match ramp.mode {
+        RampMode::Magnitude => (&MAGNITUDE_RAMP, position),
+        RampMode::Signed => (&SIGNED_RAMP, position.copysign(value_mm)),
+    };
     let [red, green, blue] = sample_ramp(ramp_stops, position);
     [red, green, blue, 255]
 }

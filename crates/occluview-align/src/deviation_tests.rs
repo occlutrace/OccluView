@@ -274,6 +274,34 @@ fn an_even_sized_map_uses_both_middle_values_for_its_median() {
 }
 
 #[test]
+fn signed_bands_use_the_same_distance_intervals_on_both_sides_of_zero() {
+    let ramp = RampSettings {
+        scale_mm: 1.0,
+        bands: Some(4),
+        mode: RampMode::Signed,
+        ..RampSettings::default()
+    };
+    let zero = ramp_color(0.0, &ramp);
+    for value in [-0.24, -0.01, 0.01, 0.24] {
+        assert_eq!(ramp_color(value, &ramp), zero, "inside zero band: {value}");
+    }
+    for sign in [-1.0, 1.0] {
+        assert_eq!(
+            ramp_color(sign * 0.26, &ramp),
+            ramp_color(sign * 0.49, &ramp)
+        );
+        assert_ne!(ramp_color(sign * 0.26, &ramp), zero);
+    }
+    let continuous = RampSettings {
+        bands: None,
+        ..ramp
+    };
+    for value in [-1.0, 1.0] {
+        assert_eq!(ramp_color(value, &ramp), ramp_color(value, &continuous));
+    }
+}
+
+#[test]
 fn the_magnitude_ramp_is_cool_at_nothing_and_hot_at_the_scale() {
     let map = DeviationMap {
         signed_mm: vec![0.0, 0.5, -0.5],
