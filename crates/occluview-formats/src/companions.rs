@@ -151,6 +151,7 @@ fn material_image(directory: &Path, obj: &[u8]) -> Option<PathBuf> {
 /// a file name containing spaces survives because only the leading option
 /// tokens are removed.
 fn directives(bytes: &[u8], keyword: &str) -> Vec<String> {
+    let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
     let Some(text) = std::str::from_utf8(bytes).ok() else {
         return Vec::new();
     };
@@ -266,6 +267,14 @@ fn same_stem_image(path: &Path, directory: &Path) -> Option<PathBuf> {
 mod tests {
     use super::*;
     use occluview_core::{MeshTexture, Vertex};
+
+    #[test]
+    fn a_material_library_bom_does_not_hide_its_first_texture() {
+        assert_eq!(
+            directives(b"\xef\xbb\xbfmap_Kd atlas.png\n", "map_Kd"),
+            ["atlas.png"]
+        );
+    }
 
     #[cfg(unix)]
     #[test]

@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- OBJ imports retain textures named on the first line of BOM-prefixed material libraries.
+
 - Mesh export resolves the full supported chain of eight destination symbolic links.
 
 - OBJ fallback textures cannot escape the mesh folder through symbolic links.
