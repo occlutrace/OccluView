@@ -12,8 +12,9 @@
 //!   `/vt/vn` suffixes. We fan-triangulate polygons with `>3` corners.
 //! - `p a b ...` - point element; a file with vertices but no faces is loaded
 //!   as a point cloud, so an OBJ export of a point cloud keeps its geometry.
-//! - `g`, `o`, `s`, `usemtl`, `mtllib`, `#` - group/object/smoothing/material
-//!   directives; tolerated, not geometry-affecting for v1.
+//! - `usemtl` - all faces must share one material identity. Multiple face
+//!   materials are refused rather than flattened into one image.
+//! - `g`, `o`, `s`, `mtllib`, `#` - tolerated metadata directives.
 //!
 //! ## Robustness rules (from the real corpus)
 //!
@@ -138,6 +139,8 @@ pub(crate) fn read_admitted(
         .with_name("OBJ")
         .from_input_of(bytes.len());
     let mut has_faces = false;
+    let mut active_material: Option<&str> = None;
+    let mut used_material: Option<Option<&str>> = None;
 
     for (line_no, line) in text.trim_start_matches('\u{feff}').lines().enumerate() {
         // Strip comments: everything after the first '#' that is not in a
@@ -175,10 +178,24 @@ pub(crate) fn read_admitted(
             // folding them into `_`) so the source documents which OBJ features
             // we have *chosen* to skip vs. which are genuinely unknown.
             #[allow(clippy::match_same_arms)]
-            "g" | "o" | "s" | "usemtl" | "mtllib" | "newmtl" | "bevel" | "cstype" | "deg"
-            | "curv" | "curv2" | "surf" | "parm" | "trim" | "hole" | "scrv" | "sp" | "end"
-            | "con" | "bmat" | "step" => {}
+            "g" | "o" | "s" | "mtllib" | "newmtl" | "bevel" | "cstype" | "deg" | "curv"
+            | "curv2" | "surf" | "parm" | "trim" | "hole" | "scrv" | "sp" | "end" | "con"
+            | "bmat" | "step" => {}
+            "usemtl" => {
+                active_material = line
+                    .strip_prefix("usemtl")
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty());
+            }
             "f" => {
+                if used_material.is_some_and(|used| used != active_material) {
+                    return Err(FormatError::Malformed {
+                        format: "OBJ",
+                        offset: line_no,
+                        reason: "multiple face materials cannot be represented by one mesh; export separate material meshes".to_string(),
+                    });
+                }
+                used_material = Some(active_material);
                 has_faces = true;
                 let data = parse::MeshData {
                     positions: &positions,
@@ -219,4 +236,26 @@ pub(crate) fn read_admitted(
     }
 
     shading.build(builder).map_err(FormatError::Core)
+}
+
+#[cfg(test)]
+mod material_tests {
+    use super::*;
+
+    #[test]
+    fn obj_refuses_multiple_materials_used_by_faces() {
+        let geometry = "v 0 0 0\nv 1 0 0\nv 0 1 0\n";
+        for faces in [
+            "usemtl first\nf 1 2 3\nusemtl second\nf 1 3 2\n",
+            "f 1 2 3\nusemtl second\nf 1 3 2\n",
+        ] {
+            assert!(
+                read(format!("{geometry}{faces}").as_bytes()).is_err(),
+                "discarded material partitions"
+            );
+        }
+        assert!(
+            read(format!("{geometry}usemtl unused\nusemtl used\nf 1 2 3\n").as_bytes()).is_ok()
+        );
+    }
 }
