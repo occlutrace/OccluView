@@ -509,6 +509,42 @@ fn ray_dab_preserves_the_shadow_shape_failure_reason() {
     assert!(!session.dirty_stroke);
 }
 
+#[test]
+fn an_invalid_remesh_vertex_id_leaves_the_entire_shadow_unchanged() {
+    let mesh = quad_mesh(None).expect("mesh");
+    let (mut session, shadow) = session_over(&mesh);
+    let original = shadow.read().expect("shadow").clone();
+    let outcome = session.session.apply_stroke_dosed(
+        BrushStroke {
+            center: [0.0, 0.0, 0.0],
+            radius_mm: 2.0,
+            strength: 1.0,
+            view_dir: [0.0, 0.0, -1.0],
+        },
+        BrushMode::Add,
+        SculptTip::Ball,
+        None,
+        DabDose::FULL,
+    );
+    let delta = outcome.topology_delta.as_ref().expect("a remeshing dab");
+    assert!(!delta.appended_vertices.is_empty());
+    let invalid_id = session.session.vertices().len();
+    let mut moved = outcome.touched_vertices;
+    moved.push(invalid_id);
+    assert_eq!(
+        session.patch_shadow(&moved, &[], Some(delta)),
+        Err(DabFailure::InvalidVertexIndex {
+            vertex_id: invalid_id,
+            vertex_count: invalid_id,
+        })
+    );
+    assert_eq!(
+        *shadow.read().expect("shadow"),
+        original,
+        "a rejected patch must not publish even its appended vertices"
+    );
+}
+
 /// How far the vertices the dab actually moved spread along x and along y
 /// from the dab centre. Read from the live shadow rather than the touched list,
 /// because a dab that also retessellated the patch reports a topology delta.

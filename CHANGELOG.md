@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Sculpt rejects invalid remesh vertex indices before changing any display geometry.
+
 - GLB imports reject incomplete, misordered, duplicate, or unaligned chunks and inconsistent file lengths.
 
 - BOM-prefixed PLY and OBJ imports retain their named companion textures.

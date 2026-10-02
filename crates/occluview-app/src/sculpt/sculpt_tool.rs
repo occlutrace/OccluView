@@ -836,14 +836,6 @@ impl SculptSession {
                 live_count,
             });
         }
-        if topology_delta.is_some() {
-            shadow.extend(
-                live[shadow_count..]
-                    .iter()
-                    .copied()
-                    .map(crate::sculpt::sculpt_kernel::vertex_from_edit_vertex),
-            );
-        }
         if let Some(vertex_id) = moved
             .iter()
             .chain(normal_vertices.iter())
@@ -854,6 +846,14 @@ impl SculptSession {
                 vertex_id,
                 vertex_count: live_count,
             });
+        }
+        if topology_delta.is_some() {
+            shadow.extend(
+                live[shadow_count..]
+                    .iter()
+                    .copied()
+                    .map(crate::sculpt::sculpt_kernel::vertex_from_edit_vertex),
+            );
         }
         for &vertex_id in moved {
             let source = live[vertex_id];
