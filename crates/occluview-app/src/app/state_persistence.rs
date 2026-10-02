@@ -236,7 +236,10 @@ mod tests {
         let key = super::super::workspace::id::SceneKey::INITIAL;
         let mut persistence = empty_persistence();
         persistence.sync_sculpt_preferences(&ctx, key);
-        persistence.sculpt_settings_dirty_since = Some(Instant::now() - Duration::from_secs(2));
+        let Some(aged_timestamp) = Instant::now().checked_sub(Duration::from_secs(2)) else {
+            panic!("test clock cannot represent the settling interval");
+        };
+        persistence.sculpt_settings_dirty_since = Some(aged_timestamp);
         super::super::mesh_editor_overlay::set_sculpt_radius_share(&ctx, key, 0.5);
         persistence.sync_sculpt_preferences(&ctx, key);
         persistence.sync_sculpt_preferences(&ctx, key);
@@ -246,7 +249,10 @@ mod tests {
                 .should_attempt(Instant::now()),
             "the last brush change has not settled yet"
         );
-        persistence.sculpt_settings_dirty_since = Some(Instant::now() - Duration::from_secs(2));
+        let Some(aged_timestamp) = Instant::now().checked_sub(Duration::from_secs(2)) else {
+            panic!("test clock cannot represent the settling interval");
+        };
+        persistence.sculpt_settings_dirty_since = Some(aged_timestamp);
         persistence.sync_sculpt_preferences(&ctx, key);
         assert!(
             persistence
