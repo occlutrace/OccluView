@@ -146,7 +146,6 @@ fn a_job_that_finishes_inside_its_budget_returns_its_value() {
         permit,
         Instant::now() + Duration::from_millis(400),
         move |progress| {
-            thread::sleep(Duration::from_millis(30));
             let _ = progress.send(ThumbnailJobProgress::Prepared);
             let _ = progress.send(ThumbnailJobProgress::Finished(7_u8));
         },
@@ -400,26 +399,45 @@ fn inflight_thumbnail_coalesces_duplicate_requests() {
         background: [0; 4],
     };
     let run_count = Arc::new(AtomicUsize::new(0));
-    let barrier = Arc::new(std::sync::Barrier::new(3));
-
-    let make_worker = |run_count: Arc<AtomicUsize>, barrier: Arc<std::sync::Barrier>| {
-        let key = key.clone();
-        thread::spawn(move || {
-            barrier.wait();
-            render_coalesced_thumbnail(key, Duration::from_millis(250), move || {
-                run_count.fetch_add(1, Ordering::SeqCst);
-                thread::sleep(Duration::from_millis(40));
-                ThumbnailAttempt::Bitmap(vec![1, 2, 3, 4])
-            })
+    let (leader_entered_render, leader_registered) = std::sync::mpsc::channel::<()>();
+    let (release_leader, wait_for_release) = std::sync::mpsc::channel::<()>();
+    let leader_key = key.clone();
+    let leader_count = run_count.clone();
+    let leader = thread::spawn(move || {
+        render_coalesced_thumbnail(leader_key, Duration::from_millis(250), move || {
+            leader_count.fetch_add(1, Ordering::SeqCst);
+            let _ = leader_entered_render.send(());
+            let _ = wait_for_release.recv();
+            ThumbnailAttempt::Bitmap(vec![1, 2, 3, 4])
         })
-    };
+    });
+    leader_registered
+        .recv()
+        .expect("leader should enter its render closure");
 
-    let left = make_worker(run_count.clone(), barrier.clone());
-    let right = make_worker(run_count.clone(), barrier.clone());
-    barrier.wait();
+    let (follower_waiting, wait_for_follower) = std::sync::mpsc::channel::<()>();
+    let follower_key = key;
+    let follower_count = run_count.clone();
+    let follower = thread::spawn(move || {
+        super::super::concurrency::render_coalesced_thumbnail_with_follower_notice(
+            follower_key,
+            Duration::from_millis(250),
+            move || {
+                follower_count.fetch_add(1, Ordering::SeqCst);
+                ThumbnailAttempt::Bitmap(vec![5, 6, 7, 8])
+            },
+            move || {
+                let _ = follower_waiting.send(());
+            },
+        )
+    });
+    wait_for_follower
+        .recv()
+        .expect("duplicate request should join the in-flight render");
+    let _ = release_leader.send(());
 
-    let left = left.join().expect("left worker should complete");
-    let right = right.join().expect("right worker should complete");
+    let left = leader.join().expect("leader should complete");
+    let right = follower.join().expect("follower should complete");
     assert_eq!(left, ThumbnailAttempt::Bitmap(vec![1, 2, 3, 4]));
     assert_eq!(right, ThumbnailAttempt::Bitmap(vec![1, 2, 3, 4]));
     assert_eq!(run_count.load(Ordering::SeqCst), 1);
@@ -439,15 +457,16 @@ fn inflight_thumbnail_follower_timeout_reports_transient_failure_without_duplica
     // `render_coalesced_thumbnail` registers the in-flight entry *before* it
     // calls the render closure, receiving this signal guarantees the follower
     // that starts next will observe the entry and take the follower path -
-    // deterministically, without a racy fixed sleep.
+    // deterministically.
     let (leader_entered_render, leader_registered) = std::sync::mpsc::channel::<()>();
+    let (release_leader, wait_for_release) = std::sync::mpsc::channel::<()>();
     let leader_key = key.clone();
     let leader_count = run_count.clone();
     let leader = thread::spawn(move || {
         render_coalesced_thumbnail(leader_key, Duration::from_millis(250), move || {
             leader_count.fetch_add(1, Ordering::SeqCst);
             let _ = leader_entered_render.send(());
-            thread::sleep(Duration::from_millis(90));
+            let _ = wait_for_release.recv();
             ThumbnailAttempt::Bitmap(vec![9, 8, 7, 6])
         })
     });
@@ -463,8 +482,9 @@ fn inflight_thumbnail_follower_timeout_reports_transient_failure_without_duplica
             ThumbnailAttempt::Bitmap(vec![5, 4, 3, 2])
         })
     });
-    let leader = leader.join().expect("leader should complete");
     let follower = follower.join().expect("follower should complete");
+    let _ = release_leader.send(());
+    let leader = leader.join().expect("leader should complete");
 
     assert_eq!(leader, ThumbnailAttempt::Bitmap(vec![9, 8, 7, 6]));
     // A follower that outwaits its budget reports the transient failure so the
