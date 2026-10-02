@@ -242,7 +242,12 @@ pub(super) fn apply_selected_face_mesh_edit_action(
     if entry.id() != layer_id {
         return Ok(LayerContextApply::default());
     }
-    let Some(selection) = edit_mode.selected_faces_for_layer(layer_id) else {
+    let Some(selection) = edit_mode
+        .visible_selection_plan(scene)
+        .into_iter()
+        .find(|selection| selection.layer_id == layer_id)
+        .map(|selection| selection.selection)
+    else {
         return Ok(LayerContextApply::default());
     };
     if selection.selected_count() == 0 {

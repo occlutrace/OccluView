@@ -599,3 +599,68 @@ fn selected_face_mesh_separate_splits_components_into_multiple_layers_and_undo_r
     assert_eq!(scene.meshes()[0].mesh.triangle_count(), 3);
     assert_eq!(scene.meshes()[0].id(), layer_id);
 }
+
+#[test]
+fn selection_context_refuses_hidden_or_replaced_mesh() {
+    use super::super::apply_layer_context_action_with_status;
+    use crate::app::OccluViewApp;
+    use std::sync::Arc;
+
+    for action in [
+        LayerContextAction::DeleteSelectedFaces,
+        LayerContextAction::CropToSelectedFaces,
+        LayerContextAction::CutSelectionToNewLayer,
+        LayerContextAction::SeparateSelectedComponents,
+    ] {
+        for hide_layer in [true, false] {
+            let Some(mut scene) = scene_with_two_triangles() else {
+                panic!("valid scene");
+            };
+            let mut app = OccluViewApp::new_for_tests(egui::Context::default());
+            let Some(mut context) = app.active_context() else {
+                panic!("active scene");
+            };
+            assert!(context.document.edit_mode.select_face_hit(
+                &scene,
+                ScenePickHit {
+                    layer_index: 0,
+                    layer_id: scene.meshes()[0].id(),
+                    triangle_index: 0,
+                    point: Vec3::ZERO,
+                    distance: 1.0,
+                },
+            ));
+            if hide_layer {
+                scene.meshes_mut()[0].visible = false;
+            } else {
+                let old = &scene.meshes()[0].mesh;
+                let Ok(replacement) =
+                    Mesh::new(None, old.vertices().to_vec(), old.indices().to_vec())
+                else {
+                    panic!("replacement with the same face count");
+                };
+                assert_ne!(replacement.topology_id(), old.topology_id());
+                scene.meshes_mut()[0].mesh = Arc::new(replacement);
+            }
+            assert!(context
+                .document
+                .edit_mode
+                .visible_selection_plan(&scene)
+                .is_empty());
+            let before = scene.meshes()[0].mesh.clone();
+            let request = request(&scene, 0, action);
+
+            let apply =
+                apply_layer_context_action_with_status(&mut context, &mut scene, &[], request);
+
+            assert!(
+                !apply.scene_changed,
+                "{action:?} must use the live visible selection plan"
+            );
+            assert!(Arc::ptr_eq(&before, &scene.meshes()[0].mesh));
+            assert_eq!(scene.meshes().len(), 1);
+            assert_eq!(context.document.edit_mode.undo_len(), 0);
+            assert!(!context.document.has_unsaved_mesh_edits());
+        }
+    }
+}
