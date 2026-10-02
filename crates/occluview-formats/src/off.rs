@@ -133,7 +133,7 @@ fn read_binary(bytes: &[u8]) -> Result<Mesh, FormatError> {
             Vec::with_capacity(bounded_capacity::<u32>(n, bytes.len().saturating_sub(cur)));
         for k in 0..n {
             let raw = read_i32(bytes, &mut cur)?;
-            let idx = u32::try_from(raw.max(0)).map_err(|_| FormatError::Malformed {
+            let idx = u32::try_from(raw).map_err(|_| FormatError::Malformed {
                 format: "OFF (binary)",
                 offset: cur,
                 reason: format!("negative vertex index {raw} in face"),
@@ -250,8 +250,7 @@ fn read_ascii(bytes: &[u8]) -> Result<Mesh, FormatError> {
         }
         let mut idxs: Vec<u32> = Vec::with_capacity(bounded_capacity::<u32>(n, bytes.len()));
         for k in 0..n {
-            let raw = lexer.next_f32()?;
-            let idx = raw as u32;
+            let idx = lexer.next_u32()?;
             if idx as usize >= v_count {
                 return Err(FormatError::Core(
                     occluview_core::CoreError::IndexOutOfRange {
@@ -272,7 +271,7 @@ fn read_ascii(bytes: &[u8]) -> Result<Mesh, FormatError> {
     builder.build().map_err(FormatError::Core)
 }
 
-/// Token-stream lexer: yields whitespace-split f32 values, skipping comments
+/// Token-stream lexer: yields whitespace-split values, skipping comments
 /// and blank lines.
 struct Lexer<'a> {
     lines: std::str::Lines<'a>,
@@ -288,11 +287,23 @@ impl<'a> Lexer<'a> {
     }
 
     fn next_f32(&mut self) -> Result<f32, FormatError> {
+        let token = self.next_token()?;
+        token
+            .parse::<f32>()
+            .map_err(|_| malformed(&format!("bad number {token:?}")))
+    }
+
+    fn next_u32(&mut self) -> Result<u32, FormatError> {
+        let token = self.next_token()?;
+        token
+            .parse::<u32>()
+            .map_err(|_| malformed(&format!("bad vertex index {token:?}")))
+    }
+
+    fn next_token(&mut self) -> Result<&'a str, FormatError> {
         loop {
             if let Some(t) = self.tokens.next() {
-                return t
-                    .parse::<f32>()
-                    .map_err(|_| malformed(&format!("bad number {t:?}")));
+                return Ok(t);
             }
             let line = self.lines.next().ok_or(FormatError::Truncated {
                 format: "OFF (ascii)",
@@ -334,6 +345,29 @@ fn malformed(reason: &str) -> FormatError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejects_ascii_indices_that_are_not_unsigned_integers() {
+        for index in ["-1", "1.5", "NaN", "inf", "4294967296"] {
+            let text = format!("OFF\n3 1 0\n0 0 0\n1 0 0\n0 1 0\n3 {index} 1 2\n");
+            assert!(read(text.as_bytes()).is_err(), "accepted index {index}");
+        }
+    }
+
+    #[test]
+    fn rejects_negative_binary_indices() {
+        let mut bytes = b"OFF BINARY\n".to_vec();
+        for count in [3i32, 1, 0] {
+            bytes.extend_from_slice(&count.to_le_bytes());
+        }
+        for value in [0.0f64, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0] {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        for value in [3i32, -1, 1, 2] {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        assert!(matches!(read(&bytes), Err(FormatError::Malformed { .. })));
+    }
 
     #[test]
     fn reads_minimal_binary_off() {
