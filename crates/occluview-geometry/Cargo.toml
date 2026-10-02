@@ -6,7 +6,7 @@
 # three cannot disagree about them.
 [package]
 name = "occluview-geometry"
-description = "Shared geometry constants and trivial pure math for OccluView kernels."
+description = "Shared geometry constants, pure math, and triangle-surface queries for OccluView kernels."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

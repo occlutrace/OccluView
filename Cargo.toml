@@ -14,7 +14,6 @@ members = [
     "crates/occluview-i18n",
     "crates/occluview-mesh-edit",
     "crates/occluview-sculpt",
-    "crates/occluview-surface-query",
     "crates/occluview-align",
     "crates/occluview-contact",
     "crates/occluview-core",
@@ -37,7 +36,6 @@ default-members = [
     "crates/occluview-mesh-edit",
     "crates/occluview-sculpt",
     "crates/occluview-align",
-    "crates/occluview-surface-query",
     "crates/occluview-contact",
     "crates/occluview-core",
     "crates/occluview-hps",
@@ -56,9 +54,8 @@ occluview-geometry = 0
 occluview-i18n = 0
 occluview-repo-contracts = 0
 occluview-update = 0
-# Geometry kernels and the shared surface query.
+# Geometry kernels.
 occluview-sculpt = 1
-occluview-surface-query = 1
 occluview-hps = 1
 # The pure data model and the mesh-editing crate over it.
 occluview-core = 1
@@ -93,7 +90,6 @@ occluview-geometry = { path = "crates/occluview-geometry" }
 occluview-i18n = { path = "crates/occluview-i18n" }
 occluview-mesh-edit = { path = "crates/occluview-mesh-edit" }
 occluview-sculpt = { path = "crates/occluview-sculpt" }
-occluview-surface-query = { path = "crates/occluview-surface-query" }
 occluview-align   = { path = "crates/occluview-align" }
 occluview-contact = { path = "crates/occluview-contact" }
 occluview-core    = { path = "crates/occluview-core" }

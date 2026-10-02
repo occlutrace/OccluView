@@ -7,6 +7,7 @@
 //! `occluview-hps`, so the three crates cannot diverge on those thresholds.
 
 #![forbid(unsafe_code)]
+#![cfg_attr(test, allow(clippy::expect_used, clippy::panic, clippy::unwrap_used))]
 
 use glam::{DVec3, Vec2, Vec3};
 
@@ -15,6 +16,10 @@ pub use sculpt_field::{
     ball_weight, cylinder_weight, knife_weight, stamp_weight, TipStamp, CYLINDER_PLATEAU,
     KNIFE_AXIS_MIN_LENGTH, KNIFE_CROSS_RADIUS_SHARE,
 };
+
+/// Shared triangle-surface queries: the borrowed mesh view, the deterministic
+/// nearest-surface index, and the cooperative cancellation flag.
+pub mod surface;
 
 /// Average a coincident-position normal run. A zero output means that member
 /// keeps its source direction. Large runs use bounded directional clusters.
