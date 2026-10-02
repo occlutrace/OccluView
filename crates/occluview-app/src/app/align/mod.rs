@@ -313,6 +313,13 @@ impl SceneContext<'_> {
         };
 
         let outcome = self.tools.align.tool.click(point);
+        if matches!(
+            outcome,
+            ClickOutcome::StartedPair | ClickOutcome::CompletedPair(_) | ClickOutcome::MovedPending
+        ) {
+            self.abandon_align_jobs();
+            self.tools.align.rejected.clear();
+        }
         // The first point can contradict the arm-time role guess and swap the
         // two scans. That is the same role change the panel button performs, so
         // it owes the same invalidation: without it the map would keep

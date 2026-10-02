@@ -46,6 +46,7 @@ remain in the Git history.
 
 ### Align
 
+- Changing or removing alignment points cancels fits that used the previous points.
 - Deviation maps and statistics exclude distances that overflow storage and non-finite readings.
 - Closing the exclusion brush without changing markings restores the deviation map.
 - Cancel preserves the save prompt for restored scan positions, including an unfinished drag or a position already exported during the session.

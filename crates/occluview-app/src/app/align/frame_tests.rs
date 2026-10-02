@@ -36,6 +36,76 @@ fn release(pos: egui::Pos2) -> egui::Event {
     }
 }
 
+#[test]
+fn placing_a_landmark_discards_the_fit_with_previous_points() {
+    use crate::align::align_worker::AlignOutcome;
+
+    let mut app = test_app("align-click-obsolete-fit");
+    let mut scene = named_scene("moving", 0.0);
+    let moving = scene.meshes()[0].id();
+    let fixed = push_named_layer(&mut scene, "fixed", 5.0);
+    let camera = crate::viewer::home_camera_for_scene(&scene);
+    app.workspace.scenes[0].document.scene = Some(scene.into());
+    app.workspace.scenes[0].render.camera = Some(camera);
+    let ctx = app.ui.repaint_ctx.clone();
+    let mut scene = app.active_context().expect("live scene");
+    scene.tools.align.tool.arm();
+    for local in [Vec3::ZERO, Vec3::Y] {
+        for layer in [moving, fixed] {
+            scene.tools.align.tool.click(AlignPoint {
+                layer,
+                local,
+                normal: Vec3::Z,
+            });
+        }
+    }
+    assert!(scene.tools.align.tool.can_align());
+    let generation = scene.align_worker_mut().generation();
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 400.0));
+    let (pointer, _) =
+        crate::viewer::project_world_to_viewport(&camera, screen, Vec3::new(0.25, 0.25, 0.0))
+            .expect("surface projects into viewport");
+    for events in [
+        vec![egui::Event::PointerMoved(pointer)],
+        vec![press(pointer)],
+        vec![release(pointer)],
+    ] {
+        ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(screen),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                let response = ui.interact(
+                    screen,
+                    egui::Id::new("landmark-viewport"),
+                    egui::Sense::click(),
+                );
+                scene.handle_align_click(&response, ui.ctx());
+            },
+        )
+        .drop_without_applying_deltas();
+    }
+    assert!(
+        scene.tools.align.tool.pending().is_some(),
+        "the click must place a landmark"
+    );
+    scene.align_worker_mut().publish_for_tests(
+        generation,
+        AlignOutcome::Aligned {
+            pose: Rigid::new(glam::DQuat::IDENTITY, DVec3::X),
+            rejected: vec![],
+        },
+    );
+    scene.drain_align_worker(&ctx);
+    assert_eq!(
+        scene.document.scene.as_ref().expect("scene").meshes()[0].transform,
+        Affine3A::IDENTITY
+    );
+    assert_eq!(scene.document.edit_mode.undo_len(), 0);
+}
+
 fn assert_same_direction(actual: Vec3, expected: Vec3, what: &str) {
     let delta = actual.normalize_or_zero() - expected.normalize_or_zero();
     assert!(delta.length() < 1.0e-5, "{what}: got {actual:?}");
