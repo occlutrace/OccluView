@@ -304,6 +304,7 @@ mod one_budget_tests {
         }
         let release_at = Instant::now() + Duration::from_millis(400);
         std::thread::spawn(move || {
+            // Spend part of the request budget while the gate remains full.
             while Instant::now() < release_at {
                 std::thread::sleep(Duration::from_millis(10));
             }
@@ -313,6 +314,7 @@ mod one_budget_tests {
         let started = Instant::now();
         let outcome: ThumbnailJobOutcome<()> =
             run_thumbnail_job_with_deadline(budget, |progress| {
+                // The render must outlast the remaining request budget.
                 std::thread::sleep(Duration::from_millis(500));
                 let _ = progress.send(ThumbnailJobProgress::Finished(()));
             });
