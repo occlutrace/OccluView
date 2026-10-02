@@ -17,6 +17,36 @@ fn one_triangle_glb() -> Vec<u8> {
 }
 
 #[test]
+fn optional_attribute_counts_must_match_positions() {
+    let (json, bin) = occluview_core::test_support::minimal_triangle_glb_chunks();
+    for attribute in ["NORMAL", "TEXCOORD_0", "COLOR_0"] {
+        for count in [2usize, 4] {
+            let components = if attribute == "TEXCOORD_0" { 2 } else { 3 };
+            let mut data = bin.clone();
+            let offset = data.len();
+            data.resize(offset + count * components * 4, 0);
+            let mut doc: serde_json::Value = serde_json::from_slice(json).expect("JSON");
+            doc["meshes"][0]["primitives"][0]["attributes"][attribute] = serde_json::json!(2);
+            doc["accessors"].as_array_mut().expect("accessors").push(serde_json::json!({
+                "bufferView": 2, "count": count, "type": if components == 2 { "VEC2" } else { "VEC3" }, "componentType": 5126
+            }));
+            doc["bufferViews"]
+                .as_array_mut()
+                .expect("views")
+                .push(serde_json::json!({
+                    "buffer": 0, "byteOffset": offset, "byteLength": data.len() - offset
+                }));
+            doc["buffers"][0]["byteLength"] = serde_json::json!(data.len());
+            let bytes = glb::build_glb(&serde_json::to_vec(&doc).expect("JSON"), &data);
+            assert!(
+                read(&bytes).is_err(),
+                "accepted {attribute} count {count} for three positions"
+            );
+        }
+    }
+}
+
+#[test]
 fn mirrored_nodes_preserve_front_face_winding() {
     let (json, bin) = occluview_core::test_support::minimal_triangle_glb_chunks();
     for indexed in [false, true] {
