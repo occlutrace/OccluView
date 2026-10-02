@@ -5,8 +5,8 @@ use std::collections::HashSet;
 
 use super::journal::{EntryOwner, HistoryEntry, PendingReservation};
 use super::{
-    HistoryCommandId, HistoryDirection, HistorySnapshot, HistoryStepInfo, HistoryStepKind, SceneKey,
-    WorkspaceHistory,
+    HistoryCommandId, HistoryDirection, HistorySnapshot, HistoryStepInfo, HistoryStepKind,
+    SceneKey, WorkspaceHistory,
 };
 
 impl WorkspaceHistory {
