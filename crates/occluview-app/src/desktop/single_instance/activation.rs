@@ -220,9 +220,9 @@ impl WaylandActivator {
             .bind::<XdgActivationV1, _, _>(&queue_handle, 1..=1, ())
             .context("binding xdg_activation_v1")?;
 
-        // SAFETY: `surface` is the live winit Wayland surface; importing its
-        // id borrows the object without taking ownership.
         let surface_id =
+            // SAFETY: `surface` is the live winit Wayland surface; importing its
+            // id borrows the object without taking ownership.
             unsafe { ObjectId::from_ptr(WlSurface::interface(), surface.as_ptr().cast()) }
                 .context("importing the eframe Wayland surface")?;
         let surface = WlSurface::from_id(&connection, surface_id)
