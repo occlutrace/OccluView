@@ -159,7 +159,7 @@ impl GroupGrid {
         if !(radius.is_finite() && radius > 0.0) {
             return;
         }
-        let reach = (radius / self.cell_size).ceil() as i32 + 1;
+        let reach = ((radius / self.cell_size).ceil() as i32).saturating_add(1);
         if reach > MAX_NEIGHBORHOOD_REACH {
             // The radius dwarfs the grid: one linear pass over every occupied
             // cell beats an O(reach^3) neighborhood scan and can never freeze.
@@ -180,6 +180,25 @@ impl GroupGrid {
                     }
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn huge_radius_query_returns_every_group_without_overflow() {
+        let grid = GroupGrid::build_with_cell_size(
+            [DVec3::ZERO, DVec3::X, DVec3::Y].into_iter(),
+            DVec3::ZERO,
+            1.0,
+        );
+        let mut found = Vec::new();
+        for radius in [f64::from(i32::MAX), f64::MAX] {
+            grid.query_radius(DVec3::ZERO, radius, &mut found);
+            assert_eq!(found, [0, 1, 2]);
         }
     }
 }
