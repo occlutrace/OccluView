@@ -1,7 +1,7 @@
 use eframe::egui;
 use glam::Vec3;
 use occluview_core::{Camera, Scene, SceneMesh, SceneMeshId, ScenePickHit};
-use occluview_edit::FaceSelection;
+use occluview_mesh_edit::FaceSelection;
 
 /// Region selection request (freehand lasso or the marquee rectangle as a
 /// 4-point polygon). The dental CAD "Mark triangles" semantics: a triangle
@@ -297,7 +297,7 @@ impl FaceSelectionState {
 /// point cloud / faceless mesh or an out-of-range index — a no-op, never a
 /// panic.
 fn component_triangles(entry: &SceneMesh, triangle_index: usize) -> Option<Vec<usize>> {
-    occluview_edit::component_at_triangle_in_mesh(&entry.mesh, triangle_index)
+    occluview_mesh_edit::component_at_triangle_in_mesh(&entry.mesh, triangle_index)
         .ok()
         .flatten()
 }

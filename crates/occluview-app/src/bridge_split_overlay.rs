@@ -252,13 +252,13 @@ fn error_label(error: &BridgeSplitToolError, locale: &crate::i18n::LocaleManager
     let number_format = locale.number_format();
     match error {
         BridgeSplitToolError::Kernel(error) => match error {
-            occluview_edit::BridgeSplitError::NoIntersection => {
+            occluview_mesh_edit::BridgeSplitError::NoIntersection => {
                 locale.tr(crate::i18n::message_id!("bridge-err-miss"))
             }
-            occluview_edit::BridgeSplitError::TangentContact => {
+            occluview_mesh_edit::BridgeSplitError::TangentContact => {
                 locale.tr(crate::i18n::message_id!("bridge-err-tangent"))
             }
-            occluview_edit::BridgeSplitError::DiscTooSmall {
+            occluview_mesh_edit::BridgeSplitError::DiscTooSmall {
                 disc_radius_mm,
                 required_radius_mm,
             } => locale.tr_with(
@@ -274,7 +274,7 @@ fn error_label(error: &BridgeSplitToolError, locale: &crate::i18n::LocaleManager
                     ),
                 ],
             ),
-            occluview_edit::BridgeSplitError::DiscLimitExceeded {
+            occluview_mesh_edit::BridgeSplitError::DiscLimitExceeded {
                 required_radius_mm,
                 max_radius_mm,
             } => locale.tr_with(
@@ -290,27 +290,27 @@ fn error_label(error: &BridgeSplitToolError, locale: &crate::i18n::LocaleManager
                     ),
                 ],
             ),
-            occluview_edit::BridgeSplitError::OpenOrNonManifold { .. }
-            | occluview_edit::BridgeSplitError::DisconnectedInput { .. }
-            | occluview_edit::BridgeSplitError::DegenerateInput { .. } => {
+            occluview_mesh_edit::BridgeSplitError::OpenOrNonManifold { .. }
+            | occluview_mesh_edit::BridgeSplitError::DisconnectedInput { .. }
+            | occluview_mesh_edit::BridgeSplitError::DegenerateInput { .. } => {
                 locale.tr(crate::i18n::message_id!("bridge-err-no-result"))
             }
-            occluview_edit::BridgeSplitError::DamagedCutRim { .. }
-            | occluview_edit::BridgeSplitError::CapFailed { .. } => {
+            occluview_mesh_edit::BridgeSplitError::DamagedCutRim { .. }
+            | occluview_mesh_edit::BridgeSplitError::CapFailed { .. } => {
                 locale.tr(crate::i18n::message_id!("bridge-err-invalid-cut"))
             }
-            occluview_edit::BridgeSplitError::InvalidOutput { side, .. } => locale.tr_with(
+            occluview_mesh_edit::BridgeSplitError::InvalidOutput { side, .. } => locale.tr_with(
                 crate::i18n::message_id!("bridge-err-invalid-side"),
                 &[("side", side)],
             ),
-            occluview_edit::BridgeSplitError::SeparationViolation { .. } => {
+            occluview_mesh_edit::BridgeSplitError::SeparationViolation { .. } => {
                 locale.tr(crate::i18n::message_id!("bridge-err-gap"))
             }
-            occluview_edit::BridgeSplitError::EmptyInput => {
+            occluview_mesh_edit::BridgeSplitError::EmptyInput => {
                 locale.tr(crate::i18n::message_id!("bridge-err-empty"))
             }
-            occluview_edit::BridgeSplitError::InvalidRequest { .. }
-            | occluview_edit::BridgeSplitError::Mesh(_) => {
+            occluview_mesh_edit::BridgeSplitError::InvalidRequest { .. }
+            | occluview_mesh_edit::BridgeSplitError::Mesh(_) => {
                 locale.tr(crate::i18n::message_id!("bridge-err-invalid"))
             }
         },
@@ -352,7 +352,7 @@ mod tests {
     fn disc_miss_explains_how_to_correct_the_placement() {
         assert_eq!(
             error_label(
-                &BridgeSplitToolError::Kernel(occluview_edit::BridgeSplitError::NoIntersection),
+                &BridgeSplitToolError::Kernel(occluview_mesh_edit::BridgeSplitError::NoIntersection),
                 &english(),
             ),
             "Disc misses the bridge. Move it into a connector."
@@ -362,7 +362,7 @@ mod tests {
     #[test]
     fn topology_failures_do_not_expose_repair_instructions() {
         let label = error_label(
-            &BridgeSplitToolError::Kernel(occluview_edit::BridgeSplitError::DegenerateInput {
+            &BridgeSplitToolError::Kernel(occluview_mesh_edit::BridgeSplitError::DegenerateInput {
                 faces: 4,
             }),
             &english(),

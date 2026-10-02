@@ -14,7 +14,7 @@ use super::whole_mesh::{edit_command_for_layer_action, layer_edit_status};
 use super::{resolve_layer, with_undoable_note, SelectedFaceEditContext};
 use crate::i18n::message_id;
 use occluview_core::{CoreError, SceneMeshId};
-use occluview_edit::{
+use occluview_mesh_edit::{
     crop_mesh_to_selected_faces, delete_selected_faces_in_mesh,
     selected_connected_components_in_mesh, MeshEditOptions,
 };
@@ -304,7 +304,7 @@ fn apply_single_layer_selected_face_edit(
     scene: &mut Scene,
     context: SelectedFaceEditContext,
     action: LayerContextAction,
-    selection: &occluview_edit::FaceSelection,
+    selection: &occluview_mesh_edit::FaceSelection,
     edit_mode: &mut EditModeController,
 ) -> Result<LayerContextApply, CoreError> {
     let Some(entry) = scene.meshes_mut().get_mut(context.index) else {
@@ -334,9 +334,9 @@ fn apply_single_layer_selected_face_edit(
 
 pub(super) fn selected_face_edit_result(
     mesh: &occluview_core::Mesh,
-    selection: &occluview_edit::FaceSelection,
+    selection: &occluview_mesh_edit::FaceSelection,
     action: LayerContextAction,
-) -> Result<occluview_edit::CoreMeshEditResult, CoreError> {
+) -> Result<occluview_mesh_edit::CoreMeshEditResult, CoreError> {
     match action {
         LayerContextAction::DeleteSelectedFaces => delete_selected_faces_in_mesh(
             mesh,

@@ -1,5 +1,5 @@
+use crate::{BridgeSplitReport, BridgeSplitRequest, MeshEditBuffers};
 use glam::{DAffine3, DVec3};
-use occluview_mesh_edit::{BridgeSplitReport, BridgeSplitRequest, MeshEditBuffers};
 use occluview_robust_csg::{
     normalize_closed_mesh, prepare_robust_solid, split_prepared_with_separator_disc,
     validate_separator_clearance as validate_robust_separator_clearance, PreparedRobustSolid,

@@ -1,8 +1,10 @@
-# occluview-mesh-edit — product-neutral mesh-editing kernel behind the
-# occluview-edit façade.
+# occluview-mesh-edit — mesh editing: the product-neutral geometry kernel, the
+# adapter that runs it on `occluview-core` meshes, and the optional native CSG
+# fallback.
+# Layering: depends on occluview-core (rank 1) and occluview-robust-csg (rank 0).
 [package]
 name = "occluview-mesh-edit"
-description = "Product-neutral mesh editing kernel; the occluview-edit facade adapts it to the core mesh model."
+description = "Mesh editing for OccluView: a product-neutral geometry kernel plus the adapter that runs it on core meshes."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,11 +13,17 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+default = []
+robust-csg = ["dep:occluview-robust-csg"]
+
 [lints]
 workspace = true
 
 [dependencies]
 earcutr = { workspace = true }
 glam = { workspace = true }
+occluview-core = { workspace = true }
 occluview-geometry-math = { workspace = true }
+occluview-robust-csg = { workspace = true, optional = true }
 thiserror = { workspace = true }

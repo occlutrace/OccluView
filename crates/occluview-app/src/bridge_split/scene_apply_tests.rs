@@ -4,7 +4,7 @@ use super::{
 use crate::edit_mode::{BusyFinish, EditModeCommand, EditModeController, StructuralHistoryStep};
 use glam::{Affine3A, Vec3};
 use occluview_core::{Mesh, Scene, SceneMesh, Vertex};
-use occluview_edit::{BridgeSplitReport, CoreBridgeSplitResult};
+use occluview_mesh_edit::{BridgeSplitReport, CoreBridgeSplitResult};
 
 fn mesh(name: &str, z: f32) -> Option<Mesh> {
     Mesh::new(

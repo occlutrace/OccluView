@@ -19,7 +19,6 @@ members = [
     "crates/occluview-align",
     "crates/occluview-contact",
     "crates/occluview-core",
-    "crates/occluview-edit",
     "crates/occluview-hps",
     "crates/occluview-formats",
     "crates/occluview-render",
@@ -42,7 +41,6 @@ default-members = [
     "crates/occluview-surface-query",
     "crates/occluview-contact",
     "crates/occluview-core",
-    "crates/occluview-edit",
     "crates/occluview-hps",
     "crates/occluview-formats",
     "crates/occluview-render",
@@ -61,13 +59,12 @@ occluview-repo-contracts = 0
 occluview-robust-csg = 0
 occluview-update = 0
 # Geometry kernels and the shared surface query.
-occluview-mesh-edit = 1
 occluview-sculpt = 1
 occluview-surface-query = 1
 occluview-hps = 1
-# The pure data model, and the edit façade over the kernels.
+# The pure data model and the mesh-editing crate over it.
 occluview-core = 1
-occluview-edit = 2
+occluview-mesh-edit = 2
 # Query consumers and scene services.
 occluview-align = 2
 occluview-contact = 2
@@ -103,7 +100,6 @@ occluview-surface-query = { path = "crates/occluview-surface-query" }
 occluview-align   = { path = "crates/occluview-align" }
 occluview-contact = { path = "crates/occluview-contact" }
 occluview-core    = { path = "crates/occluview-core" }
-occluview-edit    = { path = "crates/occluview-edit" }
 occluview-hps = { path = "crates/occluview-hps" }
 occluview-formats = { path = "crates/occluview-formats" }
 occluview-render  = { path = "crates/occluview-render" }

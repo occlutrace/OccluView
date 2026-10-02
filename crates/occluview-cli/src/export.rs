@@ -1,13 +1,13 @@
 #![cfg_attr(test, allow(clippy::expect_used))]
 
 use anyhow::{bail, Context, Result};
-use occluview_edit::{
-    fill_holes_in_mesh, MeshEditOptions, MeshEditReport, CLOSE_HOLES_EDGE_CEILING,
-};
 use occluview_formats::dispatch::read_file_with_key_provider;
 use occluview_formats::hps::RuntimeHpsKeyProvider;
 use occluview_formats::write::{
     write_mesh_overwrite, MeshWriteFormat, MeshWriteOptions, MeshWriteReport, MeshWriteWarning,
+};
+use occluview_mesh_edit::{
+    fill_holes_in_mesh, MeshEditOptions, MeshEditReport, CLOSE_HOLES_EDGE_CEILING,
 };
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};

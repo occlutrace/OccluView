@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use occluview_core::{Camera, Scene, SceneMesh, SceneMeshId, ScenePickHit};
-use occluview_edit::FaceSelection;
+use occluview_mesh_edit::FaceSelection;
 
 use super::selection::{FaceSelectionState, ScreenPolygonSelectionRequest};
 

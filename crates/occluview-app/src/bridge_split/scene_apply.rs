@@ -5,7 +5,7 @@
 //! immediately after it with a fresh identity and the same presentation state.
 
 use occluview_core::{Scene, SceneMesh, SceneMeshId};
-use occluview_edit::CoreBridgeSplitResult;
+use occluview_mesh_edit::CoreBridgeSplitResult;
 use std::sync::Arc;
 
 use super::BridgeSplitTarget;
