@@ -5,6 +5,9 @@ remain in the Git history.
 
 ## Unreleased
 
+- File-open handoff publishes complete requests before the running window reads them.
+
+
 - GLB texture decoding validates image buffer sources and byte ranges without overflowing.
 
 - Sculpt reports the actual display-geometry failure instead of always reporting a poisoned lock.
