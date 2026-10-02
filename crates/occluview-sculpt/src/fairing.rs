@@ -278,6 +278,15 @@ pub struct FairingJob {
     persist_warm_start: bool,
 }
 
+fn selection_is_valid<S: FairingSurface + ?Sized>(surface: &S, selection: &[(u32, f64)]) -> bool {
+    !selection.is_empty()
+        && selection.iter().all(|&(vertex, weight)| {
+            (vertex as usize) < surface.vertex_count()
+                && weight.is_finite()
+                && (0.0..=1.0).contains(&weight)
+        })
+}
+
 impl FairingJob {
     /// Create a reusable general-purpose fairing job.
     pub fn new<S: FairingSurface + ?Sized>(
@@ -304,10 +313,7 @@ impl FairingJob {
     ) -> Option<Self> {
         if !feature_size_mm.is_finite()
             || feature_size_mm <= 0.0
-            || selection.is_empty()
-            || selection.iter().any(|&(v, w)| {
-                v as usize >= surface.vertex_count() || !w.is_finite() || !(0.0..=1.0).contains(&w)
-            })
+            || !selection_is_valid(surface, selection)
         {
             return None;
         }
