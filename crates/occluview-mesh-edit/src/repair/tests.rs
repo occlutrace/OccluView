@@ -406,6 +406,22 @@ fn clean_mesh_returns_exact_input_clone() {
 }
 
 #[test]
+fn translated_repair_preserves_distinct_vertices_contract_regression() {
+    for offset in [1.0e6_f32, -1.0e6] {
+        let mut clean = cube();
+        for vertex in &mut clean.vertices {
+            vertex.position[0] += offset;
+            vertex.position[1] += offset;
+            vertex.position[2] += offset;
+        }
+        let result = repair(&clean);
+        assert_eq!(result.report.welded_vertices, 0);
+        assert!(!result.report.changed_content());
+        assert_eq!(result.mesh, clean);
+    }
+}
+
+#[test]
 fn point_clouds_are_rejected() {
     let cloud = MeshEditBuffers {
         vertices: vec![v([0.0, 0.0, 0.0])],
