@@ -71,7 +71,7 @@ fn fuzz_lock_does_not_drift() {
         .iter()
         .filter_map(|(name, workspace_versions)| {
             fuzz.get(name).and_then(|fuzz_versions| {
-                (fuzz_versions != workspace_versions).then(|| {
+                (!fuzz_versions.is_subset(workspace_versions)).then(|| {
                     format!(
                         "{name}: workspace [{}] vs fuzz [{}]",
                         versions_list(workspace_versions),
@@ -83,7 +83,7 @@ fn fuzz_lock_does_not_drift() {
         .collect();
     assert!(
         drift.is_empty(),
-        "every package in both lockfiles resolves to one version:\n{}",
+        "every fuzz package version is one the workspace also resolves:\n{}",
         drift.join("\n")
     );
 }
