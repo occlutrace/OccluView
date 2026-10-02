@@ -240,9 +240,11 @@ impl SceneContext<'_> {
             world_to_local,
             local_per_world,
         } = target;
-        let camera = *self.render.camera.as_ref()?;
+        let mut camera = *self.render.camera.as_ref()?;
         let scene = self.document.scene.as_ref()?;
-        let clip_plane = self.active_viewport_clip_plane(scene.bbox());
+        let bounds = self.effective_scene_bbox(scene);
+        camera.fit_clip_planes_to_bbox(bounds);
+        let clip_plane = self.active_viewport_clip_plane(bounds);
         let tip = mesh_editor_overlay::sculpt_tip(ctx, self.scene_key);
         local_brush_ray_step(LocalBrushRayInput {
             camera: &camera,
