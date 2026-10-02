@@ -301,7 +301,7 @@ workspace.
 
 | crate | role | rank |
 |---|---|---|
-| `occluview-geometry-math` | Shared geometry constants and pure math; the bottom leaf, importing no other workspace crate. | 0 |
+| `occluview-geometry` | Shared geometry constants and pure math; the bottom leaf, importing no other workspace crate. | 0 |
 | `occluview-i18n` | Fluent catalogs and locale resolution shared by the app and the shell. | 0 |
 | `occluview-repo-contracts` | Repository contract tests: CI workflows, packaging reports and the release version. | 0 |
 | `occluview-robust-csg` | Native Manifold CSG boundary; isolates the C++ build from mesh code. | 0 |

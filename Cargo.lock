@@ -2643,7 +2643,7 @@ dependencies = [
  "occluview-contact",
  "occluview-core",
  "occluview-formats",
- "occluview-geometry-math",
+ "occluview-geometry",
  "occluview-i18n",
  "occluview-mesh-edit",
  "occluview-render",
@@ -2700,7 +2700,7 @@ version = "1.2.1"
 dependencies = [
  "bytemuck",
  "glam",
- "occluview-geometry-math",
+ "occluview-geometry",
  "rayon",
  "thiserror 2.0.21",
 ]
@@ -2724,7 +2724,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "occluview-geometry-math"
+name = "occluview-geometry"
 version = "1.2.1"
 dependencies = [
  "glam",
@@ -2739,7 +2739,7 @@ dependencies = [
  "glam",
  "image",
  "md-5",
- "occluview-geometry-math",
+ "occluview-geometry",
  "thiserror 2.0.21",
  "tracing",
  "zeroize",
@@ -2762,7 +2762,7 @@ dependencies = [
  "earcutr",
  "glam",
  "occluview-core",
- "occluview-geometry-math",
+ "occluview-geometry",
  "occluview-robust-csg",
  "thiserror 2.0.21",
 ]
@@ -2777,7 +2777,7 @@ dependencies = [
  "naga",
  "occluview-contact",
  "occluview-core",
- "occluview-geometry-math",
+ "occluview-geometry",
  "pollster 1.0.1",
  "thiserror 2.0.21",
  "tracing",
@@ -2806,7 +2806,7 @@ name = "occluview-sculpt"
 version = "1.2.1"
 dependencies = [
  "glam",
- "occluview-geometry-math",
+ "occluview-geometry",
  "rayon",
 ]
 
@@ -2817,7 +2817,7 @@ dependencies = [
  "glam",
  "occluview-core",
  "occluview-formats",
- "occluview-geometry-math",
+ "occluview-geometry",
  "occluview-i18n",
  "occluview-render",
  "occluview-thumbnail",
@@ -2836,7 +2836,7 @@ name = "occluview-surface-query"
 version = "1.2.1"
 dependencies = [
  "glam",
- "occluview-geometry-math",
+ "occluview-geometry",
 ]
 
 [[package]]

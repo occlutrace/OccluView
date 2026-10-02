@@ -14,7 +14,7 @@
 mod builder;
 mod bvh;
 mod normals;
-pub use occluview_geometry_math::accumulate_smooth_normals;
+pub use occluview_geometry::accumulate_smooth_normals;
 mod principal_axis;
 mod texture;
 mod vertex;

@@ -173,7 +173,7 @@ fn invalid_surface(attribute: &'static str) -> FormatError {
 /// Area-weighted vertex normals for a decoded HPS surface.
 ///
 /// The accumulation and the degeneracy rule come from `occluview-core`, which
-/// re-exports the shared `occluview-geometry-math` implementation, so facets under
+/// re-exports the shared `occluview-geometry` implementation, so facets under
 /// 20 um shade the same way on this path as on every other. No local copy is
 /// kept.
 fn smooth_normals(positions: &[Vec3], indices: &[u32]) -> Vec<Vec3> {

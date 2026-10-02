@@ -302,7 +302,7 @@ fn arcball_sphere_vec(
 /// squared pixel distance from `p` to that closest point. A degenerate segment
 /// (`a == b`) yields `t = 0`. All inputs are 2D panel pixels.
 pub(crate) fn closest_param_on_segment(point: Pos2, a: Pos2, b: Pos2) -> (f32, f32) {
-    occluview_geometry_math::closest_param_on_segment_2d(
+    occluview_geometry::closest_param_on_segment_2d(
         Vec2::new(point.x, point.y),
         Vec2::new(a.x, a.y),
         Vec2::new(b.x, b.y),

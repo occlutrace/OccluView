@@ -89,7 +89,7 @@ pub use edit::{
 pub use error::{BridgeSplitError, MeshEditError};
 pub use holes::{fill_holes, fill_selected_holes, CLOSE_HOLES_EDGE_CEILING};
 pub use normals::recompute_all_normals;
-pub use occluview_geometry_math::{coincident_position_key, COINCIDENT_POSITION_EPS_MM};
+pub use occluview_geometry::{coincident_position_key, COINCIDENT_POSITION_EPS_MM};
 pub use orientation::invert_orientation;
 pub use repair::{repair_mesh, RepairOptions, RepairReport, RepairResult};
 pub use scene_section::{LayerSection, SceneSection, SectionCache};

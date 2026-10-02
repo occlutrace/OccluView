@@ -20,4 +20,4 @@ glam      = { workspace = true }
 bytemuck  = { workspace = true }
 thiserror = { workspace = true }
 rayon     = { workspace = true }
-occluview-geometry-math = { workspace = true }
+occluview-geometry = { workspace = true }

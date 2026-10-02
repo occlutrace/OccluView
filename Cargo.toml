@@ -10,7 +10,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/occluview-geometry-math",
+    "crates/occluview-geometry",
     "crates/occluview-i18n",
     "crates/occluview-mesh-edit",
     "crates/occluview-sculpt",
@@ -53,7 +53,7 @@ default-members = [
 
 [workspace.metadata.layer-ranks]
 # Shared leaf libraries.
-occluview-geometry-math = 0
+occluview-geometry = 0
 occluview-i18n = 0
 occluview-repo-contracts = 0
 occluview-robust-csg = 0
@@ -91,7 +91,7 @@ publish = false              # we are not on crates.io yet
 # `dep = { workspace = true }` in each crate's [dependencies].
 [workspace.dependencies]
 # Internal crates.
-occluview-geometry-math = { path = "crates/occluview-geometry-math" }
+occluview-geometry = { path = "crates/occluview-geometry" }
 occluview-i18n = { path = "crates/occluview-i18n" }
 occluview-mesh-edit = { path = "crates/occluview-mesh-edit" }
 occluview-sculpt = { path = "crates/occluview-sculpt" }

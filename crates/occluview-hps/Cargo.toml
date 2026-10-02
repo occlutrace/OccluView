@@ -28,7 +28,7 @@ blowfish = { workspace = true }
 glam     = { workspace = true }
 image    = { workspace = true }
 md-5     = { workspace = true }
-occluview-geometry-math = { workspace = true }
+occluview-geometry = { workspace = true }
 thiserror = { workspace = true }
 zeroize  = { workspace = true }
 tracing  = { workspace = true }
