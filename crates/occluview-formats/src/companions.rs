@@ -65,6 +65,7 @@ pub(crate) fn attach(mesh: &mut Mesh, path: &Path, kind: LocateKind, bytes: &[u8
 
 /// The image a mesh file names, or the one that shares its name.
 fn locate(path: &Path, kind: LocateKind, bytes: &[u8]) -> Option<PathBuf> {
+    let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
     // A relative path from a command line has an empty parent, and the files
     // it names are in the working directory.
     let directory = match path.parent() {
@@ -253,6 +254,42 @@ fn same_stem_image(path: &Path, directory: &Path) -> Option<PathBuf> {
 mod tests {
     use super::*;
     use occluview_core::{MeshTexture, Vertex};
+
+    #[test]
+    fn a_bom_prefixed_obj_loads_its_named_companion() {
+        let directory = tempfile::tempdir().expect("directory");
+        std::fs::write(directory.path().join("atlas.png"), textured_png()).expect("image");
+        std::fs::write(directory.path().join("atlas.mtl"), "map_Kd atlas.png\n").expect("MTL");
+        let bytes = b"\xef\xbb\xbfmtllib atlas.mtl\n\
+            v 0 0 0\nv 1 0 0\nv 0 1 0\nvt 0 1\nvt 1 1\nvt 0 0\nf 1/1 2/2 3/3\n";
+        let path = directory.path().join("scan.obj");
+        std::fs::write(&path, bytes).expect("OBJ");
+        let mesh = crate::read_file(&path).expect("valid BOM OBJ");
+        assert_eq!(mesh.triangle_count(), 1);
+        assert_eq!(
+            mesh.texture().expect("named companion").rgba,
+            [255, 0, 0, 255, 0, 0, 255, 255]
+        );
+    }
+
+    #[test]
+    fn a_bom_prefixed_ply_loads_its_named_companion() {
+        let directory = tempfile::tempdir().expect("directory");
+        std::fs::write(directory.path().join("atlas.png"), textured_png()).expect("image");
+        let bytes = b"\xef\xbb\xbfply\nformat ascii 1.0\ncomment TextureFile atlas.png\n\
+            element vertex 3\nproperty float x\nproperty float y\nproperty float z\n\
+            property float s\nproperty float t\nelement face 1\n\
+            property list uchar int vertex_indices\nend_header\n\
+            0 0 0 0 1\n1 0 0 1 1\n0 1 0 0 0\n3 0 1 2\n";
+        let path = directory.path().join("scan.ply");
+        std::fs::write(&path, bytes).expect("PLY");
+        let mesh = crate::read_file(&path).expect("valid BOM PLY");
+        assert_eq!(mesh.triangle_count(), 1);
+        assert_eq!(
+            mesh.texture().expect("named companion").rgba,
+            [255, 0, 0, 255, 0, 0, 255, 255]
+        );
+    }
 
     fn textured_png() -> Vec<u8> {
         crate::glb_writer::encode_png(&MeshTexture::new(

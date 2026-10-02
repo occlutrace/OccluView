@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- BOM-prefixed PLY and OBJ imports retain their named companion textures.
+
 - Sculpt protection skirts keep one weight per vertex when a shorter surface path is found.
 
 - Sculpt rejects non-finite vertex data in topology history before replay.
