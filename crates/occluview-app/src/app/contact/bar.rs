@@ -5,7 +5,7 @@ use occluview_contact::{ContactScale, ContactStats, LOAD_MAX_MM, LOAD_MIN_MM};
 
 use super::super::SceneContext;
 use crate::app_settings::UnitDisplay;
-use crate::contact::contact::{ContactMode, ContactStatus};
+use crate::contact::state::{ContactMode, ContactStatus};
 use crate::ui::icons::AppIcon;
 use crate::ui::ui_theme;
 
@@ -634,7 +634,7 @@ impl SceneContext<'_> {
         let candidates: Vec<(occluview_core::SceneMeshId, String)> =
             pair.map_or_else(Vec::new, |pair| {
                 self.document.scene.as_ref().map_or_else(Vec::new, |scene| {
-                    crate::contact::contact::antagonist_candidates(scene, pair.subject)
+                    crate::contact::state::antagonist_candidates(scene, pair.subject)
                         .into_iter()
                         .filter(|id| *id != pair.antagonist)
                         .filter_map(|id| self.layer_display_name(id).map(|name| (id, name)))
