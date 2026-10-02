@@ -505,7 +505,7 @@ fn gutter_icon(ui: &mut egui::Ui, icon: LineIcon) {
             crate::ui::icons::paint(painter, rect, AppIcon::CloseHoles, ui_theme::text_weak());
         }
         LineIcon::Fixed => {
-            crate::ui::icons::paint(painter, rect, AppIcon::Check, ui_theme::accent())
+            crate::ui::icons::paint(painter, rect, AppIcon::Check, ui_theme::accent());
         }
     }
 }
