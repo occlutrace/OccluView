@@ -93,6 +93,11 @@ For behaviour changes, add or update tests. Prefer behavioural assertions over
 source-text checks. Keep performance thresholds tied to a reproducible
 measurement.
 
+GPU tests without an available adapter report
+`SKIPPED (no GPU adapter): <test name>` and return. Setting
+`OCCLUVIEW_REQUIRE_GPU_TESTS=1` makes the shared test helper panic instead, so
+a CI lane that promises GPU coverage cannot pass vacuously.
+
 The workspace test list is the baseline. Refresh it before deleting or
 adding a large group of tests:
 
