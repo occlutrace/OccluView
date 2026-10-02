@@ -312,7 +312,6 @@ pub(crate) fn fill_holes_with_outcome(
             &context,
             boundary_loop,
             options,
-            selection.is_some(),
             &mut new_indices,
             &mut added_vertices,
         )?;
@@ -547,11 +546,6 @@ fn triangle_already_exists(mesh: &MeshEditBuffers, boundary_loop: &[usize]) -> b
 ///    via hierarchical splitting — good for deep sockets and strongly wrapped
 ///    rims) then the flat ear-clip lid (good where the membrane grazes a wall).
 ///    Only for rims simple in 3D, so an hourglass crossing is never baked in.
-/// 4. Selection path (explicit operator intent — the convention that a lasso'd
-///    socket always closes): if every guarded candidate grazed nearby surface,
-///    still emit the best watertight cover (membrane first, else the flat lid).
-///    Whole-mesh auto-close does not do this — it stays conservative and
-///    refuses, so it never bakes a self-intersection into a scan.
 ///
 /// A 3-edge rim around a lone free-standing triangle is never capped on any
 /// path: its only cover is the triangle's reverse twin, a zero-volume doubled
@@ -561,7 +555,6 @@ fn triangulate_loop(
     context: &LoopFillContext<'_>,
     boundary_loop: &[usize],
     options: MeshEditOptions,
-    has_selection: bool,
     new_indices: &mut Vec<u32>,
     added_vertices: &mut Vec<EditVertex>,
 ) -> Result<bool, MeshEditError> {
@@ -642,14 +635,6 @@ fn triangulate_loop(
         }
     }
 
-    // 4) Selection path: the operator marked this rim — it must close. Emit the
-    // best watertight cover even if it grazes nearby surface.
-    if has_selection {
-        if let Some(cap) = membrane.as_ref().or(ear_lid.as_ref()) {
-            emit_plain_cap(new_indices, boundary_loop, cap)?;
-            return Ok(true);
-        }
-    }
     Ok(false)
 }
 
