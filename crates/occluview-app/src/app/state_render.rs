@@ -60,6 +60,8 @@ pub(super) struct RenderState {
     pub(super) prepared_scene: Option<PreparedScene>,
     pub(super) prepared_selection_overlay: Option<PreparedScene>,
     pub(super) render_extent_px: [u16; 2],
+    /// Aspect of the displayed canvas, independent of texture allocation limits.
+    pub(super) viewport_aspect: f32,
     pub(super) rendered: Option<RenderedFrame>,
     /// Typed redraw and cache-staleness state; see [`RenderInvalidation`].
     /// Render paths consume their own cursors.
@@ -104,6 +106,8 @@ impl RenderState {
             prepared_scene: None,
             prepared_selection_overlay: None,
             render_extent_px: DEFAULT_RENDER_EXTENT_PX,
+            viewport_aspect: f32::from(DEFAULT_RENDER_EXTENT_PX[0])
+                / f32::from(DEFAULT_RENDER_EXTENT_PX[1]),
             rendered: None,
             invalidation: RenderInvalidation::new(),
             section_cache: occluview_mesh_edit::scene::SectionCache::new(),

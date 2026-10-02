@@ -105,7 +105,7 @@ impl LiveViewport {
     /// so the clamped extent would draw every splat at
     /// `radius * actual / clamped`: 5.25 px instead of 3.5 px on a 4K
     /// fullscreen, and undersized in a window below the floor. The camera
-    /// aspect still comes from the clamped extent, which is correct.
+    /// projection uses the displayed canvas aspect independently of that extent.
     pub(super) fn update_view(
         &mut self,
         camera: &GpuCamera,
