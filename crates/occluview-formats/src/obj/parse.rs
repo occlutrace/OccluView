@@ -254,6 +254,7 @@ fn parse_color_channel(s: &str, line_no: usize, raw: &str) -> Result<u8, FormatE
         return Ok(v.clamp(0, 255) as u8);
     }
     if let Ok(f) = s.parse::<f32>() {
+        let f = crate::finite_coordinate(f, "OBJ", line_no)?;
         // Scale 0.0..=1.0 to 0..=255. Values slightly out of range clamp.
         return Ok((f.clamp(0.0, 1.0) * 255.0).round() as u8);
     }
@@ -268,6 +269,20 @@ fn parse_color_channel(s: &str, line_no: usize, raw: &str) -> Result<u8, FormatE
 mod tests {
     use super::*;
     use crate::obj;
+
+    #[test]
+    fn rejects_non_finite_vertex_color_channels() {
+        for channel in ["NaN", "inf", "-inf"] {
+            let source = format!("v 0 0 0 {channel} 0.5 1.0\n");
+            assert!(
+                matches!(
+                    obj::read(source.as_bytes()),
+                    Err(FormatError::Malformed { format: "OBJ", .. })
+                ),
+                "color channel {channel} must be rejected"
+            );
+        }
+    }
 
     fn read_obj(text: &str) -> occluview_core::Mesh {
         obj::read(text.as_bytes()).expect("OBJ should parse")
