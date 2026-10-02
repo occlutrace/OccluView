@@ -31,6 +31,24 @@ fn a_cold_mesh_can_be_resolved_for_background_preparation() -> anyhow::Result<()
 }
 
 #[test]
+fn sculpt_target_never_substitutes_an_unavailable_edit_layer() -> anyhow::Result<()> {
+    let mesh = occluview_core::test_support::quad_mesh(None)
+        .ok_or_else(|| anyhow::anyhow!("quad mesh"))?;
+    let mut scene = Scene::new();
+    let edited = scene.add(SceneMesh::new(mesh.clone()));
+    let other = scene.add(SceneMesh::new(mesh));
+    let edited_id = scene.meshes()[edited].id();
+    let other_id = scene.meshes()[other].id();
+    scene.meshes_mut()[edited].visible = false;
+
+    assert_eq!(sculpt_target(&scene, Some(edited_id)), None);
+    assert_eq!(sculpt_target(&scene, None), Some((other, other_id)));
+    scene.remove(edited);
+    assert_eq!(sculpt_target(&scene, Some(edited_id)), None);
+    Ok(())
+}
+
+#[test]
 #[allow(
     clippy::float_cmp,
     reason = "Operation flags and paired cursor heights are exact values."
