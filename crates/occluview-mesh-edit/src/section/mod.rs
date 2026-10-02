@@ -18,7 +18,7 @@
 
 use glam::{DVec3, Vec3};
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
 /// Tolerance for accepting a normal as unit length in [`SectionPlane::new`].
@@ -281,11 +281,16 @@ impl Stitcher {
         let mut points = Vec::new();
         let mut incident: Vec<Vec<usize>> = Vec::new();
         let mut seg_nodes = Vec::new();
+        let mut edges = HashSet::new();
         for segment in segments {
-            let a = intern(&mut index, &mut points, &mut incident, segment.a);
-            let b = intern(&mut index, &mut points, &mut incident, segment.b);
+            let (first, second) = ordered_ends(segment);
+            let a = intern(&mut index, &mut points, &mut incident, first);
+            let b = intern(&mut index, &mut points, &mut incident, second);
             if a == b {
                 continue; // sub-weld-scale segment; treat as a point and drop
+            }
+            if !edges.insert((a.min(b), a.max(b))) {
+                continue;
             }
             let seg = seg_nodes.len();
             seg_nodes.push((a, b));
@@ -421,6 +426,17 @@ fn cmp_first_point(a: &SectionPolyline, b: &SectionPolyline) -> Ordering {
 #[cfg(test)]
 mod property_tests {
     use super::*;
+
+    #[test]
+    fn repeated_section_segments_contract_regression() {
+        let pos = [[-1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [1.0, -1.0, 0.0]];
+        let plane = SectionPlane::new(Vec3::X, 0.0).unwrap();
+        let once = plane_section(&pos, &[0, 1, 2], plane);
+        for indices in [[0, 1, 2, 0, 1, 2], [0, 1, 2, 2, 1, 0], [2, 1, 0, 0, 1, 2]] {
+            let repeated = plane_section(&pos, &indices, plane);
+            assert_eq!(repeated, once, "duplicate faces cannot close an open line");
+        }
+    }
 
     /// Closed UV sphere of `radius` about the origin.
     fn uv_sphere(radius: f64, nlat: usize, nlon: usize) -> (Vec<[f32; 3]>, Vec<u32>) {

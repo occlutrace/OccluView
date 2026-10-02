@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Repeated faces no longer turn open section contours into artificial closed loops.
+
 - Surface queries handle small triangles separated by very large distances without overflowing their grid.
 
 - Resizing a short scene pane with the Section panel open no longer crashes the axis gizmo.
