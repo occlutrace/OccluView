@@ -406,10 +406,7 @@ fn read_faces(
                 let _ = cursor.read_scalar(*ty)?;
                 continue;
             };
-            let poly_n = match cursor.read_scalar(*count_ty)? {
-                ScalarValue::Int(n) => n.max(0) as u32,
-                ScalarValue::Float(f) => f.max(0.0) as u32,
-            };
+            let poly_n = read_index(cursor, *count_ty)?;
             if i == indices_prop_idx {
                 // The geometry list. Read every corner, then fan-triangulate:
                 // the corners themselves are needed for the texture
@@ -447,16 +444,68 @@ fn read_faces(
 }
 
 fn read_index(cursor: &mut Cursor<'_>, ty: ScalarType) -> Result<u32, FormatError> {
-    match cursor.read_scalar(ty)? {
-        ScalarValue::Int(n) => Ok(n.max(0) as u32),
-        ScalarValue::Float(f) => Ok(f.max(0.0) as u32),
+    let value = cursor.read_scalar(ty)?;
+    match value {
+        ScalarValue::Int(n) => u32::try_from(n).ok(),
+        ScalarValue::Float(f)
+            if f >= 0.0 && f64::from(f) <= f64::from(u32::MAX) && f.fract() == 0.0 =>
+        {
+            Some(f as u32)
+        }
+        ScalarValue::Float(_) => None,
     }
+    .ok_or_else(|| FormatError::Malformed {
+        format: "PLY (binary)",
+        offset: cursor.pos,
+        reason: format!("list count or index must be a non-negative u32 integer, got {value:?}"),
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ply::header::{self, Format};
+
+    #[test]
+    fn binary_list_indices_reject_negative_and_fractional_values() {
+        for endian in [Endian::Little, Endian::Big] {
+            let bytes = if endian == Endian::Little {
+                (-1i32).to_le_bytes()
+            } else {
+                (-1i32).to_be_bytes()
+            };
+            assert!(read_index(&mut Cursor::new(&bytes, endian), ScalarType::Int).is_err());
+            for value in [-1.0f32, 1.5, 4_294_967_296.0] {
+                let bytes = if endian == Endian::Little {
+                    value.to_le_bytes()
+                } else {
+                    value.to_be_bytes()
+                };
+                assert!(
+                    read_index(&mut Cursor::new(&bytes, endian), ScalarType::Float).is_err(),
+                    "{value}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn binary_list_counts_reject_negative_values() {
+        let original = colored_triangle_le();
+        let header_end = original
+            .windows(b"end_header\n".len())
+            .position(|w| w == b"end_header\n")
+            .expect("header")
+            + b"end_header\n".len();
+        let header = std::str::from_utf8(&original[..header_end])
+            .expect("header")
+            .replace("list uchar int", "list char int");
+        let mut bytes = header.into_bytes();
+        bytes.extend_from_slice(&original[header_end..]);
+        let prefix = bytes.len() - 13;
+        bytes[prefix] = 255;
+        assert!(read_le(&header::parse(&bytes).expect("header")).is_err());
+    }
 
     fn colored_triangle_le() -> Vec<u8> {
         let mut out = Vec::new();
