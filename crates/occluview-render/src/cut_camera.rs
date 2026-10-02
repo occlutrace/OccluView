@@ -18,7 +18,8 @@ use occluview_core::Aabb;
 /// Build an orthographic cut-view camera looking along the clip plane's
 /// normal at the bbox center, framed to the cross-section extent.
 ///
-/// The camera sits at `center + normal * distance` looking toward `center`,
+/// The camera sits at `center - normal * distance` on the cut-away side,
+/// looking toward `center` so the section face is visible,
 /// with `up` chosen as a non-degenerate vector in the plane. The orthographic
 /// frustum is sized to the bbox's projected half-diagonal so the whole
 /// cross-section fits.
@@ -42,10 +43,9 @@ pub fn cut_view_camera(plane: &ClipPlane, bbox: Aabb) -> GpuCamera {
     // space.
     let half_diag = bbox.half_diagonal().max(1.0);
 
-    // Camera position: offset along the normal so we look "down" the normal
-    // at the cross-section.
+    // Look into the cut from the discarded half, as the focused camera does.
     let distance = half_diag * 4.0;
-    let eye = center + normal * distance;
+    let eye = center - normal * distance;
 
     // Up vector: pick a non-parallel vector. If normal is ~+Y, use +Z; else +Y.
     let up = if normal.dot(Vec3::Y).abs() < 0.9 {
@@ -188,18 +188,18 @@ mod tests {
         Aabb::from_min_max(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0))
     }
 
-    /// The bbox variant stands the eye four half-diagonals along the plane
-    /// normal. `+Z` is the ordinary case and `+Y` is the one where a `+Y` up
+    /// The bbox variant stands the eye four half-diagonals on the cut-away
+    /// side. `+Z` is the ordinary case and `+Y` is the one where a `+Y` up
     /// vector would be parallel to the view, so a construction change — or a NaN
     /// out of the degenerate basis — has to fail here.
     #[test]
-    fn cut_camera_eye_stands_off_along_the_normal() {
+    fn cut_camera_eye_stands_off_on_the_cut_away_side() {
         let bbox = unit_bbox();
         let half_diag = bbox.half_diagonal().max(1.0);
         for normal in [Vec3::Z, Vec3::Y] {
             let plane = ClipPlane::new(normal.to_array(), 0.0);
             let cam = cut_view_camera(&plane, bbox);
-            let expected = bbox.center() + normal * half_diag * 4.0;
+            let expected = bbox.center() - normal * half_diag * 4.0;
             let eye = Vec3::from_array(cam.camera_pos);
             assert!(
                 (eye - expected).length() < 1.0e-4,

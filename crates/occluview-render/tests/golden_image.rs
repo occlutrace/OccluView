@@ -579,6 +579,35 @@ fn solid_cut_paints_the_cap_of_a_closed_mesh() {
     );
 }
 
+#[test]
+fn automatic_solid_cut_shows_the_cross_section() {
+    let _gpu = gpu_test_lock();
+    let mesh = closed_cube_mesh();
+    let offscreen = pollster::block_on(Offscreen::new()).expect("offscreen init");
+    let cut = occluview_render::CutViewSpec {
+        plane: ClipPlane::new([0.0, 0.0, 1.0], 0.0),
+        cap_color: [0.0, 1.0, 0.0, 1.0],
+        show_hollow: false,
+    };
+    let pixels = pollster::block_on(offscreen.render_cut_view_with_deadline(
+        &mesh,
+        &cut,
+        dark_thumbnail_spec(),
+        test_render_deadline(),
+    ))
+    .expect("automatic solid cut");
+    let cap_pixels = pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|pixel| pixel[1] > 220 && pixel[0] < 20 && pixel[2] < 20)
+        .count();
+    assert!(
+        cap_pixels > 100,
+        "the automatic section must expose its cap: {cap_pixels}"
+    );
+}
+
 /// Validates the convenience entry point `render_cut_view` — auto-frames an
 /// orthographic camera along the plane normal and renders the solid cut.
 /// Proves the full cut-view pipeline (camera + clip + stencil cap) runs

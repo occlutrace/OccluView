@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Automatic section views face the exposed cross-section instead of the retained exterior.
+
 - Reject malformed HPS base64 tails and padding before decoding geometry.
 
 - Oversized render deadlines return a timeout instead of crashing.
