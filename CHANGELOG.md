@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Orthographic scene picking selects visible surfaces even when they lie behind the orbit camera.
+
 - Mesh region selection preserves existing marks when its outline or projection input is invalid.
 
 - Sculpt strength falls back to the brush default when an invalid numeric value is supplied.
