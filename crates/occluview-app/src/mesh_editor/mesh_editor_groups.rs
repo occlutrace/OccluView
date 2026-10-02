@@ -337,13 +337,13 @@ pub(super) fn edit_selection(
     action
 }
 
-/// Repair safe interior holes across the visible scene. With marked faces the
-/// repair is scoped to those marks; without marks every visible layer is
-/// considered. The optional perimeter restraint is off by default because
-/// the kernel already protects outer scan borders.
+/// Repair safe interior holes surrounded by marked faces on visible layers.
+/// The optional perimeter restraint is off by default because the kernel
+/// already protects outer scan borders.
 pub(super) fn close_holes(
     ui: &mut egui::Ui,
     scene_key: SceneKey,
+    state: &MeshEditorPanelState,
     enabled: bool,
     locale: &crate::i18n::LocaleManager,
 ) -> Option<MeshEditorAction> {
@@ -362,7 +362,7 @@ pub(super) fn close_holes(
             AppIcon::CloseHoles,
             &locale.tr(crate::i18n::message_id!("meshedit-cell-close-holes")),
             &locale.tr(crate::i18n::message_id!("meshedit-cell-close-holes-hint")),
-            enabled,
+            enabled && state.selected_face_count > 0,
             false,
         )
         .clicked()
@@ -845,7 +845,7 @@ mod tests {
                 let _ = tab_strip(ui, &state, &locale);
                 let _ = selection(ui, &state, enabled, &locale);
                 let _ = edit_selection(ui, &state, enabled, &locale);
-                let _ = close_holes(ui, SceneKey::INITIAL, enabled, &locale);
+                let _ = close_holes(ui, SceneKey::INITIAL, &state, enabled, &locale);
                 let _ = sculpt(ui, SceneKey::INITIAL, &state, enabled, &locale);
                 super::super::session_bar::status(ui, &state, &locale);
                 let _ = super::super::session_bar::session(ui, &state, !state.busy, &locale);
