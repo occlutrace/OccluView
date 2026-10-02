@@ -62,7 +62,7 @@ pub(crate) fn sample_vertices(soup: Soup<'_>, budget: usize) -> Vec<u32> {
 
 /// Area-weighted vertex normals computed from triangle winding.
 ///
-/// This is deliberately not `occluview_geometry_math::accumulate_smooth_normals`,
+/// This is deliberately not `occluview_geometry::accumulate_smooth_normals`,
 /// and the two differences are the reason the implementations are separate
 /// rather than duplicated:
 ///

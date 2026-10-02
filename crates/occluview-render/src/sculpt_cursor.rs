@@ -8,12 +8,12 @@
 
 use bytemuck::{Pod, Zeroable};
 use glam::DVec3;
-use occluview_geometry_math::{
+use occluview_geometry::{
     stamp_weight, CYLINDER_PLATEAU, KNIFE_AXIS_MIN_LENGTH, KNIFE_CROSS_RADIUS_SHARE,
 };
 use std::f32::consts::TAU;
 
-pub use occluview_geometry_math::TipStamp as SculptTipStamp;
+pub use occluview_geometry::TipStamp as SculptTipStamp;
 
 /// Cylinder plateau quantized for the GPU's f32 field inputs.
 #[allow(clippy::cast_possible_truncation)]

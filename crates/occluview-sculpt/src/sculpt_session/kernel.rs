@@ -5,7 +5,7 @@
 //! `dabs`, Smooth in `smooth`, and shape-preserving Relax in `relax`.
 
 use super::*;
-use occluview_geometry_math::closest_point_on_triangle;
+use occluview_geometry::closest_point_on_triangle;
 
 mod dabs;
 mod densify;

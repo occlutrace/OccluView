@@ -266,7 +266,7 @@ impl SculptSession {
 
     fn refresh_cached_display_scope_normals(&mut self, scope: &[u32]) {
         use glam::Vec3;
-        use occluview_geometry_math::average_duplicate_normal_group;
+        use occluview_geometry::average_duplicate_normal_group;
 
         self.display_normals.resize(self.verts.len(), 0.0);
         for &group in scope {
@@ -457,7 +457,7 @@ fn normal_face_data(
     triangle: u32,
 ) -> (DVec3, glam::Vec3) {
     use glam::Vec3;
-    use occluview_geometry_math::facet_contributes_normal;
+    use occluview_geometry::facet_contributes_normal;
 
     let Some(groups) = topology.triangle(triangle) else {
         return (DVec3::ZERO, Vec3::ZERO);

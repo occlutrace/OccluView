@@ -24,6 +24,6 @@ workspace = true
 earcutr = { workspace = true }
 glam = { workspace = true }
 occluview-core = { workspace = true }
-occluview-geometry-math = { workspace = true }
+occluview-geometry = { workspace = true }
 occluview-robust-csg = { workspace = true, optional = true }
 thiserror = { workspace = true }

@@ -8,7 +8,7 @@
 //! question with thousands of tree queries, the largest single cost of a dab.
 
 use super::*;
-use occluview_geometry_math::closest_point_on_triangle;
+use occluview_geometry::closest_point_on_triangle;
 
 /// Faces around one or two vertices, at their positions before an edit.
 ///

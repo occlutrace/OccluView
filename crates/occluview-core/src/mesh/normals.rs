@@ -1,15 +1,15 @@
 use super::Vertex;
 use glam::Vec3;
-use occluview_geometry_math::{accumulate_smooth_normals, average_duplicate_normal_group};
+use occluview_geometry::{accumulate_smooth_normals, average_duplicate_normal_group};
 #[cfg(test)]
-use occluview_geometry_math::{DUPLICATE_NORMAL_DOT, MAX_PAIRWISE_DUPLICATE_GROUP};
+use occluview_geometry::{DUPLICATE_NORMAL_DOT, MAX_PAIRWISE_DUPLICATE_GROUP};
 use rayon::prelude::*;
 
-/// The welding tolerance and its key function live in `occluview-geometry-math`,
+/// The welding tolerance and its key function live in `occluview-geometry`,
 /// shared with `occluview-mesh-edit`. One number has to decide which vertices
 /// share a normal at load and after every edit, or a scan changes shading the
 /// first time it is touched.
-use occluview_geometry_math::coincident_position_key as position_key;
+use occluview_geometry::coincident_position_key as position_key;
 
 fn normal_is_usable(normal: [f32; 3]) -> bool {
     let n = Vec3::from_array(normal);
