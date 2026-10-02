@@ -258,3 +258,69 @@ fn embedded_texture(comments: &header::TextureComments) -> Option<MeshTexture> {
     let png = embed::decode(encoded)?;
     crate::texture_decode::decode_embedded_raster(&png, "PLY").ok()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn vertex_list_file(format: &str) -> Vec<u8> {
+        let mut bytes = format!(
+            "ply\nformat {format} 1.0\nelement vertex 2\n\
+             property list uchar int neighbors\nproperty float x\n\
+             property list uchar float weights\nproperty float y\nproperty float z\n\
+             property list uchar uchar flags\nend_header\n"
+        )
+        .into_bytes();
+        if format == "ascii" {
+            bytes.extend_from_slice(b"2 8 9 1 1 0.5 2 3 2 10 11\n0 4 0 5 6 0\n");
+        } else {
+            let big = format == "binary_big_endian";
+            bytes.push(2);
+            for n in [8i32, 9] {
+                bytes.extend_from_slice(&if big {
+                    n.to_be_bytes()
+                } else {
+                    n.to_le_bytes()
+                });
+            }
+            let float = |n: f32| {
+                if big {
+                    n.to_be_bytes()
+                } else {
+                    n.to_le_bytes()
+                }
+            };
+            bytes.extend_from_slice(&float(1.0));
+            bytes.push(1);
+            bytes.extend_from_slice(&float(0.5));
+            bytes.extend_from_slice(&float(2.0));
+            bytes.extend_from_slice(&float(3.0));
+            bytes.extend_from_slice(&[2, 10, 11, 0]);
+            bytes.extend_from_slice(&float(4.0));
+            bytes.push(0);
+            bytes.extend_from_slice(&float(5.0));
+            bytes.extend_from_slice(&float(6.0));
+            bytes.push(0);
+        }
+        bytes
+    }
+
+    #[test]
+    fn vertex_lists_are_consumed_in_every_encoding() {
+        for format in ["ascii", "binary_little_endian", "binary_big_endian"] {
+            let mesh = read(&vertex_list_file(format)).expect("valid vertex lists");
+            assert_eq!(mesh.vertices()[0].position, [1.0, 2.0, 3.0], "{format}");
+            assert_eq!(mesh.vertices()[1].position, [4.0, 5.0, 6.0], "{format}");
+            assert!(mesh.is_point_cloud());
+        }
+    }
+
+    #[test]
+    fn truncated_vertex_lists_are_rejected_in_every_encoding() {
+        for format in ["ascii", "binary_little_endian", "binary_big_endian"] {
+            let mut bytes = vertex_list_file(format);
+            bytes.truncate(bytes.len() - 2);
+            assert!(read(&bytes).is_err(), "accepted truncated {format} list");
+        }
+    }
+}

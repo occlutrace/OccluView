@@ -31,6 +31,8 @@ pub(crate) enum FieldPlan {
     Uv(usize),
     /// Read but discard (unknown property like `confidence`).
     Skip,
+    /// Consume a list with this count type; its element type is in the plan.
+    List(ScalarType),
 }
 
 impl FieldPlan {
@@ -48,7 +50,7 @@ impl FieldPlan {
         format: &'static str,
     ) -> Result<Vec<(FieldPlan, ScalarType)>, FormatError> {
         let plan = Self::plan_for(element);
-        if plan.is_empty() && element.count > 0 {
+        if plan.iter().all(|(field, _)| matches!(field, Self::List(_))) && element.count > 0 {
             return Err(FormatError::Malformed {
                 format,
                 offset: 0,
@@ -66,11 +68,11 @@ impl FieldPlan {
         element
             .properties
             .iter()
-            .filter_map(|p| match p {
-                Property::Scalar { name, ty } => Some((route(name), *ty)),
-                // A `list` property inside the vertex element is unusual but
-                // allowed; we skip it (its length prefix would break the row).
-                Property::List { .. } => None,
+            .map(|p| match p {
+                Property::Scalar { name, ty } => (route(name), *ty),
+                Property::List {
+                    count_ty, elem_ty, ..
+                } => (Self::List(*count_ty), *elem_ty),
             })
             .collect()
     }
@@ -181,6 +183,18 @@ where
     for _ in 0..element.count {
         let mut fields = VertexFields::default();
         for (route, ty) in &plan {
+            if matches!(route, FieldPlan::List(_)) {
+                let count = read_face_index(tokens)?;
+                for _ in 0..count {
+                    let tok = tokens.next().ok_or(FormatError::Truncated {
+                        format: "PLY (ascii)",
+                        expected: element.count,
+                        got: 0,
+                    })?;
+                    apply_scalar(tok, *ty, FieldPlan::Skip, &mut fields)?;
+                }
+                continue;
+            }
             let tok = tokens.next().ok_or(FormatError::Truncated {
                 format: "PLY (ascii)",
                 expected: element.count,
