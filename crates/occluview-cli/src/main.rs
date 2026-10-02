@@ -193,7 +193,7 @@ fn cmd_thumbnail(args: &mut impl Iterator<Item = OsString>) -> Result<()> {
 
     let out_path = normalize_thumbnail_output_path(match output {
         Some(path) => path,
-        None => implicit_thumbnail_path(&file),
+        None => implicit_thumbnail_path(&file)?,
     })?;
 
     eprintln!("Rendering {size}x{size} thumbnail...");
@@ -362,7 +362,7 @@ mod replace_thumbnail_file {
 /// thumbnail there would replace the scan's image with a picture of the scan.
 /// An occupied name is therefore stepped aside, and only an explicit `-o`
 /// replaces a file the operator chose by name.
-fn implicit_thumbnail_path(file: &Path) -> PathBuf {
+fn implicit_thumbnail_path(file: &Path) -> Result<PathBuf> {
     let mut path = file.to_path_buf();
     path.set_extension("png");
     // The writer collapses a repeated terminal extension (`scan.png.stl` ->
@@ -370,7 +370,7 @@ fn implicit_thumbnail_path(file: &Path) -> PathBuf {
     // the one before that collapse.
     path = export::normalize_output_path(path);
     if !path.exists() {
-        return path;
+        return Ok(path);
     }
     let stem = path.file_stem().map_or_else(
         || "thumbnail".to_string(),
@@ -383,15 +383,17 @@ fn implicit_thumbnail_path(file: &Path) -> PathBuf {
     let mut candidate = path.clone();
     candidate.set_file_name(format!("{stem}-thumb.png"));
     if !candidate.exists() {
-        return candidate;
+        return Ok(candidate);
     }
     for index in 2..1000u32 {
         candidate.set_file_name(format!("{stem}-thumb-{index}.png"));
         if !candidate.exists() {
-            return candidate;
+            return Ok(candidate);
         }
     }
-    candidate
+    Err(anyhow!(
+        "thumbnail: no unused output name; choose an explicit -o <output-path>"
+    ))
 }
 
 /// `convert <file> -o output.{stl|ply|obj}`
@@ -725,5 +727,27 @@ mod tests {
             .expect("read directory")
             .filter_map(Result::ok)
             .all(|entry| !entry.file_name().to_string_lossy().contains(".occluview-")));
+    }
+
+    #[test]
+    fn implicit_thumbnail_naming_never_returns_an_occupied_destination() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        for index in 0..1000 {
+            let name = match index {
+                0 => "scan.png".to_owned(),
+                1 => "scan-thumb.png".to_owned(),
+                _ => format!("scan-thumb-{index}.png"),
+            };
+            std::fs::write(directory.path().join(name), b"existing image").expect("seed image");
+        }
+        let destination = super::implicit_thumbnail_path(&directory.path().join("scan.obj"));
+        assert!(
+            destination.is_err(),
+            "exhausted implicit output names must refuse to overwrite"
+        );
+        assert_eq!(
+            std::fs::read(directory.path().join("scan-thumb-999.png")).expect("existing image"),
+            b"existing image"
+        );
     }
 }
