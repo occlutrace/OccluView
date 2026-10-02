@@ -146,6 +146,13 @@ pub(super) fn apply_visible_selection_action_with_status(
     paths: &[PathBuf],
     request: LayerContextRequest,
 ) -> LayerContextApply {
+    if scene
+        .meshes()
+        .get(request.index)
+        .is_none_or(|entry| entry.id() != request.layer_id)
+    {
+        return LayerContextApply::default();
+    }
     let plan = app.document.edit_mode.visible_selection_plan(scene);
     if plan.is_empty() {
         // Not a multi-layer request after all: the menu may have been opened on
