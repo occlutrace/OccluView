@@ -187,6 +187,7 @@ pub fn repair_mesh(
 ) -> Result<RepairResult, MeshEditError> {
     let options = options.validate()?;
     validate_face_edit_buffers(mesh.topology, &mesh.vertices, &mesh.indices)?;
+    super::validate::validate_finite_positions(&mesh.vertices)?;
 
     let mut report = RepairReport {
         input_vertices: mesh.vertices.len(),
