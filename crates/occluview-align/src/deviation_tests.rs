@@ -209,6 +209,53 @@ fn a_non_finite_vertex_is_named_as_such() {
 }
 
 #[test]
+fn a_distance_outside_the_map_precision_is_unusable() {
+    let (fixed_positions, fixed_indices) = sheet();
+    let index = SurfaceIndex::build(Soup {
+        positions: &fixed_positions,
+        indices: &fixed_indices,
+        mask: None,
+    })
+    .unwrap();
+    let moving = many_positions(32);
+    let map = deviation(
+        Soup {
+            positions: &moving,
+            indices: &[],
+            mask: None,
+        },
+        &index,
+        Rigid::new(glam::DQuat::IDENTITY, glam::DVec3::Z * 1e40),
+        &DeviationSettings {
+            influence_radius_mm: 2e40,
+            ..settings()
+        },
+        &CancelFlag::new(),
+    );
+    assert!(map.signed_mm.iter().all(|value| value.is_finite()));
+    assert!(map
+        .validity
+        .iter()
+        .all(|state| *state == Validity::NonFinite));
+    assert!(deviation_stats(&map, 0.1).summary.is_none());
+}
+
+#[test]
+fn non_finite_readings_are_excluded_from_statistics() {
+    let mut map = all_measured(MIN_MEASURED);
+    map.signed_mm
+        .extend_from_slice(&[f32::NAN, f32::INFINITY, f32::NEG_INFINITY]);
+    map.validity.extend_from_slice(&[Validity::Measured; 3]);
+    let stats = deviation_stats(&map, 0.1);
+    assert_eq!(stats.measured, MIN_MEASURED);
+    assert_eq!(stats.unmeasured.unusable, 3);
+    let summary = stats.summary.unwrap();
+    assert!((summary.mean_abs - 0.05).abs() < 1e-7);
+    assert!((summary.rms - 0.05).abs() < 1e-7);
+    assert!((summary.within_tolerance - 1.0).abs() < 1e-9);
+}
+
+#[test]
 fn the_magnitude_ramp_is_cool_at_nothing_and_hot_at_the_scale() {
     let map = DeviationMap {
         signed_mm: vec![0.0, 0.5, -0.5],
