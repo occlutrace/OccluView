@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Mesh selection shortcuts keep face marks unchanged while a mesh operation is running.
+
 - Mesh editing preserves the current undo and redo history when an outdated operation finishes.
 
 - Invalid contact-field updates clear previous contact paint instead of displaying a stale measurement.

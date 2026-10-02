@@ -41,6 +41,41 @@ fn pick_hit(layer_index: usize, layer_id: SceneMeshId, triangle_index: usize) ->
 }
 
 #[test]
+fn bulk_selection_commands_preserve_marks_while_an_edit_is_busy() {
+    for command in [
+        EditModeController::select_all_visible_selections,
+        EditModeController::invert_visible_selections,
+        EditModeController::clear_visible_selections,
+    ] {
+        let mut scene = Scene::new();
+        scene.add(SceneMesh::new(
+            two_triangle_mesh(Some("busy")).expect("valid mesh"),
+        ));
+        let layer = &scene.meshes()[0];
+        let mut controller = EditModeController::new(4, 1_000_000);
+        assert!(controller.begin_face_selection(layer, &scene));
+        assert!(controller.select_face_hit(&scene, pick_hit(0, layer.id(), 0)));
+        let marks_before = controller.selected_faces_for_layer(layer.id());
+        let token = controller
+            .begin_layer_edit(layer, EditModeCommand::DeleteSelectedFaces)
+            .expect("edit starts");
+
+        assert!(!command(&mut controller, &scene));
+        assert_eq!(
+            controller.selected_faces_for_layer(layer.id()),
+            marks_before
+        );
+        assert!(controller.is_busy());
+
+        assert_eq!(
+            controller.finish_layer_edit_noop(token),
+            BusyFinish::Applied
+        );
+        assert!(command(&mut controller, &scene));
+    }
+}
+
+#[test]
 fn edit_mode_tracks_dirty_state_and_discard_without_scene_indices() {
     let layer = LayerKey::new(42);
     let mut state = EditModeState::default();
