@@ -258,7 +258,7 @@ fn read_accessor_bytes(
         .buffer_views
         .get(acc.buffer_view)
         .ok_or_else(|| malformed("buffer_view out of range"))?;
-    let _buffer = doc
+    let buffer = doc
         .buffers
         .get(view.buffer)
         .ok_or_else(|| malformed("buffer out of range"))?;
@@ -272,24 +272,47 @@ fn read_accessor_bytes(
     }
 
     let stride = view.byte_stride.unwrap_or(bytes_per_elem);
-    let start = view.byte_offset.unwrap_or(0) + acc.byte_offset.unwrap_or(0);
-    // A hostile accessor `count` (attacker-controlled JSON) times the element
-    // stride can overflow `usize` — a panic in debug and a silent wrap in
-    // release that would defeat the bounds check below. Reject the overflow as
-    // malformed instead of trusting the arithmetic.
+    if stride < bytes_per_elem {
+        return Err(malformed(
+            "accessor stride is smaller than its element size",
+        ));
+    }
+    let view_start = view.byte_offset.unwrap_or(0);
+    let view_end = view_start
+        .checked_add(view.byte_length as usize)
+        .ok_or_else(|| malformed("buffer view byte range overflows"))?;
+    if view_end > buffer.byte_length as usize {
+        return Err(malformed("buffer view extends past its declared buffer"));
+    }
+    if view_end > bin_chunk.len() {
+        return Err(FormatError::Truncated {
+            format: "glTF",
+            expected: view_end,
+            got: bin_chunk.len(),
+        });
+    }
+    let accessor_offset = acc.byte_offset.unwrap_or(0);
+    let start = view_start
+        .checked_add(accessor_offset)
+        .ok_or_else(|| malformed("accessor byte offset overflows"))?;
     let span = acc
         .count
         .checked_mul(bytes_per_elem)
         .ok_or_else(|| malformed("accessor count times element size overflows"))?;
-    let end = start
-        .checked_add(span)
+    // The source span includes interleaved gaps; the packed output does not.
+    let source_span = if acc.count == 0 {
+        0
+    } else {
+        (acc.count - 1)
+            .checked_mul(stride)
+            .and_then(|bytes| bytes.checked_add(bytes_per_elem))
+            .ok_or_else(|| malformed("accessor count times stride overflows"))?
+    };
+    let accessor_end = accessor_offset
+        .checked_add(source_span)
         .ok_or_else(|| malformed("accessor byte range overflows"))?;
-    if end > bin_chunk.len() {
-        return Err(FormatError::Truncated {
-            format: "glTF",
-            expected: end,
-            got: bin_chunk.len(),
-        });
+    if accessor_end > view.byte_length as usize {
+        return Err(malformed("accessor extends past its buffer view"));
     }
     let mut out = Vec::with_capacity(span);
     for i in 0..acc.count {
@@ -315,6 +338,77 @@ fn f32_at(b: &[u8]) -> f32 {
 mod tests {
     use super::*;
     use crate::gltf::json;
+
+    fn accessor_document() -> json::GltfDoc {
+        serde_json::from_str(
+            r#"{"accessors":[{"bufferView":0,"count":3,"type":"VEC3","componentType":5126}],
+                "bufferViews":[{"buffer":0,"byteLength":36}],
+                "buffers":[{"byteLength":36}]}"#,
+        )
+        .expect("document")
+    }
+
+    #[test]
+    fn accessor_range_rejects_offset_overflow() {
+        let mut doc = accessor_document();
+        doc.buffer_views[0].byte_offset = Some(usize::MAX);
+        doc.accessors[0].byte_offset = Some(1);
+        assert!(read_f32_vec3(&doc, 0, &[0; 36]).is_err());
+    }
+
+    #[test]
+    fn accessor_range_rejects_stride_overflow() {
+        let mut doc = accessor_document();
+        doc.buffer_views[0].byte_stride = Some(usize::MAX);
+        assert!(read_f32_vec3(&doc, 0, &[0; 36]).is_err());
+    }
+
+    #[test]
+    fn accessor_range_cannot_read_past_its_view() {
+        let mut doc = accessor_document();
+        doc.buffer_views[0].byte_length = 12;
+        assert!(read_f32_vec3(&doc, 0, &[0; 36]).is_err());
+    }
+
+    #[test]
+    fn accessor_range_cannot_read_past_its_buffer() {
+        let mut doc = accessor_document();
+        doc.buffers[0].byte_length = 12;
+        assert!(read_f32_vec3(&doc, 0, &[0; 36]).is_err());
+    }
+
+    #[test]
+    fn accessor_range_includes_interleaved_gaps() {
+        let mut doc = accessor_document();
+        doc.buffer_views[0].byte_stride = Some(24);
+        doc.buffers[0].byte_length = 60;
+        assert!(read_f32_vec3(&doc, 0, &[0; 60]).is_err());
+    }
+
+    #[test]
+    fn accessor_range_rejects_overlapping_elements() {
+        let mut doc = accessor_document();
+        for stride in [0, 4, 8] {
+            doc.buffer_views[0].byte_stride = Some(stride);
+            assert!(read_f32_vec3(&doc, 0, &[0; 36]).is_err());
+        }
+    }
+
+    #[test]
+    fn accessor_range_reads_valid_interleaved_elements() {
+        let mut doc = accessor_document();
+        doc.buffer_views[0].byte_stride = Some(24);
+        doc.buffer_views[0].byte_length = 60;
+        doc.buffers[0].byte_length = 60;
+        let mut bin = [0; 60];
+        for (index, value) in [1.0_f32, 2.0, 3.0].into_iter().enumerate() {
+            bin[index * 24..index * 24 + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        assert_eq!(
+            read_f32_vec3(&doc, 0, &bin).expect("interleaved positions"),
+            vec![[1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [3.0, 0.0, 0.0]]
+        );
+    }
 
     #[test]
     fn hostile_accessor_count_errors_instead_of_aborting() {
