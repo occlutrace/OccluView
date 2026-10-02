@@ -30,9 +30,10 @@ use occluview_align::{
 /// that decides whether the search runs at all.
 #[test]
 fn best_fit_runs_the_full_search_not_a_local_only_refinement() {
-    let settings = AlignSettings::default().refine();
-    assert!(
-        !settings.local_only,
+    let settings = AlignSettings::default().search();
+    assert_eq!(
+        settings.profile,
+        occluview_align::SearchProfile::Standard,
         "Best fit must be allowed to search; local_only removes the global seed \
          and the radius ladder, which is what made it stop finding a scan that \
          was more than a couple of millimetres out"
@@ -43,10 +44,10 @@ fn best_fit_runs_the_full_search_not_a_local_only_refinement() {
         matching_ratio: 0.6,
         ..AlignSettings::default()
     }
-    .refine();
+    .search();
     assert!((tuned.influence_radius_mm - 1.5).abs() < f64::EPSILON);
-    assert!((tuned.matching_ratio - 0.6).abs() < f64::EPSILON);
-    assert!(!tuned.local_only);
+    assert!((tuned.overlap_prior.unwrap_or_default() - 0.6).abs() < f64::EPSILON);
+    assert_eq!(tuned.profile, occluview_align::SearchProfile::Standard);
 }
 
 /// A map with one of everything: a hard negative, nominal, a hard positive,
@@ -441,8 +442,8 @@ fn worker_does_not_authorize_a_rank_deficient_refinement() {
     let outcome = super::execute(&job, &cancel, &mut cache);
 
     assert!(
-        matches!(outcome, super::AlignOutcome::Failed { .. }),
-        "rank-deficient evidence must not authorize a refined pose"
+        matches!(outcome, super::AlignOutcome::Candidates(ref result) if result.candidates.iter().all(|candidate| candidate.confidence == occluview_align::Confidence::Weak)),
+        "rank-deficient evidence remains a reviewable uncertain pose"
     );
 }
 
@@ -535,6 +536,7 @@ fn measure_job(generation: u64) -> super::AlignJob {
         },
         measure_key: key(),
         pose: occluview_align::Rigid::default(),
+        authored_pose: glam::Affine3A::IDENTITY,
         pairs: Vec::new(),
         mask: None,
         fixed_mask: None,
@@ -592,6 +594,7 @@ fn observable_measure_job(generation: u64) -> super::AlignJob {
             orientation: Orientation::Match,
         },
         pose: occluview_align::Rigid::default(),
+        authored_pose: glam::Affine3A::IDENTITY,
         pairs: Vec::new(),
         mask: None,
         fixed_mask: None,
@@ -638,6 +641,7 @@ fn line_measure_job(generation: u64) -> super::AlignJob {
             orientation: Orientation::Match,
         },
         pose: occluview_align::Rigid::default(),
+        authored_pose: glam::Affine3A::IDENTITY,
         pairs: Vec::new(),
         mask: None,
         fixed_mask: None,
@@ -930,6 +934,7 @@ fn a_weakly_observable_surface_still_produces_its_map() {
             orientation: Orientation::Match,
         },
         pose: occluview_align::Rigid::default(),
+        authored_pose: glam::Affine3A::IDENTITY,
         pairs: Vec::new(),
         mask: None,
         fixed_mask: None,

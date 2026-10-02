@@ -393,6 +393,9 @@ impl SceneContext<'_> {
                     field.map(|_| &scale),
                     field_width(field),
                 );
+                if let Some(transform) = self.alignment_preview_transform(entry.id()) {
+                    uniform.model = glam::Mat4::from(transform).to_cols_array();
+                }
                 uniform.opacity = self.displayed_opacity(entry.id(), uniform.opacity);
                 occluview_render::PreparedSceneSource {
                     mesh: &entry.mesh,
@@ -421,6 +424,9 @@ impl SceneContext<'_> {
                     field.map(|_| &scale),
                     field_width(field),
                 );
+                if let Some(transform) = self.alignment_preview_transform(entry.id()) {
+                    uniform.model = glam::Mat4::from(transform).to_cols_array();
+                }
                 uniform.opacity = self.displayed_opacity(entry.id(), uniform.opacity);
                 occluview_render::PreparedSceneUpdate {
                     topology: occluview_render::PreparedSceneTopology::from_mesh(&entry.mesh),

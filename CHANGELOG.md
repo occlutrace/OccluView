@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Scan alignment previews uncertain candidates and changes the scan only after Accept alignment.
+
 - OBJ thumbnails retain positive face references to vertices declared later in the file.
 
 - OBJ companion textures retain filenames after MTL options with optional vector components.

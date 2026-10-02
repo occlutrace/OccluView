@@ -9,6 +9,7 @@ pub(crate) mod display;
 pub(crate) mod drag;
 pub(super) mod panel;
 pub(super) mod results;
+mod review;
 pub(super) mod session;
 
 use eframe::egui;
@@ -107,7 +108,7 @@ impl SceneContext<'_> {
         for layer in named {
             if !live.contains(&layer) {
                 self.tools.align.tool.forget_layer(layer);
-                self.tools.align.refined_match_ready = false;
+                self.tools.align.accepted = None;
                 self.tools.align.settings.show_deviation = false;
                 // The mask indexes that layer's vertices. Left behind, it would
                 // be handed to the next pair and exclude an arbitrary region of
@@ -192,7 +193,7 @@ impl SceneContext<'_> {
         self.discard_align_drag();
         self.clear_deviation_overlay();
         self.clear_align_mask();
-        self.tools.align.refined_match_ready = false;
+        self.tools.align.accepted = None;
         // Tens of megabytes of cached arrays belong to a session the operator
         // has just left.
         self.tools.align.geometry.clear();
@@ -362,7 +363,7 @@ impl SceneContext<'_> {
 
     /// Submit a deviation measurement.
     pub(super) fn run_align_measure(&mut self) {
-        if !self.tools.align.refined_match_ready || !self.tools.align.settings.show_deviation {
+        if !self.alignment_measurement_ready() || !self.tools.align.settings.show_deviation {
             return;
         }
         self.submit_align_job(AlignJobKind::Measure, Vec::new());
@@ -371,7 +372,7 @@ impl SceneContext<'_> {
     /// Keep a queued measurement tied to the visible, currently authorized map.
     fn align_measure_allowed(&self, kind: AlignJobKind) -> bool {
         kind != AlignJobKind::Measure
-            || (self.tools.align.refined_match_ready && self.tools.align.settings.show_deviation)
+            || (self.alignment_measurement_ready() && self.tools.align.settings.show_deviation)
     }
 
     /// The clicked pairs, with the moving half in its layer's local frame and
@@ -455,14 +456,17 @@ impl SceneContext<'_> {
             return;
         }
 
-        let Some(pose) = Rigid::from_affine(&moving.transform) else {
+        let rigid_pose = Rigid::from_affine(&moving.transform);
+        if kind == AlignJobKind::Measure && rigid_pose.is_none() {
             self.tools.align.status = Some(
                 self.ui
                     .locale
                     .tr(crate::i18n::message_id!("align-status-scaled")),
             );
             return;
-        };
+        }
+        let pose = rigid_pose.unwrap_or(Rigid::IDENTITY);
+        let review_key = self.current_alignment_key();
 
         // Geometry, not topology: a sculpt keeps the topology id and mints a
         // fresh geometry id so geometry-derived caches can tell that the
@@ -531,6 +535,7 @@ impl SceneContext<'_> {
                 orientation: settings.orientation,
             },
             pose,
+            authored_pose: moving.transform,
             pairs,
             mask,
             fixed_mask,
@@ -549,10 +554,15 @@ impl SceneContext<'_> {
         // that busy state unless accepted work schedules the next frame here.
         self.ui.repaint_ctx.request_repaint();
         if kind != AlignJobKind::Measure {
+            if self.tools.align.review.is_some() {
+                self.render.invalidation.scene_geometry_changed();
+            }
+            self.tools.align.review = None;
+            self.tools.align.pending_review = review_key;
             // The previous heatmap belongs to the previous fit. Keep the
             // current geometry while the new job runs, but do not display an
             // old map beside a new refusal or let the toggle claim it is live.
-            self.tools.align.refined_match_ready = false;
+            self.tools.align.accepted = None;
             self.tools.align.settings.show_deviation = false;
             self.tools.align.stats = None;
             // Only a heatmap is the previous fit's picture. With the brush

@@ -4,7 +4,9 @@
 //! has changed.
 
 use eframe::egui;
-use occluview_align::{FitRejection, Rigid};
+use occluview_align::FitRejection;
+#[cfg(test)]
+use occluview_align::Rigid;
 use occluview_core::SceneMeshId;
 
 use super::super::SceneContext;
@@ -85,7 +87,9 @@ impl SceneContext<'_> {
             // map claiming that the last pose was refined when no future
             // measurement can validate it. Region markings remain intact:
             // they are operator input, not worker output.
-            self.tools.align.refined_match_ready = false;
+            self.tools.align.accepted = None;
+            self.tools.align.review = None;
+            self.tools.align.pending_review = None;
             self.tools.align.settings.show_deviation = false;
             if self.tools.align.overlay == AlignOverlay::Map {
                 self.clear_deviation_overlay();
@@ -128,71 +132,22 @@ impl SceneContext<'_> {
     /// Apply one finished job.
     fn apply_align_outcome(&mut self, completion: AlignCompletion, ctx: &egui::Context) {
         match completion.outcome {
-            AlignOutcome::Aligned { pose, rejected } => {
-                if !self.commit_align_pose(pose) {
-                    self.tools.align.status = Some(
-                        self.ui
-                            .locale
-                            .tr(crate::i18n::message_id!("align-status-pose-refused")),
-                    );
-                    return;
-                }
-                // A point fit changes the pose and invalidates any previous
-                // map; refinement performs the next measurement.
-                self.forget_align_fit(
-                    &self
-                        .ui
-                        .locale
-                        .tr(crate::i18n::message_id!("align-status-aligned-points")),
-                );
-                self.tools.align.rejected = rejected;
-                self.tools.align.status = Some(
-                    self.ui
-                        .locale
-                        .tr(crate::i18n::message_id!("align-status-aligned")),
-                );
+            AlignOutcome::Candidates(candidates) => {
+                self.install_alignment_review(completion.generation, candidates);
             }
-            AlignOutcome::Refined { pose } => {
-                if !self.commit_align_pose(pose) {
-                    self.tools.align.status = Some(
-                        self.ui
-                            .locale
-                            .tr(crate::i18n::message_id!("align-status-pose-refused")),
-                    );
-                    return;
-                }
-                // `commit_align_pose` invalidates derived alignment state while
-                // rebuilding the scene. Mark readiness only after that commit,
-                // so the map can describe the pose that actually landed.
-                self.tools.align.refined_match_ready = true;
-                // An open contact reading owns the per-surface colouring, and
-                // the two overlays describe different measurements. The reading
-                // clears the deviation map when it opens ("Contact and deviation
-                // overlays are mutually exclusive"); in the other direction a
-                // refined fit closes an open reading and leaves the map off.
-                // With both up, one layer would wear `contact_map = 1` and
-                // `measured_map = 1` at once, both panels would claim their own
-                // map is live, and the shader would mix the contact ramp into a
-                // colour taken from the deviation ramp, so the colours would
-                // belong to neither reading.
-                if self.tools.contacts.is_open() {
-                    let ctx = self.ui.repaint_ctx.clone();
-                    self.close_contacts(&ctx);
-                    self.tools.align.status = Some(
-                        self.ui
-                            .locale
-                            .tr(crate::i18n::message_id!("align-status-refined")),
-                    );
-                    self.measure_if_shown();
-                    return;
-                }
-                self.tools.align.settings.show_deviation = true;
-                self.tools.align.status = Some(
-                    self.ui
-                        .locale
-                        .tr(crate::i18n::message_id!("align-status-refined")),
-                );
-                self.measure_if_shown();
+            AlignOutcome::InvalidInput(error) => {
+                self.tools.align.review = None;
+                self.tools.align.pending_review = None;
+                self.tools.align.accepted = None;
+                let occluview_align::AlignmentInputError::NonFinite { field, index } = error;
+                tracing::warn!(?field, index, "alignment input is non-finite");
+                self.tools.align.status = Some(self.ui.locale.tr_with(
+                    crate::i18n::message_id!("align-input-nonfinite"),
+                    &[
+                        ("field", format!("{field:?}").as_str()),
+                        ("index", index.to_string().as_str()),
+                    ],
+                ));
             }
             AlignOutcome::Measured {
                 colors,
@@ -235,7 +190,7 @@ impl SceneContext<'_> {
         // the pose/mask that authorized it became stale. Generation normally
         // drops that completion, but this boundary also owns the invariant so
         // no late result can resurrect a hidden or unrefined overlay.
-        if !self.tools.align.refined_match_ready || !self.tools.align.settings.show_deviation {
+        if !self.alignment_measurement_ready() || !self.tools.align.settings.show_deviation {
             return;
         }
         // The brush owns the per-vertex colour channel while it is open.
@@ -283,7 +238,7 @@ impl SceneContext<'_> {
             // but the layer can still disappear between the worker snapshot
             // and this UI poll. Never leave a refined/visible claim behind a
             // measurement that could not be attached to the current mesh.
-            self.tools.align.refined_match_ready = false;
+            self.tools.align.accepted = None;
             self.tools.align.settings.show_deviation = false;
             self.clear_deviation_overlay();
             self.tools.align.status = Some(
@@ -308,7 +263,7 @@ impl SceneContext<'_> {
         if self.tools.align.brush.is_armed() {
             return;
         }
-        if self.tools.align.refined_match_ready
+        if self.alignment_measurement_ready()
             && self.tools.align.settings.show_deviation
             && self.tools.align.tool.can_measure()
         {
@@ -326,7 +281,7 @@ impl SceneContext<'_> {
         self.abandon_align_jobs();
         // A map and a refined-match claim describe the same pose and surface.
         // Invalidate the claim even when no map is currently visible.
-        self.tools.align.refined_match_ready = false;
+        self.tools.align.accepted = None;
         self.tools.align.settings.show_deviation = false;
         // Preserve operator markings; only the derived map is stale.
         if self.tools.align.overlay != AlignOverlay::Map {
@@ -344,7 +299,13 @@ impl SceneContext<'_> {
     ///
     /// Cheap: it moves a counter and empties two small lists. Nothing here waits
     /// on the worker thread.
-    pub(in crate::app) fn abandon_align_jobs(&self) {
+    pub(in crate::app) fn abandon_align_jobs(&mut self) {
+        let had_preview = self.tools.align.review.is_some();
+        self.tools.align.review = None;
+        self.tools.align.pending_review = None;
+        if had_preview {
+            self.render.invalidation.scene_geometry_changed();
+        }
         if let Some(worker) = self.tools.align.worker.as_ref() {
             worker.bump_generation();
         }
@@ -363,7 +324,7 @@ impl SceneContext<'_> {
         // directions therefore revoke the old authority: returning to
         // Automatically must start with the map off and require a new refined
         // match; role inference alone is not a measurement.
-        self.tools.align.refined_match_ready = false;
+        self.tools.align.accepted = None;
         self.tools.align.settings.show_deviation = false;
         // Do not key cleanup only off the enum: a partial update can leave the
         // colour cache or the faded companion alive after the enum has already
@@ -389,13 +350,20 @@ impl SceneContext<'_> {
     /// It can fail to: the layer may have left the scene while the job ran, and
     /// another tool may hold the edit state machine. The caller has to know,
     /// because it is about to tell the operator the scan was aligned.
-    fn commit_align_pose(&mut self, pose: Rigid) -> bool {
+    pub(in crate::app) fn commit_align_affine(&mut self, pose: glam::Affine3A) -> bool {
         let Some(scene) = self.document.scene.clone() else {
             return false;
         };
         let Some(moving_id) = self.tools.align.tool.moving_layer() else {
             return false;
         };
+        if scene
+            .meshes()
+            .iter()
+            .any(|entry| entry.id() == moving_id && entry.transform == pose)
+        {
+            return true;
+        }
         let mut next = scene.as_ref().clone();
         if !next.meshes().iter().any(|entry| entry.id() == moving_id) {
             return false;
@@ -412,7 +380,7 @@ impl SceneContext<'_> {
             .iter_mut()
             .find(|entry| entry.id() == moving_id)
         {
-            entry.transform = pose.to_affine();
+            entry.transform = pose;
         }
         self.document
             .edit_mode
@@ -424,6 +392,11 @@ impl SceneContext<'_> {
         // asking and the alignment would be lost, along with every earlier fit.
         self.document.mark_mesh_edits_unsaved(moving_id);
         true
+    }
+
+    #[cfg(test)]
+    fn commit_align_pose(&mut self, pose: Rigid) -> bool {
+        self.commit_align_affine(pose.to_affine())
     }
 
     /// Forget the last fit: its outlier marks, its map, and anything the worker
@@ -449,11 +422,6 @@ fn align_failure_parts(failure: AlignFailure) -> (crate::i18n::MessageId, String
             String::new(),
             String::new(),
         ),
-        AlignFailure::MovingSurfaceMissing => (
-            crate::i18n::message_id!("align-fail-no-surface-moving"),
-            String::new(),
-            String::new(),
-        ),
         AlignFailure::MeasurementDropped => (
             crate::i18n::message_id!("align-fail-recolor"),
             String::new(),
@@ -464,11 +432,12 @@ fn align_failure_parts(failure: AlignFailure) -> (crate::i18n::MessageId, String
             String::new(),
             String::new(),
         ),
-        AlignFailure::Fit(rejection) => fit_rejection_parts(rejection),
     }
 }
 
-fn fit_rejection_parts(rejection: FitRejection) -> (crate::i18n::MessageId, String, String) {
+pub(super) fn fit_rejection_parts(
+    rejection: FitRejection,
+) -> (crate::i18n::MessageId, String, String) {
     let key = match rejection {
         FitRejection::TooFewPairs { .. } => crate::i18n::message_id!("align-reject-toofew"),
         FitRejection::Unpaired { .. } => crate::i18n::message_id!("align-reject-unpaired"),
@@ -533,90 +502,80 @@ mod tests {
     /// table checks that each typed failure selects its intended message.
     #[test]
     fn typed_failures_resolve_to_their_catalog_keys() {
-        use super::align_failure_parts;
-        use crate::align::align_worker::AlignFailure;
-        use occluview_align::FitRejection;
-
         let cases = [
             (
-                AlignFailure::FixedSurfaceMissing,
+                super::AlignFailure::FixedSurfaceMissing,
                 "align-fail-no-surface-fixed",
             ),
             (
-                AlignFailure::MovingSurfaceMissing,
-                "align-fail-no-surface-moving",
+                super::AlignFailure::MeasurementDropped,
+                "align-fail-recolor",
             ),
-            (AlignFailure::MeasurementDropped, "align-fail-recolor"),
             (
-                AlignFailure::MeasurementUnobservable,
+                super::AlignFailure::MeasurementUnobservable,
                 "align-fail-unobservable",
             ),
+        ];
+        for (failure, key) in cases {
+            assert_eq!(super::align_failure_parts(failure).0.as_str(), key);
+        }
+        // Geometric refusals are now candidate explanations, not failed jobs.
+        for (reason, key) in [
             (
-                AlignFailure::Fit(FitRejection::TooFewPairs { have: 2, need: 3 }),
+                occluview_align::FitRejection::TooFewPairs { have: 2, need: 3 },
                 "align-reject-toofew",
             ),
             (
-                AlignFailure::Fit(FitRejection::Unpaired {
+                occluview_align::FitRejection::Unpaired {
                     moving: 4,
                     fixed: 5,
-                }),
+                },
                 "align-reject-unpaired",
             ),
             (
-                AlignFailure::Fit(FitRejection::Degenerate {
+                occluview_align::FitRejection::Degenerate {
                     weak_axes: [false; 3],
-                }),
+                },
                 "align-reject-degenerate-plain",
             ),
             (
-                AlignFailure::Fit(FitRejection::Degenerate {
+                occluview_align::FitRejection::Degenerate {
                     weak_axes: [true, false, true],
-                }),
+                },
                 "align-reject-degenerate-plain",
             ),
             (
-                AlignFailure::Fit(FitRejection::UnitMismatch { ratio: 2.5 }),
+                occluview_align::FitRejection::UnitMismatch { ratio: 2.5 },
                 "align-reject-unit",
             ),
             (
-                AlignFailure::Fit(FitRejection::Apart {
+                occluview_align::FitRejection::Apart {
                     separation: 12.0,
                     allowed: 3.0,
-                }),
+                },
                 "align-reject-apart",
             ),
             (
-                AlignFailure::Fit(FitRejection::Runaway {
+                occluview_align::FitRejection::Runaway {
                     moved_by: 20.0,
                     allowed: 5.0,
-                }),
+                },
                 "align-reject-runaway",
             ),
             (
-                AlignFailure::Fit(FitRejection::NoImprovement),
+                occluview_align::FitRejection::NoImprovement,
                 "align-reject-no-improvement",
             ),
             (
-                AlignFailure::Fit(FitRejection::Ambiguous),
+                occluview_align::FitRejection::Ambiguous,
                 "align-reject-ambiguous",
             ),
             (
-                AlignFailure::Fit(FitRejection::NonFinite),
+                occluview_align::FitRejection::NonFinite,
                 "align-reject-nonfinite",
             ),
-        ];
-        let embedded = crate::i18n::catalog::embedded_en_keys();
-        for (failure, key) in cases {
-            let (actual, first, second) = align_failure_parts(failure);
-            assert_eq!(
-                (actual.as_str(), first, second),
-                (key, String::new(), String::new()),
-                "the typed failure must resolve to its own catalog key"
-            );
-            assert!(
-                embedded.contains(actual.as_str()),
-                "the typed failure key {key} must exist in the English catalog"
-            );
+        ] {
+            assert_eq!(super::fit_rejection_parts(reason).0.as_str(), key);
         }
     }
 
@@ -695,3 +654,7 @@ mod tests {
         assert!(!change_affects_pair(None, None, &[]));
     }
 }
+
+#[cfg(test)]
+#[path = "review_tests.rs"]
+pub(in crate::app) mod review_tests;

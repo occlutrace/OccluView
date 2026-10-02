@@ -29,9 +29,12 @@ pub(crate) struct AlignState {
     pub(crate) settings: AlignSettings,
     pub(crate) status: Option<String>,
     pub(crate) stats: Option<DeviationStats>,
-    /// Set only after a Best fit matching result has landed on the current
-    /// scene. Naming two roles is not enough to authorize a deviation map.
-    pub(crate) refined_match_ready: bool,
+    /// Candidate review never owns scene pose or measurement authority.
+    pub(crate) review: Option<AlignmentReview>,
+    /// Only explicit acceptance can authorize a derived measurement.
+    pub(crate) accepted: Option<AcceptedAlignment>,
+    /// Input authority captured before worker submission.
+    pub(crate) pending_review: Option<ReviewKey>,
     pub(crate) rejected: Vec<u32>,
     /// Per-layer overlay colours currently on screen.
     pub(crate) overlay_colors: Vec<(SceneMeshId, Arc<Vec<[u8; 4]>>)>,
@@ -72,4 +75,48 @@ pub(crate) struct AlignState {
     /// layer's opacity was captured by every history step and save taken while
     /// the map was up, and came back with no map to justify it.
     pub(crate) ghosted: Vec<SceneMeshId>,
+}
+
+/// Immutable authority snapshot; comparisons use complete values, not hashes.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ReviewKey {
+    pub(crate) generation: u64,
+    pub(crate) content_revision: u64,
+    pub(crate) roles: [SceneMeshId; 2],
+    pub(crate) geometry: [u64; 2],
+    pub(crate) transforms: [Affine3A; 2],
+    pub(crate) visible: [bool; 2],
+    pub(crate) mask_revision: u64,
+    pub(crate) matching: [u64; 2],
+    pub(crate) orientation: occluview_align::Orientation,
+}
+
+pub(crate) struct AlignmentReview {
+    pub(crate) key: ReviewKey,
+    pub(crate) candidates: occluview_align::AlignmentSearchResult,
+    pub(crate) selected: usize,
+    pub(crate) preview_enabled: bool,
+}
+
+/// Operator authorization and geometric confidence remain separate facts.
+pub(crate) struct AcceptedAlignment {
+    pub(crate) key: Option<ReviewKey>,
+    pub(crate) candidate_id: occluview_align::CandidateId,
+    pub(crate) confidence: occluview_align::Confidence,
+    pub(crate) evidence: occluview_align::CandidateEvidence,
+}
+#[cfg(test)]
+impl AcceptedAlignment {
+    /// Existing map tests isolate map invalidation from candidate search.
+    pub(crate) fn test_authority() -> Self {
+        Self {
+            key: None,
+            candidate_id: occluview_align::CandidateId {
+                family: 0,
+                proposal: 0,
+            },
+            confidence: occluview_align::Confidence::Weak,
+            evidence: occluview_align::CandidateEvidence::default(),
+        }
+    }
 }

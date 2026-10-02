@@ -558,7 +558,7 @@ align-commit-done-hint = Сохранить сопоставление и зак
 
 align-map-heatmap = Теплокарта
 align-map-heatmap-hint = Окрасить один скан по расстоянию до другого
-align-map-requires-refine = Сначала выполните точное совмещение
+align-map-requires-accept = Сначала примите кандидат совмещения
 align-map-max = макс
 align-map-min = мин
 align-map-not-measured = не измерено
@@ -625,12 +625,8 @@ align-fit-busy = Совмещение уже идёт — окно разбло�
 align-status-measure-dropped = Измерение сброшено — цветами владеет кисть пометок
 align-status-measure-unavailable = Измерение не применено — скан изменился; снова выполните точное совмещение
 align-status-map-elsewhere = Карта расстояний на вкладке «Автоматически» — она вернётся туда
-align-status-aligned-points = Совмещено по точкам
-
 ## Align result status lines — DRAFT.
 
-align-status-aligned = Совмещено по точкам — выполните точное совмещение для посадки поверхностей.
-align-status-refined = Точное совмещение готово
 align-status-measured = Теплокарта обновлена
 align-status-remeasure = { $reason } — запустите точное совмещение для повторного измерения
 align-status-settings-changed = Настройки сопоставления изменены
@@ -834,7 +830,6 @@ cut-footer-thickness = Перетаскивание = панорама · кли
 ## Worker-built align failures — DRAFT.
 
 align-fail-no-surface-fixed = У неподвижного скана нет пригодной поверхности
-align-fail-no-surface-moving = У подвижного скана нет пригодной поверхности
 align-fail-recolor = Измерение сброшено до окраски
 align-fail-unobservable = Поверхность недостаточно наблюдаема для надёжной теплокарты
 align-reject-toofew = Поставьте больше пар стрелок или приблизьте сканы
@@ -1117,3 +1112,20 @@ workspace-history-budget = Для этого действия не хватае�
 workspace-stale-target = Сцена или слой больше недоступны.
 workspace-close-dialog = Сначала закройте открытый диалог.
 workspace-import-cancelled = Ожидающие загрузки отменены: их сцена закрыта.
+
+# Candidate review and explicit alignment acceptance.
+align-review-ready = Кандидат готов к просмотру. Примите его, чтобы переместить скан.
+align-review-accepted = Совмещение принято. Геометрическая уверенность не изменилась.
+align-review-invalidated = Кандидат устарел. Повторите сопоставление.
+align-review-count = Кандидат { $current } из { $total }
+align-review-overlap = Общее перекрытие: { $percent }% меньшей выбранной поверхности
+align-review-evidence-missing = Независимые данные о перекрытии и неопределённости недоступны.
+align-review-previous = Предыдущий
+align-review-next = Следующий
+align-review-preview = Предпросмотр
+align-review-accept = Принять совмещение
+align-confidence-verified = Проверенная геометрия
+align-confidence-probable = Вероятное
+align-confidence-ambiguous = Неоднозначное
+align-confidence-weak = Слабые данные
+align-input-nonfinite = Недопустимое число: { $field }, позиция { $index }.

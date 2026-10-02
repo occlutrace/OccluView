@@ -58,6 +58,14 @@ pub(crate) enum AlignPanelAction {
     SwapRoles,
     /// Drop every arrow and both scan names, so a different pair can be picked.
     Clear,
+    /// Cycle a render-only candidate.
+    PreviousCandidate,
+    /// Cycle a render-only candidate.
+    NextCandidate,
+    /// Toggle candidate preview without editing geometry.
+    PreviewCandidate,
+    /// Commit the selected current candidate once.
+    AcceptCandidate,
     /// Re-measure with the current settings.
     Measure,
     /// Stop showing the map.
@@ -91,8 +99,12 @@ pub(crate) struct AlignPanelView<'a> {
     pub(crate) drop_pending: &'a mut bool,
     /// The last thing that happened, in a sentence.
     pub(crate) status: Option<&'a str>,
+    /// Reviewable results never own the scene pose.
+    pub(crate) review: Option<&'a crate::align::align_state::AlignmentReview>,
+    /// Accepted geometric confidence, independent of the map.
+    pub(crate) accepted_confidence: Option<occluview_align::Confidence>,
     /// Whether a landed Best fit matching result authorizes a heatmap.
-    pub(crate) refined_match_ready: bool,
+    pub(crate) accepted_ready: bool,
     /// Which scan moves onto which, once both are named.
     pub(crate) roles: Option<crate::align::align_panel_roles::AlignRoles>,
     /// Whether a job is in flight.
@@ -285,6 +297,7 @@ fn automatically(
             None
         };
     action = action.or(fits(ui, view.tool, enabled, view.busy, locale));
+    action = action.or(candidate_review(ui, view, enabled, locale));
     ui.add_space(4.0);
     prompt(ui, view.tool, locale);
     action = action.or(back(ui, view.tool, enabled, locale));
@@ -295,10 +308,102 @@ fn automatically(
     action.or(align_panel_map::show(
         ui,
         view.settings,
-        view.refined_match_ready,
+        view.accepted_ready,
         enabled,
         locale,
     ))
+}
+
+/// Review controls select a render override; only Accept changes the scene.
+fn candidate_review(
+    ui: &mut egui::Ui,
+    view: &AlignPanelView<'_>,
+    enabled: bool,
+    locale: &crate::i18n::LocaleManager,
+) -> Option<AlignPanelAction> {
+    use occluview_align::Metric;
+    let Some(review) = view.review else {
+        if let Some(confidence) = view.accepted_confidence {
+            ui.label(locale.tr(confidence_label(confidence)));
+        }
+        return None;
+    };
+    let candidate = review.candidates.candidates.get(review.selected)?;
+    ui.separator();
+    ui.label(locale.tr_with(
+        crate::i18n::message_id!("align-review-count"),
+        &[
+            ("current", (review.selected + 1).to_string().as_str()),
+            (
+                "total",
+                review.candidates.candidates.len().to_string().as_str(),
+            ),
+        ],
+    ));
+    ui.label(locale.tr(confidence_label(candidate.confidence)));
+    if let Metric::Measured(overlap) = candidate.evidence.overlap_smaller {
+        ui.label(locale.tr_with(
+            crate::i18n::message_id!("align-review-overlap"),
+            &[("percent", format!("{:.0}", overlap * 100.).as_str())],
+        ));
+    } else {
+        hint(
+            ui,
+            &locale.tr(crate::i18n::message_id!("align-review-evidence-missing")),
+        );
+    }
+    let mut action = None;
+    ui.horizontal(|ui| {
+        if ui
+            .add_enabled(
+                enabled,
+                egui::Button::new(locale.tr(crate::i18n::message_id!("align-review-previous"))),
+            )
+            .clicked()
+        {
+            action = Some(AlignPanelAction::PreviousCandidate);
+        }
+        if ui
+            .add_enabled(
+                enabled,
+                egui::Button::new(locale.tr(crate::i18n::message_id!("align-review-next"))),
+            )
+            .clicked()
+        {
+            action = Some(AlignPanelAction::NextCandidate);
+        }
+    });
+    if ui
+        .add_enabled(
+            enabled,
+            egui::Button::new(locale.tr(crate::i18n::message_id!("align-review-preview")))
+                .selected(review.preview_enabled),
+        )
+        .clicked()
+    {
+        action = Some(AlignPanelAction::PreviewCandidate);
+    }
+    if ui
+        .add_enabled(
+            enabled,
+            egui::Button::new(locale.tr(crate::i18n::message_id!("align-review-accept"))),
+        )
+        .clicked()
+    {
+        action = Some(AlignPanelAction::AcceptCandidate);
+    }
+    action
+}
+
+/// Localized geometric confidence name; acceptance never changes this class.
+pub(crate) fn confidence_label(confidence: occluview_align::Confidence) -> crate::i18n::MessageId {
+    use occluview_align::Confidence;
+    match confidence {
+        Confidence::Verified => crate::i18n::message_id!("align-confidence-verified"),
+        Confidence::Probable => crate::i18n::message_id!("align-confidence-probable"),
+        Confidence::Ambiguous => crate::i18n::message_id!("align-confidence-ambiguous"),
+        Confidence::Weak => crate::i18n::message_id!("align-confidence-weak"),
+    }
 }
 
 /// The Manually tab: the three drag constraints and the history buttons.

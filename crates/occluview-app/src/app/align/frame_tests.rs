@@ -93,10 +93,10 @@ fn placing_a_landmark_discards_the_fit_with_previous_points() {
     );
     scene.align_worker_mut().publish_for_tests(
         generation,
-        AlignOutcome::Aligned {
-            pose: Rigid::new(glam::DQuat::IDENTITY, DVec3::X),
-            rejected: vec![],
-        },
+        AlignOutcome::Candidates(results::review_tests::candidate_result(Rigid::new(
+            glam::DQuat::IDENTITY,
+            DVec3::X,
+        ))),
     );
     scene.drain_align_worker(&ctx);
     assert_eq!(
@@ -305,7 +305,8 @@ fn removing_a_named_layer_revokes_refined_authority() {
         .align
         .tool
         .imply_pair(&[moving_id, fixed_id]);
-    app.workspace.scenes[0].tools.align.refined_match_ready = true;
+    app.workspace.scenes[0].tools.align.accepted =
+        Some(crate::align::align_state::AcceptedAlignment::test_authority());
     app.workspace.scenes[0].tools.align.settings.show_deviation = true;
     app.workspace.scenes[0].tools.align.rejected = vec![0];
     app.active_context()
@@ -341,7 +342,7 @@ fn removing_a_named_layer_revokes_refined_authority() {
     .drop_without_applying_deltas();
 
     assert!(
-        !app.workspace.scenes[0].tools.align.refined_match_ready,
+        app.workspace.scenes[0].tools.align.accepted.is_none(),
         "a named layer that left the scene cannot still hold a refined match"
     );
     assert!(

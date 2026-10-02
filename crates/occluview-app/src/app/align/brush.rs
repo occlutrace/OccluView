@@ -59,6 +59,10 @@ fn resize_align_brush_from_wheel(
 impl SceneContext<'_> {
     /// Paint or clear under the pointer. Returns whether the brush owns this
     /// frame's pointer.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one stroke transaction pairs hit capture with mask invalidation"
+    )]
     pub(in crate::app) fn handle_align_brush(
         &mut self,
         response: &egui::Response,
@@ -689,14 +693,15 @@ mod tests {
         let mut scene = app.active_context().expect("live test scene");
         scene.tools.align.tool.arm();
         scene.tools.align.tool.imply_pair(&[moving, fixed]);
-        scene.tools.align.refined_match_ready = true;
+        scene.tools.align.accepted =
+            Some(crate::align::align_state::AcceptedAlignment::test_authority());
         scene.tools.align.settings.show_deviation = true;
         assert!(scene.apply_deviation_colors(vec![[40, 90, 160, 255]; 3]));
         scene.tools.align.brush.set_armed(true);
         scene.refresh_align_region_preview();
         assert!(!scene.tools.align.markings.any());
         assert_eq!(scene.tools.align.overlay, AlignOverlay::Nothing);
-        assert!(scene.tools.align.refined_match_ready);
+        assert!(scene.tools.align.accepted.is_some());
         assert!(scene.tools.align.settings.show_deviation);
         assert!(scene.tools.align.worker.is_none());
 
@@ -783,10 +788,9 @@ mod tests {
         );
         scene.align_worker_mut().publish_for_tests(
             generation,
-            AlignOutcome::Aligned {
-                pose: Rigid::new(DQuat::IDENTITY, DVec3::X),
-                rejected: vec![],
-            },
+            AlignOutcome::Candidates(crate::app::align::results::review_tests::candidate_result(
+                Rigid::new(DQuat::IDENTITY, DVec3::X),
+            )),
         );
         scene.drain_align_worker(&ctx);
         assert_eq!(
@@ -1003,7 +1007,8 @@ mod tests {
             "the pair has to be measurable, or a measurement could not be started anyway"
         );
         app.workspace.scenes[0].tools.align.settings.show_deviation = true;
-        app.workspace.scenes[0].tools.align.refined_match_ready = true;
+        app.workspace.scenes[0].tools.align.accepted =
+            Some(crate::align::align_state::AcceptedAlignment::test_authority());
         assert!(
             app.active_context()
                 .expect("live test scene")
@@ -1081,7 +1086,7 @@ mod tests {
             "the toggle must not keep claiming a map is visible"
         );
         assert!(
-            !app.workspace.scenes[0].tools.align.refined_match_ready,
+            app.workspace.scenes[0].tools.align.accepted.is_none(),
             "the fit the map described is revoked with it"
         );
         assert!(

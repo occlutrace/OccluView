@@ -9,8 +9,8 @@ use super::super::SceneContext;
 use crate::align::align_panel::{AlignPanelAction, AlignTab};
 use crate::align::align_worker::{matching_inputs_changed, AlignWorker};
 
-fn heatmap_is_authorized(tab: AlignTab, refined_match_ready: bool) -> bool {
-    tab == AlignTab::Automatically && refined_match_ready
+fn heatmap_is_authorized(tab: AlignTab, accepted_ready: bool) -> bool {
+    tab == AlignTab::Automatically && accepted_ready
 }
 
 fn action_after_tab_change(
@@ -114,9 +114,11 @@ impl SceneContext<'_> {
                     .map_or(0, |scene| scene.meshes().len()),
                 settings: &mut settings,
                 status: self.tools.align.status.as_deref(),
-                refined_match_ready: heatmap_is_authorized(
+                review: self.tools.align.review.as_ref(),
+                accepted_confidence: self.tools.align.accepted.as_ref().map(|a| a.confidence),
+                accepted_ready: heatmap_is_authorized(
                     self.tools.align.tab,
-                    self.tools.align.refined_match_ready,
+                    self.alignment_measurement_ready(),
                 ),
                 roles: panel_roles,
                 busy,
@@ -173,7 +175,7 @@ impl SceneContext<'_> {
             // fit, and that job would then arm the claim from inputs the
             // operator has already changed. The user-facing "measure again"
             // notice still waits for a fit that actually existed.
-            if self.tools.align.refined_match_ready {
+            if self.tools.align.accepted.is_some() {
                 self.forget_align_fit(
                     &self
                         .ui
@@ -201,10 +203,23 @@ impl SceneContext<'_> {
         match action_after_tab_change(action, tab_changed) {
             Some(AlignPanelAction::Align) => self.run_align_fit(),
             Some(AlignPanelAction::Refine) => self.run_align_refine(),
+            Some(AlignPanelAction::PreviousCandidate) => self.cycle_alignment_candidate(false),
+            Some(AlignPanelAction::NextCandidate) => self.cycle_alignment_candidate(true),
+            Some(AlignPanelAction::PreviewCandidate) => self.toggle_alignment_preview(),
+            Some(AlignPanelAction::AcceptCandidate) => {
+                self.accept_alignment_candidate();
+            }
             Some(AlignPanelAction::Measure) => self.run_align_measure(),
             Some(AlignPanelAction::HideMap) => {
                 self.tools.align.settings.show_deviation = false;
+                let current = self.alignment_measurement_ready();
                 self.abandon_align_jobs();
+                if current {
+                    let key = self.current_alignment_key();
+                    if let Some(accepted) = self.tools.align.accepted.as_mut() {
+                        accepted.key = key;
+                    }
+                }
                 self.clear_deviation_overlay();
             }
             Some(AlignPanelAction::Back) => {
@@ -386,10 +401,9 @@ mod tests {
         assert_eq!(scene.tools.align.tool.pairs().len(), 1);
         scene.align_worker_mut().publish_for_tests(
             generation,
-            AlignOutcome::Aligned {
-                pose: Rigid::new(DQuat::IDENTITY, DVec3::X),
-                rejected: vec![],
-            },
+            AlignOutcome::Candidates(crate::app::align::results::review_tests::candidate_result(
+                Rigid::new(DQuat::IDENTITY, DVec3::X),
+            )),
         );
         scene.drain_align_worker(&ctx);
 

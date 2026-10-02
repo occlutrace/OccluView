@@ -484,7 +484,7 @@ align-commit-done-hint = Ausrichtung behalten und schließen — Scan exportiere
 
 align-map-heatmap = Heatmap
 align-map-heatmap-hint = Einen Scan nach Abstand zum anderen einfärben
-align-map-requires-refine = Zuerst „Best fit matching“ ausführen
+align-map-requires-accept = Zuerst einen Ausrichtungskandidaten akzeptieren
 align-map-max = max
 align-map-min = min
 align-map-not-measured = nicht gemessen
@@ -551,12 +551,8 @@ align-fit-busy = Eine Anpassung läuft bereits — das Fenster wird frei, sobald
 align-status-measure-dropped = Messung verworfen — Pinsel besitzt die Farben
 align-status-measure-unavailable = Messung nicht angewendet — Scan geändert; Best fit matching erneut ausführen
 align-status-map-elsewhere = Distanzkarte liegt auf dem Automatik-Tab — dort kommt sie zurück
-align-status-aligned-points = Auf Punkten ausgerichtet
-
 ## Align result status lines — DRAFT.
 
-align-status-aligned = Nach Punkten ausgerichtet — zuerst „Best fit matching“ ausführen.
-align-status-refined = Best fit bereit
 align-status-measured = Heatmap aktualisiert
 align-status-remeasure = { $reason } — Best-Fit-Matching erneut laufen lassen
 align-status-settings-changed = Matching-Einstellungen geändert
@@ -742,7 +738,6 @@ cut-footer-thickness = Ziehen = Schwenken · Klick Kontur = Wandstärke · Recht
 ## Worker-built align failures — DRAFT.
 
 align-fail-no-surface-fixed = Fixer Scan ohne brauchbare Oberfläche
-align-fail-no-surface-moving = Bewegter Scan ohne brauchbare Oberfläche
 align-fail-recolor = Messung vor dem Einfärben verworfen
 align-fail-unobservable = Die Oberfläche reicht für eine verlässliche Abweichungskarte nicht aus
 align-reject-toofew = Weitere Pfeilpaare setzen oder Scans näher platzieren
@@ -1025,3 +1020,20 @@ workspace-history-budget = Für diese Aktion reicht der Speicher der Rückgängi
 workspace-stale-target = Die Szene oder Ebene ist nicht mehr verfügbar.
 workspace-close-dialog = Schließen Sie zuerst den geöffneten Dialog.
 workspace-import-cancelled = Ausstehende Importe wurden beim Schließen ihrer Szene abgebrochen.
+
+# Candidate review and explicit alignment acceptance.
+align-review-ready = Kandidat zur Prüfung bereit. Akzeptieren, um den Scan zu bewegen.
+align-review-accepted = Ausrichtung akzeptiert. Geometrische Sicherheit unverändert.
+align-review-invalidated = Kandidat veraltet. Abgleich erneut starten.
+align-review-count = Kandidat { $current } von { $total }
+align-review-overlap = Gemeinsame Überlappung: { $percent }% der kleineren ausgewählten Fläche
+align-review-evidence-missing = Unabhängige Überlappungs- und Unsicherheitsdaten fehlen.
+align-review-previous = Zurück
+align-review-next = Weiter
+align-review-preview = Vorschau
+align-review-accept = Ausrichtung akzeptieren
+align-confidence-verified = Verifizierte Geometrie
+align-confidence-probable = Wahrscheinlich
+align-confidence-ambiguous = Mehrdeutig
+align-confidence-weak = Schwache Evidenz
+align-input-nonfinite = Ungültige Zahl: { $field } an Position { $index }.
