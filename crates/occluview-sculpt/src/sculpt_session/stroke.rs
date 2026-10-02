@@ -24,6 +24,7 @@ pub fn tip_dab_spacing_mm(tip: TipStamp, radius_mm: f64) -> f64 {
     };
     (radius_mm.abs() * share).max(MIN_SPACING_MM)
 }
+
 /// Path samples as a share of the radius. Between samples the step reads the
 /// surface as a straight chord; half a radius keeps that chord under the
 /// footprint on a curved surface.
@@ -719,5 +720,20 @@ impl SculptSession {
         };
         self.hit_triangle = Some(ti);
         Some((hit, normal))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_surface_rays_return_no_hit_without_overflow() {
+        for verts in [Vec::new(), vec![0.0, 0.0, 0.0]] {
+            let mut session = SculptSession::new(verts, Vec::new());
+            for direction in [DVec3::X, DVec3::Z, DVec3::ONE] {
+                assert!(session.raycast(DVec3::ZERO, direction).is_none());
+            }
+        }
     }
 }
