@@ -16,10 +16,9 @@ use eframe::egui;
 use glam::DVec3;
 use occluview_align::suggested_scale_mm;
 use occluview_align::{
-    deviation, deviation_stats, fit_pairs, observability, ramp_color, refine, CancelFlag,
-    DeviationMap, DeviationSettings, DeviationStats, FitBounds, FitRejection, Observability,
-    Orientation, RampMode, RampSettings, RefineSettings, Rigid, Soup, SurfaceIndex, Validity,
-    NO_DATA_COLOR,
+    deviation, deviation_stats, observability, ramp_color, CancelFlag, DeviationMap,
+    DeviationSettings, DeviationStats, Observability, Orientation, RampMode, RampSettings, Rigid,
+    Soup, SurfaceIndex, Validity, NO_DATA_COLOR,
 };
 use rayon::prelude::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
@@ -83,26 +82,17 @@ impl Default for AlignSettings {
 }
 
 impl AlignSettings {
-    fn refine(self) -> RefineSettings {
-        RefineSettings {
+    fn search(self) -> occluview_align::SearchSettings {
+        use occluview_align::{NormalPolicy, SearchSettings};
+        SearchSettings {
             influence_radius_mm: self.influence_radius_mm,
-            matching_ratio: self.matching_ratio,
-            orientation: self.orientation,
-            // The full search, not local-only. "Best fit matching" is the one
-            // button an operator presses to find the other arch, and it has to
-            // work from a pose that is not already close: a scan dropped in at
-            // its own origin, an arch picked up mid-case, or a rescan that sits
-            // several millimetres off. `local_only: true` drops both the global
-            // seed and the radius ladder, so a start more than a couple of
-            // millimetres out converges onto whatever surface it touches first
-            // and then fails the refinement gate.
-            //
-            // Measured on a real arch with the search enabled: a start 8 mm out
-            // seats (seated fraction 0.998, trustworthy). With
-            // `local_only: true` a 4 mm start reports a seated fraction of 0.016
-            // and is refused.
-            local_only: false,
-            ..RefineSettings::default()
+            overlap_prior: Some(self.matching_ratio),
+            normal_policy: match self.orientation {
+                Orientation::Match => NormalPolicy::Match,
+                Orientation::Inverted => NormalPolicy::Opposed,
+                Orientation::Ignored => NormalPolicy::Unsigned,
+            },
+            ..SearchSettings::default()
         }
     }
 
@@ -233,6 +223,8 @@ pub(crate) struct AlignJob {
     pub(crate) measure_key: MeasureKey,
     /// The moving layer's current pose: local to world.
     pub(crate) pose: Rigid,
+    /// Authored affine retained without absorbing scale into a rigid fit.
+    pub(crate) authored_pose: glam::Affine3A,
     /// Clicked pairs, for an `Align` job.
     pub(crate) pairs: Vec<WorldPair>,
     /// Per-vertex exclusion mask over the moving layer.
@@ -250,12 +242,8 @@ pub(crate) struct AlignJob {
 /// typed reason.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum AlignFailure {
-    /// A fit or refine refused, carrying the refusal to report.
-    Fit(FitRejection),
     /// The fixed scan has no usable surface.
     FixedSurfaceMissing,
-    /// The moving scan has no usable surface.
-    MovingSurfaceMissing,
     /// The cached measurement was dropped before it could be coloured.
     MeasurementDropped,
     /// The map has samples, but they do not expose enough rigid motion to be
@@ -265,18 +253,10 @@ pub(crate) enum AlignFailure {
 
 /// What a finished job produced.
 pub(crate) enum AlignOutcome {
-    /// A fit landed. The pose maps the moving layer's local frame to world.
-    Aligned {
-        /// The new layer pose.
-        pose: Rigid,
-        /// Pairs dropped as outliers.
-        rejected: Vec<u32>,
-    },
-    /// A refine landed.
-    Refined {
-        /// The new layer pose.
-        pose: Rigid,
-    },
+    /// Search result for explicit operator review; pose is an input-frame correction.
+    Candidates(occluview_align::AlignmentSearchResult),
+    /// Encountered non-finite numeric input, with its field and scalar index.
+    InvalidInput(occluview_align::AlignmentInputError),
     /// A measurement landed.
     Measured {
         /// One colour per measured vertex.
@@ -733,15 +713,6 @@ struct WorkerCache {
     seen: Option<(MeasureKey, Option<Observability>)>,
 }
 
-/// Jobs that require the fixed surface index.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum SurfaceJob {
-    /// Seat the surfaces with ICP.
-    Refine,
-    /// Measure the deviation map.
-    Measure,
-}
-
 /// Run one job.
 fn execute(job: &AlignJob, cancel: &CancelFlag, cached: &mut WorkerCache) -> AlignOutcome {
     let moving = Soup {
@@ -750,18 +721,15 @@ fn execute(job: &AlignJob, cancel: &CancelFlag, cached: &mut WorkerCache) -> Ali
         mask: job.mask.as_ref().map(|mask| mask.as_slice()),
     };
 
-    let surface_job = match job.kind {
-        AlignJobKind::Align => return align_from_pairs(job, moving),
-        AlignJobKind::Refine => SurfaceJob::Refine,
-        AlignJobKind::Measure => SurfaceJob::Measure,
-    };
+    if job.kind != AlignJobKind::Measure {
+        return execute_search(job, cancel);
+    }
 
     // Re-colouring changes only the display, so reuse the cached map.
-    if surface_job == SurfaceJob::Measure
-        && cached
-            .measured
-            .as_ref()
-            .is_some_and(|(key, _)| *key == job.measure_key)
+    if cached
+        .measured
+        .as_ref()
+        .is_some_and(|(key, _)| *key == job.measure_key)
     {
         return recolor(job, cached);
     }
@@ -772,34 +740,17 @@ fn execute(job: &AlignJob, cancel: &CancelFlag, cached: &mut WorkerCache) -> Ali
         };
     };
 
-    match surface_job {
-        SurfaceJob::Refine => {
-            match refine(moving, index, job.pose, &job.settings.refine(), cancel) {
-                Ok(report) if report.is_trustworthy_refinement_for(&job.settings.refine()) => {
-                    AlignOutcome::Refined { pose: report.rigid }
-                }
-                Ok(_) => AlignOutcome::Failed {
-                    rejection: AlignFailure::Fit(FitRejection::NoImprovement),
-                },
-                Err(rejection) => AlignOutcome::Failed {
-                    rejection: AlignFailure::Fit(rejection),
-                },
-            }
-        }
-        SurfaceJob::Measure => {
-            let map = deviation(moving, index, job.pose, &job.settings.deviation(), cancel);
-            // Do not cache a cancelled map or expose it to later re-colouring.
-            let seen = observability(moving, index, job.pose, &job.settings.deviation(), cancel);
-            if !cancel.is_cancelled() {
-                cached.measured = Some((job.measure_key, map));
-                cached.summary = None;
-                cached.seen = Some((job.measure_key, seen));
-                return recolor(job, cached);
-            }
-            let stats = deviation_stats(&map, job.settings.tolerance_mm);
-            paint(&map, job, stats, seen)
-        }
+    let map = deviation(moving, index, job.pose, &job.settings.deviation(), cancel);
+    // Do not cache a cancelled map or expose it to later re-colouring.
+    let seen = observability(moving, index, job.pose, &job.settings.deviation(), cancel);
+    if !cancel.is_cancelled() {
+        cached.measured = Some((job.measure_key, map));
+        cached.summary = None;
+        cached.seen = Some((job.measure_key, seen));
+        return recolor(job, cached);
     }
+    let stats = deviation_stats(&map, job.settings.tolerance_mm);
+    paint(&map, job, stats, seen)
 }
 
 /// Colour the map already in hand, taking the summary from the cache when the
@@ -905,51 +856,48 @@ fn surface_index<'a>(
     cached.as_ref().map(|(_, index)| index)
 }
 
-/// Fit the clicked pairs. The moving points are in the moving layer's local
-/// frame and the fixed points are in world, so the result *is* the new layer
-/// pose — no composition, and no chance of composing it the wrong way round.
-fn align_from_pairs(job: &AlignJob, moving: Soup<'_>) -> AlignOutcome {
-    let moving_points: Vec<DVec3> = job.pairs.iter().map(|pair| pair.moving).collect();
-    let fixed_points: Vec<DVec3> = job.pairs.iter().map(|pair| pair.fixed).collect();
-    let moving_normals: Vec<DVec3> = job.pairs.iter().map(|pair| pair.moving_normal).collect();
-    let fixed_normals: Vec<DVec3> = job.pairs.iter().map(|pair| pair.fixed_normal).collect();
-    // Bounds are measured in the frames used by the corresponding point sets.
-    let fixed_soup = Soup {
-        positions: &job.fixed_world_positions,
-        indices: &job.fixed_indices,
-        mask: job.fixed_mask.as_ref().map(|mask| mask.as_slice()),
+/// Search geometry without allowing numerical confidence to edit the scene.
+fn execute_search(job: &AlignJob, cancel: &CancelFlag) -> AlignOutcome {
+    use occluview_align::{AlignmentInput, MeshInput, PointPair, SearchControl};
+    let pairs: Vec<_> = job
+        .pairs
+        .iter()
+        .map(|p| PointPair {
+            moving_local: p.moving,
+            fixed_local: p.fixed,
+            normals_local: Some([p.moving_normal, p.fixed_normal]),
+        })
+        .collect();
+    let input = AlignmentInput {
+        moving: MeshInput {
+            soup: Soup {
+                positions: &job.moving_positions,
+                indices: &job.moving_indices,
+                mask: job.mask.as_deref().map(Vec::as_slice),
+            },
+            world_from_local: job.authored_pose.as_daffine3(),
+            revision: job.measure_key.moving.0,
+        },
+        fixed: MeshInput {
+            soup: Soup {
+                positions: &job.fixed_world_positions,
+                indices: &job.fixed_indices,
+                mask: job.fixed_mask.as_deref().map(Vec::as_slice),
+            },
+            world_from_local: glam::DAffine3::IDENTITY,
+            revision: job.fixed_key.geometry,
+        },
+        landmarks: &pairs,
+        seeds: &[],
     };
-    // Missing bounds are reported instead of inventing an overlap allowance.
-    let Some((moving_center, moving_extent)) = occluview_align::bounds_of(moving) else {
-        return AlignOutcome::Failed {
-            rejection: AlignFailure::MovingSurfaceMissing,
-        };
-    };
-    let Some((fixed_center, fixed_extent)) = occluview_align::bounds_of(fixed_soup) else {
-        return AlignOutcome::Failed {
-            rejection: AlignFailure::FixedSurfaceMissing,
-        };
-    };
-    let bounds = FitBounds {
-        moving_center,
-        moving_extent,
-        fixed_center,
-        fixed_extent,
-    };
-
-    match fit_pairs(
-        &moving_points,
-        &fixed_points,
-        Some((&moving_normals, &fixed_normals)),
-        &bounds,
+    let settings = job.settings.search();
+    match occluview_align::search_alignment(
+        &input,
+        &settings,
+        &SearchControl::new(cancel.clone(), settings.wall_limit),
     ) {
-        Ok(fit) => AlignOutcome::Aligned {
-            pose: fit.rigid,
-            rejected: fit.rejected,
-        },
-        Err(rejection) => AlignOutcome::Failed {
-            rejection: AlignFailure::Fit(rejection),
-        },
+        Ok(result) => AlignOutcome::Candidates(result),
+        Err(error) => AlignOutcome::InvalidInput(error),
     }
 }
 

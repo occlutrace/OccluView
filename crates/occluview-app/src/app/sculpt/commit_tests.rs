@@ -380,7 +380,8 @@ fn a_sculpt_commit_revokes_the_alignment_measured_against_the_old_mesh() {
         .align
         .tool
         .imply_pair(&[layer_id, layer_id]);
-    app.workspace.scenes[0].tools.align.refined_match_ready = true;
+    app.workspace.scenes[0].tools.align.accepted =
+        Some(crate::align::align_state::AcceptedAlignment::test_authority());
     app.workspace.scenes[0].tools.align.settings.show_deviation = true;
     app.workspace.scenes[0].tools.align.rejected = vec![0, 1];
     let vertex_count = layer_mesh(&app, layer_id).vertices().len();
@@ -412,7 +413,7 @@ fn a_sculpt_commit_revokes_the_alignment_measured_against_the_old_mesh() {
         "the stroke really committed, so the surface really changed"
     );
     assert!(
-        !app.workspace.scenes[0].tools.align.refined_match_ready,
+        app.workspace.scenes[0].tools.align.accepted.is_none(),
         "a fit measured against the replaced surface is not a refined match for it"
     );
     assert!(!app.workspace.scenes[0].tools.align.settings.show_deviation);
