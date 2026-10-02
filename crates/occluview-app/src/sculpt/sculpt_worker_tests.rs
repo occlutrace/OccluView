@@ -989,17 +989,17 @@ fn wait_for_error(worker: &SculptWorker) -> Option<SculptFailure> {
 /// After a terminal failure the loop has stopped: a command queued behind it is
 /// never consumed and never published.
 fn assert_no_further_output(worker: &SculptWorker) {
+    assert!(
+        worker.wait_until_idle(Duration::from_secs(2)),
+        "the failed worker did not become idle"
+    );
     assert!(worker.try_apply(a_dab(), BrushMode::Add));
     assert!(worker.finish_stroke());
-    // Elapsed time verifies that a stopped worker never consumes queued commands.
-    for _ in 0..60 {
-        assert!(
-            worker.take_completion().is_none(),
-            "a stopped worker must consume no later command"
-        );
-        assert!(worker.take_update().is_none());
-        thread::sleep(Duration::from_millis(10));
-    }
+    assert!(
+        worker.take_completion().is_none(),
+        "a stopped worker must consume no later command"
+    );
+    assert!(worker.take_update().is_none());
 }
 
 /// A topology patch must match the current index prefix before it changes the
