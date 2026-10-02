@@ -16,6 +16,42 @@ fn one_triangle_glb() -> Vec<u8> {
     glb::build_glb(json, &bin)
 }
 
+#[test]
+fn mirrored_nodes_preserve_front_face_winding() {
+    let (json, bin) = occluview_core::test_support::minimal_triangle_glb_chunks();
+    for indexed in [false, true] {
+        for (parent, child, expected) in [
+            ([-1.0, 1.0, 1.0], [1.0, 1.0, 1.0], [0, 2, 1]),
+            ([1.0, 1.0, 1.0], [-1.0, 1.0, 1.0], [0, 2, 1]),
+            ([-1.0, 1.0, 1.0], [1.0, -1.0, 1.0], [0, 1, 2]),
+        ] {
+            let mut doc: serde_json::Value = serde_json::from_slice(json).expect("JSON");
+            doc["nodes"] = serde_json::json!([
+                {"children": [1], "scale": parent}, {"mesh": 0, "scale": child}
+            ]);
+            if !indexed {
+                doc["meshes"][0]["primitives"][0]
+                    .as_object_mut()
+                    .expect("primitive")
+                    .remove("indices");
+            }
+            let json = serde_json::to_vec(&doc).expect("JSON");
+            let mesh = read(&glb::build_glb(&json, &bin)).expect("mirrored GLB");
+            assert_eq!(
+                mesh.indices(),
+                expected,
+                "indexed={indexed}, parent={parent:?}, child={child:?}"
+            );
+            let corners: Vec<_> = mesh
+                .indices()
+                .iter()
+                .map(|&i| glam::Vec3::from_array(mesh.vertices()[i as usize].position))
+                .collect();
+            assert!((corners[1] - corners[0]).cross(corners[2] - corners[0]).z > 0.0);
+        }
+    }
+}
+
 /// Build one textured triangle with its raster embedded in the GLB BIN chunk.
 /// `declared_mime` deliberately remains separate from the bytes so callers can
 /// verify that input policy is based on the raster signature, not metadata.
