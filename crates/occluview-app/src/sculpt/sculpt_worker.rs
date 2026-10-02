@@ -1264,18 +1264,28 @@ impl SculptWorker {
     }
 
     #[cfg(test)]
-    pub(crate) fn wait_for_completion(&self, timeout: Duration) -> bool {
+    pub(crate) fn wait_take_completion(&self, timeout: Duration) -> Option<SculptCompletion> {
         let Ok(completions) = self.state.completions.lock() else {
-            return false;
+            return None;
         };
         let Ok((completions, _)) = self.state.completion_wake.wait_timeout_while(
             completions,
             timeout,
             |completions| completions.is_empty(),
         ) else {
-            return false;
+            return None;
         };
-        !completions.is_empty()
+        if completions.is_empty() {
+            return None;
+        }
+        drop(completions);
+        let _publish = self.state.publish_boundary.lock().ok()?;
+        let mut completions = self.state.completions.lock().ok()?;
+        let completion = completions.pop_front();
+        if completion.is_some() {
+            self.state.completion_wake.notify_one();
+        }
+        completion
     }
 }
 
