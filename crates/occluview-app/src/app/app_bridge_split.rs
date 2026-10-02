@@ -175,6 +175,9 @@ impl SceneContext<'_> {
             frame: &frame,
             panel_zoom_notches,
         });
+        if !self.tools.bridge_split_active() {
+            return true;
+        }
         let panel_action = self.show_bridge_split_panel(ctx, response.rect);
         if self.apply_bridge_split_panel_action(panel_action, &scene, entry, ctx) {
             return true;
@@ -284,6 +287,18 @@ impl SceneContext<'_> {
             &color_for,
             &self.ui.locale,
         );
+        if matches!(
+            panel.command,
+            crate::cut::cut_ruler::SectionPanelCommand::Close
+        ) {
+            self.cancel_bridge_split(
+                &self
+                    .ui
+                    .locale
+                    .tr(crate::i18n::message_id!("bridge-canceled")),
+            );
+            return true;
+        }
         if panel.viewport_needs_render {
             self.render.invalidation.overlay_tools_changed();
             ctx.request_repaint();
@@ -640,6 +655,89 @@ mod transition_tests {
     use crate::app::app_test_support::{named_scene, test_app};
     use glam::{Affine3A, Vec3};
     use std::sync::Arc;
+
+    #[test]
+    fn bridge_section_close_cancels_the_separator_without_editing_the_scene() {
+        use super::*;
+        use crate::cut::cut_manipulator::DiscPose;
+
+        let mut app = test_app("bridge-section-close");
+        let scene = Arc::new(named_scene("jaw", 0.0));
+        let source = scene.meshes()[0].mesh.clone();
+        let entry = &scene.meshes()[0];
+        app.workspace.scenes[0].document.scene = Some(scene.clone());
+        app.workspace.scenes[0].tools.bridge_split.start(entry);
+        app.workspace.scenes[0].tools.bridge_split_disc.arm();
+        app.workspace.scenes[0].tools.bridge_split_disc.plant_pose(
+            DiscPose {
+                center: Vec3::ZERO,
+                plane_normal: Vec3::Z,
+                radius_mm: 4.0,
+            },
+            true,
+        );
+        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 820.0));
+        let panel = crate::cut::cut_ruler::section_panel_rect(viewport).expect("panel fits");
+        let close = egui::pos2(panel.right() - 18.0, panel.top() + 16.0);
+        let camera = Camera::default();
+        let frame_context = BridgeFrameContext {
+            camera: &camera,
+            scene: &scene,
+            entry,
+            viewport_rect: viewport,
+        };
+        let ctx = egui::Context::default();
+        for pressed in [None, Some(true), Some(false)] {
+            let mut events = vec![egui::Event::PointerMoved(close)];
+            if let Some(pressed) = pressed {
+                events.push(egui::Event::PointerButton {
+                    pos: close,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+            ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(viewport),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let mut context = app.active_context().expect("live scene");
+                    let (frame, _) = context.build_bridge_split_frame(&ctx, &frame_context);
+                    context.show_bridge_split_section(BridgeSectionInput {
+                        ui,
+                        ctx: &ctx,
+                        frame_context: &frame_context,
+                        frame: &frame,
+                        panel_zoom_notches: 0.0,
+                    });
+                },
+            )
+            .drop_without_applying_deltas();
+        }
+        assert_eq!(
+            app.workspace.scenes[0].tools.bridge_split.session().mode(),
+            BridgeSplitMode::Off
+        );
+        assert!(!app.workspace.scenes[0].tools.bridge_split_disc.is_active());
+        assert!(!app.workspace.scenes[0]
+            .tools
+            .bridge_split_section
+            .slice_visible());
+        assert!(Arc::ptr_eq(
+            &app.workspace.scenes[0]
+                .document
+                .scene
+                .as_ref()
+                .expect("scene")
+                .meshes()[0]
+                .mesh,
+            &source
+        ));
+        assert_eq!(app.workspace.scenes[0].document.edit_mode.undo_len(), 0);
+    }
 
     /// Switching from Align to Bridge Split commits its open pose as one edit;
     /// switching back cancels only the separator preview and leaves Align as
