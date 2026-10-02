@@ -392,7 +392,8 @@ pub(crate) fn probe_wall_thickness(
         return None;
     }
     let base = triangle_index.checked_mul(3)?;
-    let tri = entry.mesh.indices().get(base..base + 3)?;
+    let end = base.checked_add(3)?;
+    let tri = entry.mesh.indices().get(base..end)?;
     let world = world_triangle(entry, tri)?;
     let inward = -surface_normal_at(entry, tri, &world, point)?;
     let reading = match nearest_exit(entry, triangle_index, point, inward) {
@@ -948,6 +949,7 @@ mod tests {
     fn probe_out_of_range_triangle_is_refused() {
         let entry = SceneMesh::new(sheet_mesh());
         assert!(probe_wall_thickness(&entry, 99, Vec3::ZERO).is_none());
+        assert!(probe_wall_thickness(&entry, usize::MAX / 3, Vec3::ZERO).is_none());
         assert!(probe_wall_thickness(&entry, usize::MAX, Vec3::ZERO).is_none());
     }
 }
