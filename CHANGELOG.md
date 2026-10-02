@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Refuse GLB scenes that merge incompatible primitive materials.
+
 - Use the OBJ face material atlas and refuse unsupported mixed face materials.
 
 - Invalid Sculpt position-history records are refused before changing the surface.

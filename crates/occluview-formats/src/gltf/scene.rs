@@ -121,6 +121,7 @@ pub(super) struct SceneWalk<'a> {
     bin_chunk: &'a [u8],
     builder: &'a mut MeshBuilder,
     visited: VisitedNodes,
+    material: Option<Option<usize>>,
 }
 
 impl<'a> SceneWalk<'a> {
@@ -135,6 +136,7 @@ impl<'a> SceneWalk<'a> {
             bin_chunk,
             builder,
             visited,
+            material: None,
         }
     }
 
@@ -170,6 +172,13 @@ impl<'a> SceneWalk<'a> {
                 .get(mesh_idx)
                 .ok_or_else(|| malformed("mesh out of range"))?;
             for prim in &mesh.primitives {
+                if self
+                    .material
+                    .is_some_and(|material| material != prim.material)
+                {
+                    return Err(malformed("multiple primitive materials cannot be represented by one mesh; export separate material meshes"));
+                }
+                self.material = Some(prim.material);
                 emit_primitive(
                     self.doc,
                     prim,
