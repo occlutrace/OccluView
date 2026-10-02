@@ -2761,9 +2761,9 @@ version = "1.2.1"
 dependencies = [
  "earcutr",
  "glam",
+ "manifold-csg",
  "occluview-core",
  "occluview-geometry",
- "occluview-robust-csg",
  "thiserror 2.0.21",
 ]
 
@@ -2790,15 +2790,6 @@ version = "1.2.1"
 dependencies = [
  "serde_json",
  "serde_yaml_ng",
-]
-
-[[package]]
-name = "occluview-robust-csg"
-version = "1.2.1"
-dependencies = [
- "glam",
- "manifold-csg",
- "thiserror 2.0.21",
 ]
 
 [[package]]

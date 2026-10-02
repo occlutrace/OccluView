@@ -47,6 +47,12 @@ mod numeric;
 mod orientation;
 mod pinch;
 mod repair;
+/// Robust finite-disc CSG fallback for closed triangle meshes.
+///
+/// This module owns the native Manifold dependency directly, so enabling the
+/// `robust-csg` feature builds the C++ kernel as part of this crate.
+#[cfg(feature = "robust-csg")]
+pub mod robust;
 mod scene_section;
 mod section;
 mod topology;

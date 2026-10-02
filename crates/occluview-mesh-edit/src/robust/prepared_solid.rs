@@ -4,10 +4,10 @@ use std::sync::Arc;
 use glam::{DMat3, DVec3};
 use manifold_csg::Manifold;
 
-use crate::disc_split::split_prepared_with_separator_disc;
-use crate::native_mesh::{extract_part, manifold_from_closed_shell, validate_mesh};
-use crate::solid_compose::{subtract_contained_voids, union_overlapping_clusters};
-use crate::{
+use super::disc_split::split_prepared_with_separator_disc;
+use super::native_mesh::{extract_part, manifold_from_closed_shell, validate_mesh};
+use super::solid_compose::{subtract_contained_voids, union_overlapping_clusters};
+use super::{
     invalid_input, kernel_error, position_bounds, RobustCsgError, RobustMesh, SeparatorDisc,
 };
 
@@ -108,7 +108,7 @@ impl PreparedRobustSolid {
         &self,
         transform: &[f64; 12],
         disc: SeparatorDisc,
-    ) -> Result<crate::RobustSplit, RobustCsgError> {
+    ) -> Result<super::RobustSplit, RobustCsgError> {
         split_prepared_with_separator_disc(self, transform, disc)
     }
 

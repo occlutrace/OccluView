@@ -1,7 +1,7 @@
 use glam::DVec3;
 use manifold_csg::Manifold;
 
-use crate::{
+use super::{
     flatten_positions, invalid_input, kernel_error, RobustCsgError, RobustMesh, RobustMeshPart,
 };
 
