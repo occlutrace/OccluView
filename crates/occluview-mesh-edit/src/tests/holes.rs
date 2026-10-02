@@ -451,3 +451,21 @@ fn a_large_unwelded_soup_is_refused_rather_than_filled() {
         "expected the options to be named as the problem, got {error}"
     );
 }
+
+#[test]
+fn selected_hole_refuses_a_cap_that_pierces_the_support_surface() {
+    let mut input = bowl_mesh();
+    // A face from the bowl apex crosses the entire lid plane inside the rim.
+    input.vertices.push(v([-0.2, 0.3, -1.0]));
+    input.vertices.push(v([0.4, 0.1, -1.0]));
+    input.indices.extend_from_slice(&[4, 5, 6]);
+    let selected = FaceSelection::new(vec![true; input.triangle_count()]);
+    let result = fill_selected_holes(&input, &selected, MeshEditOptions::default())
+        .expect("a refused cap must preserve the source with a warning");
+    assert_eq!(
+        result.report.filled_holes, 0,
+        "selection cannot waive piercing guards"
+    );
+    assert!(result.report.skipped_damaged_rims > 0);
+    assert_eq!(result.mesh.indices, input.indices);
+}

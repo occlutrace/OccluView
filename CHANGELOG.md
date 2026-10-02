@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Close Holes keeps selected rims open with a warning when every candidate cap intersects the surrounding surface.
+
 - OFF imports reject negative structural counts and non-integer face degrees instead of silently discarding geometry.
 
 - Repair Mesh refuses non-finite coordinates before changing geometry.
