@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Sculpt reports the actual display-geometry failure instead of always reporting a poisoned lock.
+
 - Sculpt welds equal coordinates consistently when one corner uses negative zero.
 
 - OBJ thumbnails reject extreme relative face indices without crashing.
