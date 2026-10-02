@@ -144,7 +144,12 @@ fn viewport_ray_for_scene(
     if bbox.is_empty() || !viewport_rect.contains(pointer) {
         return None;
     }
-    viewport_ray(camera, viewport_rect, pointer)
+    let (origin, direction) = viewport_ray(camera, viewport_rect, pointer)?;
+    let mut fitted_camera = *camera;
+    fitted_camera.fit_clip_planes_to_bbox(bbox);
+    // Orthographic rendering includes the full fitted depth range, even
+    // when the nearest surface lies behind the orbital eye.
+    Some((origin + direction * fitted_camera.near, direction))
 }
 
 pub(crate) fn viewport_ray(
@@ -363,6 +368,55 @@ mod tests {
         };
         assert_eq!(center_dir, right_dir);
         assert_ne!(center_origin, right_origin);
+    }
+
+    #[test]
+    fn orthographic_scene_pick_includes_visible_geometry_behind_the_eye() {
+        let camera = Camera {
+            distance: 100.0,
+            yaw: 0.0,
+            pitch: 0.0,
+            ..Camera::default()
+        };
+        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 400.0));
+        let mut scene = Scene::new();
+        for z in [150.0, 0.0] {
+            let mesh = Mesh::new(
+                None,
+                vec![
+                    Vertex::at(Vec3::new(-10.0, -10.0, z)),
+                    Vertex::at(Vec3::new(10.0, -10.0, z)),
+                    Vertex::at(Vec3::new(0.0, 10.0, z)),
+                ],
+                vec![0, 1, 2],
+            )
+            .expect("valid triangle");
+            scene.add(SceneMesh::new(mesh));
+        }
+        let mut rendered_camera = camera;
+        rendered_camera.fit_clip_planes_to_bbox(scene.bbox());
+        let point = Vec3::new(0.0, 0.0, 150.0);
+        let depth = (point - camera.eye()).dot(camera.view_direction());
+        assert!(depth >= rendered_camera.near && depth <= rendered_camera.far);
+
+        let hit = pick_scene_hit(&camera, viewport, viewport.center(), &scene)
+            .expect("the visible surface must be selectable");
+        assert_eq!(hit.layer_index, 0);
+        assert!((hit.point - point).length() < 1e-4);
+        assert!(
+            (pick_scene_point(&camera, viewport, viewport.center(), &scene)
+                .expect("surface focus pick")
+                - point)
+                .length()
+                < 1e-4
+        );
+        let target = scene.meshes()[0].id();
+        assert_eq!(
+            pick_layer_hit(&camera, viewport, viewport.center(), &scene, target)
+                .expect("named-layer surface pick")
+                .layer_id,
+            target
+        );
     }
 
     #[test]
