@@ -250,7 +250,7 @@ fn a_menu_action_targets_every_marked_visible_layer() {
     ) else {
         unreachable!("deleting one marked face per layer must succeed");
     };
-    assert!(apply.scene_changed, "the scene must change");
+    assert!(apply.apply.scene_changed, "the scene must change");
     for entry in scene.meshes() {
         assert_eq!(
             entry.mesh.triangle_count(),
