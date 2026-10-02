@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- PLY imports preserve integer positions, normals, and UVs and reject invalid integer vertex fields.
+
 - OBJ thumbnails resolve relative faces against the vertices preceding each face.
 
 

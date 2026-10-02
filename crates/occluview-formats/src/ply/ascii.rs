@@ -431,12 +431,7 @@ fn apply_scalar(
                 offset: 0,
                 reason: format!("bad float: {tok:?}"),
             })?;
-            match route {
-                FieldPlan::Position(i) if i < 3 => fields.position[i] = v,
-                FieldPlan::Normal(i) if i < 3 => fields.normal[i] = v,
-                FieldPlan::Uv(i) if i < 2 => fields.uv[i] = v,
-                _ => {}
-            }
+            apply_float(v, route, fields);
         }
         ScalarType::Uchar
         | ScalarType::Char
@@ -444,21 +439,37 @@ fn apply_scalar(
         | ScalarType::Short
         | ScalarType::Uint
         | ScalarType::Int => {
-            // Integer-valued; route colors here. (We could also accept
-            // integer-valued positions, but PLY uses float for xyz.)
+            let v: i64 = tok.parse().map_err(|_| FormatError::Malformed {
+                format: "PLY (ascii)",
+                offset: 0,
+                reason: format!("bad integer: {tok:?}"),
+            })?;
             if let FieldPlan::Color(i) = route {
-                let v: i32 = tok.parse().map_err(|_| FormatError::Malformed {
+                if i < 4 {
+                    fields.color[i] = v.clamp(0, 255) as u8;
+                }
+            } else {
+                // Geometry uses f32 internally; the integer parse above keeps
+                // fractional or nonnumeric values from masquerading as integers.
+                let value = tok.parse::<f32>().map_err(|_| FormatError::Malformed {
                     format: "PLY (ascii)",
                     offset: 0,
                     reason: format!("bad integer: {tok:?}"),
                 })?;
-                if i < 4 {
-                    fields.color[i] = v.clamp(0, 255) as u8;
-                }
+                apply_float(value, route, fields);
             }
         }
     }
     Ok(())
+}
+
+fn apply_float(value: f32, route: FieldPlan, fields: &mut VertexFields) {
+    match route {
+        FieldPlan::Position(i) if i < 3 => fields.position[i] = value,
+        FieldPlan::Normal(i) if i < 3 => fields.normal[i] = value,
+        FieldPlan::Uv(i) if i < 2 => fields.uv[i] = value,
+        _ => {}
+    }
 }
 
 fn parse_index(tok: &str) -> Result<u32, FormatError> {
