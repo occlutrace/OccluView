@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- A failed final file append preserves camera navigation made while the load was running.
+
 - Refuse PLY texture seams that cannot preserve the original mesh topology.
 
 - Sculpt refuses malformed mesh buffers before preparing a session instead of crashing.

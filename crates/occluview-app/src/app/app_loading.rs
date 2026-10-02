@@ -736,7 +736,7 @@ impl SceneContext<'_> {
             && !self.loader.has_queued_for(self.scene_key)
         {
             self.document.load_queue_camera_reset = LoadQueueCameraReset::Idle;
-            if self.document.scene.is_some() {
+            if self.document.scene.is_some() && !self.document.camera_modified_during_load {
                 self.reset_camera_to_home();
             }
         }

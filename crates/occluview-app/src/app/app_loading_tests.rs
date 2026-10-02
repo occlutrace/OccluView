@@ -500,6 +500,58 @@ fn decoded_append_waits_until_a_pending_mesh_edit_finishes() {
 }
 
 #[test]
+fn failed_final_append_preserves_camera_navigation() -> Result<()> {
+    for navigated in [false, true] {
+        let mut app = test_app("append-failure-camera");
+        let mut target = app
+            .active_context()
+            .ok_or_else(|| anyhow::anyhow!("missing scene"))?;
+        target.document.scene = Some(Arc::new(named_scene("loaded", 0.0)));
+        target.reset_camera_to_home();
+        let home = target.render.camera;
+        let pending = delivered_load_for_scene(
+            target.scene_key,
+            target.document.content_revision,
+            named_scene("unreadable", 10.0),
+            SceneLoadMode::Append,
+            "/cases/unreadable.stl",
+        );
+        target.loader.install_active(pending);
+        target.document.load_queue_camera_reset = LoadQueueCameraReset::WhenQueueDrains;
+        let camera = target
+            .render
+            .camera
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("missing camera"))?;
+        camera.focus_on(glam::Vec3::new(12.0, 4.0, 0.0));
+        if navigated {
+            target.request_camera_repaint(&egui::Context::default());
+        }
+        let before_failure = target.render.camera;
+        let pending = target
+            .loader
+            .active
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("missing append"))?;
+
+        apply_result(&mut target, pending, Err(anyhow::anyhow!("unreadable")));
+
+        assert_eq!(
+            target.render.camera,
+            if navigated { before_failure } else { home },
+            "finishing a failed append must respect navigation during the load"
+        );
+        assert_eq!(
+            target.document.load_queue_camera_reset,
+            LoadQueueCameraReset::Idle
+        );
+        assert!(target.ui.app_error.is_some());
+        assert_eq!(scene_names_for_context(&target), vec!["loaded"]);
+    }
+    Ok(())
+}
+
+#[test]
 fn failed_replace_leaves_the_scene_and_its_edits_untouched() {
     let mut app = test_app("replace-failed");
     let mut target = app.active_context().expect("test scene");
