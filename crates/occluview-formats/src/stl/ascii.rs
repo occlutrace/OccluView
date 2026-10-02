@@ -164,12 +164,8 @@ pub(crate) fn estimate_peak_bytes(bytes: &[u8]) -> Result<u64, FormatError> {
         reason: "file is not valid UTF-8".to_string(),
     })?;
     let facets = text
-        .lines()
-        .filter(|line| {
-            line.split_ascii_whitespace()
-                .next()
-                .is_some_and(|tag| tag.eq_ignore_ascii_case("facet"))
-        })
+        .split_ascii_whitespace()
+        .filter(|tag| tag.eq_ignore_ascii_case("facet"))
         .count();
     Ok(u64::try_from(bytes.len())
         .unwrap_or(u64::MAX)
@@ -232,6 +228,25 @@ fn unexpected(expected: &str, got: &str) -> FormatError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn memory_estimate_accounts_for_facets_on_the_same_line() {
+        let single_line = SINGLE_FACET
+            .split_ascii_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(
+            read(single_line.as_bytes())
+                .expect("one-line STL")
+                .triangle_count(),
+            1
+        );
+        let multiline_geometry = estimate_peak_bytes(SINGLE_FACET.as_bytes()).expect("estimate")
+            - SINGLE_FACET.len() as u64;
+        let single_line_geometry = estimate_peak_bytes(single_line.as_bytes()).expect("estimate")
+            - single_line.len() as u64;
+        assert_eq!(single_line_geometry, multiline_geometry);
+    }
 
     #[test]
     fn reads_solid_names_containing_spaces() {
