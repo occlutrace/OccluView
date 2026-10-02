@@ -23,9 +23,7 @@ const MAX_CACHED_FILE_THUMBNAIL_BYTES: usize = 32 * 1024 * 1024;
 /// 1.45 GB/s, a 64 MB file costs about 45 ms to key exactly, and the largest
 /// real scan in the test corpora is 33 MB.
 pub(super) const EXACT_CONTENT_HASH_BYTES: u64 = 64 * 1024 * 1024;
-const EXACT_CONTENT_HASH_BYTES_USIZE: usize = 64 * 1024 * 1024;
 const CONTENT_HASH_SAMPLE_BYTES: u64 = 64 * 1024;
-const CONTENT_HASH_SAMPLE_BYTES_USIZE: usize = 64 * 1024;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(super) enum ThumbnailRequestKey {
@@ -481,26 +479,7 @@ fn thumbnail_kind_tag(kind: FormatKind) -> u8 {
 fn thumbnail_bytes_fingerprint(bytes: &[u8]) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(u64::try_from(bytes.len()).unwrap_or(u64::MAX).to_le_bytes());
-    if bytes.len() <= EXACT_CONTENT_HASH_BYTES_USIZE {
-        hasher.update([0u8]);
-        hasher.update(bytes);
-    } else {
-        let sample = CONTENT_HASH_SAMPLE_BYTES_USIZE;
-        for (label, start) in [
-            (b"head".as_slice(), 0usize),
-            (b"middle".as_slice(), bytes.len() / 2),
-            (b"tail".as_slice(), bytes.len().saturating_sub(sample)),
-        ] {
-            let end = start.saturating_add(sample).min(bytes.len());
-            hasher.update(label);
-            hasher.update(u64::try_from(start).unwrap_or(u64::MAX).to_le_bytes());
-            hasher.update(
-                u64::try_from(end.saturating_sub(start))
-                    .unwrap_or(u64::MAX)
-                    .to_le_bytes(),
-            );
-            hasher.update(&bytes[start..end]);
-        }
-    }
+    hasher.update([0u8]);
+    hasher.update(bytes);
     hasher.finalize().into()
 }

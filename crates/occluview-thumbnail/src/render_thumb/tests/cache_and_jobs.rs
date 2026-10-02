@@ -84,6 +84,20 @@ fn stream_thumbnail_cache_key_changes_when_kind_or_bytes_change() {
 }
 
 #[test]
+fn large_streams_with_different_interior_bytes_have_distinct_cache_keys() {
+    let length =
+        usize::try_from(cache::EXACT_CONTENT_HASH_BYTES).expect("hash budget fits usize") + 1;
+    let mut bytes = vec![0u8; length];
+    let first = cache::ThumbnailStreamCacheKey::new(occluview_formats::FormatKind::Obj, &bytes);
+    bytes[length / 4] = 1;
+    let second = cache::ThumbnailStreamCacheKey::new(occluview_formats::FormatKind::Obj, &bytes);
+    assert_ne!(
+        first, second,
+        "different stream payloads must not share pixels"
+    );
+}
+
+#[test]
 fn file_content_cache_key_reuses_identical_copies_and_changes_for_content() {
     let bytes = b"v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n";
     let first = fixtures::write_temp_fixture("content-key-a.obj", bytes);
