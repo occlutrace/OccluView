@@ -608,6 +608,50 @@ fn automatic_solid_cut_shows_the_cross_section() {
     );
 }
 
+#[test]
+fn translated_solid_cut_keeps_its_cross_section_cap() {
+    let _gpu = gpu_test_lock();
+    let cube = closed_cube_mesh();
+    let offset = Vec3::new(100.0, -50.0, 0.0);
+    let vertices = cube
+        .vertices()
+        .iter()
+        .map(|vertex| {
+            let mut vertex = *vertex;
+            vertex.position = (Vec3::from_array(vertex.position) + offset).to_array();
+            vertex
+        })
+        .collect();
+    let mesh = Mesh::new(None, vertices, cube.indices().to_vec()).expect("translated cube");
+    let plane = ClipPlane::new([0.0, 0.0, 1.0], 0.0);
+    let cam = occluview_render::cut_camera::cut_view_camera_focused(&plane, offset, 1.0, 1.0);
+    let offscreen = pollster::block_on(Offscreen::new()).expect("offscreen init");
+    let cut = occluview_render::CutViewSpec {
+        plane,
+        cap_color: [0.0, 1.0, 0.0, 1.0],
+        show_hollow: false,
+    };
+    let pixels = pollster::block_on(offscreen.render_with_cut_with_deadline(CutMeshRequest {
+        mesh: &mesh,
+        camera: &cam,
+        cut: &cut,
+        half_extent: 1.0,
+        spec: dark_thumbnail_spec(),
+        deadline: test_render_deadline(),
+    }))
+    .expect("translated solid cut");
+    let cap_pixels = pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|pixel| pixel[1] > 220 && pixel[0] < 20 && pixel[2] < 20)
+        .count();
+    assert!(
+        cap_pixels > 100,
+        "translation must preserve the cross-section cap: {cap_pixels}"
+    );
+}
+
 /// Validates the convenience entry point `render_cut_view` — auto-frames an
 /// orthographic camera along the plane normal and renders the solid cut.
 /// Proves the full cut-view pipeline (camera + clip + stencil cap) runs
