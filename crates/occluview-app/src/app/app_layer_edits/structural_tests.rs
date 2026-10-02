@@ -530,3 +530,23 @@ fn separate_parts_get_distinct_tints_so_the_split_is_visible() {
         );
     }
 }
+
+#[test]
+fn partition_rejects_invalid_and_overlapping_components() {
+    let source = grid_mesh(2, 1);
+    for components in [
+        vec![vec![source.triangle_count()]],
+        vec![vec![0, 1], vec![1, 2]],
+        vec![vec![0, 0]],
+    ] {
+        let result = super::structural::split_selection_into_meshes(&source, &components);
+        assert!(
+            result.is_err(),
+            "invalid partition must be refused before constructing layers"
+        );
+    }
+    let split = super::structural::split_selection_into_meshes(&source, &[vec![0], vec![1]])
+        .expect("a disjoint partition is valid");
+    assert_eq!(split.components.len(), 2);
+    assert_eq!(split.remainder.triangle_count(), 2);
+}
