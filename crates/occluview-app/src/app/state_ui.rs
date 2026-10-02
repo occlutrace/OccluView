@@ -115,6 +115,7 @@ pub(super) struct SceneUiState {
     pub(super) status_message_snapshot: Option<String>,
     pub(super) repair_report: crate::repair_report::RepairReportDialog,
     pub(super) viewport_secondary_gesture_moved_since_press: bool,
+    pub(super) viewport_context_menu: Option<(egui::Response, bool)>,
     pub(super) layers_window_layer_count: Option<usize>,
 }
 
