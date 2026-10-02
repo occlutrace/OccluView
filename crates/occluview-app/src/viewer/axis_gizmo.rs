@@ -252,12 +252,12 @@ pub(crate) fn axis_gizmo_footprint_for(
 
 fn axis_gizmo_center(viewport: egui::Rect, avoid: Option<egui::Rect>) -> egui::Pos2 {
     let half = AXIS_GIZMO_FOOTPRINT_PX * 0.5;
-    let x = (viewport.right() - AXIS_GIZMO_MARGIN_PX - half)
-        .max(viewport.left() + AXIS_GIZMO_MARGIN_PX + half);
-    let bottom_home = viewport.bottom() - AXIS_GIZMO_MARGIN_PX - half;
+    let inset_x = (AXIS_GIZMO_MARGIN_PX + half).min(viewport.width() * 0.5);
+    let inset_y = (AXIS_GIZMO_MARGIN_PX + half).min(viewport.height() * 0.5);
+    let x = viewport.right() - inset_x;
+    let bottom_home = viewport.bottom() - inset_y;
     let y = avoid.map_or(bottom_home, |panel| {
-        (panel.top() - AXIS_GIZMO_GAP_PX - half)
-            .clamp(viewport.top() + AXIS_GIZMO_MARGIN_PX + half, bottom_home)
+        (panel.top() - AXIS_GIZMO_GAP_PX - half).clamp(viewport.top() + inset_y, bottom_home)
     });
     egui::pos2(x, y)
 }
@@ -344,5 +344,15 @@ mod tests {
 
         assert_ne!(light.hub_fill, dark.hub_fill);
         assert_ne!(light.label, dark.label);
+    }
+
+    #[test]
+    fn axis_gizmo_stays_inside_a_short_viewport_with_a_section_panel() {
+        for size in [egui::vec2(800.0, 100.0), egui::vec2(80.0, 60.0)] {
+            let viewport = egui::Rect::from_min_size(egui::pos2(400.0, 30.0), size);
+            let panel = egui::Rect::from_min_size(viewport.min, egui::vec2(352.0, 389.0));
+            let center = axis_gizmo_center(viewport, Some(panel));
+            assert!(viewport.contains(center), "{center:?} outside {viewport:?}");
+        }
     }
 }

@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Resizing a short scene pane with the Section panel open no longer crashes the axis gizmo.
+
 - Malformed triangles are skipped safely when calculating surface normals.
 
 - Bridge Split rejects zero-area triangles before accepting an input or output as a closed mesh.
