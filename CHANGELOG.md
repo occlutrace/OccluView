@@ -46,6 +46,7 @@ remain in the Git history.
 
 ### Align
 
+- Typing a matching percentage now sets the intended ratio, including values with a percent sign or decimal comma.
 - Painting exclusion regions immediately cancels fits computed with the old markings.
 - Changing or removing alignment points cancels fits that used the previous points.
 - Deviation maps and statistics exclude distances that overflow storage and non-finite readings.
