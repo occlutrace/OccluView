@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Separate refuses invalid or overlapping component partitions before creating layers.
+
 - Refuse GLB scenes that merge incompatible primitive materials.
 
 - Use the OBJ face material atlas and refuse unsupported mixed face materials.

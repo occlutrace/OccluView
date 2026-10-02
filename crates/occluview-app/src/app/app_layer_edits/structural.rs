@@ -190,9 +190,15 @@ pub(super) fn split_selection_into_meshes(
     let mut bucket_of_triangle = vec![remainder_bucket; triangle_count];
     for (component_id, component) in components.iter().enumerate() {
         for &triangle in component {
-            if let Some(slot) = bucket_of_triangle.get_mut(triangle) {
-                *slot = component_id;
+            let slot = bucket_of_triangle.get_mut(triangle).ok_or_else(|| {
+                CoreError::Geometry(format!("component triangle {triangle} is out of range"))
+            })?;
+            if *slot != remainder_bucket {
+                return Err(CoreError::Geometry(format!(
+                    "triangle {triangle} belongs to multiple component entries"
+                )));
             }
+            *slot = component_id;
         }
     }
 
