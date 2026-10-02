@@ -113,13 +113,28 @@ impl AlignSettings {
         }
     }
 
+    /// Finite cool and hot display endpoints within the working range.
+    pub(crate) fn display_limits(self) -> (f64, f64) {
+        let scale_mm = if self.scale_mm.is_nan() {
+            WORKING_MAX_MM
+        } else {
+            self.scale_mm
+        }
+        .clamp(WORKING_SCALE_MIN_MM, WORKING_MAX_MM);
+        let min_mm = if self.min_display_mm.is_nan() {
+            WORKING_MIN_DISPLAY_MM
+        } else {
+            self.min_display_mm
+        }
+        .clamp(WORKING_SCALE_MIN_MM, scale_mm);
+        (min_mm, scale_mm)
+    }
+
     fn ramp(self) -> RampSettings {
+        let (min_mm, scale_mm) = self.display_limits();
         RampSettings {
-            min_mm: self.min_display_mm.clamp(
-                WORKING_SCALE_MIN_MM,
-                self.scale_mm.clamp(WORKING_SCALE_MIN_MM, WORKING_MAX_MM),
-            ),
-            scale_mm: self.scale_mm.clamp(WORKING_SCALE_MIN_MM, WORKING_MAX_MM),
+            min_mm,
+            scale_mm,
             tolerance_mm: self.tolerance_mm,
             // The operator-facing Align Meshes map is one continuous absolute
             // scale. The field exists only so stored settings load; a stored
