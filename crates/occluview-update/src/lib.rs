@@ -212,7 +212,7 @@ pub fn check_with(
     }
     let latest = parse_version(&manifest.version)?;
     let current = parse_version(current_version)?;
-    if latest <= current {
+    if !latest.cmp_precedence(&current).is_gt() {
         return Ok(None);
     }
     // A missing platform entry is not an error: the newer release is still

@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Update checks ignore build metadata when deciding whether a release is newer.
+
 - ASCII STL memory admission accounts for facets sharing a line.
 
 - OBJ imports resolve companion images relative to their material library while retaining folder confinement.

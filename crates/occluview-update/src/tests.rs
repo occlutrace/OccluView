@@ -349,6 +349,21 @@ fn check_still_offers_a_genuinely_newer_version() {
 }
 
 #[test]
+fn build_metadata_does_not_make_the_running_release_an_update() {
+    let (keypair, pubkey) = test_keypair();
+    let manifest = br#"{"version": "1.2.3+z", "platforms": {}}"#.to_vec();
+    let signature = sign(&keypair, &manifest).into_bytes();
+    let manifest_url = serve_once(manifest, "/latest.json");
+    let sig_url = serve_once(signature, "/latest.json.minisig");
+    let result = check_with(&manifest_url, &sig_url, &[pubkey.as_str()], "1.2.3+a")
+        .expect("signed manifest");
+    assert!(
+        result.is_none(),
+        "build metadata does not change release precedence"
+    );
+}
+
+#[test]
 fn download_refuses_an_artifact_url_that_is_not_a_plain_file_name() {
     let (keypair, pubkey) = test_keypair();
     let payload = b"fake installer bytes".to_vec();
