@@ -70,15 +70,17 @@ fn completion_for(worker: &ContactWorker, offset: u64, z_gap: f32) -> ContactCom
 
 /// Wait for one completion, without spinning a fixed sleep in the test body.
 fn wait_for_completion(worker: &ContactWorker, deadline: Duration) -> Option<ContactCompletion> {
-    let started = Instant::now();
-    while started.elapsed() < deadline {
+    let deadline = Instant::now() + deadline;
+    loop {
         let drained = worker.drain();
         if let Some(completion) = drained.into_iter().next() {
             return Some(completion);
         }
-        thread::sleep(Duration::from_millis(5));
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() || !worker.wait_for_output(remaining) || worker.has_failed() {
+            return None;
+        }
     }
-    None
 }
 
 /// The worker's core contract: a measurement comes back with a value per
@@ -238,11 +240,10 @@ fn a_busy_hold_is_released_when_the_job_body_panics() {
 fn a_panicking_worker_latches_a_failure_and_stops_looking_busy() {
     let worker = ContactWorker::spawn_panicking();
 
-    let mut waited = Duration::ZERO;
-    while !worker.has_failed() && waited < Duration::from_secs(10) {
-        thread::sleep(Duration::from_millis(5));
-        waited += Duration::from_millis(5);
-    }
+    assert!(
+        worker.wait_for_output(Duration::from_secs(10)),
+        "the panicking worker reports its terminal failure"
+    );
 
     assert!(
         worker.has_failed(),
@@ -268,6 +269,7 @@ fn a_generation_bump_discards_in_flight_work() {
     // The cancelled job must not publish: the completion list is cleared and the
     // worker's own flag stops the compute at its next checkpoint.
     let mut waited = Duration::ZERO;
+    // The elapsed window checks that cancellation suppresses late publication.
     while waited < Duration::from_millis(300) {
         assert!(
             worker.drain().is_empty(),
