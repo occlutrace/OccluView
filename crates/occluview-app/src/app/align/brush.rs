@@ -174,6 +174,12 @@ impl SceneContext<'_> {
             // with Both checked the other side usually was.
             return true;
         }
+        let reason = self
+            .ui
+            .locale
+            .tr(crate::i18n::message_id!("align-status-markings-changed"));
+        self.forget_align_fit(&reason);
+        self.tools.align.status = Some(reason);
         for (layer_id, side) in painted {
             self.patch_region_preview(layer_id, side);
         }
@@ -704,6 +710,85 @@ mod tests {
                     .as_str()
             )
         );
+    }
+
+    #[test]
+    fn painting_markings_rejects_an_old_fit_before_pointer_release() {
+        use crate::align::align_worker::AlignOutcome;
+        use crate::app::app_test_support::{named_scene, push_named_layer, test_app};
+        use glam::{Affine3A, DQuat, DVec3};
+        use occluview_align::Rigid;
+
+        let mut app = test_app("align-paint-obsolete-fit");
+        let mut scene = named_scene("moving", 0.0);
+        let moving = scene.meshes()[0].id();
+        let fixed = push_named_layer(&mut scene, "fixed", 5.0);
+        let camera = crate::viewer::home_camera_for_scene(&scene);
+        app.workspace.scenes[0].document.scene = Some(scene.into());
+        app.workspace.scenes[0].render.camera = Some(camera);
+        let ctx = app.ui.repaint_ctx.clone();
+        let mut scene = app.active_context().expect("live scene");
+        scene.tools.align.tool.arm();
+        scene.tools.align.tool.imply_pair(&[moving, fixed]);
+        scene.tools.align.brush.set_armed(true);
+        let generation = scene.align_worker_mut().generation();
+        drop(scene);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let (pointer, _) =
+            crate::viewer::project_world_to_viewport(&camera, screen, Vec3::new(0.25, 0.25, 0.0))
+                .expect("surface projects into viewport");
+        for events in [
+            vec![],
+            vec![
+                egui::Event::PointerMoved(pointer),
+                egui::Event::PointerButton {
+                    pos: pointer,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        ] {
+            ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let response = ui.interact(
+                        screen,
+                        egui::Id::new("paint-viewport"),
+                        egui::Sense::click_and_drag(),
+                    );
+                    let mut scene = app.active_context().expect("live scene");
+                    assert!(scene.input_allowed, "the brush has focused viewport input");
+                    scene.handle_align_brush(&response, ui.ctx());
+                },
+            )
+            .drop_without_applying_deltas();
+        }
+        let mut scene = app.active_context().expect("live scene");
+        assert!(ctx.input(|input| input.pointer.primary_down()));
+        assert!(
+            scene.tools.align.markings.any(),
+            "the held brush must paint a region"
+        );
+        scene.align_worker_mut().publish_for_tests(
+            generation,
+            AlignOutcome::Aligned {
+                pose: Rigid::new(DQuat::IDENTITY, DVec3::X),
+                rejected: vec![],
+            },
+        );
+        scene.drain_align_worker(&ctx);
+        assert_eq!(
+            scene.document.scene.as_ref().expect("scene").meshes()[0].transform,
+            Affine3A::IDENTITY,
+            "the fit with the old mask cannot move the scan while painting"
+        );
+        assert_eq!(scene.document.edit_mode.undo_len(), 0);
+        assert!(scene.tools.align.markings.any());
     }
 
     /// Every whole-mesh command has a one-scan report. The report keys are
