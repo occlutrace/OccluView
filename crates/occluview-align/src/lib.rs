@@ -1,12 +1,9 @@
 //! Scan-to-scan registration and deviation metrology for dental meshes.
 //!
-//! The pipeline has three stages:
-//! 1. Align clicked surface point pairs with a rigid fit.
-//! 2. Refine the pose with trimmed point-to-plane ICP. Unless the start is
-//!    already seated, refinement first tries a global feature seed, then
-//!    decides the pose with a rival-basin pass and a trust gate that can
-//!    refuse it — all three decide the result.
-//! 3. Produce signed deviations along the fixed surface normal.
+//! Search returns finite pose corrections and explicit missing evidence for
+//! operator review through [`search_alignment`]. A result never authorizes a
+//! scene edit. Pair fitting and legacy ICP remain numerical seed/refinement
+//! primitives; their refusals become explanations at the search boundary.
 //!
 //! # What the deviation number means
 //!
@@ -31,12 +28,12 @@
 //! unmeasured counts. The distance alone is a lower bound.
 //!
 //! The alignment kernels depend only on product-neutral surface queries and
-//! numeric libraries: plain slices in, plain values out. They never allocate
-//! unboundedly, never panic on hostile input, and are deterministic —
-//! deterministically seeded RNG, fixed iteration counts, ordered reductions —
-//! so the same input yields bit-identical output across runs and thread counts.
-//! The feature seed is the stage whose cost is not bounded by sample count: it
-//! runs a fixed RANSAC trial budget over its own seeded draws.
+//! numeric libraries: plain slices in, plain values out. Fixed random seeds,
+//! iteration ceilings and ordered reductions make completed numeric work
+//! reproducible. Cancellation and wall deadlines can return different finite
+//! prefixes under different loads. The review boundary records unfinished
+//! evidence; legacy indexing and nearest queries still need controlled work
+//! accounting before their cancellation latency can be guaranteed.
 //!
 //! Units are millimetres. Every transform is rigid: dental scans are metric,
 //! so a scale difference is *detected and reported*, never fitted away.
@@ -56,16 +53,22 @@ mod pairs;
 mod pairs_tests;
 mod rigid;
 mod sample;
+mod search_control;
+mod search_result;
+mod search_transition;
 
 pub use deviation::{
     deviation, deviation_colors, deviation_stats, ramp_color, suggested_scale_mm, DeviationMap,
     DeviationSettings, DeviationStats, DeviationSummary, RampMode, RampSettings, Unmeasured,
     Validity, MIN_MEASURED, NO_DATA_COLOR,
 };
-pub use icp::{refine, IcpReport, Orientation, RefineSettings};
+pub use icp::{refine, search_alignment, IcpReport, Orientation, RefineSettings};
 pub use mask::{apply_brush, invert, set_all, MaskEdit, EXCLUDED, INCLUDED};
 pub use observability::{observability, Observability};
 pub use occluview_geometry::surface::{CancelFlag, Soup, SurfaceHit, SurfaceIndex};
 pub use pairs::{fit_pairs, FitBounds, FitRejection, PairFit};
 pub use rigid::Rigid;
 pub use sample::bounds_of;
+
+pub use search_control::SearchControl;
+pub use search_result::*;

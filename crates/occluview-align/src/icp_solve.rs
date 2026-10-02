@@ -28,12 +28,18 @@ pub(super) struct Correspondence {
 }
 
 /// Run one resolution level to convergence or to its iteration ceiling.
+pub(super) fn run_level(level: &Level<'_>) -> Result<LevelOutcome, FitRejection> {
+    run_level_checkpointed(level, &mut |_, _, _| {})
+}
+
 #[expect(
     clippy::too_many_lines,
-    reason = "one iteration loop whose branches are the documented stop and trial rules; \
-              splitting it hides the frame in which `summary` and `pose` must stay paired"
+    reason = "one ordered legacy iteration with paired pose diagnostics"
 )]
-pub(super) fn run_level(level: &Level<'_>) -> Result<LevelOutcome, FitRejection> {
+pub(super) fn run_level_checkpointed(
+    level: &Level<'_>,
+    checkpoint: &mut dyn FnMut(Rigid, Summary, u32),
+) -> Result<LevelOutcome, FitRejection> {
     let mut pose = level.start;
     let mut iterations = 0u32;
     let mut converged = false;
@@ -85,6 +91,7 @@ pub(super) fn run_level(level: &Level<'_>) -> Result<LevelOutcome, FitRejection>
         measured.support_coverage =
             common_support_coverage(level, measured.coverage, measured_reciprocal);
         summary = Some(measured);
+        checkpoint(pose, measured, iterations);
         // The correspondences describe `pose` at the start of the iteration,
         // not the candidate the step below produces. Keep the summary paired.
         let seats_more = measured.seated_fraction > best_seated + COARSE_TIE_SEATED;
@@ -151,6 +158,7 @@ pub(super) fn run_level(level: &Level<'_>) -> Result<LevelOutcome, FitRejection>
             best = Some((next_pose, next_summary));
         }
         iterations += 1;
+        checkpoint(pose, next_summary, iterations);
         if rotation.length() < CONVERGED_ROTATION && translation.length() < CONVERGED_TRANSLATION {
             converged = true;
             break;
