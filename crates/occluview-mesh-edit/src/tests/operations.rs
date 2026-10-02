@@ -2,6 +2,19 @@ use super::*;
 use crate::normals::smooth_duplicate_position_normals_for_tests;
 
 #[test]
+fn nonfinite_section_vertices_contract_regression() {
+    let plane = SectionPlane::new(glam::Vec3::X, 0.0).unwrap();
+    for invalid in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        let pos = [[-1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [invalid, -1.0, 0.0]];
+        let result = plane_section(&pos, &[0, 1, 2], plane);
+        assert!(
+            result.polylines.is_empty(),
+            "invalid triangle must be skipped"
+        );
+    }
+}
+
+#[test]
 fn point_cloud_face_edit_validation_is_typed() {
     let err = validate_face_edit_buffers(MeshTopology::PointCloud, &[v([0.0, 0.0, 0.0])], &[])
         .expect_err("point clouds are rejected");
