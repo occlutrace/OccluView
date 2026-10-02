@@ -716,8 +716,16 @@ mod viewport_ownership_tests {
                     .poll_sculpt_worker(ctx);
                 break;
             }
-            assert!(Instant::now() < deadline, "worker finishes the ray path");
-            std::thread::sleep(Duration::from_millis(1));
+            let worker = app.workspace.scenes[0]
+                .tools
+                .sculpt
+                .worker
+                .as_ref()
+                .expect("sculpt worker");
+            assert!(
+                worker.wait_until_idle(deadline.saturating_duration_since(Instant::now())),
+                "worker finishes the ray path"
+            );
         }
     }
 
