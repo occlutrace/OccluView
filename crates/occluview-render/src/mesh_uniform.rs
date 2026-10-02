@@ -180,6 +180,7 @@ impl GpuMeshUniform {
     ) -> usize {
         let copied = stops.len().min(CONTACT_STOP_CAPACITY);
         if copied == 0 || field_width == 0 {
+            self.clear_contact_paint();
             return 0;
         }
         for (slot, stop) in self.contact_stops.iter_mut().enumerate() {
@@ -494,6 +495,18 @@ mod tests {
             0
         );
         assert_eq!(u.contact_map, 0);
+    }
+
+    #[test]
+    fn an_invalid_contact_update_clears_previous_paint() {
+        let stops = [[0.0, 1.0, 0.0, 0.0]];
+        for (width, ramp) in [(64, &[][..]), (0, &stops[..])] {
+            let mut uniform = GpuMeshUniform::identity();
+            assert_eq!(uniform.set_contact_paint(64, 0.01, 0.01, &stops), 1);
+            assert_eq!(uniform.contact_map, 1);
+            assert_eq!(uniform.set_contact_paint(width, 0.01, 0.01, ramp), 0);
+            assert_eq!(uniform.contact_map, 0);
+        }
     }
 
     /// A NaN would propagate through the shader's `clamp`/`mix` and paint the

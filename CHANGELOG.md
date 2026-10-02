@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Invalid contact-field updates clear previous contact paint instead of displaying a stale measurement.
+
 - Cut View and Bridge Split preserve the disc and section framing when wheel input is non-finite.
 
 - Closing the viewer preserves a sculpt brush change made on the closing frame.
