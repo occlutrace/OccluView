@@ -45,15 +45,30 @@ impl ScaleBar {
     ) -> String {
         match unit {
             crate::app_settings::UnitDisplay::Millimeters => {
-                let mm = number_format.decimal(f64::from(self.length_mm), 0);
+                let length = f64::from(self.length_mm);
+                let mm = number_format.decimal(length, length_precision(length, 0));
                 format!("{mm} mm")
             }
             crate::app_settings::UnitDisplay::Inches => {
-                let inches = number_format.decimal(f64::from(self.length_mm) / 25.4, 2);
+                let length = f64::from(self.length_mm) / 25.4;
+                let inches = number_format.decimal(length, length_precision(length, 2));
                 format!("{inches} in")
             }
         }
     }
+}
+
+fn length_precision(length: f64, minimum: usize) -> usize {
+    let mut digits = minimum;
+    let mut scaled = length.abs();
+    for _ in 0..minimum {
+        scaled *= 10.0;
+    }
+    while scaled.is_finite() && scaled > 0.0 && scaled < 1.0 {
+        digits += 1;
+        scaled *= 10.0;
+    }
+    digits
 }
 
 fn nice_length_mm(target_mm: f32) -> f32 {
@@ -138,6 +153,28 @@ mod tests {
             ),
             "1 mm"
         );
+    }
+
+    #[test]
+    fn zoomed_scale_bar_keeps_nonzero_lengths_in_both_units_and_locales() {
+        let bar = ScaleBar::for_mm_per_px(0.5 / 512.0).expect("close view");
+        assert_eq!(bar.length_mm, 0.1);
+        for (tag, mm, inches) in [("en", "0.1 mm", "0.004 in"), ("de", "0,1 mm", "0,004 in")] {
+            assert_eq!(
+                bar.label(
+                    crate::app_settings::UnitDisplay::Millimeters,
+                    NumberFormat::for_tag(tag)
+                ),
+                mm
+            );
+            assert_eq!(
+                bar.label(
+                    crate::app_settings::UnitDisplay::Inches,
+                    NumberFormat::for_tag(tag)
+                ),
+                inches
+            );
+        }
     }
 
     #[test]

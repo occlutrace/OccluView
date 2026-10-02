@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Scale bars retain nonzero millimeter and inch labels when zoomed in.
+
 - Closing the Bridge Split Section window cancels the separator and preserves the scene.
 
 - Bridge Split discards previews after position edits, including sculpt changes that preserve mesh topology.
