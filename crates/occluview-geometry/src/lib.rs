@@ -4,7 +4,7 @@
 //! higher-level OccluView crates may depend on it without creating cycles. The
 //! constants here decide which vertices weld and which facets shade. They are
 //! defined once and shared by `occluview-mesh-edit`, `occluview-core` and
-//! `occluview-hps`, so the three crates cannot diverge on those thresholds.
+//! `occluview-formats`, so the three crates cannot diverge on those thresholds.
 
 #![forbid(unsafe_code)]
 #![cfg_attr(test, allow(clippy::expect_used, clippy::panic, clippy::unwrap_used))]

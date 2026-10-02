@@ -279,9 +279,9 @@ jobs:
       - name: cargo test (shipped feature set)
         # Compile the feature set used by release artifacts without a private key.
         run: |
-          cargo clippy -p occluview-hps -p occluview-formats \
+          cargo clippy -p occluview-formats \
             --all-features --all-targets --locked -- -D warnings
-          cargo test -p occluview-hps -p occluview-formats --all-features --locked
+          cargo test -p occluview-formats --all-features --locked
       - name: cargo check and test (occluview-sculpt without default features)
         # `parallel` is the crate default, so the single-threaded fairing and
         # remesh paths only compile without it; this lane is what keeps a

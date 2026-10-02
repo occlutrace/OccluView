@@ -9,7 +9,7 @@ use occluview_geometry::{
 /// 10 um sliver.
 ///
 /// Owned by `occluview-geometry` so this crate, `occluview-core` and
-/// `occluview-hps` apply one threshold on every load path.
+/// `occluview-formats` apply one threshold on every load path.
 pub use occluview_geometry::DEGENERATE_AREA_SIN;
 use std::collections::HashMap;
 

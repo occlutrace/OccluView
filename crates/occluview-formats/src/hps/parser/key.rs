@@ -1,4 +1,4 @@
-use crate::error::HpsError;
+use super::error::HpsError;
 use std::env;
 use std::fmt;
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
@@ -63,7 +63,7 @@ impl fmt::Debug for HpsSecretKey {
 
 /// Supplies the base HPS key for encrypted `CE` files.
 pub trait HpsKeyProvider: Sync {
-    /// Provider-specific error returned unchanged by [`crate::ReadError`].
+    /// Provider-specific error returned unchanged by [`super::ReadError`].
     type Error;
 
     /// Return the base secret key, or `None` when this build/user has no key.

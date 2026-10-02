@@ -2709,17 +2709,22 @@ dependencies = [
 name = "occluview-formats"
 version = "1.2.1"
 dependencies = [
+ "adler2",
+ "blowfish",
  "glam",
  "image",
+ "md-5",
  "occluview-core",
- "occluview-hps",
+ "occluview-geometry",
  "proptest",
  "rayon",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+ "tracing",
  "windows",
+ "zeroize",
  "zip",
 ]
 
@@ -2728,22 +2733,6 @@ name = "occluview-geometry"
 version = "1.2.1"
 dependencies = [
  "glam",
-]
-
-[[package]]
-name = "occluview-hps"
-version = "1.2.1"
-dependencies = [
- "adler2",
- "blowfish",
- "glam",
- "image",
- "md-5",
- "occluview-geometry",
- "thiserror 2.0.21",
- "tracing",
- "zeroize",
- "zip",
 ]
 
 [[package]]

@@ -1,4 +1,4 @@
-use crate::{HpsError, ReadError};
+use super::{HpsError, ReadError};
 use blowfish::cipher::{Block, BlockCipherDecrypt, KeyInit};
 use blowfish::Blowfish;
 use md5::{Digest, Md5};
@@ -139,7 +139,7 @@ mod tests {
     #![allow(clippy::expect_used)]
 
     use super::*;
-    use crate::key::{HpsSecretKey, NoHpsKeyProvider};
+    use super::super::key::{HpsSecretKey, NoHpsKeyProvider};
 
     struct StaticProvider(Vec<u8>);
 

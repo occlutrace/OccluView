@@ -10,7 +10,7 @@ use occluview_formats::{
     },
     FormatError,
 };
-use occluview_hps::DecodedSurface;
+use occluview_formats::hps::parser::DecodedSurface;
 
 struct ExternalProvider;
 

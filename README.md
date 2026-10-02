@@ -306,12 +306,11 @@ workspace.
 | `occluview-repo-contracts` | Repository contract tests: CI workflows, packaging reports and the release version. | 0 |
 | `occluview-update` | Signed update-manifest checks; the only crate carrying HTTP and signature verification. | 0 |
 | `occluview-sculpt` | Surface sculpting kernel with its own `parallel` feature. | 1 |
-| `occluview-hps` | HPS parser; isolates the archive, cipher and image dependencies. | 1 |
 | `occluview-core` | Pure data model: math, units, mesh, scene and camera, with no I/O, GPU or platform code. | 1 |
 | `occluview-mesh-edit` | Product-neutral mesh-editing kernel plus the adapter to core meshes; the `robust` module owns the optional native CSG fallback (feature `robust-csg`). | 2 |
 | `occluview-align` | Scan registration and signed deviation metrology. | 2 |
 | `occluview-contact` | Occlusal contact metrology and the clinical colour law. | 2 |
-| `occluview-formats` | Import and export readers and writers for the supported scan formats. | 3 |
+| `occluview-formats` | Import and export readers and writers for the supported scan formats; the `hps` module owns the HPS parser (feature `private-hps-key`). | 3 |
 | `occluview-render` | wgpu renderer for the live viewer and the offscreen thumbnail path. | 3 |
 | `occluview-thumbnail` | Platform-neutral thumbnail loading, rendering and fallback. | 4 |
 | `occluview-shell` | Windows COM shell extension: Explorer thumbnails and the preview pane. | 5 |
