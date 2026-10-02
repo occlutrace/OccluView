@@ -35,12 +35,16 @@ pub struct StrokeRecord {
 
 impl SculptSession {
     /// Open a session over a welded triangle mesh in millimetres.
+    ///
+    /// # Errors
+    /// Returns [`crate::SculptInputError`] for malformed mesh buffers before
+    /// constructing adjacency, spatial indices, or mutable session state.
     // session construction initialises every buffer in one place.
     #[allow(clippy::too_many_lines)]
-    pub fn new(verts: Vec<f32>, tris: Vec<u32>) -> SculptSession {
+    pub fn new(verts: Vec<f32>, tris: Vec<u32>) -> Result<SculptSession, crate::SculptInputError> {
         let nv = verts.len() / 3;
         let triangle_count = tris.len() / 3;
-        let topology = SurfaceTopology::new(&verts, &tris);
+        let topology = SurfaceTopology::new(&verts, &tris)?;
         let rays = TriBuckets::build(&verts, &tris, 2.0);
         let reference_verts = verts.clone();
         let opening_verts = verts.clone();
@@ -170,7 +174,7 @@ impl SculptSession {
         s.step_budget = s.compute_step_budget();
         s.group_area = s.compute_all_group_areas();
         s.reserve_session_growth();
-        s
+        Ok(s)
     }
 
     /// Reserve the growth one session is admitted, before the first stroke.
@@ -766,5 +770,61 @@ impl Iterator for GroupPositions<'_> {
             self.verts[vertex + 1] as f64,
             self.verts[vertex + 2] as f64,
         ))
+    }
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::*;
+
+    #[test]
+    fn session_construction_refuses_invalid_corners_without_panicking() {
+        let outcome =
+            std::panic::catch_unwind(|| SculptSession::new(vec![0.0, 0.0, 0.0], vec![0, 1, 2]));
+        assert!(
+            outcome.is_ok(),
+            "invalid triangle corners must return an error"
+        );
+        assert!(matches!(
+            outcome,
+            Ok(Err(crate::SculptInputError::InvalidTriangleIndex))
+        ));
+    }
+
+    #[test]
+    fn session_construction_checks_complete_finite_mesh_buffers() {
+        use crate::SculptInputError;
+        let triangle = vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
+        for (positions, corners, expected) in [
+            (vec![0.0], vec![], SculptInputError::IncompletePositions),
+            (
+                triangle.clone(),
+                vec![0, 1],
+                SculptInputError::IncompleteTriangles,
+            ),
+            (
+                vec![f32::NAN, 0.0, 0.0],
+                vec![],
+                SculptInputError::NonFinitePositions,
+            ),
+            (
+                vec![f32::INFINITY, 0.0, 0.0],
+                vec![],
+                SculptInputError::NonFinitePositions,
+            ),
+            (
+                triangle.clone(),
+                vec![0, 1, u32::MAX],
+                SculptInputError::InvalidTriangleIndex,
+            ),
+        ] {
+            assert_eq!(
+                SurfaceTopology::new(&positions, &corners).err(),
+                Some(expected)
+            );
+            assert_eq!(SculptSession::new(positions, corners).err(), Some(expected));
+        }
+        assert!(SculptSession::new(vec![], vec![]).is_ok());
+        assert!(SculptSession::new(triangle, vec![0, 1, 2]).is_ok());
     }
 }

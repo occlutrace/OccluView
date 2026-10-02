@@ -730,7 +730,7 @@ mod tests {
     #[test]
     fn empty_surface_rays_return_no_hit_without_overflow() {
         for verts in [Vec::new(), vec![0.0, 0.0, 0.0]] {
-            let mut session = SculptSession::new(verts, Vec::new());
+            let mut session = SculptSession::new(verts, Vec::new()).expect("valid mesh fixture");
             for direction in [DVec3::X, DVec3::Z, DVec3::ONE] {
                 assert!(session.raycast(DVec3::ZERO, direction).is_none());
             }

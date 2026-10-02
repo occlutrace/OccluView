@@ -11,6 +11,35 @@
 
 use crate::hash::FxHashMap;
 
+/// Invalid caller-owned mesh buffers refused before constructing a surface.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SculptInputError {
+    /// Positions do not contain complete xyz triples.
+    IncompletePositions,
+    /// Triangle indices do not contain complete corner triples.
+    IncompleteTriangles,
+    /// At least one position is NaN or infinite.
+    NonFinitePositions,
+    /// A triangle corner addresses a vertex outside the supplied buffer.
+    InvalidTriangleIndex,
+    /// Vertex ids or adjacency offsets cannot be represented by the kernel.
+    IndexCapacityExceeded,
+}
+
+impl std::fmt::Display for SculptInputError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::IncompletePositions => "sculpt positions must contain complete xyz triples",
+            Self::IncompleteTriangles => "sculpt indices must contain complete triangles",
+            Self::NonFinitePositions => "sculpt positions must be finite",
+            Self::InvalidTriangleIndex => "sculpt triangle addresses an unavailable vertex",
+            Self::IndexCapacityExceeded => "sculpt mesh exceeds the supported index capacity",
+        })
+    }
+}
+
+impl std::error::Error for SculptInputError {}
+
 pub(crate) fn position_key(point: [f32; 3]) -> (u32, u32, u32) {
     let bits = point.map(|coordinate| {
         if coordinate == 0.0 {
@@ -82,10 +111,35 @@ impl std::ops::Deref for EdgeFaces {
 
 impl SurfaceTopology {
     /// Weld `tris` over `verts` into groups and build adjacency.
+    ///
+    /// # Errors
+    /// Refuses incomplete triples, non-finite positions, unavailable corners,
+    /// or buffers whose vertex ids or adjacency offsets exceed u32 capacity.
     // welding and adjacency construction are one pass over the faces.
     #[allow(clippy::too_many_lines)]
-    pub fn new(verts: &[f32], tris: &[u32]) -> SurfaceTopology {
+    pub fn new(verts: &[f32], tris: &[u32]) -> Result<SurfaceTopology, SculptInputError> {
+        if !verts.len().is_multiple_of(3) {
+            return Err(SculptInputError::IncompletePositions);
+        }
+        if !tris.len().is_multiple_of(3) {
+            return Err(SculptInputError::IncompleteTriangles);
+        }
+        if verts.iter().any(|coordinate| !coordinate.is_finite()) {
+            return Err(SculptInputError::NonFinitePositions);
+        }
         let vertex_count = verts.len() / 3;
+        if u32::try_from(vertex_count).is_err()
+            || tris
+                .len()
+                .checked_mul(2)
+                .and_then(|count| u32::try_from(count).ok())
+                .is_none()
+        {
+            return Err(SculptInputError::IndexCapacityExceeded);
+        }
+        if tris.iter().any(|&corner| corner as usize >= vertex_count) {
+            return Err(SculptInputError::InvalidTriangleIndex);
+        }
         // One entry per vertex makes the hasher the loop here, and a fixed
         // hash also keeps group ids identical between runs instead of merely
         // deterministic per seed.
@@ -195,7 +249,7 @@ impl SurfaceTopology {
                 triangle_cursor[group as usize] += 1;
             }
         }
-        SurfaceTopology {
+        Ok(SurfaceTopology {
             vertex_group,
             member_off,
             members,
@@ -208,7 +262,7 @@ impl SurfaceTopology {
             added_members: Vec::new(),
             neighbor_overlay: FxHashMap::default(),
             incident_overlay: FxHashMap::default(),
-        }
+        })
     }
 
     /// Number of welded groups, base plus appended.
@@ -508,7 +562,8 @@ mod tests {
             -0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, -0.0, 0.0, 0.0, 1.0, -0.0, -1.0,
             0.0, 0.0,
         ];
-        let topology = SurfaceTopology::new(&verts, &[0, 1, 2, 3, 4, 5]);
+        let topology =
+            SurfaceTopology::new(&verts, &[0, 1, 2, 3, 4, 5]).expect("valid mesh fixture");
         assert_eq!(topology.group_count(), 4);
         assert_eq!(topology.group_of(0), topology.group_of(3));
         assert_eq!(topology.group_of(2), topology.group_of(4));

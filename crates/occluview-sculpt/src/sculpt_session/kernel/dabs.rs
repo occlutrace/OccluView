@@ -485,7 +485,8 @@ mod tests {
         let mut session = SculptSession::new(
             vec![-2.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0],
             vec![0, 1, 2],
-        );
+        )
+        .expect("valid mesh fixture");
         session.set_preserve_skirt(true);
         let mut weighted = vec![(0, 1.0), (1, 1.0)];
         session.extend_preserve_skirt(&mut weighted, 4.0);
