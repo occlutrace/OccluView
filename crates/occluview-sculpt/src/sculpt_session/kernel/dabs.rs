@@ -96,6 +96,11 @@ impl SculptSession {
             BinaryHeap::with_capacity(weighted.len() * 2);
         let mut best: FxHashMap<u32, (f64, f64)> = FxHashMap::default();
         best.reserve(weighted.len() * 2);
+        let mut slots: FxHashMap<u32, usize> = weighted
+            .iter()
+            .enumerate()
+            .map(|(slot, &(group, _))| (group, slot))
+            .collect();
         for &(group, weight) in weighted.iter() {
             // Every seed is settled at distance zero before the walk, finite
             // or not: a non-finite seed pushes nothing but still bars the
@@ -152,7 +157,12 @@ impl SculptSession {
                 }
                 let sheet = self.sheet_share(neighbor);
                 if sheet > 0.0 {
-                    weighted.push((neighbor, share * sheet));
+                    if let Some(&slot) = slots.get(&neighbor) {
+                        weighted[slot].1 = share * sheet;
+                    } else {
+                        slots.insert(neighbor, weighted.len());
+                        weighted.push((neighbor, share * sheet));
+                    }
                 }
                 best.insert(neighbor, (ndist, share));
                 frontier.push(std::cmp::Reverse(SkirtFrontier {
@@ -463,5 +473,26 @@ impl SculptSession {
         }
         self.proposals = proposals;
         self.weights = weighted;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preserve_skirt_keeps_one_weight_for_a_shorter_rediscovered_path() {
+        let mut session = SculptSession::new(
+            vec![-2.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0],
+            vec![0, 1, 2],
+        );
+        session.set_preserve_skirt(true);
+        let mut weighted = vec![(0, 1.0), (1, 1.0)];
+        session.extend_preserve_skirt(&mut weighted, 4.0);
+        assert_eq!(weighted.len(), 3, "a group must receive exactly one weight");
+        assert_eq!(weighted[0], (0, 1.0));
+        assert_eq!(weighted[1], (1, 1.0));
+        assert_eq!(weighted[2].0, 2);
+        assert!((weighted[2].1 - 20.0 / 27.0).abs() < 1e-12);
     }
 }
