@@ -101,7 +101,7 @@ fn unique_request_file_name() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     /// The disk poller must stop once its listener is gone, even when no
     /// request was ever delivered. `send` only reports a dead receiver when
@@ -127,14 +127,13 @@ mod tests {
         drop(receiver);
         drop(listener_alive);
 
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while !poller.is_finished() && Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(10));
-        }
+        let (exited_tx, exited_rx) = mpsc::channel();
+        let _joiner = thread::spawn(move || {
+            let _ = exited_tx.send(poller.join());
+        });
         assert!(
-            poller.is_finished(),
+            matches!(exited_rx.recv_timeout(Duration::from_secs(5)), Ok(Ok(()))),
             "disk fallback poller did not exit within 5 s of its listener being dropped"
         );
-        assert!(poller.join().is_ok(), "disk fallback poller panicked");
     }
 }
