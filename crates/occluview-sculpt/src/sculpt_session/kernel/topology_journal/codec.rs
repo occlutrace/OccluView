@@ -214,6 +214,9 @@ impl TopoJournal {
     // fail-closed decoding walks the wire layout in one pass.
     #[allow(clippy::too_many_lines)]
     pub fn decode(words: &[u32], floats: &[f32]) -> Option<TopoJournal> {
+        if floats.iter().any(|value| !value.is_finite()) {
+            return None;
+        }
         if words.is_empty() && floats.is_empty() {
             return Some(TopoJournal::default());
         }
@@ -373,6 +376,42 @@ impl TopoJournal {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decoded_vertex_payload_refuses_non_finite_geometry() {
+        let mut journal = TopoJournal {
+            base_verts: 3,
+            base_tris: 1,
+            base_groups: 3,
+            base_live_tris: 1,
+            live_tris: 1,
+            ..TopoJournal::default()
+        };
+        journal.push_added_vert(TopoAddedVert {
+            vertex: 3,
+            group: 3,
+            component: 0,
+            pos: [0.5, 0.0, 0.0],
+            nrm: [0.0, 0.0, 1.0],
+            ref_nrm: [0.0, 0.0, 1.0],
+            reference: [0.5, 0.0, 0.0],
+            budget: 1.0,
+            area: 1.0,
+        });
+        let words = journal.encode_u32();
+        let valid = journal.encode_f32();
+        assert!(TopoJournal::decode(&words, &valid).is_some());
+        for field in 0..15 {
+            for invalid in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+                let mut floats = valid.clone();
+                floats[field] = invalid;
+                assert!(
+                    TopoJournal::decode(&words, &floats).is_none(),
+                    "non-finite vertex field {field} must refuse the journal",
+                );
+            }
+        }
+    }
 
     #[test]
     fn decoded_collapse_refuses_a_removed_slot_past_the_tail() {
