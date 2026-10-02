@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Hole-cap fairing uses the full outside support count for large vertex fans.
+
 - Sections preserve closed contours for finite transformed meshes with local plane offsets beyond the f32 range.
 
 - Separate refuses invalid or overlapping component partitions before creating layers.

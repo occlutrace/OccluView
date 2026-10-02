@@ -8,10 +8,16 @@ use glam::Vec3;
 
 /// A vertex count as `f32`.
 ///
-/// The counts are fan and rim sizes, which never approach `u16::MAX`; the
-/// saturation guards a pathological input rather than a reachable one.
+/// Outside support fans are not bounded by the cap's rim-size limit. Convert
+/// every byte of the count so large fans use their full valence in averages.
 pub(crate) fn count_as_f32(count: usize) -> f32 {
-    f32::from(u16::try_from(count).unwrap_or(u16::MAX))
+    count
+        .to_le_bytes()
+        .iter()
+        .rev()
+        .fold(0.0_f32, |value, &byte| {
+            value.mul_add(256.0, f32::from(byte))
+        })
 }
 
 /// Right-handed orthonormal tangent basis for a unit `normal`.
