@@ -40,17 +40,22 @@ pub(super) fn fast_obj_thumbnail_mesh(bytes: &[u8]) -> Result<Mesh, FormatError>
     let (min, max) = obj_robust_bounds(&source_vertices);
     let mut cluster = SurfaceGridCluster::new("OBJ", min, max, FAST_CLUSTER_GRID);
     let mut seen_faces = 0usize;
+    let mut seen_vertices = 0usize;
 
     for line in text.lines() {
         let Some((tag, mut tokens)) = obj_line_tokens(line) else {
             continue;
         };
+        if tag == "v" {
+            seen_vertices += 1;
+            continue;
+        }
         if tag != "f" {
             continue;
         }
 
         let indices =
-            obj_face_indices(&mut tokens, source_vertices.len()).ok_or(FormatError::Malformed {
+            obj_face_indices(&mut tokens, seen_vertices).ok_or(FormatError::Malformed {
                 format: "OBJ",
                 offset: seen_faces,
                 reason: "malformed face line".to_string(),
