@@ -267,7 +267,7 @@ fn read_with(
         }
     }
 
-    uvs.apply(&mut builder);
+    uvs.apply(&mut builder)?;
 
     shading.build(builder).map_err(FormatError::Core)
 }
