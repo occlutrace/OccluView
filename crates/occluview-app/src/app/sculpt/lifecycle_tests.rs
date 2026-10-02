@@ -472,6 +472,10 @@ fn topology_deltas_flush_before_sparse_writes_and_commit_at_finish() {
         !worker.has_pending_sparse_update(),
         "the frame must also have drained the sparse update"
     );
+    assert!(
+        !worker.has_uncommitted_geometry(),
+        "the latest completed stroke no longer needs a live preview"
+    );
 }
 
 #[test]
@@ -1099,6 +1103,16 @@ fn a_finished_stroke_commits_before_a_later_live_topology_delta() {
         "the committed mesh and worker agree while the second stroke stays open"
     );
     assert_eq!(sculpt_shadow_len(&app), after_second);
+    assert!(
+        app.workspace.scenes[0]
+            .tools
+            .sculpt
+            .worker
+            .as_ref()
+            .expect("worker")
+            .has_uncommitted_geometry(),
+        "rebuilding the viewport must restore the second stroke's live geometry"
+    );
 }
 
 /// Multiple finished strokes commit in sequence while the latest open stroke
@@ -1169,6 +1183,16 @@ fn multiple_completions_commit_before_the_latest_live_delta() {
     );
     assert!(app.workspace.scenes[0].document.has_unsaved_mesh_edits());
     assert_eq!(sculpt_shadow_len(&app), final_len);
+    assert!(
+        app.workspace.scenes[0]
+            .tools
+            .sculpt
+            .worker
+            .as_ref()
+            .expect("worker")
+            .has_uncommitted_geometry(),
+        "older completions must not clear the third stroke's live preview"
+    );
 }
 
 #[test]

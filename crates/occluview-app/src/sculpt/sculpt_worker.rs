@@ -832,6 +832,8 @@ pub(crate) struct SculptCompletion {
     pub(crate) before: Arc<Mesh>,
     /// Mesh state after this stroke, ready for scene commit.
     pub(crate) mesh: Arc<Mesh>,
+    /// Display revision sealed by this stroke; later dabs still need restoration.
+    pub(crate) geometry_revision: u64,
 }
 
 /// Sparse live update accumulated by the worker between UI frames.
@@ -1046,8 +1048,15 @@ impl SculptWorker {
         self.state.geometry_dirty.load(Ordering::Acquire)
     }
 
-    pub(crate) fn mark_geometry_committed(&self) {
-        self.state.geometry_dirty.store(false, Ordering::Release);
+    pub(crate) fn mark_geometry_committed(&self, geometry_revision: u64) {
+        let Ok(_publish) = self.state.publish_boundary.try_lock() else {
+            return;
+        };
+        // A later stroke may already be visible while an older completion lands.
+        // Share the publication lock so its dirty flag cannot race this clear.
+        if self.state.geometry_revision.load(Ordering::Acquire) == geometry_revision {
+            self.state.geometry_dirty.store(false, Ordering::Release);
+        }
     }
 
     /// Copy the latest display arrays when a prepared scene is recreated.

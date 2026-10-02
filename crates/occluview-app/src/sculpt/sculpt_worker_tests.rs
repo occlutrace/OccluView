@@ -529,6 +529,7 @@ fn ordered_output_snapshot_keeps_topology_and_completion_together() {
     assert!(worker.state.push_completion(SculptCompletion {
         before: Arc::clone(&mesh),
         mesh,
+        geometry_revision: worker.state.geometry_revision.load(Ordering::Acquire),
     }));
 
     let (deltas, completions, update) = worker
@@ -668,7 +669,7 @@ fn repeated_completions_survive_scene_and_edit_state_commit() {
     for _ in 0..4 {
         assert!(worker.try_apply(stroke, BrushMode::Add));
         assert!(worker.finish_stroke());
-        let SculptCompletion { before, mesh } = wait_for_completion(&worker);
+        let SculptCompletion { before, mesh, .. } = wait_for_completion(&worker);
         let current = scene
             .meshes()
             .iter()

@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Sculpt preserves the live preview of a later stroke when an earlier stroke is saved.
+
 - Shape-preserving smoothing rejects invalid selection weights before changing the surface.
 
 - PLY imports consume vertex list properties correctly in ASCII and both binary byte orders.
