@@ -442,6 +442,28 @@ fn section_zoom_keeps_the_cursor_world_point_after_resizing_the_disc() {
     }
 }
 
+#[test]
+fn non_finite_section_zoom_preserves_the_view_and_disc() {
+    use crate::cut::cut_ruler::section_image_rect_for;
+
+    let mut tool = CutTool::default();
+    tool.enable();
+    tool.update(&hover(Vec3::ZERO), Vec3::new(0.0, 0.0, 100.0));
+    let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 820.0));
+    let cursor = section_image_rect_for(viewport)
+        .expect("panel fits")
+        .center();
+    let pose = tool.pose();
+    let zoom = tool.section.slice_zoom();
+    let pan = tool.section.pan();
+    for notches in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        assert!(!tool.zoom_slice_at_cursor(viewport, Some(cursor), notches));
+        assert_eq!(tool.pose(), pose);
+        assert_eq!(tool.section.slice_zoom(), zoom);
+        assert_eq!(tool.section.pan(), pan);
+    }
+}
+
 fn assert_cursor_zoom(radius: f32, notches: f32, display: SectionDisplay) {
     use crate::cut::cut_ruler::{section_image_rect_for, SlicePlaneMap};
 

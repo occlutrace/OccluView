@@ -298,6 +298,13 @@ fn wheel_scales_radius_and_clamps() {
 }
 
 #[test]
+fn non_finite_wheel_notches_preserve_the_disc_radius() {
+    for notches in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        assert_eq!(scale_radius(8.0, notches), 8.0);
+    }
+}
+
+#[test]
 fn center_press_begins_translate_and_wins_priority_over_the_rim() {
     let center = pos2(200.0, 200.0);
     let translate = begin_drag(&pose(), &probe_input(center, center, 40.0, false));

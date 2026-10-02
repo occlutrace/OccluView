@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Cut View and Bridge Split preserve the disc and section framing when wheel input is non-finite.
+
 - Closing the viewer preserves a sculpt brush change made on the closing frame.
 
 - Restarting Bridge Split can prepare a new source without waiting for an abandoned preparation.
