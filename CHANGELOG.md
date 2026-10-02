@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Empty scene panes respond to right-clicks before a viewport image is rendered.
+
 - Graphics startup retains software fallback when every hardware adapter fails to create a device.
 
 - Background and cut-ghost preference changes refresh every scene.
