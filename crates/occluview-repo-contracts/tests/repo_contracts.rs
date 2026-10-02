@@ -747,7 +747,10 @@ fn release_version_is_kept_in_sync_across_workspace_lockfile_and_installer() {
 /// equal while a floating channel such as `stable` does not.
 fn major_minor(version: &str) -> (&str, &str) {
     let mut parts = version.split('.');
-    (parts.next().unwrap_or_default(), parts.next().unwrap_or("0"))
+    (
+        parts.next().unwrap_or_default(),
+        parts.next().unwrap_or("0"),
+    )
 }
 
 #[test]

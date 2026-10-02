@@ -922,7 +922,10 @@ impl StrokeState {
                 && crate::sculpt::sculpt_worker::same_ray(&previous.step, &sample.step);
             if !previous.break_before
                 && !sample.break_before
-                && crate::sculpt::sculpt_worker::same_brush_and_visibility(&previous.step, &sample.step)
+                && crate::sculpt::sculpt_worker::same_brush_and_visibility(
+                    &previous.step,
+                    &sample.step,
+                )
                 && (both_travel || same_stationary_ray)
             {
                 let input_pointer = sample.pointer;

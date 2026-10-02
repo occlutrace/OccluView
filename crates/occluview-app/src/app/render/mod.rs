@@ -1,7 +1,7 @@
+pub(super) mod contact;
 mod live;
 mod offscreen;
 mod scene;
-pub(super) mod contact;
 
 #[cfg(test)]
 pub(super) use offscreen::{RenderError, APP_OFFSCREEN_RENDER_TIMEOUT, OFFSCREEN_RETRY_DELAY};

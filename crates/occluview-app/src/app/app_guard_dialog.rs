@@ -50,7 +50,12 @@ pub(super) fn show_guard_dialog(
             ui.horizontal(|ui| {
                 let (icon_rect, _) =
                     ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
-                crate::ui::icons::paint(ui.painter(), icon_rect, AppIcon::Warn, ui_theme::warning());
+                crate::ui::icons::paint(
+                    ui.painter(),
+                    icon_rect,
+                    AppIcon::Warn,
+                    ui_theme::warning(),
+                );
                 ui.label(egui::RichText::new(spec.headline).strong());
             });
             if let Some(note) = spec.note {

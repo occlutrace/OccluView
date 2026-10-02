@@ -67,7 +67,10 @@ impl SceneContext<'_> {
         )
     }
 
-    pub(super) fn sculpt_target_layer_id(&self, scene: &occluview_core::Scene) -> Option<SceneMeshId> {
+    pub(super) fn sculpt_target_layer_id(
+        &self,
+        scene: &occluview_core::Scene,
+    ) -> Option<SceneMeshId> {
         sculpt_target(scene, self.document.edit_mode.session_layer_id())
             .map(|(_, layer_id)| layer_id)
     }

@@ -8,8 +8,8 @@
 //! plane changes invalidate it.
 
 use glam::{Affine3A, DAffine3, DMat3};
-use occluview_mesh_edit::{plane_section, SectionPlane, SectionPolyline};
 use occluview_core::{Scene, SceneMesh, SceneMeshId};
+use occluview_mesh_edit::{plane_section, SectionPlane, SectionPolyline};
 use std::sync::Arc;
 
 /// Whether `entry` contributes a contour. Never true for point clouds.

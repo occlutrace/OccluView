@@ -2,7 +2,6 @@ use super::cursor::{sculpt_cursor_color, sculpt_cursor_linear_rgba};
 use crate::sculpt::sculpt_kernel::BrushMode;
 use eframe::egui;
 
-
 #[test]
 fn cursor_palette_is_published_to_the_linear_gpu_uniform() {
     // Every mode is washed 75 % toward white, so even the darkest ink

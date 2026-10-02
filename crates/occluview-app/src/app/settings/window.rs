@@ -1,8 +1,8 @@
 //! Settings action dispatch and product-information modals.
 
-use super::panel::{settings_popup_id, show_settings_popup, SettingsAction};
 use super::super::information_dialog::InformationDialog;
 use super::super::SceneContext;
+use super::panel::{settings_popup_id, show_settings_popup, SettingsAction};
 use crate::i18n::message_id;
 use crate::ui::icons::AppIcon;
 use crate::ui::ui_theme;

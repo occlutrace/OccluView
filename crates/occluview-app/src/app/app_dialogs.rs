@@ -1,8 +1,8 @@
 use super::app_guard_dialog::{show_guard_dialog, GuardDialogAction, GuardDialogSpec};
 use super::app_help::render_contextual_hint;
 use super::app_recent_popup::RecentFilesAction;
-use super::settings::panel::{settings_popup_id, show_settings_toolbar_toggle};
 use super::information_dialog::InformationDialog;
+use super::settings::panel::{settings_popup_id, show_settings_toolbar_toggle};
 use super::{load_app_logo_color_image, status_overlay_rect, PathBuf, OPEN_DIALOG_EXTENSIONS};
 use super::{AppErrorAction, SceneContext};
 use crate::measure::measure_overlay::{toolbar_toggle, toolbar_toggle_width, ToolbarToggle};
@@ -47,9 +47,7 @@ impl SceneContext<'_> {
         ];
         let controls_width: f32 = controls
             .iter()
-            .map(|(key, active)| {
-                toolbar_toggle_width(ui, &self.ui.locale.tr(*key), *active)
-            })
+            .map(|(key, active)| toolbar_toggle_width(ui, &self.ui.locale.tr(*key), *active))
             .sum();
         let scenes = ui.painter().layout_no_wrap(
             self.ui

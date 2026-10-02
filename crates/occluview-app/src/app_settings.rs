@@ -647,7 +647,10 @@ mod tests {
             invalid.last_sculpt_tool,
             crate::sculpt::sculpt_tool::SculptToolKind::AddRemove
         );
-        assert_eq!(invalid.last_sculpt_tip, crate::sculpt::sculpt_tool::SculptTip::Ball);
+        assert_eq!(
+            invalid.last_sculpt_tip,
+            crate::sculpt::sculpt_tool::SculptTip::Ball
+        );
         assert_eq!(invalid.sculpt_radius_share, None);
         Ok(())
     }

@@ -103,7 +103,11 @@ impl OccluViewApp {
             _ => None,
         }
     }
-    pub(super) fn finish_layer_drag(&mut self, ctx: &egui::Context, frame: &WorkspaceInputFrame<'_>) {
+    pub(super) fn finish_layer_drag(
+        &mut self,
+        ctx: &egui::Context,
+        frame: &WorkspaceInputFrame<'_>,
+    ) {
         if self.workspace.layer_drag.is_none() {
             return;
         }
@@ -183,7 +187,11 @@ impl OccluViewApp {
                 layers: LayerIds::one(payload.layer),
             });
     }
-    pub(super) fn show_layer_drag_preview(&mut self, ui: &mut egui::Ui, frame: &WorkspaceInputFrame<'_>) {
+    pub(super) fn show_layer_drag_preview(
+        &mut self,
+        ui: &mut egui::Ui,
+        frame: &WorkspaceInputFrame<'_>,
+    ) {
         let ctx = ui.ctx().clone();
         let payload = self.workspace.layer_drag.clone();
         let pointer = ctx.input(|input| input.pointer.hover_pos());
@@ -275,7 +283,11 @@ impl OccluViewApp {
             egui::Stroke::new(1.0, stroke),
             egui::StrokeKind::Inside,
         );
-        painter.galley(rect.min + vec2(11.0, 6.0), galley, crate::ui::ui_theme::text());
+        painter.galley(
+            rect.min + vec2(11.0, 6.0),
+            galley,
+            crate::ui::ui_theme::text(),
+        );
     }
     fn paint_layer_drop_label(
         &self,

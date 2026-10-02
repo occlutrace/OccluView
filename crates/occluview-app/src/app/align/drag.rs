@@ -7,8 +7,8 @@ use eframe::egui;
 use glam::{Affine3A, Vec3};
 use occluview_core::SceneMeshId;
 
-use super::layer_of;
 use super::super::SceneContext;
+use super::layer_of;
 use crate::edit_mode::EditModeCommand;
 use crate::i18n::message_id;
 use crate::viewer::pick_scene_hit;
@@ -144,7 +144,6 @@ impl SceneContext<'_> {
         replay.owned
     }
 
-
     /// Ray-pick the surface under the primary press and open its drag.
     fn begin_align_drag_at(&mut self, response: &egui::Response, grab: egui::Pos2) -> bool {
         let Some((camera, scene)) = self.render.camera.zip(self.document.scene.clone()) else {
@@ -272,8 +271,10 @@ impl SceneContext<'_> {
                 .view_direction()
                 .cross(camera.view_up())
                 .normalize_or_zero();
-            let world_per_pixel =
-                crate::align::align_drag::mm_per_pixel(camera.orthographic_height, viewport.height());
+            let world_per_pixel = crate::align::align_drag::mm_per_pixel(
+                camera.orthographic_height,
+                viewport.height(),
+            );
             let moved = crate::align::align_drag::screen_delta_to_world(
                 motion,
                 right,
@@ -303,8 +304,11 @@ impl SceneContext<'_> {
         let entry = layer_of(scene, drag.layer)?;
         let centre_local = entry.mesh.bbox_cached().center();
         let radius_local = entry.mesh.bbox_cached().size().length() * 0.5;
-        let pivot_local =
-            crate::align::align_drag::drag_pivot_local(drag.pivot_local, centre_local, radius_local);
+        let pivot_local = crate::align::align_drag::drag_pivot_local(
+            drag.pivot_local,
+            centre_local,
+            radius_local,
+        );
         let pose_scale = entry
             .transform
             .matrix3
@@ -324,7 +328,10 @@ impl SceneContext<'_> {
             ),
         );
         let pivot_world = entry.transform.transform_point3(pivot_local);
-        Some(crate::align::align_drag::rotation_about_pivot(turn, pivot_world))
+        Some(crate::align::align_drag::rotation_about_pivot(
+            turn,
+            pivot_world,
+        ))
     }
 
     /// Apply one drag step directly to the scene, without touching history.
@@ -431,7 +438,10 @@ impl SceneContext<'_> {
         self.forget_align_fit(&self.ui.locale.tr(message_id!("align-status-moved-hand")));
         self.tools.align.status = Some(self.ui.locale.tr_with(
             message_id!("align-drag-moved"),
-            &[("name", &name), ("moved", &number_format.decimal(moved_mm, 2))],
+            &[
+                ("name", &name),
+                ("moved", &number_format.decimal(moved_mm, 2)),
+            ],
         ));
         true
     }

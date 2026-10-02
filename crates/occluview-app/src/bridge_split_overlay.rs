@@ -264,8 +264,14 @@ fn error_label(error: &BridgeSplitToolError, locale: &crate::i18n::LocaleManager
             } => locale.tr_with(
                 crate::i18n::message_id!("bridge-err-small"),
                 &[
-                    ("have", &number_format.decimal(f64::from(*disc_radius_mm) * 2.0, 1)),
-                    ("need", &number_format.decimal(f64::from(*required_radius_mm) * 2.0, 1)),
+                    (
+                        "have",
+                        &number_format.decimal(f64::from(*disc_radius_mm) * 2.0, 1),
+                    ),
+                    (
+                        "need",
+                        &number_format.decimal(f64::from(*required_radius_mm) * 2.0, 1),
+                    ),
                 ],
             ),
             occluview_edit::BridgeSplitError::DiscLimitExceeded {
@@ -274,8 +280,14 @@ fn error_label(error: &BridgeSplitToolError, locale: &crate::i18n::LocaleManager
             } => locale.tr_with(
                 crate::i18n::message_id!("bridge-err-limit"),
                 &[
-                    ("need", &number_format.decimal(f64::from(*required_radius_mm) * 2.0, 1)),
-                    ("max", &number_format.decimal(f64::from(*max_radius_mm) * 2.0, 1)),
+                    (
+                        "need",
+                        &number_format.decimal(f64::from(*required_radius_mm) * 2.0, 1),
+                    ),
+                    (
+                        "max",
+                        &number_format.decimal(f64::from(*max_radius_mm) * 2.0, 1),
+                    ),
                 ],
             ),
             occluview_edit::BridgeSplitError::OpenOrNonManifold { .. }
