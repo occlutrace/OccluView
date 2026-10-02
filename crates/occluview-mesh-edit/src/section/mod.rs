@@ -111,8 +111,8 @@ pub struct SectionResult {
 /// Intersect a triangle mesh with `plane` and return the contour polylines.
 ///
 /// `positions` are the vertex positions and `indices` are triangle indices in
-/// chunks of three. Out-of-range indices skip their triangle. The output is
-/// deterministic and independent of triangle order.
+/// chunks of three. Out-of-range indices or nonfinite positions skip their
+/// triangle. The output is deterministic and independent of triangle order.
 #[must_use]
 pub fn plane_section(
     positions: &[[f32; 3]],
@@ -141,7 +141,7 @@ pub(super) struct Segment {
 /// normal is `normal` and offset is `offset`.
 ///
 /// Returns `None` when the triangle does not straddle the plane, has an
-/// out-of-range index, or the resulting segment is degenerate. The half-open
+/// out-of-range index, a nonfinite position, or a degenerate segment. The half-open
 /// classification (`proj >= offset` is the kept side) matches the clipping
 /// kernels used elsewhere in the editor.
 pub(super) fn triangle_segment(
@@ -175,15 +175,12 @@ pub(super) fn triangle_segment(
     })
 }
 
-/// Promote a vertex position to `f64`, or `None` when the index is out of range.
+/// Promote a finite vertex position to `f64`, or reject invalid data.
 pub(super) fn promote(positions: &[[f32; 3]], index: u32) -> Option<DVec3> {
     let index = usize::try_from(index).ok()?;
     let v = positions.get(index)?;
-    Some(DVec3::new(
-        f64::from(v[0]),
-        f64::from(v[1]),
-        f64::from(v[2]),
-    ))
+    let point = DVec3::new(f64::from(v[0]), f64::from(v[1]), f64::from(v[2]));
+    point.is_finite().then_some(point)
 }
 
 /// Index of the minority vertex given the per-vertex kept-side booleans.

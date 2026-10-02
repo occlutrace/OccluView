@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Section contours skip triangles containing invalid coordinates instead of emitting NaN points.
+
 - Repeated faces no longer turn open section contours into artificial closed loops.
 
 - Surface queries handle small triangles separated by very large distances without overflowing their grid.
