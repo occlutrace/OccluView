@@ -128,8 +128,8 @@ fn perf_label_1m() {
     let mesh = grid_mesh(cols, rows);
     let (selection, components) = even_row_strip_selection(cols, rows);
     let start = std::time::Instant::now();
-    let labelled =
-        occluview_mesh_edit::selected_connected_components_in_mesh(&mesh, &selection).expect("label");
+    let labelled = occluview_mesh_edit::selected_connected_components_in_mesh(&mesh, &selection)
+        .expect("label");
     let elapsed = start.elapsed();
     let tris = mesh.triangle_count();
     let found = labelled.len();

@@ -352,7 +352,9 @@ mod tests {
     fn disc_miss_explains_how_to_correct_the_placement() {
         assert_eq!(
             error_label(
-                &BridgeSplitToolError::Kernel(occluview_mesh_edit::BridgeSplitError::NoIntersection),
+                &BridgeSplitToolError::Kernel(
+                    occluview_mesh_edit::BridgeSplitError::NoIntersection
+                ),
                 &english(),
             ),
             "Disc misses the bridge. Move it into a connector."

@@ -1,10 +1,10 @@
-use crate::{BridgeSplitReport, BridgeSplitRequest, MeshEditBuffers};
-use glam::{DAffine3, DVec3};
 use crate::robust::{
     normalize_closed_mesh, prepare_robust_solid, split_prepared_with_separator_disc,
     validate_separator_clearance as validate_robust_separator_clearance, PreparedRobustSolid,
     RobustMesh, RobustMeshPart, SeparatorDisc,
 };
+use crate::{BridgeSplitReport, BridgeSplitRequest, MeshEditBuffers};
+use glam::{DAffine3, DVec3};
 
 use super::{
     conversion, part_name, validate_restored_finite_result, CoreBridgeSplitError,
