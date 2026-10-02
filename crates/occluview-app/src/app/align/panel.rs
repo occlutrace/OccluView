@@ -306,6 +306,7 @@ impl SceneContext<'_> {
         if !self.tools.align.tool.back() {
             return false;
         }
+        self.abandon_align_jobs();
         self.tools.align.rejected.clear();
         self.tools.align.status = Some(match self.tools.align.tool.pairs().len() {
             0 if self.tools.align.tool.pending().is_none() => self
@@ -351,6 +352,60 @@ mod tests {
             action_after_tab_change(Some(AlignPanelAction::Refine), false),
             Some(AlignPanelAction::Refine)
         );
+    }
+
+    #[test]
+    fn removing_an_arrow_discards_the_fit_that_used_it() -> anyhow::Result<()> {
+        use crate::align::align_tool::AlignPoint;
+        use crate::app::app_test_support::{named_scene, push_named_layer, test_app};
+        use glam::{Affine3A, DQuat, DVec3, Vec3};
+        use occluview_align::Rigid;
+
+        let mut app = test_app("align-back-obsolete-fit");
+        let mut scene = named_scene("moving", 0.0);
+        let moving = scene.meshes()[0].id();
+        let fixed = push_named_layer(&mut scene, "fixed", 5.0);
+        app.workspace.scenes[0].document.scene = Some(scene.into());
+        let ctx = app.ui.repaint_ctx.clone();
+        let mut scene = app
+            .active_context()
+            .ok_or_else(|| anyhow::anyhow!("live scene"))?;
+        scene.tools.align.tool.arm();
+        for local in [Vec3::ZERO, Vec3::Y] {
+            for layer in [moving, fixed] {
+                scene.tools.align.tool.click(AlignPoint {
+                    layer,
+                    local,
+                    normal: Vec3::Z,
+                });
+            }
+        }
+        assert!(scene.tools.align.tool.can_align());
+        let generation = scene.align_worker_mut().generation();
+        assert!(scene.take_align_arrow_back());
+        assert_eq!(scene.tools.align.tool.pairs().len(), 1);
+        scene.align_worker_mut().publish_for_tests(
+            generation,
+            AlignOutcome::Aligned {
+                pose: Rigid::new(DQuat::IDENTITY, DVec3::X),
+                rejected: vec![],
+            },
+        );
+        scene.drain_align_worker(&ctx);
+
+        assert_eq!(
+            scene
+                .document
+                .scene
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("scene"))?
+                .meshes()[0]
+                .transform,
+            Affine3A::IDENTITY,
+            "a result based on the removed arrow cannot move the scan"
+        );
+        assert_eq!(scene.document.edit_mode.undo_len(), 0);
+        Ok(())
     }
 
     /// The worker can publish after this frame already drained an empty queue.
