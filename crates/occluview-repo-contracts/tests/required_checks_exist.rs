@@ -56,6 +56,9 @@ fn pull_request_job_names(workflow: &str) -> BTreeSet<String> {
 
     for line in workflow.lines() {
         let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
         let line_indent = indentation(line);
         if line_indent == 0 && trimmed == "jobs:" {
             in_jobs = true;
