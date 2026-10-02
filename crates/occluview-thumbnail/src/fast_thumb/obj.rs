@@ -54,12 +54,13 @@ pub(super) fn fast_obj_thumbnail_mesh(bytes: &[u8]) -> Result<Mesh, FormatError>
             continue;
         }
 
-        let indices =
-            obj_face_indices(&mut tokens, seen_vertices).ok_or(FormatError::Malformed {
+        let indices = obj_face_indices(&mut tokens, source_vertices.len(), seen_vertices).ok_or(
+            FormatError::Malformed {
                 format: "OBJ",
                 offset: seen_faces,
                 reason: "malformed face line".to_string(),
-            })?;
+            },
+        )?;
         if indices.len() >= 3 {
             for triangle in 1..indices.len() - 1 {
                 cluster.push_triangle(
@@ -138,6 +139,7 @@ fn obj_line_tokens(line: &str) -> Option<(&str, impl Iterator<Item = &str>)> {
 fn obj_face_indices<'a>(
     tokens: &mut impl Iterator<Item = &'a str>,
     vertex_count: usize,
+    preceding_vertex_count: usize,
 ) -> Option<Vec<usize>> {
     let mut indices = Vec::new();
     for token in tokens {
@@ -147,7 +149,7 @@ fn obj_face_indices<'a>(
             Ordering::Greater => usize::try_from(raw - 1).ok()?,
             Ordering::Less => {
                 let from_end = usize::try_from(raw.unsigned_abs()).ok()?;
-                vertex_count.checked_sub(from_end)?
+                preceding_vertex_count.checked_sub(from_end)?
             }
             Ordering::Equal => return None,
         };

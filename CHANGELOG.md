@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- OBJ thumbnails retain positive face references to vertices declared later in the file.
+
 - OBJ companion textures retain filenames after MTL options with optional vector components.
 
 - Mesh imports reject non-finite coordinates and GLB transform overflow before constructing geometry.

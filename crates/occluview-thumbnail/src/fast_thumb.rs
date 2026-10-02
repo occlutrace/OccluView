@@ -313,6 +313,13 @@ mod tests {
     }
 
     #[test]
+    fn fast_obj_keeps_positive_forward_face_references() {
+        let bytes = b"f 1 2 3\nv 0 0 0\nv 1 0 0\nv 0 1 0\n";
+        let mesh = fast_obj_thumbnail_mesh(bytes).expect("forward OBJ face");
+        assert_eq!(mesh.triangle_count(), 1);
+    }
+
+    #[test]
     fn fast_obj_relative_faces_use_the_vertices_defined_at_the_face() {
         let bytes = b"v 0 0 0\nv 1 0 0\nv 0 1 0\nf -3 -2 -1\nv 100 0 0\n";
         let mesh = fast_obj_thumbnail_mesh(bytes).expect("interleaved OBJ");
