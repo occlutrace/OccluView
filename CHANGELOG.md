@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Mesh region selection preserves existing marks when its outline or projection input is invalid.
+
 - Sculpt strength falls back to the brush default when an invalid numeric value is supplied.
 
 - Switching Sculpt tips or redrawing the panel preserves the chosen brush size until the size control is changed.
