@@ -250,7 +250,8 @@ impl CutManipulator {
 
     /// Set the operator-selected radius without synthesizing a pointer gesture.
     pub(crate) fn set_radius_mm(&mut self, radius_mm: f32) -> bool {
-        if !radius_mm.is_finite()
+        if !self.is_active()
+            || !radius_mm.is_finite()
             || radius_mm <= 0.0
             || self.radius_mm.to_bits() == radius_mm.to_bits()
         {
@@ -261,11 +262,10 @@ impl CutManipulator {
             CutMode::Planted { pose, .. } => Some(pose),
             CutMode::Off => None,
         };
-        let Some(pose) = pose else {
-            return false;
-        };
         self.radius_mm = radius_mm;
-        pose.radius_mm = radius_mm;
+        if let Some(pose) = pose {
+            pose.radius_mm = radius_mm;
+        }
         true
     }
 
@@ -286,6 +286,10 @@ impl CutManipulator {
             CutMode::Follow { pose, .. } => *pose,
             CutMode::Off => None,
         }
+    }
+
+    pub(crate) fn radius_mm(&self) -> f32 {
+        self.radius_mm
     }
 
     /// The clip plane derived from the current disc, as `(normal, distance)`
