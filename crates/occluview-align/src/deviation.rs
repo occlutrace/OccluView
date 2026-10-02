@@ -10,7 +10,7 @@ use rayon::prelude::*;
 
 use crate::icp::Orientation;
 use crate::sample::vertex_at;
-use crate::{CancelFlag, Rigid, Soup, SurfaceIndex};
+use crate::{CancelFlag, Rigid, Soup, SurfaceHit, SurfaceIndex};
 
 /// Colour for a vertex whose deviation could not be measured.
 pub const NO_DATA_COLOR: [u8; 4] = [128, 128, 128, 255];
@@ -303,21 +303,12 @@ fn measure_vertex(
         return (0.0, Validity::NonFinite);
     };
     let point = pose.apply(local);
-    let Some(hit) = fixed.nearest(point, settings.influence_radius_mm) else {
-        return (0.0, Validity::OutOfReach);
+    let hit = match measured_hit(fixed, point, settings.influence_radius_mm) {
+        Ok(hit) => hit,
+        Err(validity) => return (0.0, validity),
     };
-    if hit.normal.length() < MIN_NORMAL_LENGTH {
-        return (0.0, Validity::DegenerateNormal);
-    }
     let offset = point - hit.point;
     let distance = offset.length();
-    // Where the fixed scan ends, the nearest point slides along its rim and the
-    // distance to it grows with how far this scan runs past the border, up to
-    // the whole influence radius. That is coverage, not deviation. Only a
-    // vertex standing over the rim itself reads a deviation there.
-    if hit.on_border && offset.dot(hit.pseudo_normal).abs() < distance * MIN_BORDER_ALIGNMENT {
-        return (0.0, Validity::BeyondBorder);
-    }
     // The side comes from the closest feature's pseudonormal: at an edge or a
     // vertex the face normal of whichever triangle won the tie can point away
     // from a point that is outside.
@@ -327,6 +318,30 @@ fn measure_vertex(
         Orientation::Inverted => -signed_along(offset, hit.pseudo_normal, distance),
     };
     (signed as f32, Validity::Measured)
+}
+
+/// A surface correspondence usable by both the map and its sensitivity estimate.
+pub(crate) fn measured_hit(
+    fixed: &SurfaceIndex,
+    point: DVec3,
+    radius_mm: f64,
+) -> Result<SurfaceHit, Validity> {
+    let hit = fixed
+        .nearest(point, radius_mm)
+        .ok_or(Validity::OutOfReach)?;
+    if hit.normal.length() < MIN_NORMAL_LENGTH {
+        return Err(Validity::DegenerateNormal);
+    }
+    let offset = point - hit.point;
+    let distance = offset.length();
+    // Where the fixed scan ends, the nearest point slides along its rim and the
+    // distance to it grows with how far this scan runs past the border, up to
+    // the whole influence radius. That is coverage, not deviation. Only a
+    // vertex standing over the rim itself reads a deviation there.
+    if hit.on_border && offset.dot(hit.pseudo_normal).abs() < distance * MIN_BORDER_ALIGNMENT {
+        return Err(Validity::BeyondBorder);
+    }
+    Ok(hit)
 }
 
 /// Distance carrying the sign of which side of the surface the point sits on.
