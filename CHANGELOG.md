@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Closest-surface queries preserve valid face and edge projections on small triangles.
+
 - Closing holes no longer overflows rim-weld grid coordinates on distant geometry.
 
 - Repair no longer merges distinct vertices when a mesh is stored far from the coordinate origin.
