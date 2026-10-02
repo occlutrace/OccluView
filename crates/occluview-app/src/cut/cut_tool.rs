@@ -164,22 +164,19 @@ impl CutTool {
         pointer: Option<egui::Pos2>,
         notches: f32,
     ) -> bool {
-        let before = self.section.slice_zoom();
-        if !self.section.zoom_at_cursor(viewport_rect, pointer, notches) {
-            return false;
-        }
-        let after = self.section.slice_zoom();
-        if let Some(pose) = self.manipulator.pose() {
-            let wanted =
-                crate::cut::cut_manipulator::radius_after_slice_zoom(pose.radius_mm, before, after);
-            // The clip plane is untouched: a radius is how much disc is drawn,
-            // and the plane it lies in has not moved. Dropping the cached plane
-            // here would blank the clipping for a frame.
-            if self.manipulator.set_radius_mm(wanted) {
-                self.mark_dirty();
-            }
-        }
-        true
+        let frame = self.section_frame();
+        let manipulator = &mut self.manipulator;
+        self.section
+            .zoom_at_cursor_with_frame(viewport_rect, pointer, notches, |before, after| {
+                let pose = manipulator.pose()?;
+                let wanted = crate::cut::cut_manipulator::radius_after_slice_zoom(
+                    pose.radius_mm,
+                    before,
+                    after,
+                );
+                manipulator.set_radius_mm(wanted);
+                SectionViewFrame::new(manipulator.pose()?, frame?.normal())
+            })
     }
 
     pub(crate) fn viewport_clip_plane(&self, bbox: Aabb) -> ClipPlane {

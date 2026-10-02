@@ -426,3 +426,55 @@ fn plane_change_resets_pan_and_clears_the_ruler() {
         "plane change clears the ruler in Lines mode too"
     );
 }
+
+#[test]
+fn section_zoom_keeps_the_cursor_world_point_after_resizing_the_disc() {
+    for display in [SectionDisplay::Lines, SectionDisplay::Mesh] {
+        for (radius, notches) in [
+            (8.0, 2.0),
+            (8.0, -2.0),
+            (0.01, 2.0),
+            (60.0, -2.0),
+            (8.0, 100.0),
+        ] {
+            assert_cursor_zoom(radius, notches, display);
+        }
+    }
+}
+
+fn assert_cursor_zoom(radius: f32, notches: f32, display: SectionDisplay) {
+    use crate::cut::cut_ruler::{section_image_rect_for, SlicePlaneMap};
+
+    let mut tool = CutTool::default();
+    tool.enable();
+    let input = CutFrameInput {
+        primary_pressed: true,
+        primary_down: true,
+        ..hover(Vec3::ZERO)
+    };
+    tool.update(&input, input.eye);
+    tool.manipulator.set_radius_mm(radius);
+    tool.update(&frame(None, false), input.eye);
+    let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 820.0));
+    let image = section_image_rect_for(viewport).expect("panel fits");
+    let cursor = image.center() + egui::vec2(70.0, -40.0);
+    let before = tool.section.live_cam().expect("planted section");
+    let clip = tool.cached_clip;
+    if matches!(display, SectionDisplay::Mesh) {
+        tool.section.set_display_mode(display);
+        tool.store_slice(&egui::Context::default(), slice_image(), before);
+    }
+    let world =
+        SlicePlaneMap::new_with_basis(before, image, tool.slice_basis()).panel_to_world(cursor);
+
+    assert!(tool.zoom_slice_at_cursor(viewport, Some(cursor), notches));
+    assert_eq!(tool.cached_clip, clip);
+    tool.update(&frame(None, false), input.eye);
+    let after = tool.section.live_cam().expect("zoomed section");
+    let projected =
+        SlicePlaneMap::new_with_basis(after, image, tool.slice_basis()).world_to_panel(world);
+    assert!(
+        (projected - cursor).length() < 0.01,
+        "cursor point moved to {projected:?}"
+    );
+}

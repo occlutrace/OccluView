@@ -260,6 +260,19 @@ impl SectionView {
         pointer: Option<egui::Pos2>,
         notches: f32,
     ) -> bool {
+        let frame = self.current_frame;
+        self.zoom_at_cursor_with_frame(viewport_rect, pointer, notches, |_, _| frame)
+    }
+
+    /// Anchor the cursor using the final framing, including any disc resize
+    /// supplied by the tool after the zoom has been clamped.
+    pub(crate) fn zoom_at_cursor_with_frame(
+        &mut self,
+        viewport_rect: egui::Rect,
+        pointer: Option<egui::Pos2>,
+        notches: f32,
+        frame_for_zoom: impl FnOnce(f32, f32) -> Option<SectionViewFrame>,
+    ) -> bool {
         if notches == 0.0 {
             return false;
         }
@@ -272,12 +285,20 @@ impl SectionView {
         if !image_rect.contains(pointer) {
             return false;
         }
-        let new_zoom = (self.slice_view.zoom * SLICE_ZOOM_STEP.powf(notches))
+        let new_zoom = (self.slice_zoom() * SLICE_ZOOM_STEP.powf(notches))
             .clamp(SLICE_ZOOM_MIN, SLICE_ZOOM_MAX);
         if (new_zoom - self.slice_view.zoom).abs() <= f32::EPSILON {
             return false;
         }
-        let half_ratio = self.slice_view.zoom / new_zoom;
+        let Some(next_frame) = frame_for_zoom(self.slice_view.zoom, new_zoom) else {
+            return false;
+        };
+        self.slice_view.zoom = new_zoom;
+        self.sync(Some(next_frame));
+        let Some(next_cam) = self.live_slice_cam() else {
+            return false;
+        };
+        let half_ratio = next_cam.half_extent / cam.half_extent;
         let (new_focus, _) = crate::cut::cut_ruler::SlicePlaneMap::zoom_focus_at_cursor_with_basis(
             cam.focus,
             cam.half_extent,
@@ -286,9 +307,8 @@ impl SectionView {
             half_ratio,
             self.slice_basis,
         );
-        self.slice_view.pan += new_focus - cam.focus;
-        self.slice_view.zoom = new_zoom;
-        self.needs_render = self.wants_offscreen_slice();
+        self.slice_view.pan += new_focus - next_cam.focus;
+        self.mark_dirty();
         true
     }
 
