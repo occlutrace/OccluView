@@ -9,6 +9,270 @@ enum ReplayDirection {
     Forward,
 }
 
+/// A sparse face overlay used to validate the complete record before writing
+/// session state. Its storage grows with edited faces, not with mesh size.
+struct ReplayState<'a> {
+    faces: &'a [u32],
+    changed: crate::hash::FxHashMap<u32, [u32; 3]>,
+    live: u32,
+    vertices: u32,
+    groups: u32,
+}
+
+impl ReplayState<'_> {
+    fn face(&self, triangle: u32) -> Option<[u32; 3]> {
+        if triangle >= self.live {
+            return None;
+        }
+        self.changed.get(&triangle).copied().or_else(|| {
+            let offset = triangle as usize * 3;
+            self.faces.get(offset..offset + 3)?.try_into().ok()
+        })
+    }
+
+    fn write(&mut self, triangle: u32, corners: [u32; 3]) -> bool {
+        if triangle >= self.live || corners.iter().any(|&vertex| vertex >= self.vertices) {
+            return false;
+        }
+        self.changed.insert(triangle, corners);
+        true
+    }
+
+    fn forward(&mut self, journal: &TopoJournal, event: TopoEvent) -> Option<()> {
+        match event {
+            TopoEvent::AddedVert(index) => {
+                let added = journal.added_verts.get(index as usize)?;
+                if added.vertex != self.vertices || added.group != self.groups {
+                    return None;
+                }
+                self.vertices = self.vertices.checked_add(1)?;
+                self.groups = self.groups.checked_add(1)?;
+            }
+            TopoEvent::AddedTri(index) => {
+                let corners = *journal.added_tris.get(index as usize)?;
+                let triangle = self.live;
+                self.live = self.live.checked_add(1)?;
+                self.write(triangle, corners).then_some(())?;
+            }
+            TopoEvent::Rewire(index) => {
+                let rewire = journal.rewired.get(index as usize)?;
+                self.write(rewire.tri, rewire.after).then_some(())?;
+            }
+            TopoEvent::Collapse(index) => {
+                let slot = journal.collapsed.get(index as usize)?;
+                if slot.last.checked_add(1)? != self.live
+                    || slot.removed > slot.last
+                    || self.face(slot.last)? != slot.at_last_corners
+                {
+                    return None;
+                }
+                self.write(slot.removed, slot.at_last_corners)
+                    .then_some(())?;
+                self.live = slot.last;
+            }
+            TopoEvent::Retire(index) => {
+                (*journal.retired.get(index as usize)? < self.groups).then_some(())?;
+            }
+        }
+        Some(())
+    }
+
+    fn inverse(&mut self, journal: &TopoJournal, event: TopoEvent) -> Option<()> {
+        match event {
+            TopoEvent::AddedVert(index) => {
+                let added = journal.added_verts.get(index as usize)?;
+                self.vertices = self.vertices.checked_sub(1)?;
+                self.groups = self.groups.checked_sub(1)?;
+                if added.vertex != self.vertices || added.group != self.groups {
+                    return None;
+                }
+            }
+            TopoEvent::AddedTri(index) => {
+                let corners = journal.added_tris.get(index as usize)?;
+                let last = self.live.checked_sub(1)?;
+                if self.face(last)? != *corners {
+                    return None;
+                }
+                self.live = last;
+            }
+            TopoEvent::Rewire(index) => {
+                let rewire = journal.rewired.get(index as usize)?;
+                self.write(rewire.tri, rewire.before).then_some(())?;
+            }
+            TopoEvent::Collapse(index) => {
+                let slot = journal.collapsed.get(index as usize)?;
+                if slot.removed > slot.last || self.live != slot.last {
+                    return None;
+                }
+                self.live = self.live.checked_add(1)?;
+                self.write(slot.last, slot.at_last_corners).then_some(())?;
+                self.write(slot.removed, slot.at_removed_corners)
+                    .then_some(())?;
+            }
+            TopoEvent::Retire(index) => {
+                (*journal.retired.get(index as usize)? < self.groups).then_some(())?;
+            }
+        }
+        Some(())
+    }
+}
+
+impl SculptSession {
+    pub(crate) fn topology_history_is_valid(&self, journal: &TopoJournal, redo: bool) -> bool {
+        self.validate_topology_history(journal, redo).is_some()
+    }
+
+    fn validate_topology_history(&self, journal: &TopoJournal, redo: bool) -> Option<()> {
+        let base_vertices = u32::try_from(journal.base_verts).ok()?;
+        let base_faces = u32::try_from(journal.base_tris).ok()?;
+        let added = u32::try_from(journal.added_verts.len()).ok()?;
+        let end_vertices = base_vertices.checked_add(added)?;
+        let end_groups = journal.base_groups.checked_add(added)?;
+        let mut state = ReplayState {
+            faces: &self.tris,
+            changed: crate::hash::FxHashMap::default(),
+            live: u32::try_from(self.tris.len() / 3).ok()?,
+            vertices: u32::try_from(self.vertex_count()).ok()?,
+            groups: u32::try_from(self.topology.group_count()).ok()?,
+        };
+        let expected = if redo {
+            (base_vertices, journal.base_groups, base_faces)
+        } else {
+            (end_vertices, end_groups, journal.live_tris)
+        };
+        if (state.vertices, state.groups, state.live) != expected
+            || journal.base_live_tris != journal.base_tris
+            || self.live_tris != state.live
+            || self.topology.triangle_len() != state.live
+            || self.face_origin.len() != state.live as usize
+            || !journal.payload_is_valid(end_vertices)
+        {
+            return None;
+        }
+        if redo {
+            for &event in &journal.events {
+                state.forward(journal, event)?;
+            }
+            ((state.vertices, state.groups, state.live)
+                == (end_vertices, end_groups, journal.live_tris))
+                .then_some(())
+        } else {
+            for &event in journal.events.iter().rev() {
+                state.inverse(journal, event)?;
+            }
+            if (state.vertices, state.groups, state.live)
+                != (base_vertices, journal.base_groups, base_faces)
+            {
+                return None;
+            }
+            for triangle in 0..state.live {
+                state
+                    .face(triangle)?
+                    .iter()
+                    .all(|&vertex| vertex < base_vertices)
+                    .then_some(())?;
+            }
+            Some(())
+        }
+    }
+}
+
+impl TopoJournal {
+    fn payload_is_valid(&self, end_vertices: u32) -> bool {
+        let counts = [
+            self.added_verts.len(),
+            self.added_tris.len(),
+            self.rewired.len(),
+            self.collapsed.len(),
+            self.retired.len(),
+        ];
+        let mut seen = [0usize; 5];
+        for &event in &self.events {
+            let (kind, index) = event.encode();
+            let kind = kind as usize;
+            if index as usize != seen[kind] || seen[kind] >= counts[kind] {
+                return false;
+            }
+            seen[kind] += 1;
+        }
+        seen == counts
+            && self.added_verts.iter().all(|added| {
+                added
+                    .pos
+                    .iter()
+                    .chain(&added.nrm)
+                    .chain(&added.ref_nrm)
+                    .chain(&added.reference)
+                    .chain([&added.budget, &added.area])
+                    .all(|value| value.is_finite())
+            })
+            && self.material.iter().all(|edit| {
+                edit.vertex < end_vertices
+                    && edit
+                        .before
+                        .iter()
+                        .chain(&edit.after)
+                        .all(|value| value.is_finite())
+            })
+    }
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::*;
+
+    #[test]
+    fn invalid_topology_history_is_refused_atomically_in_both_directions() {
+        for redo in [true, false] {
+            let faces = if redo {
+                vec![0, 1, 2]
+            } else {
+                vec![0, 1, 2, 0, 1, 2, 0, 1, 2]
+            };
+            let mut session =
+                SculptSession::new(vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0], faces)
+                    .expect("valid mesh fixture");
+            let before = session.faces().to_vec();
+            let mut journal = TopoJournal {
+                base_verts: 3,
+                base_tris: 1,
+                base_groups: 3,
+                base_live_tris: 1,
+                live_tris: if redo { 2 } else { 3 },
+                ..TopoJournal::default()
+            };
+            if redo {
+                journal.push_rewire(TopoRewire {
+                    tri: 0,
+                    before: [0, 1, 2],
+                    after: [2, 1, 0],
+                });
+                journal.push_added_tri([0, 1, u32::MAX]);
+            } else {
+                journal.push_added_tri([0, 2, 1]);
+                journal.push_added_tri([0, 1, 2]);
+            }
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                session.restore_topo(&[], &[], redo, &journal)
+            }));
+            assert!(
+                result.is_ok(),
+                "malformed topology must not panic (redo={redo})"
+            );
+            assert!(
+                result.ok().flatten().is_none(),
+                "malformed topology must refuse"
+            );
+            assert_eq!(
+                session.faces(),
+                before,
+                "a refused history record must leave every face intact"
+            );
+            assert_eq!(session.vertex_count(), 3);
+        }
+    }
+}
+
 impl SculptSession {
     /// Apply one journal record in one direction, refusing on any mismatch.
     ///

@@ -143,7 +143,7 @@ impl SculptSession {
             } else {
                 journal.next_revision
             };
-            if self.topo_revision.0 != expected {
+            if self.topo_revision.0 != expected || !self.topology_history_is_valid(journal, redo) {
                 return None;
             }
         }
