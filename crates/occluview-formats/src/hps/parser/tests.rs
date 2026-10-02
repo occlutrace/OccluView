@@ -183,6 +183,17 @@ fn parses_minimal_cc_hps_triangle() {
 }
 
 #[test]
+fn hps_surface_rejects_a_base64_tail_that_emits_no_byte() {
+    let bytes = cc_fixture(3, 1, &[4], "");
+    let text = String::from_utf8(bytes).expect("XML");
+    let corrupted = text.replace("</Vertices>", "A</Vertices>");
+    assert!(matches!(
+        read(corrupted.as_bytes()),
+        Err(HpsError::BadContainer { .. })
+    ));
+}
+
+#[test]
 fn parses_hps_xml_inside_hps_zip_package() {
     let hps = cc_fixture(4, 2, &[4, 0], "");
     let package = zip_hps_fixture("scan/geometry.hps", &hps);

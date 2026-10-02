@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Reject malformed HPS base64 tails and padding before decoding geometry.
+
 - Oversized render deadlines return a timeout instead of crashing.
 
 - Selected Close Holes preserves unmarked faces and protects their boundary vertices during cleanup.
