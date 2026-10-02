@@ -224,26 +224,26 @@ fn render_that_outran_the_callers_deadline_still_populates_the_cache() {
     let metadata = cache::thumbnail_file_metadata(&path).expect("fixture metadata");
     let key = ThumbnailFileCacheKey::new(&path, &metadata);
 
-    // Retry until one request acquires a worker and fills the cache.
-    let mut cached = None;
-    'attempts: for _ in 0..40 {
-        let _early = render_thumbnail_file_or_placeholder_with_timeout(
-            &path,
-            spec,
-            Duration::from_millis(20),
-        );
-        for _ in 0..20 {
-            if let Ok(mut cache) = thumbnail_file_cache().lock() {
-                if let Some(pixels) = cache.get(&key, spec.size_px) {
-                    cached = Some(pixels);
-                    break 'attempts;
-                }
-            }
-            thread::sleep(Duration::from_millis(25));
-        }
-    }
-
-    let cached = cached.expect("a timed-out render must still populate the cache for the repaint");
+    let _early = render_thumbnail_file_or_placeholder_with_timeout(
+        &path,
+        spec,
+        Duration::from_millis(20),
+    );
+    assert!(
+        wait_for_thumbnail_file_cache(Duration::from_secs(15), || {
+            thumbnail_file_cache()
+                .lock()
+                .ok()
+                .and_then(|mut cache| cache.get(&key, spec.size_px))
+                .is_some()
+        }),
+        "a timed-out render must still populate the cache for the repaint"
+    );
+    let cached = thumbnail_file_cache()
+        .lock()
+        .ok()
+        .and_then(|mut cache| cache.get(&key, spec.size_px))
+        .expect("the cached render must remain available for the repaint");
     assert_eq!(
         cached.len(),
         usize::from(spec.size_px) * usize::from(spec.size_px) * 4
