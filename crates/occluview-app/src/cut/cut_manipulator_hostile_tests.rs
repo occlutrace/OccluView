@@ -59,6 +59,23 @@ fn planted() -> CutManipulator {
     m
 }
 
+#[test]
+fn radius_control_updates_follow_mode_without_a_hover() {
+    let mut m = CutManipulator::default();
+    m.arm_with_radius(12.0);
+    assert!(m.pose().is_none());
+    assert!(m.set_radius_mm(6.0));
+    assert_eq!(m.radius_mm(), 6.0);
+    m.update(&CutFrameInput {
+        surface_hit: hit(Vec3::ZERO, Vec3::Y),
+        ..base()
+    });
+    assert_eq!(m.pose().expect("follow disc").radius_mm, 6.0);
+    m.disarm();
+    assert!(!m.set_radius_mm(9.0));
+    assert_eq!(m.radius_mm(), 6.0);
+}
+
 /// Grab the center handle (pointer at the projected center) and hold it.
 fn grab_center(m: &mut CutManipulator) {
     let out = m.update(&CutFrameInput {

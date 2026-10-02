@@ -318,10 +318,7 @@ impl SceneContext<'_> {
             BridgeSplitPanelState {
                 mode: self.tools.bridge_split.session().mode(),
                 kerf_mm: self.tools.bridge_split.session().kerf_mm(),
-                disc_radius_mm: self.tools.bridge_split_disc.pose().map_or(
-                    crate::cut::cut_manipulator::DEFAULT_DISC_RADIUS_MM,
-                    |pose| pose.radius_mm,
-                ),
+                disc_radius_mm: self.tools.bridge_split_disc.radius_mm(),
                 can_apply: self.tools.bridge_split.session().can_apply(),
                 failure: self.tools.bridge_split.session().failure(),
             },
@@ -655,6 +652,38 @@ mod transition_tests {
     use crate::app::app_test_support::{named_scene, test_app};
     use glam::{Affine3A, Vec3};
     use std::sync::Arc;
+
+    #[test]
+    fn bridge_size_control_changes_the_remembered_radius_before_placement() {
+        use super::*;
+
+        let mut app = test_app("bridge-radius-control");
+        let scene = named_scene("jaw", 0.0);
+        let entry = &scene.meshes()[0];
+        app.workspace.scenes[0].tools.bridge_split.start(entry);
+        app.workspace.scenes[0]
+            .tools
+            .bridge_split_disc
+            .arm_with_radius(12.0);
+        let ctx = egui::Context::default();
+        let mut context = app.active_context().expect("live scene");
+        context.apply_bridge_split_panel_action(
+            Some(BridgeSplitPanelAction::SetDiscRadiusMm(6.0)),
+            &scene,
+            entry,
+            &ctx,
+        );
+        assert_eq!(
+            context.tools.bridge_split_disc.radius_mm().to_bits(),
+            6.0_f32.to_bits()
+        );
+        assert!(context.tools.bridge_split_disc.pose().is_none());
+        assert_eq!(
+            context.tools.bridge_split.session().mode(),
+            BridgeSplitMode::Following
+        );
+        assert_eq!(context.document.edit_mode.undo_len(), 0);
+    }
 
     #[test]
     fn bridge_section_close_cancels_the_separator_without_editing_the_scene() {
