@@ -19,6 +19,11 @@ struct ProjectedLoop {
     signed_area: f64,
 }
 
+struct ProjectedLoops {
+    valid: Vec<ProjectedLoop>,
+    rejected_bounds: Vec<[Point2; 2]>,
+}
+
 #[derive(Clone, Copy)]
 struct ProjectionBasis {
     origin: DVec3,
@@ -56,7 +61,8 @@ fn triangulate_regions_with_policy(
     let expected_normal = expected_normal
         .try_normalize()
         .ok_or_else(|| cap_failed("separator normal is not normalizable"))?;
-    let projected = project_loops(mesh, loops, expected_normal, best_effort)?;
+    let projection = project_loops(mesh, loops, expected_normal, best_effort)?;
+    let projected = projection.valid;
     let parents = containment_parents(&projected)?;
     let depths = containment_depths(&parents)?;
     let mut cap_indices = Vec::new();
@@ -64,6 +70,16 @@ fn triangulate_regions_with_policy(
 
     for (outer_index, depth) in depths.iter().copied().enumerate() {
         if depth % 2 != 0 {
+            continue;
+        }
+        let outer_bounds = point_bounds(&projected[outer_index].points)?;
+        if projection
+            .rejected_bounds
+            .iter()
+            .any(|rejected| bounds_overlap(outer_bounds, *rejected))
+        {
+            // A damaged inner rim cannot be discarded into a solid lid.
+            // Only regions spatially independent of every rejected rim are safe.
             continue;
         }
         let holes: Vec<usize> = parents
@@ -99,7 +115,7 @@ fn project_loops(
     loops: &[Vec<usize>],
     normal: DVec3,
     best_effort: bool,
-) -> Result<Vec<ProjectedLoop>, BridgeSplitError> {
+) -> Result<ProjectedLoops, BridgeSplitError> {
     let seed = if normal.x.abs() < 0.9 {
         DVec3::X
     } else {
@@ -124,11 +140,13 @@ fn project_loops(
         tolerance: planar_tolerance(mesh, loops),
     };
     let mut projected = Vec::with_capacity(loops.len());
+    let mut rejected_bounds = Vec::new();
     for ring in loops {
         match project_loop(mesh, ring, basis) {
             Ok(loop_data) => projected.push(loop_data),
             Err(error) if best_effort => {
                 let _ = error;
+                rejected_bounds.push(rejected_loop_bounds(mesh, ring, basis)?);
             }
             Err(error) => return Err(error),
         }
@@ -136,7 +154,48 @@ fn project_loops(
     if projected.is_empty() {
         return Err(cap_failed("no planar cut loop could be projected"));
     }
-    Ok(projected)
+    Ok(ProjectedLoops {
+        valid: projected,
+        rejected_bounds,
+    })
+}
+
+fn rejected_loop_bounds(
+    mesh: &MeshEditBuffers,
+    ring: &[usize],
+    basis: ProjectionBasis,
+) -> Result<[Point2; 2], BridgeSplitError> {
+    let points = ring
+        .iter()
+        .map(|&index| {
+            let vertex = mesh
+                .vertices
+                .get(index)
+                .ok_or_else(|| cap_failed("rejected cut rim vertex is out of range"))?;
+            let relative = DVec3::from_array(vertex.position.map(f64::from)) - basis.origin;
+            Ok([relative.dot(basis.u), relative.dot(basis.v)])
+        })
+        .collect::<Result<Vec<_>, BridgeSplitError>>()?;
+    point_bounds(&points)
+}
+
+fn point_bounds(points: &[Point2]) -> Result<[Point2; 2], BridgeSplitError> {
+    if points.is_empty() || points.iter().flatten().any(|value| !value.is_finite()) {
+        return Err(cap_failed("cut rim has no finite spatial bounds"));
+    }
+    let mut min = [f64::INFINITY; 2];
+    let mut max = [f64::NEG_INFINITY; 2];
+    for point in points {
+        for axis in 0..2 {
+            min[axis] = min[axis].min(point[axis]);
+            max[axis] = max[axis].max(point[axis]);
+        }
+    }
+    Ok([min, max])
+}
+
+fn bounds_overlap(left: [Point2; 2], right: [Point2; 2]) -> bool {
+    (0..2).all(|axis| left[0][axis] <= right[1][axis] && right[0][axis] <= left[1][axis])
 }
 
 fn project_loop(

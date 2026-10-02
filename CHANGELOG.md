@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Surface bridge splits leave regions open when a damaged inner contour prevents safe capping.
+
 - Hole-cap fairing uses the full outside support count for large vertex fans.
 
 - Sections preserve closed contours for finite transformed meshes with local plane offsets beyond the f32 range.
