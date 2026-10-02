@@ -84,5 +84,5 @@ pub use remesh_policy::{RemeshPolicy, TopologyRevision};
 pub use respace::{tangential_respace_target, RespaceSurface, RESPACE_GAIN};
 pub use sculpt_session::*;
 pub use shape_preserve::{preserve_alpha, DEFAULT_PRESERVE_RINGS};
-pub use surface_topology::{SurfacePoint, SurfaceTopology};
+pub use surface_topology::{SculptInputError, SurfacePoint, SurfaceTopology};
 pub use tip_stamp::segment_stamp_weight;

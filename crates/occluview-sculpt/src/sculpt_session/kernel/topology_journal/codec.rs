@@ -471,7 +471,8 @@ mod tests {
         let mut session = SculptSession::new(
             vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
             vec![0, 1, 2],
-        );
+        )
+        .expect("valid mesh fixture");
         assert!(session.restore_topo(&[], &[], false, &journal).is_none());
         assert_eq!(session.faces(), &[0, 1, 2]);
         assert_eq!(session.vertex_count(), 3);

@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Sculpt refuses malformed mesh buffers before preparing a session instead of crashing.
+
 - Solid section caps remain visible when a mesh is translated away from the origin.
 
 - Close Holes refuses a fully zero-area minimum-area cover while retaining supported indexed seams.

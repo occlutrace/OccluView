@@ -177,7 +177,11 @@ impl BrushSession {
         for vertex in &mesh.vertices {
             positions.extend_from_slice(&vertex.position);
         }
-        let mut kernel = SculptSession::new(positions, mesh.indices.clone());
+        let mut kernel = SculptSession::new(positions, mesh.indices.clone()).map_err(|error| {
+            MeshEditError::MalformedMesh {
+                reason: error.to_string(),
+            }
+        })?;
         // Erode uses the opposite-wall reserve. Build its immutable opening
         // probe on this already-background preparation path, never on a dab.
         kernel.prepare_wall_probe();

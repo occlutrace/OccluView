@@ -689,7 +689,8 @@ mod tests {
         let session = SculptSession::new(
             vec![-1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, -0.0, 0.0, 0.0, 1.0, 0.0],
             vec![0, 2, 3, 2, 1, 3],
-        );
+        )
+        .expect("valid mesh fixture");
         assert_eq!(
             session.grid_snapped_group(DVec3::new(-0.0, 0.0, 0.0), 0, 1),
             Some(2)
@@ -706,7 +707,8 @@ mod tests {
                 verts.extend_from_slice(&[0.0, angle.cos() as f32, angle.sin() as f32]);
                 tris.extend_from_slice(&[0, 1, face + 2]);
             }
-            let mut session = SculptSession::new(verts.clone(), tris.clone());
+            let mut session =
+                SculptSession::new(verts.clone(), tris.clone()).expect("valid mesh fixture");
             session.start_stroke();
             let mut journal = std::mem::take(&mut session.topo_journal);
             let mut added_faces = Vec::new();

@@ -38,7 +38,7 @@ fn grid_session_with_offset_spike(
             tris.extend_from_slice(&[a, b, d, a, d, c]);
         }
     }
-    SculptSession::new(verts, tris)
+    SculptSession::new(verts, tris).expect("valid mesh fixture")
 }
 
 fn irregular_sheet_session() -> SculptSession {
@@ -66,7 +66,7 @@ fn irregular_sheet_session() -> SculptSession {
             tris.extend_from_slice(&[a, b, d, a, d, c]);
         }
     }
-    SculptSession::new(verts, tris)
+    SculptSession::new(verts, tris).expect("valid mesh fixture")
 }
 
 fn assert_live_normal_buffers_match(
@@ -120,7 +120,7 @@ fn tilted_grid_session(half_cells: usize, spacing: f64, slope: f64) -> SculptSes
             tris.extend_from_slice(&[a, b, d, a, d, c]);
         }
     }
-    SculptSession::new(verts, tris)
+    SculptSession::new(verts, tris).expect("valid mesh fixture")
 }
 
 fn closed_slab_session(half_cells: usize, spacing: f64, thickness: f64) -> SculptSession {
@@ -192,7 +192,7 @@ fn closed_slab_session(half_cells: usize, spacing: f64, thickness: f64) -> Sculp
         );
         tris.extend_from_slice(&[a, b, c, a, c, d]);
     }
-    SculptSession::new(verts, tris)
+    SculptSession::new(verts, tris).expect("valid mesh fixture")
 }
 
 fn grid_vertex(half_cells: usize, x: usize, y: usize) -> u32 {
@@ -266,7 +266,7 @@ fn cube_crease_session() -> SculptSession {
         let base = (face_index * 4) as u32;
         tris.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
-    SculptSession::new(verts, tris)
+    SculptSession::new(verts, tris).expect("valid mesh fixture")
 }
 
 fn centered_dab(radius: f64, mode: BrushMode, strength: f64) -> Dab {
@@ -374,7 +374,8 @@ fn dab_snapshot_survives_scratch_traversal_and_relocates_raycast() {
     let mut session = SculptSession::new(
         vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
         vec![0, 1, 2],
-    );
+    )
+    .expect("valid mesh fixture");
     session.start_stroke();
     select_all(&mut session);
     for group in 0..3 {
@@ -400,7 +401,7 @@ fn flip_uses_group_ids_then_journals_raw_vertices() {
         0.0,
     ];
     let tris = vec![2, 3, 5, 3, 4, 5];
-    let mut session = SculptSession::new(verts.clone(), tris.clone());
+    let mut session = SculptSession::new(verts.clone(), tris.clone()).expect("valid mesh fixture");
     session.start_stroke();
     select_all(&mut session);
     let tolerance = SculptSession::remesh_tolerance_mm(1.0);
@@ -471,7 +472,7 @@ fn split_and_collapse_keep_rows_and_exact_history() {
             tris.extend_from_slice(&[a, a + 1, a + 5, a, a + 5, a + 4]);
         }
     }
-    let mut session = SculptSession::new(verts.clone(), tris.clone());
+    let mut session = SculptSession::new(verts.clone(), tris.clone()).expect("valid mesh fixture");
     session.start_stroke();
     select_all(&mut session);
     let dab = Dab {
@@ -548,7 +549,8 @@ fn motion_limits_preserve_identity_and_requested_direction_after_compression() {
     let mut session = SculptSession::new(
         vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
         vec![0, 1, 2],
-    );
+    )
+    .expect("valid mesh fixture");
     session.write_group_position(1, DVec3::new(0.1, 0.0, 0.0));
     let here = session.group_v(0);
     assert_eq!(session.clamp_step_at(0, here, here), here);
@@ -567,7 +569,8 @@ fn smooth_keeps_an_irregular_planar_fan_in_place() {
     let verts = vec![
         0.2, 0.1, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, -1.0, 0.0, 0.0, 0.0, -1.0, 0.0,
     ];
-    let mut session = SculptSession::new(verts.clone(), vec![0, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 1]);
+    let mut session = SculptSession::new(verts.clone(), vec![0, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 1])
+        .expect("valid mesh fixture");
     session.start_stroke();
     select_all(&mut session);
     let region = session.region_points.clone();
@@ -600,7 +603,7 @@ fn split_inherits_material_depth_across_strokes_and_history() {
             tris.extend_from_slice(&[a, a + 1, a + 5, a, a + 5, a + 4]);
         }
     }
-    let mut session = SculptSession::new(verts, tris);
+    let mut session = SculptSession::new(verts, tris).expect("valid mesh fixture");
     for group in 0..16 {
         let point = session.group_v(group) + DVec3::new(0.0, 0.0, -0.6);
         session.write_group_position(group, point);
@@ -1050,7 +1053,7 @@ fn preserve_skirt_knife_keeps_incremental_normals_current_through_history() {
 #[test]
 fn appended_group_without_overlay_rows_has_no_base_neighbors_or_faces() {
     let verts = [0.0_f32, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
-    let mut topology = SurfaceTopology::new(&verts, &[0, 1, 2]);
+    let mut topology = SurfaceTopology::new(&verts, &[0, 1, 2]).expect("valid mesh fixture");
     let appended = topology.append_group(3);
     topology.set_neighbors(0, Vec::new());
     topology.set_incident(0, Vec::new());
@@ -1064,7 +1067,8 @@ fn raycast_interpolates_the_display_normals_across_a_face() {
     let verts = vec![
         0.0_f32, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, -1.0, 1.0,
     ];
-    let mut session = SculptSession::new(verts, vec![0, 1, 2, 1, 0, 3]);
+    let mut session =
+        SculptSession::new(verts, vec![0, 1, 2, 1, 0, 3]).expect("valid mesh fixture");
     let (hit, normal) = session
         .raycast(DVec3::new(0.2, 0.2, 1.0), -DVec3::Z)
         .expect("the ray hits the front face");
