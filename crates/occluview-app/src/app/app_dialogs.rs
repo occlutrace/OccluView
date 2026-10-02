@@ -83,6 +83,17 @@ impl SceneContext<'_> {
         let thickness_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::T);
         let align_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::A);
         let edit_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::E);
+        let can_cut = self.can_render_cut_view();
+        let edit_session_active = self.document.edit_mode.has_active_session();
+        let has_pickable_layer = self.has_measurable_layer();
+        let can_measure =
+            measure_tool::measure_menu_enabled(has_pickable_layer, edit_session_active);
+        let can_edit_mesh = self.document.scene.as_ref().is_some_and(|scene| {
+            scene
+                .meshes()
+                .iter()
+                .any(|entry| !entry.mesh.is_point_cloud())
+        });
         let mut toggle_cut_view = false;
         let mut toggle_measure: Option<MeasureMode> = None;
         let mut toggle_align = false;
@@ -91,19 +102,19 @@ impl SceneContext<'_> {
             let consume = |ctx: &egui::Context, shortcut: &egui::KeyboardShortcut| {
                 ctx.input_mut(|input| input.consume_key(shortcut.modifiers, shortcut.logical_key))
             };
-            if consume(&ctx, &cut_shortcut) {
+            if consume(&ctx, &cut_shortcut) && can_cut {
                 toggle_cut_view = true;
             }
-            if consume(&ctx, &ruler_shortcut) {
+            if consume(&ctx, &ruler_shortcut) && can_measure {
                 toggle_measure = Some(MeasureMode::Ruler);
             }
-            if consume(&ctx, &thickness_shortcut) {
+            if consume(&ctx, &thickness_shortcut) && can_measure {
                 toggle_measure = Some(MeasureMode::Thickness);
             }
-            if consume(&ctx, &align_shortcut) {
+            if consume(&ctx, &align_shortcut) && can_measure {
                 toggle_align = true;
             }
-            if consume(&ctx, &edit_shortcut) {
+            if consume(&ctx, &edit_shortcut) && can_edit_mesh {
                 toggle_edit_mesh = true;
             }
         }
@@ -232,7 +243,6 @@ impl SceneContext<'_> {
                     self.show_scenes_menu(ui);
                     toolbar_divider(ui);
 
-                    let can_cut = self.can_render_cut_view();
                     let cut_shortcut_text = ui.ctx().format_shortcut(&cut_shortcut);
                     let cut_hint = if can_cut {
                         self.ui.locale.tr_with(
@@ -265,10 +275,6 @@ impl SceneContext<'_> {
 
                     toolbar_divider(ui);
 
-                    let edit_session_active = self.document.edit_mode.has_active_session();
-                    let has_pickable_layer = self.has_measurable_layer();
-                    let can_measure =
-                        measure_tool::measure_menu_enabled(has_pickable_layer, edit_session_active);
                     let entries = [
                         (
                             AppIcon::Ruler,
@@ -340,11 +346,6 @@ impl SceneContext<'_> {
                         toggle_align = true;
                     }
 
-                    let can_edit_mesh =
-                        self.document.scene.is_some()
-                            && self.document.scene.as_ref().is_some_and(|s| {
-                                s.meshes().iter().any(|m| !m.mesh.is_point_cloud())
-                            });
                     let edit_active = self.document.edit_mode.has_active_session();
                     let edit_shortcut_text = ui.ctx().format_shortcut(&edit_shortcut);
                     let edit_hint = if edit_active {
@@ -792,6 +793,101 @@ fn toolbar_divider(ui: &mut egui::Ui) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Context as _;
+
+    #[test]
+    fn disabled_toolbar_commands_cannot_be_armed_by_keyboard_shortcuts() -> anyhow::Result<()> {
+        for key in [
+            egui::Key::C,
+            egui::Key::M,
+            egui::Key::T,
+            egui::Key::A,
+            egui::Key::E,
+        ] {
+            let ctx = egui::Context::default();
+            let mut app = crate::app::OccluViewApp::new_for_tests(ctx.clone());
+            ctx.run_ui(
+                egui::RawInput {
+                    events: vec![egui::Event::Key {
+                        key,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    }],
+                    ..Default::default()
+                },
+                |ui| {
+                    let Some(mut scene) = app.active_context() else {
+                        panic!("scene missing");
+                    };
+                    scene.show_toolbar(ui);
+                },
+            )
+            .drop_without_applying_deltas();
+            let scene = app.active_context().context("scene missing")?;
+            assert!(
+                !scene.tools.cut_view.is_active(),
+                "{key:?} must obey the disabled Cut button"
+            );
+            assert!(
+                !scene.tools.measure.is_active(),
+                "{key:?} must obey the disabled measurement buttons"
+            );
+            assert!(
+                !scene.align_active(),
+                "{key:?} must obey the disabled Align button"
+            );
+            assert!(!scene.document.edit_mode.has_active_session());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn toolbar_shortcuts_keep_measurement_and_alignment_blocked_during_mesh_editing(
+    ) -> anyhow::Result<()> {
+        for key in [egui::Key::M, egui::Key::T, egui::Key::A] {
+            let ctx = egui::Context::default();
+            let mut app = crate::app::OccluViewApp::new_for_tests(ctx.clone());
+            let model =
+                std::sync::Arc::new(super::super::app_test_support::named_scene("surface", 0.0));
+            app.workspace.scenes[0].document.scene = Some(model.clone());
+            assert!(app.workspace.scenes[0]
+                .document
+                .edit_mode
+                .begin_face_selection(&model.meshes()[0], &model));
+            ctx.run_ui(
+                egui::RawInput {
+                    events: vec![egui::Event::Key {
+                        key,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    }],
+                    ..Default::default()
+                },
+                |ui| {
+                    let Some(mut scene) = app.active_context() else {
+                        panic!("scene missing");
+                    };
+                    scene.show_toolbar(ui);
+                },
+            )
+            .drop_without_applying_deltas();
+            let scene = app.active_context().context("scene missing")?;
+            assert!(
+                !scene.tools.measure.is_active(),
+                "{key:?} must leave mesh editing in control"
+            );
+            assert!(
+                !scene.align_active(),
+                "{key:?} must leave mesh editing in control"
+            );
+            assert!(scene.document.edit_mode.has_active_session());
+        }
+        Ok(())
+    }
 
     #[test]
     fn production_guard_dialog_stays_content_sized() -> anyhow::Result<()> {
