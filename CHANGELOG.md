@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Restarting Bridge Split can prepare a new source without waiting for an abandoned preparation.
+
 - Sculpt brush preferences save after the last slider change settles.
 
 - Cut View zoom keeps the section point under the cursor fixed while resizing the disc.

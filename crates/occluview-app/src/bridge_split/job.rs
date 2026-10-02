@@ -33,28 +33,45 @@ struct BridgeSplitSourceCache {
 
 impl BridgeSplitSourceCache {
     fn prepared_source(
-        &mut self,
+        cache: &Mutex<Self>,
         source: &Arc<Mesh>,
+        prepare: impl FnOnce(
+            Arc<Mesh>,
+        ) -> Result<
+            PreparedBridgeSplitSource,
+            occluview_mesh_edit::CoreBridgeSplitError,
+        >,
     ) -> Result<Arc<PreparedBridgeSplitSource>, BridgeSplitToolError> {
         // Keyed by geometry_id, not topology_id: an interactive sculpt commit
         // preserves topology_id (to spare the renderer a re-upload) while its
         // positions change, so keying on topology_id would hand back a stale
         // pre-sculpt prepared solid. geometry_id changes on every geometry edit.
         let geometry_id = source.geometry_id();
-        if let Some(prepared) = self.entries.get(&geometry_id) {
-            let prepared = Arc::clone(prepared);
-            self.touch(geometry_id);
-            return Ok(prepared);
+        {
+            let mut cache = cache
+                .lock()
+                .map_err(|_| BridgeSplitToolError::WorkerStopped)?;
+            if let Some(prepared) = cache.entries.get(&geometry_id) {
+                let prepared = Arc::clone(prepared);
+                cache.touch(geometry_id);
+                return Ok(prepared);
+            }
         }
 
-        let prepared = Arc::new(
-            prepare_bridge_split_source(Arc::clone(source)).map_err(BridgeSplitToolError::from)?,
-        );
-        self.entries.insert(geometry_id, Arc::clone(&prepared));
-        self.touch(geometry_id);
-        while self.recency.len() > SOURCE_CACHE_CAPACITY {
-            if let Some(evicted) = self.recency.pop_front() {
-                self.entries.remove(&evicted);
+        let prepared = Arc::new(prepare(Arc::clone(source)).map_err(BridgeSplitToolError::from)?);
+        let mut cache = cache
+            .lock()
+            .map_err(|_| BridgeSplitToolError::WorkerStopped)?;
+        if let Some(existing) = cache.entries.get(&geometry_id) {
+            let existing = Arc::clone(existing);
+            cache.touch(geometry_id);
+            return Ok(existing);
+        }
+        cache.entries.insert(geometry_id, Arc::clone(&prepared));
+        cache.touch(geometry_id);
+        while cache.recency.len() > SOURCE_CACHE_CAPACITY {
+            if let Some(evicted) = cache.recency.pop_front() {
+                cache.entries.remove(&evicted);
             }
         }
         Ok(prepared)
@@ -94,10 +111,11 @@ impl BridgeSplitWorker {
     pub(crate) fn spawn() -> Self {
         let source_cache = Arc::new(Mutex::new(BridgeSplitSourceCache::default()));
         let compute = move |input: BridgeSplitJobInput| {
-            let prepared = source_cache
-                .lock()
-                .map_err(|_| BridgeSplitToolError::WorkerStopped)?
-                .prepared_source(&input.mesh)?;
+            let prepared = BridgeSplitSourceCache::prepared_source(
+                &source_cache,
+                &input.mesh,
+                prepare_bridge_split_source,
+            )?;
             bridge_split_prepared_mesh_in_world(&prepared, input.transform, input.request)
                 .map_err(BridgeSplitToolError::from)
         };
@@ -265,11 +283,20 @@ mod tests {
     fn source_cache_reuses_each_prepared_source_across_source_switches() {
         let source = Arc::new(mesh_with_redundant_degenerate_face("A"));
         let alternate = Arc::new(mesh_with_redundant_degenerate_face("B"));
-        let mut cache = BridgeSplitSourceCache::default();
+        let cache = Mutex::new(BridgeSplitSourceCache::default());
 
-        let first = cache.prepared_source(&source).expect("prepared source");
-        let other = cache.prepared_source(&alternate).expect("alternate source");
-        let second = cache.prepared_source(&source).expect("cached source");
+        let first =
+            BridgeSplitSourceCache::prepared_source(&cache, &source, prepare_bridge_split_source)
+                .expect("prepared source");
+        let other = BridgeSplitSourceCache::prepared_source(
+            &cache,
+            &alternate,
+            prepare_bridge_split_source,
+        )
+        .expect("alternate source");
+        let second =
+            BridgeSplitSourceCache::prepared_source(&cache, &source, prepare_bridge_split_source)
+                .expect("cached source");
 
         assert!(!Arc::ptr_eq(&first, &other));
         assert!(Arc::ptr_eq(&first, &second));
@@ -280,13 +307,51 @@ mod tests {
     fn source_cache_remembers_open_surface_preparation() {
         let source = Arc::new(open_triangle("surface"));
         let geometry_id = source.geometry_id();
-        let mut cache = BridgeSplitSourceCache::default();
+        let cache = Mutex::new(BridgeSplitSourceCache::default());
 
-        cache
-            .prepared_source(&source)
+        BridgeSplitSourceCache::prepared_source(&cache, &source, prepare_bridge_split_source)
             .expect("open surface is eligible for the surface fallback");
+        let cache = cache.lock().expect("cache");
         assert!(cache.entries.contains_key(&geometry_id));
         assert!(cache.recency.contains(&geometry_id));
+    }
+
+    #[test]
+    fn a_new_source_does_not_wait_for_abandoned_preparation() {
+        let cache = Mutex::new(BridgeSplitSourceCache::default());
+        let source = Arc::new(open_triangle("old"));
+        let next = Arc::new(open_triangle("next"));
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let (next_tx, next_rx) = mpsc::channel();
+        let reached_next = thread::scope(|scope| {
+            let cache = &cache;
+            scope.spawn(move || {
+                let _ = BridgeSplitSourceCache::prepared_source(cache, &source, |mesh| {
+                    let _ = started_tx.send(());
+                    let _ = release_rx.recv_timeout(std::time::Duration::from_secs(5));
+                    prepare_bridge_split_source(mesh)
+                });
+            });
+            assert!(started_rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .is_ok());
+            scope.spawn(move || {
+                let _ = BridgeSplitSourceCache::prepared_source(cache, &next, |mesh| {
+                    let _ = next_tx.send(());
+                    prepare_bridge_split_source(mesh)
+                });
+            });
+            let reached_next = next_rx
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .is_ok();
+            let _ = release_tx.send(());
+            reached_next
+        });
+        assert!(
+            reached_next,
+            "source preparation serialized the replacement job"
+        );
     }
 
     #[allow(clippy::expect_used)]
