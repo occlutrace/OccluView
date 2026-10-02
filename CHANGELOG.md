@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Mesh edits preserve correct facet normals for very small and very large geometry.
+
 - Section contours remain visible on layers with small nonzero scales.
 
 - Closest-surface queries preserve valid face and edge projections on small triangles.
