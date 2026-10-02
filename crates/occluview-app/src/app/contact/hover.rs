@@ -6,7 +6,7 @@ use occluview_contact::{
 };
 
 use super::super::SceneContext;
-use crate::contact::contact::{field_value_at, reading_of};
+use crate::contact::state::{field_value_at, reading_of};
 use crate::ui::ui_theme;
 
 /// The chip's gap from the cursor, in points.

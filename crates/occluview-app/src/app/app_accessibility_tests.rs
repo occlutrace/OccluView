@@ -3,7 +3,7 @@
 use super::*;
 use crate::app::information_dialog::InformationDialog;
 use crate::app::settings::panel::settings_popup_id;
-use crate::contact::contact::ContactMode;
+use crate::contact::state::ContactMode;
 use crate::i18n::preference::UiLanguagePreference;
 use crate::measure::measure_tool::MeasureMode;
 use crate::mesh_editor::mesh_editor_overlay::EditorTab;
@@ -450,7 +450,7 @@ fn contact_strip_controls_publish_names_roles_and_selected_state() {
     app.workspace.scenes[0]
         .tools
         .contacts
-        .open(crate::contact::contact::ContactPair {
+        .open(crate::contact::state::ContactPair {
             subject: layer_id,
             antagonist: layer_id,
         });
