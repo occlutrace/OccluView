@@ -1,7 +1,6 @@
 cargo fmt
 clippy (windows)
 cross-compile (windows-gnu)
-build (windows integration)
 test (Windows preview package)
 build and test (macOS Apple Silicon)
 test (linux renderer)
