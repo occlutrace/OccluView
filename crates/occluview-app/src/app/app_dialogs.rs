@@ -88,12 +88,7 @@ impl SceneContext<'_> {
         let has_pickable_layer = self.has_measurable_layer();
         let can_measure =
             measure_tool::measure_menu_enabled(has_pickable_layer, edit_session_active);
-        let can_edit_mesh = self.document.scene.as_ref().is_some_and(|scene| {
-            scene
-                .meshes()
-                .iter()
-                .any(|entry| !entry.mesh.is_point_cloud())
-        });
+        let can_edit_mesh = has_pickable_layer;
         let mut toggle_cut_view = false;
         let mut toggle_measure: Option<MeasureMode> = None;
         let mut toggle_align = false;
@@ -405,12 +400,6 @@ impl SceneContext<'_> {
         // one's selection.
         if toggle_edit_mesh {
             let edit_active = self.document.edit_mode.has_active_session();
-            let can_edit_mesh = self.document.scene.is_some()
-                && self
-                    .document
-                    .scene
-                    .as_ref()
-                    .is_some_and(|s| s.meshes().iter().any(|m| !m.mesh.is_point_cloud()));
             if let (false, true, Some(scene)) =
                 (edit_active, can_edit_mesh, self.document.scene.clone())
             {
@@ -886,6 +875,34 @@ mod tests {
             );
             assert!(scene.document.edit_mode.has_active_session());
         }
+        Ok(())
+    }
+
+    #[test]
+    fn hidden_meshes_do_not_enable_the_edit_toolbar_button() -> anyhow::Result<()> {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut app = crate::app::OccluViewApp::new_for_tests(ctx.clone());
+        let mut model = super::super::app_test_support::named_scene("surface", 0.0);
+        model.meshes_mut()[0].visible = false;
+        app.workspace.scenes[0].document.scene = Some(std::sync::Arc::new(model));
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let Some(mut scene) = app.active_context() else {
+                panic!("scene missing");
+            };
+            scene.show_toolbar(ui);
+        });
+        output.textures_delta.clear();
+        let update = output
+            .platform_output
+            .accesskit_update
+            .context("toolbar output")?;
+        let edit = update
+            .nodes
+            .iter()
+            .find_map(|(_, node)| (node.label() == Some("Edit")).then_some(node))
+            .context("Edit button missing")?;
+        assert!(edit.is_disabled(), "Edit has no visible mesh it can open");
         Ok(())
     }
 
