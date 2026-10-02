@@ -225,8 +225,11 @@ impl SceneContext<'_> {
                 || self.tools.sculpt.worker_has_pending_work();
             if !session_ready && !can_still_prepare {
                 self.tools.sculpt.pending_presses.clear();
-                self.scene_ui.status_message =
-                    Some(self.ui.locale.tr(crate::i18n::message_id!("sculpt-failed")));
+                self.scene_ui.status_message = Some(
+                    self.ui
+                        .locale
+                        .tr(crate::i18n::message_id!("sculpt-worker-unavailable")),
+                );
                 return;
             }
             self.tools.sculpt.pending_presses.push_front(pending);
