@@ -187,13 +187,6 @@ mod tests {
 
     use super::*;
 
-    fn one_triangle_binary_stl() -> Vec<u8> {
-        let mut out = vec![0u8; 84];
-        out[80..84].copy_from_slice(&1u32.to_le_bytes());
-        out.extend_from_slice(&[0u8; 50]);
-        out
-    }
-
     #[test]
     fn glb_magic_wins_without_extension() {
         assert!(matches!(
@@ -205,7 +198,10 @@ mod tests {
     #[test]
     fn binary_stl_magic_wins_over_wrong_extension() {
         assert!(matches!(
-            infer_thumbnail_format(Some("obj"), &one_triangle_binary_stl()),
+            infer_thumbnail_format(
+                Some("obj"),
+                &occluview_core::test_support::binary_stl(&[[0.0; 12]]),
+            ),
             Ok(FormatKind::Stl)
         ));
     }
@@ -307,12 +303,10 @@ mod agreement_tests {
         let mut bytes = b"g 1 arch upper".to_vec();
         bytes.resize(80, 0);
         bytes.extend_from_slice(&1u32.to_le_bytes());
-        for value in [
+        let triangle = [
             0.0f32, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0,
-        ] {
-            bytes.extend_from_slice(&value.to_le_bytes());
-        }
-        bytes.extend_from_slice(&[0, 0]);
+        ];
+        occluview_core::test_support::append_binary_stl_triangle(&mut bytes, &triangle);
 
         assert!(matches!(probe(Some("stl"), &bytes), Ok(FormatKind::Stl)));
         let inferred = infer_thumbnail_format(Some("stl"), &bytes);

@@ -122,34 +122,13 @@ fn a_legacy_embedded_ply_header_still_decodes_to_its_image() {
 }
 
 use super::*;
+use occluview_core::test_support::colored_uv_triangle_mesh;
 use occluview_core::{Mesh, Vertex};
 use tempfile::NamedTempFile;
 
-fn triangle_mesh() -> Mesh {
-    Mesh::new(
-        Some("sample".to_string()),
-        vec![
-            Vertex::at(glam::Vec3::new(0.0, 0.0, 0.0))
-                .with_normal(glam::Vec3::new(0.0, 0.0, 1.0))
-                .with_color([210, 180, 120, 255])
-                .with_uv([0.0, 0.0]),
-            Vertex::at(glam::Vec3::new(1.0, 0.0, 0.0))
-                .with_normal(glam::Vec3::new(0.0, 0.0, 1.0))
-                .with_color([220, 170, 110, 255])
-                .with_uv([1.0, 0.0]),
-            Vertex::at(glam::Vec3::new(0.0, 1.0, 0.0))
-                .with_normal(glam::Vec3::new(0.0, 0.0, 1.0))
-                .with_color([230, 160, 100, 255])
-                .with_uv([0.0, 1.0]),
-        ],
-        vec![0, 1, 2],
-    )
-    .expect("sample mesh")
-}
-
 #[test]
 fn overwrite_semantics_truncate_existing_file() {
-    let mesh = triangle_mesh();
+    let mesh = colored_uv_triangle_mesh(Some("sample")).expect("sample mesh");
     let directory = tempfile::tempdir().expect("temp directory");
     let destination = directory.path().join("scan.obj");
     std::fs::write(&destination, b"stale bytes").expect("seed file");
@@ -169,7 +148,7 @@ fn overwrite_semantics_truncate_existing_file() {
 
 #[test]
 fn overwrite_commits_a_complete_file_without_leaving_a_sibling_temp() {
-    let mesh = triangle_mesh();
+    let mesh = colored_uv_triangle_mesh(Some("sample")).expect("sample mesh");
     let directory = tempfile::tempdir().expect("temp directory");
     let destination = directory.path().join("scan.obj");
     std::fs::write(&destination, b"previous export").expect("seed file");
@@ -209,7 +188,7 @@ fn overwrite_temp_files_are_unique_siblings_of_the_destination() {
 
 #[test]
 fn new_file_publishes_only_the_complete_export() {
-    let mesh = triangle_mesh();
+    let mesh = colored_uv_triangle_mesh(Some("sample")).expect("sample mesh");
     let directory = tempfile::tempdir().expect("temp directory");
     let destination = directory.path().join("scan.obj");
 
@@ -233,7 +212,7 @@ fn new_file_publishes_only_the_complete_export() {
 
 #[test]
 fn new_file_collision_leaves_the_existing_export_and_no_temp_behind() {
-    let mesh = triangle_mesh();
+    let mesh = colored_uv_triangle_mesh(Some("sample")).expect("sample mesh");
     let directory = tempfile::tempdir().expect("temp directory");
     let destination = directory.path().join("scan.obj");
     let seed = b"operator export already exists";
@@ -280,7 +259,7 @@ fn overwriting_a_symlink_updates_its_target_and_keeps_the_link() {
     std::fs::write(&target, b"previous scan").expect("seed target");
     symlink(&target, &link).expect("create symlink");
 
-    let mesh = triangle_mesh();
+    let mesh = colored_uv_triangle_mesh(Some("sample")).expect("sample mesh");
     write_mesh_overwrite(
         &link,
         &mesh,
@@ -390,7 +369,7 @@ fn an_unresolvable_link_chain_fails_instead_of_replacing_the_link() {
         resolve_overwrite_destination(&first).expect_err("a link loop must not resolve to a file");
     assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
 
-    let mesh = triangle_mesh();
+    let mesh = colored_uv_triangle_mesh(Some("sample")).expect("sample mesh");
     let outcome = write_mesh_overwrite(
         &first,
         &mesh,

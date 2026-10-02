@@ -42,6 +42,9 @@ pub mod mesh;
 pub mod scene;
 pub mod units;
 
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
+
 pub use bbox::Aabb;
 pub use camera::{
     orbit_delta_from_pointer_motion, zoom_factor_from_scroll, Camera, CameraAxisView, CameraPreset,

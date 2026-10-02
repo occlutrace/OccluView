@@ -1268,11 +1268,11 @@ impl SculptWorker {
         let Ok(completions) = self.state.completions.lock() else {
             return None;
         };
-        let Ok((completions, _)) = self.state.completion_wake.wait_timeout_while(
-            completions,
-            timeout,
-            |completions| completions.is_empty(),
-        ) else {
+        let Ok((completions, _)) =
+            self.state
+                .completion_wake
+                .wait_timeout_while(completions, timeout, |completions| completions.is_empty())
+        else {
             return None;
         };
         if completions.is_empty() {

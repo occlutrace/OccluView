@@ -240,26 +240,14 @@ mod tests {
 
     use super::{transform_key, AlignGeometry, PaintedVertices, SLOTS};
     use glam::{Affine3A, Vec3};
-    use occluview_core::{Mesh, SceneMesh, Vertex};
-
-    fn triangle() -> Mesh {
-        Mesh::new(
-            None,
-            vec![
-                Vertex::at(Vec3::ZERO),
-                Vertex::at(Vec3::new(1.0, 0.0, 0.0)),
-                Vertex::at(Vec3::new(0.0, 1.0, 0.0)),
-            ],
-            vec![0, 1, 2],
-        )
-        .expect("valid mesh")
-    }
+    use occluview_core::test_support::simple_triangle_mesh;
+    use occluview_core::SceneMesh;
 
     /// A second job over unchanged geometry must not copy the mesh again.
     /// Sharing the same allocation is what makes that observable.
     #[test]
     fn unchanged_geometry_is_handed_out_without_being_rebuilt() {
-        let entry = SceneMesh::new(triangle());
+        let entry = SceneMesh::new(simple_triangle_mesh(None).expect("valid mesh"));
         let mut cache = AlignGeometry::default();
         let first = cache.local_positions(&entry);
         let second = cache.local_positions(&entry);
@@ -278,7 +266,7 @@ mod tests {
     /// position.
     #[test]
     fn moving_a_layer_rebuilds_its_world_positions() {
-        let mut entry = SceneMesh::new(triangle());
+        let mut entry = SceneMesh::new(simple_triangle_mesh(None).expect("valid mesh"));
         let mut cache = AlignGeometry::default();
         let before = cache.world_positions(&entry);
         entry.transform = Affine3A::from_translation(Vec3::new(0.0, 0.0, 5.0));
@@ -336,7 +324,7 @@ mod tests {
     /// deformed scan to the screen.
     #[test]
     fn repainting_changes_only_the_colour() {
-        let mesh = triangle();
+        let mesh = simple_triangle_mesh(None).expect("valid mesh");
         let mut painted = PaintedVertices::default();
         let colors = vec![[1u8, 2, 3, 255]; 3];
         let vertices = painted.repaint(&mesh, &colors).expect("a repaint");
@@ -353,12 +341,17 @@ mod tests {
     #[test]
     fn a_map_of_the_wrong_length_is_refused() {
         let mut painted = PaintedVertices::default();
-        assert!(painted.repaint(&triangle(), &[[0, 0, 0, 255]; 2]).is_none());
+        assert!(painted
+            .repaint(
+                &simple_triangle_mesh(None).expect("valid mesh"),
+                &[[0, 0, 0, 255]; 2]
+            )
+            .is_none());
     }
 
     #[test]
     fn a_sparse_patch_with_an_invalid_vertex_id_is_refused() {
-        let mesh = triangle();
+        let mesh = simple_triangle_mesh(None).expect("valid mesh");
         let mut painted = PaintedVertices::default();
         let colors = [[1, 2, 3, 255]; 3];
         painted.repaint(&mesh, &colors).expect("a repaint");

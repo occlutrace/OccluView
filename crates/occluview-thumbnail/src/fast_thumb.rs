@@ -331,14 +331,13 @@ mod tests {
                     [x0, 0.0, z0, x1, 0.0, z0, x1, 0.0, z1],
                     [x0, 0.0, z0, x1, 0.0, z1, x0, 0.0, z1],
                 ] {
-                    let floats = [
-                        0.0, 1.0, 0.0, tri[0], tri[1], tri[2], tri[3], tri[4], tri[5], tri[6],
-                        tri[7], tri[8],
-                    ];
-                    for value in floats {
-                        bytes.extend_from_slice(&value.to_le_bytes());
-                    }
-                    bytes.extend_from_slice(&[0, 0]);
+                    occluview_core::test_support::append_binary_stl_facet(
+                        &mut bytes,
+                        [0.0, 1.0, 0.0],
+                        [tri[0], tri[1], tri[2]],
+                        [tri[3], tri[4], tri[5]],
+                        [tri[6], tri[7], tri[8]],
+                    );
                 }
             }
         }
@@ -369,13 +368,13 @@ mod tests {
         bytes[STL_HEADER_SIZE..STL_FIRST_TRIANGLE_OFFSET]
             .copy_from_slice(&(triangles.len() as u32).to_le_bytes());
         for (a, b, c) in triangles {
-            let floats = [
-                0.0, 0.0, 1.0, a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2],
-            ];
-            for value in floats {
-                bytes.extend_from_slice(&value.to_le_bytes());
-            }
-            bytes.extend_from_slice(&[0, 0]);
+            occluview_core::test_support::append_binary_stl_facet(
+                &mut bytes,
+                [0.0, 0.0, 1.0],
+                *a,
+                *b,
+                *c,
+            );
         }
         bytes
     }
@@ -451,10 +450,7 @@ mod tests {
         // A zero-area triangle would be correctly culled by the grid clusterer,
         // so use genuine geometry — this test is about format detection.
         let floats: [f32; 12] = [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
-        for value in floats {
-            bytes.extend_from_slice(&value.to_le_bytes());
-        }
-        bytes.extend_from_slice(&[0, 0]);
+        occluview_core::test_support::append_binary_stl_triangle(&mut bytes, &floats);
 
         let mesh = try_read_fast_thumbnail_mesh(None, &bytes).expect("fast stream STL path");
 

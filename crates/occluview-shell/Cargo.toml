@@ -73,6 +73,7 @@ features = [
 version = "0.62.2"
 
 [dev-dependencies]
+occluview-core = { workspace = true, features = ["test-support"] }
 roxmltree = { workspace = true }
 serde_yaml_ng = { workspace = true }
 serde_json = { workspace = true }

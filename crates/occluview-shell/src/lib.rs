@@ -38,9 +38,6 @@ mod stream_read {
         read_capped_stream, read_capped_stream_until, StreamRead, StreamReadBounds,
     };
 }
-#[cfg(test)]
-mod test_support;
-
 #[cfg(windows)]
 pub mod com;
 
@@ -55,9 +52,6 @@ pub use shell_contract::{
 
 #[cfg(windows)]
 pub use registration::notify_shell_associations_changed;
-
-#[cfg(test)]
-pub(crate) use test_support::acquire_render_test_guard;
 
 /// No-op shell refresh stub on non-Windows hosts.
 #[cfg(not(windows))]

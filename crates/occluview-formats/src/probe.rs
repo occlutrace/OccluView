@@ -253,12 +253,11 @@ mod tests {
         // Real OccluTrace export: binary STL with header "OccluTrace Native
         // binary STL", declared as one triangle. Even without the "solid"
         // prefix, the size formula (84 + 50*1 == 134) identifies it.
-        let mut bytes = vec![0u8; 84];
+        let mut header = [0u8; 80];
         let label = b"OccluTrace Native binary STL";
-        bytes[..label.len()].copy_from_slice(label);
-        bytes[80..84].copy_from_slice(&1u32.to_le_bytes());
+        header[..label.len()].copy_from_slice(label);
         // 1 triangle record (50 bytes).
-        bytes.extend_from_slice(&[0u8; 50]);
+        let bytes = occluview_core::test_support::binary_stl_with_header(&header, &[[0.0; 12]]);
         assert_eq!(
             probe(Some("ply"), &bytes).unwrap(),
             FormatKind::Stl,
@@ -269,9 +268,7 @@ mod tests {
     #[test]
     fn binary_layout_matches_size_formula() {
         // Exact-size match -> yes.
-        let mut bytes = vec![0u8; 84];
-        bytes[80..84].copy_from_slice(&3u32.to_le_bytes());
-        bytes.extend(std::iter::repeat_n(0u8, 3 * 50));
+        let mut bytes = occluview_core::test_support::binary_stl(&[[0.0; 12]; 3]);
         assert!(crate::stl::binary_layout_matches(&bytes));
 
         // Off-by-one size -> no.

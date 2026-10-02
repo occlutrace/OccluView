@@ -272,8 +272,6 @@ mod tests {
     }
 
     fn one_triangle_binary_stl_with_x_offset(x_offset: f32) -> Vec<u8> {
-        let mut out = vec![0u8; 84];
-        out[80..84].copy_from_slice(&1u32.to_le_bytes());
         let tri: [f32; 12] = [
             0.0,
             0.0,
@@ -288,11 +286,7 @@ mod tests {
             1.0,
             0.0, // v2
         ];
-        for f in tri {
-            out.extend_from_slice(&f.to_le_bytes());
-        }
-        out.extend_from_slice(&[0, 0]); // attribute byte count
-        out
+        occluview_core::test_support::binary_stl(&[tri])
     }
 
     /// A sparse file of the requested length: instant, and it still reports
@@ -512,16 +506,12 @@ mod tests {
         // ("OccluTrace Native binary STL"); the file is binary STL underneath.
         // Magic-first dispatch must route it to the STL reader, not the PLY
         // reader (which would reject it as bad signature).
-        let mut bytes = vec![0u8; 84];
+        let mut header = [0u8; 80];
         let label = b"OccluTrace Native binary STL";
-        bytes[..label.len()].copy_from_slice(label);
-        bytes[80..84].copy_from_slice(&1u32.to_le_bytes());
+        header[..label.len()].copy_from_slice(label);
         // One triangle: normal +Z, three vertices.
         let tri: [f32; 12] = [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
-        for f in tri {
-            bytes.extend_from_slice(&f.to_le_bytes());
-        }
-        bytes.extend_from_slice(&[0, 0]);
+        let bytes = occluview_core::test_support::binary_stl_with_header(&header, &[tri]);
 
         let mesh = dispatch_by_extension("ply", &bytes).expect("magic wins over extension");
         assert_eq!(mesh.triangle_count(), 1, "STL content must parse as STL");

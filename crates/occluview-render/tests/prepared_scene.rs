@@ -5,6 +5,7 @@
 mod common;
 
 use glam::Vec3;
+use occluview_core::test_support::render_triangle_mesh;
 use occluview_core::{Mesh, MeshBuilder, Vertex};
 use occluview_render::{
     GpuCamera, GpuMeshUniform, GpuTexture, Offscreen, PreparedScene, PreparedSceneSource,
@@ -29,15 +30,6 @@ fn gpu_test_lock() -> MutexGuard<'static, ()> {
 
 fn test_render_deadline() -> RenderDeadline {
     RenderDeadline::after(Duration::from_secs(5))
-}
-
-fn triangle_mesh() -> Mesh {
-    let mut builder = MeshBuilder::new();
-    let a = builder.push_vertex(Vertex::at(Vec3::new(-0.5, -0.5, 0.0)).with_normal(Vec3::Z));
-    let b = builder.push_vertex(Vertex::at(Vec3::new(0.5, -0.5, 0.0)).with_normal(Vec3::Z));
-    let c = builder.push_vertex(Vertex::at(Vec3::new(0.0, 0.5, 0.0)).with_normal(Vec3::Z));
-    builder.push_triangle(a, b, c);
-    builder.build().expect("valid triangle mesh")
 }
 
 fn opposite_normal_triangles() -> Mesh {
@@ -162,8 +154,8 @@ fn pixel_delta_sum(left: &[u8], right: &[u8]) -> u64 {
 #[test]
 fn prepared_scene_rejects_same_length_different_mesh_topology() {
     let _gpu = gpu_test_lock();
-    let original = triangle_mesh();
-    let replacement = triangle_mesh();
+    let original = render_triangle_mesh().expect("valid triangle mesh");
+    let replacement = render_triangle_mesh().expect("valid triangle mesh");
     assert_eq!(original.vertices().len(), replacement.vertices().len());
     assert_eq!(original.indices().len(), replacement.indices().len());
 
@@ -196,7 +188,7 @@ fn prepared_scene_rejects_same_length_different_mesh_topology() {
 #[test]
 fn prepared_scene_rejects_invalid_sparse_vertex_ids() {
     let _gpu = gpu_test_lock();
-    let mesh = triangle_mesh();
+    let mesh = render_triangle_mesh().expect("valid triangle mesh");
     let offscreen = pollster::block_on(Offscreen::new()).expect("offscreen init");
     let prepared = offscreen.prepare_scene(&[PreparedSceneSource {
         mesh: &mesh,
@@ -328,7 +320,7 @@ fn draw_into_caller_owned_pass(
 #[test]
 fn prepared_scene_draws_into_existing_render_pass() {
     let _gpu = gpu_test_lock();
-    let mesh = triangle_mesh();
+    let mesh = render_triangle_mesh().expect("valid triangle mesh");
     let cam = camera_looking_at_origin();
     let offscreen = pollster::block_on(Offscreen::new()).expect("offscreen init");
     let prepared = offscreen.prepare_scene(&[PreparedSceneSource {
@@ -563,7 +555,7 @@ fn count_lit_shared_pixels(renderer: &Renderer, readback: &wgpu::Buffer) -> usiz
 #[test]
 fn shared_device_renderer_submits_and_reads_back_a_prepared_scene() {
     let _gpu = gpu_test_lock();
-    let mesh = triangle_mesh();
+    let mesh = render_triangle_mesh().expect("valid triangle mesh");
     let owner = pollster::block_on(Renderer::new_headless(wgpu::TextureFormat::Rgba8Unorm))
         .expect("headless renderer init");
     assert_adapter_matches_test_environment(owner.device());
@@ -594,8 +586,8 @@ fn shared_device_renderer_submits_and_reads_back_a_prepared_scene() {
 #[test]
 fn prepared_viewport_can_draw_selection_overlay_after_base_scene() {
     let _gpu = gpu_test_lock();
-    let mesh = triangle_mesh();
-    let overlay = triangle_mesh();
+    let mesh = render_triangle_mesh().expect("valid triangle mesh");
+    let overlay = render_triangle_mesh().expect("valid triangle mesh");
     let cam = camera_looking_at_origin();
     let offscreen = pollster::block_on(Offscreen::new()).expect("offscreen init");
     let base = offscreen.prepare_scene(&[PreparedSceneSource {
