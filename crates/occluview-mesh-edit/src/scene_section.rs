@@ -87,7 +87,7 @@ fn world_plane_to_local(plane: SectionPlane, transform: &Affine3A) -> Option<Sec
     let local_normal = matrix.transpose() * normal;
     let local_distance = f64::from(plane.distance) - normal.dot(transform.translation.as_dvec3());
     let length = local_normal.length();
-    if !length.is_finite() || length < 1.0e-6 {
+    if !length.is_finite() || length <= 0.0 {
         return None;
     }
     SectionPlane::new(
@@ -258,6 +258,21 @@ mod tests {
         assert_eq!(layer.polylines.len(), 1);
         assert!(layer.polylines[0].closed);
         assert!(layer.polylines[0].points.iter().all(|p| p.x == 0.5));
+    }
+
+    #[test]
+    fn small_layer_scale_contract_regression() {
+        let mut scene = Scene::new();
+        let scale = 1.0e-7;
+        scene.add(SceneMesh::new(cube()).with_transform(Affine3A::from_scale(Vec3::splat(scale))));
+        let section = SceneSection::compute(&scene, xplane(0.5 * scale));
+        assert_eq!(section.per_layer.len(), 1, "nonzero scale has a contour");
+        let lines = &section.per_layer[0].polylines;
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].closed);
+        for point in &lines[0].points {
+            assert!((point.x - f64::from(0.5 * scale)).abs() < 1.0e-12);
+        }
     }
 
     #[test]

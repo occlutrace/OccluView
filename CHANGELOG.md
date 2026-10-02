@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Section contours remain visible on layers with small nonzero scales.
+
 - Closest-surface queries preserve valid face and edge projections on small triangles.
 
 - Closing holes no longer overflows rim-weld grid coordinates on distant geometry.
