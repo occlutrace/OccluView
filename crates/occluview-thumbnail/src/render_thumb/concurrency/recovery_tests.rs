@@ -305,9 +305,7 @@ mod one_budget_tests {
         let release_at = Instant::now() + Duration::from_millis(400);
         std::thread::spawn(move || {
             // Spend part of the request budget while the gate remains full.
-            while Instant::now() < release_at {
-                std::thread::sleep(Duration::from_millis(10));
-            }
+            std::thread::sleep(release_at.saturating_duration_since(Instant::now()));
             drop(held);
         });
 
