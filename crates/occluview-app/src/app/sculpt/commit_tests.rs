@@ -17,9 +17,8 @@ use crate::app::OccluViewApp;
 use crate::sculpt::sculpt_kernel::{BrushMode, BrushRayStep, BrushSession, BrushStroke};
 use crate::sculpt::sculpt_tool::{PendingSculptPress, SculptSession, SculptTip, SculptToolKind};
 use crate::sculpt::sculpt_worker::SculptWorker;
-use glam::Affine3A;
-use occluview_core::test_support::coarse_ridge_mesh;
-use occluview_core::{Mesh, Scene, SceneMesh, SceneMeshId};
+use glam::{Affine3A, Vec3};
+use occluview_core::{Mesh, Scene, SceneMesh, SceneMeshId, Vertex};
 use occluview_mesh_edit::mesh_edit_buffers_from_mesh;
 use occluview_render::PreparedSceneTopology;
 use std::sync::{Arc, RwLock};
@@ -27,6 +26,27 @@ use std::time::{Duration, Instant};
 
 /// A 5x3 lattice at 4mm spacing folded along a sharp ridge: coarse enough that
 /// the brush has somewhere to work, small enough to finish immediately.
+fn coarse_ridge_mesh() -> Mesh {
+    let mut vertices = Vec::new();
+    for j in 0..3usize {
+        for i in 0..5usize {
+            let x = i as f32 * 4.0 - 8.0;
+            let y = j as f32 * 4.0 - 4.0;
+            let z = if j == 1 { 4.0 } else { 0.0 };
+            vertices.push(Vertex::at(Vec3::new(x, y, z)));
+        }
+    }
+    let mut indices = Vec::new();
+    let idx = |i: usize, j: usize| (j * 5 + i) as u32;
+    for j in 0..2usize {
+        for i in 0..4usize {
+            indices.extend_from_slice(&[idx(i, j), idx(i + 1, j), idx(i + 1, j + 1)]);
+            indices.extend_from_slice(&[idx(i, j), idx(i + 1, j + 1), idx(i, j + 1)]);
+        }
+    }
+    Mesh::new(Some("coarse-ridge".to_string()), vertices, indices).expect("ridge mesh")
+}
+
 fn a_stroke_that_moves_geometry() -> BrushStroke {
     BrushStroke {
         center: [0.0, 0.0, 4.0],
@@ -67,7 +87,7 @@ fn worker_for(mesh: &Mesh, layer_id: SceneMeshId) -> SculptWorker {
 /// and a live worker — the state the frame path is in when it polls.
 fn app_with_a_sculpt_worker(name: &str) -> (OccluViewApp, SceneMeshId) {
     let mut app = test_app(name);
-    let mesh = coarse_ridge_mesh().expect("ridge mesh");
+    let mesh = coarse_ridge_mesh();
     let mut scene = Scene::new();
     let index = scene.add(SceneMesh::new(mesh));
     app.workspace.scenes[0].document.scene = Some(Arc::new(scene));
@@ -126,9 +146,10 @@ fn pump_sculpt_worker(app: &mut OccluViewApp) {
             return;
         }
         assert!(
-            worker.wait_until_idle(deadline.saturating_duration_since(Instant::now())),
+            Instant::now() < deadline,
             "the sculpt worker never settled on its stroke"
         );
+        std::thread::sleep(Duration::from_millis(1));
     }
 }
 
@@ -170,16 +191,11 @@ fn pump_until_failure_is_shown(app: &mut OccluViewApp) {
         app.active_context()
             .expect("live test scene")
             .poll_sculpt_worker(&ctx);
-        let worker = app.workspace.scenes[0]
-            .tools
-            .sculpt
-            .worker
-            .as_ref()
-            .expect("sculpt worker");
         assert!(
-            worker.wait_until_idle(deadline.saturating_duration_since(Instant::now())),
+            Instant::now() < deadline,
             "a terminal worker failure never reached the operator"
         );
+        std::thread::sleep(Duration::from_millis(1));
     }
 }
 
