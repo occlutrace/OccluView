@@ -546,6 +546,15 @@ fn finalize_refinement(
     context: FinalizeContext<'_>,
     mut state: LevelOutcome,
 ) -> Result<IcpReport, FitRejection> {
+    if context.rivalry.cancel.is_cancelled() {
+        state.converged = false;
+        return Ok(report_from_state(
+            state,
+            Verification::NONE,
+            0.0,
+            context.matching_ratio,
+        ));
+    }
     if let Some(seed) = context.feature_seed {
         if state
             .pose
@@ -601,6 +610,7 @@ fn finalize_refinement(
             }
         }
     }
+    state.converged &= !context.rivalry.cancel.is_cancelled();
     Ok(report_from_state(
         state,
         verification,
