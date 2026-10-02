@@ -66,7 +66,7 @@ pub fn split(bytes: &[u8]) -> Result<(Vec<u8>, &[u8]), FormatError> {
         }
         let chunk_len = u32_from(&bytes[cursor..cursor + 4]) as usize;
         let chunk_type = u32_from(&bytes[cursor + 4..cursor + 8]);
-        if chunk_len % 4 != 0 {
+        if !chunk_len.is_multiple_of(4) {
             return Err(malformed("GLB chunk length is not aligned to four bytes"));
         }
         if chunk_index == 0 && chunk_type != JSON_CHUNK_TYPE {

@@ -125,7 +125,7 @@ mod non_finite_positions {
     }
 
     fn glb_bytes(mut json: Vec<u8>, bin: &[u8]) -> Vec<u8> {
-        while json.len() % 4 != 0 {
+        while !json.len().is_multiple_of(4) {
             json.push(b' ');
         }
         let mut bytes = b"glTF".to_vec();
@@ -140,7 +140,7 @@ mod non_finite_positions {
         bytes.extend_from_slice(&json);
         bytes.extend_from_slice(&u32::try_from(bin.len()).expect("length").to_le_bytes());
         bytes.extend_from_slice(b"BIN\0");
-        bytes.extend_from_slice(&bin);
+        bytes.extend_from_slice(bin);
         bytes
     }
 }

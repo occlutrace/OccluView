@@ -192,9 +192,9 @@ fn strip_options(tokens: &mut Vec<&str>) {
         tokens.remove(0);
         if matches!(option, "-s" | "-o" | "-t") {
             for _ in 0..3 {
-                if !tokens
+                if tokens
                     .first()
-                    .is_some_and(|value| value.parse::<f64>().is_ok())
+                    .is_none_or(|value| value.parse::<f64>().is_err())
                 {
                     break;
                 }
