@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- GLB imports reject attribute streams whose counts differ from the position stream.
+
 - Binary PLY imports reject negative or fractional list counts and indices instead of silently coercing them.
 
 - Thumbnail stream copying handles zero and maximum byte limits without overflowing.

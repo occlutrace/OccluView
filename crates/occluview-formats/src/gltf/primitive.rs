@@ -42,6 +42,17 @@ pub(super) fn emit_primitive(
         .transpose()?;
 
     let vertex_count = positions.len();
+    for (name, count) in [
+        ("NORMAL", normals.as_ref().map(Vec::len)),
+        ("COLOR_0", colors.as_ref().map(Vec::len)),
+        ("TEXCOORD_0", uvs.as_ref().map(Vec::len)),
+    ] {
+        if count.is_some_and(|count| count != vertex_count) {
+            return Err(malformed(&format!(
+                "{name} count does not match POSITION count"
+            )));
+        }
+    }
     let base = builder_push_vertices(
         VertexStreams {
             positions: &positions,
