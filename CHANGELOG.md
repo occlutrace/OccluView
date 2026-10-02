@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Sculpt rejects overflowing vertex and group counts in topology history instead of crashing.
+
 - Sculpt shows a complete localized message when its preparation worker cannot start.
 
 - Thumbnail stream copying rejects a zero chunk limit instead of reporting unread data as complete.
