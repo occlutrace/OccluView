@@ -103,8 +103,13 @@ impl SculptSession {
 
     /// Write back positions (undo of a stroke that never split): incremental.
     /// Split-strokes go through [`Self::restore_topo`] with their journal.
-    pub fn restore(&mut self, indices: &[u32], positions: &[f32]) -> Vec<u32> {
-        self.restore_inner(indices, positions)
+    /// Returns `None` for malformed positions or unavailable vertices, without
+    /// changing the surface or its spatial indices.
+    pub fn restore(&mut self, indices: &[u32], positions: &[f32]) -> Option<Vec<u32>> {
+        if !position_history_is_valid(indices, positions, self.vertex_count()) {
+            return None;
+        }
+        Some(self.restore_inner(indices, positions))
     }
 
     /// Undo (`redo = false`) or redo (`redo = true`) one stroke with its
@@ -120,7 +125,14 @@ impl SculptSession {
         redo: bool,
         journal: &TopoJournal,
     ) -> Option<Vec<u32>> {
-        self.remesh_armed = false;
+        let present = if redo && !journal.is_empty() {
+            journal.base_verts.checked_add(journal.added_verts.len())?
+        } else {
+            self.vertex_count()
+        };
+        if !position_history_is_valid(indices, positions, present) {
+            return None;
+        }
         // Revision fencing: undo expects the session at the journal's end
         // state, redo at its start state. Anything else is a stale record
         // and fails closed instead of partially mutating the session.
@@ -135,6 +147,7 @@ impl SculptSession {
                 return None;
             }
         }
+        self.remesh_armed = false;
         if !journal.is_empty() {
             let applied = if redo {
                 self.apply_topo_forward(journal)
@@ -269,5 +282,46 @@ impl SculptSession {
         let dirty = self.finish_dirty_batch();
         self.invalidate_sheet_state(true);
         dirty
+    }
+}
+
+fn position_history_is_valid(indices: &[u32], positions: &[f32], present: usize) -> bool {
+    indices.len().checked_mul(3) == Some(positions.len())
+        && positions.iter().all(|value| value.is_finite())
+        && indices.iter().all(|&vertex| (vertex as usize) < present)
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::*;
+
+    #[test]
+    fn malformed_position_history_is_refused_before_any_write() {
+        for (indices, positions) in [
+            (vec![0, 1], vec![0.0, 0.0, 1.0]),
+            (vec![0, u32::MAX], vec![0.0, 0.0, 1.0, 0.0, 0.0, 2.0]),
+            (vec![0], vec![f32::NAN, 0.0, 0.0]),
+        ] {
+            let mut session = SculptSession::new(
+                vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+                vec![0, 1, 2],
+            )
+            .expect("valid mesh fixture");
+            let before = session.verts.clone();
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                session.restore_topo(&indices, &positions, false, &TopoJournal::default())
+            }));
+            assert!(outcome.is_ok(), "malformed position history must not panic");
+            assert!(
+                outcome.expect("no panic").is_none(),
+                "malformed history must be refused"
+            );
+            assert_eq!(
+                session.verts, before,
+                "refusal must preserve the whole surface"
+            );
+            assert!(session.restore(&indices, &positions).is_none());
+            assert_eq!(session.verts, before);
+        }
     }
 }
