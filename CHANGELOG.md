@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Closing the Bridge Split Section window cancels the separator and preserves the scene.
+
 - Bridge Split discards previews after position edits, including sculpt changes that preserve mesh topology.
 
 - Tool keyboard shortcuts obey the same availability rules as their toolbar buttons.
