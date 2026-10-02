@@ -10,7 +10,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$supportedExtensions = @("stl", "ply", "obj", "glb", "dcm", "hps")
+$supportedExtensions = @("stl", "ply", "obj", "glb", "dcm", "hps", "off")
 # Extensions the installer may claim machine-wide: default ProgID, DefaultIcon
 # and the ShellEx handlers under both the bare key and SystemFileAssociations.
 $ownedExtensions = @("stl", "ply", "obj", "glb", "hps")
