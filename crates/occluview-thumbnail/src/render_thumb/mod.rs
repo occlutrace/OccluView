@@ -24,6 +24,8 @@ use crate::ThumbnailError;
 use occluview_formats::FormatError;
 use occluview_render::{AdapterPolicy, RenderDeadline, ThumbnailSpec};
 use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::sync::Condvar;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -68,6 +70,48 @@ const THUMBNAIL_RENDERER_PREWARM_TIMEOUT: Duration = Duration::from_secs(15);
 /// second-paint cache behaviour without silently extending an Explorer COM
 /// call or leaving an unbounded worker behind.
 const BACKGROUND_CACHE_WARM_TIMEOUT: Duration = DEFAULT_THUMBNAIL_TIMEOUT;
+
+#[cfg(test)]
+static THUMBNAIL_FILE_CACHE_CHANGED: OnceLock<(Mutex<()>, Condvar)> = OnceLock::new();
+
+#[cfg(test)]
+fn thumbnail_file_cache_changed() -> &'static (Mutex<()>, Condvar) {
+    THUMBNAIL_FILE_CACHE_CHANGED.get_or_init(|| (Mutex::new(()), Condvar::new()))
+}
+
+#[cfg(test)]
+fn notify_thumbnail_file_cache_changed() {
+    let (lock, changed) = thumbnail_file_cache_changed();
+    let _guard = lock
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    changed.notify_all();
+}
+
+#[cfg(test)]
+fn wait_for_thumbnail_file_cache(timeout: Duration, mut cached: impl FnMut() -> bool) -> bool {
+    let deadline = Instant::now() + timeout;
+    let (lock, changed) = thumbnail_file_cache_changed();
+    let mut guard = lock
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+    loop {
+        if cached() {
+            return true;
+        }
+        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            return false;
+        };
+        let (next_guard, result) = changed
+            .wait_timeout(guard, remaining)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard = next_guard;
+        if result.timed_out() && !cached() {
+            return false;
+        }
+    }
+}
 
 /// Immutable timing and adapter policy for one thumbnail request.
 ///
@@ -623,6 +667,8 @@ fn cache_file_thumbnail(
             cache.insert_with_background(content_key, size_px, background, pixels);
         }
     }
+    #[cfg(test)]
+    notify_thumbnail_file_cache_changed();
 }
 
 #[must_use]
