@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Mesh editing preserves the current undo and redo history when an outdated operation finishes.
+
 - Invalid contact-field updates clear previous contact paint instead of displaying a stale measurement.
 
 - Cut View and Bridge Split preserve the disc and section framing when wheel input is non-finite.

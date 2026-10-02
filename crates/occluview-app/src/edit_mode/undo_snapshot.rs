@@ -132,16 +132,17 @@ impl EditModeController {
     }
 
     pub(crate) fn finish_layer_edit_success(&mut self, token: EditSessionToken) -> BusyFinish {
+        let finish = self.state.finish_busy_success(token, true);
+        if finish != BusyFinish::Applied {
+            return finish;
+        }
         // The op changed content: the redo history displaced by this op's
         // pre-op snapshot is now permanently invalid.
         self.last_undo_push_stored = self
             .pending_history_command
             .take()
             .is_some_and(|id| self.history.borrow_mut().commit_pending_edit(id));
-        let finish = self.state.finish_busy_success(token, true);
-        if finish == BusyFinish::Applied {
-            self.session_dirty = true;
-        }
+        self.session_dirty = true;
         finish
     }
 
@@ -154,6 +155,10 @@ impl EditModeController {
         token: EditSessionToken,
         post_op_scene: &Scene,
     ) -> BusyFinish {
+        let finish = self.state.finish_busy_success(token, true);
+        if finish != BusyFinish::Applied {
+            return finish;
+        }
         if self.last_undo_push_stored {
             let post_op_ids = scene_layer_ids(post_op_scene);
             if let Some(command_id) = self.pending_history_command {
@@ -170,10 +175,7 @@ impl EditModeController {
             .pending_history_command
             .take()
             .is_some_and(|id| self.history.borrow_mut().commit_pending_edit(id));
-        let finish = self.state.finish_busy_success(token, true);
-        if finish == BusyFinish::Applied {
-            self.session_dirty = true;
-        }
+        self.session_dirty = true;
         finish
     }
 
@@ -182,11 +184,15 @@ impl EditModeController {
         token: EditSessionToken,
         message: String,
     ) -> BusyFinish {
+        let finish = self.state.finish_busy_error(token, message);
+        if finish != BusyFinish::Applied {
+            return finish;
+        }
         if let Some(command_id) = self.pending_history_command.take() {
             self.history.borrow_mut().discard_pending(command_id);
         }
         self.last_undo_push_stored = false;
-        self.state.finish_busy_error(token, message)
+        finish
     }
 
     /// Finish a busy op that turned out to change nothing: the pre-op undo

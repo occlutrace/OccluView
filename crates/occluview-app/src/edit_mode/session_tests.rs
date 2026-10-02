@@ -5,6 +5,96 @@ use super::*;
 use occluview_core::test_support::{simple_triangle_mesh, two_triangle_mesh};
 use occluview_core::{Mesh, Scene, SceneMesh};
 
+fn check_stale_completion(
+    structural: bool,
+    finish: impl FnOnce(&mut EditModeController, EditSessionToken, &Scene) -> BusyFinish,
+) {
+    let layer = SceneMesh::new(simple_triangle_mesh(Some("before")).expect("valid triangle mesh"));
+    let mut scene = Scene::new();
+    scene.add(layer.clone());
+    let mut controller = EditModeController::new(4, 1_000_000);
+    let old_token = controller
+        .begin_layer_edit(&layer, EditModeCommand::InvertNormals)
+        .expect("first edit starts");
+    assert_eq!(
+        controller.finish_layer_edit_success(old_token),
+        BusyFinish::Applied
+    );
+    assert!(controller.undo_last_layer_edit(&layer).is_some());
+    let redo_before = controller.next_history_step(HistoryDirection::Redo);
+
+    let token = if structural {
+        controller.begin_scene_edit(&scene, layer.id(), EditModeCommand::CutSelectionToNewLayer)
+    } else {
+        controller.begin_layer_edit(&layer, EditModeCommand::InvertNormals)
+    }
+    .expect("second edit starts");
+    let pending_before = controller.pending_history_command;
+    assert!(pending_before.is_some());
+    let bytes_before = controller.history.borrow().used_bytes();
+    let state_before = controller.state.clone();
+
+    assert_eq!(
+        finish(&mut controller, old_token, &scene),
+        BusyFinish::Stale
+    );
+    assert_eq!(controller.state, state_before);
+    assert_eq!(controller.pending_history_command, pending_before);
+    assert!(controller.last_edit_undoable());
+    assert_eq!(controller.history.borrow().used_bytes(), bytes_before);
+    assert_eq!(controller.undo_len(), 0);
+    assert_eq!(
+        controller.next_history_step(HistoryDirection::Redo),
+        redo_before
+    );
+
+    if structural {
+        scene.add(SceneMesh::new(Mesh::empty()));
+        assert_eq!(
+            controller.finish_scene_edit_success(token, &scene),
+            BusyFinish::Applied
+        );
+        let StructuralHistoryStep::Restored(restored) =
+            controller.undo_last_scene_edit(&scene, layer.id())
+        else {
+            panic!("the current structural edit must remain undoable");
+        };
+        assert_eq!(restored.meshes().len(), 1);
+    } else {
+        assert_eq!(
+            controller.finish_layer_edit_success(token),
+            BusyFinish::Applied
+        );
+        assert!(controller.undo_last_layer_edit(&layer).is_some());
+    }
+}
+
+#[test]
+fn stale_completion_of_layer_edit_preserves_pending_history() {
+    check_stale_completion(false, |controller, token, _| {
+        controller.finish_layer_edit_success(token)
+    });
+}
+
+#[test]
+fn stale_completion_of_scene_edit_preserves_pending_history() {
+    check_stale_completion(true, EditModeController::finish_scene_edit_success);
+}
+
+#[test]
+fn stale_completion_error_preserves_pending_history() {
+    check_stale_completion(false, |controller, token, _| {
+        controller.finish_layer_edit_error(token, "outdated result".to_string())
+    });
+}
+
+#[test]
+fn stale_completion_noop_preserves_pending_history() {
+    check_stale_completion(false, |controller, token, _| {
+        controller.finish_layer_edit_noop(token)
+    });
+}
+
 #[test]
 fn begin_face_selection_captures_baseline_scene_once_per_session() {
     let Some(mesh) = two_triangle_mesh(Some("baseline")) else {
