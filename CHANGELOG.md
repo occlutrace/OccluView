@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Preserve GLB normals and mirrored winding at extreme node scales.
+
 - Large mesh streams with different interior content no longer share a cached thumbnail.
 
 - Reject non-finite OBJ vertex color channels instead of silently changing their color.

@@ -2,7 +2,7 @@ use super::accessor::{read_color_f32, read_f32_vec3, read_indices, read_texcoord
 use super::error::malformed;
 use super::json;
 use crate::error::FormatError;
-use glam::{Mat4, Vec3};
+use glam::{DMat4, Mat4, Vec3};
 use occluview_core::{MeshBuilder, Vertex};
 
 pub(super) fn emit_primitive(
@@ -65,7 +65,7 @@ pub(super) fn emit_primitive(
     )?;
     // Positions are baked into the mesh, so a reflection must also reverse
     // corners to retain glTF's front-facing side in the stored geometry.
-    let mirrored = transform.determinant() < 0.0;
+    let mirrored = transform.as_dmat4().determinant() < 0.0;
     let mut push_triangle = |a, b, c| {
         let (b, c) = if mirrored { (c, b) } else { (b, c) };
         builder.push_triangle(a, b, c);
@@ -132,12 +132,13 @@ fn builder_push_vertices(
         let mut v = Vertex::at(position);
         if let Some(ns) = streams.normals {
             if i < ns.len() {
-                let normal = normal_transform.transform_vector3(Vec3::from_array(ns[i]));
+                let normal = normal_transform.transform_vector3(Vec3::from_array(ns[i]).as_dvec3());
                 let normal = if normal.length_squared() > 0.0 {
                     normal.normalize()
                 } else {
                     normal
                 };
+                let normal = normal.as_vec3();
                 for component in normal.to_array() {
                     crate::finite_coordinate(component, "glTF", i)?;
                 }
@@ -162,7 +163,8 @@ fn builder_push_vertices(
     Ok(first)
 }
 
-fn normal_transform_for(transform: Mat4) -> Mat4 {
+fn normal_transform_for(transform: Mat4) -> DMat4 {
+    let transform = transform.as_dmat4();
     if transform.determinant() == 0.0 {
         transform
     } else {
@@ -175,12 +177,74 @@ mod tests {
     use super::*;
 
     #[test]
+    fn normals_survive_extreme_nonsingular_scales() {
+        for scale in [1.0e-20, 1.0e20, f32::MIN_POSITIVE] {
+            let mut builder = MeshBuilder::new();
+            builder_push_vertices(
+                VertexStreams {
+                    positions: &[[0.0, 0.0, 0.0]],
+                    normals: Some(&[[1.0, 1.0, 0.0]]),
+                    colors: None,
+                    uvs: None,
+                },
+                Mat4::from_scale(Vec3::new(scale, scale * 2.0, scale)),
+                &mut builder,
+            )
+            .expect("a finite nonsingular transform");
+            let mesh = builder.build().expect("a point with a normal");
+            let actual = Vec3::from_array(mesh.vertices()[0].normal);
+            let expected = Vec3::new(2.0, 1.0, 0.0).normalize();
+            assert!(
+                actual.abs_diff_eq(expected, 1.0e-6),
+                "scale {scale}: {actual:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn tiny_reflections_preserve_front_face_winding() {
+        let doc: json::GltfDoc = serde_json::from_value(serde_json::json!({
+            "buffers": [{ "byteLength": 36 }],
+            "bufferViews": [{ "buffer": 0, "byteLength": 36 }],
+            "accessors": [{
+                "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"
+            }]
+        }))
+        .expect("a position stream");
+        let primitive = json::Primitive {
+            attributes: json::Attributes {
+                position: Some(0),
+                ..json::Attributes::default()
+            },
+            indices: None,
+            mode: None,
+            material: None,
+        };
+        let bytes: Vec<u8> = [Vec3::ZERO, Vec3::X, Vec3::Y]
+            .into_iter()
+            .flat_map(|p| p.to_array().into_iter().flat_map(f32::to_le_bytes))
+            .collect();
+        let mut builder = MeshBuilder::new();
+        emit_primitive(
+            &doc,
+            &primitive,
+            Mat4::from_scale(Vec3::new(-1.0e-20, 1.0e-20, 1.0e-20)),
+            &bytes,
+            &mut builder,
+        )
+        .expect("a finite reflection");
+        let mesh = builder.build().expect("a reflected triangle");
+        assert_eq!(mesh.indices(), [0, 2, 1]);
+    }
+
+    #[test]
     fn small_nonsingular_scales_use_inverse_transpose_normals() {
         let transform = Mat4::from_scale(Vec3::new(0.0001, 0.0002, 0.0001));
         let normal = Vec3::new(1.0, 1.0, 0.0).normalize();
         let actual = normal_transform_for(transform)
-            .transform_vector3(normal)
-            .normalize();
+            .transform_vector3(normal.as_dvec3())
+            .normalize()
+            .as_vec3();
         let expected = Vec3::new(2.0, 1.0, 0.0).normalize();
         assert!(
             actual.abs_diff_eq(expected, 1.0e-6),
