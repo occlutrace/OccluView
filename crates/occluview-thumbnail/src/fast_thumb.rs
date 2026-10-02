@@ -313,6 +313,19 @@ mod tests {
     }
 
     #[test]
+    fn fast_obj_relative_faces_use_the_vertices_defined_at_the_face() {
+        let bytes = b"v 0 0 0\nv 1 0 0\nv 0 1 0\nf -3 -2 -1\nv 100 0 0\n";
+        let mesh = fast_obj_thumbnail_mesh(bytes).expect("interleaved OBJ");
+        assert!(
+            mesh.vertices()
+                .iter()
+                .all(|vertex| vertex.position[0] <= 1.0),
+            "later vertices must not change an earlier relative face"
+        );
+        assert_eq!(mesh.triangle_count(), 1);
+    }
+
+    #[test]
     fn binary_stl_fast_path_clusters_dense_surface_into_a_solid_reduced_mesh() {
         // A finely tessellated 10x10 plane with far more triangles than the
         // cluster grid can resolve. The fast path must weld onto the grid (a
