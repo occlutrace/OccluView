@@ -12,8 +12,17 @@ impl SceneContext<'_> {
     pub(in crate::app) fn cancel_align_session(&mut self, ctx: &egui::Context) {
         // Cancel throws the open gesture away; restore_session_poses records
         // the whole cancellation as its single, undoable history step.
+        let Some(restored) = self.restore_session_poses() else {
+            self.abandon_align_jobs();
+            self.scene_ui.status_message = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("repair-edit-busy")),
+            );
+            ctx.request_repaint();
+            return;
+        };
         self.discard_align_drag();
-        let restored = self.restore_session_poses();
         self.disarm_align_tool(ctx);
         self.scene_ui.status_message = Some(if restored {
             self.ui
@@ -110,24 +119,28 @@ impl SceneContext<'_> {
     /// Ctrl+Z after Cancel would resurrect work the operator has just discarded.
     /// As one step, Ctrl+Z after Cancel puts the alignment back, which recovers
     /// a Cancel made by mistake.
-    fn restore_session_poses(&mut self) -> bool {
+    /// A refused scene edit leaves the session intact so restoration can retry.
+    fn restore_session_poses(&mut self) -> Option<bool> {
         if !self.align_session_moved() {
-            return false;
+            return Some(false);
         }
         let Some(scene) = self.document.scene.clone() else {
-            return false;
+            return Some(false);
         };
         let mut next = scene.as_ref().clone();
         let Some(focus) = next.meshes().first().map(occluview_core::SceneMesh::id) else {
-            return false;
+            return Some(false);
         };
         let Some(token) =
             self.document
                 .edit_mode
                 .begin_scene_edit(&next, focus, EditModeCommand::MoveLayer)
         else {
-            return false;
+            return None;
         };
+        // Discard the open gesture only after restoration owns the scene.
+        // The restore records all movement as one step before set_scene runs.
+        self.discard_align_drag();
         let mut restored = Vec::new();
         for entry in next.meshes_mut() {
             if let Some(pose) = self.session_pose_of(entry.id()) {
@@ -144,6 +157,6 @@ impl SceneContext<'_> {
         for layer in restored {
             self.document.mark_mesh_edits_unsaved(layer);
         }
-        true
+        Some(true)
     }
 }
