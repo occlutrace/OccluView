@@ -1,4 +1,8 @@
 //! Shared fixtures and setup helpers for workspace tests.
+//!
+//! Every helper here is test scaffolding: failures are test failures, so the
+//! public-API documentation lints do not apply to this module.
+#![allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
 
 use crate::{CoreError, Mesh, MeshBuilder, Vertex};
 use glam::Vec3;
@@ -134,9 +138,8 @@ pub fn textured_render_triangle_mesh() -> Result<Mesh, CoreError> {
 /// Reports a GPU-test skip, or fails when the test lane requires GPU coverage.
 #[allow(clippy::panic, clippy::print_stderr)]
 pub fn report_gpu_test_skip(test_name: &str, reason: &str) {
-    let reason = reason.replace('\n', " ").replace('\r', " ");
-    let may_skip = std::env::var_os("OCCLUVIEW_REQUIRE_GPU_TESTS")
-        .is_none_or(|value| value == "0");
+    let reason = reason.replace(['\n', '\r'], " ");
+    let may_skip = std::env::var_os("OCCLUVIEW_REQUIRE_GPU_TESTS").is_none_or(|value| value == "0");
     assert!(
         may_skip,
         "OCCLUVIEW_REQUIRE_GPU_TESTS is set, but {test_name} cannot run: {reason}"
