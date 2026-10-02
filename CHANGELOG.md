@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Mesh export resolves the full supported chain of eight destination symbolic links.
+
 - OBJ fallback textures cannot escape the mesh folder through symbolic links.
 
 - Contact pointer readouts refuse extreme triangle indices without overflowing.

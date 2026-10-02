@@ -119,7 +119,7 @@ pub fn resolve_overwrite_destination(path: &Path) -> std::io::Result<PathBuf> {
     /// exists for, without letting a long chain walk somewhere unexpected.
     const MAX_DESTINATION_LINKS: usize = 8;
     let mut current = path.to_path_buf();
-    for _ in 0..MAX_DESTINATION_LINKS {
+    for depth in 0..=MAX_DESTINATION_LINKS {
         // A missing path is not an error: `create_export_temp` and the rename
         // create it, and that is what the caller wants for a new file.
         let Ok(metadata) = std::fs::symlink_metadata(&current) else {
@@ -127,6 +127,9 @@ pub fn resolve_overwrite_destination(path: &Path) -> std::io::Result<PathBuf> {
         };
         if !metadata.file_type().is_symlink() {
             return Ok(current);
+        }
+        if depth == MAX_DESTINATION_LINKS {
+            break;
         }
         let target = std::fs::read_link(&current)?;
         current = if target.is_absolute() {

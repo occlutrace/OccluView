@@ -126,6 +126,29 @@ use occluview_core::test_support::colored_uv_triangle_mesh;
 use occluview_core::{Mesh, Vertex};
 use tempfile::NamedTempFile;
 
+#[cfg(unix)]
+#[test]
+fn overwrite_resolves_eight_links_and_rejects_a_ninth() {
+    use std::os::unix::fs::symlink;
+    let directory = tempfile::tempdir().expect("directory");
+    let target = directory.path().join("target.obj");
+    std::fs::write(&target, b"previous export").expect("target");
+    let mut last = target.clone();
+    for depth in 1..=9 {
+        let link = directory.path().join(format!("link-{depth}.obj"));
+        symlink(&last, &link).expect("link");
+        if depth <= 8 {
+            assert_eq!(
+                resolve_overwrite_destination(&link).expect("supported chain"),
+                target
+            );
+        } else {
+            assert!(resolve_overwrite_destination(&link).is_err());
+        }
+        last = link;
+    }
+}
+
 #[test]
 fn overwrite_semantics_truncate_existing_file() {
     let mesh = colored_uv_triangle_mesh(Some("sample")).expect("sample mesh");
