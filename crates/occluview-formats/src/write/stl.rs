@@ -92,8 +92,11 @@ mod tests {
             write_mesh(&mut bytes, &mesh, MeshWriteOptions::default(), &mut report)
                 .expect("write a finite triangle");
             let normal: Vec<f32> = bytes[84..96]
-                .chunks_exact(4)
-                .map(|chunk| f32::from_le_bytes(chunk.try_into().expect("a float")))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .copied()
+                .map(f32::from_le_bytes)
                 .collect();
             assert_eq!(normal, [1.0, 0.0, 0.0], "scale {scale}");
         }
