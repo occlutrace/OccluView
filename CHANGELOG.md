@@ -115,6 +115,7 @@ remain in the Git history.
 
 ### Align
 
+- Suggested deviation scales expand beyond 10 mm when the measured range requires it.
 - Non-finite heatmap limits recover to a finite working range instead of interrupting alignment or panel rendering.
 - Signed deviation bands use matching distance intervals above and below zero.
 - Perform alignment explains its two-arrow requirement when only one complete arrow is placed.
