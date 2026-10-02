@@ -4,18 +4,24 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 2
+    open-pull-requests-limit: 5
     labels: ["deps", "cargo"]
     commit-message:
       prefix: "build(deps)"
+    # Security updates always arrive as separate PRs; these groups cover
+    # version updates only (routine minor/patch flow apart from major bumps).
     groups:
-      cargo-dependencies:
+      cargo-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+      cargo-major:
         patterns:
           - "*"
         update-types:
           - "major"
-          - "minor"
-          - "patch"
     ignore:
       - dependency-name: "image"
         # Keep image below 0.25.10: decoder-graph changes require malformed-input,
@@ -27,18 +33,22 @@ updates:
     directory: "/fuzz"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 1
+    open-pull-requests-limit: 5
     labels: ["deps", "cargo"]
     commit-message:
       prefix: "build(deps)"
     groups:
-      fuzz-dependencies:
+      cargo-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+      cargo-major:
         patterns:
           - "*"
         update-types:
           - "major"
-          - "minor"
-          - "patch"
 
   - package-ecosystem: "github-actions"
     directory: "/"
