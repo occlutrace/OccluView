@@ -87,7 +87,7 @@ impl NumberFormat {
         self.group_digits(&value.to_string())
     }
 
-    fn group_digits(&self, digits: &str) -> String {
+    fn group_digits(self, digits: &str) -> String {
         let (sign, digits) = if let Some(rest) = digits.strip_prefix('-') {
             ("-", rest)
         } else {

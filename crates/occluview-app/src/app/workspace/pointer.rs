@@ -36,6 +36,8 @@ enum GestureCancelReason {
 }
 
 impl OccluViewApp {
+    // Resolve one input frame in order: cancellation, capture, wheel, keyboard.
+    #[allow(clippy::too_many_lines)]
     pub(super) fn route_pointer_input(
         &mut self,
         ctx: &egui::Context,
