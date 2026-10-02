@@ -178,21 +178,23 @@ fn transient_failure_still_heals_from_the_background_render_on_retry() {
     let bytes = fixtures::large_binary_stl_tessellated_plane(4 * 1024 * 1024);
     let path = write_verdict_fixture("verdict-heals.stl", &bytes);
 
-    let mut healed = None;
-    'attempts: for _ in 0..40 {
-        let _early = try_render_thumbnail_file(&path, spec, Duration::from_millis(20));
-        for _ in 0..20 {
-            if let ThumbnailAttempt::Bitmap(pixels) =
-                try_render_thumbnail_file(&path, spec, Duration::from_millis(200))
-            {
-                healed = Some(pixels);
-                break 'attempts;
-            }
-            thread::sleep(Duration::from_millis(25));
-        }
-    }
-
-    let healed = healed.expect("a retried request must eventually serve the cached render");
+    let _early = try_render_thumbnail_file(&path, spec, Duration::from_millis(20));
+    assert!(
+        wait_for_thumbnail_file_cache(Duration::from_secs(15), || {
+            thumbnail_file_cache()
+                .lock()
+                .ok()
+                .and_then(|mut cache| cache.get(&key, spec.size_px))
+                .is_some()
+        }),
+        "the background render must eventually populate the file cache"
+    );
+    let healed = try_render_thumbnail_file(&path, spec, Duration::from_millis(200));
+    assert!(
+        matches!(&healed, ThumbnailAttempt::Bitmap(_)),
+        "a retry must serve the cached render"
+    );
+    let healed = healed.into_pixels_or_placeholder(spec);
     assert_ne!(
         healed,
         placeholder_thumbnail(spec),
@@ -209,22 +211,35 @@ fn inflight_followers_inherit_the_leaders_transient_failure() {
         size_px: 61,
         background: [0; 4],
     };
-    let barrier = Arc::new(std::sync::Barrier::new(2));
-
+    let (leader_entered_render, leader_registered) = std::sync::mpsc::channel::<()>();
+    let (release_leader, wait_for_release) = std::sync::mpsc::channel::<()>();
     let leader_key = key.clone();
-    let leader_barrier = barrier.clone();
     let leader = thread::spawn(move || {
         render_coalesced_thumbnail(leader_key, Duration::from_millis(250), move || {
-            leader_barrier.wait();
-            thread::sleep(Duration::from_millis(40));
+            let _ = leader_entered_render.send(());
+            let _ = wait_for_release.recv();
             ThumbnailAttempt::TransientFailure
         })
     });
 
-    barrier.wait();
-    let follower = render_coalesced_thumbnail(key, Duration::from_millis(500), || {
-        ThumbnailAttempt::Bitmap(vec![7, 7, 7, 7])
+    leader_registered
+        .recv()
+        .expect("leader should enter its render closure");
+    let (follower_waiting, wait_for_follower) = std::sync::mpsc::channel::<()>();
+    let follower = thread::spawn(move || {
+        super::super::concurrency::render_coalesced_thumbnail_with_follower_notice(
+            key,
+            Duration::from_millis(500),
+            || ThumbnailAttempt::Bitmap(vec![7, 7, 7, 7]),
+            move || {
+                let _ = follower_waiting.send(());
+            },
+        )
     });
+    wait_for_follower
+        .recv()
+        .expect("follower should join the in-flight render");
+    let _ = release_leader.send(());
 
     assert_eq!(
         leader.join().expect("leader should complete"),
