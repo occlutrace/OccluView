@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Closing the viewer preserves a sculpt brush change made on the closing frame.
+
 - Restarting Bridge Split can prepare a new source without waiting for an abandoned preparation.
 
 - Sculpt brush preferences save after the last slider change settles.
