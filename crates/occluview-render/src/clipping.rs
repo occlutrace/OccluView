@@ -118,18 +118,24 @@ impl Default for CutViewSpec {
 }
 
 /// Build a cap quad: 4 position vertices + 2 triangles forming a large
-/// square centered on the plane origin, lying in the plane's tangent space,
+/// square centered on `center` projected onto the plane, lying in its tangent space,
 /// oversized to `half_extent` on each side so the stencil test clips it to
 /// the cross-section.
 ///
-/// The plane origin is `plane.normal * plane.distance`. Two orthonormal
-/// basis vectors `u`/`v` span the plane.
+/// Two orthonormal basis vectors `u`/`v` span the plane. Centering on the mesh
+/// keeps a bounded quad over the section even when the mesh is translated.
 ///
 /// Returns `(vertices: Vec<[f32;3]>, indices: Vec<u32>)` — 4 verts, 6 indices
 /// (2 triangles).
 #[must_use]
-pub fn cap_quad(plane: &ClipPlane, half_extent: f32) -> (Vec<[f32; 3]>, Vec<u32>) {
-    let origin = clipping_inner::plane_origin(plane);
+pub fn cap_quad(
+    plane: &ClipPlane,
+    center: [f32; 3],
+    half_extent: f32,
+) -> (Vec<[f32; 3]>, Vec<u32>) {
+    let normal = plane.normal;
+    let offset = center.iter().zip(normal).map(|(a, b)| a * b).sum::<f32>() - plane.distance;
+    let origin = std::array::from_fn::<_, 3, _>(|axis| center[axis] - normal[axis] * offset);
     let (u, v) = clipping_inner::orthonormal_basis(&plane.normal);
     let h = half_extent;
     // Four corners of a square in the plane.
@@ -159,15 +165,6 @@ pub fn cap_quad(plane: &ClipPlane, half_extent: f32) -> (Vec<[f32; 3]>, Vec<u32>
 /// Internal math helpers, kept in a submodule so the public surface of
 /// `clipping` stays focused on the high-level types.
 mod clipping_inner {
-    /// Compute the plane origin: `normal * distance`.
-    pub(super) fn plane_origin(plane: &super::ClipPlane) -> [f32; 3] {
-        [
-            plane.normal[0] * plane.distance,
-            plane.normal[1] * plane.distance,
-            plane.normal[2] * plane.distance,
-        ]
-    }
-
     /// Two orthonormal vectors spanning the plane perpendicular to `normal`.
     /// Picks an arbitrary up vector that isn't parallel to `normal`, then
     /// cross-products.
@@ -281,7 +278,7 @@ mod tests {
     #[test]
     fn cap_quad_produces_4_verts_2_triangles() {
         let plane = ClipPlane::new([0.0, 1.0, 0.0], 0.0);
-        let (verts, indices) = cap_quad(&plane, 10.0);
+        let (verts, indices) = cap_quad(&plane, [0.0; 3], 10.0);
         assert_eq!(verts.len(), 4);
         assert_eq!(indices.len(), 6);
         // All verts lie in the Y=0 plane (since normal=+Y, distance=0).

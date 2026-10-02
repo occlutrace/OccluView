@@ -331,7 +331,11 @@ impl Offscreen {
                 drop(rpass);
             }
 
-            let (cap_verts, cap_indices) = cap_quad(&cut.plane, half_extent);
+            let (cap_verts, cap_indices) = cap_quad(
+                &cut.plane,
+                mesh.bbox_uncached().center().to_array(),
+                half_extent,
+            );
             let cap_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("occluview cap vertex buffer"),
                 size: (cap_verts.len() * 12) as u64,
