@@ -224,6 +224,9 @@ impl TopoJournal {
             return None;
         }
         let (base_verts, base_tris, base_groups) = (words[0] as usize, words[1] as usize, words[2]);
+        if words[0].checked_add(words[5]).is_none() || base_groups.checked_add(words[5]).is_none() {
+            return None;
+        }
         let (n_rewired, n_rows, n_added_v, n_added_t) = (
             words[3] as usize,
             words[4] as usize,
@@ -376,6 +379,39 @@ impl TopoJournal {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decoded_history_refuses_overflowing_vertex_and_group_counts() {
+        let mut words = [
+            u32::MAX,
+            0,
+            u32::MAX,
+            0,
+            0,
+            2,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            2,
+            0,
+            0,
+            0,
+            1,
+        ];
+        let floats = [0.0; 30];
+        for (vertices, groups) in [(u32::MAX, 3), (3, u32::MAX)] {
+            words[0] = vertices;
+            words[2] = groups;
+            assert!(TopoJournal::decode(&words, &floats).is_none());
+        }
+        words[0] = 3;
+        words[2] = 3;
+        assert!(TopoJournal::decode(&words, &floats).is_some());
+    }
 
     #[test]
     fn decoded_vertex_payload_refuses_non_finite_geometry() {
