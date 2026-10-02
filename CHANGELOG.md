@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Repair no longer merges distinct vertices when a mesh is stored far from the coordinate origin.
+
 - Closing holes with an empty face selection now preserves the complete mesh.
 
 - Section contours skip triangles containing invalid coordinates instead of emitting NaN points.

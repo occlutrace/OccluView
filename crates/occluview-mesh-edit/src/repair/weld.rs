@@ -16,7 +16,7 @@ use crate::{EditVertex, MeshEditBuffers, MeshEditError};
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum WeldKey {
     Exact([u32; 3], [u8; 4], [u32; 2]),
-    Quantized([i32; 3], [u8; 4], [u32; 2]),
+    Quantized([u64; 3], [u8; 4], [u32; 2]),
 }
 
 /// Weld vertices whose position and full attribute payload match.
@@ -140,19 +140,12 @@ fn exact_position_key(value: f32) -> u32 {
     }
 }
 
-/// One quantized position lane (the `position_lane_key` scheme with a
-/// caller-chosen step).
-#[allow(clippy::cast_possible_truncation)]
-fn lane_key(value: f32, epsilon: f32) -> i32 {
+/// Bits of a rounded grid coordinate, without saturating distant positions.
+fn lane_key(value: f32, epsilon: f32) -> u64 {
     if !value.is_finite() {
         return 0;
     }
     let scaled = (f64::from(value) / f64::from(epsilon)).round();
-    if scaled <= f64::from(i32::MIN) {
-        i32::MIN
-    } else if scaled >= f64::from(i32::MAX) {
-        i32::MAX
-    } else {
-        scaled as i32
-    }
+    // Adding positive zero canonicalizes a rounded negative zero as well.
+    (scaled + 0.0).to_bits()
 }
