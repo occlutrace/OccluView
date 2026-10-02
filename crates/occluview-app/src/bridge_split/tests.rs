@@ -10,7 +10,7 @@ use occluview_mesh_edit::{
     BridgeSplitError, BridgeSplitReport, BridgeSplitRequest, CoreBridgeSplitResult,
 };
 use std::sync::{mpsc, Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 #[test]
 fn default_kerf_and_clamp_use_one_source_of_truth() {
@@ -452,10 +452,13 @@ pub(super) fn poll_controller_until(
     controller: &mut BridgeSplitController,
     live_target: Option<BridgeSplitTarget>,
 ) -> bool {
-    if !controller.worker.wait_for_output(Duration::from_secs(1)) {
-        return false;
+    for _ in 0..100 {
+        if controller.poll(live_target) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(10));
     }
-    controller.poll(live_target)
+    false
 }
 
 pub(super) fn poll_controller_until_job_started(
@@ -463,25 +466,26 @@ pub(super) fn poll_controller_until_job_started(
     live_target: BridgeSplitTarget,
     started_rx: &mpsc::Receiver<BridgeSplitGuard>,
 ) -> Option<BridgeSplitGuard> {
-    let deadline = Instant::now() + Duration::from_secs(1);
-    if !controller
-        .worker
-        .wait_for_output(deadline.saturating_duration_since(Instant::now()))
-    {
-        return None;
+    for _ in 0..100 {
+        let _ = controller.poll(Some(live_target));
+        match started_rx.try_recv() {
+            Ok(guard) => return Some(guard),
+            Err(mpsc::TryRecvError::Disconnected) => return None,
+            Err(mpsc::TryRecvError::Empty) => std::thread::sleep(Duration::from_millis(10)),
+        }
     }
-    let _ = controller.poll(Some(live_target));
-    started_rx
-        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-        .ok()
+    None
 }
 
 fn poll_worker_until(worker: &mut BridgeSplitWorker) -> Vec<BridgeSplitJobOutput> {
-    if worker.wait_for_output(Duration::from_secs(1)) {
-        worker.poll()
-    } else {
-        Vec::new()
+    for _ in 0..100 {
+        let outputs = worker.poll();
+        if !outputs.is_empty() {
+            return outputs;
+        }
+        std::thread::sleep(Duration::from_millis(10));
     }
+    Vec::new()
 }
 
 struct ThreadExitSignal(mpsc::Sender<()>);
