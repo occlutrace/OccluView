@@ -1,5 +1,5 @@
 //! Texture decode/color-correction tests. Shares the base64/XML fixture
-//! builders from [`crate::tests`].
+//! builders from [`super::tests`].
 
 #![allow(
     clippy::cast_possible_truncation,
@@ -10,7 +10,7 @@
 )]
 
 use super::*;
-use crate::tests::{append_packed_uv, cc_fixture, encode_base64, red_png_bytes, small_jpeg_bytes};
+use super::tests::{append_packed_uv, cc_fixture, encode_base64, red_png_bytes, small_jpeg_bytes};
 use std::io::Cursor;
 
 fn embedded_raster_hps(raster: &[u8]) -> Vec<u8> {

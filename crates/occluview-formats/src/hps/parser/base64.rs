@@ -1,4 +1,4 @@
-use crate::error::HpsError;
+use super::error::HpsError;
 
 /// Decode standard base64 used inside HPS XML binary blocks.
 pub(super) fn decode(encoded: &str) -> Result<Vec<u8>, HpsError> {

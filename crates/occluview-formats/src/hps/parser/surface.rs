@@ -1,6 +1,6 @@
 //! Neutral decoded surface data.
 
-use crate::HpsError;
+use super::HpsError;
 
 /// Decoded RGBA8 texture pixels independent of any renderer or mesh type.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -295,7 +295,7 @@ fn require_finite<'a>(
 mod tests {
     use super::{DecodedSurface, DecodedTexture};
 
-    fn triangle() -> Result<DecodedSurface, crate::HpsError> {
+    fn triangle() -> Result<DecodedSurface, super::super::HpsError> {
         DecodedSurface::new(
             vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
             vec![0, 1, 2],

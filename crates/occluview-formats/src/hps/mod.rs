@@ -1,6 +1,11 @@
 //! OccluView compatibility adapter for the product-neutral HPS parser.
+//!
+//! The neutral parser lives in [`parser`]; this module adapts it to the
+//! viewer mesh model and the [`FormatError`] contract.
 
 mod mesh;
+/// Product-neutral parsing for HPS dental surfaces.
+pub mod parser;
 
 use crate::error::FormatError;
 use occluview_core::Mesh;
@@ -9,10 +14,10 @@ use std::fmt;
 const FORMAT: &str = "HPS";
 
 /// Parser version exposed through the formats facade.
-pub const PARSER_VERSION: &str = occluview_hps::PARSER_VERSION;
+pub const PARSER_VERSION: &str = parser::PARSER_VERSION;
 
 /// Stable HPS failure categories for consumers that must not depend on the
-/// product-neutral parser crate directly.
+/// product-neutral parser module directly.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HpsReadFailure {
     /// The input is a medical DICOM file.
@@ -53,7 +58,7 @@ pub enum HpsDecodedReadError {
 /// This compatibility wrapper preserves the original formats API while the
 /// neutral parser owns key storage, redaction, and zeroization.
 #[derive(Clone)]
-pub struct HpsSecretKey(occluview_hps::HpsSecretKey);
+pub struct HpsSecretKey(parser::HpsSecretKey);
 
 impl HpsSecretKey {
     /// Construct a Blowfish-compatible HPS key.
@@ -62,7 +67,7 @@ impl HpsSecretKey {
     /// Returns [`FormatError::Malformed`] when the key length is outside
     /// Blowfish's 4..=56 byte range.
     pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, FormatError> {
-        occluview_hps::HpsSecretKey::from_bytes(bytes)
+        parser::HpsSecretKey::from_bytes(bytes)
             .map(Self)
             .map_err(map_parser_error)
     }
@@ -73,7 +78,7 @@ impl HpsSecretKey {
     /// Returns [`FormatError::Malformed`] if the resulting key is not
     /// Blowfish-compatible.
     pub fn from_config_value(value: &str) -> Result<Self, FormatError> {
-        occluview_hps::HpsSecretKey::from_config_value(value)
+        parser::HpsSecretKey::from_config_value(value)
             .map(Self)
             .map_err(map_parser_error)
     }
@@ -114,13 +119,13 @@ pub struct RuntimeHpsKeyProvider;
 
 impl HpsKeyProvider for RuntimeHpsKeyProvider {
     fn base_key(&self) -> Result<Option<HpsSecretKey>, FormatError> {
-        leaf_provider_key(&occluview_hps::RuntimeHpsKeyProvider)
+        leaf_provider_key(&parser::RuntimeHpsKeyProvider)
     }
 }
 
 fn leaf_provider_key<P>(provider: &P) -> Result<Option<HpsSecretKey>, FormatError>
 where
-    P: occluview_hps::HpsKeyProvider<Error = occluview_hps::HpsError>,
+    P: parser::HpsKeyProvider<Error = parser::HpsError>,
 {
     provider
         .base_key()
@@ -130,10 +135,10 @@ where
 
 struct ProviderAdapter<'a>(&'a dyn HpsKeyProvider);
 
-impl occluview_hps::HpsKeyProvider for ProviderAdapter<'_> {
+impl parser::HpsKeyProvider for ProviderAdapter<'_> {
     type Error = FormatError;
 
-    fn base_key(&self) -> Result<Option<occluview_hps::HpsSecretKey>, Self::Error> {
+    fn base_key(&self) -> Result<Option<parser::HpsSecretKey>, Self::Error> {
         self.0.base_key().map(|key| key.map(|key| key.0))
     }
 }
@@ -157,8 +162,8 @@ pub fn read(bytes: &[u8]) -> Result<Mesh, FormatError> {
 /// # Errors
 /// Returns [`FormatError`] when the input is not a supported HPS payload or
 /// fails parser validation.
-pub fn read_decoded_surface(bytes: &[u8]) -> Result<occluview_hps::DecodedSurface, FormatError> {
-    occluview_hps::read(bytes).map_err(map_parser_error)
+pub fn read_decoded_surface(bytes: &[u8]) -> Result<parser::DecodedSurface, FormatError> {
+    parser::read(bytes).map_err(map_parser_error)
 }
 
 /// Read raw HPS XML or a dental HPS package with an explicit key provider.
@@ -182,12 +187,12 @@ pub fn read_with_key_provider(
 pub fn read_decoded_surface_with_key_provider(
     bytes: &[u8],
     key_provider: &dyn HpsKeyProvider,
-) -> Result<occluview_hps::DecodedSurface, FormatError> {
+) -> Result<parser::DecodedSurface, FormatError> {
     let provider = ProviderAdapter(key_provider);
-    match occluview_hps::read_with_key_provider(bytes, &provider) {
+    match parser::read_with_key_provider(bytes, &provider) {
         Ok(surface) => Ok(surface),
-        Err(occluview_hps::ReadError::Parser(error)) => Err(map_parser_error(error)),
-        Err(occluview_hps::ReadError::KeyProvider(error)) => Err(error),
+        Err(parser::ReadError::Parser(error)) => Err(map_parser_error(error)),
+        Err(parser::ReadError::KeyProvider(error)) => Err(error),
     }
 }
 
@@ -198,13 +203,13 @@ pub fn read_decoded_surface_with_key_provider(
 /// Returns [`HpsDecodedReadError`] when parsing or runtime key resolution fails.
 pub fn read_decoded_surface_bytes_with_runtime_key_provider(
     bytes: &[u8],
-) -> Result<occluview_hps::DecodedSurface, HpsDecodedReadError> {
-    match occluview_hps::read_with_key_provider(bytes, &occluview_hps::RuntimeHpsKeyProvider) {
+) -> Result<parser::DecodedSurface, HpsDecodedReadError> {
+    match parser::read_with_key_provider(bytes, &parser::RuntimeHpsKeyProvider) {
         Ok(surface) => Ok(surface),
-        Err(occluview_hps::ReadError::Parser(error)) => {
+        Err(parser::ReadError::Parser(error)) => {
             Err(HpsDecodedReadError::Parser(classify_parser_error(&error)))
         }
-        Err(occluview_hps::ReadError::KeyProvider(error)) => Err(HpsDecodedReadError::KeyProvider(
+        Err(parser::ReadError::KeyProvider(error)) => Err(HpsDecodedReadError::KeyProvider(
             classify_key_provider_error(&error),
         )),
     }
@@ -212,15 +217,14 @@ pub fn read_decoded_surface_bytes_with_runtime_key_provider(
 
 /// Convert a validated product-neutral HPS surface into an OccluView mesh.
 ///
-/// This is the only public bridge from [`occluview_hps::DecodedSurface`]
-/// into the viewer mesh model. Parsing and key handling remain in
-/// `occluview-hps`.
+/// This is the only public bridge from [`parser::DecodedSurface`]
+/// into the viewer mesh model. Parsing and key handling remain in [`parser`].
 ///
 /// # Errors
 /// Returns [`FormatError`] when the validated surface cannot be represented by
 /// [`Mesh`].
 pub fn mesh_from_decoded_surface(
-    surface: occluview_hps::DecodedSurface,
+    surface: parser::DecodedSurface,
 ) -> Result<Mesh, FormatError> {
     mesh::build_mesh(surface)
 }
@@ -232,13 +236,13 @@ pub fn mesh_from_decoded_surface(
 /// Returns [`FormatError`] when the validated surface cannot be represented by
 /// the core mesh model.
 pub fn geometry_mesh_from_decoded_surface(
-    surface: &occluview_hps::DecodedSurface,
+    surface: &parser::DecodedSurface,
 ) -> Result<Mesh, FormatError> {
     mesh::build_geometry_mesh(surface)
 }
 
-fn map_parser_error(error: occluview_hps::HpsError) -> FormatError {
-    use occluview_hps::HpsError;
+fn map_parser_error(error: parser::HpsError) -> FormatError {
+    use crate::hps::parser::HpsError;
 
     match error {
         HpsError::MedicalDicom => FormatError::Unsupported {
@@ -276,8 +280,8 @@ fn map_parser_error(error: occluview_hps::HpsError) -> FormatError {
     }
 }
 
-fn classify_parser_error(error: &occluview_hps::HpsError) -> HpsReadFailure {
-    use occluview_hps::HpsError;
+fn classify_parser_error(error: &parser::HpsError) -> HpsReadFailure {
+    use crate::hps::parser::HpsError;
 
     match error {
         HpsError::MedicalDicom => HpsReadFailure::MedicalDicom,
@@ -293,10 +297,10 @@ fn classify_parser_error(error: &occluview_hps::HpsError) -> HpsReadFailure {
     }
 }
 
-fn classify_key_provider_error(error: &occluview_hps::HpsError) -> HpsReadFailure {
+fn classify_key_provider_error(error: &parser::HpsError) -> HpsReadFailure {
     match error {
-        occluview_hps::HpsError::InvalidKey { .. }
-        | occluview_hps::HpsError::BadContainer { .. } => HpsReadFailure::InvalidKey,
+        parser::HpsError::InvalidKey { .. }
+        | parser::HpsError::BadContainer { .. } => HpsReadFailure::InvalidKey,
         _ => HpsReadFailure::KeyProviderFailed,
     }
 }

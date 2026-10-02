@@ -1,5 +1,5 @@
 # occluview-formats — file format readers/writers.
-# Layering: depends on occluview-core and occluview-hps.
+# Layering: depends on occluview-core and occluview-geometry.
 [package]
 name = "occluview-formats"
 description = "3D file format import and export for OccluView: read STL, PLY, OBJ, OFF, GLB, and HPS; write STL, PLY, OBJ, and GLB."
@@ -14,16 +14,19 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[package.metadata.cargo-machete]
+ignored = ["md-5"] # imported under its Rust crate name, `md5`
+
 [features]
 default = []
 # Private/offline builds may embed an obfuscated HPS key from
 # OCCLUVIEW_HPS_EMBEDDED_KEY at compile time. Release packaging may enable this
 # only from CI secrets; the key must never be stored in source or logs.
-private-hps-key = ["occluview-hps/private-hps-key"]
+private-hps-key = []
 
 [dependencies]
 occluview-core = { workspace = true }
-occluview-hps = { workspace = true }
+occluview-geometry = { workspace = true }
 thiserror      = { workspace = true }
 rayon          = { workspace = true }
 glam           = { workspace = true }
@@ -31,6 +34,15 @@ serde          = { workspace = true }
 serde_json     = { workspace = true }
 # PNG + JPEG decode for glTF texture images (GLB embeds them in bufferViews).
 image          = { workspace = true }
+# HPS package compatibility. The `hps::parser` module owns the archive,
+# cipher and image dependencies directly, plus one debug event on the
+# texture path.
+adler2   = { workspace = true }
+blowfish = { workspace = true }
+md-5     = { workspace = true }
+zeroize  = { workspace = true }
+zip      = { workspace = true }
+tracing  = { workspace = true }
 
 # `MoveFileExW`, so replacing an existing export is published through one
 # rename and reports its collision codes as themselves.
@@ -39,7 +51,6 @@ version = "0.62.2"
 features = ["Win32_Storage_FileSystem"]
 
 [dev-dependencies]
-zip            = { workspace = true }
 proptest = { workspace = true }
 tempfile = "3.27.0"
 # The production reader accepts only PNG/JPEG. Enable BMP in tests solely to

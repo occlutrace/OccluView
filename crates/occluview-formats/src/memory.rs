@@ -34,7 +34,7 @@ pub(crate) fn estimate_file_peak_bytes(
             if bytes.starts_with(b"PK") {
                 // ZipArchive indexes central-directory entries while the source stays owned.
                 check_estimate(reserved_bytes.saturating_add(source_bytes.saturating_mul(4)))?;
-                let uncompressed = occluview_hps::package_uncompressed_size(bytes)
+                let uncompressed = crate::hps::parser::package_uncompressed_size(bytes)
                     .map_err(|error| FormatError::Malformed {
                         format: "HPS",
                         offset: 0,
@@ -51,7 +51,7 @@ pub(crate) fn estimate_file_peak_bytes(
         FormatKind::Threemf => source_bytes,
     };
     let texture_bytes = if may_decode_texture(kind, bytes) {
-        occluview_hps::MAX_TEXTURE_RGBA_BYTES.saturating_mul(2)
+        crate::hps::parser::MAX_TEXTURE_RGBA_BYTES.saturating_mul(2)
     } else {
         0
     };
@@ -61,7 +61,7 @@ pub(crate) fn estimate_file_peak_bytes(
 pub(crate) fn estimate_companion_peak_bytes(kind: FormatKind, bytes: &[u8]) -> u64 {
     if may_load_companion_image(kind, bytes) {
         crate::companions::MAX_COMPANION_IMAGE_BYTES
-            .saturating_add(occluview_hps::MAX_TEXTURE_RGBA_BYTES.saturating_mul(2))
+            .saturating_add(crate::hps::parser::MAX_TEXTURE_RGBA_BYTES.saturating_mul(2))
     } else {
         0
     }
@@ -128,7 +128,7 @@ mod tests {
         assert!(
             estimate_companion_peak_bytes(FormatKind::Obj, obj)
                 >= crate::companions::MAX_COMPANION_IMAGE_BYTES
-                    .saturating_add(occluview_hps::MAX_TEXTURE_RGBA_BYTES.saturating_mul(2)),
+                    .saturating_add(crate::hps::parser::MAX_TEXTURE_RGBA_BYTES.saturating_mul(2)),
             "path-aware companion decoding must be inside the import estimate"
         );
         let untextured_obj = estimate_file_peak_bytes(FormatKind::Obj, b"v 0 0 0\n", 0)
@@ -144,6 +144,6 @@ mod tests {
     fn embedded_rasters_reserve_decode_and_rgba_conversion_peak() {
         let estimate =
             estimate_file_peak_bytes(FormatKind::Hps, b"Texture", 0).expect("HPS texture estimate");
-        assert!(estimate >= occluview_hps::MAX_TEXTURE_RGBA_BYTES.saturating_mul(2));
+        assert!(estimate >= crate::hps::parser::MAX_TEXTURE_RGBA_BYTES.saturating_mul(2));
     }
 }

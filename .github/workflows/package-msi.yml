@@ -125,7 +125,7 @@ jobs:
           }
 
           $testLog = Join-Path $env:RUNNER_TEMP "occluview-hps-provider-test.log"
-          cargo test --locked -p occluview-hps --features private-hps-key key::tests::runtime_provider_reads_generated_embedded_key_when_present -- --nocapture *> $testLog
+          cargo test --locked -p occluview-formats --features private-hps-key key::tests::runtime_provider_reads_generated_embedded_key_when_present -- --nocapture *> $testLog
           $testExit = $LASTEXITCODE
           if (Select-String -Path $testLog -SimpleMatch -Pattern $env:OCCLUVIEW_HPS_EMBEDDED_KEY -Quiet) {
             Remove-Item -LiteralPath $testLog -Force
@@ -379,7 +379,7 @@ jobs:
 
           test_log="$(mktemp)"
           set +e
-          cargo test --locked -p occluview-hps --features private-hps-key key::tests::runtime_provider_reads_generated_embedded_key_when_present -- --nocapture >"$test_log" 2>&1
+          cargo test --locked -p occluview-formats --features private-hps-key key::tests::runtime_provider_reads_generated_embedded_key_when_present -- --nocapture >"$test_log" 2>&1
           test_status=$?
           set -e
           if printf '%s\n' "$OCCLUVIEW_HPS_EMBEDDED_KEY" | grep -Fq -f - "$test_log"; then
@@ -494,7 +494,7 @@ jobs:
           fi
           test_log="$(mktemp)"
           set +e
-          cargo test --locked --target aarch64-apple-darwin -p occluview-hps --features private-hps-key \
+          cargo test --locked --target aarch64-apple-darwin -p occluview-formats --features private-hps-key \
             key::tests::runtime_provider_reads_generated_embedded_key_when_present -- --nocapture >"$test_log" 2>&1
           test_status=$?
           set -e

@@ -1,4 +1,4 @@
-use crate::error::HpsError;
+use super::error::HpsError;
 use std::collections::BTreeMap;
 
 #[derive(Copy, Clone, Debug)]

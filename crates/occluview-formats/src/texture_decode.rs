@@ -11,8 +11,8 @@ use std::io::Cursor;
 
 // One definition of the texture budget for every reader in the workspace,
 // owned by the crate that reads the format most exposed to it. See
-// `occluview_hps::MAX_TEXTURE_DIMENSION_PX` for why there is exactly one.
-pub(crate) use occluview_hps::{MAX_TEXTURE_DIMENSION_PX, MAX_TEXTURE_RGBA_BYTES};
+// `crate::hps::parser::MAX_TEXTURE_DIMENSION_PX` for why there is exactly one.
+pub(crate) use crate::hps::parser::{MAX_TEXTURE_DIMENSION_PX, MAX_TEXTURE_RGBA_BYTES};
 
 const EMBEDDED_RASTER_FORMAT_POLICY: &str =
     "embedded texture format is not permitted; only PNG and JPEG are accepted";

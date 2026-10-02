@@ -1,4 +1,4 @@
-use crate::{
+use super::{
     base64, crypto, faces, malformed, texture, xml, DecodedSurface, HpsError, HpsKeyProvider,
     NoHpsKeyProvider, ReadError,
 };
@@ -421,7 +421,7 @@ mod tests {
     use super::{
         build_surface, checked_aggregate_uncompressed_size, MAX_PACKAGE_UNCOMPRESSED_BYTES,
     };
-    use crate::{texture::SurfaceTexture, HpsError};
+    use super::super::{texture::SurfaceTexture, HpsError};
 
     #[test]
     fn aggregate_zip_uncompressed_size_is_bounded() {

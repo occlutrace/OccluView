@@ -2,5 +2,5 @@
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
-    let _ = occluview_hps::read(data);
+    let _ = occluview_formats::hps::parser::read(data);
 });

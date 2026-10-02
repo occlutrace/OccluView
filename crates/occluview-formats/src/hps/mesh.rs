@@ -1,7 +1,7 @@
 use crate::error::FormatError;
 use glam::Vec3;
 use occluview_core::{Mesh, MeshTexture, Vertex};
-use occluview_hps::{DecodedSurface, DecodedSurfaceParts};
+use super::parser::{DecodedSurface, DecodedSurfaceParts};
 use std::collections::HashMap;
 
 pub(super) fn build_mesh(surface: DecodedSurface) -> Result<Mesh, FormatError> {
@@ -136,7 +136,7 @@ fn build_corner_split_vertices(
 fn mesh_from_parts(
     vertices: Vec<Vertex>,
     indices: Vec<u32>,
-    texture: Option<occluview_hps::DecodedTexture>,
+    texture: Option<super::parser::DecodedTexture>,
 ) -> Result<Mesh, FormatError> {
     let mut mesh =
         Mesh::new(Some("HPS".to_string()), vertices, indices).map_err(FormatError::Core)?;
@@ -196,7 +196,7 @@ mod tests {
     #![allow(clippy::expect_used)]
 
     use super::{build_geometry_mesh, build_mesh};
-    use occluview_hps::{DecodedSurface, DecodedTexture};
+    use super::super::parser::{DecodedSurface, DecodedTexture};
 
     #[test]
     fn neutral_surface_adapter_preserves_geometry_attributes_and_texture() {

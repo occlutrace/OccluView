@@ -14,7 +14,6 @@ cargo-fuzz = true
 
 [dependencies]
 occluview-formats = { path = "../crates/occluview-formats" }
-occluview-hps = { path = "../crates/occluview-hps" }
 libfuzzer-sys = "0.4.13"
 
 # Every target is declared. cargo does NOT auto-discover binaries under

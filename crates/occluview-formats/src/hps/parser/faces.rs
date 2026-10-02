@@ -1,4 +1,4 @@
-use crate::error::HpsError;
+use super::error::HpsError;
 
 #[derive(Copy, Clone)]
 struct Edge {

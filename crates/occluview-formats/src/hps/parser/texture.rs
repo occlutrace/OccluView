@@ -1,4 +1,4 @@
-use crate::{
+use super::{
     base64, crypto,
     parser::{encrypted_element_uses_scrambled_key, original_size_attr},
     xml, DecodedTexture, HpsError,
