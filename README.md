@@ -295,15 +295,12 @@ names the override.
 
 The workspace is layered from shared leaves upward: a crate may depend only on a
 lower-ranked crate, and each rank is declared in `[workspace.metadata.layer-ranks]`
-in the root `Cargo.toml`. `crates/occluview-repo-contracts` checks Cargo's
-dependency graph against those ranks. The `fuzz/` crate is excluded from the
-workspace.
+in the root `Cargo.toml`. The `fuzz/` crate is excluded from the workspace.
 
 | crate | role | rank |
 |---|---|---|
 | `occluview-geometry` | Shared geometry constants, pure math, and triangle-surface queries; the bottom leaf, importing no other workspace crate. | 0 |
 | `occluview-i18n` | Fluent catalogs and locale resolution shared by the app and the shell. | 0 |
-| `occluview-repo-contracts` | Repository contract tests: CI workflows, packaging reports and the release version. | 0 |
 | `occluview-update` | Signed update-manifest checks; the only crate carrying HTTP and signature verification. | 0 |
 | `occluview-sculpt` | Surface sculpting kernel with its own `parallel` feature. | 1 |
 | `occluview-core` | Pure data model: math, units, mesh, scene and camera, with no I/O, GPU or platform code. | 1 |

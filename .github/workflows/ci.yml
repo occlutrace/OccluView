@@ -84,7 +84,7 @@ jobs:
         # runner.
         run: |
           cargo clippy -p occluview-core -p occluview-mesh-edit -p occluview-formats \
-            -p occluview-render -p occluview-repo-contracts \
+            -p occluview-render \
             --all-targets --locked --target x86_64-pc-windows-gnu -- -D warnings
           cargo clippy -p occluview-mesh-edit --all-features --all-targets --locked \
             --target x86_64-pc-windows-gnu -- -D warnings

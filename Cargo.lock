@@ -2774,14 +2774,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "occluview-repo-contracts"
-version = "1.2.1"
-dependencies = [
- "serde_json",
- "serde_yaml_ng",
-]
-
-[[package]]
 name = "occluview-sculpt"
 version = "1.2.1"
 dependencies = [

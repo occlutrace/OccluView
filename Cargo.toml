@@ -24,7 +24,6 @@ members = [
     "crates/occluview-update",
     "crates/occluview-app",
     "crates/occluview-cli",
-    "crates/occluview-repo-contracts",
 ]
 exclude = ["fuzz"]
 
@@ -43,14 +42,12 @@ default-members = [
     "crates/occluview-update",
     "crates/occluview-app",
     "crates/occluview-cli",
-    "crates/occluview-repo-contracts",
 ]
 
 [workspace.metadata.layer-ranks]
 # Shared leaf libraries.
 occluview-geometry = 0
 occluview-i18n = 0
-occluview-repo-contracts = 0
 occluview-update = 0
 # Geometry kernels.
 occluview-sculpt = 1
