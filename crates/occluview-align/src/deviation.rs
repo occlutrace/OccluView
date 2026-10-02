@@ -419,7 +419,7 @@ pub fn deviation_stats(map: &DeviationMap, tolerance_mm: f64) -> DeviationStats 
     values.sort_by(f64::total_cmp);
     let middle = values.len() / 2;
     let median = if values.len().is_multiple_of(2) {
-        (values[middle - 1] + values[middle]) * 0.5
+        values[middle - 1].midpoint(values[middle])
     } else {
         values[middle]
     };
