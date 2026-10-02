@@ -620,6 +620,36 @@ mod tests {
     }
 
     #[test]
+    fn sculpt_tip_clicks_change_live_settings_only_when_enabled() {
+        for pending in [false, true] {
+            for tip in SculptTip::ALL {
+                let ctx = egui::Context::default();
+                ctx.enable_accesskit();
+                let previous = if tip == SculptTip::Ball {
+                    SculptTip::Knife
+                } else {
+                    SculptTip::Ball
+                };
+                set_sculpt_tip(&ctx, SceneKey::INITIAL, previous);
+                let state = super::MeshEditorPanelState {
+                    active_tab: super::EditorTab::Sculpt,
+                    sculpt_pending: pending,
+                    ..Default::default()
+                };
+                let label = crate::i18n::LocaleManager::for_tests().tr(tip.label_key());
+                assert_eq!(
+                    click_live_control(&ctx, &state, &label, egui::accesskit::Role::Button),
+                    None
+                );
+                assert_eq!(
+                    sculpt_tip(&ctx, SceneKey::INITIAL),
+                    if pending { previous } else { tip }
+                );
+            }
+        }
+    }
+
+    #[test]
     fn close_holes_limit_clicks_toggle_the_live_option_only_when_enabled() {
         for busy in [false, true] {
             let ctx = egui::Context::default();
@@ -641,6 +671,83 @@ mod tests {
                 None
             );
             assert_eq!(close_holes_limit_mm(&ctx, SceneKey::INITIAL), None);
+        }
+    }
+
+    #[test]
+    fn sculpt_panel_rendering_preserves_normalized_brush_size() {
+        let ctx = egui::Context::default();
+        let state = super::MeshEditorPanelState {
+            active_tab: super::EditorTab::Sculpt,
+            ..Default::default()
+        };
+        let share = 0.37;
+        super::set_sculpt_radius_share(&ctx, SceneKey::INITIAL, share);
+        for tip in SculptTip::ALL {
+            set_sculpt_tip(&ctx, SceneKey::INITIAL, tip);
+            panel_frame(&ctx, &state, vec![])
+                .0
+                .drop_without_applying_deltas();
+            assert_eq!(
+                super::sculpt_radius_share(&ctx, SceneKey::INITIAL),
+                share,
+                "rendering {tip:?} must preserve the user's size share"
+            );
+        }
+    }
+
+    #[test]
+    fn sculpt_sliders_update_live_settings_only_on_enabled_pointer_input() {
+        for pending in [false, true] {
+            for label in ["size", "force"] {
+                let ctx = egui::Context::default();
+                ctx.enable_accesskit();
+                let state = super::MeshEditorPanelState {
+                    active_tab: super::EditorTab::Sculpt,
+                    sculpt_armed: Some(SculptToolKind::AddRemove),
+                    sculpt_pending: pending,
+                    ..Default::default()
+                };
+                super::set_sculpt_radius_share(&ctx, SceneKey::INITIAL, 0.37);
+                for _ in 0..2 {
+                    panel_frame(&ctx, &state, vec![])
+                        .0
+                        .drop_without_applying_deltas();
+                }
+                let (output, _) = panel_frame(&ctx, &state, vec![]);
+                let bounds = control_bounds(&output, label, egui::accesskit::Role::Slider);
+                output.drop_without_applying_deltas();
+                let point = egui::pos2(bounds.right() - 10.0, bounds.center().y);
+                let size_before = super::sculpt_radius_share(&ctx, SceneKey::INITIAL);
+                let force_before =
+                    sculpt_strength(&ctx, SceneKey::INITIAL, SculptToolKind::AddRemove);
+                for pressed in [true, false] {
+                    let (output, action) = panel_frame(
+                        &ctx,
+                        &state,
+                        vec![
+                            egui::Event::PointerMoved(point),
+                            egui::Event::PointerButton {
+                                pos: point,
+                                button: egui::PointerButton::Primary,
+                                pressed,
+                                modifiers: egui::Modifiers::NONE,
+                            },
+                        ],
+                    );
+                    output.drop_without_applying_deltas();
+                    assert_eq!(action, None);
+                }
+                assert_eq!(
+                    super::sculpt_radius_share(&ctx, SceneKey::INITIAL) != size_before,
+                    !pending && label == "size"
+                );
+                assert_eq!(
+                    sculpt_strength(&ctx, SceneKey::INITIAL, SculptToolKind::AddRemove)
+                        != force_before,
+                    !pending && label == "force"
+                );
+            }
         }
     }
 
