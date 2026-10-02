@@ -449,12 +449,10 @@ impl SceneContext<'_> {
         if !self.tools.align.brush.is_armed() {
             if self.tools.align.overlay == AlignOverlay::Region {
                 self.clear_deviation_overlay();
-                // The map was taken down to make room for the markings. Closing
-                // the brush is the moment to put it back, or an operator who
-                // opened the brush to fix one region loses the reading they
-                // opened it because of.
-                self.measure_if_shown();
             }
+            // Opening an unmarked brush also hides the map, without attaching
+            // a region overlay. Restore any still-authorized reading on close.
+            self.measure_if_shown();
             return;
         }
         // A measured map and the markings are both per-vertex colours on the
@@ -663,6 +661,49 @@ mod tests {
         let brush = AlignBrush::default();
         assert_eq!(brush.target(), BrushTarget::Both);
         assert_eq!(brush.target().sides().len(), 2);
+    }
+
+    #[test]
+    fn closing_an_unmarked_brush_requests_the_authorized_map_again() {
+        use crate::app::align::display::AlignOverlay;
+        use crate::app::app_test_support::{named_scene, push_named_layer, test_app};
+
+        let mut app = test_app("align-close-unmarked-brush");
+        let mut scene = named_scene("fixed", 0.0);
+        let fixed = scene.meshes()[0].id();
+        let moving = push_named_layer(&mut scene, "moving", 5.0);
+        app.workspace.scenes[0].document.scene = Some(scene.into());
+        let mut scene = app.active_context().expect("live test scene");
+        scene.tools.align.tool.arm();
+        scene.tools.align.tool.imply_pair(&[moving, fixed]);
+        scene.tools.align.refined_match_ready = true;
+        scene.tools.align.settings.show_deviation = true;
+        assert!(scene.apply_deviation_colors(vec![[40, 90, 160, 255]; 3]));
+        scene.tools.align.brush.set_armed(true);
+        scene.refresh_align_region_preview();
+        assert!(!scene.tools.align.markings.any());
+        assert_eq!(scene.tools.align.overlay, AlignOverlay::Nothing);
+        assert!(scene.tools.align.refined_match_ready);
+        assert!(scene.tools.align.settings.show_deviation);
+        assert!(scene.tools.align.worker.is_none());
+
+        scene.tools.align.brush.set_armed(false);
+        scene.refresh_align_region_preview();
+
+        assert!(
+            scene.tools.align.worker.is_some(),
+            "closing an unchanged brush must submit a replacement measurement"
+        );
+        assert_eq!(
+            scene.tools.align.status.as_deref(),
+            Some(
+                scene
+                    .ui
+                    .locale
+                    .tr(crate::i18n::message_id!("align-job-measure"))
+                    .as_str()
+            )
+        );
     }
 
     /// Every whole-mesh command has a one-scan report. The report keys are
