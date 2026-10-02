@@ -29,7 +29,13 @@ pub(crate) fn show(
     if !refined_match_ready {
         settings.show_deviation = false;
     }
-    let mut action = toggle(ui, settings, enabled && refined_match_ready, locale);
+    let mut action = toggle(
+        ui,
+        settings,
+        enabled && refined_match_ready,
+        refined_match_ready,
+        locale,
+    );
     if !refined_match_ready || !settings.show_deviation {
         return action;
     }
@@ -44,6 +50,7 @@ fn toggle(
     ui: &mut egui::Ui,
     settings: &mut AlignSettings,
     enabled: bool,
+    refined_match_ready: bool,
     locale: &crate::i18n::LocaleManager,
 ) -> Option<AlignPanelAction> {
     let mut action = None;
@@ -74,8 +81,9 @@ fn toggle(
                         .as_str(),
                 ),
             )
-            .on_hover_text(if enabled {
-                locale.tr(crate::i18n::message_id!("align-map-heatmap-hint"))
+            .on_hover_text(locale.tr(crate::i18n::message_id!("align-map-heatmap-hint")))
+            .on_disabled_hover_text(if refined_match_ready {
+                locale.tr(crate::i18n::message_id!("align-job-measure"))
             } else {
                 locale.tr(crate::i18n::message_id!("align-map-requires-refine"))
             })
@@ -145,5 +153,69 @@ fn range(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::panic)]
+    use super::*;
+
+    fn heatmap_frame(
+        ctx: &egui::Context,
+        settings: &mut AlignSettings,
+        ready: bool,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(400.0, 400.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                let _ = show(
+                    ui,
+                    settings,
+                    ready,
+                    false,
+                    &crate::i18n::LocaleManager::for_tests(),
+                );
+            },
+        );
+        output.textures_delta.clear();
+        output
+    }
+
+    #[test]
+    fn disabled_heatmap_explains_missing_refinement_or_busy_measurement() {
+        for (ready, expected) in [(false, "Run Best fit matching first"), (true, "Measuring…")] {
+            let ctx = egui::Context::default();
+            ctx.all_styles_mut(|style| {
+                style.interaction.tooltip_delay = 0.0;
+                style.interaction.show_tooltips_only_when_still = false;
+            });
+            let mut settings = AlignSettings::default();
+            let output = heatmap_frame(&ctx, &mut settings, ready, Vec::new());
+            let position = output.shapes.iter().find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text() == "Heatmap" => {
+                    Some(text.pos + text.galley.rect.center().to_vec2())
+                }
+                _ => None,
+            });
+            assert!(position.is_some(), "the heatmap toggle must be rendered");
+            let Some(pos) = position else { return };
+            let _ = heatmap_frame(
+                &ctx,
+                &mut settings,
+                ready,
+                vec![egui::Event::PointerMoved(pos)],
+            );
+            let output = heatmap_frame(&ctx, &mut settings, ready, Vec::new());
+            assert!(
+                output.shapes.iter().any(|shape| matches!(
+                    &shape.shape,
+                    egui::Shape::Text(text) if text.galley.text().contains(expected)
+                )),
+                "disabled heatmap must explain its current state: {expected}",
+            );
+        }
+    }
 }
