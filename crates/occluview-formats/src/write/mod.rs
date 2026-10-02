@@ -231,9 +231,10 @@ pub(super) fn mesh_vertex_position(mesh: &Mesh, index: u32) -> Result<glam::Vec3
 }
 
 pub(super) fn triangle_normal(a: glam::Vec3, b: glam::Vec3, c: glam::Vec3) -> glam::Vec3 {
-    let normal = (b - a).cross(c - a);
-    if normal.is_finite() && normal.length_squared() > f32::EPSILON {
-        normal.normalize()
+    let a = a.as_dvec3();
+    let normal = (b.as_dvec3() - a).cross(c.as_dvec3() - a);
+    if normal.is_finite() && normal.length_squared() > 0.0 {
+        normal.normalize().as_vec3()
     } else {
         glam::Vec3::Z
     }
