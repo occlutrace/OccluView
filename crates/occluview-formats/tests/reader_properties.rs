@@ -17,6 +17,134 @@
 use occluview_formats::dispatch::dispatch_by_extension;
 use proptest::prelude::*;
 
+mod non_finite_positions {
+    use super::dispatch_by_extension;
+
+    fn reject(extension: &str, bytes: &[u8]) {
+        assert!(
+            dispatch_by_extension(extension, bytes).is_err(),
+            "accepted non-finite {extension} position"
+        );
+    }
+
+    #[test]
+    fn ascii_stl() {
+        reject("stl", b"solid scan\nfacet normal 0 0 1\nouter loop\nvertex NaN 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid scan\n");
+    }
+
+    #[test]
+    fn binary_stl() {
+        reject(
+            "stl",
+            &occluview_core::test_support::binary_stl(&[[
+                0.0,
+                0.0,
+                1.0,
+                f32::NAN,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+            ]]),
+        );
+    }
+
+    #[test]
+    fn obj() {
+        reject("obj", b"v NaN 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n");
+    }
+
+    #[test]
+    fn ascii_off() {
+        reject("off", b"OFF\n3 1 0\nNaN 0 0\n1 0 0\n0 1 0\n3 0 1 2\n");
+    }
+
+    #[test]
+    fn binary_off() {
+        for bad in [f64::NAN, f64::INFINITY, f64::MAX] {
+            let mut bytes = b"OFF BINARY\n".to_vec();
+            for n in [3i32, 1, 0] {
+                bytes.extend_from_slice(&n.to_le_bytes());
+            }
+            for f in [bad, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0] {
+                bytes.extend_from_slice(&f.to_le_bytes());
+            }
+            for n in [3i32, 0, 1, 2] {
+                bytes.extend_from_slice(&n.to_le_bytes());
+            }
+            reject("off", &bytes);
+        }
+    }
+
+    #[test]
+    fn ascii_ply() {
+        reject("ply", b"ply\nformat ascii 1.0\nelement vertex 1\nproperty float x\nproperty float y\nproperty float z\nend_header\nNaN 0 0\n");
+    }
+
+    #[test]
+    fn binary_ply() {
+        for big in [false, true] {
+            let format = if big {
+                "binary_big_endian"
+            } else {
+                "binary_little_endian"
+            };
+            let mut bytes = format!("ply\nformat {format} 1.0\nelement vertex 1\nproperty float x\nproperty float y\nproperty float z\nend_header\n").into_bytes();
+            for f in [f32::NAN, 0.0, 0.0] {
+                bytes.extend_from_slice(&if big {
+                    f.to_be_bytes()
+                } else {
+                    f.to_le_bytes()
+                });
+            }
+            reject("ply", &bytes);
+        }
+    }
+
+    #[test]
+    fn glb() {
+        let (json, mut bin) = occluview_core::test_support::minimal_triangle_glb_chunks();
+        bin[..4].copy_from_slice(&f32::NAN.to_le_bytes());
+        reject("glb", &glb_bytes(json.to_vec(), &bin));
+    }
+
+    #[test]
+    fn glb_transform_overflow() {
+        let (json, mut bin) = occluview_core::test_support::minimal_triangle_glb_chunks();
+        bin[..4].copy_from_slice(&f32::MAX.to_le_bytes());
+        let mut doc: serde_json::Value = serde_json::from_slice(json).expect("JSON");
+        doc["nodes"][0]["scale"] = serde_json::json!([2.0, 2.0, 2.0]);
+        reject(
+            "glb",
+            &glb_bytes(serde_json::to_vec(&doc).expect("JSON"), &bin),
+        );
+    }
+
+    fn glb_bytes(mut json: Vec<u8>, bin: &[u8]) -> Vec<u8> {
+        while json.len() % 4 != 0 {
+            json.push(b' ');
+        }
+        let mut bytes = b"glTF".to_vec();
+        bytes.extend_from_slice(&2u32.to_le_bytes());
+        bytes.extend_from_slice(
+            &u32::try_from(28 + json.len() + bin.len())
+                .expect("length")
+                .to_le_bytes(),
+        );
+        bytes.extend_from_slice(&u32::try_from(json.len()).expect("length").to_le_bytes());
+        bytes.extend_from_slice(b"JSON");
+        bytes.extend_from_slice(&json);
+        bytes.extend_from_slice(&u32::try_from(bin.len()).expect("length").to_le_bytes());
+        bytes.extend_from_slice(b"BIN\0");
+        bytes.extend_from_slice(&bin);
+        bytes
+    }
+}
+
 /// A binary STL of `triangles` triangles with the given coordinates.
 fn binary_stl(coordinates: &[f32]) -> Vec<u8> {
     let triangles = coordinates.len() / 12;

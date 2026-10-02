@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Mesh imports reject non-finite coordinates and GLB transform overflow before constructing geometry.
+
 - Sculpt rejects invalid remesh vertex indices before changing any display geometry.
 
 - GLB imports reject incomplete, misordered, duplicate, or unaligned chunks and inconsistent file lengths.

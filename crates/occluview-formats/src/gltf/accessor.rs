@@ -325,6 +325,11 @@ fn read_accessor_bytes(
             }
         })?);
     }
+    if acc.component_type == 5126 {
+        for component in out.as_chunks::<4>().0 {
+            crate::finite_coordinate(f32::from_le_bytes(*component), "glTF", start)?;
+        }
+    }
     Ok(out)
 }
 

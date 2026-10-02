@@ -145,6 +145,23 @@ pub use write::{
     MeshWriteFormat, MeshWriteOptions, MeshWriteReport, MeshWriteWarning,
 };
 
+/// Keep invalid numeric input out of geometry construction and its caches.
+pub(crate) fn finite_coordinate(
+    value: f32,
+    format: &'static str,
+    offset: usize,
+) -> Result<f32, FormatError> {
+    if value.is_finite() {
+        Ok(value)
+    } else {
+        Err(FormatError::Malformed {
+            format,
+            offset,
+            reason: "coordinate component is not finite or exceeds f32 range".to_string(),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{LEGACY_HPS_EXTENSION, V1_OPEN_EXTENSIONS};

@@ -51,7 +51,7 @@ pub(super) fn emit_primitive(
         },
         transform,
         builder,
-    );
+    )?;
     // Positions are baked into the mesh, so a reflection must also reverse
     // corners to retain glTF's front-facing side in the stored geometry.
     let mirrored = transform.determinant() < 0.0;
@@ -110,11 +110,14 @@ fn builder_push_vertices(
     streams: VertexStreams<'_>,
     transform: Mat4,
     builder: &mut MeshBuilder,
-) -> u32 {
+) -> Result<u32, FormatError> {
     let mut first = 0u32;
     let normal_transform = normal_transform_for(transform);
     for (i, p) in streams.positions.iter().enumerate() {
         let position = transform.transform_point3(Vec3::from_array(*p));
+        for component in position.to_array() {
+            crate::finite_coordinate(component, "glTF", i)?;
+        }
         let mut v = Vertex::at(position);
         if let Some(ns) = streams.normals {
             if i < ns.len() {
@@ -124,6 +127,9 @@ fn builder_push_vertices(
                 } else {
                     normal
                 };
+                for component in normal.to_array() {
+                    crate::finite_coordinate(component, "glTF", i)?;
+                }
                 v = v.with_normal(normal);
             }
         }
@@ -142,7 +148,7 @@ fn builder_push_vertices(
             first = h;
         }
     }
-    first
+    Ok(first)
 }
 
 fn normal_transform_for(transform: Mat4) -> Mat4 {

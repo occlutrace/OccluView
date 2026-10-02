@@ -355,11 +355,13 @@ where
         expected: 0,
         got: 0,
     })?;
-    tok.parse::<f32>().map_err(|_| FormatError::Malformed {
-        format: "PLY (ascii)",
-        offset: 0,
-        reason: format!("texture coordinate {tok:?} is not a number"),
-    })
+    tok.parse::<f32>()
+        .map_err(|_| FormatError::Malformed {
+            format: "PLY (ascii)",
+            offset: 0,
+            reason: format!("texture coordinate {tok:?} is not a number"),
+        })
+        .and_then(|value| crate::finite_coordinate(value, "PLY (ascii)", 0))
 }
 
 /// Read one vertex-index token.
@@ -431,6 +433,7 @@ fn apply_scalar(
                 offset: 0,
                 reason: format!("bad float: {tok:?}"),
             })?;
+            let v = crate::finite_coordinate(v, "PLY (ascii)", 0)?;
             apply_float(v, route, fields);
         }
         ScalarType::Uchar

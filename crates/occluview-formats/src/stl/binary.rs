@@ -116,7 +116,7 @@ fn decode_triangle_record(bytes: &[u8], start: usize) -> Result<(Vec3, [Vec3; 3]
     let mut floats = [0.0_f32; 12];
     for (slot, chunk) in floats.iter_mut().zip(rec.as_chunks::<4>().0.iter()) {
         let arr = *chunk;
-        *slot = f32::from_le_bytes(arr);
+        *slot = crate::finite_coordinate(f32::from_le_bytes(arr), "STL (binary)", start)?;
     }
     let normal = Vec3::from_array([floats[0], floats[1], floats[2]]);
     let a = Vec3::from_array([floats[3], floats[4], floats[5]]);
