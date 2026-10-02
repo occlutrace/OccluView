@@ -163,10 +163,10 @@ fn builder_push_vertices(
 }
 
 fn normal_transform_for(transform: Mat4) -> Mat4 {
-    if transform.determinant() != 0.0 {
-        transform.inverse().transpose()
-    } else {
+    if transform.determinant() == 0.0 {
         transform
+    } else {
+        transform.inverse().transpose()
     }
 }
 
