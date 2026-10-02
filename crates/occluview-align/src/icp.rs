@@ -422,6 +422,21 @@ pub fn refine(
     settings: &RefineSettings,
     cancel: &CancelFlag,
 ) -> Result<IcpReport, FitRejection> {
+    refine_checkpointed(moving, fixed, start, settings, cancel, &mut |_| {})
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "legacy inputs plus one finite evidence callback"
+)]
+pub(crate) fn refine_checkpointed(
+    moving: Soup<'_>,
+    fixed: &SurfaceIndex,
+    start: Rigid,
+    settings: &RefineSettings,
+    cancel: &CancelFlag,
+    checkpoint: &mut dyn FnMut(IcpReport),
+) -> Result<IcpReport, FitRejection> {
     if moving.vertex_count() == 0 || moving.triangle_count() == 0 {
         return Err(FitRejection::TooFewPairs {
             have: 0,
@@ -456,7 +471,19 @@ pub fn refine(
     };
     let (initial_pose, adaptive_settings, feature_seed) =
         select_initial_pose(&initial_level, center)?;
-    let state = refine_levels(&initial_level, &adaptive_settings, initial_pose.rigid)?;
+    checkpoint(idle_report(initial_pose.rigid));
+    let state = refine_levels(
+        &initial_level,
+        &adaptive_settings,
+        initial_pose.rigid,
+        checkpoint,
+    )?;
+    checkpoint(report_from_state(
+        state,
+        Verification::NONE,
+        0.0,
+        adaptive_settings.matching_ratio,
+    ));
     let allowed = extent.max(1.0) + initial_pose.coarse_shift + settings.influence_radius_mm.abs();
     let rivalry = RivalContext {
         moving,
@@ -486,6 +513,7 @@ fn refine_levels(
     base: &Level<'_>,
     settings: &RefineSettings,
     mut pose: Rigid,
+    checkpoint: &mut dyn FnMut(IcpReport),
 ) -> Result<LevelOutcome, FitRejection> {
     let mut iterations = 0u32;
     let mut converged = false;
@@ -500,17 +528,38 @@ fn refine_levels(
         // authorize a refined pose and the heatmap that follows it.
         // Cancellation is returned as an untrusted report when it has evidence;
         // structural and refinement refusals remain refusals to the worker.
-        let level = run_level(&Level {
-            moving: base.moving,
-            normals: base.normals,
-            fixed: base.fixed,
-            moving_surface: base.moving_surface,
-            fixed_samples: base.fixed_samples,
-            samples: &samples,
-            settings,
-            cancel: base.cancel,
-            start: pose,
-        })?;
+        let level = icp_solve::run_level_checkpointed(
+            &Level {
+                moving: base.moving,
+                normals: base.normals,
+                fixed: base.fixed,
+                moving_surface: base.moving_surface,
+                fixed_samples: base.fixed_samples,
+                samples: &samples,
+                settings,
+                cancel: base.cancel,
+                start: pose,
+            },
+            &mut |pose, summary, count| {
+                checkpoint(report_from_state(
+                    LevelOutcome {
+                        pose,
+                        summary,
+                        iterations: iterations + count,
+                        converged: false,
+                    },
+                    Verification::NONE,
+                    0.0,
+                    settings.matching_ratio,
+                ));
+            },
+        )?;
+        checkpoint(report_from_state(
+            level,
+            Verification::NONE,
+            0.0,
+            settings.matching_ratio,
+        ));
         iterations += level.iterations;
         converged = level.converged;
         pose = level.pose;
@@ -934,9 +983,26 @@ struct Summary {
 }
 
 /// A level's outcome.
+#[derive(Clone, Copy)]
 struct LevelOutcome {
     pose: Rigid,
     iterations: u32,
     converged: bool,
     summary: Summary,
+}
+
+/// Search for reviewable finite corrections of the authored moving frame.
+///
+/// Missing independent evidence keeps transitional poses Weak. Geometry and
+/// authored affines are immutable; accepting a pose is a separate app action.
+///
+/// # Errors
+/// Returns a field/index error only for encountered NaN or infinity. Incomplete
+/// validation and finite geometric refusals return explicit Weak checkpoints.
+pub fn search_alignment(
+    input: &crate::AlignmentInput<'_>,
+    settings: &crate::SearchSettings,
+    control: &crate::SearchControl,
+) -> Result<crate::AlignmentSearchResult, crate::AlignmentInputError> {
+    crate::search_transition::search(input, settings, control)
 }
