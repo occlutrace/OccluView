@@ -310,10 +310,14 @@ fn route_value(
     color: &mut [u8; 4],
     uv: &mut [f32; 2],
 ) {
+    let numeric = match v {
+        ScalarValue::Float(f) => f,
+        ScalarValue::Int(n) => n as f32,
+    };
     match (v, route) {
-        (ScalarValue::Float(f), FieldPlan::Position(i)) if i < 3 => position[i] = f,
-        (ScalarValue::Float(f), FieldPlan::Normal(i)) if i < 3 => normal[i] = f,
-        (ScalarValue::Float(f), FieldPlan::Uv(i)) if i < 2 => uv[i] = f,
+        (_, FieldPlan::Position(i)) if i < 3 => position[i] = numeric,
+        (_, FieldPlan::Normal(i)) if i < 3 => normal[i] = numeric,
+        (_, FieldPlan::Uv(i)) if i < 2 => uv[i] = numeric,
         (ScalarValue::Int(n), FieldPlan::Color(i)) if i < 4 => {
             color[i] = n.clamp(0, 255) as u8;
         }

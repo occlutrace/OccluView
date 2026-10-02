@@ -263,6 +263,45 @@ fn embedded_texture(comments: &header::TextureComments) -> Option<MeshTexture> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn integer_vertex_fields_are_preserved_in_every_encoding() {
+        for format in ["ascii", "binary_little_endian", "binary_big_endian"] {
+            let mut bytes = format!(
+                "ply\nformat {format} 1.0\nelement vertex 1\n\
+                 property int x\nproperty int y\nproperty int z\n\
+                 property int nx\nproperty int ny\nproperty int nz\n\
+                 property int s\nproperty int t\nend_header\n"
+            )
+            .into_bytes();
+            let values = [2i32, -3, 4, 0, 0, 1, 1, -1];
+            if format == "ascii" {
+                bytes.extend_from_slice(b"2 -3 4 0 0 1 1 -1\n");
+            } else {
+                for value in values {
+                    bytes.extend_from_slice(&if format == "binary_big_endian" {
+                        value.to_be_bytes()
+                    } else {
+                        value.to_le_bytes()
+                    });
+                }
+            }
+            let mesh = read(&bytes).expect("integer vertex fields");
+            assert_eq!(mesh.vertices()[0].position, [2.0, -3.0, 4.0], "{format}");
+            assert_eq!(mesh.vertices()[0].normal, [0.0, 0.0, 1.0], "{format}");
+            assert_eq!(mesh.vertices()[0].uv, [1.0, -1.0], "{format}");
+        }
+    }
+
+    #[test]
+    fn non_integer_ascii_vertex_properties_are_rejected() {
+        for value in ["1.5", "NaN", "word"] {
+            let bytes = format!(
+                "ply\nformat ascii 1.0\nelement vertex 1\nproperty int x\nend_header\n{value}\n"
+            );
+            assert!(read(bytes.as_bytes()).is_err(), "accepted integer {value}");
+        }
+    }
+
     fn vertex_list_file(format: &str) -> Vec<u8> {
         let mut bytes = format!(
             "ply\nformat {format} 1.0\nelement vertex 2\n\
