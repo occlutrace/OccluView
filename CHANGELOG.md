@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Sculpt rejects malformed collapse history before it can address a face beyond the saved tail.
+
 - CLI thumbnail output refuses exhausted automatic names instead of overwriting an existing image.
 
 

@@ -132,6 +132,9 @@ impl SculptSession {
                 let Some(slot) = journal.collapsed.get(index as usize) else {
                     return false;
                 };
+                if slot.removed > slot.last {
+                    return false;
+                }
                 // Later events are already undone, so the prefix ends
                 // exactly where this collapse truncated it.
                 if self.tris.len() / 3 != slot.last as usize {

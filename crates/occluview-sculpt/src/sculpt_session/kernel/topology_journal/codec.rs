@@ -273,6 +273,9 @@ impl TopoJournal {
         let n_collapsed = take(&mut cursor, 1)?[0] as usize;
         for _ in 0..n_collapsed {
             let head = take(&mut cursor, 10)?;
+            if head[0] > head[1] {
+                return None;
+            }
             journal.collapsed.push(CollapsedSlot {
                 removed: head[0],
                 last: head[1],
@@ -364,5 +367,40 @@ impl TopoJournal {
             });
         }
         Some(journal)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decoded_collapse_refuses_a_removed_slot_past_the_tail() {
+        let mut journal = TopoJournal {
+            base_verts: 3,
+            base_tris: 2,
+            base_groups: 3,
+            base_live_tris: 2,
+            live_tris: 1,
+            ..TopoJournal::default()
+        };
+        journal.push_collapse(CollapsedSlot {
+            removed: 2,
+            last: 1,
+            at_removed_corners: [0, 1, 2],
+            at_removed_origin: 0,
+            at_last_corners: [0, 1, 2],
+            at_last_origin: 1,
+        });
+        assert!(TopoJournal::decode(&journal.encode_u32(), &journal.encode_f32()).is_none());
+        let mut session = SculptSession::new(
+            vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+            vec![0, 1, 2],
+        );
+        assert!(session.restore_topo(&[], &[], false, &journal).is_none());
+        assert_eq!(session.faces(), &[0, 1, 2]);
+        assert_eq!(session.vertex_count(), 3);
+        journal.collapsed[0].removed = 1;
+        assert!(TopoJournal::decode(&journal.encode_u32(), &journal.encode_f32()).is_some());
     }
 }
