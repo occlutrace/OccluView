@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Sculpt strength falls back to the brush default when an invalid numeric value is supplied.
+
 - Switching Sculpt tips or redrawing the panel preserves the chosen brush size until the size control is changed.
 
 - GPU vertex updates reject changed vertex counts before uploading data.
