@@ -115,3 +115,14 @@ fn a_triangle_with_nothing_measured_reports_nothing() {
         None
     );
 }
+
+#[test]
+fn an_extreme_triangle_index_reports_nothing_without_panicking() {
+    let values = [-0.2, -0.1, 0.0];
+    for triangle in [usize::MAX, usize::MAX / 3, usize::MAX / 3 + 1] {
+        assert_eq!(
+            interpolate_field_at_triangle(&values, &[0, 1, 2], triangle, [1.0 / 3.0; 3]),
+            None
+        );
+    }
+}

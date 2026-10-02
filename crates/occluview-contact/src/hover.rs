@@ -122,7 +122,8 @@ pub fn interpolate_field_at_triangle(
     triangle: usize,
     barycentric: [f64; 3],
 ) -> Option<f32> {
-    let corners = indices.get(triangle * 3..triangle * 3 + 3)?;
+    let start = triangle.checked_mul(3)?;
+    let corners = indices.get(start..start.checked_add(3)?)?;
     let mut sum = 0.0_f64;
     let mut total = 0.0_f64;
     let mut measured = false;
