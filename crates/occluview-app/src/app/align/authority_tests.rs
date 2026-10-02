@@ -771,3 +771,45 @@ fn returning_to_automatic_does_not_measure_implicitly() {
         "and nothing is left running as if a measurement had been asked for"
     );
 }
+
+#[test]
+fn cancel_marks_restored_layers_unsaved_after_an_open_drag_or_export() {
+    for committed in [false, true] {
+        let mut app = test_app("align-cancel-unsaved");
+        let mut scene = named_scene("fixed", 0.0);
+        let fixed = scene.meshes()[0].id();
+        let moving = push_named_layer(&mut scene, "moving", 5.0);
+        app.workspace.scenes[0].document.scene = Some(Arc::new(scene));
+        let ctx = app.ui.repaint_ctx.clone();
+        let mut scene = app.active_context().expect("live test scene");
+        scene.arm_align_tool(&ctx);
+        scene.tools.align.drag = Some(crate::app::align::drag::AlignDrag {
+            layer: moving,
+            start: glam::Affine3A::IDENTITY,
+            pivot_local: Vec3::ZERO,
+        });
+        scene.nudge_align_layer(moving, glam::Affine3A::from_translation(Vec3::X));
+        if committed {
+            assert!(scene.finish_align_drag());
+            // Export clears the saved layer's dirty flag without closing Align.
+            scene.document.forget_unsaved_edits(&[moving]);
+        }
+        assert_eq!(scene.document.has_unsaved_mesh_edits(), !committed);
+        scene.cancel_align_session(&ctx);
+
+        let restored = scene.document.scene.as_ref().expect("scene remains live");
+        assert!(restored
+            .meshes()
+            .iter()
+            .all(|entry| { entry.transform == glam::Affine3A::IDENTITY }));
+        assert!(
+            scene.document.unsaved_edit_layer_ids.contains(&moving),
+            "the restored pose needs saving, including when Cancel discards an open drag"
+        );
+        assert!(!scene.document.unsaved_edit_layer_ids.contains(&fixed));
+        assert_eq!(
+            scene.document.edit_mode.undo_len(),
+            usize::from(committed) + 1
+        );
+    }
+}
