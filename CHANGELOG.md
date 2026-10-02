@@ -46,9 +46,10 @@ remain in the Git history.
 
 ### Align
 
+- Deviation maps and statistics exclude distances that overflow storage and non-finite readings.
 - Closing the exclusion brush without changing markings restores the deviation map.
-- Unavailable alignment controls now show their refusal tooltips and expose the correct disabled state.
 - Cancel preserves the save prompt for restored scan positions, including an unfinished drag or a position already exported during the session.
+- Unavailable alignment controls now show their refusal tooltips and expose the correct disabled state.
 - Deviation sensitivity uses only measured overlap, excluding vertices beyond the fixed scan's border.
 - Best-fit matching scores its coarse hypotheses on the seed sample set instead
   of the dense one, which removes most of the work one press performed. Searching

@@ -41,7 +41,7 @@ pub enum Validity {
     BeyondBorder,
     /// The fixed surface there has no usable normal.
     DegenerateNormal,
-    /// The moving vertex itself is not finite.
+    /// The moving vertex or its measured distance is not a finite f32 value.
     NonFinite,
     /// The operator painted this vertex out of the comparison.
     Excluded,
@@ -334,6 +334,9 @@ pub(crate) fn measured_hit(
     }
     let offset = point - hit.point;
     let distance = offset.length();
+    if !distance.is_finite() || distance > f64::from(f32::MAX) {
+        return Err(Validity::NonFinite);
+    }
     // Where the fixed scan ends, the nearest point slides along its rim and the
     // distance to it grows with how far this scan runs past the border, up to
     // the whole influence radius. That is coverage, not deviation. Only a
@@ -366,16 +369,23 @@ pub fn deviation_stats(map: &DeviationMap, tolerance_mm: f64) -> DeviationStats 
         .signed_mm
         .iter()
         .zip(&map.validity)
-        .filter(|(_, state)| **state == Validity::Measured)
+        .filter(|(value, state)| **state == Validity::Measured && value.is_finite())
         .map(|(value, _)| f64::from(*value))
         .collect();
     let measured = u32::try_from(values.len()).unwrap_or(u32::MAX);
-    let unmeasured = map
-        .validity
-        .iter()
-        .fold(Unmeasured::default(), |mut count, state| {
+    let unmeasured = map.validity.iter().enumerate().fold(
+        Unmeasured::default(),
+        |mut count, (vertex, state)| {
             match state {
-                Validity::Measured => {}
+                Validity::Measured => {
+                    if map
+                        .signed_mm
+                        .get(vertex)
+                        .is_some_and(|value| !value.is_finite())
+                    {
+                        count.unusable = count.unusable.saturating_add(1);
+                    }
+                }
                 Validity::Excluded => count.excluded = count.excluded.saturating_add(1),
                 Validity::OutOfReach | Validity::BeyondBorder => {
                     count.out_of_reach = count.out_of_reach.saturating_add(1);
@@ -385,7 +395,8 @@ pub fn deviation_stats(map: &DeviationMap, tolerance_mm: f64) -> DeviationStats 
                 }
             }
             count
-        });
+        },
+    );
     if measured < MIN_MEASURED {
         return DeviationStats {
             measured,
