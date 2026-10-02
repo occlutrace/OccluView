@@ -73,9 +73,12 @@ fn locate(path: &Path, kind: LocateKind, bytes: &[u8]) -> Option<PathBuf> {
         _ => Path::new("."),
     };
     match kind {
-        LocateKind::Obj => {
-            material_image(directory, bytes).or_else(|| same_stem_image(path, directory))
-        }
+        LocateKind::Obj => material_image(directory, bytes).or_else(|| {
+            directives(bytes, "usemtl")
+                .is_empty()
+                .then(|| same_stem_image(path, directory))
+                .flatten()
+        }),
         LocateKind::Ply => {
             let header = crate::ply::header::parse(bytes).ok()?;
             header
@@ -115,12 +118,13 @@ impl LocateKind {
     }
 }
 
-/// The first `map_Kd` image that exists, over the libraries the OBJ names.
+/// The used material's image, or the first atlas for legacy OBJs without usemtl.
 ///
 /// An OBJ may name several libraries, and a library may carry several
 /// materials of which only some have an image. Stopping at the first value
 /// found loses the texture whenever that value is the one without a file.
 fn material_image(directory: &Path, obj: &[u8]) -> Option<PathBuf> {
+    let used = used_face_material(obj);
     for library in directives(obj, "mtllib") {
         let Some(library) = inside(directory, directory, &library) else {
             continue;
@@ -133,13 +137,41 @@ fn material_image(directory: &Path, obj: &[u8]) -> Option<PathBuf> {
         else {
             continue;
         };
-        for image in directives(&text, "map_Kd") {
-            if let Some(found) = inside(directory, library.parent()?, &image) {
-                return Some(found);
+        let material_text = std::str::from_utf8(&text).ok()?;
+        let mut current = None;
+        for line in material_text.trim_start_matches('\u{feff}').lines() {
+            if let Some(name) = directives(line.as_bytes(), "newmtl").first() {
+                current = Some(name.clone());
+            }
+            if used
+                .as_ref()
+                .is_some_and(|name| current.as_ref() != Some(name))
+            {
+                continue;
+            }
+            for image in directives(line.as_bytes(), "map_Kd") {
+                if let Some(found) = inside(directory, library.parent()?, &image) {
+                    return Some(found);
+                }
             }
         }
     }
     None
+}
+
+/// Material active at the first face; the OBJ parser refuses mixed identities.
+fn used_face_material(obj: &[u8]) -> Option<String> {
+    let text = std::str::from_utf8(obj).ok()?;
+    let mut current = None;
+    for line in text.trim_start_matches('\u{feff}').lines() {
+        if let Some(name) = directives(line.as_bytes(), "usemtl").first() {
+            current = Some(name.clone());
+        }
+        if line.split_ascii_whitespace().next() == Some("f") {
+            return current;
+        }
+    }
+    current
 }
 
 /// Every value of `keyword` in a text file, in the order they appear.
@@ -267,6 +299,35 @@ fn same_stem_image(path: &Path, directory: &Path) -> Option<PathBuf> {
 mod tests {
     use super::*;
     use occluview_core::{MeshTexture, Vertex};
+
+    #[test]
+    fn obj_companion_uses_the_faces_material_identity() {
+        let directory = tempfile::tempdir().expect("directory");
+        for name in ["first.png", "used.png", "scan.png"] {
+            std::fs::write(directory.path().join(name), textured_png()).expect("image");
+        }
+        std::fs::write(
+            directory.path().join("scan.mtl"),
+            "newmtl first\nmap_Kd first.png\nnewmtl used\nmap_Kd used.png\n",
+        )
+        .expect("MTL");
+        let obj = b"mtllib scan.mtl\nusemtl used\nf 1/1 2/2 3/3\n";
+        assert_eq!(
+            material_image(directory.path(), obj),
+            Some(
+                directory
+                    .path()
+                    .join("used.png")
+                    .canonicalize()
+                    .expect("path")
+            )
+        );
+        let missing = b"mtllib scan.mtl\nusemtl absent\nf 1/1 2/2 3/3\n";
+        assert!(
+            locate(&directory.path().join("scan.obj"), LocateKind::Obj, missing).is_none(),
+            "an unrelated atlas must not replace a missing named material"
+        );
+    }
 
     #[test]
     fn a_material_library_bom_does_not_hide_its_first_texture() {

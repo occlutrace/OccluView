@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Use the OBJ face material atlas and refuse unsupported mixed face materials.
+
 - Invalid Sculpt position-history records are refused before changing the surface.
 
 - Refuse GLB sparse, required-extension, animated, skinned and morph-target assets that cannot be preserved.
