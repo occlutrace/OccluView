@@ -150,19 +150,6 @@ impl PersistenceState {
             self.sculpt_settings_dirty_since = None;
             return;
         }
-        // A close request races the debounce: the settings are already written
-        // into `settings`, but the dirty mark is only set once the values have
-        // been still for a second, and closing does not persist anything
-        // (`intercept_unsaved_close_request` only fires for unsaved mesh edits,
-        // and there is no `on_exit`). Closing within that second would discard
-        // the new brush settings, so flush them now rather than on a
-        // timer the closing window will not run.
-        if self.sculpt_settings_dirty_since.is_some()
-            && ctx.input(|i| i.viewport().close_requested())
-        {
-            self.sculpt_settings_dirty_since = None;
-            self.settings_persistence.mark_dirty();
-        }
         let radii = crate::sculpt::sculpt_tool::SculptTip::ALL
             .map(|tip| super::mesh_editor_overlay::sculpt_radius_mm(ctx, scene_key, tip));
         let strengths = [
@@ -198,6 +185,14 @@ impl PersistenceState {
             self.settings.last_sculpt_tip = tip;
             self.sculpt_settings_dirty_since = Some(Instant::now());
             ctx.request_repaint_after(SCULPT_SETTINGS_PERSIST_DELAY);
+        }
+        // Sample the latest values before flushing: closing can coincide with
+        // the first change, and the closing window will not run the timer.
+        if self.sculpt_settings_dirty_since.is_some()
+            && ctx.input(|i| i.viewport().close_requested())
+        {
+            self.sculpt_settings_dirty_since = None;
+            self.settings_persistence.mark_dirty();
         } else if let Some(since) = self.sculpt_settings_dirty_since {
             let settled = SCULPT_SETTINGS_PERSIST_DELAY.saturating_sub(since.elapsed());
             if settled.is_zero() {
@@ -258,6 +253,29 @@ mod tests {
                 .settings_persistence
                 .should_attempt(Instant::now()),
             "a settled change must become saveable"
+        );
+    }
+
+    #[test]
+    fn brush_preferences_flush_a_first_change_on_window_close() {
+        let ctx = egui::Context::default();
+        let key = super::super::workspace::id::SceneKey::INITIAL;
+        let mut persistence = empty_persistence();
+        let mut input = egui::RawInput::default();
+        let Some(viewport) = input.viewports.get_mut(&egui::ViewportId::ROOT) else {
+            panic!("root viewport missing");
+        };
+        viewport.events.push(egui::ViewportEvent::Close);
+        ctx.run_ui(input, |_ui| {
+            super::super::mesh_editor_overlay::set_sculpt_radius_share(&ctx, key, 0.5);
+            persistence.sync_sculpt_preferences(&ctx, key);
+        })
+        .drop_without_applying_deltas();
+        assert!(
+            persistence
+                .settings_persistence
+                .should_attempt(Instant::now()),
+            "closing must flush even the first brush change"
         );
     }
 
