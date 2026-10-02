@@ -118,7 +118,7 @@ pub struct DabDiagnostics {
 }
 
 impl DabDiagnostics {
-    /// A zeroed set, usable in a `const` context.
+    /// A reset set, usable in a `const` context.
     pub const fn new() -> Self {
         Self {
             seed_missing: 0,
@@ -136,8 +136,8 @@ impl DabDiagnostics {
 
     /// Flat wire order, shared with the operator report.
     ///
-    /// Slots 4, 5 and 7 are the reserved counters. They are reported as zero
-    /// and a consumer must ignore them.
+    /// Slots 4, 5 and 7 are reserved legacy values a consumer must ignore.
+    /// Slot 5 retains the minimum-gain reset value of 1000.
     pub fn encode(self) -> [u32; 10] {
         [
             self.seed_missing,
