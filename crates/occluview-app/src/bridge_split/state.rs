@@ -38,6 +38,7 @@ impl BridgeSplitPose {
 pub(crate) struct BridgeSplitTarget {
     pub(crate) layer_id: SceneMeshId,
     pub(crate) topology_id: u64,
+    pub(crate) geometry_id: u64,
     pub(crate) transform: [u32; 12],
 }
 
@@ -46,6 +47,7 @@ impl BridgeSplitTarget {
         Self {
             layer_id: entry.id(),
             topology_id: entry.mesh.topology_id(),
+            geometry_id: entry.mesh.geometry_id(),
             transform: affine_bits(&entry.transform),
         }
     }

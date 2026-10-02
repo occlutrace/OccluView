@@ -116,6 +116,33 @@ fn scene_apply_rejects_a_stale_or_hidden_target() {
 }
 
 #[test]
+fn scene_apply_rejects_position_edits_with_unchanged_topology() {
+    let Some(bridge) = mesh("Bridge", 0.0) else {
+        panic!("missing bridge fixture");
+    };
+    let Some(result) = split_result() else {
+        panic!("missing preview fixture");
+    };
+    let mut scene = Scene::new();
+    let index = scene.add(SceneMesh::new(bridge));
+    let original = scene.meshes()[index].mesh.clone();
+    let target = BridgeSplitTarget::capture(&scene.meshes()[index]);
+    let mut vertices = original.vertices().to_vec();
+    vertices[0].position[2] += 0.5;
+    let Some(sculpted) = original.with_sculpted_vertices(vertices) else {
+        panic!("position-only edit must preserve vertex count");
+    };
+    assert_eq!(sculpted.topology_id(), original.topology_id());
+    assert_ne!(sculpted.geometry_id(), original.geometry_id());
+    scene.meshes_mut()[index].mesh = std::sync::Arc::new(sculpted);
+
+    assert!(matches!(
+        apply_preview_to_scene(&scene, target, &result),
+        Err(BridgeSplitSceneApplyError::TargetChanged)
+    ));
+}
+
+#[test]
 fn bridge_split_undo_restores_the_exact_pre_split_scene_without_part_b() {
     let Some(bridge) = mesh("Bridge", 0.0) else {
         panic!("required test setup or expected result was missing");
