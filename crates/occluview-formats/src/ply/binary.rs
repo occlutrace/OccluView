@@ -276,6 +276,13 @@ fn read_vertices(
         let mut color = [255u8; 4];
         let mut uv = [0.0_f32; 2];
         for (route, ty) in &plan {
+            if let FieldPlan::List(count_ty) = route {
+                let count = read_index(cursor, *count_ty)?;
+                for _ in 0..count {
+                    let _ = cursor.read_scalar(*ty)?;
+                }
+                continue;
+            }
             let v = cursor.read_scalar(*ty)?;
             route_value(v, *route, &mut position, &mut normal, &mut color, &mut uv);
         }

@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- PLY imports consume vertex list properties correctly in ASCII and both binary byte orders.
+
 - Sculpt queries handle very large brush radii without overflowing the spatial grid.
 
 - OFF imports reject negative and non-integer face indices instead of changing their vertex references.
