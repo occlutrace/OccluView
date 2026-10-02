@@ -23,7 +23,7 @@ use std::collections::HashMap;
 
 use glam::Vec3;
 
-use super::MeshEditBuffers;
+use super::{FaceSelection, MeshEditBuffers};
 
 /// A triangle with `>= 2` boundary edges is removed as a needle when its
 /// shortest altitude is below this fraction of its longest edge — i.e. it is a
@@ -51,7 +51,7 @@ pub(crate) struct RimHealOutcome {
 impl RimHealOutcome {
     /// Project a face selection keyed by original triangle index onto the
     /// healed triangle order (dropped triangles' entries fall away).
-    pub(crate) fn remap_selection(&self, selection: &super::FaceSelection) -> super::FaceSelection {
+    pub(crate) fn remap_selection(&self, selection: &FaceSelection) -> FaceSelection {
         let mask = selection.as_slice();
         let remapped: Vec<bool> = self
             .keep
@@ -60,17 +60,22 @@ impl RimHealOutcome {
             .filter(|(_, &kept)| kept)
             .map(|(triangle, _)| mask.get(triangle).copied().unwrap_or(false))
             .collect();
-        super::FaceSelection::new(remapped)
+        FaceSelection::new(remapped)
     }
 }
 
 /// Heal dangling needle/lone triangles and near-duplicate boundary vertices.
+/// With a selection, only marked faces may be removed and vertices referenced
+/// by unmarked surviving faces are protected from welding.
 ///
 /// Returns `None` when nothing needed healing (the mesh passes through the
 /// caller unchanged, byte-for-byte). Otherwise returns the cleaned buffers, the
 /// survivor keep-mask, and the healed-defect count. The input's vertex indices
 /// are assumed already validated by the caller, so this never fails.
-pub(crate) fn heal_boundary_rims(mesh: &MeshEditBuffers) -> Option<RimHealOutcome> {
+pub(crate) fn heal_boundary_rims(
+    mesh: &MeshEditBuffers,
+    selection: Option<&FaceSelection>,
+) -> Option<RimHealOutcome> {
     let triangle_count = mesh.triangle_count();
     if triangle_count == 0 {
         return None;
@@ -87,7 +92,10 @@ pub(crate) fn heal_boundary_rims(mesh: &MeshEditBuffers) -> Option<RimHealOutcom
         if rounds > triangle_count + 1 {
             break;
         }
-        let doomed = dangling_triangles(mesh, &alive);
+        let doomed = dangling_triangles(mesh, &alive)
+            .into_iter()
+            .filter(|&triangle| selection.is_none_or(|mask| mask.as_slice()[triangle]))
+            .collect::<Vec<_>>();
         if doomed.is_empty() {
             break;
         }
@@ -98,7 +106,7 @@ pub(crate) fn heal_boundary_rims(mesh: &MeshEditBuffers) -> Option<RimHealOutcom
     }
 
     // Phase 2: weld near-duplicate boundary vertices among the survivors.
-    let (vertex_remap, welded) = weld_boundary_vertices(mesh, &alive);
+    let (vertex_remap, welded) = weld_boundary_vertices(mesh, &alive, selection);
 
     let healed = removed_triangles + welded;
     if healed == 0 {
@@ -210,7 +218,11 @@ fn is_needle(mesh: &MeshEditBuffers, tri: &[u32]) -> bool {
 ///
 /// Deterministic: candidates are bucketed on a quantized grid, and each cluster
 /// elects its lowest id as canonical after a sorted union.
-fn weld_boundary_vertices(mesh: &MeshEditBuffers, alive: &[bool]) -> (Vec<u32>, usize) {
+fn weld_boundary_vertices(
+    mesh: &MeshEditBuffers,
+    alive: &[bool],
+    selection: Option<&FaceSelection>,
+) -> (Vec<u32>, usize) {
     let vertex_count = mesh.vertices.len();
     // Identity remap over vertex ids (all referenced ids fit u32 by validation).
     let identity = || -> Vec<u32> {
@@ -242,6 +254,17 @@ fn weld_boundary_vertices(mesh: &MeshEditBuffers, alive: &[bool]) -> (Vec<u32>, 
     }
     if boundary.len() < 2 || edge_lengths.is_empty() {
         return (remap, 0);
+    }
+    if let Some(selection) = selection {
+        let mut protected = vec![false; vertex_count];
+        for (triangle, face) in mesh.indices.as_chunks::<3>().0.iter().enumerate() {
+            if alive[triangle] && !selection.as_slice()[triangle] {
+                for &vertex in face {
+                    protected[vertex as usize] = true;
+                }
+            }
+        }
+        boundary.retain(|&vertex| !protected[vertex as usize]);
     }
     boundary.sort_unstable();
     edge_lengths.sort_by(|l, r| l.partial_cmp(r).unwrap_or(std::cmp::Ordering::Equal));

@@ -380,7 +380,7 @@ fn apply_rim_healing(
     enabled: bool,
 ) -> RimHealing {
     let outcome = if enabled {
-        super::holes_cleanup::heal_boundary_rims(mesh)
+        super::holes_cleanup::heal_boundary_rims(mesh, selection)
     } else {
         None
     };

@@ -469,3 +469,32 @@ fn selected_hole_refuses_a_cap_that_pierces_the_support_surface() {
     assert!(result.report.skipped_damaged_rims > 0);
     assert_eq!(result.mesh.indices, input.indices);
 }
+
+#[test]
+fn selected_hole_healing_preserves_an_unselected_island() {
+    let mut input = bowl_mesh();
+    for position in [[5.0, 0.0, 0.0], [6.0, 0.0, 0.0], [5.0, 1.0, 0.0]] {
+        input.vertices.push(v(position));
+    }
+    input.indices.extend_from_slice(&[5, 6, 7]);
+    let selection = FaceSelection::new(vec![true, true, true, true, false]);
+    let result = fill_selected_holes(
+        &input,
+        &selection,
+        MeshEditOptions {
+            heal_boundary_rims: true,
+            ..MeshEditOptions::default()
+        },
+    )
+    .expect("selected hole fill");
+    assert_eq!(result.report.filled_holes, 1);
+    assert_eq!(
+        result.report.removed_triangles, 0,
+        "unmarked geometry cannot be removed"
+    );
+    assert!(result
+        .mesh
+        .indices
+        .chunks_exact(3)
+        .any(|triangle| triangle == [5, 6, 7]));
+}

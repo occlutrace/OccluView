@@ -25,7 +25,7 @@ fn far_boundary_healing_contract_regression() {
             topology: MeshTopology::TriangleMesh,
         };
         assert!(
-            heal_boundary_rims(&mesh).is_none(),
+            heal_boundary_rims(&mesh, None).is_none(),
             "clean rim stays intact"
         );
     }
@@ -269,7 +269,7 @@ fn heal_boundary_rims_drops_lone_triangles_and_leaves_clean_meshes_alone() {
         indices: vec![0, 1, 2, 0, 2, 3, 4, 5, 6],
         topology: MeshTopology::TriangleMesh,
     };
-    let outcome = heal_boundary_rims(&good).expect("the lone triangle is a defect to heal");
+    let outcome = heal_boundary_rims(&good, None).expect("the lone triangle is a defect to heal");
     assert!(outcome.healed >= 1, "at least the lone triangle is healed");
     assert_eq!(
         outcome.mesh.triangle_count(),
@@ -292,7 +292,7 @@ fn heal_boundary_rims_drops_lone_triangles_and_leaves_clean_meshes_alone() {
         topology: MeshTopology::TriangleMesh,
     };
     assert!(
-        heal_boundary_rims(&tetra).is_none(),
+        heal_boundary_rims(&tetra, None).is_none(),
         "a clean closed mesh must not be altered"
     );
 }
