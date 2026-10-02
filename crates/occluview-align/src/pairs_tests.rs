@@ -412,6 +412,31 @@ fn non_finite_bounds_are_refused_before_overlap_can_be_claimed() {
 }
 
 #[test]
+fn overflowing_bounds_are_refused_before_overlap_can_be_claimed() {
+    let points = spread();
+    for bounds in [
+        FitBounds {
+            moving_center: DVec3::splat(1e200),
+            moving_extent: 40.0,
+            fixed_center: DVec3::splat(-1e200),
+            fixed_extent: 40.0,
+        },
+        FitBounds {
+            moving_center: DVec3::ZERO,
+            moving_extent: f64::MAX,
+            fixed_center: DVec3::ZERO,
+            fixed_extent: f64::MAX,
+        },
+    ] {
+        assert_eq!(
+            fit_pairs(&points, &points, None, &bounds),
+            Err(FitRejection::NonFinite),
+            "uncomputable overlap cannot validate a pose: {bounds:?}"
+        );
+    }
+}
+
+#[test]
 fn mismatched_lengths_are_refused_rather_than_truncated() {
     let outcome = fit(&spread(), &spread()[..2], None, 40.0);
     assert!(

@@ -56,6 +56,7 @@ remain in the Git history.
   bar starts at zero instead of hiding everything below 50 um.
 
 - Best-fit ambiguity checks remain consistent when a scan is stored far from the coordinate origin.
+- Point-pair alignment rejects bounds whose overlap calculations overflow instead of accepting an unchecked pose.
 
 ### Viewer
 
