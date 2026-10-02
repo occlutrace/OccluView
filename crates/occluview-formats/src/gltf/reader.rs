@@ -7,6 +7,33 @@ use glam::Mat4;
 use occluview_core::{Mesh, MeshBuilder};
 
 pub(super) fn read_doc(doc: &json::GltfDoc, bin_chunk: &[u8]) -> Result<Mesh, FormatError> {
+    if !doc.extensions_required.is_empty() {
+        return Err(malformed(&format!(
+            "required glTF extensions are unsupported: {}",
+            doc.extensions_required.join(", ")
+        )));
+    }
+    if doc
+        .accessors
+        .iter()
+        .any(|accessor| accessor.sparse.is_some())
+    {
+        return Err(malformed(
+            "sparse accessors are unsupported; replacements cannot be discarded",
+        ));
+    }
+    if !doc.animations.is_empty()
+        || doc.nodes.iter().any(|node| node.skin.is_some())
+        || doc.meshes.iter().any(|mesh| {
+            mesh.primitives
+                .iter()
+                .any(|primitive| !primitive.targets.is_empty())
+        })
+    {
+        return Err(malformed(
+            "animated, skinned and morph-target geometry is unsupported by the static mesh reader",
+        ));
+    }
     let scene_idx = doc.scene.unwrap_or(0);
     let scene = doc
         .scenes

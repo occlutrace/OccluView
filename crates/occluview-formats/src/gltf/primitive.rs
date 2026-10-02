@@ -212,6 +212,7 @@ mod tests {
         }))
         .expect("a position stream");
         let primitive = json::Primitive {
+            targets: Vec::new(),
             attributes: json::Attributes {
                 position: Some(0),
                 ..json::Attributes::default()
