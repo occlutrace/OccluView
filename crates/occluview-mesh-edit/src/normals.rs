@@ -1,4 +1,4 @@
-use glam::Vec3;
+use glam::{DVec3, Vec3};
 use occluview_geometry::{coincident_position_key, DUPLICATE_NORMAL_DOT, MAX_DUPLICATE_CLUSTERS};
 
 /// Squared sine of the smallest angle a facet may have and still contribute a
@@ -40,15 +40,15 @@ pub fn recompute_all_normals(
         return Ok(());
     }
 
-    let mut normals = vec![Vec3::ZERO; vertices.len()];
+    let mut normals = vec![DVec3::ZERO; vertices.len()];
     for triangle in indices.as_chunks::<3>().0 {
         let ia = triangle[0] as usize;
         let ib = triangle[1] as usize;
         let ic = triangle[2] as usize;
 
-        let a = Vec3::from_array(vertices[ia].position);
-        let b = Vec3::from_array(vertices[ib].position);
-        let c = Vec3::from_array(vertices[ic].position);
+        let a = Vec3::from_array(vertices[ia].position).as_dvec3();
+        let b = Vec3::from_array(vertices[ib].position).as_dvec3();
+        let c = Vec3::from_array(vertices[ic].position).as_dvec3();
         let face_normal = (b - a).cross(c - a);
         // Relative to the facet's own edges, not an absolute epsilon. The
         // cross product is twice an area — square millimetres — so comparing it
@@ -62,7 +62,7 @@ pub fn recompute_all_normals(
             .max((a - c).length_squared());
         if face_normal.is_finite()
             && face_normal.length_squared()
-                > longest_edge_sq * longest_edge_sq * DEGENERATE_AREA_SIN
+                > longest_edge_sq * longest_edge_sq * f64::from(DEGENERATE_AREA_SIN)
         {
             normals[ia] += face_normal;
             normals[ib] += face_normal;
@@ -74,7 +74,7 @@ pub fn recompute_all_normals(
         // The accumulated normal is a sum of face normals, so its magnitude
         // carries the same area units; a normalize only needs it to be nonzero.
         vertex.normal = if normal.length_squared() > 0.0 && normal.is_finite() {
-            normal.normalize().to_array()
+            normal.normalize().as_vec3().to_array()
         } else {
             Vec3::Z.to_array()
         };
@@ -197,6 +197,24 @@ fn smooth_duplicate_position_normals(vertices: &mut [EditVertex]) {
 mod shared_tolerance_tests {
     use super::coincident_position_key;
     use occluview_geometry::COINCIDENT_POSITION_EPS_MM;
+
+    #[test]
+    fn scaled_triangle_normals_contract_regression() {
+        for scale in [1.0e-15_f32, 1.0, 1.0e20] {
+            let mut vertices = [
+                super::EditVertex::at([0.0, 0.0, 0.0]),
+                super::EditVertex::at([0.0, scale, 0.0]),
+                super::EditVertex::at([0.0, 0.0, scale]),
+            ];
+            super::recompute_all_normals(&mut vertices, &[0, 1, 2]).unwrap();
+            for vertex in vertices {
+                assert!(
+                    (glam::Vec3::from_array(vertex.normal) - glam::Vec3::X).length() < 1.0e-6,
+                    "healthy facets must keep their direction at scale {scale}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn one_tolerance_decides_which_vertices_share_a_normal() {
