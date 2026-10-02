@@ -163,8 +163,9 @@ pub(super) fn min_area_triangulation(points: &[Vec3]) -> Option<Vec<[usize; 3]>>
             split[i * n + j] = best_k;
         }
     }
-    // Full-span weight W[0][n-1]; infinite/NaN means degenerate input.
-    if !weight[n - 1].is_finite() {
+    // A complete cover must have positive area, even when an indexed seam
+    // requires individual zero-area connector faces.
+    if !weight[n - 1].is_finite() || weight[n - 1] <= 0.0 {
         return None;
     }
 
@@ -279,4 +280,16 @@ fn balanced_far_split(points: &[DVec3], arc: &[usize]) -> (usize, usize) {
     let high = (3 * m / 4).min(m - 1);
     let second = best_slot.clamp(low, high);
     (0, second)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn minimum_area_cap_refuses_a_zero_area_rim() {
+        let points = [Vec3::ZERO, Vec3::X, Vec3::X * 2.0, Vec3::X * 3.0];
+        assert!(min_area_triangulation(&points).is_none());
+        assert!(min_area_triangulation_any(&points).is_none());
+    }
 }
