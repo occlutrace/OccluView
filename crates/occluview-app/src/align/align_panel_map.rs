@@ -40,7 +40,6 @@ pub(crate) fn show(
         return action;
     }
 
-    settings.scale_mm = settings.scale_mm.clamp(0.001, WORKING_MAX_MM);
     action = action.or(range(ui, settings, enabled, locale));
     action
 }
@@ -107,11 +106,10 @@ fn range(
     enabled: bool,
     locale: &crate::i18n::LocaleManager,
 ) -> Option<AlignPanelAction> {
-    settings.scale_mm = settings.scale_mm.clamp(0.001, WORKING_MAX_MM);
+    let (min_mm, scale_mm) = settings.display_limits();
+    settings.scale_mm = scale_mm.max(0.001);
     settings.auto_scale = false;
-    settings.min_display_mm = settings
-        .min_display_mm
-        .clamp(WORKING_SCALE_MIN_MM, settings.scale_mm - 0.001);
+    settings.min_display_mm = min_mm.min(settings.scale_mm - 0.001);
     let mut changed = false;
     ui.horizontal(|ui| {
         ui.label(locale.tr(crate::i18n::message_id!("align-map-min")));
@@ -154,6 +152,28 @@ fn range(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nonfinite_heatmap_limits_cannot_panic_or_reach_the_range_widgets() {
+        for (scale_mm, min_display_mm) in [
+            (f64::NAN, 0.0),
+            (0.05, f64::NAN),
+            (f64::INFINITY, f64::NEG_INFINITY),
+            (f64::NEG_INFINITY, f64::INFINITY),
+        ] {
+            let ctx = egui::Context::default();
+            let mut settings = AlignSettings {
+                scale_mm,
+                min_display_mm,
+                ..AlignSettings::default()
+            };
+            let _ = heatmap_frame(&ctx, &mut settings, true, Vec::new());
+            assert!(settings.scale_mm.is_finite());
+            assert!(settings.min_display_mm.is_finite());
+            assert!((0.001..=WORKING_MAX_MM).contains(&settings.scale_mm));
+            assert!((0.0..=settings.scale_mm - 0.001).contains(&settings.min_display_mm));
+        }
+    }
 
     fn heatmap_frame(
         ctx: &egui::Context,

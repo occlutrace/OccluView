@@ -194,6 +194,27 @@ fn a_persisted_wide_range_is_clamped_before_colouring() {
 }
 
 #[test]
+fn nonfinite_heatmap_limits_cannot_panic_or_reach_the_colour_ramp() {
+    for (scale_mm, min_display_mm) in [
+        (f64::NAN, 0.0),
+        (0.05, f64::NAN),
+        (f64::INFINITY, f64::NEG_INFINITY),
+        (f64::NEG_INFINITY, f64::INFINITY),
+    ] {
+        let settings = AlignSettings {
+            scale_mm,
+            min_display_mm,
+            ..AlignSettings::default()
+        };
+        let ramp = settings.ramp();
+        assert!(ramp.scale_mm.is_finite());
+        assert!(ramp.min_mm.is_finite());
+        assert!((WORKING_SCALE_MIN_MM..=WORKING_MAX_MM).contains(&ramp.scale_mm));
+        assert!((WORKING_SCALE_MIN_MM..=ramp.scale_mm).contains(&ramp.min_mm));
+    }
+}
+
+#[test]
 fn the_display_range_is_absolute_zero_to_one_tenth() {
     let zero = AlignSettings {
         scale_mm: -1.0,
