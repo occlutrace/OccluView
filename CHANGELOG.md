@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Oversized render deadlines return a timeout instead of crashing.
+
 - Selected Close Holes preserves unmarked faces and protects their boundary vertices during cleanup.
 
 - Close Holes keeps selected rims open with a warning when every candidate cap intersects the surrounding surface.
