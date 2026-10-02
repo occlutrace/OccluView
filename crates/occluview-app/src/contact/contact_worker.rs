@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 #[cfg(test)]
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use occluview_align::CancelFlag;
 use occluview_contact::{compute_contact_field, ContactDiagnostics, ContactSettings, ContactStats};
@@ -108,6 +108,8 @@ impl ContactWorker {
                     guard(&unusable, || {
                         run_worker(&queue, &completions, &running, &busy, &unusable);
                     });
+                    #[cfg(test)]
+                    signal_waiters(&queue);
                 })
         })
     }
@@ -175,16 +177,30 @@ impl ContactWorker {
             thread::Builder::new()
                 .name("occluview-contacts-panic-test".into())
                 .spawn(move || {
-                    let deadline = Instant::now() + std::time::Duration::from_secs(5);
-                    while Instant::now() < deadline {
-                        if queue.state.lock().is_ok_and(|state| !state.jobs.is_empty()) {
-                            break;
-                        }
-                        thread::sleep(std::time::Duration::from_millis(2));
-                    }
+                    wait_for_queued_job(&queue, Duration::from_secs(5));
                     guard(&unusable, || panic!("a contact job body panicked"));
+                    signal_waiters(&queue);
                 })
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn wait_for_output(&self, timeout: Duration) -> bool {
+        let Ok(state) = self.queue.state.lock() else {
+            return false;
+        };
+        let Ok((_state, _)) = self.queue.wake.wait_timeout_while(state, timeout, |_| {
+            self.completions
+                .lock()
+                .is_ok_and(|completions| completions.is_empty())
+                && !self.has_failed()
+        }) else {
+            return false;
+        };
+        self.completions
+            .lock()
+            .is_ok_and(|completions| !completions.is_empty())
+            || self.has_failed()
     }
 
     pub(crate) fn has_failed(&self) -> bool {
@@ -391,6 +407,25 @@ fn run_worker(
                 outcome,
             });
         }
+        #[cfg(test)]
+        signal_waiters(queue);
+    }
+}
+
+#[cfg(test)]
+fn wait_for_queued_job(queue: &JobQueue, timeout: Duration) {
+    let Ok(state) = queue.state.lock() else {
+        return;
+    };
+    let _ = queue.wake.wait_timeout_while(state, timeout, |state| {
+        state.jobs.is_empty()
+    });
+}
+
+#[cfg(test)]
+fn signal_waiters(queue: &JobQueue) {
+    if let Ok(_state) = queue.state.lock() {
+        queue.wake.notify_all();
     }
 }
 
