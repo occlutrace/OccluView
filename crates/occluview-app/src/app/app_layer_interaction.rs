@@ -470,7 +470,7 @@ impl SceneContext<'_> {
             contacts: self.tools.contacts.pair().is_some_and(|pair| {
                 pair.subject == hit.layer_id || pair.antagonist == hit.layer_id
             }),
-            can_read_contacts: crate::contact::contact::can_read_contacts(scene, hit.layer_id),
+            can_read_contacts: crate::contact::state::can_read_contacts(scene, hit.layer_id),
         })
     }
 
@@ -496,7 +496,7 @@ impl SceneContext<'_> {
         let readable = scene
             .meshes()
             .iter()
-            .map(|entry| crate::contact::contact::can_read_contacts(scene, entry.id()))
+            .map(|entry| crate::contact::state::can_read_contacts(scene, entry.id()))
             .collect();
         (marked, readable)
     }
@@ -771,7 +771,7 @@ mod tests {
     #[test]
     fn a_reading_marks_both_of_its_arches() {
         use crate::app::app_test_support::{push_named_layer, test_app};
-        use crate::contact::contact::ContactPair;
+        use crate::contact::state::ContactPair;
 
         let mut app = test_app("reading-marks-both-arches");
         let mut scene = super::Scene::new();

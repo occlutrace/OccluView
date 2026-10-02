@@ -745,5 +745,5 @@ pub(crate) fn reading_of(signed_mm: f32) -> Option<ContactReading> {
 }
 
 #[cfg(test)]
-#[path = "contact_tests.rs"]
+#[path = "state_tests.rs"]
 mod tests;
