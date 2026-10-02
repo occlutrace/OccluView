@@ -179,4 +179,55 @@ mod tests {
         assert_eq!(loop_count, 1);
         assert_eq!(capped.indices.len(), 6);
     }
+    #[test]
+    fn surface_cap_preserves_a_region_with_an_invalid_nested_rim() {
+        let rings = [
+            vec![
+                [0.0, 0.0, 0.0],
+                [4.0, 0.0, 0.0],
+                [4.0, 4.0, 0.0],
+                [0.0, 4.0, 0.0],
+            ],
+            vec![
+                [1.0, 1.0, 0.0],
+                [3.0, 3.0, 0.0],
+                [3.0, 1.0, 0.0],
+                [1.0, 3.0, 0.0],
+            ],
+            vec![
+                [8.0, 0.0, 0.0],
+                [10.0, 0.0, 0.0],
+                [10.0, 2.0, 0.0],
+                [8.0, 2.0, 0.0],
+            ],
+        ];
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        let mut cut_edges = Vec::new();
+        for ring in rings {
+            let base = u32::try_from(vertices.len()).expect("small fixture");
+            for z in [0.0, 1.0] {
+                vertices.extend(ring.iter().map(|p| crate::EditVertex::at([p[0], p[1], z])));
+            }
+            for i in 0..4 {
+                let a = base + i;
+                let b = base + (i + 1) % 4;
+                indices.extend_from_slice(&[a, b, b + 4, a, b + 4, a + 4]);
+                cut_edges.push([a, b]);
+            }
+        }
+        let mesh = MeshEditBuffers {
+            vertices,
+            indices,
+            topology: crate::MeshTopology::TriangleMesh,
+        };
+        let source_faces = mesh.triangle_count();
+        let (result, capped) = cap_surface_part_best_effort(mesh, &cut_edges, DVec3::Z)
+            .expect("the independent valid region remains usable");
+        assert_eq!(
+            capped, 1,
+            "an invalid inner contour cannot disappear into an outer lid"
+        );
+        assert_eq!(result.triangle_count(), source_faces + 2);
+    }
 }
