@@ -128,15 +128,22 @@ impl SceneContext<'_> {
         else {
             return false;
         };
+        let mut restored = Vec::new();
         for entry in next.meshes_mut() {
             if let Some(pose) = self.session_pose_of(entry.id()) {
-                entry.transform = pose;
+                if entry.transform != pose {
+                    entry.transform = pose;
+                    restored.push(entry.id());
+                }
             }
         }
         self.document
             .edit_mode
             .finish_scene_edit_success(token, &next);
         self.set_scene(next, false);
+        for layer in restored {
+            self.document.mark_mesh_edits_unsaved(layer);
+        }
         true
     }
 }
