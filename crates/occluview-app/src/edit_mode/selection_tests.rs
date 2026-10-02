@@ -24,6 +24,76 @@ fn box_polygon(min: egui::Pos2, max: egui::Pos2) -> Vec<egui::Pos2> {
 }
 
 #[test]
+fn screen_polygon_selection_rejects_nonfinite_outlines_without_changing_marks() {
+    let mut scene = Scene::new();
+    scene.add(SceneMesh::new(
+        occluview_core::test_support::two_triangle_mesh(Some("invalid outline"))
+            .unwrap_or_else(|| panic!("valid fixture mesh")),
+    ));
+    let Some(mut selection) = FaceSelectionState::empty_for_layer(scene.meshes()[0].id(), 2) else {
+        panic!("nonempty fixture selection");
+    };
+    selection.write_face(0, true);
+    let before = selection.clone();
+    let camera = ortho_camera_above();
+    let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 400.0));
+    for invalid in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        for unmark in [false, true] {
+            let mut polygon = box_polygon(egui::pos2(100.0, 100.0), egui::pos2(300.0, 300.0));
+            polygon.push(egui::pos2(invalid, 200.0));
+            assert_eq!(
+                selection.select_screen_polygon(
+                    &scene,
+                    &camera,
+                    ScreenPolygonSelectionRequest {
+                        viewport_rect: viewport,
+                        polygon_px: &polygon,
+                        unmark,
+                        through_mesh: true
+                    }
+                ),
+                None
+            );
+            assert_eq!(selection, before);
+        }
+    }
+}
+
+#[test]
+fn selection_projection_rejects_invalid_camera_scale_and_viewport() {
+    let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 400.0));
+    let camera = ortho_camera_above();
+    let Some(projector) = OrthoProjector::new(&camera, viewport) else {
+        panic!("valid projection");
+    };
+    assert!(projector.project(Vec3::new(f32::MAX, 0.0, 0.0)).is_none());
+    for invalid in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        let mut camera = ortho_camera_above();
+        camera.target.x = invalid;
+        assert!(OrthoProjector::new(&camera, viewport).is_none());
+        let viewport =
+            egui::Rect::from_min_size(egui::pos2(invalid, 0.0), egui::vec2(400.0, 400.0));
+        assert!(OrthoProjector::new(&ortho_camera_above(), viewport).is_none());
+    }
+    for height in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 0.0, -1.0] {
+        let mut camera = ortho_camera_above();
+        camera.orthographic_height = height;
+        assert!(
+            OrthoProjector::new(&camera, viewport).is_none(),
+            "height {height}"
+        );
+    }
+    let camera = ortho_camera_above();
+    for width in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 0.0, -1.0] {
+        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 400.0));
+        assert!(
+            OrthoProjector::new(&camera, viewport).is_none(),
+            "width {width}"
+        );
+    }
+}
+
+#[test]
 fn screen_polygon_selection_takes_faces_overlapping_outline_not_disjoint_ones() {
     // Triangle 0 sits at the viewport center (overlaps the outline); triangle
     // 1 is far off, its whole screen bbox disjoint from the outline. Under

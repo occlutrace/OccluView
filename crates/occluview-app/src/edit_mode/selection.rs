@@ -173,7 +173,7 @@ impl FaceSelectionState {
         }
 
         let polygon = request.polygon_px;
-        if polygon.len() < 3 {
+        if polygon.len() < 3 || polygon.iter().any(|point| !point.is_finite()) {
             return None;
         }
         let mut polygon_bbox = egui::Rect::NOTHING;
@@ -335,28 +335,40 @@ struct OrthoProjector {
 }
 
 impl OrthoProjector {
-    /// Resolve the basis from the camera and viewport, or `None` when the
-    /// camera/viewport is degenerate — matching the guards in
-    /// `project_world_to_viewport`.
+    /// Resolve the camera and viewport basis, or `None` when either input is
+    /// nonfinite or degenerate.
     fn new(camera: &Camera, viewport: egui::Rect) -> Option<Self> {
         let width = viewport.width();
         let height = viewport.height();
-        if width <= 0.0 || height <= 0.0 {
+        if !viewport.is_finite()
+            || !width.is_finite()
+            || !height.is_finite()
+            || width <= 0.0
+            || height <= 0.0
+        {
             return None;
         }
         let eye = camera.eye();
         let forward = camera.view_direction();
-        if forward.length_squared() <= f32::EPSILON {
+        if !eye.is_finite() || !forward.is_finite() || forward.length_squared() <= f32::EPSILON {
             return None;
         }
         let up = camera.view_up();
         let right = forward.cross(up).normalize_or_zero();
-        if right.length_squared() <= f32::EPSILON || up.length_squared() <= f32::EPSILON {
+        if !right.is_finite()
+            || !up.is_finite()
+            || right.length_squared() <= f32::EPSILON
+            || up.length_squared() <= f32::EPSILON
+        {
             return None;
         }
         let half_height = camera.orthographic_height * 0.5;
         let half_width = half_height * (width / height);
-        if half_height <= f32::EPSILON || half_width <= f32::EPSILON {
+        if !half_height.is_finite()
+            || !half_width.is_finite()
+            || half_height <= f32::EPSILON
+            || half_width <= f32::EPSILON
+        {
             return None;
         }
         Some(Self {
@@ -373,9 +385,9 @@ impl OrthoProjector {
         })
     }
 
-    /// Project a world point to (screen pixel, depth). Bit-identical to
-    /// `project_world_to_viewport`: `None` for a non-finite point or depth so
-    /// those triangles are skipped exactly as the shared projector would.
+    /// Project a world point to (screen pixel, depth), preserving the
+    /// established arithmetic for finite results. Reject nonfinite points,
+    /// depths, and screen coordinates before intersection predicates run.
     #[inline]
     fn project(&self, point: Vec3) -> Option<(egui::Pos2, f32)> {
         if !point.is_finite() {
@@ -396,7 +408,7 @@ impl OrthoProjector {
             self.left + (ndc_x + 1.0) * 0.5 * self.width,
             self.top + (1.0 - (ndc_y + 1.0) * 0.5) * self.height,
         );
-        Some((screen, depth))
+        screen.is_finite().then_some((screen, depth))
     }
 
     /// The constant direction from the surface back toward the camera (ortho).
