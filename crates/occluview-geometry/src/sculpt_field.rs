@@ -59,6 +59,9 @@ pub fn knife_weight(offset: DVec3, axis: Option<DVec3>, radius_mm: f64) -> f64 {
         return ball_weight(offset.length(), radius_mm * cross_share.sqrt());
     };
     let axis_length = axis.length();
+    if !axis_length.is_finite() {
+        return ball_weight(offset.length(), radius_mm * cross_share.sqrt());
+    }
     let unit = axis * (1.0 / axis_length);
     let along = offset.dot(unit);
     let across = (offset - unit * along).length();
@@ -96,5 +99,22 @@ pub fn stamp_weight(
         TipStamp::Ball => ball_weight(distance_mm, radius_mm),
         TipStamp::Knife => knife_weight(offset, axis, radius_mm),
         TipStamp::Cylinder => cylinder_weight(distance_mm, radius_mm),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn knife_with_overflowing_axis_length_uses_ball_fallback() {
+        let offset = DVec3::X;
+        let radius = 4.0;
+        let expected = ball_weight(offset.length(), radius * KNIFE_CROSS_RADIUS_SHARE.sqrt());
+        let actual = knife_weight(offset, Some(DVec3::splat(1.0e308)), radius);
+        assert!(
+            (actual - expected).abs() < 1.0e-12,
+            "{actual} != {expected}"
+        );
     }
 }

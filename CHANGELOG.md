@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Knife strokes keep their radial fallback when a bearing cannot be normalized.
+
 ### Formats
 
 - Opening or dropping a 3MF (or any ZIP) file now reports that the format is
