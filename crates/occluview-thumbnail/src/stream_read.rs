@@ -10,7 +10,7 @@ pub enum StreamRead {
         /// The observed or declared byte length that exceeded the cap.
         byte_len: usize,
     },
-    /// A read operation failed before the stream completed.
+    /// A read operation failed or the configured chunk size was zero.
     ReadFailed,
     /// The caller's absolute request deadline elapsed before another bounded
     /// shell-stream read could begin.
@@ -64,6 +64,9 @@ fn read_capped_stream_inner(
     deadline: Option<Instant>,
     mut read_chunk: impl FnMut(&mut [u8]) -> Result<usize, ()>,
 ) -> StreamRead {
+    if bounds.chunk_bytes == 0 {
+        return StreamRead::ReadFailed;
+    }
     let declared_cap = match bounds.declared_len {
         Some(len) => {
             let len = usize::try_from(len).unwrap_or(usize::MAX);
@@ -119,6 +122,23 @@ mod tests {
         min_buffer_bytes: 4,
         chunk_bytes: 8,
     };
+
+    #[test]
+    fn a_zero_chunk_limit_cannot_report_an_unread_stream_as_complete() {
+        let mut called = false;
+        let result = read_capped_stream(
+            StreamReadBounds {
+                chunk_bytes: 0,
+                ..BOUNDS
+            },
+            |_| {
+                called = true;
+                Ok(0)
+            },
+        );
+        assert_eq!(result, StreamRead::ReadFailed);
+        assert!(!called, "a zero-size read cannot establish EOF");
+    }
 
     #[test]
     fn stream_bounds_are_safe_at_zero_and_maximum_caps() {
