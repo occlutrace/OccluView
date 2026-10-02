@@ -146,10 +146,9 @@ fn pump_sculpt_worker(app: &mut OccluViewApp) {
             return;
         }
         assert!(
-            Instant::now() < deadline,
+            worker.wait_until_idle(deadline.saturating_duration_since(Instant::now())),
             "the sculpt worker never settled on its stroke"
         );
-        std::thread::sleep(Duration::from_millis(1));
     }
 }
 
@@ -191,11 +190,16 @@ fn pump_until_failure_is_shown(app: &mut OccluViewApp) {
         app.active_context()
             .expect("live test scene")
             .poll_sculpt_worker(&ctx);
+        let worker = app.workspace.scenes[0]
+            .tools
+            .sculpt
+            .worker
+            .as_ref()
+            .expect("sculpt worker");
         assert!(
-            Instant::now() < deadline,
+            worker.wait_until_idle(deadline.saturating_duration_since(Instant::now())),
             "a terminal worker failure never reached the operator"
         );
-        std::thread::sleep(Duration::from_millis(1));
     }
 }
 
