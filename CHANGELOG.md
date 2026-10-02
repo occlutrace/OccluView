@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- GLB imports reject incomplete, misordered, duplicate, or unaligned chunks and inconsistent file lengths.
+
 - BOM-prefixed PLY and OBJ imports retain their named companion textures.
 
 - Sculpt protection skirts keep one weight per vertex when a shorter surface path is found.
