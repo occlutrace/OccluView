@@ -130,6 +130,9 @@ pub(crate) fn camera_keep_side(pose: &DiscPose, eye: Vec3) -> bool {
 
 /// Clamp the wheel-scaled radius to the allowed range.
 pub(crate) fn scale_radius(radius: f32, notches: f32) -> f32 {
+    if !notches.is_finite() {
+        return radius.clamp(MIN_DISC_RADIUS_MM, MAX_DISC_RADIUS_MM);
+    }
     (radius * RADIUS_WHEEL_STEP.powf(notches)).clamp(MIN_DISC_RADIUS_MM, MAX_DISC_RADIUS_MM)
 }
 

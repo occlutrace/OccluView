@@ -273,7 +273,7 @@ impl SectionView {
         notches: f32,
         frame_for_zoom: impl FnOnce(f32, f32) -> Option<SectionViewFrame>,
     ) -> bool {
-        if notches == 0.0 {
+        if !notches.is_finite() || notches == 0.0 {
             return false;
         }
         let (Some(pointer), Some(cam)) = (pointer, self.panel_cam()) else {
