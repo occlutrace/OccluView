@@ -215,6 +215,39 @@ fn prepared_scene_rejects_invalid_sparse_vertex_ids() {
     );
 }
 
+#[test]
+fn prepared_scene_rejects_vertex_count_changes_before_uploading() {
+    let _gpu = gpu_test_lock();
+    let mesh = render_triangle_mesh().expect("valid triangle mesh");
+    let offscreen = pollster::block_on(Offscreen::new()).expect("offscreen init");
+    let prepared = offscreen.prepare_scene(&[PreparedSceneSource {
+        mesh: &mesh,
+        uniform: identity_uniform(),
+        visible: true,
+        wireframe: false,
+        contact: None,
+    }]);
+    let topology = PreparedSceneTopology::from_mesh(&mesh);
+    for count in [2, 4] {
+        let vertices = vec![mesh.vertices()[0]; count];
+        assert!(!prepared.write_entry_vertices(offscreen.renderer(), &topology, &vertices));
+        assert!(!prepared.write_entry_vertices_sparse(
+            offscreen.renderer(),
+            &topology,
+            &vertices,
+            &[0],
+        ));
+    }
+    assert!(prepared.write_entry_vertices(offscreen.renderer(), &topology, mesh.vertices()));
+    assert!(prepared.write_entry_vertices_sparse(
+        offscreen.renderer(),
+        &topology,
+        mesh.vertices(),
+        &[0],
+    ));
+    assert!(!offscreen.renderer().is_gpu_faulted());
+}
+
 /// Draw `prepared` through a render pass this test owns — the offscreen
 /// convenience path the other tests use is what makes this one different — and
 /// return the color readback.
