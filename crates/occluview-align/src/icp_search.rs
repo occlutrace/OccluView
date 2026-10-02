@@ -212,6 +212,7 @@ pub(super) fn choose_start_pose(level: &Level<'_>) -> Result<StartPose, FitRejec
         coarse_candidates_are_ambiguous(
             &candidate,
             &best,
+            moving_center,
             moving_extent,
             COARSE_ANSWER_TOLERANCE_FRACTION * level.settings.influence_radius_mm.abs(),
         )
@@ -899,6 +900,7 @@ const COARSE_SAME_QUESTION_RAD: f64 = std::f64::consts::FRAC_PI_2;
 pub(super) fn coarse_candidates_are_ambiguous(
     candidate: &CoarseCandidate,
     best: &CoarseCandidate,
+    center: DVec3,
     extent: f64,
     tolerance: f64,
 ) -> bool {
@@ -913,7 +915,7 @@ pub(super) fn coarse_candidates_are_ambiguous(
     // `COARSE_SAME_QUESTION_RAD`.
     candidate.shift <= best.shift + COARSE_TIE_SHIFT_MM
         && turn_between(candidate.rigid, best.rigid) <= COARSE_SAME_QUESTION_RAD
-        && poses_are_distinct(candidate.rigid, best.rigid, extent, tolerance)
+        && poses_are_distinct(candidate.rigid, best.rigid, center, extent, tolerance)
         && coarse_candidates_are_equivalent(candidate, best)
 }
 
@@ -930,12 +932,18 @@ pub(super) fn coarse_candidates_are_ambiguous(
 /// displacement at the rim is the sum, and it is compared against a fraction of
 /// the correspondence radius: hypotheses nearer than that place the surface
 /// within the distance the search itself treats as the same place.
-fn poses_are_distinct(left: Rigid, right: Rigid, extent: f64, tolerance: f64) -> bool {
+fn poses_are_distinct(
+    left: Rigid,
+    right: Rigid,
+    center: DVec3,
+    extent: f64,
+    tolerance: f64,
+) -> bool {
     let turned = (left.rotation * right.rotation.inverse())
         .to_scaled_axis()
         .length();
     let rim_shift =
-        (left.translation - right.translation).length() + turned * extent.max(0.0) * 0.5;
+        left.apply(center).distance(right.apply(center)) + turned * extent.max(0.0) * 0.5;
     rim_shift > tolerance
 }
 

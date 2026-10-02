@@ -53,6 +53,8 @@ remain in the Git history.
   0.050 to 0.200 mm. The hottest colour is now 100 um rather than 200 um, and the
   bar starts at zero instead of hiding everything below 50 um.
 
+- Best-fit ambiguity checks remain consistent when a scan is stored far from the coordinate origin.
+
 ### Viewer
 
 - The section view recomputes its contour after a sculpt. The section cache was

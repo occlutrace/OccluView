@@ -333,7 +333,7 @@ fn equally_supported_poses_in_one_component_are_ambiguous() {
     // A 2 mm slide on a scan with a 2 mm influence radius: half a radius is
     // 1 mm, so 2 mm is unmistakably a different answer.
     assert!(
-        coarse_candidates_are_ambiguous(&twin, &best, 60.0, 1.0),
+        coarse_candidates_are_ambiguous(&twin, &best, DVec3::ZERO, 60.0, 1.0),
         "a repeated/symmetric window must not be selected by component id"
     );
 
@@ -346,9 +346,23 @@ fn equally_supported_poses_in_one_component_are_ambiguous() {
         DVec3::new(0.006, 0.0, 0.0),
     );
     assert!(
-        !coarse_candidates_are_ambiguous(&nudge, &best, 60.0, 1.0),
+        !coarse_candidates_are_ambiguous(&nudge, &best, DVec3::ZERO, 60.0, 1.0),
         "two parameterisations of one seating are not two answers"
     );
+}
+
+#[test]
+fn coarse_ambiguity_does_not_depend_on_the_mesh_coordinate_origin() {
+    let best = candidate(0.05, 0.8, Some(0.8));
+    let rotation = DQuat::from_axis_angle(DVec3::Z, 0.01);
+    for center in [DVec3::ZERO, DVec3::new(10_000.0, -20_000.0, 0.0)] {
+        let mut nudge = best;
+        nudge.rigid = crate::Rigid::new(rotation, center - rotation * center);
+        assert!(
+            !coarse_candidates_are_ambiguous(&nudge, &best, center, 60.0, 1.0),
+            "a turn moving the scan rim by only 0.3 mm is one seating at {center:?}"
+        );
+    }
 }
 
 #[test]
@@ -529,7 +543,7 @@ fn a_candidate_worse_on_both_axes_is_not_a_rival_answer() {
     worse.rigid = crate::Rigid::new(DQuat::IDENTITY, DVec3::new(2.0, 0.0, 0.0));
 
     assert!(
-        !coarse_candidates_are_ambiguous(&worse, &best, 60.0, 1.0),
+        !coarse_candidates_are_ambiguous(&worse, &best, DVec3::ZERO, 60.0, 1.0),
         "a candidate worse in residual and coverage must not refuse the fit"
     );
 
@@ -543,7 +557,7 @@ fn a_candidate_worse_on_both_axes_is_not_a_rival_answer() {
     let mut rival = candidate(0.050, 0.800, Some(0.800));
     rival.rigid = crate::Rigid::new(DQuat::IDENTITY, DVec3::new(2.0, 0.0, 0.0));
     assert!(
-        coarse_candidates_are_ambiguous(&rival, &twin, 60.0, 1.0),
+        coarse_candidates_are_ambiguous(&rival, &twin, DVec3::ZERO, 60.0, 1.0),
         "an equally supported distinct pose is still ambiguous"
     );
 }
