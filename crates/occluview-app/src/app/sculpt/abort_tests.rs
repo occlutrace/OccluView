@@ -119,7 +119,10 @@ fn pump_until_quiescent(app: &mut OccluViewApp) {
             Instant::now() < deadline,
             "the sculpt worker never settled on its stroke"
         );
-        std::thread::sleep(Duration::from_millis(1));
+        assert!(
+            worker.wait_until_idle(deadline.saturating_duration_since(Instant::now())),
+            "the sculpt worker never settled on its stroke"
+        );
     }
 }
 
