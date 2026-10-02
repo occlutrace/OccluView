@@ -1,7 +1,5 @@
 use glam::Vec3;
-use occluview_geometry::{
-    coincident_position_key, DUPLICATE_NORMAL_DOT, MAX_DUPLICATE_CLUSTERS,
-};
+use occluview_geometry::{coincident_position_key, DUPLICATE_NORMAL_DOT, MAX_DUPLICATE_CLUSTERS};
 
 /// Squared sine of the smallest angle a facet may have and still contribute a
 /// normal. Scale-free: the test compares twice the facet's area against its own

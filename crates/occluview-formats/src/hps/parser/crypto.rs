@@ -138,8 +138,8 @@ fn swap_32_bit_words_in_blocks(bytes: &mut [u8]) {
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use super::*;
     use super::super::key::{HpsSecretKey, NoHpsKeyProvider};
+    use super::*;
 
     struct StaticProvider(Vec<u8>);
 

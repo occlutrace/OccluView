@@ -9,8 +9,8 @@
     clippy::float_cmp
 )]
 
-use super::*;
 use super::tests::{append_packed_uv, cc_fixture, encode_base64, red_png_bytes, small_jpeg_bytes};
+use super::*;
 use std::io::Cursor;
 
 fn embedded_raster_hps(raster: &[u8]) -> Vec<u8> {

@@ -1,7 +1,7 @@
+use super::parser::{DecodedSurface, DecodedSurfaceParts};
 use crate::error::FormatError;
 use glam::Vec3;
 use occluview_core::{Mesh, MeshTexture, Vertex};
-use super::parser::{DecodedSurface, DecodedSurfaceParts};
 use std::collections::HashMap;
 
 pub(super) fn build_mesh(surface: DecodedSurface) -> Result<Mesh, FormatError> {
@@ -195,8 +195,8 @@ fn smooth_normals(positions: &[Vec3], indices: &[u32]) -> Vec<Vec3> {
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use super::{build_geometry_mesh, build_mesh};
     use super::super::parser::{DecodedSurface, DecodedTexture};
+    use super::{build_geometry_mesh, build_mesh};
 
     #[test]
     fn neutral_surface_adapter_preserves_geometry_attributes_and_texture() {
