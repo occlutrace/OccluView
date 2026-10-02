@@ -19,6 +19,30 @@ The render tests use a software rasteriser (Lavapipe on Linux, WARP on
 Windows), so `cargo test` needs no GPU. They are slower than the rest; that is
 expected.
 
+## Workspace
+
+The workspace contains these crates:
+
+- `occluview-geometry` — Shared geometry constants, pure math, and triangle-surface queries; the bottom leaf, importing no other workspace crate.
+- `occluview-i18n` — Fluent catalogs and locale resolution shared by the app and the shell.
+- `occluview-repo-contracts` — Repository contract tests: CI workflows, packaging reports and the release version.
+- `occluview-update` — Signed update-manifest checks; the only crate carrying HTTP and signature verification.
+- `occluview-sculpt` — Surface sculpting kernel with its own `parallel` feature.
+- `occluview-core` — Pure data model: math, units, mesh, scene and camera, with no I/O, GPU or platform code.
+- `occluview-mesh-edit` — Product-neutral mesh-editing kernel plus the adapter to core meshes; the `robust` module owns the optional native CSG fallback (feature `robust-csg`).
+- `occluview-align` — Scan registration and signed deviation metrology.
+- `occluview-contact` — Occlusal contact metrology and the clinical colour law.
+- `occluview-formats` — Import and export readers and writers for the supported scan formats; the `hps` module owns the HPS parser (feature `private-hps-key`).
+- `occluview-render` — wgpu renderer for the live viewer and the offscreen thumbnail path.
+- `occluview-thumbnail` — Platform-neutral thumbnail loading, rendering and fallback.
+- `occluview-shell` — Windows COM shell extension: Explorer thumbnails and the preview pane.
+- `occluview-app` — Desktop viewer binary (`occluview`), built with egui and wgpu.
+- `occluview-cli` — Headless `occluview-cli` helper.
+
+New crate names follow `occluview-<noun>`; do not introduce names ending in `-kernel`, `-math`, `-core`, `-index`, `-csg`, `-query`, or `-session`.
+An optional part of a crate belongs in a module behind a Cargo feature, not in a new crate.
+A new crate needs a reason and a row in the README workspace table; the repository-contract test enforces that table.
+
 ## Repository hygiene
 
 Keep process material outside the repository. Do not commit prompts, exported
