@@ -193,6 +193,7 @@ pub(crate) fn score_common_region(
     config: CoarseScoring<'_>,
     control: &GeometryControl,
 ) -> Result<CoarseScore, GeometryStop> {
+    let _phase = crate::search_probe::Span::new(crate::search_probe::Phase::Scoring, control);
     let policy = config.policy;
     let ceiling = config.ceiling;
     let capacity = config.samples_per_side.min(1_024);

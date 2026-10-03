@@ -1077,6 +1077,7 @@ fn generate_hypotheses_inner(
         insert_candidate, proposal_order, score_common_region, CoarseScoring, Proposal,
     };
     use crate::{CandidateId, SeedOrigin};
+    let _phase = crate::search_probe::Span::new(crate::search_probe::Phase::Proposals, control);
     let mut result = ProposalSearch {
         pool: Vec::with_capacity(33),
         best: None,

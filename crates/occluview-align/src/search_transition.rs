@@ -25,6 +25,7 @@ pub(crate) fn search(
     settings: &SearchSettings,
     control: &SearchControl,
 ) -> Result<AlignmentSearchResult, AlignmentInputError> {
+    let _probe = crate::search_probe::Session::new();
     let mut result = initial_result(input, settings);
     let geometry = control.geometry_control(settings);
     let limits = geometry.limits();
@@ -76,6 +77,8 @@ pub(crate) fn search(
     recorded_settings.work_budget = result.provenance.budget.clone();
     recorded_settings.wall_limit = geometry.wall_limit();
     result.provenance.effective_settings = Some(recorded_settings);
+    let preparation =
+        crate::search_probe::Span::new(crate::search_probe::Phase::Preparation, &geometry);
     let moving = prepare_alignment_surface(
         input.moving,
         SurfaceSide::Moving,
@@ -88,6 +91,7 @@ pub(crate) fn search(
         settings.reference_regions,
         &geometry,
     )?;
+    drop(preparation);
     if let (Metric::Measured(a), Metric::Measured(b)) =
         (moving.eligible_area_mm2, fixed.eligible_area_mm2)
     {

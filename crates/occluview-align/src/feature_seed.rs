@@ -100,6 +100,7 @@ fn hypotheses(
     target: &[SurfaceSample],
     control: &GeometryControl,
 ) -> Result<Vec<(Rigid, SeedOrigin)>, GeometryStop> {
+    let _phase = crate::search_probe::Span::new(crate::search_probe::Phase::Descriptors, control);
     let _memory = control.reserve(24 * 1024 * 1024)?;
     let source = cloud(source, control)?;
     let target = cloud(target, control)?;
