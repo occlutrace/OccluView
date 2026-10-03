@@ -61,7 +61,7 @@ features = [
 # microsoft/windows-rs#3038). An explicit `windows-core` dependency of the
 # same version makes those paths resolve.
 [target.'cfg(windows)'.dependencies.windows-core]
-version = "0.62.2"
+version = "0.100.0"
 
 [dev-dependencies]
 roxmltree = { workspace = true }
