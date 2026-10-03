@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Preserve a file created at an implicit thumbnail destination while rendering.
+
 - Hash complete large scan files so different interior geometry cannot share a thumbnail identity.
 
 - Reject update responses that exceed the download limit even when their prefix has a valid signature.

@@ -191,6 +191,7 @@ fn cmd_thumbnail(args: &mut impl Iterator<Item = OsString>) -> Result<()> {
         }
     }
 
+    let overwrite = output.is_some();
     let out_path = normalize_thumbnail_output_path(match output {
         Some(path) => path,
         None => implicit_thumbnail_path(&file)?,
@@ -237,7 +238,7 @@ fn cmd_thumbnail(args: &mut impl Iterator<Item = OsString>) -> Result<()> {
     eprintln!("Writing {}...", out_path.display());
     let img = image::RgbaImage::from_raw(u32::from(size), u32::from(size), pixels)
         .ok_or_else(|| anyhow!("failed to create image buffer"))?;
-    write_thumbnail_atomically(&out_path, &img)
+    write_thumbnail_atomically(&out_path, &img, overwrite)
         .with_context(|| format!("writing {}", out_path.display()))?;
 
     if rendered.is_none() {
@@ -253,13 +254,21 @@ fn cmd_thumbnail(args: &mut impl Iterator<Item = OsString>) -> Result<()> {
 
 static NEXT_THUMBNAIL_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
-fn write_thumbnail_atomically(path: &Path, image: &image::RgbaImage) -> Result<()> {
+fn write_thumbnail_atomically(
+    path: &Path,
+    image: &image::RgbaImage,
+    overwrite: bool,
+) -> Result<()> {
     // A symlink destination is followed, not replaced. A bare rename would swap
     // the link's inode for a regular file and leave the file the link points at
     // with its previous image while the CLI prints "Done". The mesh writer's
     // resolver is shared rather than duplicated here.
-    let path = occluview_formats::resolve_overwrite_destination(path)?;
-    let path = path.as_path();
+    let destination = if overwrite {
+        occluview_formats::resolve_overwrite_destination(path)?
+    } else {
+        path.to_path_buf()
+    };
+    let path = destination.as_path();
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -282,9 +291,20 @@ fn write_thumbnail_atomically(path: &Path, image: &image::RgbaImage) -> Result<(
         let _ = std::fs::remove_file(&temporary);
         return Err(error);
     }
-    if let Err(error) = replace_thumbnail_file::replace(&temporary, path) {
+    let published = if overwrite {
+        replace_thumbnail_file::replace(&temporary, path)
+    } else {
+        // Both files are in the same directory. A hard link publishes the
+        // complete PNG atomically and fails if any destination already exists.
+        // Filesystems without hard links refuse rather than overwrite a scan's atlas.
+        std::fs::hard_link(&temporary, path)
+    };
+    if let Err(error) = published {
         let _ = std::fs::remove_file(&temporary);
         return Err(error.into());
+    }
+    if !overwrite {
+        let _ = std::fs::remove_file(&temporary);
     }
     Ok(())
 }
@@ -377,9 +397,9 @@ fn implicit_thumbnail_path(file: &Path) -> Result<PathBuf> {
         |stem| stem.to_string_lossy().into_owned(),
     );
     // Keep stepping: the `-thumb` name is also checked with `exists()`, because
-    // `write_thumbnail_atomically` renames over its destination and a
-    // pre-existing `scan-thumb.png` is a file the operator never named. A
-    // numbered suffix keeps escalating instead of overwriting anything.
+    // an occupied `scan-thumb.png` is a file the operator never named. A
+    // numbered suffix avoids collisions; publication also refuses a file
+    // created after this check.
     let mut candidate = path.clone();
     candidate.set_file_name(format!("{stem}-thumb.png"));
     if !candidate.exists() {
@@ -718,7 +738,7 @@ mod tests {
         std::fs::write(&destination, b"previous thumbnail").expect("seed thumbnail");
         let image = image::RgbaImage::from_pixel(3, 2, image::Rgba([12, 34, 56, 255]));
 
-        write_thumbnail_atomically(&destination, &image).expect("publish thumbnail");
+        write_thumbnail_atomically(&destination, &image, true).expect("publish thumbnail");
 
         let decoded = image::open(&destination).expect("decode published thumbnail");
         assert_eq!(decoded.width(), 3);
@@ -748,6 +768,32 @@ mod tests {
         assert_eq!(
             std::fs::read(directory.path().join("scan-thumb-999.png")).expect("existing image"),
             b"existing image"
+        );
+    }
+
+    #[test]
+    fn implicit_thumbnail_publication_preserves_a_file_created_during_rendering() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let destination = super::implicit_thumbnail_path(&directory.path().join("scan.obj"))
+            .expect("implicit name");
+        std::fs::write(&destination, b"companion created during rendering")
+            .expect("concurrent image");
+        let image = image::RgbaImage::from_pixel(2, 2, image::Rgba([1, 2, 3, 255]));
+        let result = write_thumbnail_atomically(&destination, &image, false);
+        assert!(
+            result.is_err(),
+            "implicit output must refuse a publication collision"
+        );
+        assert_eq!(
+            std::fs::read(&destination).expect("preserved companion"),
+            b"companion created during rendering"
+        );
+        assert_eq!(
+            std::fs::read_dir(directory.path())
+                .expect("directory")
+                .count(),
+            1,
+            "temporary image must be removed"
         );
     }
 }
