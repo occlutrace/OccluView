@@ -353,7 +353,7 @@ impl TopoJournal {
                 area: field(13),
                 component: {
                     let c = field(14);
-                    if !c.is_finite() || c < 0.0 || c >= 16_777_216.0 {
+                    if !c.is_finite() || c < 0.0 || c >= 16_777_216.0 || c.fract() != 0.0 {
                         return None;
                     }
                     c as u32
@@ -379,6 +379,39 @@ impl TopoJournal {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decoded_vertex_payload_refuses_fractional_component_ids() {
+        let mut journal = TopoJournal {
+            base_verts: 3,
+            base_tris: 1,
+            base_groups: 3,
+            base_live_tris: 1,
+            live_tris: 1,
+            ..TopoJournal::default()
+        };
+        journal.push_added_vert(TopoAddedVert {
+            vertex: 3,
+            group: 3,
+            component: 0,
+            pos: [0.5, 0.0, 0.0],
+            nrm: [0.0, 0.0, 1.0],
+            ref_nrm: [0.0, 0.0, 1.0],
+            reference: [0.5, 0.0, 0.0],
+            budget: 1.0,
+            area: 1.0,
+        });
+        let words = journal.encode_u32();
+        let mut floats = journal.encode_f32();
+        for valid in [0.0, 1.0, 16_777_215.0] {
+            floats[14] = valid;
+            assert!(TopoJournal::decode(&words, &floats).is_some());
+        }
+        for invalid in [0.5, 1.25, -0.5, 16_777_216.0] {
+            floats[14] = invalid;
+            assert!(TopoJournal::decode(&words, &floats).is_none());
+        }
+    }
 
     #[test]
     fn decoded_history_refuses_overflowing_vertex_and_group_counts() {

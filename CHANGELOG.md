@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Sculpt refuses fractional sheet identities in decoded topology history instead of rounding them.
+
 - Sculpt ray traversal avoids integer overflow when distant vertices push cells to their index limits.
 
 - Close Holes applies and records cleanup even when every remaining rim stays open.
