@@ -12,18 +12,9 @@ use std::time::UNIX_EPOCH;
 
 const MAX_CACHED_FILE_THUMBNAILS: usize = 96;
 const MAX_CACHED_FILE_THUMBNAIL_BYTES: usize = 32 * 1024 * 1024;
-/// Files up to this size are keyed on every byte.
-///
-/// Above it the key is built from sampled windows, and sampling can be fooled:
-/// two scans of exactly the same length whose difference lies between the
-/// windows key the same, and the second one is then served the first one's
-/// picture -- the wrong arch on screen, which is the worst thing this cache
-/// can do. The budget therefore covers the scans a clinic actually holds
-/// rather than the smallest number that keeps the hash cheap: at a measured
-/// 1.45 GB/s, a 64 MB file costs about 45 ms to key exactly, and the largest
-/// real scan in the test corpora is 33 MB.
-pub(super) const EXACT_CONTENT_HASH_BYTES: u64 = 64 * 1024 * 1024;
-const CONTENT_HASH_SAMPLE_BYTES: u64 = 64 * 1024;
+/// Large content fixtures exercise the former sampling boundary.
+#[cfg(test)]
+pub(super) const LARGE_CONTENT_FIXTURE_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(super) enum ThumbnailRequestKey {
@@ -52,10 +43,10 @@ pub(super) struct ThumbnailFileCacheKey {
 }
 
 /// Content identity used to share work between different paths containing the
-/// same mesh. The hash is exact for ordinary small shell inputs and sampled for
-/// very large files so opening a folder never turns metadata preflight into a
-/// second full-file read. The format tag and byte length prevent cross-format
-/// or truncated-file reuse.
+/// same mesh. Every admitted byte participates in the hash, including interior
+/// geometry in large scans. The format tag and byte length prevent cross-format
+/// or truncated-file reuse. The file admission cap bounds IO; hashing uses a
+/// fixed-size buffer.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(super) struct ThumbnailFileContentKey {
     format_tag: u8,
@@ -340,40 +331,8 @@ pub(super) fn thumbnail_file_content_key(
     hasher.update([format_tag]);
     hasher.update(metadata.byte_len.to_le_bytes());
 
-    if metadata.byte_len <= EXACT_CONTENT_HASH_BYTES {
-        hasher.update([0u8]);
-        hash_file_range(&mut file, &mut hasher, 0, metadata.byte_len)
-            .map_err(|e| file_io_error(path, e))?;
-    } else {
-        // Past the exact budget the key is a sample, and a sample can be
-        // fooled. Mixing the timestamp in bounds what a collision can cost:
-        // two files have to share a length, three windows and a
-        // modification time to share a picture. It costs the deduplication of
-        // copies -- but only for files this large, where a folder holding two
-        // copies of the same 100 MB export is a rarer thing than a re-export
-        // that kept its triangle count.
-        hasher.update(b"mtime");
-        hasher.update(metadata.modified_nanos.to_le_bytes());
-
-        // Hash three labelled, position-aware windows. The labels prevent
-        // ambiguous concatenations and the offsets make equal windows at
-        // different positions distinct.
-        for (label, start) in [
-            (b"head".as_slice(), 0),
-            (b"middle".as_slice(), metadata.byte_len / 2),
-            (
-                b"tail".as_slice(),
-                metadata.byte_len.saturating_sub(CONTENT_HASH_SAMPLE_BYTES),
-            ),
-        ] {
-            let length = CONTENT_HASH_SAMPLE_BYTES.min(metadata.byte_len.saturating_sub(start));
-            hasher.update(label);
-            hasher.update(start.to_le_bytes());
-            hasher.update(length.to_le_bytes());
-            hash_file_range(&mut file, &mut hasher, start, length)
-                .map_err(|e| file_io_error(path, e))?;
-        }
-    }
+    hash_file_range(&mut file, &mut hasher, 0, metadata.byte_len)
+        .map_err(|e| file_io_error(path, e))?;
 
     Ok(ThumbnailFileContentKey {
         format_tag,
