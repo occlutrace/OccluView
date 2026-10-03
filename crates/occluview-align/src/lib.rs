@@ -52,6 +52,8 @@ mod pairs;
 #[cfg(test)]
 mod pairs_tests;
 mod rigid;
+#[cfg(test)]
+mod rotation_grid;
 mod sample;
 mod search_control;
 mod search_result;
