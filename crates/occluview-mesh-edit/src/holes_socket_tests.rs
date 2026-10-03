@@ -12,6 +12,30 @@ use glam::Vec3;
 use std::collections::{HashMap, HashSet};
 
 #[test]
+fn selected_rim_cleanup_preserves_an_unmarked_degenerate_face() {
+    let mesh = MeshEditBuffers {
+        vertices: vec![
+            EditVertex::at([0.0, 0.0, 0.0]),
+            EditVertex::at([1.0, 0.0, 0.0]),
+            EditVertex::at([0.0, 1.0, 0.0]),
+            EditVertex::at([5.0, 0.0, 0.0]),
+            EditVertex::at([6.0, 0.0, 0.0]),
+            EditVertex::at([10.0, 0.0, 0.0]),
+            EditVertex::at([11.0, 0.0, 0.0]),
+            EditVertex::at([10.0, 1.0, 0.0]),
+        ],
+        indices: vec![0, 1, 2, 3, 3, 4, 5, 6, 7],
+        topology: MeshTopology::TriangleMesh,
+    };
+    let selection = FaceSelection::new(vec![true, false, false]);
+    let healed =
+        heal_boundary_rims(&mesh, Some(&selection)).expect("the marked lone face is cleaned");
+    assert_eq!(healed.keep, vec![false, true, true]);
+    assert_eq!(healed.mesh.indices, vec![3, 3, 4, 5, 6, 7]);
+    assert_eq!(healed.mesh.vertices, mesh.vertices);
+}
+
+#[test]
 fn far_boundary_healing_contract_regression() {
     for offset in [1.0e30_f32, -1.0e30] {
         let mesh = MeshEditBuffers {

@@ -124,7 +124,7 @@ pub(crate) fn heal_boundary_rims(
         let a = vertex_remap[tri[0] as usize];
         let b = vertex_remap[tri[1] as usize];
         let c = vertex_remap[tri[2] as usize];
-        if a == b || b == c || c == a {
+        if (a == b || b == c || c == a) && selection.is_none_or(|mask| mask.as_slice()[triangle]) {
             // Weld collapsed this face; count it as healed and drop it.
             continue;
         }
