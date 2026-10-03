@@ -169,8 +169,8 @@ fn supported_trim_alternative(
     (difference > 0.20).then(|| (target / area, (squared / target).sqrt()))
 }
 
-/// Exact controlled queries in both directions; interrupted upper bounds never
-/// become distances. Training evidence remains unverified regardless of score.
+/// Complete controlled queries on each declared representation; interrupted
+/// upper bounds never become distances. Training evidence remains unverified.
 pub(crate) fn score_common_region(
     moving: &PreparedSurface,
     fixed: &PreparedSurface,
@@ -192,18 +192,27 @@ pub(crate) fn score_common_region(
         pose,
         policy,
         capacity,
-        exclude_border,
+        exclude_border && fixed.exact_original,
         control,
     )?;
-    let reverse = directional_support(
+    let mut reverse = directional_support(
         fixed,
         moving_index,
         pose.inverse(),
         policy,
         capacity,
-        exclude_border,
+        exclude_border && moving.exact_original,
         control,
     )?;
+    if config.proxies.is_some()
+        || !moving.quality.orientation_coherent
+        || !fixed.quality.orientation_coherent
+    {
+        for sample in forward.iter_mut().chain(&mut reverse) {
+            control.charge_operations(1)?;
+            sample.compatible = None;
+        }
+    }
     let areas = [moving.eligible_area_mm2, fixed.eligible_area_mm2];
     let smaller = areas[0].min(areas[1]);
     let coverage = |band| {
@@ -223,21 +232,7 @@ pub(crate) fn score_common_region(
             .sum::<f64>()
     };
     let lcp = (soft(&forward).min(soft(&reverse)) / smaller).clamp(0., 1.);
-    let policy_support = [&forward, &reverse].map(|samples| {
-        let oriented: f64 = samples
-            .iter()
-            .filter(|s| s.distance.is_some_and(|d| d <= 0.5) && s.compatible.is_some())
-            .map(|s| s.weight)
-            .sum();
-        (oriented > 0.).then(|| {
-            samples
-                .iter()
-                .filter(|s| s.distance.is_some_and(|d| d <= 0.5) && s.compatible == Some(true))
-                .map(|s| s.weight)
-                .sum::<f64>()
-        })
-    });
-    let mut reverse = reverse;
+    let policy_support = [&forward, &reverse].map(|samples| policy_covered_area(samples));
     let (distances, area) = if areas[0] <= areas[1] {
         (&mut forward, areas[0])
     } else {
@@ -274,6 +269,21 @@ pub(crate) fn score_common_region(
             fixed.samples[0].population_area_mm2,
         ],
         policy_support,
+    })
+}
+
+fn policy_covered_area(samples: &[WeightedDistance]) -> Option<f64> {
+    let oriented: f64 = samples
+        .iter()
+        .filter(|s| s.distance.is_some_and(|d| d <= 0.5) && s.compatible.is_some())
+        .map(|s| s.weight)
+        .sum();
+    (oriented > 0.).then(|| {
+        samples
+            .iter()
+            .filter(|s| s.distance.is_some_and(|d| d <= 0.5) && s.compatible == Some(true))
+            .map(|s| s.weight)
+            .sum()
     })
 }
 
@@ -540,6 +550,52 @@ mod tests {
             weighted_trim_sweep(&mut distances, 128., 1., &cancelled),
             Err(GeometryStop::Cancelled)
         );
+    }
+
+    #[test]
+    fn proxy_target_cannot_supply_original_orientation_evidence() {
+        let mesh = crate::proposal_test_support::arch::plane();
+        let control = GeometryControl::unlimited();
+        let prepare = |side| {
+            crate::prepare_alignment_surface(
+                crate::MeshInput {
+                    soup: mesh.soup(),
+                    world_from_local: glam::DAffine3::IDENTITY,
+                    revision: 1,
+                },
+                side,
+                crate::RegionPolicy::AllEligible,
+                &control,
+            )
+            .unwrap()
+            .surface
+            .unwrap()
+        };
+        let moving = prepare(crate::SurfaceSide::Moving);
+        let mut fixed = prepare(crate::SurfaceSide::Fixed);
+        fixed.exact_original = false;
+        fixed.quality.orientation_coherent = false;
+        for batch in &mut fixed.samples {
+            for sample in &mut batch.samples {
+                sample.normal = None;
+            }
+        }
+        let score = score_common_region(
+            &moving,
+            &fixed,
+            Rigid::IDENTITY,
+            CoarseScoring {
+                policy: NormalPolicy::Match,
+                samples_per_side: 128,
+                ceiling: 1.,
+                proxies: None,
+            },
+            &control,
+        )
+        .unwrap();
+        assert!(score.rms.is_some());
+        assert_eq!(score.orientation, None);
+        assert_eq!(score.policy_support, [None; 2]);
     }
 
     #[test]
