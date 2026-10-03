@@ -62,9 +62,7 @@ const OPEN_REQUEST_WAKE_BURST_STEPS: usize = 48;
 pub(crate) struct SingleInstance {
     #[cfg(windows)]
     handle: Option<HANDLE>,
-    #[cfg(all(not(windows), not(target_os = "macos")))]
-    lock_path: Option<PathBuf>,
-    #[cfg(target_os = "macos")]
+    #[cfg(not(windows))]
     lock_file: Option<std::fs::File>,
     secondary: bool,
 }
@@ -100,15 +98,9 @@ impl Drop for SingleInstance {
             let _ = unsafe { CloseHandle(handle) };
         }
 
-        #[cfg(all(not(windows), not(target_os = "macos")))]
-        if let Some(path) = self.lock_path.take() {
-            let _ = std::fs::remove_file(path);
-        }
-
-        // On macOS the open file descriptor owns the kernel lock. Dropping the
-        // field releases it; leave the stable lock file in place so a second
-        // process can never race a pathname replacement against the lock.
-        #[cfg(target_os = "macos")]
+        // The descriptor owns the kernel lock. Leave the stable inode in
+        // place so a second process cannot race a pathname replacement.
+        #[cfg(not(windows))]
         let _ = self.lock_file.take();
     }
 }

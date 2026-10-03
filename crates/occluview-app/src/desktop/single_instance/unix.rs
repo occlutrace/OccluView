@@ -4,7 +4,9 @@ use anyhow::{Context, Result};
 use eframe::egui;
 use std::io::{Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
 
@@ -74,52 +76,34 @@ fn acquire_lock_file(lock_path: PathBuf) -> Result<SingleInstance> {
         std::fs::create_dir_all(parent).context("creating single-instance directory")?;
     }
 
-    loop {
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&lock_path)
-        {
-            Ok(mut lock_file) => {
-                writeln!(lock_file, "{}", std::process::id())
-                    .context("writing single-instance lock file")?;
-                return Ok(SingleInstance {
-                    lock_path: Some(lock_path),
-                    secondary: false,
-                });
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                if lock_file_owner_is_running(&lock_path) {
-                    return Ok(SingleInstance {
-                        lock_path: None,
-                        secondary: true,
-                    });
-                }
-                std::fs::remove_file(&lock_path)
-                    .context("removing stale single-instance lock file")?;
-            }
-            Err(error) => return Err(error).context("creating single-instance lock file"),
+    let mut lock_file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .context("opening single-instance lock file")?;
+    match lock_file.try_lock() {
+        Ok(()) => {
+            // Ownership is established before publishing the diagnostic PID.
+            lock_file
+                .set_len(0)
+                .context("clearing single-instance PID")?;
+            writeln!(lock_file, "{}", std::process::id())
+                .context("writing single-instance lock file")?;
+            Ok(SingleInstance {
+                lock_file: Some(lock_file),
+                secondary: false,
+            })
+        }
+        Err(std::fs::TryLockError::WouldBlock) => Ok(SingleInstance {
+            lock_file: None,
+            secondary: true,
+        }),
+        Err(std::fs::TryLockError::Error(error)) => {
+            Err(error).context("acquiring single-instance file lock")
         }
     }
-}
-
-fn lock_file_owner_is_running(path: &Path) -> bool {
-    read_lock_file_pid(path).is_some_and(process_is_running)
-}
-
-fn read_lock_file_pid(path: &Path) -> Option<u32> {
-    let text = std::fs::read_to_string(path).ok()?;
-    text.trim().parse::<u32>().ok().filter(|pid| *pid > 0)
-}
-
-#[cfg(target_os = "linux")]
-fn process_is_running(pid: u32) -> bool {
-    Path::new("/proc").join(pid.to_string()).exists()
-}
-
-#[cfg(not(target_os = "linux"))]
-fn process_is_running(_pid: u32) -> bool {
-    true
 }
 
 fn bind_socket_listener() -> std::io::Result<UnixListener> {
@@ -167,29 +151,68 @@ mod tests {
     use super::*;
 
     #[test]
-    fn lock_file_pid_parser_rejects_empty_or_invalid_values() {
+    fn an_unpublished_pid_cannot_create_a_second_primary() {
+        let path =
+            std::env::temp_dir().join(format!("occluview-unpublished-lock-{}", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let owner = std::fs::OpenOptions::new()
+            .create_new(true)
+            .read(true)
+            .write(true)
+            .open(&path);
+        assert!(owner.is_ok());
+        let Ok(owner) = owner else {
+            panic!("lock setup failed")
+        };
+        assert!(owner.try_lock().is_ok());
+        let contender = acquire_lock_file(path.clone());
+        assert!(contender.is_ok());
+        let Ok(contender) = contender else {
+            panic!("acquisition failed")
+        };
+        assert!(
+            contender.is_secondary(),
+            "the primary owns the file before publishing its PID"
+        );
+        drop(contender);
+        drop(owner);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn lock_file_contents_cannot_override_kernel_ownership() {
         let path = std::env::temp_dir().join(format!("occluview-lock-pid-{}", std::process::id()));
-
-        assert!(std::fs::write(&path, "").is_ok());
-        assert_eq!(read_lock_file_pid(&path), None);
-
-        assert!(std::fs::write(&path, "not-a-pid").is_ok());
-        assert_eq!(read_lock_file_pid(&path), None);
-
-        assert!(std::fs::write(&path, "0").is_ok());
-        assert_eq!(read_lock_file_pid(&path), None);
-
-        assert!(std::fs::write(&path, "42\n").is_ok());
-        assert_eq!(read_lock_file_pid(&path), Some(42));
-
+        for text in ["", "not-a-pid", "0", "42\n"] {
+            assert!(std::fs::write(&path, text).is_ok());
+            let instance = acquire_lock_file(path.clone());
+            assert!(instance.is_ok());
+            let Ok(instance) = instance else {
+                panic!("acquisition failed")
+            };
+            assert!(!instance.is_secondary());
+            assert_eq!(
+                std::fs::read_to_string(&path).ok(),
+                Some(format!("{}\n", std::process::id()))
+            );
+            drop(instance);
+        }
         let _ = std::fs::remove_file(path);
     }
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn linux_lock_file_owner_detects_current_process() {
-        assert!(process_is_running(std::process::id()));
-        assert!(!process_is_running(u32::MAX));
+    fn a_current_pid_without_kernel_ownership_does_not_block_startup() {
+        let path =
+            std::env::temp_dir().join(format!("occluview-current-pid-{}", std::process::id()));
+        assert!(std::fs::write(&path, std::process::id().to_string()).is_ok());
+        let instance = acquire_lock_file(path.clone());
+        assert!(instance.is_ok());
+        let Ok(instance) = instance else {
+            panic!("acquisition failed")
+        };
+        assert!(!instance.is_secondary());
+        drop(instance);
+        let _ = std::fs::remove_file(path);
     }
 
     #[cfg(target_os = "linux")]
@@ -213,9 +236,23 @@ mod tests {
         };
 
         assert!(!instance.is_secondary());
-        assert_eq!(read_lock_file_pid(&path), Some(std::process::id()));
+        assert_eq!(
+            std::fs::read_to_string(&path).ok(),
+            Some(format!("{}\n", std::process::id()))
+        );
         drop(instance);
-        assert!(!path.exists());
+        assert!(
+            path.exists(),
+            "keep the stable inode after releasing ownership"
+        );
+        let restarted = acquire_lock_file(path.clone());
+        assert!(restarted.is_ok());
+        let Ok(restarted) = restarted else {
+            panic!("restart failed")
+        };
+        assert!(!restarted.is_secondary());
+        drop(restarted);
+        let _ = std::fs::remove_file(path);
         let _ = std::fs::remove_dir(parent);
     }
 
@@ -231,7 +268,12 @@ mod tests {
             panic!("required test setup or expected result was missing");
         };
         assert!(std::fs::create_dir_all(&parent).is_ok());
-        assert!(std::fs::write(&path, std::process::id().to_string()).is_ok());
+        let primary = acquire_lock_file(path.clone());
+        assert!(primary.is_ok());
+        let Ok(primary) = primary else {
+            panic!("primary acquisition failed")
+        };
+        assert!(!primary.is_secondary());
 
         let instance = acquire_lock_file(path.clone());
         assert!(instance.is_ok(), "live lock should be secondary");
@@ -242,6 +284,7 @@ mod tests {
         assert!(instance.is_secondary());
         assert!(path.exists());
         drop(instance);
+        drop(primary);
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_dir(parent);
     }
