@@ -540,6 +540,7 @@ fn match_features(
     matches
         .try_reserve_exact(4_096)
         .map_err(|_| GeometryStop::ResourceLimit)?;
+    let mut zero_nearest: Option<Vec<(f64, usize)>> = None;
     for (i, descriptor) in source.iter().enumerate() {
         let metric = |a: &[f64], b: &[f64]| {
             if control.charge_point_pairs(1).is_err() {
@@ -548,19 +549,34 @@ fn match_features(
                 squared_euclidean(a, b)
             }
         };
-        let mut nearest = tree
-            .nearest(descriptor, 3, &metric)
-            .map_err(|_| GeometryStop::Numerical)?;
-        if let Some(stop) = control.checkpoint() {
-            return Err(stop);
-        }
-        nearest.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(b.1)));
+        // An empty local histogram has the same exact descriptor query at
+        // every anchor. Cache only this constant, not approximate neighbors.
+        let zero = descriptor.iter().all(|value| *value == 0.);
+        control.charge_operations(1)?;
+        let nearest = if let Some(held) = zero.then_some(zero_nearest.as_ref()).flatten() {
+            held.clone()
+        } else {
+            let mut nearest = tree
+                .nearest(descriptor, 3, &metric)
+                .map_err(|_| GeometryStop::Numerical)?
+                .into_iter()
+                .map(|(distance, &other)| (distance, other))
+                .collect::<Vec<_>>();
+            if let Some(stop) = control.checkpoint() {
+                return Err(stop);
+            }
+            nearest.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+            if zero {
+                zero_nearest = Some(nearest.clone());
+            }
+            nearest
+        };
         let ratio = if nearest.len() > 1 {
             nearest[0].0 / nearest[1].0.max(f64::MIN_POSITIVE)
         } else {
             1.
         };
-        for (_, &other) in nearest
+        for (_, other) in nearest
             .into_iter()
             .take(if ratio < 0.9f64.powi(2) { 1 } else { 3 })
         {
@@ -617,6 +633,30 @@ fn consensus(
 mod tests {
     use super::*;
     use glam::DQuat;
+
+    #[test]
+    fn zero_descriptor_queries_reuse_exact_matches() {
+        let mut target = vec![[0.; SIZE]; 128];
+        for (i, descriptor) in target.iter_mut().enumerate() {
+            descriptor[i % SIZE] = 1.;
+        }
+        let single = GeometryControl::unlimited();
+        let oracle = match_features(&[[0.; SIZE]], &target, &single).unwrap();
+        let shared = GeometryControl::unlimited();
+        let matches = match_features(&vec![[0.; SIZE]; 128], &target, &shared).unwrap();
+        assert_eq!(matches.len(), oracle.len() * 128);
+        for (i, group) in matches.chunks(oracle.len()).enumerate() {
+            for (actual, expected) in group.iter().zip(&oracle) {
+                assert_eq!(actual.source, i);
+                assert_eq!(actual.target, expected.target);
+                assert_eq!(actual.ratio.to_bits(), expected.ratio.to_bits());
+            }
+        }
+        assert_eq!(
+            shared.counters().point_pair_tests,
+            single.counters().point_pair_tests
+        );
+    }
 
     #[test]
     fn empty_feature_histograms_cannot_supply_a_rigid_triplet() {
