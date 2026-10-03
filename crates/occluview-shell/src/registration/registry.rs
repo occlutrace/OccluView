@@ -25,7 +25,7 @@ pub(super) fn create_key_at(root: HKEY, subkey: &HSTRING) -> windows::core::Resu
     if r.0 == ERROR_SUCCESS {
         Ok(hkey)
     } else {
-        Err(windows::core::Error::from_thread())
+        Err(r.into())
     }
 }
 
@@ -55,7 +55,7 @@ pub(super) fn open_key_for_value_update_at(
     } else if r.0 == ERROR_FILE_NOT_FOUND || r.0 == ERROR_PATH_NOT_FOUND {
         Ok(None)
     } else {
-        Err(windows::core::Error::from_thread())
+        Err(r.into())
     }
 }
 
@@ -89,7 +89,7 @@ pub(super) fn set_string(
     if r.0 == ERROR_SUCCESS {
         Ok(())
     } else {
-        Err(windows::core::Error::from_thread())
+        Err(r.into())
     }
 }
 
@@ -100,7 +100,7 @@ pub(super) fn set_dword(hkey: HKEY, name: &HSTRING, value: u32) -> windows::core
     if r.0 == ERROR_SUCCESS {
         Ok(())
     } else {
-        Err(windows::core::Error::from_thread())
+        Err(r.into())
     }
 }
 
@@ -127,7 +127,7 @@ pub(super) fn delete_value_at(
     if r.0 == ERROR_SUCCESS || r.0 == ERROR_FILE_NOT_FOUND {
         Ok(())
     } else {
-        Err(windows::core::Error::from_thread())
+        Err(r.into())
     }
 }
 
@@ -151,7 +151,7 @@ pub(super) fn delete_value_if_matches(
         if r.0 == ERROR_SUCCESS || r.0 == ERROR_FILE_NOT_FOUND {
             Ok(())
         } else {
-            Err(windows::core::Error::from_thread())
+            Err(r.into())
         }
     } else {
         Ok(())
@@ -196,7 +196,7 @@ pub(super) fn query_string_value(
         return Ok(None);
     }
     if r.0 != ERROR_SUCCESS {
-        return Err(windows::core::Error::from_thread());
+        return Err(r.into());
     }
     if value_type != REG_SZ || byte_len == 0 {
         return Ok(None);
@@ -215,7 +215,7 @@ pub(super) fn query_string_value(
         )
     };
     if r.0 != ERROR_SUCCESS {
-        return Err(windows::core::Error::from_thread());
+        return Err(r.into());
     }
     let (wide_bytes, _) = bytes.as_chunks::<2>();
     let mut wide = wide_bytes
@@ -248,6 +248,25 @@ pub(super) fn delete_tree_at(root: HKEY, subkey: &HSTRING) -> windows::core::Res
     if r.0 == ERROR_SUCCESS || r.0 == ERROR_FILE_NOT_FOUND {
         Ok(())
     } else {
-        Err(windows::core::Error::from_thread())
+        Err(r.into())
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows::Win32::Foundation::{SetLastError, ERROR_ACCESS_DENIED, ERROR_INVALID_HANDLE};
+
+    #[test]
+    fn registry_errors_use_the_returned_win32_code() {
+        // SAFETY: this only sets this test thread's last-error value.
+        unsafe { SetLastError(ERROR_ACCESS_DENIED) };
+        let error = set_string(HKEY::default(), None, &HSTRING::from("value"))
+            .expect_err("invalid registry handle");
+        assert_eq!(
+            error.code(),
+            windows::core::HRESULT::from_win32(ERROR_INVALID_HANDLE.0)
+        );
+    }
+
 }

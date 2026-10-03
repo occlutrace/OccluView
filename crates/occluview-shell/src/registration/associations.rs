@@ -295,7 +295,7 @@ fn delete_default_icon_if_occluview(subkey: &HSTRING) -> windows::core::Result<(
         if r.0 == ERROR_SUCCESS || r.0 == ERROR_FILE_NOT_FOUND {
             Ok(())
         } else {
-            Err(windows::core::Error::from_thread())
+            Err(r.into())
         }
     } else {
         Ok(())

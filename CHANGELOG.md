@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Report the actual Windows registry error when shell registration fails.
+
 - Keep the preview object alive while window callbacks or modal menus are active.
 
 - Preserve Windows shell-item filenames containing unpaired UTF-16 code units.
