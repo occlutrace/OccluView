@@ -111,11 +111,11 @@ fn hypotheses(
     schedules
         .try_reserve_exact(4)
         .map_err(|_| GeometryStop::ResourceLimit)?;
-    for radius in [2., 4.] {
-        let a = sign_descriptors(&source, radius, false, control)?;
-        for reversed in [false, true] {
-            let b = sign_descriptors(&target, radius, reversed, control)?;
-            let matches = match_features(&a, &b, control)?;
+    let source_descriptors = descriptor_variants(&source, &[false], control)?;
+    let target_descriptors = descriptor_variants(&target, &[false, true], control)?;
+    for (radius, a) in source_descriptors.iter().enumerate() {
+        for (sign, reversed) in [false, true].into_iter().enumerate() {
+            let matches = match_features(a, &target_descriptors[radius * 2 + sign], control)?;
             let ordinal = schedules.len() as u64;
             schedules.push(Schedule {
                 matches,
@@ -268,6 +268,27 @@ fn cloud(
     Ok(cloud)
 }
 
+fn descriptor_variants(
+    cloud: &[Feature],
+    signs: &[bool],
+    control: &GeometryControl,
+) -> Result<Vec<Vec<[f64; SIZE]>>, GeometryStop> {
+    let neighbors = geometric_neighbors(cloud, control)?;
+    let mut result = Vec::new();
+    result
+        .try_reserve_exact(signs.len().saturating_mul(2))
+        .map_err(|_| GeometryStop::ResourceLimit)?;
+    for radius in [2., 4.] {
+        for &reversed in signs {
+            result.push(descriptors_from_neighbors(
+                cloud, &neighbors, radius, reversed, control,
+            )?);
+        }
+    }
+    Ok(result)
+}
+
+#[cfg(test)]
 #[allow(clippy::cast_precision_loss)]
 fn sign_descriptors(
     cloud: &[Feature],
@@ -350,6 +371,121 @@ fn sign_descriptors(
         let mut weighted = [0.; SIZE];
         for &(other, distance) in local {
             control.charge_operations(1)?;
+            for (slot, value) in weighted.iter_mut().enumerate() {
+                *value += spfh[other][slot] / distance;
+            }
+        }
+        normalize(&mut weighted);
+        for (value, extra) in histogram.iter_mut().zip(weighted) {
+            *value += extra;
+        }
+        normalize(&mut histogram);
+        result.push(histogram);
+    }
+    Ok(result)
+}
+/// Radius and normal sign do not change the nearest-65 geometric population.
+/// Keep its stable distance/index order once for all descriptor variants.
+fn geometric_neighbors(
+    cloud: &[Feature],
+    control: &GeometryControl,
+) -> Result<Vec<Vec<(usize, f64)>>, GeometryStop> {
+    let mut tree = KdTree::new(3);
+    for (i, p) in cloud.iter().enumerate() {
+        control.charge_operations(1)?;
+        tree.add(p.point.to_array(), i)
+            .map_err(|_| GeometryStop::Numerical)?;
+    }
+    let mut neighbors = Vec::new();
+    neighbors
+        .try_reserve_exact(cloud.len())
+        .map_err(|_| GeometryStop::ResourceLimit)?;
+    for (i, p) in cloud.iter().enumerate() {
+        let metric = |a: &[f64], b: &[f64]| {
+            if control.charge_point_pairs(1).is_err() {
+                f64::MAX
+            } else {
+                squared_euclidean(a, b)
+            }
+        };
+        let nearest = tree
+            .nearest(&p.point.to_array(), 65, &metric)
+            .map_err(|_| GeometryStop::Numerical)?;
+        if let Some(stop) = control.checkpoint() {
+            return Err(stop);
+        }
+        let mut local = Vec::new();
+        local
+            .try_reserve_exact(64)
+            .map_err(|_| GeometryStop::ResourceLimit)?;
+        for (distance, &other) in nearest {
+            if other != i && distance > 1e-12 && distance <= 16. {
+                local.push((other, distance));
+            }
+        }
+        local.sort_by(|a, b| a.1.sqrt().total_cmp(&b.1.sqrt()).then(a.0.cmp(&b.0)));
+        neighbors.push(local);
+    }
+    Ok(neighbors)
+}
+
+fn descriptors_from_neighbors(
+    cloud: &[Feature],
+    neighbors: &[Vec<(usize, f64)>],
+    radius: f64,
+    reversed: bool,
+    control: &GeometryControl,
+) -> Result<Vec<[f64; SIZE]>, GeometryStop> {
+    let mut spfh = Vec::new();
+    spfh.try_reserve_exact(cloud.len())
+        .map_err(|_| GeometryStop::ResourceLimit)?;
+    for (i, p) in cloud.iter().enumerate() {
+        let local = &neighbors[i];
+        let mut histogram = [0.; SIZE];
+        for &(other, distance) in local
+            .iter()
+            .filter(|(_, distance)| *distance <= radius * radius)
+        {
+            control.charge_operations(1)?;
+            let distance = distance.sqrt();
+            let mut delta = (cloud[other].point - p.point) / distance;
+            let sign = if reversed { -1. } else { 1. };
+            let mut first = p.normal * sign;
+            let mut second = cloud[other].normal * sign;
+            let a = first.dot(delta);
+            let b = second.dot(delta);
+            let phi = if a.abs() < b.abs() {
+                std::mem::swap(&mut first, &mut second);
+                delta = -delta;
+                -b
+            } else {
+                a
+            };
+            let tangent = delta.cross(first).normalize_or_zero();
+            if tangent.length_squared() < 0.5 {
+                continue;
+            }
+            let theta = first.cross(tangent).dot(second).atan2(first.dot(second));
+            histogram[bin(theta / std::f64::consts::PI)] += 1.;
+            histogram[11 + bin(tangent.dot(second))] += 1.;
+            histogram[22 + bin(phi)] += 1.;
+        }
+        normalize(&mut histogram);
+        spfh.push(histogram);
+    }
+    let mut result = Vec::new();
+    result
+        .try_reserve_exact(spfh.len())
+        .map_err(|_| GeometryStop::ResourceLimit)?;
+    for (i, local) in neighbors.iter().enumerate() {
+        let mut histogram = spfh[i];
+        let mut weighted = [0.; SIZE];
+        for &(other, distance) in local
+            .iter()
+            .filter(|(_, distance)| *distance <= radius * radius)
+        {
+            control.charge_operations(1)?;
+            let distance = distance.sqrt();
             for (slot, value) in weighted.iter_mut().enumerate() {
                 *value += spfh[other][slot] / distance;
             }
@@ -469,6 +605,37 @@ fn consensus(
 mod tests {
     use super::*;
     use glam::DQuat;
+
+    #[test]
+    fn descriptor_variants_share_one_geometric_neighborhood_search() {
+        let cloud = (0..256u32)
+            .map(|i| Feature {
+                point: DVec3::new(
+                    f64::from(i % 16) * 0.47,
+                    f64::from(i / 16) * 0.51,
+                    f64::from(i % 7) * 0.03,
+                ),
+                normal: DVec3::new(0.02 * f64::from(i % 16), 0.03 * f64::from(i / 16), 1.)
+                    .normalize(),
+            })
+            .collect::<Vec<_>>();
+        let single = GeometryControl::unlimited();
+        let expected = [2., 4.]
+            .into_iter()
+            .flat_map(|radius| {
+                [false, true].map(|sign| sign_descriptors(&cloud, radius, sign, &single).unwrap())
+            })
+            .collect::<Vec<_>>();
+        let shared = GeometryControl::unlimited();
+        let actual = descriptor_variants(&cloud, &[false, true], &shared).unwrap();
+        assert_eq!(actual, expected);
+        assert!(
+            shared.counters().point_pair_tests * 4 <= single.counters().point_pair_tests,
+            "repeated spatial searches: {} vs {}",
+            shared.counters().point_pair_tests,
+            single.counters().point_pair_tests
+        );
+    }
 
     #[test]
     fn histograms_preserve_rigid_geometry_and_both_normal_signs() {
