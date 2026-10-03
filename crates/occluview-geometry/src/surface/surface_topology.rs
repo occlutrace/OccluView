@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use glam::{DVec3, Vec3};
 
 use super::surface_geometry::Feature;
+use super::{allocated_vec, GeometryControl, GeometryStop};
 
 /// Per-slot and per-vertex topology of the triangles an index kept.
 #[derive(Clone, Debug, Default)]
@@ -34,6 +35,7 @@ pub(super) struct Topology {
     pub(super) vertex_normals: Vec<Vec3>,
     /// Whether a welded vertex lies on the open border.
     pub(super) vertex_border: Vec<bool>,
+    pub(super) orientation_coherent: bool,
 }
 
 impl Topology {
@@ -88,6 +90,7 @@ impl Topology {
 struct EdgeUse {
     count: u32,
     normal_sum: DVec3,
+    direction_sum: i32,
 }
 
 /// Collects triangles in source order and turns them into a [`Topology`].
@@ -104,6 +107,27 @@ pub(super) struct TopologyBuilder {
 }
 
 impl TopologyBuilder {
+    pub(super) fn with_capacity(
+        vertices: usize,
+        triangles: usize,
+        control: &GeometryControl,
+    ) -> Result<Self, GeometryStop> {
+        let mut dense = HashMap::new();
+        dense
+            .try_reserve(vertices)
+            .map_err(|_| control.stop(GeometryStop::ResourceLimit))?;
+        let mut edges = HashMap::new();
+        edges
+            .try_reserve(triangles.saturating_mul(3))
+            .map_err(|_| control.stop(GeometryStop::ResourceLimit))?;
+        Ok(Self {
+            dense,
+            edges,
+            vertex_sums: allocated_vec(vertices, control)?,
+            kept: allocated_vec(triangles, control)?,
+        })
+    }
+
     fn id(&mut self, welded: usize) -> u32 {
         let next = u32::try_from(self.vertex_sums.len()).unwrap_or(u32::MAX);
         let id = *self.dense.entry(welded).or_insert(next);
@@ -120,14 +144,20 @@ impl TopologyBuilder {
 
     /// A triangle that is not indexed (zero area) but still joins its
     /// neighbours along its edges.
-    pub(super) fn add_connector(&mut self, welded: [usize; 3]) {
+    pub(super) fn add_connector(
+        &mut self,
+        welded: [usize; 3],
+        control: &GeometryControl,
+    ) -> Result<(), GeometryStop> {
         let ids = welded.map(|vertex| self.id(vertex));
         for edge in 0..3 {
+            control.charge_operations(1)?;
             self.edges
                 .entry(Self::edge_key(ids, edge))
                 .or_default()
                 .count += 1;
         }
+        Ok(())
     }
 
     /// An indexed triangle, in slot order before any reordering.
@@ -136,12 +166,19 @@ impl TopologyBuilder {
         welded: [usize; 3],
         corners: &[DVec3; 3],
         unit_normal: DVec3,
-    ) {
+        control: &GeometryControl,
+    ) -> Result<(), GeometryStop> {
         let ids = welded.map(|vertex| self.id(vertex));
         for edge in 0..3 {
+            control.charge_operations(1)?;
             let entry = self.edges.entry(Self::edge_key(ids, edge)).or_default();
             entry.count += 1;
             entry.normal_sum += unit_normal;
+            entry.direction_sum += if ids[edge] < ids[(edge + 1) % 3] {
+                1
+            } else {
+                -1
+            };
         }
         for corner in 0..3 {
             let to_next = corners[(corner + 1) % 3] - corners[corner];
@@ -154,20 +191,31 @@ impl TopologyBuilder {
             }
         }
         self.kept.push(ids);
+        Ok(())
     }
 
-    pub(super) fn finish(self) -> Topology {
-        let mut vertex_border = vec![false; self.vertex_sums.len()];
-        let mut edge_normals = Vec::with_capacity(self.kept.len());
-        let mut edge_border = Vec::with_capacity(self.kept.len());
+    pub(super) fn finish(self, control: &GeometryControl) -> Result<Topology, GeometryStop> {
+        let mut vertex_border = allocated_vec(self.vertex_sums.len(), control)?;
+        let mut vertex_normals = allocated_vec(self.vertex_sums.len(), control)?;
+        for sum in &self.vertex_sums {
+            control.charge_operations(1)?;
+            vertex_border.push(false);
+            vertex_normals.push(sum.normalize_or_zero().as_vec3());
+        }
+        let mut edge_normals = allocated_vec(self.kept.len(), control)?;
+        let mut edge_border = allocated_vec(self.kept.len(), control)?;
+        let mut orientation_coherent = true;
         for &ids in &self.kept {
             let mut normals = [Vec3::ZERO; 3];
             let mut border = 0u8;
             for (edge, normal) in normals.iter_mut().enumerate() {
+                control.charge_operations(1)?;
                 let key = Self::edge_key(ids, edge);
                 let Some(entry) = self.edges.get(&key) else {
                     continue;
                 };
+                orientation_coherent &=
+                    entry.count <= 2 && (entry.count != 2 || entry.direction_sum == 0);
                 *normal = entry.normal_sum.normalize_or_zero().as_vec3();
                 if entry.count == 1 {
                     border |= 1 << edge;
@@ -181,16 +229,13 @@ impl TopologyBuilder {
             edge_normals.push(normals);
             edge_border.push(border);
         }
-        Topology {
+        Ok(Topology {
             corners: self.kept,
             edge_normals,
             edge_border,
-            vertex_normals: self
-                .vertex_sums
-                .iter()
-                .map(|sum| sum.normalize_or_zero().as_vec3())
-                .collect(),
+            vertex_normals,
             vertex_border,
-        }
+            orientation_coherent,
+        })
     }
 }

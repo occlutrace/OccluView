@@ -7,7 +7,10 @@ mod cancel;
 mod index;
 mod soup;
 
-pub use cancel::CancelFlag;
+pub use cancel::{
+    BuildOutcome, CancelFlag, GeometryControl, GeometryCounters, GeometryLimits, GeometryMemory,
+    GeometryStop, QueryOutcome,
+};
 pub use index::{SurfaceHit, SurfaceIndex};
 pub use soup::Soup;
 

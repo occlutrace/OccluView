@@ -4,7 +4,7 @@
 //! traversal is an optimisation over "test every triangle" and must return the
 //! same answer, tie-break included.
 
-#![allow(clippy::expect_used, clippy::panic)]
+#![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
 use super::Soup;
 use super::{closest_feature_on_triangle, Feature, SurfaceHit, SurfaceIndex};
@@ -571,4 +571,219 @@ fn marking_the_whole_mesh_leaves_no_index() {
         mask: Some(&mask),
     })
     .is_none());
+}
+
+/// Exact controlled queries must preserve unrestricted grid and brute answers.
+#[test]
+fn controlled_queries_agree_on_ten_thousand_probes() {
+    use super::super::GeometryLimits;
+    use super::{BuildOutcome, GeometryControl, QueryOutcome};
+    let (positions, indices) = awkward_mesh();
+    let mesh = soup(&positions, &indices);
+    let unrestricted = SurfaceIndex::build(mesh).unwrap();
+    let control = GeometryControl::new(
+        super::super::CancelFlag::new(),
+        std::time::Duration::from_secs(10),
+        GeometryLimits::default(),
+    );
+    let BuildOutcome::Complete(index) =
+        SurfaceIndex::build_controlled(mesh, glam::DAffine3::IDENTITY, &control)
+    else {
+        panic!("exact synthetic index");
+    };
+    for i in 0..10_000usize {
+        let point = DVec3::new(
+            super::radical_inverse(i + 1, 2) * 70. - 20.,
+            super::radical_inverse(i + 1, 3) * 70. - 20.,
+            super::radical_inverse(i + 1, 5) * 12. - 6.,
+        );
+        let radius = 0.1 + super::radical_inverse(i + 1, 7) * 15.;
+        let QueryOutcome::Complete(actual) = index.nearest_controlled(point, radius, &control)
+        else {
+            panic!("bounded ordinary query");
+        };
+        let expected = unrestricted.nearest(point, radius);
+        let brute = brute_nearest(&unrestricted, point, radius);
+        assert_eq!(actual.map(|h| h.triangle), expected.map(|h| h.triangle));
+        assert_eq!(actual.map(|h| h.on_border), expected.map(|h| h.on_border));
+        assert_eq!(actual, brute);
+        if let (Some(a), Some(b)) = (actual, expected) {
+            assert!(a.point.distance(b.point) <= 1e-10);
+        }
+    }
+    assert_eq!(control.counters().query_calls, 10_000);
+}
+
+/// ID35: a dense bucket's upper bound never becomes exact nearest evidence.
+#[test]
+fn deadline_and_work_caps_are_honest_in_dense_queries() {
+    use super::super::{CancelFlag, GeometryLimits, GeometryStop};
+    use super::{GeometryControl, QueryOutcome};
+    let positions = [0., 0., 0., 10., 0., 0., 0., 10., 0.];
+    let indices: Vec<u32> = (0..20_000).flat_map(|_| [0, 1, 2]).collect();
+    let index = SurfaceIndex::build(soup(&positions, &indices)).unwrap();
+    let control = GeometryControl::new(
+        CancelFlag::new(),
+        std::time::Duration::from_secs(10),
+        GeometryLimits::default(),
+    );
+    let result = index.nearest_controlled(DVec3::new(2., 2., 1.), 2., &control);
+    assert!(matches!(
+        result,
+        QueryOutcome::Interrupted {
+            best: Some(_),
+            reason: GeometryStop::WorkLimit
+        }
+    ));
+    assert_eq!(control.counters().triangle_tests, 16_384);
+    assert_eq!(control.counters().query_calls, 1);
+    let expired = GeometryControl::new(
+        CancelFlag::new(),
+        std::time::Duration::ZERO,
+        GeometryLimits::default(),
+    );
+    assert!(matches!(
+        index.nearest_controlled(DVec3::ZERO, 1., &expired),
+        QueryOutcome::Interrupted {
+            best: None,
+            reason: GeometryStop::Deadline
+        }
+    ));
+    assert_eq!(expired.counters().triangle_tests, 0);
+    assert_eq!(index.nearest(DVec3::splat(f64::NAN), 1.), None);
+}
+
+/// ID35: fallible memory and topology/bucket work stop before exceeding caps.
+#[test]
+fn deadline_and_work_caps_are_honest_in_builds() {
+    use super::super::{CancelFlag, GeometryLimits, GeometryStop};
+    use super::{BuildOutcome, GeometryControl};
+    let (positions, indices) = plane(50, 0.5);
+    for (memory_bytes, operations, expected) in [
+        (4096, 80_000_000, GeometryStop::ResourceLimit),
+        (256 * 1024 * 1024, 5000, GeometryStop::WorkLimit),
+    ] {
+        let control = GeometryControl::new(
+            CancelFlag::new(),
+            std::time::Duration::from_secs(10),
+            GeometryLimits {
+                operations,
+                memory_bytes,
+                ..Default::default()
+            },
+        );
+        assert!(
+            matches!(SurfaceIndex::build_controlled(soup(&positions, &indices), glam::DAffine3::IDENTITY, &control), BuildOutcome::Partial { value: None, reason } if reason == expected)
+        );
+        assert!(control.counters().operations <= operations);
+        assert!(control.counters().peak_memory_bytes <= memory_bytes as u64);
+        assert_eq!(control.counters().memory_bytes, 0);
+    }
+}
+
+/// ID34: scheduled cancellation reaches topology, buckets, occupancy and inner queries.
+#[test]
+fn cancel_every_stage_of_surface_index() {
+    use super::super::{CancelFlag, GeometryLimits, GeometryStop};
+    use super::{BuildOutcome, GeometryControl};
+    use std::time::{Duration, Instant};
+    let (positions, indices) = plane(90, 0.4);
+    let baseline = GeometryControl::new(
+        CancelFlag::new(),
+        Duration::from_secs(10),
+        GeometryLimits::default(),
+    );
+    let BuildOutcome::Complete(index) = SurfaceIndex::build_controlled(
+        soup(&positions, &indices),
+        glam::DAffine3::IDENTITY,
+        &baseline,
+    ) else {
+        panic!("baseline index");
+    };
+    drop(index);
+    let operations = baseline.counters().operations;
+    for numerator in [1, 3, 6, 8, 9] {
+        let flag = CancelFlag::new();
+        let control = GeometryControl::new(
+            flag.clone(),
+            Duration::from_secs(10),
+            GeometryLimits::default(),
+        );
+        let boundary = operations * numerator / 10;
+        let (sent, received) = std::sync::mpsc::channel();
+        std::thread::scope(|scope| {
+            let echo = control.clone();
+            scope.spawn(move || {
+                let started = Instant::now();
+                while echo.counters().operations < boundary
+                    && started.elapsed() < Duration::from_secs(2)
+                {
+                    std::thread::yield_now();
+                }
+                let at = Instant::now();
+                flag.cancel();
+                sent.send(at).unwrap();
+            });
+            let result = SurfaceIndex::build_controlled(
+                soup(&positions, &indices),
+                glam::DAffine3::IDENTITY,
+                &control,
+            );
+            let terminal = Instant::now();
+            let cancelled = received.recv().unwrap();
+            assert!(matches!(
+                result,
+                BuildOutcome::Partial {
+                    value: None,
+                    reason: GeometryStop::Cancelled
+                }
+            ));
+            assert!(terminal.saturating_duration_since(cancelled) < Duration::from_millis(100));
+        });
+        assert_eq!(control.counters().memory_bytes, 0);
+    }
+    assert_inner_query_cancelled();
+}
+
+fn assert_inner_query_cancelled() {
+    use super::super::{CancelFlag, GeometryLimits, GeometryStop};
+    use super::{GeometryControl, QueryOutcome};
+    use std::time::{Duration, Instant};
+    let positions = [0., 0., 0., 10., 0., 0., 0., 10., 0.];
+    let indices: Vec<u32> = (0..40_000).flat_map(|_| [0, 1, 2]).collect();
+    let index = SurfaceIndex::build(soup(&positions, &indices)).unwrap();
+    let flag = CancelFlag::new();
+    let control = GeometryControl::new(
+        flag.clone(),
+        Duration::from_secs(10),
+        GeometryLimits {
+            single_query_tests: u64::MAX,
+            ..Default::default()
+        },
+    );
+    let (sent, received) = std::sync::mpsc::channel();
+    std::thread::scope(|scope| {
+        let echo = control.clone();
+        scope.spawn(move || {
+            let started = Instant::now();
+            while echo.counters().triangle_tests < 128 && started.elapsed() < Duration::from_secs(2)
+            {
+                std::thread::yield_now();
+            }
+            let at = Instant::now();
+            flag.cancel();
+            sent.send(at).unwrap();
+        });
+        let result = index.nearest_controlled(DVec3::new(2., 2., 1.), 2., &control);
+        let terminal = Instant::now();
+        let cancelled = received.recv().unwrap();
+        assert!(matches!(
+            result,
+            QueryOutcome::Interrupted {
+                reason: GeometryStop::Cancelled,
+                ..
+            }
+        ));
+        assert!(terminal.saturating_duration_since(cancelled) < Duration::from_millis(100));
+    });
 }
