@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Reject update responses that exceed the download limit even when their prefix has a valid signature.
+
 - Keep adjacent OBJ textures when a later material switch is unused by every face.
 
 - Keep contact patches and counts separate at extreme scan coordinates.
