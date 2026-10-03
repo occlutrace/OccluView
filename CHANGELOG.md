@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Reject invalid ASCII OFF edge counts consistently with binary OFF.
+
 - Open BOM-prefixed OFF files consistently with format detection.
 
 - Reject incomplete HPS XML instead of silently discarding surface attributes.
