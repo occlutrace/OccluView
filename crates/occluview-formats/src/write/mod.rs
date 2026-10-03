@@ -251,11 +251,11 @@ pub(super) fn sanitize_obj_name(name: &str) -> String {
         .collect()
 }
 
-/// Format an OBJ coordinate with six decimal places without allocating.
+/// Format an OBJ coordinate with enough digits to recover the original f32.
 pub(super) struct FmtF32(pub(super) f32);
 
 impl std::fmt::Display for FmtF32 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:.6}", self.0)
+        std::fmt::Display::fmt(&self.0, f)
     }
 }
