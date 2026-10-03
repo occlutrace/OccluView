@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Keep connected STL objects together when shared corners differ only in the sign of zero.
+
 - Disabled cuts preserve the uncut mesh without drawing a cross-section cap.
 
 - Close Windows registry keys after failed shell registration or cleanup operations.
