@@ -490,12 +490,19 @@ fn gather(
         if !point.is_finite() {
             return Err(GeometryStop::Numerical);
         }
-        let hit = match target
-            .original_index
-            .nearest_with_scratch(point, reach, &mut scratch)
+        let hit = if super::icp_overlap::outside_query_bounds(&target.original_index, point, reach)
         {
-            QueryOutcome::Complete(hit) => hit.filter(|h| !target.exact_original || !h.on_border),
-            QueryOutcome::Interrupted { reason, .. } => return Err(reason),
+            None
+        } else {
+            match target
+                .original_index
+                .nearest_with_scratch(point, reach, &mut scratch)
+            {
+                QueryOutcome::Complete(hit) => {
+                    hit.filter(|h| !target.exact_original || !h.on_border)
+                }
+                QueryOutcome::Interrupted { reason, .. } => return Err(reason),
+            }
         };
         let agreement = hit.and_then(|h| {
             sample
@@ -713,6 +720,27 @@ mod tests {
         }
     }
     #[test]
+    fn distant_basin_uses_exact_bounds_without_spending_nearest_calls() {
+        let control = GeometryControl::unlimited();
+        let surface = surface(&control);
+        let before = control.counters().query_calls;
+        let gathered = gather(
+            &surface,
+            &surface,
+            Rigid::new(DQuat::IDENTITY, DVec3::splat(1000.)),
+            2,
+            0.3,
+            false,
+            NormalPolicy::Unsigned,
+            &control,
+        )
+        .unwrap();
+        assert_eq!(gathered.len(), surface.samples[2].samples.len());
+        assert!(gathered.iter().all(|pair| pair.pair.is_none()));
+        assert_eq!(control.counters().query_calls, before);
+    }
+
+    #[test]
     fn converged_basins_share_later_work_without_consuming_rival_slots() {
         let control = GeometryControl::unlimited();
         let surface = surface(&control);
@@ -765,7 +793,16 @@ mod tests {
             &SearchSettings::default(),
             &control,
         );
-        assert_eq!(result.stop, Some(GeometryStop::WorkLimit));
+        // Exact box rejection can complete the distant no-support basins
+        // without consuming nearest-query admission. Both outcomes retain
+        // the leading dense checkpoint and stay within the same hard cap.
+        assert!(result
+            .stop
+            .is_none_or(|stop| stop == GeometryStop::WorkLimit));
+        if result.stop.is_none() {
+            assert_eq!(result.basins[0], 16);
+            assert!(control.counters().query_calls <= 100_000);
+        }
         assert!(result.basins[2] >= 1, "dense work={:?}", result.basins);
         assert!(result.basins[0] <= 16 && result.basins[1] <= 8 && result.basins[2] <= 5);
         let leading = result
