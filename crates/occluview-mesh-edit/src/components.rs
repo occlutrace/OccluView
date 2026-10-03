@@ -349,6 +349,30 @@ mod tests {
     }
 
     #[test]
+    fn signed_zero_soup_keeps_connected_selection() {
+        let source = grid(4, 3);
+        let selection = mask(source.triangle_count(), |_| true);
+        let expected = selected_connected_components(&source, &selection).unwrap();
+        let mut seed = 0x83a7_1c59_u32;
+        for _ in 0..32 {
+            let mut soup = explode_to_soup(&source);
+            for vertex in &mut soup.vertices {
+                for coordinate in &mut vertex.position {
+                    seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                    if *coordinate == 0.0 && seed & 0x8000_0000 != 0 {
+                        *coordinate = -0.0;
+                    }
+                }
+            }
+            assert_eq!(
+                selected_connected_components(&soup, &selection).unwrap(),
+                expected,
+                "zero sign cannot disconnect a geometrically shared edge"
+            );
+        }
+    }
+
+    #[test]
     fn single_triangle_soup_island_is_a_valid_component() {
         // A tiny sliver island (one triangle) is still a valid, panic-free part.
         let mesh = MeshEditBuffers {

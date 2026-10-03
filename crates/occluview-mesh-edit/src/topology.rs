@@ -52,11 +52,7 @@ pub(crate) fn indexed_topology(mesh: &MeshEditBuffers) -> CanonicalTopology {
 
 fn soup_weld_key(vertex: &EditVertex) -> SoupWeldKey {
     (
-        [
-            vertex.position[0].to_bits(),
-            vertex.position[1].to_bits(),
-            vertex.position[2].to_bits(),
-        ],
+        canonical_position_key(vertex.position),
         vertex.color,
         [vertex.uv[0].to_bits(), vertex.uv[1].to_bits()],
     )
