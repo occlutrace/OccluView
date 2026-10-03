@@ -169,7 +169,8 @@ impl FaceDecoder {
         // command while the list grows by one per command (measured: 20 000
         // commands 0.06 s, 40 000 0.23 s, 160 000 4.08 s). The growth is still
         // quadratic in a stream that never restarts (a real one restarts,
-        // which clears the list), and the request deadline bounds that.
+        // which clears the list). A caller deadline stops waiting for the
+        // result; it does not cancel this synchronous parser.
         let _ = self.edges.splice(
             self.current_edge_idx..=self.current_edge_idx,
             [
