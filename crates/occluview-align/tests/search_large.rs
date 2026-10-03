@@ -70,6 +70,11 @@ fn large_representation_remains_useful() {
             assert!((surface.eligible_area_mm2 - 100.).abs() < 1e-6);
             assert_eq!(surface.revision, count as u64);
             assert!(!surface.exact_original);
+            assert!(!surface.quality.orientation_coherent);
+            assert!(surface
+                .samples
+                .iter()
+                .all(|set| set.samples.iter().all(|sample| sample.normal.is_none())));
             let mut max_error = 0f64;
             for i in 0..8192 {
                 let world = DVec3::new(
