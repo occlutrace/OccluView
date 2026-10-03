@@ -11,6 +11,68 @@ use crate::{
 use occluview_geometry::surface::{GeometryControl, GeometryStop};
 use std::collections::{BTreeMap, BTreeSet};
 
+struct CachedMeasurement {
+    id: CandidateId,
+    pose: crate::Rigid,
+    full: bool,
+    evidence: CandidateEvidence,
+    center: glam::DVec3,
+    radius: f64,
+    jackknife: Option<Metric<[f64; 2]>>,
+}
+
+/// Completed evidence belongs to these immutable prepared populations and
+/// normal policy. Pose changes require fresh measurement; screening evidence
+/// never substitutes for full verification. Borrowing prevents surface edits.
+pub(crate) struct VerificationCache<'a> {
+    surfaces: [&'a PreparedSurface; 2],
+    policy: crate::NormalPolicy,
+    measurements: Vec<CachedMeasurement>,
+    probes: Vec<(crate::Rigid, AlignmentCandidate)>,
+    _memory: occluview_geometry::surface::GeometryMemory,
+}
+
+impl<'a> VerificationCache<'a> {
+    /// Admit a bounded job-private cache before storing completed evidence.
+    ///
+    /// # Errors
+    /// Returns cancellation, deadline or resource exhaustion on admission.
+    pub(crate) fn new(
+        moving: &'a PreparedSurface,
+        fixed: &'a PreparedSurface,
+        policy: crate::NormalPolicy,
+        control: &GeometryControl,
+    ) -> Result<Self, GeometryStop> {
+        let memory = control.reserve(512 * 1024)?;
+        let mut measurements = Vec::new();
+        measurements
+            .try_reserve_exact(32)
+            .map_err(|_| GeometryStop::ResourceLimit)?;
+        let mut probes = Vec::new();
+        probes
+            .try_reserve_exact(8)
+            .map_err(|_| GeometryStop::ResourceLimit)?;
+        Ok(Self {
+            surfaces: [moving, fixed],
+            policy,
+            measurements,
+            probes,
+            _memory: memory,
+        })
+    }
+
+    fn matches(
+        &self,
+        moving: &PreparedSurface,
+        fixed: &PreparedSurface,
+        policy: crate::NormalPolicy,
+    ) -> bool {
+        std::ptr::eq(self.surfaces[0], moving)
+            && std::ptr::eq(self.surfaces[1], fixed)
+            && self.policy == policy
+    }
+}
+
 /// Preserve the best numerical checkpoint on interruption and classify only
 /// completed independent passes. Public top-k never reduces the rival pool.
 #[expect(
@@ -18,12 +80,12 @@ use std::collections::{BTreeMap, BTreeSet};
     reason = "bounded transactional verification and candidate publication"
 )]
 pub(crate) fn verify_results(
-    moving: &PreparedSurface,
-    fixed: &PreparedSurface,
     settings: &SearchSettings,
     result: &mut AlignmentSearchResult,
     control: &GeometryControl,
+    cache: &mut VerificationCache<'_>,
 ) {
+    let [moving, fixed] = cache.surfaces;
     let _phase = crate::search_probe::Span::new(crate::search_probe::Phase::Verification, control);
     let _workspace = match control.reserve(2 * 1024 * 1024) {
         Ok(workspace) => workspace,
@@ -48,7 +110,7 @@ pub(crate) fn verify_results(
     // score. Screened rivals cannot establish the final full-resolution gap.
     for (index, candidate) in candidates.iter_mut().take(13).enumerate() {
         let full = index < 5;
-        match measure_candidate(moving, fixed, candidate, settings, full, control) {
+        match measure_candidate(moving, fixed, candidate, settings, full, control, cache) {
             Ok(Some(info)) => {
                 metadata.insert(candidate.id, info);
                 if full {
@@ -80,7 +142,7 @@ pub(crate) fn verify_results(
             if remote {
                 continue;
             }
-            match measure_candidate(moving, fixed, candidate, settings, true, control) {
+            match measure_candidate(moving, fixed, candidate, settings, true, control, cache) {
                 Ok(Some(info)) => {
                     metadata.insert(candidate.id, info);
                     fully_evaluated.insert(candidate.id);
@@ -108,7 +170,7 @@ pub(crate) fn verify_results(
             break;
         };
         let candidate = &mut candidates[index];
-        match measure_candidate(moving, fixed, candidate, settings, true, control) {
+        match measure_candidate(moving, fixed, candidate, settings, true, control, cache) {
             Ok(Some(info)) => {
                 metadata.insert(candidate.id, info);
                 fully_evaluated.insert(candidate.id);
@@ -129,15 +191,36 @@ pub(crate) fn verify_results(
             if radius <= 0. {
                 continue;
             }
-            match crate::icp::spatial_jackknife(
-                moving,
-                fixed,
-                pose,
-                settings.normal_policy,
-                center,
-                control,
-            ) {
+            let cached = cache
+                .measurements
+                .iter()
+                .find(|entry| {
+                    cache.matches(moving, fixed, settings.normal_policy)
+                        && entry.id == candidate.id
+                        && entry.pose == pose
+                })
+                .and_then(|entry| entry.jackknife);
+            let drift = if let Some(drift) = cached {
+                control.charge_operations(1).map(|()| drift)
+            } else {
+                crate::icp::spatial_jackknife(
+                    moving,
+                    fixed,
+                    pose,
+                    settings.normal_policy,
+                    center,
+                    control,
+                )
+            };
+            match drift {
                 Ok(drift) => {
+                    if let Some(entry) = cache
+                        .measurements
+                        .iter_mut()
+                        .find(|entry| entry.id == candidate.id && entry.pose == pose)
+                    {
+                        entry.jackknife = Some(drift);
+                    }
                     candidate.evidence.jackknife_mm_deg = drift;
                     candidate.evidence.jackknife_complete = matches!(drift, Metric::Measured(_));
                 }
@@ -155,7 +238,7 @@ pub(crate) fn verify_results(
                 {
                     Ok(probes) => {
                         for (ordinal, probe) in probes.into_iter().take(8).enumerate() {
-                            match evaluate_probe(moving, fixed, probe, settings, control) {
+                            match evaluate_probe(probe, settings, control, cache, ordinal) {
                                 Ok(Some(mut candidate)) => {
                                     candidate.id = CandidateId {
                                         family: 8,
@@ -202,11 +285,11 @@ pub(crate) fn verify_results(
     // The arch-local tooth-pitch autocorrelation set and conservative whole-area
     // uncertainty are not established by principal/global probes. Keep these
     // obligations visible and prohibit highest-class publication.
-    result.work.unfinished_stages.push("tooth-pitch-rivals");
-    result
-        .work
-        .unfinished_stages
-        .push("whole-area-support-bound");
+    for stage in ["tooth-pitch-rivals", "whole-area-support-bound"] {
+        if !result.work.unfinished_stages.contains(&stage) {
+            result.work.unfinished_stages.push(stage);
+        }
+    }
     for index in 0..candidates.len() {
         if !candidates[index].evidence.holdout_complete {
             continue;
@@ -313,6 +396,7 @@ fn measure_candidate(
     settings: &SearchSettings,
     full: bool,
     control: &GeometryControl,
+    cache: &mut VerificationCache<'_>,
 ) -> Result<Option<(crate::Rigid, glam::DVec3, f64)>, GeometryStop> {
     let Some(pose) = moving
         .frame
@@ -320,6 +404,18 @@ fn measure_candidate(
     else {
         return Ok(None);
     };
+    control.charge_operations(cache.measurements.len() as u64 + 1)?;
+    let valid = cache.matches(moving, fixed, settings.normal_policy);
+    if let Some(entry) = cache.measurements.iter().find(|entry| {
+        valid && entry.id == candidate.id && entry.pose == pose && (entry.full || !full)
+    }) {
+        let training = candidate.evidence.training_info_eigenvalues;
+        let twists = candidate.evidence.training_weak_twists.clone();
+        candidate.evidence.clone_from(&entry.evidence);
+        candidate.evidence.training_info_eigenvalues = training;
+        candidate.evidence.training_weak_twists = twists;
+        return Ok(Some((pose, entry.center, entry.radius)));
+    }
     let mut pass = if full {
         crate::icp::verify_candidate(moving, fixed, pose, settings.normal_policy, control)?
     } else {
@@ -329,17 +425,45 @@ fn measure_candidate(
     pass.evidence
         .training_weak_twists
         .clone_from(&candidate.evidence.training_weak_twists);
+    if valid {
+        let entry = CachedMeasurement {
+            id: candidate.id,
+            pose,
+            full,
+            evidence: pass.evidence.clone(),
+            center: pass.center,
+            radius: pass.radius,
+            jackknife: None,
+        };
+        if let Some(held) = cache
+            .measurements
+            .iter_mut()
+            .find(|entry| entry.id == candidate.id)
+        {
+            *held = entry;
+        } else if cache.measurements.len() < 32 {
+            cache.measurements.push(entry);
+        }
+    }
     candidate.evidence = pass.evidence;
     Ok(Some((pose, pass.center, pass.radius)))
 }
 
 fn evaluate_probe(
-    moving: &PreparedSurface,
-    fixed: &PreparedSurface,
     probe: crate::Rigid,
     settings: &SearchSettings,
     control: &GeometryControl,
+    cache: &mut VerificationCache<'_>,
+    ordinal: usize,
 ) -> Result<Option<AlignmentCandidate>, GeometryStop> {
+    let [moving, fixed] = cache.surfaces;
+    control.charge_operations(1)?;
+    let valid = cache.matches(moving, fixed, settings.normal_policy);
+    if let Some((seed, candidate)) = cache.probes.get(ordinal) {
+        if valid && *seed == probe {
+            return Ok(Some(candidate.clone()));
+        }
+    }
     let refined = crate::icp::perturb_refine(
         moving,
         fixed,
@@ -355,7 +479,7 @@ fn evaluate_probe(
     let Some(pose) = moving.frame.correction_to_world(fixed.frame, refined) else {
         return Ok(None);
     };
-    Ok(Some(AlignmentCandidate {
+    let candidate = AlignmentCandidate {
         id: CandidateId {
             family: 8,
             proposal: 0,
@@ -366,7 +490,15 @@ fn evaluate_probe(
         reasons: vec![EvidenceReason::UniquenessNotEstablished],
         seeds: vec![SeedOrigin::PrincipalFrame],
         refinement: RefinementTermination::NotStarted,
-    }))
+    };
+    if valid {
+        if let Some(entry) = cache.probes.get_mut(ordinal) {
+            *entry = (probe, candidate.clone());
+        } else if ordinal == cache.probes.len() && ordinal < 8 {
+            cache.probes.push((probe, candidate.clone()));
+        }
+    }
+    Ok(Some(candidate))
 }
 
 fn measured(metric: Metric<f64>) -> Option<f64> {
@@ -397,5 +529,141 @@ trait Below {
 impl Below for Metric<f64> {
     fn is_below(&self, limit: f64) -> bool {
         matches!(self, Metric::Measured(v) if *v < limit)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{MeshInput, RegionPolicy, Rigid, SurfaceSide};
+    use glam::DAffine3;
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one exact cache fixture with pose, policy, resolution and cancellation controls"
+    )]
+    fn completed_pose_verification_reuses_exact_evidence() {
+        let control = GeometryControl::unlimited();
+        let mesh = crate::proposal_test_support::arch::plane();
+        let surface = crate::prepare_alignment_surface(
+            MeshInput {
+                soup: mesh.soup(),
+                world_from_local: DAffine3::IDENTITY,
+                revision: 1,
+            },
+            SurfaceSide::Moving,
+            RegionPolicy::AllEligible,
+            &control,
+        )
+        .unwrap()
+        .surface
+        .unwrap();
+        let settings = SearchSettings::default();
+        let mut cache =
+            VerificationCache::new(&surface, &surface, settings.normal_policy, &control).unwrap();
+        let mut candidate = AlignmentCandidate {
+            id: CandidateId {
+                family: 0,
+                proposal: 0,
+            },
+            pose: Rigid::IDENTITY,
+            confidence: Confidence::Weak,
+            evidence: CandidateEvidence::default(),
+            reasons: Vec::new(),
+            seeds: vec![SeedOrigin::Start],
+            refinement: RefinementTermination::NotStarted,
+        };
+        measure_candidate(
+            &surface,
+            &surface,
+            &mut candidate,
+            &settings,
+            true,
+            &control,
+            &mut cache,
+        )
+        .unwrap();
+        let evidence = candidate.evidence.clone();
+        let before = control.counters().query_calls;
+        measure_candidate(
+            &surface,
+            &surface,
+            &mut candidate,
+            &settings,
+            true,
+            &control,
+            &mut cache,
+        )
+        .unwrap();
+        assert_eq!(candidate.evidence, evidence);
+        assert_eq!(control.counters().query_calls, before);
+        candidate.pose.translation.z = 0.05;
+        measure_candidate(
+            &surface,
+            &surface,
+            &mut candidate,
+            &settings,
+            true,
+            &control,
+            &mut cache,
+        )
+        .unwrap();
+        assert!(control.counters().query_calls > before);
+        let before = control.counters().query_calls;
+        let other_policy = SearchSettings {
+            normal_policy: crate::NormalPolicy::Unsigned,
+            ..settings.clone()
+        };
+        measure_candidate(
+            &surface,
+            &surface,
+            &mut candidate,
+            &other_policy,
+            true,
+            &control,
+            &mut cache,
+        )
+        .unwrap();
+        assert!(control.counters().query_calls > before);
+        candidate.id.proposal = 1;
+        measure_candidate(
+            &surface,
+            &surface,
+            &mut candidate,
+            &settings,
+            false,
+            &control,
+            &mut cache,
+        )
+        .unwrap();
+        let before = control.counters().query_calls;
+        measure_candidate(
+            &surface,
+            &surface,
+            &mut candidate,
+            &settings,
+            true,
+            &control,
+            &mut cache,
+        )
+        .unwrap();
+        assert!(control.counters().query_calls > before);
+        let cancel = occluview_geometry::surface::CancelFlag::new();
+        cancel.cancel();
+        let cancelled = GeometryControl::new(cancel, std::time::Duration::MAX, control.limits());
+        assert_eq!(
+            measure_candidate(
+                &surface,
+                &surface,
+                &mut candidate,
+                &settings,
+                true,
+                &cancelled,
+                &mut cache
+            ),
+            Err(GeometryStop::Cancelled)
+        );
     }
 }

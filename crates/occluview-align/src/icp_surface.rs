@@ -36,6 +36,7 @@ pub(crate) struct RefinementBatch {
     pub scored: u64,
     pub basins: [u32; 3],
     pub stop: Option<GeometryStop>,
+    cursor: Option<RefinementCursor>,
 }
 
 #[derive(Clone, Copy)]
@@ -79,13 +80,36 @@ fn trajectory_scale(mut scale: Scale, paired: bool) -> Scale {
     scale
 }
 
-/// Retain all completed basins until publication. The 16 -> 8 -> 5 itinerary
-/// is independent of public top-k. Earlier better checkpoints survive any
-/// later stall, unsupported dense pass, rejected trial or interruption.
-#[expect(
-    clippy::too_many_lines,
-    reason = "one bounded itinerary with transactional scores and two overlap hypotheses per basin"
-)]
+/// Pending work retains its iteration state across local admission stops.
+struct RefinementTask {
+    id: crate::CandidateId,
+    scale: Scale,
+    fraction: Option<f64>,
+    counted: bool,
+    started: bool,
+    state: Option<ScaleState>,
+}
+
+#[derive(Default)]
+struct RefinementCursor {
+    scores: Vec<crate::candidate_score::CoarseScore>,
+    initialized: bool,
+    phase: u8,
+    tasks: std::collections::VecDeque<RefinementTask>,
+    memory: Option<occluview_geometry::surface::GeometryMemory>,
+}
+
+struct ScaleState {
+    pose: Rigid,
+    fraction: Option<f64>,
+    stable: u32,
+    iteration: usize,
+    hints: [Vec<Option<SurfaceQueryHint>>; 2],
+    _memory: occluview_geometry::surface::GeometryMemory,
+}
+
+/// Refine the same internal pool independently of public top-k. Completed
+/// iterations and comparable checkpoints survive local work admission stops.
 pub(crate) fn run_multiscale(
     moving: &PreparedSurface,
     fixed: &PreparedSurface,
@@ -108,192 +132,246 @@ pub(crate) fn run_multiscale(
         scored: 0,
         basins: [0; 3],
         stop: None,
+        cursor: Some(RefinementCursor::default()),
     };
+    resume_multiscale(moving, fixed, &mut batch, settings, control, true);
+    batch
+}
+
+/// Continue pending numerical work after independent evidence releases its
+/// reserved headroom. Global caps, cancellation and the wall deadline remain
+/// shared. No completed iteration or scale is restarted.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "immutable populations, explicit cursor and evidence reservation"
+)]
+pub(crate) fn resume_multiscale(
+    moving: &PreparedSurface,
+    fixed: &PreparedSurface,
+    batch: &mut RefinementBatch,
+    settings: &SearchSettings,
+    control: &GeometryControl,
+    reserve_evidence: bool,
+) {
+    let Some(mut cursor) = batch.cursor.take() else {
+        return;
+    };
+    batch.stop = None;
     let scratch = (moving.samples[2].samples.len() + fixed.samples[2].samples.len())
         .saturating_mul(512)
         .saturating_add(4096);
-    let _memory = match control.reserve(scratch) {
-        Ok(memory) => memory,
-        Err(stop) => {
-            batch.stop = Some(stop);
-            return batch;
-        }
-    };
-    // Transactional rescoring: interruption must not mix proposal quadratures.
-    let mut scores = Vec::with_capacity(batch.candidates.len());
-    for held in &batch.candidates {
-        match rescore(moving, fixed, held.proposal.pose, settings, control) {
-            Ok(score) => {
-                batch.scored += 1;
-                scores.push(score);
-            }
-            Err(stop) => {
-                batch.stop = Some(stop);
-                return batch;
-            }
-        }
+    let outcome = if cursor.memory.is_none() {
+        control
+            .reserve(scratch)
+            .map(|memory| cursor.memory = Some(memory))
+    } else {
+        Ok(())
     }
-    for (held, score) in batch.candidates.iter_mut().zip(scores) {
-        held.proposal.score = score;
+    .and_then(|()| {
+        advance_itinerary(
+            moving,
+            fixed,
+            batch,
+            settings,
+            control,
+            reserve_evidence,
+            &mut cursor,
+        )
+    });
+    if let Err(stop) = outcome {
+        batch.stop = Some(stop);
+        batch.cursor = Some(cursor);
     }
-    batch
-        .candidates
-        .sort_by(|a, b| proposal_order(&a.proposal, &b.proposal));
-    let mut leading_alternative = batch
-        .candidates
-        .first()
-        .cloned()
-        .filter(|p| p.proposal.score.supported_prefix.is_some());
-    // Deliver a fully examined leading checkpoint before weaker basins can
-    // consume the allowance. Each resolution is still charged once to its
-    // 16/8/5 itinerary; all other basins retain their completed checkpoints.
-    if !batch.candidates.is_empty() {
-        for scale in SCALES {
-            if let Some(stop) = refinement_admission(control) {
-                batch.stop = Some(stop);
-                return batch;
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    reason = "bounded deterministic itinerary and resumable transactional state"
+)]
+fn advance_itinerary(
+    moving: &PreparedSurface,
+    fixed: &PreparedSurface,
+    batch: &mut RefinementBatch,
+    settings: &SearchSettings,
+    control: &GeometryControl,
+    reserve_evidence: bool,
+    cursor: &mut RefinementCursor,
+) -> Result<(), GeometryStop> {
+    if !cursor.initialized {
+        cursor
+            .scores
+            .try_reserve(batch.candidates.len().saturating_sub(cursor.scores.len()))
+            .map_err(|_| GeometryStop::ResourceLimit)?;
+        for held in batch.candidates.iter().skip(cursor.scores.len()) {
+            cursor.scores.push(rescore(
+                moving,
+                fixed,
+                held.proposal.pose,
+                settings,
+                control,
+            )?);
+            batch.scored += 1;
+        }
+        for (held, score) in batch.candidates.iter_mut().zip(cursor.scores.drain(..)) {
+            held.proposal.score = score;
+        }
+        batch
+            .candidates
+            .sort_by(|a, b| proposal_order(&a.proposal, &b.proposal));
+        if let Some(leading) = batch.candidates.first().cloned() {
+            for scale in SCALES {
+                enqueue(
+                    cursor,
+                    leading.proposal.id,
+                    trajectory_scale(scale, leading.proposal.score.supported_prefix.is_some()),
+                    None,
+                    true,
+                )?;
             }
-            batch.basins[scale.slot] += 1;
-            let held = &mut batch.candidates[0];
-            let trajectory = trajectory_scale(scale, leading_alternative.is_some());
-            if let Err(stop) = refine_candidate(
+            enqueue_alternative(batch, cursor, leading, SCALES[0])?;
+        }
+        cursor.initialized = true;
+    }
+    loop {
+        if let Some(mut task) = cursor.tasks.pop_front() {
+            if let Some(stop) = refinement_admission(control, reserve_evidence) {
+                cursor.tasks.push_front(task);
+                return Err(stop);
+            }
+            let Some(index) = batch
+                .candidates
+                .iter()
+                .position(|p| p.proposal.id == task.id)
+            else {
+                return Err(GeometryStop::Numerical);
+            };
+            if !task.started {
+                if task.counted {
+                    batch.basins[task.scale.slot] += 1;
+                }
+                task.started = true;
+            }
+            let held = &mut batch.candidates[index];
+            let outcome = refine_candidate(
                 moving,
                 fixed,
                 held,
-                trajectory,
+                task.scale,
                 settings,
                 control,
                 &mut batch.iterations,
                 &mut batch.scored,
-                None,
-            ) {
+                task.fraction,
+                &mut task.state,
+                reserve_evidence,
+            );
+            if let Err(stop) = outcome {
                 held.termination = stop_termination(stop);
-                batch.stop = Some(stop);
-                return batch;
+                cursor.tasks.push_front(task);
+                return Err(stop);
             }
-            held.attempted_scales |= 1 << scale.slot;
-            if matches!(
-                held.termination,
-                RefinementTermination::NoCorrespondences
-                    | RefinementTermination::Singular
-                    | RefinementTermination::NumericalTrialRejected
-            ) {
-                break;
+            held.attempted_scales |= 1 << task.scale.slot;
+            if cursor.phase == 0
+                && matches!(
+                    held.termination,
+                    RefinementTermination::NoCorrespondences
+                        | RefinementTermination::Singular
+                        | RefinementTermination::NumericalTrialRejected
+                )
+            {
+                cursor
+                    .tasks
+                    .retain(|later| later.id != task.id || later.scale.slot == 0);
             }
+            continue;
         }
-    }
-    if let Some(mut alternative) = leading_alternative.take() {
-        if let Some((fraction, _)) = alternative.proposal.score.supported_prefix {
-            if let Some(id) = alternative.proposal.id.proposal.checked_add(1 << 31) {
-                alternative.proposal.id.proposal = id;
-                let outcome = refine_candidate(
-                    moving,
-                    fixed,
-                    &mut alternative,
-                    trajectory_scale(SCALES[0], true),
-                    settings,
-                    control,
-                    &mut batch.iterations,
-                    &mut batch.scored,
-                    Some(fraction),
-                );
-                alternative.attempted_scales |= 1;
-                batch.candidates.push(alternative);
-                if let Err(stop) = outcome {
-                    batch.stop = Some(stop);
-                    return batch;
-                }
-            }
+        if cursor.phase != 0 {
+            coalesce_basins(&mut batch.candidates, moving, control)?;
         }
-    }
-    for scale in SCALES {
+        if cursor.phase >= 3 {
+            batch
+                .candidates
+                .sort_by(|a, b| proposal_order(&a.proposal, &b.proposal));
+            return Ok(());
+        }
+        let scale = SCALES[usize::from(cursor.phase)];
         batch
             .candidates
             .sort_by(|a, b| proposal_order(&a.proposal, &b.proposal));
-        let indices: Vec<_> = batch
+        let selected: Vec<_> = batch
             .candidates
             .iter()
-            .enumerate()
-            .filter(|(_, held)| held.attempted_scales & (1 << scale.slot) == 0)
+            .filter(|held| held.attempted_scales & (1 << scale.slot) == 0)
             .take(
                 scale
                     .basins
                     .saturating_sub(batch.basins[scale.slot] as usize),
             )
-            .map(|(i, _)| i)
+            .cloned()
             .collect();
-        let mut alternatives = Vec::new();
-        for i in indices {
-            // Final evidence owns the reserved quarter. This admission stop
-            // does not poison the geometry control needed by verification.
-            if let Some(stop) = refinement_admission(control) {
-                batch.stop = Some(stop);
-                return batch;
-            }
-            batch.basins[scale.slot] += 1;
-            let mut alternative = (scale.slot == 0).then(|| batch.candidates[i].clone());
-            let trajectory = trajectory_scale(
-                scale,
-                alternative
-                    .as_ref()
-                    .is_some_and(|p| p.proposal.score.supported_prefix.is_some()),
-            );
-            let held = &mut batch.candidates[i];
-            match refine_candidate(
-                moving,
-                fixed,
-                held,
-                trajectory,
-                settings,
-                control,
-                &mut batch.iterations,
-                &mut batch.scored,
+        for held in selected {
+            enqueue(
+                cursor,
+                held.proposal.id,
+                trajectory_scale(scale, held.proposal.score.supported_prefix.is_some()),
                 None,
-            ) {
-                Ok(()) => {}
-                Err(stop) => {
-                    held.termination = stop_termination(stop);
-                    batch.stop = Some(stop);
-                    return batch;
-                }
-            }
-            held.attempted_scales |= 1 << scale.slot;
-            if let Some(mut alternative) = alternative.take() {
-                if let Some((fraction, _)) = alternative.proposal.score.supported_prefix {
-                    if let Some(id) = alternative.proposal.id.proposal.checked_add(1 << 31) {
-                        alternative.proposal.id.proposal = id;
-                        let outcome = refine_candidate(
-                            moving,
-                            fixed,
-                            &mut alternative,
-                            trajectory_scale(scale, true),
-                            settings,
-                            control,
-                            &mut batch.iterations,
-                            &mut batch.scored,
-                            Some(fraction),
-                        );
-                        alternative.attempted_scales |= 1 << scale.slot;
-                        alternatives.push(alternative);
-                        if let Err(stop) = outcome {
-                            batch.candidates.extend(alternatives);
-                            batch.stop = Some(stop);
-                            return batch;
-                        }
-                    }
-                }
+                true,
+            )?;
+            if scale.slot == 0 {
+                enqueue_alternative(batch, cursor, held, scale)?;
             }
         }
-        batch.candidates.extend(alternatives);
-        if let Err(stop) = coalesce_basins(&mut batch.candidates, moving, control) {
-            batch.stop = Some(stop);
-            return batch;
+        cursor.phase += 1;
+    }
+}
+
+fn enqueue(
+    cursor: &mut RefinementCursor,
+    id: crate::CandidateId,
+    scale: Scale,
+    fraction: Option<f64>,
+    counted: bool,
+) -> Result<(), GeometryStop> {
+    cursor
+        .tasks
+        .try_reserve(1)
+        .map_err(|_| GeometryStop::ResourceLimit)?;
+    cursor.tasks.push_back(RefinementTask {
+        id,
+        scale,
+        fraction,
+        counted,
+        started: false,
+        state: None,
+    });
+    Ok(())
+}
+
+fn enqueue_alternative(
+    batch: &mut RefinementBatch,
+    cursor: &mut RefinementCursor,
+    mut held: RefinedProposal,
+    scale: Scale,
+) -> Result<(), GeometryStop> {
+    if let Some((fraction, _)) = held.proposal.score.supported_prefix {
+        if let Some(id) = held.proposal.id.proposal.checked_add(1 << 31) {
+            held.proposal.id.proposal = id;
+            batch
+                .candidates
+                .try_reserve(1)
+                .map_err(|_| GeometryStop::ResourceLimit)?;
+            enqueue(
+                cursor,
+                held.proposal.id,
+                trajectory_scale(scale, true),
+                Some(fraction),
+                false,
+            )?;
+            batch.candidates.push(held);
         }
     }
-    batch
-        .candidates
-        .sort_by(|a, b| proposal_order(&a.proposal, &b.proposal));
-    batch
+    Ok(())
 }
 
 fn coalesce_basins(
@@ -344,12 +422,14 @@ fn coalesce_basins(
     Ok(())
 }
 
-fn refinement_admission(control: &GeometryControl) -> Option<GeometryStop> {
+fn refinement_admission(control: &GeometryControl, reserve_evidence: bool) -> Option<GeometryStop> {
     let counters = control.counters();
     let limits = control.limits();
     control.checkpoint().or_else(|| {
-        (counters.query_calls >= limits.query_calls - limits.query_calls.div_ceil(4)
-            || counters.triangle_tests >= limits.triangle_tests - limits.triangle_tests.div_ceil(4))
+        (reserve_evidence
+            && (counters.query_calls >= limits.query_calls - limits.query_calls.div_ceil(4)
+                || counters.triangle_tests
+                    >= limits.triangle_tests - limits.triangle_tests.div_ceil(4)))
         .then_some(GeometryStop::WorkLimit)
     })
 }
@@ -386,7 +466,8 @@ fn rescore(
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "bounded per-basin solve with an independently retained comparable checkpoint"
+    clippy::too_many_lines,
+    reason = "transactional solve with explicit resumable iteration state"
 )]
 fn refine_candidate(
     moving: &PreparedSurface,
@@ -398,6 +479,8 @@ fn refine_candidate(
     iterations: &mut u64,
     scored: &mut u64,
     initial_fraction: Option<f64>,
+    pending: &mut Option<ScaleState>,
+    reserve_evidence: bool,
 ) -> Result<(), GeometryStop> {
     let phase = match scale.slot {
         0 => crate::search_probe::Phase::Coarse,
@@ -405,53 +488,66 @@ fn refine_candidate(
         _ => crate::search_probe::Phase::Dense,
     };
     let _phase = crate::search_probe::Span::new(phase, control);
-    let mut pose = held.proposal.pose;
-    let mut fraction = initial_fraction;
-    let reach = scale.reach * (settings.influence_radius_mm / 2.).clamp(0.25, 2.);
-    let mut stable = 0;
-    // A facet from the previous iteration bounds this sample's new nearest
-    // distance after exact recomputation. Geometry validates every hint.
-    let mut hints = [Vec::new(), Vec::new()];
-    for (surface, hints) in [moving, fixed].into_iter().zip(&mut hints) {
-        hints
-            .try_reserve_exact(surface.samples[scale.slot].samples.len())
-            .map_err(|_| GeometryStop::ResourceLimit)?;
-        hints.resize(surface.samples[scale.slot].samples.len(), None);
+    if pending.is_none() {
+        let count = moving.samples[scale.slot]
+            .samples
+            .len()
+            .saturating_add(fixed.samples[scale.slot].samples.len());
+        let memory =
+            control.reserve(count.saturating_mul(size_of::<Option<SurfaceQueryHint>>()))?;
+        let mut hints = [Vec::new(), Vec::new()];
+        for (surface, hints) in [moving, fixed].into_iter().zip(&mut hints) {
+            hints
+                .try_reserve_exact(surface.samples[scale.slot].samples.len())
+                .map_err(|_| GeometryStop::ResourceLimit)?;
+            hints.resize(surface.samples[scale.slot].samples.len(), None);
+        }
+        *pending = Some(ScaleState {
+            pose: held.proposal.pose,
+            fraction: initial_fraction,
+            stable: 0,
+            iteration: 0,
+            hints,
+            _memory: memory,
+        });
     }
+    let Some(state) = pending.as_mut() else {
+        return Err(GeometryStop::Numerical);
+    };
+    let reach = scale.reach * (settings.influence_radius_mm / 2.).clamp(0.25, 2.);
     held.termination = RefinementTermination::IterationLimit;
-    for iteration in 0..scale.iterations {
-        if let Some(stop) = refinement_admission(control) {
+    while state.iteration < scale.iterations {
+        if let Some(stop) = refinement_admission(control, reserve_evidence) {
             return Err(stop);
         }
         let (pairs, fallback) = correspondences(
             moving,
             fixed,
-            pose,
+            state.pose,
             scale.slot,
             reach,
             settings,
-            &mut fraction,
-            iteration.is_multiple_of(3) && (iteration != 0 || initial_fraction.is_none()),
-            &mut hints,
+            &mut state.fraction,
+            state.iteration.is_multiple_of(3)
+                && (state.iteration != 0 || initial_fraction.is_none()),
+            &mut state.hints,
             control,
         )?;
         if pairs.len() < 6 {
             held.termination = RefinementTermination::NoCorrespondences;
             break;
         }
-        let Some(model) = accumulate_robust(&pairs, pose, control)? else {
+        let Some(model) = accumulate_robust(&pairs, state.pose, control)? else {
             held.termination = RefinementTermination::Singular;
             break;
         };
         *iterations += 1;
-        // Information is paired with this pose, and never written into the
-        // independent holdout evidence fields by this numerical pass.
-        if pose == held.proposal.pose {
+        if state.pose == held.proposal.pose {
             held.information.clone_from(&model.information);
             held.unsigned_fallback |= fallback;
         }
         let (next, termination, objectives) =
-            line_search(&pairs, pose, &model, scale.slot == 2, control)?;
+            line_search(&pairs, state.pose, &model, scale.slot == 2, control)?;
         if termination != RefinementTermination::NotStarted {
             held.termination = termination;
             break;
@@ -461,7 +557,7 @@ fn refine_candidate(
             break;
         };
         control.charge_point_pairs(moving.samples[0].samples.len().min(256) as u64)?;
-        let displacement = pose_distance(pose, next, &moving.samples[0].samples)[0];
+        let displacement = pose_distance(state.pose, next, &moving.samples[0].samples)[0];
         let score = rescore(moving, fixed, next, settings, control)?;
         *scored += 1;
         let next_proposal = Proposal {
@@ -471,23 +567,23 @@ fn refine_candidate(
         };
         if proposal_order(&next_proposal, &held.proposal).is_lt() {
             held.proposal = next_proposal;
-            // Recompute at the best checkpoint on the next iteration; no
-            // pre-step matrix masquerades as post-step information.
             held.information = None;
             held.unsigned_fallback |= fallback;
         }
-        pose = next;
+        state.pose = next;
+        state.iteration += 1;
         let relative = (before - after).abs() / before.max(1e-20);
-        stable = if relative < 1e-4 && displacement < 0.01 {
-            stable + 1
+        state.stable = if relative < 1e-4 && displacement < 0.01 {
+            state.stable + 1
         } else {
             0
         };
-        if stable >= 3 {
+        if state.stable >= 3 {
             held.termination = RefinementTermination::Stationary;
             break;
         }
     }
+    *pending = None;
     Ok(())
 }
 
@@ -701,6 +797,7 @@ fn correspondences(
         }
     }
     let fallback = settings.normal_policy != NormalPolicy::Unsigned && compatible < 6;
+    crate::search_probe::population(slot, !refresh, smaller.len() + other.len(), pairs.len());
     Ok((
         pairs
             .into_iter()
@@ -774,6 +871,66 @@ mod tests {
         assert_eq!(gathered.len(), surface.samples[2].samples.len());
         assert!(gathered.iter().all(|pair| pair.pair.is_none()));
         assert_eq!(control.counters().query_calls, before);
+    }
+
+    #[test]
+    fn local_admission_resume_preserves_completed_iterations_and_scores() {
+        let control = GeometryControl::unlimited();
+        let surface = surface(&control);
+        let proposals: Vec<_> = (0..4)
+            .map(|i| {
+                proposal(
+                    &surface,
+                    Rigid::new(
+                        DQuat::from_rotation_x(0.01 * f64::from(i)),
+                        DVec3::Z * 0.05 * f64::from(i),
+                    ),
+                    i,
+                    &control,
+                )
+            })
+            .collect();
+        let settings = SearchSettings::default();
+        let before = control.counters().operations;
+        let uninterrupted =
+            run_multiscale(&surface, &surface, proposals.clone(), &settings, &control);
+        let resumed_control = GeometryControl::unlimited();
+        let allowance = (control.counters().operations - before) / 2;
+        let limited = resumed_control.with_operation_allowance(allowance);
+        let mut resumed = run_multiscale(&surface, &surface, proposals, &settings, &limited);
+        assert_eq!(resumed.stop, Some(GeometryStop::WorkLimit));
+        assert!(resumed.iterations > 0);
+        let completed = resumed.iterations;
+        resume_multiscale(
+            &surface,
+            &surface,
+            &mut resumed,
+            &settings,
+            &resumed_control,
+            false,
+        );
+        assert!(resumed.stop.is_none());
+        assert!(resumed.cursor.is_none());
+        assert_eq!(resumed.basins, uninterrupted.basins);
+        assert!(resumed.iterations >= completed);
+        assert!(resumed.iterations <= uninterrupted.iterations + 1);
+        let signature = |batch: &RefinementBatch| {
+            batch
+                .candidates
+                .iter()
+                .map(|p| {
+                    (
+                        p.proposal.id,
+                        p.proposal.pose,
+                        p.proposal.score.score,
+                        p.termination,
+                        p.attempted_scales,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(signature(&resumed), signature(&uninterrupted));
+        assert_eq!(resumed_control.counters().memory_bytes, 0);
     }
 
     #[test]
