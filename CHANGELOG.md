@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Selected rim cleanup retains pre-existing degenerate faces outside the marked area.
+
 - Refuse GLB base color factors and texture transforms that cannot be represented faithfully.
 
 - Sculpt cursor and stroke rays use the rendered scene depth range, including visible geometry behind the orbital eye.
