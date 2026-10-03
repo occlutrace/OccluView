@@ -289,10 +289,12 @@ pub fn download_with(
     match stream_and_verify(
         response,
         &temp_path,
-        artifact,
-        pubkeys,
+        ArtifactVerification {
+            artifact,
+            pubkeys,
+            max_bytes: MAX_ARTIFACT_BYTES,
+        },
         progress,
-        MAX_ARTIFACT_BYTES,
     )
     .and_then(|()| std::fs::rename(&temp_path, &final_path).map_err(UpdateError::Io))
     {
@@ -308,14 +310,23 @@ pub fn download_with(
 /// detached minisign signature against the signed manifest. Leaves the fully
 /// written temp file in place on success; the caller renames it and is
 /// responsible for removing it on any error.
+struct ArtifactVerification<'a> {
+    artifact: &'a PlatformArtifact,
+    pubkeys: &'a [&'a str],
+    max_bytes: u64,
+}
+
 fn stream_and_verify(
     response: ureq::http::Response<ureq::Body>,
     temp_path: &Path,
-    artifact: &PlatformArtifact,
-    pubkeys: &[&str],
+    verification: ArtifactVerification<'_>,
     progress: &mut dyn FnMut(u64, Option<u64>),
-    max_bytes: u64,
 ) -> Result<(), UpdateError> {
+    let ArtifactVerification {
+        artifact,
+        pubkeys,
+        max_bytes,
+    } = verification;
     let total = response
         .headers()
         .get("Content-Length")
