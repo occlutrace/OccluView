@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Close Windows registry keys after failed shell registration or cleanup operations.
+
 - Report the actual Windows registry error when shell registration fails.
 
 - Keep the preview object alive while window callbacks or modal menus are active.
