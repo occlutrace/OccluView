@@ -344,3 +344,460 @@ fn a_pathological_element_count_terminates_for_every_ply_variant() {
         let _ = occluview_formats::ply::read(bytes.as_bytes());
     }
 }
+
+mod seeded_round_trips {
+    use occluview_core::{Mesh, MeshTexture, Vertex};
+    use occluview_formats::{MeshShading, MeshWriteFormat, MeshWriteOptions};
+    use std::fmt::Write as _;
+    use std::io::Write as _;
+
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> [u8; 8] {
+            self.0 = self
+                .0
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1);
+            self.0.to_le_bytes()
+        }
+
+        fn fraction(&mut self) -> f32 {
+            let bytes = self.next();
+            f32::from(u16::from_le_bytes([bytes[4], bytes[5]]) & 0x7fff) / 32767.0
+        }
+    }
+
+    fn mesh(seed: u64) -> Mesh {
+        let mut rng = Rng(seed);
+        let scale = [1e-8, 1.0, 1e6][usize::from(rng.next()[4] % 3)];
+        let triangles = usize::from(rng.next()[4] % 4) + 1;
+        let mut vertices = Vec::new();
+        for _ in 0..triangles {
+            let origin = glam::Vec3::new(rng.fraction(), rng.fraction(), rng.fraction()) * scale;
+            for offset in [glam::Vec3::ZERO, glam::Vec3::X, glam::Vec3::Y] {
+                let color = rng.next();
+                vertices.push(
+                    Vertex::at(origin + offset * scale)
+                        .with_normal(glam::Vec3::Z)
+                        .with_color([color[3], color[4], color[5], 255])
+                        .with_uv([rng.fraction(), rng.fraction()]),
+                );
+            }
+        }
+        let indices = (0..u32::try_from(vertices.len()).expect("bounded vertices")).collect();
+        Mesh::new_for_preview(None, vertices, indices).expect("valid triangle soup")
+    }
+
+    fn base64(bytes: &[u8]) -> String {
+        const ALPHABET: &[u8; 64] =
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut text = String::new();
+        for chunk in bytes.chunks(3) {
+            let bits = (u32::from(chunk[0]) << 16)
+                | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8)
+                | u32::from(*chunk.get(2).unwrap_or(&0));
+            for (i, shift) in [18, 12, 6, 0].into_iter().enumerate() {
+                let ch = if i > chunk.len() {
+                    b'='
+                } else {
+                    ALPHABET[usize::try_from((bits >> shift) & 63).expect("sextet")]
+                };
+                text.push(char::from(ch));
+            }
+        }
+        text
+    }
+
+    fn hps(mesh: &Mesh) -> Vec<u8> {
+        let positions: Vec<u8> = mesh
+            .vertices()
+            .iter()
+            .flat_map(|v| v.position.into_iter().flat_map(f32::to_le_bytes))
+            .collect();
+        let colors: Vec<u8> = mesh.vertices().iter().flat_map(|v| v.color).collect();
+        let faces = vec![4; mesh.triangle_count()];
+        let mut uvs = Vec::new();
+        for vertex in mesh.vertices() {
+            uvs.push(1);
+            for component in vertex.uv {
+                let packed = format!("{:.0}", component * 32767.0)
+                    .parse::<u16>()
+                    .expect("packed UV");
+                uvs.extend_from_slice(&packed.to_le_bytes());
+            }
+        }
+        format!(
+            "<HPS><Packed_geometry><Schema>CC</Schema><Binary_data><CC>\
+             <Facets facet_count=\"{}\" base64_encoded_bytes=\"{}\">{}</Facets>\
+             <Vertices vertex_count=\"{}\" base64_encoded_bytes=\"{}\">{}</Vertices>\
+             <VertexColorSet>{}</VertexColorSet></CC></Binary_data></Packed_geometry>\
+             <PerVertexTextureCoord>{}</PerVertexTextureCoord></HPS>",
+            mesh.triangle_count(),
+            faces.len(),
+            base64(&faces),
+            mesh.vertices().len(),
+            positions.len(),
+            base64(&positions),
+            base64(&colors),
+            base64(&uvs),
+        )
+        .into_bytes()
+    }
+
+    fn ply(mesh: &Mesh, binary_big_endian: bool) -> Vec<u8> {
+        let encoding = if binary_big_endian {
+            "binary_big_endian"
+        } else {
+            "ascii"
+        };
+        let mut bytes = format!(
+            "ply\nformat {encoding} 1.0\nelement vertex {}\n\
+             property float x\nproperty float y\nproperty float z\n\
+             property float nx\nproperty float ny\nproperty float nz\n\
+             property uchar red\nproperty uchar green\nproperty uchar blue\nproperty uchar alpha\n\
+             property float s\nproperty float t\nelement face {}\n\
+             property list uchar int vertex_indices\nend_header\n",
+            mesh.vertices().len(),
+            mesh.triangle_count(),
+        )
+        .into_bytes();
+        for vertex in mesh.vertices() {
+            let mut text = String::new();
+            for value in vertex.position.into_iter().chain(vertex.normal) {
+                if binary_big_endian {
+                    bytes.extend_from_slice(&value.to_be_bytes());
+                } else {
+                    write!(text, "{value} ").expect("text");
+                }
+            }
+            if binary_big_endian {
+                bytes.extend_from_slice(&vertex.color);
+            } else {
+                for value in vertex.color {
+                    write!(text, "{value} ").expect("text");
+                }
+            }
+            for value in vertex.uv {
+                if binary_big_endian {
+                    bytes.extend_from_slice(&value.to_be_bytes());
+                } else {
+                    write!(text, "{value} ").expect("text");
+                }
+            }
+            if !binary_big_endian {
+                text.push('\n');
+                bytes.extend_from_slice(text.as_bytes());
+            }
+        }
+        for triangle in mesh.indices().as_chunks::<3>().0 {
+            if binary_big_endian {
+                bytes.push(3);
+                for index in triangle {
+                    bytes.extend_from_slice(&index.to_be_bytes());
+                }
+            } else {
+                bytes.extend_from_slice(
+                    format!("3 {} {} {}\n", triangle[0], triangle[1], triangle[2]).as_bytes(),
+                );
+            }
+        }
+        bytes
+    }
+
+    fn off(mesh: &Mesh, binary: bool) -> Vec<u8> {
+        let mut bytes = if binary {
+            b"OFF BINARY\n".to_vec()
+        } else {
+            b"OFF\n".to_vec()
+        };
+        if binary {
+            for count in [mesh.vertices().len(), mesh.triangle_count(), 0] {
+                bytes
+                    .extend_from_slice(&i32::try_from(count).expect("bounded count").to_le_bytes());
+            }
+        } else {
+            bytes.extend_from_slice(
+                format!("{} {} 0\n", mesh.vertices().len(), mesh.triangle_count()).as_bytes(),
+            );
+        }
+        for vertex in mesh.vertices() {
+            if binary {
+                for coordinate in vertex.position {
+                    bytes.extend_from_slice(&f64::from(coordinate).to_le_bytes());
+                }
+            } else {
+                bytes.extend_from_slice(
+                    format!(
+                        "{} {} {}\n",
+                        vertex.position[0], vertex.position[1], vertex.position[2]
+                    )
+                    .as_bytes(),
+                );
+            }
+        }
+        for triangle in mesh.indices().as_chunks::<3>().0 {
+            if binary {
+                bytes.extend_from_slice(&3_i32.to_le_bytes());
+                for index in triangle {
+                    bytes.extend_from_slice(&index.to_le_bytes());
+                }
+            } else {
+                bytes.extend_from_slice(
+                    format!("3 {} {} {}\n", triangle[0], triangle[1], triangle[2]).as_bytes(),
+                );
+            }
+        }
+        bytes
+    }
+
+    fn ascii_stl(mesh: &Mesh) -> Vec<u8> {
+        let mut text = String::from("solid mesh\n");
+        for triangle in mesh.indices().as_chunks::<3>().0 {
+            text.push_str("facet normal 0 0 1\nouter loop\n");
+            for index in triangle {
+                let p = mesh.vertices()[usize::try_from(*index).expect("index")].position;
+                writeln!(text, "vertex {} {} {}", p[0], p[1], p[2]).expect("text");
+            }
+            text.push_str("endloop\nendfacet\n");
+        }
+        text.push_str("endsolid mesh\n");
+        text.into_bytes()
+    }
+
+    fn files(mesh: &Mesh) -> Vec<(&'static str, Vec<u8>, bool)> {
+        let mut files = Vec::new();
+        for (extension, format) in [
+            ("stl", MeshWriteFormat::StlBinary),
+            ("ply", MeshWriteFormat::PlyBinaryLittleEndian),
+            ("obj", MeshWriteFormat::Obj),
+        ] {
+            let mut bytes = Vec::new();
+            occluview_formats::write_mesh(&mut bytes, mesh, format, MeshWriteOptions::default())
+                .expect("write mesh");
+            files.push((extension, bytes, extension != "stl"));
+        }
+        let mut textured = mesh.clone();
+        textured.set_texture(MeshTexture::white_1x1());
+        files.push((
+            "glb",
+            occluview_formats::write_textured_glb(&textured).expect("write GLB"),
+            true,
+        ));
+        let mut package = std::io::Cursor::new(Vec::new());
+        {
+            let mut archive = zip::ZipWriter::new(&mut package);
+            archive
+                .start_file(
+                    "scan/geometry.hps",
+                    zip::write::SimpleFileOptions::default(),
+                )
+                .expect("HPS package entry");
+            archive.write_all(&hps(mesh)).expect("HPS package contents");
+            archive.finish().expect("HPS package");
+        }
+        files.extend([
+            ("stl", ascii_stl(mesh), false),
+            ("ply", ply(mesh, false), true),
+            ("ply", ply(mesh, true), true),
+            ("off", off(mesh, false), false),
+            ("off", off(mesh, true), false),
+            ("hps", hps(mesh), true),
+            ("dcm", package.into_inner(), true),
+        ]);
+        files
+    }
+
+    fn read(extension: &str, bytes: &[u8]) -> Result<Mesh, occluview_formats::FormatError> {
+        occluview_formats::dispatch::dispatch_by_extension_shaded(
+            extension,
+            bytes,
+            &occluview_formats::hps::NoHpsKeyProvider,
+            MeshShading::AsWritten,
+        )
+    }
+
+    #[test]
+    fn seeded_meshes_round_trip_through_every_writer_and_reader() {
+        for seed in 1..=48 {
+            let source = mesh(seed);
+            for (extension, bytes, attributes) in files(&source) {
+                let restored = read(extension, &bytes).expect("read encoded mesh");
+                assert_eq!(
+                    restored.indices(),
+                    source.indices(),
+                    "{extension}, seed {seed}"
+                );
+                assert_eq!(restored.vertices().len(), source.vertices().len());
+                for (a, b) in restored.vertices().iter().zip(source.vertices()) {
+                    assert_eq!(a.position, b.position, "{extension}, seed {seed}");
+                    assert!(
+                        a.normal
+                            .iter()
+                            .zip(b.normal)
+                            .all(|(a, b)| (*a - b).abs() <= 1e-6),
+                        "{extension}, seed {seed}"
+                    );
+                    if attributes {
+                        assert_eq!(a.color, b.color, "{extension}, seed {seed}");
+                        assert!(
+                            a.uv.iter()
+                                .zip(b.uv)
+                                .all(|(a, b)| (*a - b).abs() <= 1.0 / 32767.0),
+                            "{extension}, seed {seed}"
+                        );
+                    }
+                }
+                if extension == "glb" {
+                    assert_eq!(restored.texture().expect("GLB texture").rgba, [255; 4]);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn seeded_textures_survive_obj_materials_glb_and_raw_hps() {
+        use image::ImageEncoder as _;
+        for seed in 1..=16 {
+            let source = mesh(seed);
+            let mut rng = Rng(seed);
+            let rgba: Vec<u8> = (0..4)
+                .flat_map(|_| {
+                    let color = rng.next();
+                    [color[2], color[4], color[6], 255]
+                })
+                .collect();
+            let mut png = Vec::new();
+            image::codecs::png::PngEncoder::new(&mut png)
+                .write_image(&rgba, 2, 2, image::ExtendedColorType::Rgba8)
+                .expect("texture PNG");
+            let directory = tempfile::tempdir().expect("texture directory");
+            let obj_path = directory.path().join("scan.obj");
+            let mut obj = Vec::from(b"mtllib scan.mtl\nusemtl scan\n".as_slice());
+            occluview_formats::write_mesh(
+                &mut obj,
+                &source,
+                MeshWriteFormat::Obj,
+                MeshWriteOptions::default(),
+            )
+            .expect("OBJ export");
+            std::fs::write(&obj_path, obj).expect("OBJ file");
+            std::fs::write(
+                directory.path().join("scan.mtl"),
+                b"newmtl scan\nKd 1 1 1\nmap_Kd atlas.png\n",
+            )
+            .expect("MTL file");
+            std::fs::write(directory.path().join("atlas.png"), png).expect("PNG file");
+            let restored = occluview_formats::read_file(&obj_path).expect("textured OBJ");
+            assert_eq!(restored.texture().expect("OBJ atlas").rgba, rgba);
+            for (actual, expected) in restored.vertices().iter().zip(source.vertices()) {
+                assert_eq!(actual.position, expected.position);
+                assert_eq!(actual.uv, expected.uv);
+            }
+
+            let mut textured = source.clone();
+            textured.set_texture(MeshTexture::new(2, 2, rgba.clone()));
+            let glb = occluview_formats::write_textured_glb(&textured).expect("textured GLB");
+            assert_eq!(
+                read("glb", &glb)
+                    .expect("GLB")
+                    .texture()
+                    .expect("atlas")
+                    .rgba,
+                rgba
+            );
+
+            let xml = String::from_utf8(hps(&source)).expect("HPS XML");
+            let image = format!(
+                "<TextureImage Width=\"2\" Height=\"2\" BytesPerPixel=\"4\" PixelFormat=\"RGBA\">{}</TextureImage>",
+                base64(&rgba)
+            );
+            let xml = xml.replace("</HPS>", &format!("{image}</HPS>"));
+            assert_eq!(
+                read("hps", xml.as_bytes())
+                    .expect("HPS")
+                    .texture()
+                    .expect("atlas")
+                    .rgba,
+                rgba
+            );
+        }
+    }
+
+    #[test]
+    fn seeded_file_mutations_return_errors_or_consistent_meshes() {
+        for seed in 1..=8 {
+            let source = mesh(seed);
+            let mut rng = Rng(seed);
+            for (extension, bytes, _) in files(&source) {
+                let mut mutations = Vec::new();
+                let mut cuts = vec![
+                    0,
+                    1,
+                    3,
+                    4,
+                    7,
+                    11,
+                    12,
+                    27,
+                    80,
+                    83,
+                    84,
+                    bytes.len() / 2,
+                    bytes.len() - 1,
+                ];
+                cuts.extend((0..bytes.len()).step_by(17));
+                for cut in cuts.into_iter().filter(|cut| *cut < bytes.len()) {
+                    mutations.push(bytes[..cut].to_vec());
+                }
+                for _ in 0..24 {
+                    let mut changed = bytes.clone();
+                    let random = rng.next();
+                    let index =
+                        usize::from(u16::from_le_bytes([random[3], random[4]])) % bytes.len();
+                    changed[index] ^= 1 << (random[5] % 8);
+                    mutations.push(changed);
+                }
+                if extension == "stl" && !bytes.starts_with(b"solid") {
+                    let mut changed = bytes.clone();
+                    changed[80..84].copy_from_slice(&u32::MAX.to_le_bytes());
+                    mutations.push(changed);
+                }
+                if let Ok(text) = std::str::from_utf8(&bytes) {
+                    for needle in [
+                        "element vertex ",
+                        "element face ",
+                        "vertex_count=\"",
+                        "facet_count=\"",
+                    ] {
+                        if let Some(start) = text.find(needle).map(|at| at + needle.len()) {
+                            let count_len =
+                                text[start..].bytes().take_while(u8::is_ascii_digit).count();
+                            let mut changed = text.to_owned();
+                            changed.replace_range(start..start + count_len, "18446744073709551615");
+                            mutations.push(changed.into_bytes());
+                        }
+                    }
+                }
+                for changed in mutations {
+                    let result = std::panic::catch_unwind(|| read(extension, &changed));
+                    assert!(result.is_ok(), "panic reading {extension}, seed {seed}");
+                    if let Ok(Ok(mesh)) = result {
+                        assert!(mesh.indices().len().is_multiple_of(3));
+                        assert!(mesh.indices().iter().all(|index| usize::try_from(*index)
+                            .is_ok_and(|i| i < mesh.vertices().len())));
+                        for vertex in mesh.vertices() {
+                            assert!(vertex
+                                .position
+                                .iter()
+                                .chain(&vertex.normal)
+                                .chain(&vertex.uv)
+                                .all(|v| v.is_finite()));
+                        }
+                        assert!(mesh.vertices().len() <= changed.len().saturating_mul(3));
+                    }
+                }
+            }
+        }
+    }
+}
