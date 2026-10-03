@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Keep contact patches and counts separate at extreme scan coordinates.
+
 - Refuse OBJ materials whose diffuse factors or texture options would be silently discarded.
 
 - Smoothing refuses invalid neighbor ids before constructing its solve instead of crashing.
