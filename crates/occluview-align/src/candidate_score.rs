@@ -66,22 +66,34 @@ pub(crate) fn weighted_trim_sweep(
     distances: &mut [WeightedDistance],
     area: f64,
     ceiling: f64,
-) -> Option<(f64, f64, f64)> {
-    if !area.is_finite() || area <= 0. {
-        return None;
+    control: &GeometryControl,
+) -> Result<Option<(f64, f64, f64)>, GeometryStop> {
+    if let Some(stop) = control.checkpoint() {
+        return Err(stop);
     }
+    if !area.is_finite() || area <= 0. {
+        return Ok(None);
+    }
+    let mut stopped = None;
     distances.sort_by(|a, b| {
+        if stopped.is_none() {
+            stopped = control.charge_operations(1).err();
+        }
         a.distance
             .unwrap_or(f64::INFINITY)
             .total_cmp(&b.distance.unwrap_or(f64::INFINITY))
     });
-    let available = distances
-        .iter()
-        .filter(|s| s.distance.is_some())
-        .map(|s| s.weight)
-        .sum::<f64>()
-        .min(area)
-        / area;
+    if let Some(stop) = stopped {
+        return Err(stop);
+    }
+    let mut available = 0.;
+    for sample in distances.iter() {
+        control.charge_operations(1)?;
+        if sample.distance.is_some() {
+            available += sample.weight;
+        }
+    }
+    let available = available.min(area) / area;
     let endpoint = available.min(ceiling);
     let mut best = None;
     for fraction in FRACTIONS.into_iter().chain([endpoint]) {
@@ -92,6 +104,7 @@ pub(crate) fn weighted_trim_sweep(
         let mut weight = 0.;
         let mut squared = 0.;
         for sample in distances.iter() {
+            control.charge_operations(1)?;
             let Some(distance) = sample.distance else {
                 break;
             };
@@ -111,7 +124,7 @@ pub(crate) fn weighted_trim_sweep(
             best = Some((fraction, rms, cost));
         }
     }
-    best
+    Ok(best)
 }
 
 /// Compare cell populations rather than densely repeated sample counts.
@@ -230,7 +243,7 @@ pub(crate) fn score_common_region(
     } else {
         (&mut reverse, areas[1])
     };
-    let prefix = weighted_trim_sweep(distances, area, ceiling);
+    let prefix = weighted_trim_sweep(distances, area, ceiling, control)?;
     let supported_prefix = if config.proxies.is_none() {
         prefix.and_then(|p| supported_trim_alternative(distances, area, p.0, ceiling))
     } else {
@@ -480,12 +493,53 @@ mod tests {
                 cell: [1; 3],
             },
         ];
-        let p = weighted_trim_sweep(&mut d, 100., 1.).unwrap();
+        let control = GeometryControl::unlimited();
+        let p = weighted_trim_sweep(&mut d, 100., 1., &control)
+            .unwrap()
+            .unwrap();
         assert!((p.0 - 0.03).abs() < 1e-12);
         assert!(p.2 > 0.1);
         d[0].distance = None;
-        assert!(weighted_trim_sweep(&mut d, 100., 1.).is_none());
+        assert!(weighted_trim_sweep(&mut d, 100., 1., &control)
+            .unwrap()
+            .is_none());
         assert!((common_area([100., 1_000.], [1., 0.1]) - 100.).abs() < 1e-12);
+    }
+
+    #[test]
+    fn trim_sweep_counts_sorting_and_stops_without_a_prefix() {
+        let mut distances: Vec<_> = (0..128u32)
+            .map(|i| WeightedDistance {
+                distance: Some(f64::from(127 - i)),
+                weight: 1.,
+                compatible: None,
+                cell: [u64::from(i), 0, 0],
+            })
+            .collect();
+        let control = GeometryControl::new(
+            crate::CancelFlag::new(),
+            std::time::Duration::from_secs(10),
+            occluview_geometry::surface::GeometryLimits {
+                operations: 3,
+                ..occluview_geometry::surface::GeometryLimits::default()
+            },
+        );
+        assert_eq!(
+            weighted_trim_sweep(&mut distances, 128., 1., &control),
+            Err(GeometryStop::WorkLimit)
+        );
+        assert_eq!(control.counters().operations, 3);
+        let cancel = crate::CancelFlag::new();
+        cancel.cancel();
+        let cancelled = GeometryControl::new(
+            cancel,
+            std::time::Duration::from_secs(10),
+            occluview_geometry::surface::GeometryLimits::default(),
+        );
+        assert_eq!(
+            weighted_trim_sweep(&mut distances, 128., 1., &cancelled),
+            Err(GeometryStop::Cancelled)
+        );
     }
 
     #[test]
@@ -498,7 +552,9 @@ mod tests {
                 cell: [i, 0, 0],
             })
             .collect::<Vec<_>>();
-        let best = weighted_trim_sweep(&mut distances, 100., 1.).unwrap();
+        let best = weighted_trim_sweep(&mut distances, 100., 1., &GeometryControl::unlimited())
+            .unwrap()
+            .unwrap();
         assert!((best.0 - 0.10).abs() < 1e-12);
         let alternative = supported_trim_alternative(&distances, 100., best.0, 1.).unwrap();
         assert!((alternative.0 - 1.).abs() < 1e-12);
