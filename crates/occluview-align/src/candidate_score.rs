@@ -12,7 +12,7 @@ use std::{cmp::Ordering, collections::BTreeSet};
 
 const FRACTIONS: [f64; 10] = [0.01, 0.03, 0.05, 0.10, 0.20, 0.30, 0.50, 0.70, 0.90, 1.];
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct CoarseScore {
     pub score: f64,
     pub common_area: f64,
@@ -26,6 +26,9 @@ pub(crate) struct CoarseScore {
     pub population_area: [f64; 2],
     /// Policy-compatible area per direction; absent normal quality stays absent.
     pub policy_support: [Option<f64>; 2],
+    /// Sorted occupied cells of the completed smaller-side cost prefix.
+    /// Empty means no measured common-region signature.
+    pub common_cells: Vec<[u64; 3]>,
     /// Larger-area prefix retained for refinement when its occupied-cell set
     /// differs by more than 20% from the minimum-cost prefix.
     #[allow(
@@ -251,6 +254,11 @@ pub(crate) fn score_common_region(
         (&mut reverse, areas[1])
     };
     let prefix = weighted_trim_sweep(distances, area, ceiling, control)?;
+    let common_cells = if config.proxies.is_none() && capacity > 16 {
+        prefix_cells(distances, prefix.map_or(0., |p| p.0 * area), control)?
+    } else {
+        Vec::new()
+    };
     let supported_prefix = if config.proxies.is_none() {
         prefix.and_then(|p| supported_trim_alternative(distances, area, p.0, ceiling))
     } else {
@@ -281,7 +289,67 @@ pub(crate) fn score_common_region(
             fixed.samples[0].population_area_mm2,
         ],
         policy_support,
+        common_cells,
     })
+}
+
+fn prefix_cells(
+    distances: &[WeightedDistance],
+    target: f64,
+    control: &GeometryControl,
+) -> Result<Vec<[u64; 3]>, GeometryStop> {
+    let mut cells = BTreeSet::new();
+    let mut area = 0.;
+    for sample in distances {
+        control.charge_operations(1)?;
+        if area >= target || sample.distance.is_none() {
+            break;
+        }
+        cells.insert(sample.cell);
+        area += sample.weight;
+    }
+    let mut result = Vec::new();
+    result
+        .try_reserve_exact(cells.len())
+        .map_err(|_| GeometryStop::ResourceLimit)?;
+    for cell in cells {
+        control.charge_operations(1)?;
+        result.push(cell);
+    }
+    Ok(result)
+}
+
+/// Measured common regions may merge only when no more than 20% of the
+/// occupied union differs. Missing signatures never establish equivalence.
+pub(crate) fn same_common_region(
+    left: &[[u64; 3]],
+    right: &[[u64; 3]],
+    control: &GeometryControl,
+) -> Result<bool, GeometryStop> {
+    if left.is_empty() || right.is_empty() {
+        return Ok(false);
+    }
+    let mut i = 0;
+    let mut j = 0;
+    let mut union = 0u32;
+    let mut difference = 0u32;
+    while i < left.len() || j < right.len() {
+        control.charge_operations(1)?;
+        let ordering = match (left.get(i), right.get(j)) {
+            (Some(a), Some(b)) => a.cmp(b),
+            (Some(_), None) => Ordering::Less,
+            _ => Ordering::Greater,
+        };
+        union += 1;
+        difference += u32::from(ordering != Ordering::Equal);
+        if ordering != Ordering::Greater {
+            i += 1;
+        }
+        if ordering != Ordering::Less {
+            j += 1;
+        }
+    }
+    Ok(f64::from(difference) <= 0.20 * f64::from(union))
 }
 
 fn policy_covered_area(samples: &[WeightedDistance]) -> Option<f64> {
@@ -709,6 +777,7 @@ mod tests {
                     rms: Some(0.01),
                     orientation: Some(1.),
                     supported_prefix: None,
+                    common_cells: Vec::new(),
                     population_area: [100.; 2],
                     policy_support: [Some(100.); 2],
                 };
@@ -777,6 +846,7 @@ mod tests {
                 population_area: [100.; 2],
                 policy_support: [Some(if supported { 100. } else { 0. }); 2],
                 supported_prefix: None,
+                common_cells: Vec::new(),
             };
             let candidate = Proposal {
                 id: CandidateId {
@@ -822,6 +892,7 @@ mod tests {
                 population_area: [100.; 2],
                 policy_support: [None; 2],
                 supported_prefix: None,
+                common_cells: Vec::new(),
             },
         }
     }

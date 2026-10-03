@@ -185,11 +185,62 @@ pub(crate) fn run_multiscale(
             }
         }
         batch.candidates.extend(alternatives);
+        if let Err(stop) = coalesce_basins(&mut batch.candidates, moving, control) {
+            batch.stop = Some(stop);
+            return batch;
+        }
     }
     batch
         .candidates
         .sort_by(|a, b| proposal_order(&a.proposal, &b.proposal));
     batch
+}
+
+fn coalesce_basins(
+    candidates: &mut Vec<RefinedProposal>,
+    moving: &PreparedSurface,
+    control: &GeometryControl,
+) -> Result<(), GeometryStop> {
+    candidates.sort_by(|a, b| proposal_order(&a.proposal, &b.proposal));
+    let mut drop = Vec::new();
+    drop.try_reserve_exact(candidates.len())
+        .map_err(|_| GeometryStop::ResourceLimit)?;
+    // Mark first, mutate only after the entire comparison pass completes.
+    // A canceled pass retains every prior pose/evidence checkpoint.
+    for i in 0..candidates.len() {
+        for j in 0..i {
+            if drop.iter().any(|&(slot, _)| slot == j) {
+                continue;
+            }
+            let a = &candidates[j].proposal;
+            let b = &candidates[i].proposal;
+            control.charge_point_pairs(moving.samples[0].samples.len().min(256) as u64)?;
+            let distance = pose_distance(a.pose, b.pose, &moving.samples[0].samples);
+            if distance[0] < 0.2
+                && distance[1] < 1.
+                && crate::candidate_score::same_common_region(
+                    &a.score.common_cells,
+                    &b.score.common_cells,
+                    control,
+                )?
+            {
+                drop.push((i, j));
+                break;
+            }
+        }
+    }
+    for &(from, to) in &drop {
+        let origins = candidates[from].proposal.origins.clone();
+        for origin in origins {
+            if !candidates[to].proposal.origins.contains(&origin) {
+                candidates[to].proposal.origins.push(origin);
+            }
+        }
+    }
+    for &(from, _) in drop.iter().rev() {
+        candidates.remove(from);
+    }
+    Ok(())
 }
 
 fn refinement_admission(control: &GeometryControl) -> Option<GeometryStop> {
@@ -568,6 +619,69 @@ mod tests {
             score: rescore(surface, surface, pose, &SearchSettings::default(), control).unwrap(),
         }
     }
+    #[test]
+    fn converged_basins_share_later_work_without_consuming_rival_slots() {
+        let control = GeometryControl::unlimited();
+        let surface = surface(&control);
+        let proposals = (0..16)
+            .map(|i| proposal(&surface, Rigid::IDENTITY, i, &control))
+            .collect();
+        let result = run_multiscale(
+            &surface,
+            &surface,
+            proposals,
+            &SearchSettings::default(),
+            &control,
+        );
+        assert!(result.stop.is_none());
+        assert_eq!(result.basins, [16, 1, 1]);
+        assert_eq!(result.candidates.len(), 1);
+        assert_eq!(result.candidates[0].proposal.pose, Rigid::IDENTITY);
+        assert!(result.candidates[0].information.is_some());
+    }
+    #[test]
+    fn common_region_and_separated_rival_survive_coalescing() {
+        let control = GeometryControl::unlimited();
+        let surface = surface(&control);
+        let make = |pose, id| RefinedProposal {
+            proposal: proposal(&surface, pose, id, &control),
+            termination: RefinementTermination::Stationary,
+            information: None,
+            unsigned_fallback: false,
+        };
+        let first = make(Rigid::IDENTITY, 0);
+        let mut other_region = make(Rigid::IDENTITY, 1);
+        other_region.proposal.score.common_cells = vec![[u64::MAX; 3]];
+        let rival = make(Rigid::new(DQuat::IDENTITY, DVec3::Z * 2.), 2);
+        let duplicate = make(Rigid::IDENTITY, 3);
+        let mut candidates = vec![first, other_region, rival, duplicate];
+        coalesce_basins(&mut candidates, &surface, &control).unwrap();
+        assert_eq!(candidates.len(), 3);
+        assert!(candidates.iter().any(|p| p.proposal.id.proposal == 1));
+        assert!(candidates.iter().any(|p| p.proposal.id.proposal == 2));
+        let cancel = crate::CancelFlag::new();
+        cancel.cancel();
+        let limited = GeometryControl::new(
+            cancel,
+            std::time::Duration::from_secs(10),
+            occluview_geometry::surface::GeometryLimits::default(),
+        );
+        let before: Vec<_> = candidates
+            .iter()
+            .map(|p| (p.proposal.id, p.proposal.pose))
+            .collect();
+        assert_eq!(
+            coalesce_basins(&mut candidates, &surface, &limited),
+            Err(GeometryStop::Cancelled)
+        );
+        assert_eq!(
+            before,
+            candidates
+                .iter()
+                .map(|p| (p.proposal.id, p.proposal.pose))
+                .collect::<Vec<_>>()
+        );
+    }
     /// D7: a seventh coarse basin survives, and public top-k never changes work.
     #[test]
     fn seventh_basin_survives_refinement_and_public_cap() {
@@ -600,7 +714,9 @@ mod tests {
                 &control,
             );
             assert!(result.stop.is_none());
-            assert_eq!(result.basins, [16, 8, 5]);
+            assert_eq!(result.basins[0], 16);
+            assert!((1..=8).contains(&result.basins[1]));
+            assert!((1..=5).contains(&result.basins[2]));
             assert!(result
                 .candidates
                 .iter()

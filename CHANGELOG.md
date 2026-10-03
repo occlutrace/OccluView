@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Scan matching merges converged placements only when their measured common regions agree, preserving distinct alternatives.
+
 - Scan matching refines retained placements with robust area weights and preserves completed poses after interruption.
 
 - Scan matching keeps a bounded representation of large scans and reports approximate surface evidence.
