@@ -66,16 +66,25 @@ where
 }
 
 /// Parse a `vt` line. Returns `[u, v]`. A `vt` with only one component is
-/// tolerated (v defaults to 0). Returns `None` if parsing fails — a malformed
-/// texcoord should not abort the whole file (OBJ files often have spurious vt).
-pub(super) fn texcoord_line<'a, I>(tokens: &mut I, line_no: usize, raw: &str) -> Option<[f32; 2]>
+/// tolerated (v defaults to 0). Invalid entries are refused: dropping one
+/// would change the indices of every texture coordinate declared after it.
+pub(super) fn texcoord_line<'a, I>(
+    tokens: &mut I,
+    line_no: usize,
+    raw: &str,
+) -> Result<[f32; 2], FormatError>
 where
     I: Iterator<Item = &'a str>,
 {
-    let u = next_f32(tokens, line_no, raw).ok()?;
+    let mut tokens = tokens.peekable();
+    let u = next_f32(&mut tokens, line_no, raw)?;
     // The v component is optional per the spec; default 0.
-    let v = next_f32(tokens, line_no, raw).unwrap_or(0.0);
-    Some([u, v])
+    let v = if tokens.peek().is_some() {
+        next_f32(&mut tokens, line_no, raw)?
+    } else {
+        0.0
+    };
+    Ok([u, v])
 }
 
 /// Parsed-so-far mesh data, passed into `face_line` to resolve indices.
@@ -286,6 +295,23 @@ mod tests {
 
     fn read_obj(text: &str) -> occluview_core::Mesh {
         obj::read(text.as_bytes()).expect("OBJ should parse")
+    }
+
+    #[test]
+    fn malformed_texcoords_are_refused_without_reindexing_later_entries() {
+        for malformed in ["", "junk 0", "NaN 0", "0 NaN", "0 inf", "0 junk"] {
+            let source =
+                format!("v 0 0 0\nv 1 0 0\nv 0 1 0\nvt {malformed}\nvt 0.25 0.75\nf 1/1 2/1 3/1\n");
+            assert!(
+                matches!(
+                    obj::read(source.as_bytes()),
+                    Err(FormatError::Malformed { format: "OBJ", .. })
+                ),
+                "malformed vt {malformed:?} must not be replaced by the next UV"
+            );
+        }
+        let mesh = read_obj("v 0 0 0\nv 1 0 0\nv 0 1 0\nvt 0.25\nf 1/1 2/1 3/1\n");
+        assert_eq!(mesh.vertices()[0].uv, [0.25, 0.0]);
     }
 
     #[test]

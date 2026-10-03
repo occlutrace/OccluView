@@ -169,9 +169,7 @@ pub(crate) fn read_admitted(
                 normals.push(n);
             }
             "vt" => {
-                if let Some(uv) = parse::texcoord_line(&mut tokens, line_no, line) {
-                    texcoords.push(uv);
-                }
+                texcoords.push(parse::texcoord_line(&mut tokens, line_no, line)?);
             }
             // The directives below carry no geometry for v1.
             // We list recognized-but-ignored directives explicitly (rather than
