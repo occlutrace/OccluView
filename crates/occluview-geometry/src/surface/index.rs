@@ -900,12 +900,23 @@ impl SurfaceIndex {
             if traversal.tested[cache_slot] == slot {
                 continue;
             }
-            traversal.control.triangle_test(&mut traversal.tests)?;
             traversal.tested[cache_slot] = slot;
             let slot = slot as usize;
             let Some(corners) = self.corners.get(slot) else {
                 continue;
             };
+            // A bucket covers whole cells and may contain distant facets.
+            // Their boxes give conservative lower bounds before expensive
+            // triangle distances. Keep equality (and rounding slack) eligible
+            // so shared-feature/source-id ties still follow the exact rule.
+            let low = corners[0].min(corners[1]).min(corners[2]);
+            let high = corners[0].max(corners[1]).max(corners[2]);
+            let floor = (query.point.clamp(low, high) - query.point).length_squared();
+            let ceiling = traversal.best.map_or(query.limit, |found| found.distance);
+            if floor > ceiling + 32. * f64::EPSILON * ceiling.max(1.) {
+                continue;
+            }
+            traversal.control.triangle_test(&mut traversal.tests)?;
             let (candidate, feature) =
                 closest_feature_on_triangle(query.point, corners[0], corners[1], corners[2]);
             let distance = (candidate - query.point).length_squared();

@@ -840,3 +840,35 @@ fn small_index_query_evaluates_each_triangle_at_most_once() {
         control.counters()
     );
 }
+
+#[test]
+fn triangle_bounds_preserve_exact_queries_under_distance_cap() {
+    use crate::surface::{CancelFlag, GeometryControl, GeometryLimits, QueryOutcome};
+    let mut positions = Vec::new();
+    let mut indices = Vec::new();
+    for triangle in 0..256u32 {
+        let x = if triangle == 0 { 0. } else { 20. };
+        positions.extend([x, 0., 0., x + 10., 0., 0., x, 10., 0.]);
+        indices.extend([triangle * 3, triangle * 3 + 1, triangle * 3 + 2]);
+    }
+    let index = SurfaceIndex::build(Soup {
+        positions: &positions,
+        indices: &indices,
+        mask: None,
+    })
+    .unwrap();
+    let point = DVec3::new(2., 2., 0.1);
+    let expected = index.nearest(point, 1.).unwrap();
+    let control = GeometryControl::new(
+        CancelFlag::new(),
+        std::time::Duration::MAX,
+        GeometryLimits {
+            triangle_tests: 16,
+            ..GeometryLimits::default()
+        },
+    );
+    let actual = index.nearest_controlled(point, 1., &control);
+    assert_eq!(actual, QueryOutcome::Complete(Some(expected)));
+    assert_eq!(expected.triangle, 0);
+    assert!(control.counters().triangle_tests <= 16);
+}
