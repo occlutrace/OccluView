@@ -72,9 +72,9 @@ pub use pairs::{fit_pairs, FitBounds, FitRejection, PairFit};
 pub use rigid::Rigid;
 pub use sample::{
     area_samples, bounds_of, prepare_alignment_surface, spatial_stratum, split_samples,
-    PreparedSurface, SampleBatch, SampleSplit, SurfaceFrame, SurfacePreparation, SurfaceQuality,
-    SurfaceSample, SurfaceSide, AREA_SAMPLE_SEED, COARSE_AREA_SAMPLES, DENSE_AREA_SAMPLES,
-    MID_AREA_SAMPLES, VERIFY_AREA_SAMPLES,
+    PreparedSurface, SampleBatch, SampleRole, SampleSplit, SurfaceFrame, SurfacePreparation,
+    SurfaceQuality, SurfaceSample, SurfaceSide, AREA_SAMPLE_SEED, COARSE_AREA_SAMPLES,
+    DENSE_AREA_SAMPLES, MID_AREA_SAMPLES, VERIFY_AREA_SAMPLES,
 };
 
 pub use search_control::SearchControl;
