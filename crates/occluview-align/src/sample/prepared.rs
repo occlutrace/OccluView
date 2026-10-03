@@ -396,44 +396,30 @@ pub fn prepare_alignment_surface(
             return Ok(result);
         }
     };
-    let mut batches = Vec::new();
-    if batches.try_reserve_exact(4).is_err() {
-        result.completion = Completion::ResourceLimit;
-        return Ok(result);
-    }
-    for (stream, budget) in [
+    let budgets = [
         COARSE_AREA_SAMPLES,
         MID_AREA_SAMPLES,
         DENSE_AREA_SAMPLES,
         VERIFY_AREA_SAMPLES,
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let role = if stream == 3 {
-            SampleRole::Holdout
-        } else {
-            SampleRole::Training
-        };
-        let batch = match population.samples(
-            role,
-            budget,
+    ];
+    let streams = std::array::from_fn::<_, 4, _>(|stream| {
+        (
+            if stream == 3 {
+                SampleRole::Holdout
+            } else {
+                SampleRole::Training
+            },
+            budgets[stream],
             mix_seed(AREA_SAMPLE_SEED ^ stream as u64),
-            control,
-        ) {
-            Ok(batch) => batch,
-            Err(stop) => {
-                result.completion = completion(stop);
-                return Ok(result);
-            }
-        };
-        if batch.completion != Completion::Complete {
-            result.completion = batch.completion;
+        )
+    });
+    let batches = match population.batches(&streams, control) {
+        Ok(batches) => batches,
+        Err(stop) => {
+            result.completion = completion(stop);
             return Ok(result);
         }
-        batches.push(batch);
-    }
-    drop(population);
+    };
     let Ok(samples) = batches.try_into() else {
         result.completion = Completion::ResourceLimit;
         return Ok(result);
