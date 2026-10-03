@@ -65,7 +65,7 @@ struct Traversal<'a> {
     // The same query has the same distance/feature for a triangle in every
     // overlapping bucket. A fixed cache removes repeat arithmetic without
     // allocating or changing the traversal, pruning or source-id tie-break.
-    tested: [u32; 128],
+    tested: [u32; 1024],
 }
 
 /// One query's fixed terms: the point, the squared radius, and the cell window
@@ -672,8 +672,10 @@ impl SurfaceIndex {
     /// Exact nearest answer, or an explicitly interrupted upper bound.
     ///
     /// Charges each distance calculation, every bucket entry, cell and ring.
-    /// A fixed 128-entry direct-mapped cache avoids repeat triangle arithmetic
-    /// in overlapping buckets. Cache collisions only repeat work. A single dense query cannot exceed
+    /// A fixed 1,024-entry map avoids repeat triangle arithmetic in overlapping
+    /// buckets, with no collisions for indexes of at most 1,024 triangles.
+    /// Its 4 KiB stack scratch is admitted against resident work memory.
+    /// Larger-index cache collisions only repeat work. A dense query cannot exceed
     /// its triangle-test ceiling. Invalid query coordinates/radius give exact
     /// absence; incomplete traversal never masquerades as exact absence.
     pub fn nearest_controlled(
@@ -682,11 +684,17 @@ impl SurfaceIndex {
         radius: f64,
         control: &GeometryControl,
     ) -> QueryOutcome<SurfaceHit> {
+        let Ok(_scratch) = control.reserve(size_of::<[u32; 1024]>()) else {
+            return QueryOutcome::Interrupted {
+                best: None,
+                reason: control.checkpoint().unwrap_or(GeometryStop::ResourceLimit),
+            };
+        };
         let mut traversal = Traversal {
             best: None,
             tests: 0,
             control,
-            tested: [u32::MAX; 128],
+            tested: [u32::MAX; 1024],
         };
         let outcome = self.query(point, radius, &mut traversal);
         let hit = traversal
@@ -882,9 +890,13 @@ impl SurfaceIndex {
         };
         for &slot in bucket {
             traversal.control.charge_operations(1)?;
-            // Spread adjacent rows as well as adjacent facets: regular mesh
-            // strides can otherwise alias every neighbouring bucket.
-            let cache_slot = (slot.wrapping_mul(0x9e37_79b9) >> 25) as usize;
+            // Small indexes have a collision-free direct map. Larger indexes
+            // keep fixed scratch and spread both adjacent facets and mesh rows.
+            let cache_slot = if self.corners.len() <= traversal.tested.len() {
+                slot as usize
+            } else {
+                (slot.wrapping_mul(0x9e37_79b9) >> 22) as usize
+            };
             if traversal.tested[cache_slot] == slot {
                 continue;
             }
