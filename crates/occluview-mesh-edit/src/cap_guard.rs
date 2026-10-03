@@ -339,11 +339,43 @@ fn edge_pierces(seg_start: DVec3, seg_end: DVec3, tri: &[DVec3; 3]) -> bool {
     let d20 = v2.dot(v0);
     let d21 = v2.dot(v1);
     let denom = d00 * d11 - d01 * d01;
-    if denom.abs() <= f64::EPSILON {
+    if denom <= f64::EPSILON * d00 * d11 {
         return false;
     }
     let beta = (d11 * d20 - d01 * d21) / denom;
     let gamma = (d00 * d21 - d01 * d20) / denom;
     let alpha = 1.0 - beta - gamma;
     alpha > PIERCE_EPSILON && beta > PIERCE_EPSILON && gamma > PIERCE_EPSILON
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cap_piercing_is_scale_independent() {
+        for scale in [1.0e-20_f32, 1.0e-4, 1.0, 1.0e20] {
+            let cap = [GuardTriangle {
+                ids: [0, 1, 2],
+                positions: [Vec3::ZERO, Vec3::X, Vec3::Y].map(|point| point * scale),
+            }];
+            let surround = [GuardTriangle {
+                ids: [3, 4, 5],
+                positions: [
+                    Vec3::new(0.25, 0.25, -1.0),
+                    Vec3::new(0.25, 0.25, 1.0),
+                    Vec3::new(0.25, 1.0, 1.0),
+                ]
+                .map(|point| point * scale),
+            }];
+            assert!(
+                cap_pierces(&cap, &surround),
+                "cap must not pierce surface at scale {scale}"
+            );
+            assert!(
+                cap_pierces(&surround, &cap),
+                "piercing is symmetric at scale {scale}"
+            );
+        }
+    }
 }
