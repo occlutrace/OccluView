@@ -6,8 +6,8 @@
 //!
 //! Dental-scanner quirks tolerated here:
 //! - Header may contain non-ASCII bytes; ignored.
-//! - Triangle count may be wrong; we read until the declared count *or* EOF,
-//!   whichever comes first, and report truncation only if we run out mid-triangle.
+//! - An overstated triangle count is tolerated when EOF follows a complete
+//!   triangle. Undeclared trailing data is refused rather than discarded.
 //! - Files smaller than 84 bytes are rejected as truncated.
 
 use crate::error::FormatError;
@@ -69,6 +69,13 @@ pub(crate) fn read_admitted(
     // (dental scanners sometimes write a wrong count); if it's short *inside* a
     // triangle, that's a hard truncation.
     let declared_end = FIRST_TRIANGLE_OFFSET + triangle_count * TRIANGLE_SIZE;
+    if bytes.len() > declared_end {
+        return Err(FormatError::Malformed {
+            format: "STL (binary)",
+            offset: declared_end,
+            reason: "data remains after the declared triangle count".to_string(),
+        });
+    }
     if bytes.len() < declared_end {
         // Maybe the count is wrong but the file is internally consistent at a
         // smaller count — recompute how many full triangles actually fit.
@@ -211,6 +218,23 @@ mod tests {
     use super::*;
     use occluview_core::test_support::binary_stl_with_header as build_binary_stl;
     use proptest::prelude::*;
+
+    #[test]
+    fn understated_triangle_counts_cannot_silently_discard_geometry() {
+        let triangles = [
+            [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0, 0.0, 2.0, 1.0, 0.0, 2.0, 0.0, 1.0, 2.0],
+        ];
+        for declared in [0_u32, 1] {
+            let mut bytes = build_binary_stl(&[0; 80], &triangles);
+            bytes[80..84].copy_from_slice(&declared.to_le_bytes());
+            let mesh = read_shaded(&bytes, crate::MeshShading::AsWritten);
+            assert!(
+                mesh.is_err() || mesh.as_ref().is_ok_and(|mesh| mesh.triangle_count() == 2),
+                "declared count {declared} discarded a complete triangle"
+            );
+        }
+    }
 
     /// Build an 80-byte header: ASCII `text` left-aligned, zero-padded.
     fn header_with_text(text: &str) -> [u8; 80] {
