@@ -1394,6 +1394,23 @@ fn generate_hypotheses_inner(
         }
     };
     let proxies = moving_proxy.as_ref().zip(fixed_proxy.as_ref());
+    let mut translation_scorer = match crate::candidate_score::TranslationScorer::new(
+        moving,
+        fixed,
+        CoarseScoring {
+            policy: settings.normal_policy,
+            samples_per_side: 16,
+            ceiling,
+            proxies,
+        },
+        control,
+    ) {
+        Ok(scorer) => scorer,
+        Err(stop) => {
+            result.stop = Some(stop);
+            return result;
+        }
+    };
     macro_rules! visit_rotation {
         ($rotation_id:expr, $rotation:expr) => {{
             let rotation_id: u32 = $rotation_id;
@@ -1403,7 +1420,7 @@ fn generate_hypotheses_inner(
                     result.stop = Some(stop);
                     return false;
                 }
-                let mut translations = Vec::with_capacity(5);
+                let mut translations: Vec<Proposal> = Vec::with_capacity(5);
                 for (i, p) in small_patches.iter().enumerate() {
                     for (j, q) in large_patches.iter().enumerate() {
                         if let Err(stop) = admitted() {
@@ -1419,19 +1436,10 @@ fn generate_hypotheses_inner(
                         result.examined += 1;
                         result.families[6].attempted += 1;
                         result.families[6].translations_attempted += 1;
-                        let score = match score_common_region(
-                            moving,
-                            fixed,
-                            pose,
-                            CoarseScoring {
-                                policy: settings.normal_policy,
-                                samples_per_side: 16,
-                                ceiling,
-                                proxies,
-                            },
-                            control,
-                        ) {
-                            Ok(score) => score,
+                        let cutoff = (translations.len() == 4).then(|| translations[3].score.score);
+                        let score = match translation_scorer.score(pose, cutoff) {
+                            Ok(Some(score)) => score,
+                            Ok(None) => continue,
                             Err(stop) => {
                                 result.stop = Some(stop);
                                 return false;

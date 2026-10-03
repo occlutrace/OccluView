@@ -55,6 +55,118 @@ pub(crate) struct CoarseScoring<'a> {
     pub(crate) proxies: Option<(&'a SurfaceIndex, &'a SurfaceIndex)>,
 }
 
+/// Serial cheap scoring with a conservative upper bound and reused storage.
+/// For `q <= q_max`, `F >= .02/sqrt(q_max)`, and bidirectional L cannot exceed
+/// the fully measured smaller-side soft support. A strict score deficit can
+/// therefore skip the other direction without changing the four best poses.
+pub(crate) struct TranslationScorer<'a> {
+    moving: &'a PreparedSurface,
+    fixed: &'a PreparedSurface,
+    config: CoarseScoring<'a>,
+    control: &'a GeometryControl,
+    scratch: occluview_geometry::surface::SurfaceQueryScratch,
+    distances: [Vec<WeightedDistance>; 2],
+    _memory: occluview_geometry::surface::GeometryMemory,
+}
+
+impl<'a> TranslationScorer<'a> {
+    pub(crate) fn new(
+        moving: &'a PreparedSurface,
+        fixed: &'a PreparedSurface,
+        config: CoarseScoring<'a>,
+        control: &'a GeometryControl,
+    ) -> Result<Self, GeometryStop> {
+        let memory = control.reserve(32 * size_of::<WeightedDistance>() + 256)?;
+        let config = CoarseScoring {
+            samples_per_side: 16,
+            ..config
+        };
+        Ok(Self {
+            moving,
+            fixed,
+            config,
+            control,
+            scratch: occluview_geometry::surface::SurfaceQueryScratch::new(control)?,
+            distances: [Vec::new(), Vec::new()],
+            _memory: memory,
+        })
+    }
+
+    /// Return None only when a complete upper bound is strictly below cutoff.
+    /// Ties and unavailable bounds receive the complete original score.
+    pub(crate) fn score(
+        &mut self,
+        pose: Rigid,
+        cutoff: Option<f64>,
+    ) -> Result<Option<CoarseScore>, GeometryStop> {
+        let _phase =
+            crate::search_probe::Span::new(crate::search_probe::Phase::Scoring, self.control);
+        let smaller = usize::from(self.moving.eligible_area_mm2 > self.fixed.eligible_area_mm2);
+        self.query_direction(smaller, pose)?;
+        let area = self
+            .moving
+            .eligible_area_mm2
+            .min(self.fixed.eligible_area_mm2);
+        let mut soft = 0.;
+        let mut finite = 0.;
+        for sample in &self.distances[smaller] {
+            self.control.charge_operations(1)?;
+            if let Some(distance) = sample.distance {
+                soft += (1. - distance * distance).max(0.) * sample.weight;
+                finite += sample.weight;
+            }
+        }
+        let q_max = (finite / area).min(self.config.ceiling).min(1.);
+        let upper = if q_max > 0. {
+            (soft / area).min(1.) / (1. + 0.02 / q_max.sqrt() / 0.20)
+        } else {
+            0.
+        };
+        if cutoff.is_some_and(|cutoff| upper.is_finite() && upper + 1e-12 < cutoff) {
+            return Ok(None);
+        }
+        self.query_direction(1 - smaller, pose)?;
+        let [forward, reverse] = &mut self.distances;
+        score_distances(
+            self.moving,
+            self.fixed,
+            forward,
+            reverse,
+            self.config,
+            self.control,
+        )
+        .map(Some)
+    }
+
+    fn query_direction(&mut self, direction: usize, pose: Rigid) -> Result<(), GeometryStop> {
+        let (moving_index, fixed_index) = self
+            .config
+            .proxies
+            .unwrap_or((&self.moving.original_index, &self.fixed.original_index));
+        let (source, target, pose, exact) = if direction == 0 {
+            (self.moving, fixed_index, pose, self.fixed.exact_original)
+        } else {
+            (
+                self.fixed,
+                moving_index,
+                pose.inverse(),
+                self.moving.exact_original,
+            )
+        };
+        crate::icp::directional_support_into(
+            source,
+            target,
+            pose,
+            self.config.policy,
+            16,
+            self.config.proxies.is_none() && exact,
+            &mut self.scratch,
+            &mut self.distances[direction],
+            self.control,
+        )
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct WeightedDistance {
     pub distance: Option<f64>,
@@ -195,7 +307,6 @@ pub(crate) fn score_common_region(
 ) -> Result<CoarseScore, GeometryStop> {
     let _phase = crate::search_probe::Span::new(crate::search_probe::Phase::Scoring, control);
     let policy = config.policy;
-    let ceiling = config.ceiling;
     let capacity = config.samples_per_side.min(1_024);
     let (moving_index, fixed_index) = config
         .proxies
@@ -220,11 +331,28 @@ pub(crate) fn score_common_region(
         exclude_border && moving.exact_original,
         control,
     )?;
+    score_distances(moving, fixed, &mut forward, &mut reverse, config, control)
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one common score for reusable and standalone queries"
+)]
+fn score_distances(
+    moving: &PreparedSurface,
+    fixed: &PreparedSurface,
+    forward: &mut Vec<WeightedDistance>,
+    reverse: &mut Vec<WeightedDistance>,
+    config: CoarseScoring<'_>,
+    control: &GeometryControl,
+) -> Result<CoarseScore, GeometryStop> {
+    let capacity = config.samples_per_side.min(1_024);
+    let ceiling = config.ceiling;
     if config.proxies.is_some()
         || !moving.quality.orientation_coherent
         || !fixed.quality.orientation_coherent
     {
-        for sample in forward.iter_mut().chain(&mut reverse) {
+        for sample in forward.iter_mut().chain(reverse.iter_mut()) {
             control.charge_operations(1)?;
             sample.compatible = None;
         }
@@ -233,8 +361,8 @@ pub(crate) fn score_common_region(
     let smaller = areas[0].min(areas[1]);
     let coverage = |band| {
         [
-            covered(&forward, band) / areas[0],
-            covered(&reverse, band) / areas[1],
+            covered(forward, band) / areas[0],
+            covered(reverse, band) / areas[1],
         ]
         .map(|v| v.clamp(0., 1.))
     };
@@ -247,12 +375,12 @@ pub(crate) fn score_common_region(
             .map(|s| s.distance.map_or(0., |d| (1. - d * d).max(0.) * s.weight))
             .sum::<f64>()
     };
-    let lcp = (soft(&forward).min(soft(&reverse)) / smaller).clamp(0., 1.);
-    let policy_support = [&forward, &reverse].map(|samples| policy_covered_area(samples));
+    let lcp = (soft(forward).min(soft(reverse)) / smaller).clamp(0., 1.);
+    let policy_support = [&*forward, &*reverse].map(|samples| policy_covered_area(samples));
     let (distances, area) = if areas[0] <= areas[1] {
-        (&mut forward, areas[0])
+        (forward, areas[0])
     } else {
-        (&mut reverse, areas[1])
+        (reverse, areas[1])
     };
     let prefix = weighted_trim_sweep(distances, area, ceiling, control)?;
     let common_cells = if config.proxies.is_none() && capacity > 16 {
@@ -568,6 +696,128 @@ pub(crate) fn insert_candidate(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn bounded_translation_scoring_preserves_shortlist_and_cuts_queries() {
+        use glam::{DAffine3, DQuat, DVec3};
+        let mesh = crate::proposal_test_support::arch::plane();
+        let prepare = |side| {
+            crate::prepare_alignment_surface(
+                crate::MeshInput {
+                    soup: mesh.soup(),
+                    world_from_local: DAffine3::IDENTITY,
+                    revision: 1,
+                },
+                side,
+                crate::RegionPolicy::AllEligible,
+                &GeometryControl::unlimited(),
+            )
+            .unwrap()
+            .surface
+            .unwrap()
+        };
+        let moving = prepare(crate::SurfaceSide::Moving);
+        let fixed = prepare(crate::SurfaceSide::Fixed);
+        let config = CoarseScoring {
+            policy: NormalPolicy::Unsigned,
+            samples_per_side: 16,
+            ceiling: 1.,
+            proxies: None,
+        };
+        let full = GeometryControl::unlimited();
+        let bounded = GeometryControl::unlimited();
+        let mut oracle = Vec::new();
+        let mut selected: Vec<Proposal> = Vec::new();
+        let mut scorer = TranslationScorer::new(&moving, &fixed, config, &bounded).unwrap();
+        for i in 0..160u32 {
+            let pose = Rigid::new(
+                DQuat::IDENTITY,
+                DVec3::Z
+                    * if i < 4 {
+                        f64::from(i) * 0.01
+                    } else {
+                        f64::from(i)
+                    },
+            );
+            let score = score_common_region(&moving, &fixed, pose, config, &full).unwrap();
+            let mut proposal = candidate(i, score.score);
+            proposal.pose = pose;
+            proposal.score = score;
+            oracle.push(proposal);
+            let cutoff = (selected.len() == 4).then(|| selected[3].score.score);
+            let Some(score) = scorer.score(pose, cutoff).unwrap() else {
+                continue;
+            };
+            let mut proposal = candidate(i, score.score);
+            proposal.pose = pose;
+            proposal.score = score;
+            selected.push(proposal);
+            selected.sort_by(proposal_order);
+            selected.truncate(4);
+        }
+        oracle.sort_by(proposal_order);
+        oracle.truncate(4);
+        assert_eq!(
+            selected.iter().map(|p| p.id).collect::<Vec<_>>(),
+            oracle.iter().map(|p| p.id).collect::<Vec<_>>()
+        );
+        for (a, b) in selected.iter().zip(&oracle) {
+            assert_eq!(a.score.score.to_bits(), b.score.score.to_bits());
+        }
+        // Ties can still win on common area, residual or stable ordinal.
+        let best = &oracle[0];
+        let tied = scorer
+            .score(best.pose, Some(best.score.score))
+            .unwrap()
+            .unwrap();
+        assert_eq!(tied.score.to_bits(), best.score.score.to_bits());
+        assert!(
+            bounded.counters().query_calls * 10 <= full.counters().query_calls * 6,
+            "bounded {} vs full {}",
+            bounded.counters().query_calls,
+            full.counters().query_calls
+        );
+    }
+    #[test]
+    fn translation_score_bound_dominates_all_overlap_prefixes() {
+        let control = GeometryControl::unlimited();
+        for seed in 0..1000u32 {
+            let mut distances = (0..16u32)
+                .map(|i| {
+                    let n = (seed.wrapping_mul(7919) + i * 509) % 997;
+                    WeightedDistance {
+                        distance: (n % 7 != 0).then(|| f64::from(n) / 500.),
+                        weight: f64::from((i + seed) % 5 + 1),
+                        compatible: None,
+                        cell: [u64::from(i), 0, 0],
+                    }
+                })
+                .collect::<Vec<_>>();
+            let area = distances.iter().map(|d| d.weight).sum::<f64>() * 2.;
+            let soft = distances
+                .iter()
+                .map(|s| s.distance.map_or(0., |d| (1. - d * d).max(0.) * s.weight))
+                .sum::<f64>();
+            let finite = distances
+                .iter()
+                .filter(|s| s.distance.is_some())
+                .map(|s| s.weight)
+                .sum::<f64>();
+            for ceiling in [0.01, 0.03, 0.2, 0.7, 1.] {
+                let q_max = (finite / area).min(ceiling);
+                let bound = if q_max > 0. {
+                    soft / area / (1. + 0.02 / q_max.sqrt() / 0.2)
+                } else {
+                    0.
+                };
+                let prefix = weighted_trim_sweep(&mut distances, area, ceiling, &control).unwrap();
+                let score = prefix.map_or(0., |(_, _, cost)| soft / area / (1. + cost / 0.2));
+                assert!(
+                    score <= bound + 1e-12,
+                    "{seed} {ceiling}: {score} > {bound}"
+                );
+            }
+        }
+    }
     #[test]
     fn trim_sweep_visits_each_sorted_weight_once() {
         let mut distances: Vec<_> = (0..512u32)

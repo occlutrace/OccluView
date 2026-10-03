@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Scan matching reduces repeated search work with conservative shortlist bounds and reusable query scratch.
+
 - Scan matching merges converged placements only when their measured common regions agree, preserving distinct alternatives.
 
 - Scan matching refines retained placements with robust area weights and preserves completed poses after interruption.
