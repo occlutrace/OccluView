@@ -204,3 +204,67 @@ fn non_face_edit_action_errors_instead_of_aborting() {
         "non-face-edit action should return an error, got {result:?}"
     );
 }
+
+#[test]
+fn close_holes_applies_healing_only_changes_in_menu_and_batch() {
+    for batch in [false, true] {
+        let mesh = Mesh::new(
+            Some("damaged rim".into()),
+            vec![
+                v(0.0, 0.0, 0.0),
+                v(1.0, 1.0, 0.0),
+                v(1.0, 0.0, 0.0),
+                v(0.0, 1.0, 0.0),
+                v(0.5, 0.5, -1.0),
+                v(5.0, 0.0, 0.0),
+                v(6.0, 0.0, 0.0),
+                v(5.0, 1.0, 0.0),
+            ],
+            vec![4, 0, 1, 4, 1, 2, 4, 2, 3, 4, 3, 0, 5, 6, 7],
+        )
+        .expect("finite mesh");
+        let mut scene = Scene::new();
+        scene.add(SceneMesh::new(mesh));
+        let request = request(&scene, 0, LayerContextAction::CloseHoles);
+        let selection = FaceSelection::new(vec![true; 5]);
+        let proof = super::super::whole_mesh::close_holes_in_mesh(
+            &scene.meshes()[0].mesh,
+            &selection,
+            None,
+        )
+        .expect("the damaged rim is skipped, the dangling face is cleaned");
+        assert_eq!(proof.report.filled_holes, 0);
+        assert_eq!(proof.report.removed_triangles, 1);
+        assert!(proof.report.skipped_damaged_rims > 0);
+        if batch {
+            let mut controller = EditModeController::new(4, 1_000_000);
+            let entry = scene.meshes()[0].clone();
+            assert!(controller.begin_face_selection(&entry, &scene));
+            assert!(controller.select_all_faces());
+            let outcome = apply_visible_selected_face_mesh_edit_action(
+                &mut scene,
+                &mut controller,
+                LayerContextAction::CloseHoles,
+            )
+            .expect("selection close holes");
+            assert!(
+                outcome.apply.scene_changed,
+                "healing is a real undoable edit without a cap"
+            );
+            assert_eq!(controller.undo_len(), 1);
+            let restored = controller.undo_last_scene_edit(&scene, request.layer_id);
+            let crate::edit_mode::StructuralHistoryStep::Restored(restored) = restored else {
+                panic!("a single undo restores the original surface");
+            };
+            assert_eq!(restored.meshes()[0].mesh.triangle_count(), 5);
+        } else {
+            let (apply, _) = apply_layer_mesh_edit_action(&mut scene, request, Some(&selection))
+                .expect("layer close holes");
+            assert!(
+                apply.scene_changed,
+                "healing cannot be discarded because no hole closed"
+            );
+        }
+        assert_eq!(scene.meshes()[0].mesh.triangle_count(), 4);
+    }
+}

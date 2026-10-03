@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Close Holes applies and records cleanup even when every remaining rim stays open.
+
 - Selected rim cleanup retains pre-existing degenerate faces outside the marked area.
 
 - Refuse GLB base color factors and texture transforms that cannot be represented faithfully.
