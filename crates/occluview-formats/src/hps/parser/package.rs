@@ -181,11 +181,10 @@ fn read_hps_xml<P: HpsKeyProvider + ?Sized>(
     schema: &str,
     key_provider: &P,
 ) -> Result<DecodedSurface, ReadError<P::Error>> {
+    let text = xml::find_element(text, "HPS")?.body;
+    let properties = xml::parse_properties(text)?;
     let key = if schema == "CE" {
-        Some(crypto::derive_encryption_key(
-            key_provider,
-            &xml::parse_properties(text)?,
-        )?)
+        Some(crypto::derive_encryption_key(key_provider, &properties)?)
     } else {
         None
     };
@@ -340,7 +339,7 @@ struct ColorParseInput<'a> {
 }
 
 fn parse_colors(input: ColorParseInput<'_>) -> Result<Option<Vec<[u8; 4]>>, HpsError> {
-    if let Some(color_element) = xml::find_optional_element(input.text, "VertexColorSet") {
+    if let Some(color_element) = xml::find_optional_element(input.text, "VertexColorSet")? {
         let mut color_bytes = Zeroizing::new(base64::decode(color_element.body)?);
         if input.schema == "CE" {
             let key = input.key.ok_or(HpsError::KeyMissing)?;

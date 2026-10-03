@@ -40,23 +40,20 @@ pub(super) fn looks_like_hps_xml(text: &str) -> bool {
 }
 
 pub(super) fn find_element<'a>(xml: &'a str, name: &str) -> Result<XmlElement<'a>, HpsError> {
-    find_element_from(xml, name, 0)
+    find_optional_element(xml, name)?
+        .ok_or_else(|| super::malformed(format!("XML missing <{name}> element")))
 }
 
-pub(super) fn find_optional_element<'a>(xml: &'a str, name: &str) -> Option<XmlElement<'a>> {
-    find_element(xml, name).ok()
-}
-
-fn find_element_from<'a>(
+/// Absence is optional; an element that starts but cannot be read is malformed.
+pub(super) fn find_optional_element<'a>(
     xml: &'a str,
     name: &str,
-    from: usize,
-) -> Result<XmlElement<'a>, HpsError> {
+) -> Result<Option<XmlElement<'a>>, HpsError> {
     let needle = format!("<{name}");
-    let mut open = from;
+    let mut open = 0;
     loop {
         let Some(relative_open) = xml[open..].find(&needle) else {
-            return Err(super::malformed(format!("XML missing <{name}> element")));
+            return Ok(None);
         };
         open += relative_open;
         let boundary = open + needle.len();
@@ -83,10 +80,10 @@ fn find_element_from<'a>(
     };
     let close = body_start + relative_close;
 
-    Ok(XmlElement {
+    Ok(Some(XmlElement {
         open_tag: &xml[open..=open_end],
         body: &xml[body_start..close],
-    })
+    }))
 }
 
 pub(super) fn attr_value<'a>(open_tag: &'a str, attr: &str) -> Result<Option<&'a str>, HpsError> {
@@ -157,7 +154,7 @@ pub(super) fn parse_color_attr(value: &str) -> Result<[u8; 4], HpsError> {
 }
 
 pub(super) fn parse_properties(xml: &str) -> Result<BTreeMap<String, String>, HpsError> {
-    let Some(properties) = find_optional_element(xml, "Properties") else {
+    let Some(properties) = find_optional_element(xml, "Properties")? else {
         return Ok(BTreeMap::new());
     };
 

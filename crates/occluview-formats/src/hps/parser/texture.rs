@@ -63,7 +63,7 @@ fn parse_texture_coordinates(
 ) -> Result<Option<Vec<Option<[f32; 2]>>>, HpsError> {
     // `find_optional_element` stops at the first match; `find_elements`
     // would materialize every match in the document to keep one.
-    let Some(element) = xml::find_optional_element(text, "PerVertexTextureCoord") else {
+    let Some(element) = xml::find_optional_element(text, "PerVertexTextureCoord")? else {
         return Ok(None);
     };
 
@@ -82,7 +82,7 @@ fn parse_texture_coordinates(
 }
 
 fn parse_texture_image(text: &str) -> Result<Option<DecodedTexture>, HpsError> {
-    let Some(element) = xml::find_optional_element(text, "TextureImage") else {
+    let Some(element) = xml::find_optional_element(text, "TextureImage")? else {
         return Ok(None);
     };
     let bytes = base64::decode(element.body)?;

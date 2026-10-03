@@ -194,6 +194,40 @@ fn hps_surface_rejects_a_base64_tail_that_emits_no_byte() {
 }
 
 #[test]
+fn incomplete_optional_elements_do_not_silently_remove_surface_attributes() {
+    let png = encode_base64(&red_png_bytes());
+    let text = String::from_utf8(cc_fixture(
+        3,
+        1,
+        &[4],
+        &format!("<TextureImage>{png}</TextureImage>"),
+    ))
+    .expect("XML");
+    assert!(read(text.as_bytes())
+        .expect("textured surface")
+        .texture()
+        .is_some());
+    for damaged in [
+        text[..text.find("</TextureImage>").expect("closing texture tag")].to_string(),
+        text.replace("</TextureImage>", ""),
+        text.replace("</HPS>", ""),
+    ] {
+        assert!(
+            read(damaged.as_bytes()).is_err(),
+            "incomplete XML discarded attributes"
+        );
+    }
+    for element in ["PerVertexTextureCoord", "VertexColorSet", "Properties"] {
+        let source = cc_fixture(3, 1, &[4], &format!("<{element}>AAAA"));
+        assert!(
+            read(&source).is_err(),
+            "malformed optional <{element}> was ignored"
+        );
+    }
+    assert!(read(&cc_fixture(3, 1, &[4], "")).is_ok());
+}
+
+#[test]
 fn parses_hps_xml_inside_hps_zip_package() {
     let hps = cc_fixture(4, 2, &[4, 0], "");
     let package = zip_hps_fixture("scan/geometry.hps", &hps);

@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Reject incomplete HPS XML instead of silently discarding surface attributes.
+
 - Reject invalid OBJ normal and texture references instead of dropping their attributes.
 
 - Reject PLY payload beyond its declared elements instead of silently dropping mesh data.
