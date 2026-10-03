@@ -67,17 +67,21 @@ struct Traversal<'a> {
     // allocating or changing the traversal, pruning or source-id tie-break.
     tested: &'a mut [u64; 1024],
     generation: u32,
+    hint: Option<(usize, [DVec3; 3])>,
 }
 
 /// Reusable, bounded scratch for a serial sequence of exact surface queries.
 ///
 /// Admission and all work use the control supplied to [`Self::new`]. Scratch
 /// can be used across indices: tags are invalidated at every query. It caches
-/// only triangles already tested within the current traversal, never hits or
-/// distances from a previous pose, surface or revision. It is not cloneable.
+/// triangles already tested within the current traversal. The preceding facet
+/// supplies an upper bound only after its corners match the current index and
+/// its distance is recomputed at the current point. No distance or nearest
+/// answer survives a query. It is not cloneable.
 pub struct SurfaceQueryScratch {
     tested: [u64; 1024],
     generation: u32,
+    hint: Option<(usize, [DVec3; 3])>,
     control: GeometryControl,
     _memory: GeometryMemory,
 }
@@ -92,6 +96,7 @@ impl SurfaceQueryScratch {
         Ok(Self {
             tested: [0; 1024],
             generation: 0,
+            hint: None,
             control: control.clone(),
             _memory: memory,
         })
@@ -756,11 +761,18 @@ impl SurfaceIndex {
             control: &scratch.control,
             tested: &mut scratch.tested,
             generation: scratch.generation,
+            hint: scratch.hint,
         };
         let outcome = self.query(point, radius, &mut traversal);
         let hit = traversal
             .best
             .map(|found: Candidate| self.hit(found.slot, found.source, found.point, found.feature));
+        scratch.hint = traversal.best.and_then(|found| {
+            self.corners
+                .get(found.slot)
+                .copied()
+                .map(|corners| (found.slot, corners))
+        });
         match outcome {
             Ok(()) => QueryOutcome::Complete(hit),
             Err(reason) => {
@@ -788,7 +800,36 @@ impl SurfaceIndex {
         if (point.clamp(self.min, self.max) - point).length_squared() > radius * radius {
             return Ok(());
         }
-        let reach = DVec3::splat(radius);
+        // A point on any current facet bounds the nearest distance from above.
+        // Recompute it, then retain the ordinary complete traversal and exact
+        // source-id tie rule. Matching corners makes reuse safe across indices,
+        // revisions and moved index storage without a pointer-identity token.
+        if let Some((slot, corners)) = traversal.hint {
+            if self.corners.get(slot) == Some(&corners) {
+                traversal.control.triangle_test(&mut traversal.tests)?;
+                let (candidate, feature) =
+                    closest_feature_on_triangle(point, corners[0], corners[1], corners[2]);
+                let distance = (candidate - point).length_squared();
+                if !distance.is_finite() || !candidate.is_finite() {
+                    return Err(GeometryStop::Numerical);
+                }
+                if distance <= radius * radius {
+                    traversal.best = Some(Candidate {
+                        distance,
+                        source: self.sources.get(slot).copied().unwrap_or(u32::MAX),
+                        point: candidate,
+                        slot,
+                        feature,
+                    });
+                }
+            }
+        }
+        let bounded_radius = traversal.best.map_or(radius, |found| {
+            (found.distance + 32. * f64::EPSILON * found.distance.max(1.))
+                .sqrt()
+                .min(radius)
+        });
+        let reach = DVec3::splat(bounded_radius);
         let query = Query {
             point,
             limit: radius * radius,
