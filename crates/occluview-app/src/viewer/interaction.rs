@@ -371,7 +371,7 @@ mod tests {
     }
 
     #[test]
-    fn orthographic_scene_pick_includes_visible_geometry_behind_the_eye() {
+    fn orthographic_scene_pick_includes_visible_geometry_behind_the_eye() -> anyhow::Result<()> {
         let camera = Camera {
             distance: 100.0,
             yaw: 0.0,
@@ -389,8 +389,7 @@ mod tests {
                     Vertex::at(Vec3::new(0.0, 10.0, z)),
                 ],
                 vec![0, 1, 2],
-            )
-            .expect("valid triangle");
+            )?;
             scene.add(SceneMesh::new(mesh));
         }
         let mut rendered_camera = camera;
@@ -400,12 +399,12 @@ mod tests {
         assert!(depth >= rendered_camera.near && depth <= rendered_camera.far);
 
         let hit = pick_scene_hit(&camera, viewport, viewport.center(), &scene)
-            .expect("the visible surface must be selectable");
+            .ok_or_else(|| anyhow::anyhow!("the visible surface must be selectable"))?;
         assert_eq!(hit.layer_index, 0);
         assert!((hit.point - point).length() < 1e-4);
         assert!(
             (pick_scene_point(&camera, viewport, viewport.center(), &scene)
-                .expect("surface focus pick")
+                .ok_or_else(|| anyhow::anyhow!("surface focus pick"))?
                 - point)
                 .length()
                 < 1e-4
@@ -413,10 +412,11 @@ mod tests {
         let target = scene.meshes()[0].id();
         assert_eq!(
             pick_layer_hit(&camera, viewport, viewport.center(), &scene, target)
-                .expect("named-layer surface pick")
+                .ok_or_else(|| anyhow::anyhow!("named-layer surface pick"))?
                 .layer_id,
             target
         );
+        Ok(())
     }
 
     #[test]
