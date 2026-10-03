@@ -208,22 +208,7 @@ pub fn read_file_loaded_with_key_provider(
     path: &Path,
     key_provider: &dyn HpsKeyProvider,
 ) -> Result<LoadedMesh, FormatError> {
-    let bytes = read_file_bytes(path)?;
-    let mut loaded = dispatch_by_extension_loaded_with_companion_budget(
-        bytes.extension(),
-        bytes.as_slice(),
-        key_provider,
-        crate::MeshShading::Reconstructed,
-    )?;
-    // A PLY from another tool, and any OBJ, names its image beside the file;
-    // the reader sees bytes only, so finding it is this layer's job.
-    crate::companions::attach(
-        &mut loaded.mesh,
-        path,
-        crate::companions::LocateKind::for_kind(loaded.kind),
-        bytes.as_slice(),
-    )?;
-    Ok(loaded)
+    read_file_loaded_shaded(path, key_provider, crate::MeshShading::Reconstructed)
 }
 
 /// As [`read_file_with_key_provider`], choosing how vertex normals are
@@ -236,6 +221,18 @@ pub fn read_file_shaded(
     key_provider: &dyn HpsKeyProvider,
     shading: crate::MeshShading,
 ) -> Result<Mesh, FormatError> {
+    read_file_loaded_shaded(path, key_provider, shading).map(|loaded| loaded.mesh)
+}
+
+/// Read a file with the requested shading, retaining its detected kind and units.
+///
+/// # Errors
+/// See [`read_file_shaded`].
+pub fn read_file_loaded_shaded(
+    path: &Path,
+    key_provider: &dyn HpsKeyProvider,
+    shading: crate::MeshShading,
+) -> Result<LoadedMesh, FormatError> {
     let bytes = read_file_bytes(path)?;
     let mut loaded = dispatch_by_extension_loaded_with_companion_budget(
         bytes.extension(),
@@ -249,7 +246,7 @@ pub fn read_file_shaded(
         crate::companions::LocateKind::for_kind(loaded.kind),
         bytes.as_slice(),
     )?;
-    Ok(loaded.mesh)
+    Ok(loaded)
 }
 
 /// Read multiple files into a [`Scene`], wrapping each [`Mesh`] in a

@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Name the detected format in thumbnail errors for mislabeled files.
+
 - Reject OFF payload beyond its declared elements instead of silently dropping faces.
 
 - Report the detected mesh format in CLI info for mislabeled files.

@@ -9,7 +9,7 @@ use crate::fidelity::THUMBNAIL_FULL_FIDELITY_FILE_BYTES;
 use crate::thumbnail_format::infer_thumbnail_format;
 use glam::Vec3;
 use occluview_core::Mesh;
-use occluview_formats::dispatch::{dispatch_by_kind_shaded, read_file_shaded};
+use occluview_formats::dispatch::{dispatch_by_kind_loaded, read_file_loaded_shaded, LoadedMesh};
 use occluview_formats::hps::RuntimeHpsKeyProvider;
 use occluview_formats::{FormatError, FormatKind};
 
@@ -65,9 +65,8 @@ pub(super) fn load_thumbnail_mesh_from_bytes_kind(
     bytes: &[u8],
 ) -> Result<Mesh, ThumbnailError> {
     select_thumbnail_mesh(
-        kind,
         bytes.len() as u64 <= THUMBNAIL_FULL_FIDELITY_FILE_BYTES,
-        || dispatch_by_kind_shaded(kind, bytes, &RuntimeHpsKeyProvider, THUMBNAIL_SHADING),
+        || dispatch_by_kind_loaded(kind, bytes, &RuntimeHpsKeyProvider, THUMBNAIL_SHADING),
         || try_read_fast_thumbnail_mesh_for_kind(kind, bytes),
     )
 }
@@ -81,34 +80,11 @@ pub(super) fn load_thumbnail_mesh_from_file(
             usize::try_from(metadata.byte_len).unwrap_or(usize::MAX),
         ));
     }
-    // The file loaders infer the format from the real bytes themselves; `kind`
-    // is only the label for the corrupt-error path, so derive it cheaply from
-    // the extension rather than re-probing.
     select_thumbnail_mesh(
-        thumbnail_kind_from_extension(path),
         metadata.byte_len <= THUMBNAIL_FULL_FIDELITY_FILE_BYTES,
-        || read_file_shaded(path, &RuntimeHpsKeyProvider, THUMBNAIL_SHADING),
+        || read_file_loaded_shaded(path, &RuntimeHpsKeyProvider, THUMBNAIL_SHADING),
         || try_read_fast_thumbnail_mesh_from_file_with_limit(path, MAX_THUMBNAIL_FILE_BYTES as u64),
     )
-}
-
-/// The format label for the corrupt-error path.
-///
-/// This value is used for exactly one thing — naming the format in
-/// `non_renderable_thumbnail_error`, in the log line and in the error the
-/// operator can see. The mapping is delegated to the format crate's own
-/// extension table, so a GLB, HPS, DCM, 3MF or OFF file with no drawable
-/// triangles is reported under its own format and there is one place in the
-/// tree that knows what an extension means.
-fn thumbnail_kind_from_extension(path: &Path) -> FormatKind {
-    path.extension()
-        .and_then(|extension| extension.to_str())
-        .map(str::to_ascii_lowercase)
-        .and_then(|extension| occluview_formats::probe::by_extension(extension.as_str()))
-        // An extension outside the table keeps the historic STL fallback: the
-        // fast path only reaches this for the formats it recognizes, so this is
-        // a defensive default rather than a label.
-        .unwrap_or(FormatKind::Stl)
 }
 
 /// Pick the mesh a thumbnail should render, preferring whichever source is
@@ -122,16 +98,15 @@ fn thumbnail_kind_from_extension(path: &Path) -> FormatKind {
 /// layer paints a placeholder — the public entry point never returns a
 /// fully-transparent bitmap.
 fn select_thumbnail_mesh(
-    kind: FormatKind,
     prefer_full: bool,
-    full: impl FnOnce() -> Result<Mesh, FormatError>,
+    full: impl FnOnce() -> Result<LoadedMesh, FormatError>,
     fast: impl FnOnce() -> Option<Mesh>,
 ) -> Result<Mesh, ThumbnailError> {
     if prefer_full {
         // Inside the fidelity budget: trust the canonical reader, but fall back
         // to the fast surrogate if it fails or returns nothing renderable.
         match full() {
-            Ok(mesh) if thumbnail_mesh_is_renderable(&mesh) => return Ok(mesh),
+            Ok(loaded) if thumbnail_mesh_is_renderable(&loaded.mesh) => return Ok(loaded.mesh),
             full_result => {
                 if let Some(mesh) = fast() {
                     if thumbnail_mesh_is_renderable(&mesh) {
@@ -140,7 +115,7 @@ fn select_thumbnail_mesh(
                 }
                 return match full_result {
                     Err(error) => Err(error.into()),
-                    Ok(_) => Err(non_renderable_thumbnail_error(kind).into()),
+                    Ok(loaded) => Err(non_renderable_thumbnail_error(loaded.kind).into()),
                 };
             }
         }
@@ -153,11 +128,11 @@ fn select_thumbnail_mesh(
             return Ok(mesh);
         }
     }
-    let mesh = full()?;
-    if thumbnail_mesh_is_renderable(&mesh) {
-        Ok(mesh)
+    let loaded = full()?;
+    if thumbnail_mesh_is_renderable(&loaded.mesh) {
+        Ok(loaded.mesh)
     } else {
-        Err(non_renderable_thumbnail_error(kind).into())
+        Err(non_renderable_thumbnail_error(loaded.kind).into())
     }
 }
 

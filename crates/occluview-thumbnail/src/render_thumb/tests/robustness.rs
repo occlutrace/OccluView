@@ -13,6 +13,24 @@ fn spec_256() -> ThumbnailSpec {
 }
 
 #[test]
+fn non_renderable_file_errors_name_the_detected_format() {
+    let path = fixtures::write_temp_fixture(
+        "obj",
+        b"ply\nformat ascii 1.0\nelement vertex 1\nproperty float x\nproperty float y\nproperty float z\nend_header\n1 2 3\n",
+    );
+    let metadata = cache::thumbnail_file_metadata(&path).expect("metadata");
+    let error = load_thumbnail_mesh_from_file(&path, metadata).expect_err("zero extent");
+    let _ = fs::remove_file(path);
+    assert!(
+        matches!(
+            error,
+            ThumbnailError::Format(FormatError::Malformed { format: "PLY", .. })
+        ),
+        "wrong format label: {error}"
+    );
+}
+
+#[test]
 fn finite_nonzero_triangles_load_at_extreme_scales() {
     for scale in [1e-20_f32, 1.0, 1e20] {
         let bytes = occluview_core::test_support::binary_stl(&[[
