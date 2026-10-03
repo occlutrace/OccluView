@@ -308,7 +308,7 @@ fn fixed_work_provenance_and_candidates_are_reproducible() {
         assert_eq!(effective.overlap_prior, Some(0.01));
         assert_eq!(effective.wall_limit, std::time::Duration::from_secs(2));
         assert_eq!(effective.work_budget.query_calls, 99);
-        assert_eq!(result.provenance.operation_limit, 32_000_000);
+        assert_eq!(result.provenance.operation_limit, 96_000_000);
         assert_eq!(result.provenance.input_revisions, [1, 2]);
         assert_eq!(result.provenance.algorithm_version, 21);
         assert_eq!(result.completion, Completion::WorkLimit);
