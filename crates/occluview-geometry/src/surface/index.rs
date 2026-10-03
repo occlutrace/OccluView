@@ -5,12 +5,12 @@
 //! including tie-breaking. Normals come from triangle winding rather than
 //! imported vertex data so deviation signs use the indexed geometry.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
 
-use glam::DVec3;
+use glam::{DAffine3, DMat3, DVec3};
 
-use super::Soup;
+use super::{BuildOutcome, GeometryControl, GeometryMemory, GeometryStop, QueryOutcome, Soup};
 
 #[path = "surface_geometry.rs"]
 mod surface_geometry;
@@ -23,9 +23,7 @@ mod surface_topology;
 use surface_topology::{Topology, TopologyBuilder};
 #[path = "surface_index_support.rs"]
 mod surface_index_support;
-use surface_index_support::{
-    block_count, component_data, find, flat_index, gather, radical_inverse, sweep, union, weld,
-};
+use surface_index_support::{block_count, find, flat_index, radical_inverse, sweep, union};
 
 /// Triangles whose doubled area falls below this are dropped at build time:
 /// they have no usable normal and no interior to project onto.
@@ -59,6 +57,13 @@ struct Candidate {
     feature: Feature,
 }
 
+/// Shared accounting and upper bound throughout one nested traversal.
+struct Traversal<'a> {
+    best: Option<Candidate>,
+    tests: u64,
+    control: &'a GeometryControl,
+}
+
 /// One query's fixed terms: the point, the squared radius, and the cell window
 /// the radius allows. Bundled so the traversal helpers keep short signatures.
 struct Query {
@@ -87,7 +92,8 @@ impl Query {
 pub struct SurfaceHit {
     /// The closest point on the surface, in the surface's own frame.
     pub point: DVec3,
-    /// Unit geometric normal of the triangle carrying `point`.
+    /// Unit local-winding normal mapped by the authored inverse transpose.
+    /// With an identity/proper rigid query frame this is the geometric face normal.
     pub normal: DVec3,
     /// Index of that triangle within the source soup.
     pub triangle: u32,
@@ -148,8 +154,6 @@ pub fn feature_voxel_key(point: DVec3) -> Option<(i32, i32, i32)> {
     ))
 }
 
-type ComponentData = (Vec<(DVec3, DVec3)>, Vec<usize>);
-
 fn bounded_grid(extent: DVec3, mean_edge: f64) -> (f64, [i64; 3]) {
     let diagonal = extent.length().max(1e-3);
     let mut cell = (mean_edge * CELL_EDGE_FACTOR).clamp(1e-3, diagonal);
@@ -162,7 +166,7 @@ fn bounded_grid(extent: DVec3, mean_edge: f64) -> (f64, [i64; 3]) {
 }
 
 /// A spatial index answering "what is the closest surface point to this?".
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct SurfaceIndex {
     corners: Vec<[DVec3; 3]>,
     normals: Vec<DVec3>,
@@ -179,6 +183,10 @@ pub struct SurfaceIndex {
     triangle_components: Vec<usize>,
     topology: Topology,
     surface_area_mm2: f64,
+    memory: Vec<GeometryMemory>,
+    query_control: Option<GeometryControl>,
+    uncontrolled: GeometryControl,
+    normal_frame_valid: bool,
 }
 
 impl SurfaceIndex {
@@ -190,105 +198,197 @@ impl SurfaceIndex {
     ///
     /// Returns `None` when nothing usable survives.
     #[must_use]
-    #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
     pub fn build(soup: Soup<'_>) -> Option<Self> {
-        let vertex_count = soup.vertex_count();
-        let mut corners: Vec<[DVec3; 3]> = Vec::new();
-        let mut normals: Vec<DVec3> = Vec::new();
-        let mut sources: Vec<u32> = Vec::new();
+        match Self::build_controlled(soup, DAffine3::IDENTITY, &GeometryControl::unlimited()) {
+            BuildOutcome::Complete(index) => Some(index),
+            BuildOutcome::Partial { .. } | BuildOutcome::Empty => None,
+        }
+    }
+
+    /// Build the existing grid in a private f64 query frame without baking f32 vertices.
+    ///
+    /// Every topology/bucket operation is charged. Allocations are admitted
+    /// before growth and reserved fallibly. Invalid or masked facets are omitted;
+    /// arithmetic overflow returns an explicit partial outcome, never an exact
+    /// prefix index. Original source triangle ids and winding are preserved.
+    pub fn build_controlled(
+        soup: Soup<'_>,
+        local_to_query: DAffine3,
+        control: &GeometryControl,
+    ) -> BuildOutcome<Self> {
+        match Self::try_build(soup, local_to_query, control) {
+            Ok(Some(index)) => BuildOutcome::Complete(index),
+            Ok(None) => BuildOutcome::Empty,
+            Err(reason) => BuildOutcome::Partial {
+                value: None,
+                reason,
+            },
+        }
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one ordered topology and allocation transaction"
+    )]
+    fn try_build(
+        soup: Soup<'_>,
+        affine: DAffine3,
+        control: &GeometryControl,
+    ) -> Result<Option<Self>, GeometryStop> {
+        control.charge_operations(1)?;
+        if !affine.is_finite() {
+            return Err(GeometryStop::Numerical);
+        }
+        let determinant = affine.matrix3.determinant();
+        let normal_matrix = if determinant.is_finite() && determinant != 0. {
+            let inverse = affine.matrix3.inverse().transpose();
+            inverse.is_finite().then_some(inverse)
+        } else {
+            None
+        };
+        let mut normal_frame_valid = normal_matrix.is_some();
+        let vertices = soup.vertex_count();
+        let triangles = soup.triangle_count();
+        let limits = control.limits();
+        if vertices > limits.input_vertices
+            || triangles > limits.input_triangles
+            || triangles > u32::MAX as usize
+        {
+            return Err(control.stop(GeometryStop::ResourceLimit));
+        }
+        // Includes conservative hash-table load/rounding, both topology output
+        // and builder storage, components and triangle arrays at their peak.
+        let bytes = triangles
+            .checked_mul(1024)
+            .and_then(|n| vertices.checked_mul(256).and_then(|v| n.checked_add(v)))
+            .and_then(|n| n.checked_add(4096))
+            .ok_or(GeometryStop::ResourceLimit)?;
+        let mut allocation = control.reserve(bytes)?;
+        let mut corners = allocated_vec(triangles, control)?;
+        let mut normals = allocated_vec(triangles, control)?;
+        let mut sources = allocated_vec(triangles, control)?;
+        let mut parent: Vec<usize> = allocated_vec(vertices, control)?;
+        let mut sizes = allocated_vec(vertices, control)?;
+        let mut bounds = allocated_vec(vertices, control)?;
+        let mut roots = allocated_vec(vertices, control)?;
+        for vertex in 0..vertices {
+            control.charge_operations(1)?;
+            parent.push(vertex);
+            sizes.push(1usize);
+            bounds.push(None::<(DVec3, DVec3)>);
+            roots.push(usize::MAX);
+        }
+        let mut positions = HashMap::<[u64; 3], usize>::new();
+        positions
+            .try_reserve(vertices.min(triangles.saturating_mul(3)))
+            .map_err(|_| control.stop(GeometryStop::ResourceLimit))?;
+        let mut anchors = allocated_vec(triangles, control)?;
+        let mut topology = TopologyBuilder::with_capacity(
+            vertices.min(triangles.saturating_mul(3)),
+            triangles,
+            control,
+        )?;
         let mut min = DVec3::splat(f64::INFINITY);
         let mut max = DVec3::splat(f64::NEG_INFINITY);
-        let mut edge_total = 0.0f64;
-        let mut surface_area_mm2 = 0.0f64;
-        let mut parent: Vec<usize> = (0..vertex_count).collect();
-        // One entry per vertex, so `union` can hang the smaller tree under the
-        // larger instead of building a chain whose depth `find` would then have
-        // to walk.
-        let mut component_size: Vec<usize> = vec![1; vertex_count];
-        let mut welded_positions: BTreeMap<[u64; 3], usize> = BTreeMap::new();
-        // One vertex anchor per retained triangle is enough to recover its
-        // component after all unions have been completed. Keeping all three
-        // ids here needlessly triples temporary memory on a dense scan.
-        let mut triangle_anchors = Vec::new();
-        let mut topology = TopologyBuilder::default();
-
-        for (triangle, slice) in soup.indices.as_chunks::<3>().0.iter().enumerate() {
-            // Any masked corner takes the whole triangle out. A triangle with
-            // one corner inside a painted region straddles the boundary, and
-            // half a triangle is not a surface a query can land on.
-            if slice.iter().any(|index| soup.is_excluded(*index as usize)) {
+        let mut edge_total = 0.;
+        let mut area = 0.;
+        for (source, ids) in soup.indices.as_chunks::<3>().0.iter().enumerate() {
+            control.charge_operations(1)?;
+            if ids.iter().any(|&id| soup.is_excluded(id as usize)) {
                 continue;
             }
-            let Some(vertices) = read_triangle(soup.positions, vertex_count, slice) else {
+            let Some(local) = read_triangle(soup.positions, vertices, ids) else {
                 continue;
             };
-            let [a, b, c] = *slice;
-            let (Ok(a), Ok(b), Ok(c)) =
-                (usize::try_from(a), usize::try_from(b), usize::try_from(c))
-            else {
-                continue;
-            };
-            // STL and a few preview loaders duplicate every facet corner. The
-            // index still keeps those corners separate for exact nearest-hit
-            // behaviour, but component discovery and edge adjacency must weld
-            // equal positions or every triangle becomes a false one-triangle
-            // component whose every edge is open border.
-            let corner_ids = [a, b, c];
-            let welded: [usize; 3] = std::array::from_fn(|corner| {
-                weld(
-                    &mut welded_positions,
-                    &mut parent,
-                    &mut component_size,
-                    corner_ids[corner],
-                    vertices[corner],
-                )
-            });
-            let normal = (vertices[1] - vertices[0]).cross(vertices[2] - vertices[0]);
-            let length = normal.length();
-            if !length.is_finite() || length < MIN_DOUBLE_AREA {
-                topology.add_connector(welded);
+            let points = local.map(|p| affine.transform_point3(p));
+            if points.iter().any(|p| !p.is_finite()) {
+                return Err(GeometryStop::Numerical);
+            }
+            let mut welded = [0; 3];
+            for corner in 0..3 {
+                control.charge_operations(1)?;
+                let vertex = ids[corner] as usize;
+                let key = local[corner].to_array().map(canonical_bits);
+                let first = *positions.entry(key).or_insert(vertex);
+                union(&mut parent, &mut sizes, first, vertex);
+                welded[corner] = first;
+            }
+            let cross = (points[1] - points[0]).cross(points[2] - points[0]);
+            let length = cross.length();
+            if !length.is_finite() {
+                return Err(GeometryStop::Numerical);
+            }
+            if length <= MIN_DOUBLE_AREA {
+                topology.add_connector(welded, control)?;
                 continue;
             }
-            for corner in vertices {
-                min = min.min(corner);
-                max = max.max(corner);
+            let edge = longest_edge(&points);
+            if !(edge_total + edge).is_finite() || !(area + length * 0.5).is_finite() {
+                return Err(GeometryStop::Numerical);
             }
-            union(&mut parent, &mut component_size, a, b);
-            union(&mut parent, &mut component_size, b, c);
-            triangle_anchors.push(a);
-            edge_total += longest_edge(&vertices);
-            surface_area_mm2 += length * 0.5;
-            topology.add_kept(welded, &vertices, normal / length);
-            corners.push(vertices);
-            normals.push(normal / length);
-            sources.push(u32::try_from(triangle).unwrap_or(u32::MAX));
+            for point in points {
+                min = min.min(point);
+                max = max.max(point);
+            }
+            union(&mut parent, &mut sizes, ids[0] as usize, ids[1] as usize);
+            union(&mut parent, &mut sizes, ids[1] as usize, ids[2] as usize);
+            anchors.push(ids[0] as usize);
+            let local_cross = (local[1] - local[0]).cross(local[2] - local[0]);
+            let mapped = normal_matrix.and_then(|matrix| mapped_normal(matrix, local_cross));
+            normal_frame_valid &= mapped.is_some();
+            let normal = mapped.unwrap_or(cross / length);
+            topology.add_kept(welded, &points, normal, control)?;
+            corners.push(points);
+            normals.push(normal);
+            sources.push(u32::try_from(source).map_err(|_| GeometryStop::ResourceLimit)?);
+            edge_total += edge;
+            area += length * 0.5;
         }
-
         if corners.is_empty() {
-            return None;
+            return Ok(None);
         }
-
-        let mut component_bounds: BTreeMap<usize, (DVec3, DVec3)> = BTreeMap::new();
-        for (vertices, &anchor) in corners.iter().zip(&triangle_anchors) {
+        for (points, &anchor) in corners.iter().zip(&anchors) {
+            control.charge_operations(1)?;
             let root = find(&mut parent, anchor);
-            let triangle_min = vertices[0].min(vertices[1]).min(vertices[2]);
-            let triangle_max = vertices[0].max(vertices[1]).max(vertices[2]);
-            component_bounds
-                .entry(root)
-                .and_modify(|(low, high)| {
-                    *low = low.min(triangle_min);
-                    *high = high.max(triangle_max);
-                })
-                .or_insert((triangle_min, triangle_max));
+            let low = points[0].min(points[1]).min(points[2]);
+            let high = points[0].max(points[1]).max(points[2]);
+            let entry = &mut bounds[root];
+            *entry = Some(entry.map_or((low, high), |(a, b)| (a.min(low), b.max(high))));
         }
-
+        let mut components = allocated_vec(corners.len().min(vertices), control)?;
+        for (root, bound) in bounds.into_iter().enumerate() {
+            control.charge_operations(1)?;
+            if let Some(bound) = bound {
+                roots[root] = components.len();
+                components.push(bound);
+            }
+        }
+        let mut triangle_components = allocated_vec(corners.len(), control)?;
+        for anchor in anchors {
+            control.charge_operations(1)?;
+            triangle_components.push(roots[find(&mut parent, anchor)]);
+        }
         let extent = max - min;
-        let mean_edge = edge_total / corners.len() as f64;
-        let (cell, dims) = bounded_grid(extent, mean_edge);
-
-        let (components, triangle_components) =
-            component_data(&mut parent, &triangle_anchors, component_bounds)?;
-
+        if !extent.is_finite() || !extent.length().is_finite() {
+            return Err(GeometryStop::Numerical);
+        }
+        let (cell, dims) = bounded_grid(extent, edge_total / corners.len() as f64);
+        let topology = topology.finish(control)?;
+        drop(parent);
+        drop(sizes);
+        drop(positions);
+        drop(roots);
+        // Builder scratch is gone. Retain conservative capacity accounting for
+        // the arrays that remain resident, including component and topology data.
+        let resident = corners
+            .capacity()
+            .saturating_mul(256)
+            .saturating_add(topology.vertex_normals.capacity().saturating_mul(16))
+            .saturating_add(4096);
+        allocation.shrink_to(resident);
+        let mut memory = allocated_vec(4, control)?;
+        memory.push(allocation);
         let index = Self {
             corners,
             normals,
@@ -303,10 +403,49 @@ impl SurfaceIndex {
             gaps: Vec::new(),
             components,
             triangle_components,
-            topology: topology.finish(),
-            surface_area_mm2,
+            topology,
+            surface_area_mm2: area,
+            memory,
+            query_control: None,
+            uncontrolled: GeometryControl::unlimited(),
+            normal_frame_valid,
         };
-        Some(index.in_cell_order().with_buckets().with_gaps())
+        Ok(Some(index.with_buckets(control)?.with_gaps(control)?))
+    }
+
+    /// Apply shared bounded admission to the legacy nearest-call entry point.
+    /// Interrupted answers become absent there; completeness is retained by
+    /// [`Self::nearest_controlled`] for evidence consumers.
+    pub fn set_query_control(&mut self, control: GeometryControl) {
+        self.query_control = Some(control);
+    }
+
+    /// Conservative resident bytes for admitting a borrowed cached index.
+    /// Original mesh buffers are excluded; query arrays and topology are included.
+    pub fn resident_size_bytes(&self) -> u64 {
+        self.memory.iter().fold(0u64, |sum, allocation| {
+            sum.saturating_add(allocation.bytes())
+        })
+    }
+
+    /// Shared bounded query lifetime, if attached by a registration job.
+    pub fn query_control(&self) -> Option<&GeometryControl> {
+        self.query_control.as_ref()
+    }
+
+    /// Source triangles in stable source order; points are already f64 query coordinates.
+    pub fn triangles(&self) -> impl Iterator<Item = (u32, [DVec3; 3], DVec3)> + '_ {
+        self.sources
+            .iter()
+            .copied()
+            .zip(self.corners.iter().copied())
+            .zip(self.normals.iter().copied())
+            .map(|((source, points), normal)| (source, points, normal))
+    }
+
+    /// Whether directed shared edges have consistent winding and manifold incidence.
+    pub fn orientation_coherent(&self) -> bool {
+        self.topology.orientation_coherent && self.normal_frame_valid
     }
 
     /// The grid's cell size in millimetres — exposed so callers can reason
@@ -355,17 +494,29 @@ impl SurfaceIndex {
         if self.corners.len() < 10_000 {
             return Vec::new();
         }
-        let areas: Vec<f64> = self
-            .corners
-            .iter()
-            .map(|triangle| {
-                (triangle[1] - triangle[0])
-                    .cross(triangle[2] - triangle[0])
-                    .length()
-                    * 0.5
-            })
-            .collect();
-        let total: f64 = areas.iter().sum();
+        let mut areas = Vec::new();
+        if areas.try_reserve_exact(self.corners.len()).is_err() {
+            if let Some(control) = &self.query_control {
+                control.stop(GeometryStop::ResourceLimit);
+            }
+            return Vec::new();
+        }
+        let mut total = 0.;
+        for triangle in &self.corners {
+            if self
+                .query_control
+                .as_ref()
+                .is_some_and(|c| c.charge_operations(1).is_err())
+            {
+                return Vec::new();
+            }
+            let area = (triangle[1] - triangle[0])
+                .cross(triangle[2] - triangle[0])
+                .length()
+                * 0.5;
+            areas.push(area);
+            total += area;
+        }
         if !total.is_finite() || total <= 0.0 {
             return Vec::new();
         }
@@ -373,9 +524,23 @@ impl SurfaceIndex {
         let mut triangle_slot = 0;
         let mut preceding_area = 0.0;
         for sample_slot in 0..SAMPLE_COUNT {
+            if self
+                .query_control
+                .as_ref()
+                .is_some_and(|c| c.charge_operations(1).is_err())
+            {
+                return Vec::new();
+            }
             let target = (sample_slot as f64 + 0.5) * total / SAMPLE_COUNT as f64;
             while triangle_slot + 1 < areas.len() && preceding_area + areas[triangle_slot] < target
             {
+                if self
+                    .query_control
+                    .as_ref()
+                    .is_some_and(|c| c.charge_operations(1).is_err())
+                {
+                    return Vec::new();
+                }
                 preceding_area += areas[triangle_slot];
                 triangle_slot += 1;
             }
@@ -393,8 +558,12 @@ impl SurfaceIndex {
             entry.1 += self.normals[triangle_slot];
             entry.2 += 1;
         }
+        let stride = cells.len().div_ceil(4096).max(1);
         cells
             .into_values()
+            .enumerate()
+            .filter(|(ordinal, _)| ordinal.is_multiple_of(stride))
+            .map(|(_, entry)| entry)
             .filter_map(|(point, normal, count)| {
                 let normal = normal.normalize_or_zero();
                 (count > 0 && normal.length_squared() > 0.0).then_some(FeaturePoint {
@@ -419,11 +588,10 @@ impl SurfaceIndex {
         let mut selected = vec![false; self.corners.len()];
         let mut slots = Vec::with_capacity(target);
 
-        // The index is laid out by occupied spatial cell, not by source file
-        // order. A plain `step_by` can therefore spend the whole reciprocal
-        // budget in one dense component and miss a small adjacent tooth. Give
-        // each component a deterministic representative first, then fill the
-        // rest with an even walk through the spatially ordered triangles.
+        // A plain source-order stride can spend the whole reciprocal budget
+        // in one dense component and miss a small adjacent tooth. Give each
+        // component a deterministic representative first, then fill the rest
+        // with an even walk through source triangles.
         let component_slots = target.min(self.components.len());
         let mut first_component_slots = vec![None; self.components.len()];
         for (slot, &component) in self.triangle_components.iter().enumerate() {
@@ -490,14 +658,60 @@ impl SurfaceIndex {
     /// order or on how the caller parallelizes its queries.
     #[must_use]
     pub fn nearest(&self, point: DVec3, radius: f64) -> Option<SurfaceHit> {
+        let control = self.query_control.as_ref().unwrap_or(&self.uncontrolled);
+        match self.nearest_controlled(point, radius, control) {
+            QueryOutcome::Complete(hit) => hit,
+            QueryOutcome::Interrupted { .. } => None,
+        }
+    }
+
+    /// Exact nearest answer, or an explicitly interrupted upper bound.
+    ///
+    /// Charges each tested triangle (including repeats in overlapping buckets),
+    /// every visited cell and every ring. A single dense query cannot exceed
+    /// its triangle-test ceiling. Invalid query coordinates/radius give exact
+    /// absence; incomplete traversal never masquerades as exact absence.
+    pub fn nearest_controlled(
+        &self,
+        point: DVec3,
+        radius: f64,
+        control: &GeometryControl,
+    ) -> QueryOutcome<SurfaceHit> {
+        let mut traversal = Traversal {
+            best: None,
+            tests: 0,
+            control,
+        };
+        let outcome = self.query(point, radius, &mut traversal);
+        let hit = traversal
+            .best
+            .map(|found: Candidate| self.hit(found.slot, found.source, found.point, found.feature));
+        match outcome {
+            Ok(()) => QueryOutcome::Complete(hit),
+            Err(reason) => {
+                if self.query_control.is_some() {
+                    control.stop(reason);
+                }
+                QueryOutcome::Interrupted { best: hit, reason }
+            }
+        }
+    }
+
+    fn query(
+        &self,
+        point: DVec3,
+        radius: f64,
+        traversal: &mut Traversal<'_>,
+    ) -> Result<(), GeometryStop> {
+        traversal.control.begin_query()?;
         if !point.is_finite() || !radius.is_finite() || radius <= 0.0 {
-            return None;
+            return Ok(());
         }
         // Every triangle lies inside the mesh box, so a point farther from that
         // box than the radius cannot reach any of them. One clamp answers the
         // whole query for a vertex sitting off the end of the other scan.
         if (point.clamp(self.min, self.max) - point).length_squared() > radius * radius {
-            return None;
+            return Ok(());
         }
         let reach = DVec3::splat(radius);
         let query = Query {
@@ -507,7 +721,6 @@ impl SurfaceIndex {
             low: self.cell_of(point - reach),
             high: self.cell_of(point + reach),
         };
-        let mut best: Option<Candidate> = None;
 
         // Shells the coarse level already proved empty are not walked at all.
         // For a point sitting in open space this is the whole answer: the walk
@@ -518,14 +731,15 @@ impl SurfaceIndex {
             // equal distance is a tie that may still carry a lower source
             // index. That is the same test the per-cell prune makes, so the
             // answer is the one a full sweep of the window would give.
-            let ceiling = best.map_or(query.limit, |found| found.distance);
+            traversal.control.charge_operations(1)?;
+            let ceiling = traversal.best.map_or(query.limit, |found| found.distance);
             if self.ring_floor(&query, ring) > ceiling {
                 break;
             }
-            self.visit_ring(&query, ring, &mut best);
+            self.visit_ring(&query, ring, traversal)?;
         }
 
-        best.map(|found| self.hit(found.slot, found.source, found.point, found.feature))
+        Ok(())
     }
 
     /// The hit a query reports for the closest point `point` on `slot`.
@@ -577,7 +791,12 @@ impl SurfaceIndex {
     /// full rectangles, and the rows between them contribute only their two
     /// end columns. `ring` zero is the single home cell, which the `z_edge`
     /// branch covers.
-    fn visit_ring(&self, query: &Query, ring: i64, best: &mut Option<Candidate>) {
+    fn visit_ring(
+        &self,
+        query: &Query,
+        ring: i64,
+        traversal: &mut Traversal<'_>,
+    ) -> Result<(), GeometryStop> {
         let (home, low, high) = (query.home, query.low, query.high);
         let span = |axis: usize| {
             (home[axis].saturating_sub(ring).max(low[axis]))
@@ -586,30 +805,40 @@ impl SurfaceIndex {
         let columns = span(0);
         let run = columns.end() - columns.start() + 1;
         for z in span(2) {
+            traversal.control.charge_operations(1)?;
             let z_edge = (z - home[2]).abs() == ring;
             for y in span(1) {
+                traversal.control.charge_operations(1)?;
                 if z_edge || (y - home[1]).abs() == ring {
-                    self.visit_run(query, [*columns.start(), y, z], run, best);
+                    self.visit_run(query, [*columns.start(), y, z], run, traversal)?;
                 } else {
                     for x in [home[0] - ring, home[0] + ring] {
                         if x >= low[0] && x <= high[0] {
-                            self.visit_run(query, [x, y, z], 1, best);
+                            self.visit_run(query, [x, y, z], 1, traversal)?;
                         }
                     }
                 }
             }
         }
+        Ok(())
     }
 
     /// Test a run of `length` cells along x, starting at `start`.
     ///
     /// Walk the bucket table directly so empty cells require only adjacent
     /// reads.
-    fn visit_run(&self, query: &Query, start: [i64; 3], length: i64, best: &mut Option<Candidate>) {
+    fn visit_run(
+        &self,
+        query: &Query,
+        start: [i64; 3],
+        length: i64,
+        traversal: &mut Traversal<'_>,
+    ) -> Result<(), GeometryStop> {
         let Some(base) = self.cell_index(start) else {
-            return;
+            return Ok(());
         };
         for offset in 0..length {
+            traversal.control.charge_operations(1)?;
             let Some(cell) = usize::try_from(offset).ok().map(|step| base + step) else {
                 continue;
             };
@@ -624,9 +853,10 @@ impl SurfaceIndex {
                 query,
                 [start[0] + offset, start[1], start[2]],
                 from..to,
-                best,
-            );
+                traversal,
+            )?;
         }
+        Ok(())
     }
 
     /// Test one cell's triangles against the running best.
@@ -635,16 +865,17 @@ impl SurfaceIndex {
         query: &Query,
         cell: [i64; 3],
         bucket: Range<u32>,
-        best: &mut Option<Candidate>,
-    ) {
-        let ceiling = best.map_or(query.limit, |found| found.distance);
+        traversal: &mut Traversal<'_>,
+    ) -> Result<(), GeometryStop> {
+        let ceiling = traversal.best.map_or(query.limit, |found| found.distance);
         if self.cell_distance_squared(query.point, cell) > ceiling {
-            return;
+            return Ok(());
         }
         let Some(bucket) = self.items.get(bucket.start as usize..bucket.end as usize) else {
-            return;
+            return Ok(());
         };
         for &slot in bucket {
+            traversal.control.triangle_test(&mut traversal.tests)?;
             let slot = slot as usize;
             let Some(corners) = self.corners.get(slot) else {
                 continue;
@@ -652,6 +883,9 @@ impl SurfaceIndex {
             let (candidate, feature) =
                 closest_feature_on_triangle(query.point, corners[0], corners[1], corners[2]);
             let distance = (candidate - query.point).length_squared();
+            if !distance.is_finite() || !candidate.is_finite() {
+                return Err(GeometryStop::Numerical);
+            }
             if distance > query.limit {
                 continue;
             }
@@ -661,7 +895,7 @@ impl SurfaceIndex {
             // source index is what makes the answer independent of traversal
             // order.
             #[allow(clippy::float_cmp)]
-            let better = match best {
+            let better = match traversal.best {
                 None => true,
                 Some(found) => {
                     distance < found.distance
@@ -669,7 +903,7 @@ impl SurfaceIndex {
                 }
             };
             if better {
-                *best = Some(Candidate {
+                traversal.best = Some(Candidate {
                     distance,
                     source,
                     point: candidate,
@@ -678,104 +912,93 @@ impl SurfaceIndex {
                 });
             }
         }
+        Ok(())
     }
 
-    /// Reorder the triangle arrays so triangles sharing a cell sit together in
-    /// memory. A query reads every triangle of a handful of neighbouring cells;
-    /// in file order those reads are scattered over tens of megabytes, and the
-    /// walk spends its time waiting for memory rather than testing triangles.
-    ///
-    /// This moves triangles, never renames them: a hit still reports the source
-    /// index, and the tie-break still compares source indices, so the order the
-    /// arrays happen to be in cannot change an answer.
-    ///
-    /// Counted and scattered rather than sorted, for the same reason the
-    /// buckets are: it is linear, it allocates once, and it lays out identically
-    /// for identical input.
-    fn in_cell_order(mut self) -> Self {
-        let mut counts = vec![0u32; cell_count(self.dims) + 1];
-        let home: Vec<u32> = self
-            .corners
-            .iter()
-            .map(|corners| {
-                let low = corners[0].min(corners[1]).min(corners[2]);
-                let cell = self.cell_index(self.cell_of(low)).unwrap_or(0);
-                u32::try_from(cell).unwrap_or(0)
-            })
-            .collect();
-        for &cell in &home {
-            if let Some(entry) = counts.get_mut(cell as usize + 1) {
-                *entry = entry.saturating_add(1);
-            }
-        }
-        for slot in 1..counts.len() {
-            counts[slot] += counts[slot - 1];
-        }
-        let mut order = vec![0u32; self.corners.len()];
-        for (triangle, &cell) in home.iter().enumerate() {
-            let Some(cursor) = counts.get_mut(cell as usize) else {
-                continue;
-            };
-            let slot = *cursor as usize;
-            *cursor += 1;
-            if let Some(entry) = order.get_mut(slot) {
-                *entry = u32::try_from(triangle).unwrap_or(0);
-            }
-        }
-        self.corners = gather(&self.corners, &order);
-        self.normals = gather(&self.normals, &order);
-        self.sources = gather(&self.sources, &order);
-        self.triangle_components = gather(&self.triangle_components, &order);
-        self.topology.corners = gather(&self.topology.corners, &order);
-        self.topology.edge_normals = gather(&self.topology.edge_normals, &order);
-        self.topology.edge_border = gather(&self.topology.edge_border, &order);
-        self
-    }
-
-    /// Bucket triangles into a deterministic counted-and-scattered CSR list.
-    #[allow(clippy::cast_sign_loss)]
-    fn with_buckets(mut self) -> Self {
+    /// Count and scatter buckets under shared work and memory admission.
+    fn with_buckets(mut self, control: &GeometryControl) -> Result<Self, GeometryStop> {
         let cells = cell_count(self.dims);
-        let mut counts = vec![0u32; cells + 1];
+        let bytes = cells
+            .checked_add(1)
+            .and_then(|n| n.checked_mul(12))
+            .ok_or(GeometryStop::ResourceLimit)?;
+        let temporary = control.reserve(bytes)?;
+        let mut counts = allocated_vec(cells + 1, control)?;
+        for _ in 0..=cells {
+            control.charge_operations(1)?;
+            counts.push(0u32);
+        }
         for corners in &self.corners {
-            self.for_each_cell(corners, |cell| {
-                counts[cell + 1] = counts[cell + 1].saturating_add(1);
-            });
+            self.for_each_cell(corners, control, |cell| {
+                counts[cell + 1] = counts[cell + 1]
+                    .checked_add(1)
+                    .ok_or(GeometryStop::ResourceLimit)?;
+                Ok(())
+            })?;
         }
         for slot in 1..counts.len() {
-            counts[slot] += counts[slot - 1];
+            control.charge_operations(1)?;
+            counts[slot] = counts[slot]
+                .checked_add(counts[slot - 1])
+                .ok_or(GeometryStop::ResourceLimit)?;
         }
         let total = counts.last().copied().unwrap_or(0) as usize;
-        let mut items = vec![0u32; total];
-        let mut cursor = counts.clone();
+        let resident = control.reserve(
+            total
+                .checked_add(cells + 1)
+                .and_then(|n| n.checked_mul(4))
+                .ok_or(GeometryStop::ResourceLimit)?,
+        )?;
+        let mut items = allocated_vec(total, control)?;
+        for _ in 0..total {
+            control.charge_operations(1)?;
+            items.push(0u32);
+        }
+        let mut cursor = allocated_vec(counts.len(), control)?;
+        for &count in &counts {
+            control.charge_operations(1)?;
+            cursor.push(count);
+        }
         for (triangle, corners) in self.corners.iter().enumerate() {
-            let triangle = u32::try_from(triangle).unwrap_or(u32::MAX);
-            self.for_each_cell(corners, |cell| {
+            let triangle = u32::try_from(triangle).map_err(|_| GeometryStop::ResourceLimit)?;
+            self.for_each_cell(corners, control, |cell| {
                 let slot = cursor[cell] as usize;
-                if let Some(entry) = items.get_mut(slot) {
-                    *entry = triangle;
+                if let Some(item) = items.get_mut(slot) {
+                    *item = triangle;
                 }
-                cursor[cell] += 1;
-            });
+                cursor[cell] = cursor[cell]
+                    .checked_add(1)
+                    .ok_or(GeometryStop::ResourceLimit)?;
+                Ok(())
+            })?;
         }
         self.starts = counts;
         self.items = items;
-        self
+        self.memory.push(resident);
+        drop(cursor);
+        drop(temporary);
+        Ok(self)
     }
 
-    /// Call `visit` once per grid cell overlapped by this triangle's box.
-    fn for_each_cell(&self, corners: &[DVec3; 3], mut visit: impl FnMut(usize)) {
+    fn for_each_cell(
+        &self,
+        corners: &[DVec3; 3],
+        control: &GeometryControl,
+        mut visit: impl FnMut(usize) -> Result<(), GeometryStop>,
+    ) -> Result<(), GeometryStop> {
         let low = self.cell_of(corners[0].min(corners[1]).min(corners[2]));
         let high = self.cell_of(corners[0].max(corners[1]).max(corners[2]));
         for z in low[2]..=high[2] {
             for y in low[1]..=high[1] {
                 for x in low[0]..=high[0] {
+                    control.charge_operations(1)?;
                     if let Some(cell) = self.cell_index([x, y, z]) {
-                        visit(cell);
+                        visit(cell)?;
                     }
                 }
             }
         }
+        Ok(())
     }
 
     /// Grid coordinates of `point`, clamped into the grid.
@@ -822,35 +1045,42 @@ impl SurfaceIndex {
     /// Record, per coarse block, how many blocks away the nearest occupied one
     /// is. This is what lets a query in open space skip straight past the void
     /// it sits in instead of sweeping every cell of it.
-    fn with_gaps(mut self) -> Self {
+    fn with_gaps(mut self, control: &GeometryControl) -> Result<Self, GeometryStop> {
         let blocks = [
             block_count(self.dims[0]),
             block_count(self.dims[1]),
             block_count(self.dims[2]),
         ];
-        let mut gaps = vec![u8::MAX; cell_count(blocks)];
+        let count = cell_count(blocks);
+        let memory = control.reserve(count)?;
+        let mut gaps = allocated_vec(count, control)?;
+        for _ in 0..count {
+            control.charge_operations(1)?;
+            gaps.push(u8::MAX);
+        }
         let mut cell = 0usize;
         for z in 0..self.dims[2] {
             for y in 0..self.dims[1] {
                 for x in 0..self.dims[0] {
+                    control.charge_operations(1)?;
                     let occupied = self.starts.get(cell) != self.starts.get(cell + 1);
                     cell += 1;
-                    if !occupied {
-                        continue;
-                    }
-                    if let Some(entry) = flat_index(blocks, [x / BLOCK, y / BLOCK, z / BLOCK])
-                        .and_then(|flat| gaps.get_mut(flat))
-                    {
-                        *entry = 0;
+                    if occupied {
+                        if let Some(entry) = flat_index(blocks, [x / BLOCK, y / BLOCK, z / BLOCK])
+                            .and_then(|flat| gaps.get_mut(flat))
+                        {
+                            *entry = 0;
+                        }
                     }
                 }
             }
         }
-        sweep(blocks, &mut gaps, true);
-        sweep(blocks, &mut gaps, false);
+        sweep(blocks, &mut gaps, true, control)?;
+        sweep(blocks, &mut gaps, false, control)?;
         self.blocks = blocks;
         self.gaps = gaps;
-        self
+        self.memory.push(memory);
+        Ok(self)
     }
 
     /// Squared distance from `point` to a cell's own box — the cheap test that
@@ -861,6 +1091,24 @@ impl SurfaceIndex {
         let high = low + DVec3::splat(self.cell);
         (point.clamp(low, high) - point).length_squared()
     }
+}
+
+fn mapped_normal(matrix: DMat3, normal: DVec3) -> Option<DVec3> {
+    let transformed = matrix * normal;
+    let scale = transformed.abs().max_element();
+    if !transformed.is_finite() || scale <= 0. {
+        return None;
+    }
+    let normalized = (transformed / scale).normalize_or_zero();
+    (normalized.is_finite() && normalized.length_squared() > 0.).then_some(normalized)
+}
+
+fn allocated_vec<T>(capacity: usize, control: &GeometryControl) -> Result<Vec<T>, GeometryStop> {
+    let mut values = Vec::new();
+    values
+        .try_reserve_exact(capacity)
+        .map_err(|_| control.stop(GeometryStop::ResourceLimit))?;
+    Ok(values)
 }
 
 #[cfg(test)]

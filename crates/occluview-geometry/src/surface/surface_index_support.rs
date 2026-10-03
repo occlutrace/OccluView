@@ -1,8 +1,6 @@
 //! Sampling, component mapping, and coarse-grid support for the surface index.
 
-use super::{canonical_bits, ComponentData, BLOCK};
-use glam::DVec3;
-use std::collections::BTreeMap;
+use super::{GeometryControl, GeometryStop, BLOCK};
 
 /// The half of the 3x3x3 neighbourhood a forward raster sweep has already
 /// visited, ending with the cell before this one on the same row.
@@ -32,33 +30,6 @@ pub(super) fn radical_inverse(mut index: usize, base: usize) -> f64 {
         scale /= base as f64;
     }
     result
-}
-
-/// Resolve each retained triangle to the deterministic component order used
-/// by the coarse alignment hypotheses.
-pub(super) fn component_data(
-    parent: &mut [usize],
-    triangle_anchors: &[usize],
-    component_bounds: BTreeMap<usize, (DVec3, DVec3)>,
-) -> Option<ComponentData> {
-    let component_roots: Vec<usize> = component_bounds.keys().copied().collect();
-    let components: Vec<(DVec3, DVec3)> = component_bounds.into_values().collect();
-    let triangle_components = triangle_anchors
-        .iter()
-        .map(|&anchor| {
-            let root = find(parent, anchor);
-            component_roots.binary_search(&root).ok()
-        })
-        .collect::<Option<Vec<_>>>()?;
-    Some((components, triangle_components))
-}
-
-/// Pick `values` out in the order `order` names them.
-pub(super) fn gather<T: Copy>(values: &[T], order: &[u32]) -> Vec<T> {
-    order
-        .iter()
-        .filter_map(|&slot| values.get(slot as usize).copied())
-        .collect()
 }
 
 /// Coarse blocks spanning `cells` fine cells, rounding up.
@@ -91,9 +62,15 @@ pub(super) fn unflatten(dims: [i64; 3], flat: i64) -> [i64; 3] {
 /// 3x3x3 neighbourhood, so a forward sweep against the already-visited half of
 /// that neighbourhood followed by a backward sweep against the other half is
 /// exact — no iteration to a fixed point, and the same answer every run.
-pub(super) fn sweep(dims: [i64; 3], gaps: &mut [u8], forward: bool) {
+pub(super) fn sweep(
+    dims: [i64; 3],
+    gaps: &mut [u8],
+    forward: bool,
+    control: &GeometryControl,
+) -> Result<(), GeometryStop> {
     let total = i64::try_from(gaps.len()).unwrap_or(0);
     for step in 0..total {
+        control.charge_operations(1)?;
         let flat = if forward { step } else { total - 1 - step };
         let Some(&current) = usize::try_from(flat).ok().and_then(|slot| gaps.get(slot)) else {
             continue;
@@ -105,6 +82,7 @@ pub(super) fn sweep(dims: [i64; 3], gaps: &mut [u8], forward: bool) {
         let sign = if forward { 1 } else { -1 };
         let mut best = current;
         for offset in EARLIER {
+            control.charge_operations(1)?;
             let neighbour = [
                 cell[0] + sign * offset[0],
                 cell[1] + sign * offset[1],
@@ -121,6 +99,7 @@ pub(super) fn sweep(dims: [i64; 3], gaps: &mut [u8], forward: bool) {
             *entry = best;
         }
     }
+    Ok(())
 }
 
 /// Find a connected-component root with path compression.
@@ -148,27 +127,6 @@ pub(super) fn find(parent: &mut [usize], node: usize) -> usize {
         current = next;
     }
     root
-}
-
-/// The representative vertex for `point`: the first vertex seen at exactly
-/// that position, with `vertex` joined to its component.
-pub(super) fn weld(
-    positions: &mut BTreeMap<[u64; 3], usize>,
-    parent: &mut [usize],
-    component_size: &mut [usize],
-    vertex: usize,
-    point: DVec3,
-) -> usize {
-    let key = [
-        canonical_bits(point.x),
-        canonical_bits(point.y),
-        canonical_bits(point.z),
-    ];
-    let representative = *positions.entry(key).or_insert(vertex);
-    if representative != vertex {
-        union(parent, component_size, representative, vertex);
-    }
-    representative
 }
 
 /// Join two indexed vertices into one surface component.
