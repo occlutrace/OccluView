@@ -124,7 +124,6 @@ toolbar-ruler-label = Lineal
 toolbar-ruler-hint = Abstand messen: zwei Punkte auf dem Modell ({ $shortcut })
 toolbar-thickness-label = Dicke
 toolbar-thickness-hint = Wandstärke prüfen: Punkt auf der Schale ({ $shortcut })
-toolbar-measure-blocked = Mesh-Sitzung zuerst beenden oder abbrechen
 toolbar-measure-needs-layer = Messung braucht eine sichtbare Netzebene
 toolbar-align-label = Ausrichtung
 toolbar-align-hint = Zwei Scans zusammenführen: je ein Punkt ({ $shortcut })
@@ -599,7 +598,6 @@ edit-select-faces-first = Erst Netzflächen auswählen
 edit-no-changes = Keine Änderungen: { $layer }
 edit-apply-failed-title = Auswahl konnte nicht bearbeitet werden
 edit-apply-failed-summary = Auswahl konnte nicht bearbeitet werden: { $detail }
-edit-no-changes-hidden = Keine Änderungen: Auswahl verfeinern; ausgeblendete Ebenen bleiben unberührt
 edit-selected-faces = { $faces ->
     [one] { $faces } Fläche ausgewählt
    *[other] { $faces } Flächen ausgewählt

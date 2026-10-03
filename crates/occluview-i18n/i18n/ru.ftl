@@ -124,7 +124,6 @@ toolbar-ruler-label = Линейка
 toolbar-ruler-hint = Измерить расстояние: две точки на модели ({ $shortcut })
 toolbar-thickness-label = Толщина
 toolbar-thickness-hint = Измерить толщину стенки: точка на оболочке ({ $shortcut })
-toolbar-measure-blocked = Сначала завершите или отмените сессию редактирования
 toolbar-measure-needs-layer = Для измерения нужен видимый слой сетки
 toolbar-align-label = Сопоставление
 toolbar-align-hint = Совместить два скана: по точке на каждом ({ $shortcut })
@@ -675,7 +674,6 @@ edit-select-faces-first = Сначала выберите грани сетки
 edit-no-changes = Без изменений: { $layer }
 edit-apply-failed-title = Не удалось изменить выбор
 edit-apply-failed-summary = Не удалось изменить выбор: { $detail }
-edit-no-changes-hidden = Без изменений: уточните выбор; скрытые слои не тронуты
 edit-selected-faces = { $faces ->
     [one] Выбрана { $faces } грань
     [few] Выбраны { $faces } грани

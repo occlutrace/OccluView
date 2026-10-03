@@ -127,7 +127,6 @@ toolbar-ruler-label = Ruler
 toolbar-ruler-hint = Measure a distance: click two points on the model ({ $shortcut })
 toolbar-thickness-label = Thickness
 toolbar-thickness-hint = Probe the local wall thickness: click a point on the shell ({ $shortcut })
-toolbar-measure-blocked = Finish or cancel the mesh edit session first
 toolbar-measure-needs-layer = Measuring needs a visible mesh layer
 toolbar-align-label = Align
 toolbar-align-hint = Bring two scans together: click a point on each ({ $shortcut })
@@ -605,7 +604,6 @@ edit-select-faces-first = Select mesh faces first
 edit-no-changes = No changes: { $layer }
 edit-apply-failed-title = Could not edit selection
 edit-apply-failed-summary = Could not edit selection: { $detail }
-edit-no-changes-hidden = No changes: refine the selection; hidden layers stay untouched
 edit-selected-faces = { $faces ->
     [one] Selected { $faces } face
    *[other] Selected { $faces } faces

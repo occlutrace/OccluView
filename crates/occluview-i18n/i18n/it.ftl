@@ -124,7 +124,6 @@ toolbar-ruler-label = Righello
 toolbar-ruler-hint = Misura una distanza: due punti sul modello ({ $shortcut })
 toolbar-thickness-label = Spessore
 toolbar-thickness-hint = Sonda lo spessore: un punto sul guscio ({ $shortcut })
-toolbar-measure-blocked = Finisci o annulla la sessione prima
 toolbar-measure-needs-layer = Misurare vuole un livello visibile
 toolbar-align-label = Allinea
 toolbar-align-hint = Unisci due scansioni: un punto per una ({ $shortcut })
@@ -599,7 +598,6 @@ edit-select-faces-first = Seleziona prima le facce della mesh
 edit-no-changes = Niente cambiato: { $layer }
 edit-apply-failed-title = Modifica della selezione fallita
 edit-apply-failed-summary = Modifica della selezione fallita: { $detail }
-edit-no-changes-hidden = Niente cambiato: affina la selezione; i livelli nascosti restano intatti
 edit-selected-faces = { $faces ->
     [one] { $faces } faccia selezionata
    *[other] { $faces } facce selezionate

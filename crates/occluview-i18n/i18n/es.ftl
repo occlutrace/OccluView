@@ -124,7 +124,6 @@ toolbar-ruler-label = Regla
 toolbar-ruler-hint = Medir una distancia: dos puntos en el modelo ({ $shortcut })
 toolbar-thickness-label = Grosor
 toolbar-thickness-hint = Sondear el grosor: un punto en la pared ({ $shortcut })
-toolbar-measure-blocked = Termina o cancela la sesión de edición primero
 toolbar-measure-needs-layer = Medir necesita una capa de malla visible
 toolbar-align-label = Alinear
 toolbar-align-hint = Juntar dos escaneos: un punto en cada uno ({ $shortcut })
@@ -599,7 +598,6 @@ edit-select-faces-first = Selecciona primero caras de la malla
 edit-no-changes = Sin cambios: { $layer }
 edit-apply-failed-title = No se pudo editar la selección
 edit-apply-failed-summary = No se pudo editar la selección: { $detail }
-edit-no-changes-hidden = Sin cambios: afina la selección; las capas ocultas no se tocan
 edit-selected-faces = { $faces ->
     [one] { $faces } cara seleccionada
    *[other] { $faces } caras seleccionadas

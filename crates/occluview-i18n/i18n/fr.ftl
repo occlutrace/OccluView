@@ -124,7 +124,6 @@ toolbar-ruler-label = Règle
 toolbar-ruler-hint = Mesurer une distance : deux points sur le modèle ({ $shortcut })
 toolbar-thickness-label = Épaisseur
 toolbar-thickness-hint = Sonder l’épaisseur : un point sur la paroi ({ $shortcut })
-toolbar-measure-blocked = Terminer ou annuler la session d’édition
 toolbar-measure-needs-layer = Mesurer exige un calque visible
 toolbar-align-label = Aligner
 toolbar-align-hint = Assembler deux scans : un point sur chacun ({ $shortcut })
@@ -599,7 +598,6 @@ edit-select-faces-first = Sélectionner d’abord des faces du maillage
 edit-no-changes = Rien changé : { $layer }
 edit-apply-failed-title = Édition de la sélection impossible
 edit-apply-failed-summary = Édition de la sélection impossible : { $detail }
-edit-no-changes-hidden = Rien changé : affinez la sélection ; les calques masqués restent intacts
 edit-selected-faces = { $faces ->
     [one] { $faces } face sélectionnée
    *[other] { $faces } faces sélectionnées

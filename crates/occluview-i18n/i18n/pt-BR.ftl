@@ -125,7 +125,6 @@ toolbar-ruler-label = Régua
 toolbar-ruler-hint = Medir distância: dois pontos no modelo ({ $shortcut })
 toolbar-thickness-label = Espessura
 toolbar-thickness-hint = Sondar a espessura: um ponto na parede ({ $shortcut })
-toolbar-measure-blocked = Termine ou cancele a sessão antes
 toolbar-measure-needs-layer = Medir precisa de camada visível
 toolbar-align-label = Alinhar
 toolbar-align-hint = Juntar dois escaneamentos: um ponto em cada ({ $shortcut })
@@ -601,7 +600,6 @@ edit-select-faces-first = Selecione faces da malha antes
 edit-no-changes = Sem mudanças: { $layer }
 edit-apply-failed-title = Não deu para editar a seleção
 edit-apply-failed-summary = Não deu para editar a seleção: { $detail }
-edit-no-changes-hidden = Sem mudanças: refine a seleção; camadas ocultas seguem intactas
 edit-selected-faces = { $faces ->
     [one] { $faces } face selecionada
    *[other] { $faces } faces selecionadas
