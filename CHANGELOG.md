@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Scan matching skips refinement queries that cannot enter the selected common surface region.
+
 - Scan matching resumes interrupted refinement after completed verification and reuses unchanged exact evidence.
 
 - Scan matching shares coarse refinement work between overlap alternatives while retaining both placements.
