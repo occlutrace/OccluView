@@ -271,7 +271,8 @@ impl Offscreen {
             label: Some("occluview cut encoder"),
         });
 
-        if !cut.show_hollow {
+        let solid_cap = cut.plane.enabled != 0 && !cut.show_hollow;
+        if solid_cap {
             for (index, pipeline) in [
                 &self.renderer.stencil_back_pipeline,
                 &self.renderer.stencil_front_pipeline,
@@ -401,7 +402,7 @@ impl Offscreen {
         }
 
         {
-            let color_load = if cut.show_hollow {
+            let color_load = if !solid_cap {
                 wgpu::LoadOp::Clear(wgpu::Color {
                     r: spec.background[0],
                     g: spec.background[1],
@@ -428,7 +429,7 @@ impl Offscreen {
                         // A solid cap writes the cut-plane depth. Keeping the
                         // depth buffer lets the final shaded pass remain
                         // behind it when the camera looks into the cut.
-                        load: if cut.show_hollow {
+                        load: if !solid_cap {
                             wgpu::LoadOp::Clear(1.0)
                         } else {
                             wgpu::LoadOp::Load
@@ -436,7 +437,11 @@ impl Offscreen {
                         store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
+                        load: if solid_cap {
+                            wgpu::LoadOp::Load
+                        } else {
+                            wgpu::LoadOp::Clear(0)
+                        },
                         store: wgpu::StoreOp::Store,
                     }),
                 }),

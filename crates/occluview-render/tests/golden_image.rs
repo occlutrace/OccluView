@@ -652,6 +652,66 @@ fn translated_solid_cut_keeps_its_cross_section_cap() {
     );
 }
 
+#[test]
+fn disabled_solid_cut_preserves_the_uncut_mesh() {
+    let _gpu = gpu_test_lock();
+    let triangle = render_triangle_mesh().expect("valid triangle");
+    for reversed in [false, true] {
+        let vertices = triangle
+            .vertices()
+            .iter()
+            .map(|vertex| {
+                let mut vertex = *vertex;
+                vertex.position[2] -= 0.5;
+                vertex
+            })
+            .collect();
+        let indices = triangle
+            .indices()
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .flat_map(|&corners| {
+                if reversed {
+                    [corners[0], corners[2], corners[1]]
+                } else {
+                    corners
+                }
+            })
+            .collect();
+        let mesh = Mesh::new(None, vertices, indices).expect("offset triangle");
+        let cam = camera_looking_at_origin();
+        let offscreen = pollster::block_on(Offscreen::new()).expect("offscreen init");
+        let spec = dark_thumbnail_spec();
+        let uncut = pollster::block_on(offscreen.render_with_deadline(
+            &mesh,
+            &cam,
+            spec,
+            test_render_deadline(),
+        ))
+        .expect("uncut mesh");
+        let cut = occluview_render::CutViewSpec {
+            plane: ClipPlane::disabled(),
+            cap_color: [0.0, 1.0, 0.0, 1.0],
+            show_hollow: false,
+        };
+        let disabled =
+            pollster::block_on(offscreen.render_with_cut_with_deadline(CutMeshRequest {
+                mesh: &mesh,
+                camera: &cam,
+                cut: &cut,
+                half_extent: 2.0,
+                spec,
+                deadline: test_render_deadline(),
+            }))
+            .expect("disabled cut");
+        assert!(
+            uncut == disabled,
+            "a disabled cut must preserve every pixel of the uncut mesh"
+        );
+    }
+}
+
 /// Validates the convenience entry point `render_cut_view` — auto-frames an
 /// orthographic camera along the plane normal and renders the solid cut.
 /// Proves the full cut-view pipeline (camera + clip + stencil cap) runs
