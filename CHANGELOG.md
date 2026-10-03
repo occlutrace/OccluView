@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Keep adjacent OBJ textures when a later material switch is unused by every face.
+
 - Keep contact patches and counts separate at extreme scan coordinates.
 
 - Refuse OBJ materials whose diffuse factors or texture options would be silently discarded.

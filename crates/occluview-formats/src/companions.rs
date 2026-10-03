@@ -82,8 +82,8 @@ fn locate(path: &Path, kind: LocateKind, bytes: &[u8]) -> Result<Option<PathBuf>
     };
     Ok(match kind {
         LocateKind::Obj => material_image(directory, bytes)?.or_else(|| {
-            directives(bytes, "usemtl")
-                .is_empty()
+            used_face_material(bytes)
+                .is_none()
                 .then(|| same_stem_image(path, directory))
                 .flatten()
         }),
@@ -416,6 +416,22 @@ mod tests {
         std::fs::write(directory.path().join("scan.mtl"), "newmtl unused\nmap_Kd -s 9 unused.png\nnewmtl used\nmap_Kd -s 1 1 1 -o 0 0 0 -t 0 -mm 0 1 scan.png\nKd 1 1 1\n").expect("identity MTL");
         let mesh = crate::read_file(&path).expect("identity appearance");
         assert!(mesh.texture().is_some());
+    }
+
+    #[test]
+    fn unnamed_obj_faces_keep_legacy_companions_after_an_unused_material_switch() {
+        let directory = tempfile::tempdir().expect("directory");
+        let path = directory.path().join("scan.obj");
+        std::fs::write(directory.path().join("scan.png"), textured_png()).expect("image");
+        std::fs::write(
+            &path,
+            b"v 0 0 0\nv 1 0 0\nv 0 1 0\nvt 0 0\nvt 1 0\nvt 0 1\nf 1/1 2/2 3/3\nusemtl unused\n",
+        )
+        .expect("OBJ");
+        assert!(crate::read_file(&path)
+            .expect("unnamed faces")
+            .texture()
+            .is_some());
     }
 
     #[test]
