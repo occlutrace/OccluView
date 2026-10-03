@@ -669,6 +669,59 @@ fn reusable_query_scratch_preserves_exactness_and_forgets_prior_surfaces() {
 }
 
 #[test]
+fn temporal_facet_hints_preserve_exact_queries_across_population_passes() {
+    use super::super::{CancelFlag, GeometryLimits, GeometryStop, QueryOutcome};
+    use super::{GeometryControl, SurfaceQueryScratch};
+    let (positions, indices) = awkward_mesh();
+    let index = SurfaceIndex::build(soup(&positions, &indices)).unwrap();
+    let shifted: Vec<_> = positions
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .flat_map(|p| [p[0], p[1], p[2] + 3.])
+        .collect();
+    let other = SurfaceIndex::build(soup(&shifted, &indices)).unwrap();
+    let control = GeometryControl::unlimited();
+    let mut scratch = SurfaceQueryScratch::new(&control).unwrap();
+    let mut hints = vec![None; 1000];
+    for pass in 0..10 {
+        let selected = if pass == 5 { &other } else { &index };
+        for (i, hint) in hints.iter_mut().enumerate() {
+            let point = DVec3::new(
+                super::radical_inverse(i + 1, 2) * 40.,
+                super::radical_inverse(i + 1, 3) * 40.,
+                2. + f64::from(pass) * 0.01,
+            );
+            scratch.set_facet_hint(*hint);
+            assert_eq!(
+                selected.nearest_with_scratch(point, 8., &mut scratch),
+                QueryOutcome::Complete(brute_nearest(selected, point, 8.))
+            );
+            *hint = scratch.facet_hint();
+        }
+    }
+    assert_eq!(control.counters().query_calls, 10_000);
+    let cancel = CancelFlag::new();
+    let limited = GeometryControl::new(
+        cancel.clone(),
+        std::time::Duration::MAX,
+        GeometryLimits::default(),
+    );
+    let mut scratch = SurfaceQueryScratch::new(&limited).unwrap();
+    scratch.set_facet_hint(hints[0]);
+    cancel.cancel();
+    assert!(matches!(
+        index.nearest_with_scratch(DVec3::ZERO, 8., &mut scratch),
+        QueryOutcome::Interrupted {
+            reason: GeometryStop::Cancelled,
+            ..
+        }
+    ));
+    drop(scratch);
+    assert_eq!(limited.counters().memory_bytes, 0);
+}
+
+#[test]
 fn local_query_stop_does_not_poison_later_exact_queries() {
     use super::super::{CancelFlag, GeometryLimits, GeometryStop, QueryOutcome};
     use super::GeometryControl;
