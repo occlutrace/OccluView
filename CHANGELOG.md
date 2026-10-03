@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Keep the preview object alive while window callbacks or modal menus are active.
+
 - Preserve Windows shell-item filenames containing unpaired UTF-16 code units.
 
 - Keep thickness probes on their known wall after large scene translations and rotations.
