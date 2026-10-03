@@ -10,7 +10,7 @@
 
 use super::icp_surface_step::{accumulate_robust, line_search, PlaneInformation, SurfacePair};
 use crate::candidate_score::{
-    pose_distance, proposal_order, score_common_region, weighted_trim_sweep, CoarseScoring,
+    pose_distance, proposal_order, score_common_region, weighted_trim_sweep_ordered, CoarseScoring,
     Proposal, WeightedDistance,
 };
 use crate::{NormalPolicy, PreparedSurface, RefinementTermination, Rigid, SearchSettings};
@@ -832,21 +832,6 @@ fn correspondences(
             control,
         )?
     };
-    let area = moving.eligible_area_mm2.min(fixed.eligible_area_mm2);
-    if refresh || fraction.is_none() {
-        let mut distances: Vec<_> = smaller.iter().map(|p| p.distance).collect();
-        control.charge_operations(distances.len() as u64)?;
-        *fraction = weighted_trim_sweep(
-            &mut distances,
-            area,
-            settings.overlap_prior.unwrap_or(1.),
-            control,
-        )?
-        .map(|p| p.0);
-    }
-    let Some(q) = *fraction else {
-        return Ok((Vec::new(), false));
-    };
     let mut stopped = None;
     smaller.sort_by(|a, b| {
         if stopped.is_none() {
@@ -860,6 +845,19 @@ fn correspondences(
     if let Some(stop) = stopped {
         return Err(stop);
     }
+    let area = moving.eligible_area_mm2.min(fixed.eligible_area_mm2);
+    if refresh || fraction.is_none() {
+        *fraction = weighted_trim_sweep_ordered(
+            smaller.iter().map(|entry| &entry.distance),
+            area,
+            settings.overlap_prior.unwrap_or(1.),
+            control,
+        )?
+        .map(|p| p.0);
+    }
+    let Some(q) = *fraction else {
+        return Ok((Vec::new(), false));
+    };
     let target = q * area;
     let mut remaining = target;
     let mut cutoff = 0.;
@@ -1009,6 +1007,74 @@ mod tests {
         assert_eq!(gathered.len(), surface.samples[2].samples.len());
         assert!(gathered.iter().all(|pair| pair.pair.is_none()));
         assert_eq!(control.counters().query_calls, before);
+    }
+
+    #[test]
+    fn correspondence_refresh_reuses_the_distance_order() {
+        let prepared = GeometryControl::unlimited();
+        let surface = surface(&prepared);
+        let pose = Rigid::new(DQuat::from_rotation_x(0.003), DVec3::Z * 0.04);
+        for policy in [
+            NormalPolicy::Unsigned,
+            NormalPolicy::Match,
+            NormalPolicy::Opposed,
+        ] {
+            let settings = SearchSettings {
+                normal_policy: policy,
+                ..SearchSettings::default()
+            };
+            let refreshed = GeometryControl::unlimited();
+            let mut fraction = None;
+            let (actual, fallback) = correspondences(
+                &surface,
+                &surface,
+                pose,
+                2,
+                0.3,
+                &settings,
+                &mut fraction,
+                true,
+                &mut [Vec::new(), Vec::new()],
+                &refreshed,
+            )
+            .unwrap();
+            assert!(fraction.is_some());
+            assert!(!actual.is_empty());
+            let frozen = GeometryControl::unlimited();
+            let (expected, expected_fallback) = correspondences(
+                &surface,
+                &surface,
+                pose,
+                2,
+                0.3,
+                &settings,
+                &mut fraction,
+                false,
+                &mut [Vec::new(), Vec::new()],
+                &frozen,
+            )
+            .unwrap();
+            let signature = |pairs: &[SurfacePair]| {
+                pairs
+                    .iter()
+                    .map(|p| (p.moving, p.fixed, p.normal, p.weight))
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(signature(&actual), signature(&expected));
+            assert_eq!(fallback, expected_fallback);
+            assert_eq!(
+                refreshed.counters().query_calls,
+                frozen.counters().query_calls
+            );
+            let extra = refreshed.counters().operations - frozen.counters().operations;
+            let samples = surface.samples[2].samples.len() as u64;
+            assert!(
+                extra <= 2 * samples + 128,
+                "refresh uses {extra} extra units for {samples} samples"
+            );
+            assert_eq!(refreshed.counters().memory_bytes, 0);
+            assert_eq!(frozen.counters().memory_bytes, 0);
+        }
     }
 
     #[test]

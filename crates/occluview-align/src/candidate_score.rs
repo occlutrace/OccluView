@@ -226,8 +226,31 @@ pub(crate) fn weighted_trim_sweep(
     if let Some(stop) = stopped {
         return Err(stop);
     }
+    weighted_trim_sweep_ordered(distances.iter(), area, ceiling, control)
+}
+
+/// Integrate an already ordered finite population without copying or sorting.
+/// Distances must follow the same stable ascending `total_cmp` order as
+/// `weighted_trim_sweep`, with missing distances mapped to infinity. Equal
+/// distances retain their source order so fractional weights and serial sums
+/// are identical. Every population and prefix visit remains controlled.
+///
+/// # Errors
+/// Returns interruption before publishing a partial prefix or objective.
+pub(crate) fn weighted_trim_sweep_ordered<'a>(
+    distances: impl Iterator<Item = &'a WeightedDistance> + Clone,
+    area: f64,
+    ceiling: f64,
+    control: &GeometryControl,
+) -> Result<Option<(f64, f64, f64)>, GeometryStop> {
+    if let Some(stop) = control.checkpoint() {
+        return Err(stop);
+    }
+    if !area.is_finite() || area <= 0. {
+        return Ok(None);
+    }
     let mut available = 0.;
-    for sample in distances.iter() {
+    for sample in distances.clone() {
         control.charge_operations(1)?;
         if sample.distance.is_some() {
             available += sample.weight;
@@ -236,7 +259,7 @@ pub(crate) fn weighted_trim_sweep(
     let available = available.min(area) / area;
     let endpoint = available.min(ceiling);
     let mut best = None;
-    let mut slot = 0;
+    let mut ordered = distances.peekable();
     let mut full_weight = 0.;
     let mut full_squared = 0.;
     // Eligible fractions increase monotonically, including the available
@@ -248,7 +271,7 @@ pub(crate) fn weighted_trim_sweep(
             continue;
         }
         let target = fraction * area;
-        while let Some(sample) = distances.get(slot) {
+        while let Some(sample) = ordered.peek() {
             if full_weight + sample.weight >= target || sample.distance.is_none() {
                 break;
             }
@@ -256,11 +279,11 @@ pub(crate) fn weighted_trim_sweep(
             let distance = sample.distance.unwrap_or(0.);
             full_squared += distance * distance * sample.weight;
             full_weight += sample.weight;
-            slot += 1;
+            ordered.next();
         }
         let mut squared = full_squared;
         let mut weight = full_weight;
-        if let Some(sample) = distances.get(slot).filter(|s| s.distance.is_some()) {
+        if let Some(sample) = ordered.peek().filter(|s| s.distance.is_some()) {
             control.charge_operations(1)?;
             let distance = sample.distance.unwrap_or(0.);
             let w = sample.weight.min((target - full_weight).max(0.));
