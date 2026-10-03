@@ -190,7 +190,7 @@ mod tests {
         let text = str::from_utf8(&bytes).expect("obj text");
         // The white atlas samples to white on every vertex.
         assert!(
-            text.contains("v 0.000000 0.000000 0.000000 255 255 255"),
+            text.contains("v 0 0 0 255 255 255"),
             "the baked colour goes on the vertex:\n{text}"
         );
         assert!(
@@ -226,7 +226,7 @@ mod tests {
             written.warnings
         );
         let text = str::from_utf8(&bytes).expect("obj text");
-        assert!(text.contains("v 0.000000 0.000000 0.000000 210 180 120"));
+        assert!(text.contains("v 0 0 0 210 180 120"));
     }
 
     #[test]
@@ -261,7 +261,46 @@ mod tests {
         assert_eq!(round_trip.vertices()[0].color, [11, 22, 33, 255]);
     }
 
-    /// Coordinate formatting must preserve rounding and negative zero.
+    #[test]
+    fn obj_round_trip_preserves_small_positions_normals_and_uvs() {
+        for scale in [1e-9, 1.0, 1e9] {
+            let vertices = vec![
+                Vertex::at(glam::Vec3::new(scale, -scale, scale / 3.0))
+                    .with_normal(glam::Vec3::new(0.123_456_79, 0.987_654_3, 1e-7))
+                    .with_uv([1e-8, 1.0 / 7.0]),
+                Vertex::at(glam::Vec3::new(2.0 * scale, -scale, scale / 3.0))
+                    .with_normal(glam::Vec3::Z)
+                    .with_uv([0.25, 0.75]),
+                Vertex::at(glam::Vec3::new(scale, scale, scale / 3.0))
+                    .with_normal(glam::Vec3::Z)
+                    .with_uv([0.75, 0.25]),
+            ];
+            for mesh in [
+                Mesh::new_for_preview(None, vertices.clone(), vec![0, 1, 2]).expect("triangle"),
+                Mesh::point_cloud(None, vertices),
+            ] {
+                let mut bytes = Vec::new();
+                crate::write::write_mesh(
+                    &mut bytes,
+                    &mesh,
+                    MeshWriteFormat::Obj,
+                    MeshWriteOptions::default(),
+                )
+                .expect("write OBJ");
+                let restored = crate::obj::read_shaded(&bytes, crate::MeshShading::AsWritten)
+                    .expect("read OBJ");
+                assert_eq!(restored.kind(), mesh.kind());
+                assert_eq!(restored.indices(), mesh.indices());
+                for (actual, expected) in restored.vertices().iter().zip(mesh.vertices()) {
+                    assert_eq!(actual.position, expected.position, "scale {scale}");
+                    assert_eq!(actual.normal, expected.normal, "scale {scale}");
+                    assert_eq!(actual.uv, expected.uv, "scale {scale}");
+                }
+            }
+        }
+    }
+
+    /// Coordinate formatting must preserve every f32 bit, including negative zero.
     #[test]
     fn coordinate_rendering_is_pinned() {
         let mesh = Mesh::new(
@@ -282,11 +321,14 @@ mod tests {
             MeshWriteOptions::default(),
         )
         .expect("write obj");
-        let text = String::from_utf8(bytes).expect("utf-8");
-
-        assert!(text.contains("v 0.000000 -0.000000 0.333333"), "{text}");
-        assert!(text.contains("v -1.000000 2.123457 -0.000000"), "{text}");
-        assert!(text.contains("vt 0.000000 0.142857"), "{text}");
-        assert!(text.contains("v 12345.678711 0.000000 1.000000"), "{text}");
+        let restored =
+            crate::obj::read_shaded(&bytes, crate::MeshShading::AsWritten).expect("read OBJ");
+        for (actual, expected) in restored.vertices().iter().zip(mesh.vertices()) {
+            assert_eq!(
+                actual.position.map(f32::to_bits),
+                expected.position.map(f32::to_bits)
+            );
+            assert_eq!(actual.uv.map(f32::to_bits), expected.uv.map(f32::to_bits));
+        }
     }
 }

@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Preserve OBJ positions, normals and texture coordinates without rounding away small values.
+
 - Keep connected STL objects together when shared corners differ only in the sign of zero.
 
 - Disabled cuts preserve the uncut mesh without drawing a cross-section cap.
