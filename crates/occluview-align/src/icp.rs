@@ -23,9 +23,13 @@ use icp_overlap::{common_support_coverage, reciprocal_evidence};
 mod icp_step;
 #[path = "icp_verify.rs"]
 mod icp_verify;
+pub(crate) use icp_verify::{
+    perturb_refine, spatial_jackknife, verify_candidate, verify_rival_candidate,
+};
 use icp_verify::{unchanged_region_confirms, verification_holds, verify, Verification};
 #[path = "icp_unique.rs"]
 mod icp_unique;
+pub(crate) use icp_unique::{probe_rivals, rival_gap};
 use icp_unique::{rivalry, RivalContext, Rivalry};
 
 #[path = "icp_search.rs"]

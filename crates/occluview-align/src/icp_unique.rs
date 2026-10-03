@@ -18,6 +18,10 @@
 
 use glam::{DQuat, DVec3};
 
+#[path = "icp_unique_independent.rs"]
+mod independent;
+pub(crate) use independent::{probe_rivals, rival_gap};
+
 use crate::sample::{sample_vertices, vertex_at};
 use crate::{Rigid, Soup, SurfaceIndex};
 

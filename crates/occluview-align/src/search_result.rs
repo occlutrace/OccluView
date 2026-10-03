@@ -246,6 +246,10 @@ pub struct ResidualSummary {
 }
 /// Evidence populations are explicit; absent quantities never become zero.
 #[derive(Clone, Debug, Default, PartialEq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent evidence passes have separate completeness invariants"
+)]
 pub struct CandidateEvidence {
     /// Moving/fixed eligible areas; unavailable until full area accounting.
     pub eligible_area_mm2: Metric<[f64; 2]>,
@@ -288,6 +292,8 @@ pub struct CandidateEvidence {
     pub training_weak_twists: Vec<[f64; 6]>,
     /// Undamped area-weighted common plane information eigenvalues.
     pub info_eigenvalues: Metric<[f64; 6]>,
+    /// Paired normalized information eigenvectors, ascending eigenvalue order.
+    pub info_eigenvectors: Metric<[[f64; 6]; 6]>,
     /// Unconstrained normalized motion eigenvectors.
     pub weak_twists: Vec<[f64; 6]>,
     /// Relative score gap to fully evaluated distinct rival.
@@ -300,6 +306,14 @@ pub struct CandidateEvidence {
     pub score: Metric<f64>,
     /// All mandatory independent evidence passes completed.
     pub verification_complete: bool,
+    /// Both independent holdout directions finished without interrupted queries.
+    pub holdout_complete: bool,
+    /// All eight omitted-stratum solves completed.
+    pub jackknife_complete: bool,
+    /// Every mandatory rival was measured on the common verification definition.
+    pub rival_probes_complete: bool,
+    /// No eligible area is unrepresented, or a conservative calibrated bound exists.
+    pub population_coverage_complete: bool,
     /// Transitional vertex-based diagnostics; never substituted for area evidence.
     pub legacy_report: Option<crate::IcpReport>,
 }

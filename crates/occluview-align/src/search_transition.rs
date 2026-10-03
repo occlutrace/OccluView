@@ -172,7 +172,7 @@ fn initial_result(input: &AlignmentInput<'_>, settings: &SearchSettings) -> Alig
             proposal_operation_allowance: 0,
             algorithm_version: 21,
             effective_settings: None,
-            threshold_set_id: "geometric-evidence-v1-unverified",
+            threshold_set_id: "geometric-evidence-v1-conservative-holdout",
             grid_recipe_id: "haar-polar-6x12-12x24-farthest72-v1",
             input_revisions: [input.moving.revision, input.fixed.revision],
             seed: 0x4f56_5f41_4c52_3100,
@@ -457,7 +457,15 @@ fn run_proposals(
     // These 16 retained basins form the numerical refinement boundary.
     // Only terminal publication reduces the reviewed result to the UI cap.
     pool.sort_by(crate::candidate_score::proposal_order);
-    let mut refined = crate::icp::run_multiscale(moving, fixed, pool, settings, geometry);
+    let refinement_allowance = geometry
+        .limits()
+        .operations
+        .saturating_sub(geometry.counters().operations)
+        * 3
+        / 4;
+    let refinement_control = geometry.with_operation_allowance(refinement_allowance);
+    let mut refined =
+        crate::icp::run_multiscale(moving, fixed, pool, settings, &refinement_control);
     result.work.iterations = refined.iterations;
     result.work.refinement_scored_poses = refined.scored;
     result.work.examined_poses = result.work.examined_poses.saturating_add(refined.scored);
@@ -471,7 +479,7 @@ fn run_proposals(
         .candidates
         .sort_by(|a, b| crate::candidate_score::proposal_order(&a.proposal, &b.proposal));
     let mut candidates = Vec::with_capacity(5);
-    for refined_proposal in refined.candidates.into_iter().take(settings.top_k) {
+    for refined_proposal in refined.candidates.into_iter().take(16) {
         let proposal = refined_proposal.proposal;
         let Some(pose) = moving.frame.correction_to_world(fixed.frame, proposal.pose) else {
             continue;
@@ -537,6 +545,7 @@ fn run_proposals(
     if !candidates.is_empty() {
         result.candidates = candidates;
     }
+    crate::search_verification::verify_results(moving, fixed, settings, result, geometry);
     result.work.retained_poses = u32::try_from(result.candidates.len()).unwrap_or(5);
     if proposals.stop.is_none() {
         result
