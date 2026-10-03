@@ -815,3 +815,28 @@ fn overlapping_buckets_reuse_distances_without_changing_exact_hits() {
         assert!(control.counters().triangle_tests <= 72);
     }
 }
+#[test]
+fn small_index_query_evaluates_each_triangle_at_most_once() {
+    use super::{GeometryControl, QueryOutcome};
+    let positions = [0., 0., 0., 10., 0., 0., 0., 10., 0.];
+    let indices: Vec<_> = (0..512).flat_map(|_| [0, 1, 2]).collect();
+    let index = SurfaceIndex::build(Soup {
+        positions: &positions,
+        indices: &indices,
+        mask: None,
+    })
+    .unwrap();
+    let control = GeometryControl::unlimited();
+    let QueryOutcome::Complete(Some(hit)) =
+        index.nearest_controlled(DVec3::new(2., 2., 3.), 5., &control)
+    else {
+        panic!("complete finite query required");
+    };
+    assert!(hit.point.distance(DVec3::new(2., 2., 0.)) < 1e-12);
+    assert_eq!(hit.triangle, 0);
+    assert!(
+        control.counters().triangle_tests <= 512,
+        "bucket visits repeated distance arithmetic: {:?}",
+        control.counters()
+    );
+}
