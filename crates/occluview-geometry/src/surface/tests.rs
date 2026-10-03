@@ -954,3 +954,33 @@ fn triangle_bounds_preserve_exact_queries_under_distance_cap() {
     assert_eq!(expected.triangle, 0);
     assert!(control.counters().triangle_tests <= 16);
 }
+
+#[test]
+fn coherent_queries_reuse_a_recomputed_facet_bound() {
+    use super::super::QueryOutcome;
+    use super::{GeometryControl, SurfaceQueryScratch};
+    let (positions, indices) = awkward_mesh();
+    let index = SurfaceIndex::build(soup(&positions, &indices)).unwrap();
+    let point = DVec3::new(18.25, 18.75, 4.);
+    let control = GeometryControl::unlimited();
+    let mut scratch = SurfaceQueryScratch::new(&control).unwrap();
+    let expected = QueryOutcome::Complete(brute_nearest(&index, point, 10.));
+    assert_eq!(
+        index.nearest_with_scratch(point, 10., &mut scratch),
+        expected
+    );
+    let before = control.counters().operations;
+    for _ in 0..100 {
+        assert_eq!(
+            index.nearest_with_scratch(point, 10., &mut scratch),
+            expected
+        );
+    }
+    let warm = control.counters().operations - before;
+    let before = control.counters().operations;
+    for _ in 0..100 {
+        assert_eq!(index.nearest_controlled(point, 10., &control), expected);
+    }
+    let cold = control.counters().operations - before;
+    assert!(warm < cold, "warm {warm}, cold {cold}");
+}
