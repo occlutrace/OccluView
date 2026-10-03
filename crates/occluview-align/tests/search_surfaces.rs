@@ -272,8 +272,12 @@ fn deadline_and_work_caps_are_honest_for_large_surfaces() {
     assert!(started.elapsed() <= Duration::from_millis(10_100));
     assert_eq!(result.completion, Completion::ResourceLimit);
     assert_eq!(result.input_check, InputCheck::Complete);
-    assert!(result.surface.is_none());
+    let represented = result.surface.as_ref().unwrap();
+    assert!(!represented.exact_original);
+    assert_eq!(represented.original_index.triangle_count(), 1);
+    assert_eq!(represented.represented_area_mm2, 50.);
     assert_eq!(result.eligible_area_mm2, Metric::Measured(100_000_000.));
+    drop(result);
     assert!(c.counters().peak_memory_bytes <= 256 * 1024 * 1024);
     assert_eq!(c.counters().memory_bytes, 0);
     let tiny = GeometryControl::new(

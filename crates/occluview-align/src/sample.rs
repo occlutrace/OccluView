@@ -7,6 +7,7 @@ use crate::Soup;
 
 mod population;
 mod prepared;
+mod proxy;
 pub use prepared::*;
 
 /// Read one vertex position, or `None` when it is out of range or not finite.

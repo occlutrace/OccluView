@@ -156,8 +156,13 @@ pub struct SurfaceQuality {
 pub struct PreparedSurface {
     /// Coarse/middle/dense training and verification representatives.
     pub samples: [SampleBatch; 4],
-    /// Exact original eligible triangle surface in the centred frame.
+    /// Declared eligible triangle representation in the centred frame.
+    /// Original-surface authority exists only when `exact_original` is true.
     pub original_index: SurfaceIndex,
+    /// True for the complete original surface; false for a bounded proxy.
+    pub exact_original: bool,
+    /// Measured area of the representation, distinct from original eligible area.
+    pub represented_area_mm2: f64,
     /// Total eligible nondegenerate area; physical units are unchanged.
     pub eligible_area_mm2: f64,
     /// Meaning of the included population.
@@ -336,18 +341,42 @@ pub fn prepare_alignment_surface(
             translation: mesh.world_from_local.translation - center,
         },
     };
-    let mut index = match SurfaceIndex::build_controlled(mesh.soup, frame.query_from_local, control)
-    {
-        BuildOutcome::Complete(index) => index,
-        BuildOutcome::Empty => {
-            result.completion = Completion::NoUsableSurface;
-            return Ok(result);
+    // Decide before allocation admission: an optional exact attempt must not
+    // latch a global resource stop and prevent the bounded fallback. Leave
+    // working room for the other surface, samples and connected patches.
+    let estimate = mesh
+        .soup
+        .triangle_count()
+        .saturating_mul(1024)
+        .saturating_add(mesh.soup.vertex_count().saturating_mul(256))
+        .saturating_add(4096);
+    let available = control
+        .limits()
+        .memory_bytes
+        .saturating_sub(usize::try_from(control.counters().memory_bytes).unwrap_or(usize::MAX));
+    let exact_original = estimate <= available / 3;
+    let mut index = if exact_original {
+        match SurfaceIndex::build_controlled(mesh.soup, frame.query_from_local, control) {
+            BuildOutcome::Complete(index) => index,
+            BuildOutcome::Empty => {
+                result.completion = Completion::NoUsableSurface;
+                return Ok(result);
+            }
+            BuildOutcome::Partial { reason, .. } => {
+                result.completion = completion(reason);
+                return Ok(result);
+            }
         }
-        BuildOutcome::Partial { reason, .. } => {
-            result.completion = completion(reason);
-            return Ok(result);
+    } else {
+        match super::proxy::prepare_bounded_proxy(mesh, frame, regions, control) {
+            Ok(index) => index,
+            Err(stop) => {
+                result.completion = completion(stop);
+                return Ok(result);
+            }
         }
     };
+    let represented_area_mm2 = index.surface_area_mm2();
     result.quality.orientation_coherent = index.orientation_coherent()
         && mesh.world_from_local.matrix3.determinant().is_finite()
         && mesh.world_from_local.matrix3.determinant() != 0.;
@@ -408,12 +437,17 @@ pub fn prepare_alignment_surface(
     result.surface = Some(PreparedSurface {
         samples,
         original_index: index,
+        exact_original,
+        represented_area_mm2,
         eligible_area_mm2: area,
         regions,
         quality: result.quality.clone(),
         frame,
         revision: mesh.revision,
     });
+    if !exact_original {
+        result.completion = Completion::ResourceLimit;
+    }
     Ok(result)
 }
 

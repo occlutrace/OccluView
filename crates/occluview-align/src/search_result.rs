@@ -249,6 +249,10 @@ pub struct ResidualSummary {
 pub struct CandidateEvidence {
     /// Moving/fixed eligible areas; unavailable until full area accounting.
     pub eligible_area_mm2: Metric<[f64; 2]>,
+    /// Measured represented areas; proxy area is never silently normalized.
+    pub representation_area_mm2: Metric<[f64; 2]>,
+    /// Complete original-surface representations, separately for each side.
+    pub original_surface_exact: [bool; 2],
     /// Moving/fixed area actually queried. Unqueried eligible area contributes
     /// no support; role evidence is never extrapolated to whole surface area.
     pub queried_population_area_mm2: Metric<[f64; 2]>,

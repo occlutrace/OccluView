@@ -165,7 +165,7 @@ fn initial_result(input: &AlignmentInput<'_>, settings: &SearchSettings) -> Alig
         },
         provenance: SearchProvenance {
             operation_limit: 0,
-            algorithm_version: 7,
+            algorithm_version: 8,
             effective_settings: None,
             threshold_set_id: "geometric-evidence-v1-unverified",
             grid_recipe_id: "haar-polar-6x12-12x24-farthest72-v1",
@@ -464,6 +464,11 @@ fn run_proposals(
                     moving.eligible_area_mm2,
                     fixed.eligible_area_mm2,
                 ]),
+                representation_area_mm2: Metric::Measured([
+                    moving.represented_area_mm2,
+                    fixed.represented_area_mm2,
+                ]),
+                original_surface_exact: [moving.exact_original, fixed.exact_original],
                 score: Metric::Measured(score.score),
                 queried_population_area_mm2: Metric::Measured(score.population_area),
                 policy_compatible_area_mm2: Metric::Measured(score.policy_support),
