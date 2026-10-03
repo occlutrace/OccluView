@@ -4,7 +4,21 @@
 //! exclusive wall time and charged counter deltas, including interrupted work.
 //! Output contains aggregate work only, never geometry or source identifiers.
 
-use occluview_geometry::surface::GeometryControl;
+use occluview_geometry::surface::{GeometryControl, GeometryCounters};
+
+pub(crate) fn continuation(before: GeometryCounters, after: GeometryCounters, finished: bool) {
+    #[cfg(not(feature = "search-probe"))]
+    let _ = (before, after, finished);
+    #[cfg(feature = "search-probe")]
+    enabled::continuation(before, after, finished);
+}
+
+pub(crate) fn population(slot: usize, frozen: bool, samples: usize, selected: usize) {
+    #[cfg(not(feature = "search-probe"))]
+    let _ = (slot, frozen, samples, selected);
+    #[cfg(feature = "search-probe")]
+    enabled::population(slot, frozen, samples, selected);
+}
 
 #[derive(Clone, Copy)]
 pub(crate) enum Phase {
@@ -61,8 +75,40 @@ impl Drop for Session {
 
 #[cfg(feature = "search-probe")]
 mod enabled {
-    use super::{GeometryControl, Phase};
+    use super::{GeometryControl, GeometryCounters, Phase};
     use std::{cell::RefCell, io::Write, time::Instant};
+
+    #[derive(Clone, Copy, Default)]
+    struct Population {
+        passes: u64,
+        samples: u64,
+        selected: u64,
+    }
+    thread_local! {
+        static POPULATIONS: RefCell<[Population; 6]> = const { RefCell::new([Population { passes: 0, samples: 0, selected: 0 }; 6]) };
+    }
+    pub(super) fn population(slot: usize, frozen: bool, samples: usize, selected: usize) {
+        POPULATIONS.with(|populations| {
+            let index = slot
+                .checked_mul(2)
+                .and_then(|i| i.checked_add(usize::from(frozen)));
+            let mut populations = populations.borrow_mut();
+            if let Some(population) = index.and_then(|i| populations.get_mut(i)) {
+                population.passes = population.passes.saturating_add(1);
+                population.samples = population.samples.saturating_add(samples as u64);
+                population.selected = population.selected.saturating_add(selected as u64);
+            }
+        });
+    }
+
+    pub(super) fn continuation(before: GeometryCounters, after: GeometryCounters, finished: bool) {
+        let _ = writeln!(
+            std::io::stdout().lock(),
+            "ALIGN_PERF_RESUME finished={finished} queries={} operations={}",
+            after.query_calls.saturating_sub(before.query_calls),
+            after.operations.saturating_sub(before.operations)
+        );
+    }
 
     #[derive(Clone, Copy, Default)]
     struct Cost {
@@ -150,6 +196,7 @@ mod enabled {
     }
     pub(super) fn reset() {
         COSTS.with(|costs| *costs.borrow_mut() = [Cost::default(); 10]);
+        POPULATIONS.with(|p| *p.borrow_mut() = [Population::default(); 6]);
     }
     pub(super) fn publish() {
         const NAMES: [&str; 10] = [
@@ -171,6 +218,19 @@ mod enabled {
                 let _ = writeln!(output,
                     "ALIGN_PERF {name} calls={} seconds={:.6} queries={} triangles={} pairs={} operations={}",
                     c.calls, c.seconds, c.queries, c.triangles, c.pairs, c.operations);
+            }
+        });
+        POPULATIONS.with(|populations| {
+            for (i, p) in populations.borrow().iter().enumerate() {
+                let _ = writeln!(
+                    std::io::stderr().lock(),
+                    "ALIGN_POPULATION slot={} frozen={} passes={} samples={} selected={}",
+                    i / 2,
+                    i % 2 == 1,
+                    p.passes,
+                    p.samples,
+                    p.selected
+                );
             }
         });
     }

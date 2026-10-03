@@ -170,7 +170,7 @@ fn initial_result(input: &AlignmentInput<'_>, settings: &SearchSettings) -> Alig
         provenance: SearchProvenance {
             operation_limit: 0,
             proposal_operation_allowance: 0,
-            algorithm_version: 26,
+            algorithm_version: 27,
             effective_settings: None,
             threshold_set_id: "geometric-evidence-v1-conservative-holdout",
             grid_recipe_id: "haar-polar-6x12-12x24-farthest72-v1",
@@ -466,26 +466,102 @@ fn run_proposals(
     let refinement_control = geometry.with_operation_allowance(refinement_allowance);
     let mut refined =
         crate::icp::run_multiscale(moving, fixed, pool, settings, &refinement_control);
+    let proposal_completion = result.completion;
     result.work.iterations = refined.iterations;
     result.work.refinement_scored_poses = refined.scored;
-    result.work.examined_poses = result.work.examined_poses.saturating_add(refined.scored);
+    result.work.examined_poses = proposals.examined.saturating_add(refined.scored);
     result.work.refined_basins = refined.basins;
-    if let Some(stop) = refined.stop {
-        result.completion = crate::sample::completion(stop);
-        result.work.unfinished_stages.push("multiscale-refinement");
-        reasons.push(EvidenceReason::BudgetExhausted);
-    }
     refined
         .candidates
         .sort_by(|a, b| crate::candidate_score::proposal_order(&a.proposal, &b.proposal));
+    publish_refinement(moving, fixed, &refined, &reasons, result);
+    let mut cache = match crate::search_verification::VerificationCache::new(
+        moving,
+        fixed,
+        settings.normal_policy,
+        geometry,
+    ) {
+        Ok(cache) => cache,
+        Err(stop) => {
+            result.completion = crate::sample::completion(stop);
+            for candidate in &mut result.candidates {
+                candidate.reasons.push(EvidenceReason::BudgetExhausted);
+            }
+            result.candidates.truncate(settings.top_k);
+            return;
+        }
+    };
+    for attempt in 0..2 {
+        result.work.iterations = refined.iterations;
+        result.work.refinement_scored_poses = refined.scored;
+        result.work.examined_poses = proposals.examined.saturating_add(refined.scored);
+        result.work.refined_basins = refined.basins;
+        result
+            .work
+            .unfinished_stages
+            .retain(|&stage| stage != "multiscale-refinement");
+        reasons.retain(|reason| *reason != EvidenceReason::BudgetExhausted);
+        result.completion = proposal_completion;
+        if let Some(stop) = refined.stop {
+            result.completion = crate::sample::completion(stop);
+            result.work.unfinished_stages.push("multiscale-refinement");
+            reasons.push(EvidenceReason::BudgetExhausted);
+        } else if proposal_completion != Completion::Complete {
+            reasons.push(EvidenceReason::BudgetExhausted);
+        }
+        refined
+            .candidates
+            .sort_by(|a, b| crate::candidate_score::proposal_order(&a.proposal, &b.proposal));
+        publish_refinement(moving, fixed, &refined, &reasons, result);
+        crate::search_verification::verify_results(settings, result, geometry, &mut cache);
+        let evidence_complete = !result
+            .work
+            .unfinished_stages
+            .contains(&"independent-verification");
+        if attempt != 0
+            || refined.stop != Some(occluview_geometry::surface::GeometryStop::WorkLimit)
+            || !evidence_complete
+            || geometry.checkpoint().is_some()
+        {
+            break;
+        }
+        result.work.refinement_resumptions += 1;
+        // Completed independent passes release their unused headroom. Same-pose
+        // evidence is cached; changed checkpoints require new exact passes.
+        let before_resume = geometry.counters();
+        crate::icp::resume_multiscale(moving, fixed, &mut refined, settings, geometry, false);
+        crate::search_probe::continuation(
+            before_resume,
+            geometry.counters(),
+            refined.stop.is_none(),
+        );
+    }
+    result.work.retained_poses = u32::try_from(result.candidates.len()).unwrap_or(5);
+    if proposals.stop.is_none() {
+        result
+            .work
+            .unfinished_stages
+            .retain(|&stage| stage != "controlled-query-accounting");
+    } else {
+        result.work.unfinished_stages.push("proposal-families");
+    }
+}
+
+fn publish_refinement(
+    moving: &crate::PreparedSurface,
+    fixed: &crate::PreparedSurface,
+    refined: &crate::icp::RefinementBatch,
+    reasons: &[EvidenceReason],
+    result: &mut AlignmentSearchResult,
+) {
     let mut candidates = Vec::with_capacity(5);
-    for refined_proposal in refined.candidates.into_iter().take(16) {
-        let proposal = refined_proposal.proposal;
+    for refined_proposal in refined.candidates.iter().take(16) {
+        let proposal = &refined_proposal.proposal;
         let Some(pose) = moving.frame.correction_to_world(fixed.frame, proposal.pose) else {
             continue;
         };
-        let score = proposal.score;
-        let mut candidate_reasons = reasons.clone();
+        let score = &proposal.score;
+        let mut candidate_reasons = reasons.to_vec();
         if score.orientation.is_some_and(|fraction| fraction < 0.75) {
             candidate_reasons.push(EvidenceReason::PolicyConflict);
         }
@@ -538,22 +614,12 @@ fn run_proposals(
                 ..CandidateEvidence::default()
             },
             reasons: candidate_reasons,
-            seeds: proposal.origins,
+            seeds: proposal.origins.clone(),
             refinement: refined_proposal.termination,
         });
     }
     if !candidates.is_empty() {
         result.candidates = candidates;
-    }
-    crate::search_verification::verify_results(moving, fixed, settings, result, geometry);
-    result.work.retained_poses = u32::try_from(result.candidates.len()).unwrap_or(5);
-    if proposals.stop.is_none() {
-        result
-            .work
-            .unfinished_stages
-            .retain(|&stage| stage != "controlled-query-accounting");
-    } else {
-        result.work.unfinished_stages.push("proposal-families");
     }
 }
 

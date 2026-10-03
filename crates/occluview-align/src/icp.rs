@@ -49,7 +49,7 @@ use icp_solve::run_level;
 use icp_solve::weak_axes_from_normal_matrix;
 #[cfg(test)]
 use icp_step::correspondences_at_radius;
-pub(crate) use icp_surface::run_multiscale;
+pub(crate) use icp_surface::{resume_multiscale, run_multiscale, RefinementBatch};
 
 #[cfg(test)]
 #[path = "icp_internal_tests.rs"]

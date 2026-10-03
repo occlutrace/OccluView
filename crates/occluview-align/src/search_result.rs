@@ -406,6 +406,8 @@ pub struct FamilyEvidence {
 /// Completed work; elapsed time is excluded from determinism comparisons.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct SearchWork {
+    /// Numerical continuations after completed independent evidence releases headroom.
+    pub refinement_resumptions: u32,
     /// Family schedules, including interruption and actual grid coverage.
     pub families: Vec<FamilyEvidence>,
     /// Examined proposal count.
