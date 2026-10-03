@@ -4,6 +4,48 @@
 
 use super::*;
 
+#[test]
+fn artifact_limit_rejects_a_signed_prefix_of_an_oversized_body() {
+    let (keypair, pubkey) = test_keypair();
+    let payload = b"installer";
+    let artifact = PlatformArtifact {
+        url: "https://example.invalid/installer.bin".to_string(),
+        signature: sign(&keypair, payload),
+        sha256: Sha256::digest(payload)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect(),
+    };
+    let path = std::env::temp_dir().join(format!(
+        "occluview-artifact-limit-{}.partial",
+        std::process::id()
+    ));
+    for bytes in [payload.to_vec(), [payload.as_slice(), b"extra"].concat()] {
+        let oversized = bytes.len() > payload.len();
+        let response = ureq::http::Response::new(ureq::Body::builder().data(bytes));
+        let result = stream_and_verify(
+            response,
+            &path,
+            &artifact,
+            &[pubkey.as_str()],
+            &mut |_, _| {},
+            payload.len() as u64,
+        );
+        if oversized {
+            assert!(
+                result.is_err(),
+                "the signed prefix is not the complete response"
+            );
+        } else {
+            assert!(
+                result.is_ok(),
+                "exactly-at-limit installers remain valid: {result:?}"
+            );
+        }
+    }
+    let _ = std::fs::remove_file(path);
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn macos_pkg_handoff_uses_launch_services_and_rejects_disk_images() {

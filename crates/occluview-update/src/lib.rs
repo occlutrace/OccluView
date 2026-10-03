@@ -286,8 +286,15 @@ pub fn download_with(
     // a hash/signature mismatch, a failed rename) must not leave a half-written
     // `.partial` behind — a stale partial would masquerade as a resumable
     // download and never be retried cleanly. Clean up on every error path.
-    match stream_and_verify(response, &temp_path, artifact, pubkeys, progress)
-        .and_then(|()| std::fs::rename(&temp_path, &final_path).map_err(UpdateError::Io))
+    match stream_and_verify(
+        response,
+        &temp_path,
+        artifact,
+        pubkeys,
+        progress,
+        MAX_ARTIFACT_BYTES,
+    )
+    .and_then(|()| std::fs::rename(&temp_path, &final_path).map_err(UpdateError::Io))
     {
         Ok(()) => Ok(final_path),
         Err(error) => {
@@ -307,13 +314,17 @@ fn stream_and_verify(
     artifact: &PlatformArtifact,
     pubkeys: &[&str],
     progress: &mut dyn FnMut(u64, Option<u64>),
+    max_bytes: u64,
 ) -> Result<(), UpdateError> {
     let total = response
         .headers()
         .get("Content-Length")
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.parse::<u64>().ok());
-    let mut reader = response.into_body().into_reader().take(MAX_ARTIFACT_BYTES);
+    let mut reader = response
+        .into_body()
+        .into_reader()
+        .take(max_bytes.saturating_add(1));
     let mut file = std::fs::File::create(temp_path)?;
     let mut hasher = Sha256::new();
     let mut buffer = vec![0u8; 64 * 1024];
@@ -322,6 +333,11 @@ fn stream_and_verify(
         let read = reader.read(&mut buffer)?;
         if read == 0 {
             break;
+        }
+        if read as u64 > max_bytes.saturating_sub(downloaded) {
+            return Err(UpdateError::Http(format!(
+                "update artifact exceeds the {max_bytes}-byte download limit"
+            )));
         }
         std::io::Write::write_all(&mut file, &buffer[..read])?;
         hasher.update(&buffer[..read]);
