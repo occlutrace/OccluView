@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Refuse self-crossing hole rims at tiny scales.
+
 - Reject malformed OBJ texture coordinates before they shift later UV references.
 
 - Preserve OBJ positions, normals and texture coordinates without rounding away small values.
