@@ -95,7 +95,11 @@ fn distance_bins(
     Ok(bins)
 }
 
-// The finite base comes from the same bounded coordinate population as the bins.
+// Length admission precedes every integer interval; exhausted families yield locally.
+#[expect(
+    clippy::too_many_lines,
+    reason = "bounded affine-ratio join and geometric constraints"
+)]
 #[allow(clippy::cast_possible_truncation)]
 fn match_basis(
     Basis {
@@ -112,6 +116,12 @@ fn match_basis(
         .map_err(|_| GeometryStop::ResourceLimit)?;
     let mut quads = 0;
     let lengths = [base[0].distance(base[1]), base[2].distance(base[3])];
+    if lengths
+        .iter()
+        .any(|length| !length.is_finite() || *length >= 1e12)
+    {
+        return Err(GeometryStop::Numerical);
+    }
     let pair_lists: [Vec<(usize, usize)>; 2] = lengths.map(|length| {
         let key = (length / 0.25).floor() as i64;
         bins.range(key - 2..=key + 2)
@@ -303,6 +313,26 @@ fn cell(p: DVec3) -> Option<[i64; 3]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn unrepresentable_base_lengths_stop_without_integer_overflow() {
+        let control = GeometryControl::unlimited();
+        for scale in [1e20, f64::MAX, f64::INFINITY, f64::NAN] {
+            let base = Basis {
+                points: [
+                    DVec3::ZERO,
+                    DVec3::X * scale,
+                    DVec3::Y * scale,
+                    (DVec3::X + DVec3::Y) * scale,
+                ],
+                ratios: [0.5; 2],
+            };
+            assert!(matches!(
+                match_basis(base, &[], &DistanceBins::new(), &control),
+                Err(GeometryStop::Numerical)
+            ));
+        }
+    }
+
     #[test]
     fn later_exact_quad_survives_earlier_approximate_aliases() {
         let base = Basis {
