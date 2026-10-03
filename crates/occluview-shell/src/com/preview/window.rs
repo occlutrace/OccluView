@@ -237,7 +237,7 @@ pub(super) fn window_owns_handler(hwnd: HWND, handler: *const PreviewHandler) ->
     !stored.is_null() && std::ptr::eq(stored, handler)
 }
 
-fn preview_handler_from_hwnd(hwnd: HWND) -> Option<&'static PreviewHandler> {
+fn preview_handler_from_hwnd(hwnd: HWND) -> Option<windows::core::ComObject<PreviewHandler>> {
     // SAFETY: GWLP_USERDATA stores the raw PreviewHandler pointer set at WM_NCCREATE time.
     let ptr = unsafe {
         windows::Win32::UI::WindowsAndMessaging::GetWindowLongPtrW(hwnd, GWLP_USERDATA)
@@ -246,9 +246,11 @@ fn preview_handler_from_hwnd(hwnd: HWND) -> Option<&'static PreviewHandler> {
     if ptr.is_null() {
         None
     } else {
-        // SAFETY: the slot is non-null and was set to the live handler at
-        // WM_NCCREATE.
-        Some(unsafe { &*ptr })
+        // SAFETY: the slot names a live handler; Drop clears it before freeing
+        // the object. Upgrade before calling any code that can pump messages.
+        let handler = unsafe { &*ptr };
+        let interface = handler.owner.borrow().upgrade()?;
+        windows::core::ComObject::cast_from(&interface).ok()
     }
 }
 
@@ -264,4 +266,65 @@ fn point_from_lparam(lparam: LPARAM) -> POINT {
 fn wheel_delta_from_wparam(wparam: WPARAM) -> i16 {
     let bits = wparam.0 as u32;
     ((bits >> 16) & 0xFFFF) as i16
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows::core::{ComObject, Interface};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, SetWindowLongPtrW, WINDOW_EX_STYLE, WINDOW_STYLE,
+    };
+
+    #[test]
+    fn window_callback_survives_the_hosts_final_release() {
+        let object = ComObject::new(PreviewHandler::new());
+        let interface = object.to_interface::<super::super::IPreviewHandler>();
+        let weak = interface.downgrade().expect("weak preview reference");
+        *object.owner.borrow_mut() = weak.clone();
+        // SAFETY: STATIC is a built-in window class; no pointers are passed to it.
+        let hwnd = unsafe {
+            CreateWindowExW(
+                WINDOW_EX_STYLE::default(),
+                windows::core::w!("STATIC"),
+                windows::core::w!("OccluView lifetime test"),
+                WINDOW_STYLE::default(),
+                0,
+                0,
+                1,
+                1,
+                None,
+                None,
+                None,
+                None,
+            )
+        }
+        .expect("window");
+        object.preview_hwnd.set(hwnd);
+        // SAFETY: the slot is owned by this window and points to the live handler.
+        unsafe {
+            SetWindowLongPtrW(
+                hwnd,
+                GWLP_USERDATA,
+                std::ptr::from_ref::<PreviewHandler>(&object) as isize,
+            )
+        };
+        let callback = preview_handler_from_hwnd(hwnd).expect("window's owned callback");
+        drop(interface);
+        drop(object);
+        assert!(
+            weak.upgrade().is_some(),
+            "host release must not free an active callback"
+        );
+        callback.destroy_preview_window();
+        assert!(!window_owns_handler(
+            hwnd,
+            std::ptr::from_ref::<PreviewHandler>(&callback)
+        ));
+        drop(callback);
+        assert!(
+            weak.upgrade().is_none(),
+            "the final callback releases the allocation"
+        );
+    }
 }

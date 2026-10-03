@@ -150,24 +150,8 @@ impl PreviewHandler {
             let _ = unsafe { DeleteObject(HGDIOBJ(bitmap.0)) };
         }
 
-        // The tracking call above was modal and pumped this apartment's
-        // messages, so `Unload` and the final `Release` can have arrived inside
-        // it. `Drop` then freed this handler and destroyed the window, but it
-        // could not unwind this frame: running the selected command from here
-        // would touch freed memory, and the command reads the preview scene and
-        // the source stream. Destroying the window makes the common case return
-        // 0 -- it does not make this case go away.
-        //
-        // The window's back-pointer is cleared before the window is destroyed,
-        // so asking whether it still names this handler is both safe and
-        // decisive.
-        //
-        // A mitigation, not the cure. The cure is a reference held across the
-        // modal pump so the object cannot be freed at all, and the window proc
-        // reaches this handler through a raw back-pointer, not an interface
-        // pointer, so there is nothing here to add a reference to without
-        // changing how the two refer to each other. Until then, this is what
-        // stops the command from running.
+        // The window callback holds a counted reference across the modal pump.
+        // Unload may still destroy the window, so refuse a command after that.
         if !window_owns_handler(hwnd, std::ptr::from_ref(self)) {
             return;
         }

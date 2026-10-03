@@ -31,6 +31,7 @@ use occluview_render::AdapterResult;
 use std::os::windows::ffi::OsStringExt;
 #[cfg(feature = "diagnostic-logs")]
 use std::time::Instant;
+use windows::core::IUnknownImpl;
 
 #[cfg(feature = "diagnostic-logs")]
 const fn diagnostic_adapter(result: AdapterResult) -> ShellDiagnosticAdapter {
@@ -74,6 +75,7 @@ enum PreviewDragMode {
     Agile = false
 )]
 pub struct PreviewHandler {
+    owner: std::cell::RefCell<windows::core::Weak<IPreviewHandler>>,
     source: std::cell::RefCell<DeferredSource<IStream>>,
     oversize_stream_len: std::cell::Cell<Option<usize>>,
     parent_hwnd: std::cell::Cell<HWND>,
@@ -91,6 +93,7 @@ impl PreviewHandler {
     pub fn new() -> Self {
         ACTIVE_COM_OBJECTS.fetch_add(1, Ordering::AcqRel);
         Self {
+            owner: std::cell::RefCell::new(windows::core::Weak::new()),
             source: std::cell::RefCell::new(DeferredSource::default()),
             oversize_stream_len: std::cell::Cell::new(None),
             parent_hwnd: std::cell::Cell::new(HWND::default()),
@@ -591,6 +594,8 @@ impl IPreviewHandler_Impl for PreviewHandler_Impl {
             "IPreviewHandler::DoPreview",
             || Err(e_fail()),
             || {
+                let owner = self.to_interface::<IPreviewHandler>();
+                *self.this.owner.borrow_mut() = owner.downgrade()?;
                 let _ = self.this.ensure_preview_window()?;
                 self.this.render_preview_now()
             },
