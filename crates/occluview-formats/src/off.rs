@@ -225,6 +225,11 @@ fn read_ascii(bytes: &[u8]) -> Result<Mesh, FormatError> {
         .ok_or_else(|| malformed("face count missing"))?
         .parse()
         .map_err(|_| malformed("bad face count"))?;
+    if let Some(edge_count) = counts.next() {
+        let _: usize = edge_count
+            .parse()
+            .map_err(|_| malformed("bad edge count"))?;
+    }
 
     // Bound the reservation by the remaining text: an ASCII vertex needs at
     // least a few bytes, so a header claiming billions of vertices in a tiny
@@ -355,6 +360,17 @@ fn malformed(reason: &str) -> FormatError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejects_invalid_ascii_edge_counts() {
+        for count in ["-1", "1.5", "NaN", "18446744073709551616"] {
+            let text = format!("OFF\n3 1 {count}\n0 0 0\n1 0 0\n0 1 0\n3 0 1 2\n");
+            assert!(
+                read(text.as_bytes()).is_err(),
+                "accepted edge count {count}"
+            );
+        }
+    }
 
     #[test]
     fn bom_prefixed_ascii_off_agrees_with_format_probing() {
