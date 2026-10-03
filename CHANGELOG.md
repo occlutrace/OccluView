@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Reject OFF payload beyond its declared elements instead of silently dropping faces.
+
 - Report the detected mesh format in CLI info for mislabeled files.
 
 - Reject invalid ASCII OFF edge counts consistently with binary OFF.
