@@ -5,6 +5,22 @@ use windows::Win32::System::Registry::{
     REG_VALUE_TYPE,
 };
 
+/// An owned registry handle, closed on every exit path.
+pub(super) struct RegistryKey(HKEY);
+
+impl RegistryKey {
+    pub(super) const fn raw(&self) -> HKEY {
+        self.0
+    }
+}
+
+impl Drop for RegistryKey {
+    fn drop(&mut self) {
+        // SAFETY: this guard owns the handle returned by a successful open/create.
+        let _ = unsafe { RegCloseKey(self.0) };
+    }
+}
+
 /// `ERROR_SUCCESS`.
 pub(super) const ERROR_SUCCESS: u32 = 0;
 /// `ERROR_FILE_NOT_FOUND` — already-deleted key, treat as success on unregister.
@@ -14,16 +30,16 @@ pub(super) const ERROR_PATH_NOT_FOUND: u32 = 3;
 
 /// Create or open a registry key under HKCR, returning the handle. Errors
 /// propagate as `windows::core::Error`.
-pub(super) fn create_key(subkey: &HSTRING) -> windows::core::Result<HKEY> {
+pub(super) fn create_key(subkey: &HSTRING) -> windows::core::Result<RegistryKey> {
     create_key_at(HKEY_CLASSES_ROOT, subkey)
 }
 
-pub(super) fn create_key_at(root: HKEY, subkey: &HSTRING) -> windows::core::Result<HKEY> {
+pub(super) fn create_key_at(root: HKEY, subkey: &HSTRING) -> windows::core::Result<RegistryKey> {
     let mut hkey = HKEY::default();
     // SAFETY: `hkey` is a stack out-param; `subkey` is a valid PCWSTR.
     let r = unsafe { RegCreateKeyW(root, PCWSTR(subkey.as_ptr()), &mut hkey) };
     if r.0 == ERROR_SUCCESS {
-        Ok(hkey)
+        Ok(RegistryKey(hkey))
     } else {
         Err(r.into())
     }
@@ -31,14 +47,16 @@ pub(super) fn create_key_at(root: HKEY, subkey: &HSTRING) -> windows::core::Resu
 
 /// Open an existing registry key for value query/delete. Missing keys are a
 /// successful no-op for unregister paths.
-pub(super) fn open_key_for_value_update(subkey: &HSTRING) -> windows::core::Result<Option<HKEY>> {
+pub(super) fn open_key_for_value_update(
+    subkey: &HSTRING,
+) -> windows::core::Result<Option<RegistryKey>> {
     open_key_for_value_update_at(HKEY_CLASSES_ROOT, subkey)
 }
 
 pub(super) fn open_key_for_value_update_at(
     root: HKEY,
     subkey: &HSTRING,
-) -> windows::core::Result<Option<HKEY>> {
+) -> windows::core::Result<Option<RegistryKey>> {
     let mut hkey = HKEY::default();
     // SAFETY: `hkey` is a valid out-param; `subkey` is a valid PCWSTR.
     let r = unsafe {
@@ -51,7 +69,7 @@ pub(super) fn open_key_for_value_update_at(
         )
     };
     if r.0 == ERROR_SUCCESS {
-        Ok(Some(hkey))
+        Ok(Some(RegistryKey(hkey)))
     } else if r.0 == ERROR_FILE_NOT_FOUND || r.0 == ERROR_PATH_NOT_FOUND {
         Ok(None)
     } else {
@@ -121,9 +139,7 @@ pub(super) fn delete_value_at(
     let name_pcwstr = value_name_pcwstr(name);
     // SAFETY: `hkey` is open and `name_pcwstr` is either null for the default
     // value or points at a live HSTRING.
-    let r = unsafe { RegDeleteValueW(hkey, name_pcwstr) };
-    // SAFETY: `hkey` was opened in this function and is owned here.
-    let _ = unsafe { RegCloseKey(hkey) };
+    let r = unsafe { RegDeleteValueW(hkey.raw(), name_pcwstr) };
     if r.0 == ERROR_SUCCESS || r.0 == ERROR_FILE_NOT_FOUND {
         Ok(())
     } else {
@@ -142,12 +158,12 @@ pub(super) fn delete_value_if_matches(
     let Some(hkey) = open_key_for_value_update(subkey)? else {
         return Ok(());
     };
-    let current = query_string_value(hkey, name)?;
-    let result = if current.as_ref().is_some_and(|value| value == expected) {
+    let current = query_string_value(hkey.raw(), name)?;
+    if current.as_ref().is_some_and(|value| value == expected) {
         let name_pcwstr = value_name_pcwstr(name);
         // SAFETY: `hkey` is open and `name_pcwstr` is either null or a live
         // HSTRING pointer.
-        let r = unsafe { RegDeleteValueW(hkey, name_pcwstr) };
+        let r = unsafe { RegDeleteValueW(hkey.raw(), name_pcwstr) };
         if r.0 == ERROR_SUCCESS || r.0 == ERROR_FILE_NOT_FOUND {
             Ok(())
         } else {
@@ -155,10 +171,7 @@ pub(super) fn delete_value_if_matches(
         }
     } else {
         Ok(())
-    };
-    // SAFETY: `hkey` was opened in this function and is owned here.
-    let _ = unsafe { RegCloseKey(hkey) };
-    result
+    }
 }
 
 pub(super) fn key_default_matches(
@@ -168,9 +181,7 @@ pub(super) fn key_default_matches(
     let Some(hkey) = open_key_for_value_update(subkey)? else {
         return Ok(false);
     };
-    let current = query_string_value(hkey, None)?;
-    // SAFETY: `hkey` was opened in this function and is owned here.
-    let _ = unsafe { RegCloseKey(hkey) };
+    let current = query_string_value(hkey.raw(), None)?;
     Ok(current.as_ref().is_some_and(|value| value == expected))
 }
 
@@ -256,6 +267,7 @@ pub(super) fn delete_tree_at(root: HKEY, subkey: &HSTRING) -> windows::core::Res
 mod tests {
     use super::*;
     use windows::Win32::Foundation::{SetLastError, ERROR_ACCESS_DENIED, ERROR_INVALID_HANDLE};
+    use windows::Win32::System::Registry::HKEY_CURRENT_USER;
 
     #[test]
     fn registry_errors_use_the_returned_win32_code() {
@@ -269,4 +281,21 @@ mod tests {
         );
     }
 
+    #[test]
+    fn owned_registry_keys_close_after_scope() {
+        let name = HSTRING::from(format!(
+            "Software\\OccluViewHandleTest-{}",
+            std::process::id()
+        ));
+        let key = create_key_at(HKEY_CURRENT_USER, &name).expect("test key");
+        let raw = key.raw();
+        set_string(raw, None, &HSTRING::from("value")).expect("write");
+        drop(key);
+        let error = query_string_value(raw, None).expect_err("closed handle");
+        assert_eq!(
+            error.code(),
+            windows::core::HRESULT::from_win32(ERROR_INVALID_HANDLE.0)
+        );
+        delete_tree_at(HKEY_CURRENT_USER, &name).expect("remove test key");
+    }
 }
