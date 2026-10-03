@@ -43,6 +43,7 @@
 #[cfg(test)]
 extern crate self as occluview_align;
 mod candidate_score;
+mod confidence;
 mod congruent_seed;
 mod deviation;
 mod icp;
@@ -68,6 +69,7 @@ mod search_control;
 mod search_probe;
 mod search_result;
 mod search_transition;
+mod search_verification;
 
 pub use deviation::{
     deviation, deviation_colors, deviation_stats, ramp_color, suggested_scale_mm, DeviationMap,

@@ -24,6 +24,12 @@
 //!   still slide or turn — a smooth crest, a tooth turned about its own axis
 //!   with its cusps off — has a near-zero eigenvalue there.
 
+#[path = "icp_verify_independent.rs"]
+mod independent;
+pub(crate) use independent::{
+    perturb_refine, spatial_jackknife, verify_candidate, verify_rival_candidate,
+};
+
 use glam::DVec3;
 
 use crate::sample::{sample_vertices, vertex_at};
