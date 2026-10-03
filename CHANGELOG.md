@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Refuse OBJ materials whose diffuse factors or texture options would be silently discarded.
+
 - Smoothing refuses invalid neighbor ids before constructing its solve instead of crashing.
 
 - Sculpt refuses fractional sheet identities in decoded topology history instead of rounding them.

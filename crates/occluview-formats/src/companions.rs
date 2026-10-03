@@ -9,9 +9,10 @@
 //! The reader itself takes bytes and nothing else, on purpose: a file another
 //! process is replacing mid-import must not change what was parsed. Finding a
 //! companion is therefore a separate step, done by the path-aware entry points
-//! in [`crate::dispatch`], and it never fails the import — a scan whose texture
-//! is missing is still a scan.
+//! in [`crate::dispatch`]. A missing image leaves the mesh available; an
+//! unsupported material interpretation returns an explicit error.
 
+use crate::error::FormatError;
 use crate::texture_decode::decode_embedded_raster;
 use occluview_core::Mesh;
 use std::path::{Path, PathBuf};
@@ -39,32 +40,39 @@ const SAME_STEM_EXTENSIONS: [&str; 3] = ["png", "jpg", "jpeg"];
 ///
 /// A mesh that already carries a texture keeps it: a GLB or HPS holds its own
 /// image, and nothing beside the file overrides it.
-pub(crate) fn attach(mesh: &mut Mesh, path: &Path, kind: LocateKind, bytes: &[u8]) {
-    // A mesh with no texture coordinates samples one texel for every fragment,
-    // so an image attached to one paints the whole layer a single flat colour
-    // and takes the tint with it. Better no texture than that.
-    if mesh.texture().is_some() || !mesh.has_uvs() {
-        return;
+pub(crate) fn attach(
+    mesh: &mut Mesh,
+    path: &Path,
+    kind: LocateKind,
+    bytes: &[u8],
+) -> Result<(), FormatError> {
+    if mesh.texture().is_some() {
+        return Ok(());
     }
-    let Some(image) = locate(path, kind, bytes) else {
-        return;
+    let image = locate(path, kind, bytes)?;
+    // Without UVs an atlas would paint the whole layer with a single texel.
+    if !mesh.has_uvs() {
+        return Ok(());
+    }
+    let Some(image) = image else {
+        return Ok(());
     };
-    // Bounded like every other import read: an image that grows between the
-    // metadata check and the read is refused rather than pulled into memory.
+    // A missing or undecodable image leaves the geometry available.
     let Ok(image_bytes) =
         crate::dispatch::read_file_bytes_with_limit(&image, MAX_COMPANION_IMAGE_BYTES)
     else {
-        return;
+        return Ok(());
     };
     let Ok(texture) = decode_embedded_raster(image_bytes.as_slice(), "texture beside the mesh")
     else {
-        return;
+        return Ok(());
     };
     mesh.set_texture(texture);
+    Ok(())
 }
 
 /// The image a mesh file names, or the one that shares its name.
-fn locate(path: &Path, kind: LocateKind, bytes: &[u8]) -> Option<PathBuf> {
+fn locate(path: &Path, kind: LocateKind, bytes: &[u8]) -> Result<Option<PathBuf>, FormatError> {
     let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
     // A relative path from a command line has an empty parent, and the files
     // it names are in the working directory.
@@ -72,15 +80,17 @@ fn locate(path: &Path, kind: LocateKind, bytes: &[u8]) -> Option<PathBuf> {
         Some(parent) if !parent.as_os_str().is_empty() => parent,
         _ => Path::new("."),
     };
-    match kind {
-        LocateKind::Obj => material_image(directory, bytes).or_else(|| {
+    Ok(match kind {
+        LocateKind::Obj => material_image(directory, bytes)?.or_else(|| {
             directives(bytes, "usemtl")
                 .is_empty()
                 .then(|| same_stem_image(path, directory))
                 .flatten()
         }),
         LocateKind::Ply => {
-            let header = crate::ply::header::parse(bytes).ok()?;
+            let Ok(header) = crate::ply::header::parse(bytes) else {
+                return Ok(None);
+            };
             header
                 .texture
                 .file
@@ -88,7 +98,7 @@ fn locate(path: &Path, kind: LocateKind, bytes: &[u8]) -> Option<PathBuf> {
                 .and_then(|name| inside(directory, directory, name))
         }
         LocateKind::None => None,
-    }
+    })
 }
 
 /// Which companion lookup a mesh file is entitled to.
@@ -123,40 +133,120 @@ impl LocateKind {
 /// An OBJ may name several libraries, and a library may carry several
 /// materials of which only some have an image. Stopping at the first value
 /// found loses the texture whenever that value is the one without a file.
-fn material_image(directory: &Path, obj: &[u8]) -> Option<PathBuf> {
+fn material_image(directory: &Path, obj: &[u8]) -> Result<Option<PathBuf>, FormatError> {
     let used = used_face_material(obj);
     for library in directives(obj, "mtllib") {
         let Some(library) = inside(directory, directory, &library) else {
             continue;
         };
-        // The library is read through the same bounded helper as everything
-        // else this import touches.
         let Ok(text) =
             crate::dispatch::read_file_bytes_with_limit(&library, MAX_MATERIAL_LIBRARY_BYTES)
-                .map(|bytes| bytes.as_slice().to_vec())
         else {
             continue;
         };
-        let material_text = std::str::from_utf8(&text).ok()?;
-        let mut current = None;
+        let Ok(material_text) = std::str::from_utf8(text.as_slice()) else {
+            return Ok(None);
+        };
+        let mut sections = vec![(None, Vec::new())];
         for line in material_text.trim_start_matches('\u{feff}').lines() {
             if let Some(name) = directives(line.as_bytes(), "newmtl").first() {
-                current = Some(name.clone());
+                sections.push((Some(name.clone()), Vec::new()));
+            } else if let Some((_, lines)) = sections.last_mut() {
+                lines.push(line);
             }
+        }
+        for (name, lines) in sections {
             if used
                 .as_ref()
-                .is_some_and(|name| current.as_ref() != Some(name))
+                .is_some_and(|used| name.as_ref() != Some(used))
             {
                 continue;
             }
-            for image in directives(line.as_bytes(), "map_Kd") {
-                if let Some(found) = inside(directory, library.parent()?, &image) {
-                    return Some(found);
-                }
+            let image = lines
+                .iter()
+                .flat_map(|line| directives(line.as_bytes(), "map_Kd"))
+                .find_map(|image| inside(directory, library.parent()?, &image));
+            if used.is_some() || image.is_some() {
+                validate_material_properties(&lines)?;
+            }
+            if image.is_some() {
+                return Ok(image);
             }
         }
     }
-    None
+    Ok(None)
+}
+
+fn unsupported_material(property: &str) -> FormatError {
+    FormatError::Deferred {
+        format: "OBJ material",
+        reason: format!("unsupported material property {property}; appearance cannot be preserved"),
+    }
+}
+
+/// Validate the selected section before attaching an atlas from that section.
+fn validate_material_properties(lines: &[&str]) -> Result<(), FormatError> {
+    for line in lines {
+        let tokens: Vec<_> = line
+            .split('#')
+            .next()
+            .unwrap_or("")
+            .split_ascii_whitespace()
+            .collect();
+        match tokens.first().copied() {
+            Some("Kd")
+                if tokens.len() != 4
+                    || tokens[1..]
+                        .iter()
+                        .any(|value| value.parse::<f64>().ok() != Some(1.0)) =>
+            {
+                return Err(unsupported_material("Kd"));
+            }
+            Some("map_Kd") => validate_map_properties(&tokens[1..])?,
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn validate_map_properties(mut tokens: &[&str]) -> Result<(), FormatError> {
+    while let Some(option) = tokens
+        .first()
+        .copied()
+        .filter(|value| value.starts_with('-'))
+    {
+        tokens = &tokens[1..];
+        if option == "-mm" {
+            if tokens.len() < 2
+                || tokens[0].parse::<f64>().ok() != Some(0.0)
+                || tokens[1].parse::<f64>().ok() != Some(1.0)
+            {
+                return Err(unsupported_material(option));
+            }
+            tokens = &tokens[2..];
+            continue;
+        }
+        let expected = match option {
+            "-s" => 1.0,
+            "-o" | "-t" => 0.0,
+            _ => return Err(unsupported_material(option)),
+        };
+        let mut count = 0;
+        while count < 3 {
+            let Some(value) = tokens.first().and_then(|value| value.parse::<f64>().ok()) else {
+                break;
+            };
+            if value != expected {
+                return Err(unsupported_material(option));
+            }
+            tokens = &tokens[1..];
+            count += 1;
+        }
+        if count == 0 {
+            return Err(unsupported_material(option));
+        }
+    }
+    Ok(())
 }
 
 /// Material active at the first face; the OBJ parser refuses mixed identities.
@@ -301,6 +391,34 @@ mod tests {
     use occluview_core::{MeshTexture, Vertex};
 
     #[test]
+    fn obj_file_refuses_unrepresented_used_material_properties() {
+        let directory = tempfile::tempdir().expect("directory");
+        let path = directory.path().join("scan.obj");
+        let obj = b"mtllib scan.mtl\nusemtl used\nv 0 0 0\nv 1 0 0\nv 0 1 0\nvt 0 0\nvt 1 0\nvt 0 1\nf 1/1 2/2 3/3\n";
+        std::fs::write(&path, obj).expect("OBJ");
+        std::fs::write(directory.path().join("scan.png"), textured_png()).expect("image");
+        for properties in [
+            "map_Kd -s 2 1 1 scan.png",
+            "map_Kd scan.png\nKd 0.5 1 1",
+            "map_Kd -o 0.25 scan.png",
+            "map_Kd -clamp on scan.png",
+        ] {
+            std::fs::write(
+                directory.path().join("scan.mtl"),
+                format!("newmtl unused\nmap_Kd -s 9 unused.png\nnewmtl used\n{properties}\n"),
+            )
+            .expect("MTL");
+            assert!(
+                crate::read_file(&path).is_err(),
+                "silently discarded {properties}"
+            );
+        }
+        std::fs::write(directory.path().join("scan.mtl"), "newmtl unused\nmap_Kd -s 9 unused.png\nnewmtl used\nmap_Kd -s 1 1 1 -o 0 0 0 -t 0 -mm 0 1 scan.png\nKd 1 1 1\n").expect("identity MTL");
+        let mesh = crate::read_file(&path).expect("identity appearance");
+        assert!(mesh.texture().is_some());
+    }
+
+    #[test]
     fn obj_companion_uses_the_faces_material_identity() {
         let directory = tempfile::tempdir().expect("directory");
         for name in ["first.png", "used.png", "scan.png"] {
@@ -313,7 +431,7 @@ mod tests {
         .expect("MTL");
         let obj = b"mtllib scan.mtl\nusemtl used\nf 1/1 2/2 3/3\n";
         assert_eq!(
-            material_image(directory.path(), obj),
+            material_image(directory.path(), obj).expect("material lookup"),
             Some(
                 directory
                     .path()
@@ -324,7 +442,9 @@ mod tests {
         );
         let missing = b"mtllib scan.mtl\nusemtl absent\nf 1/1 2/2 3/3\n";
         assert!(
-            locate(&directory.path().join("scan.obj"), LocateKind::Obj, missing).is_none(),
+            locate(&directory.path().join("scan.obj"), LocateKind::Obj, missing)
+                .expect("material lookup")
+                .is_none(),
             "an unrelated atlas must not replace a missing named material"
         );
     }
@@ -362,7 +482,8 @@ mod tests {
         ] {
             std::fs::write(materials.join("scan.mtl"), format!("map_Kd {name}\n")).expect("MTL");
             assert_eq!(
-                material_image(directory.path(), b"mtllib materials/scan.mtl\n"),
+                material_image(directory.path(), b"mtllib materials/scan.mtl\n")
+                    .expect("material lookup"),
                 Some(expected.canonicalize().expect("image path")),
                 "{name}"
             );
@@ -465,7 +586,7 @@ mod tests {
         std::fs::write(&path, obj).expect("the obj");
 
         let mut mesh = triangle();
-        attach(&mut mesh, &path, LocateKind::Obj, obj);
+        attach(&mut mesh, &path, LocateKind::Obj, obj).expect("companion attachment");
 
         let texture = mesh.texture().expect("the texture was found");
         assert_eq!((texture.width, texture.height), (2, 1));
@@ -482,7 +603,7 @@ mod tests {
         std::fs::write(&path, obj).expect("the obj");
 
         let mut mesh = triangle();
-        attach(&mut mesh, &path, LocateKind::Obj, obj);
+        attach(&mut mesh, &path, LocateKind::Obj, obj).expect("companion attachment");
 
         assert!(
             mesh.texture().is_none(),
@@ -490,7 +611,7 @@ mod tests {
         );
 
         std::fs::write(directory.join("scan.jpg"), textured_png()).expect("the image");
-        attach(&mut mesh, &path, LocateKind::Obj, obj);
+        attach(&mut mesh, &path, LocateKind::Obj, obj).expect("companion attachment");
         assert!(
             mesh.texture().is_some(),
             "the image beside the mesh is used"
@@ -510,13 +631,14 @@ mod tests {
         std::fs::write(&path, &header).expect("the ply");
 
         let mut mesh = triangle();
-        attach(&mut mesh, &path, LocateKind::Ply, header.as_bytes());
+        attach(&mut mesh, &path, LocateKind::Ply, header.as_bytes()).expect("companion attachment");
         assert!(mesh.texture().is_some(), "the named image is used");
 
         // A header with no name at all leaves the mesh alone.
         header = header.replace("comment TextureFile atlas.png\n", "");
         let mut untextured = triangle();
-        attach(&mut untextured, &path, LocateKind::Ply, header.as_bytes());
+        attach(&mut untextured, &path, LocateKind::Ply, header.as_bytes())
+            .expect("companion attachment");
         assert!(untextured.texture().is_none());
         let _ = std::fs::remove_dir_all(&directory);
     }
@@ -543,7 +665,7 @@ mod tests {
         .expect("a triangle without coordinates");
         assert!(!mesh.has_uvs());
 
-        attach(&mut mesh, &path, LocateKind::Obj, obj);
+        attach(&mut mesh, &path, LocateKind::Obj, obj).expect("companion attachment");
 
         assert!(
             mesh.texture().is_none(),
@@ -570,7 +692,7 @@ mod tests {
         std::fs::write(&path, obj).expect("the obj");
 
         let mut mesh = triangle();
-        attach(&mut mesh, &path, LocateKind::Obj, obj);
+        attach(&mut mesh, &path, LocateKind::Obj, obj).expect("companion attachment");
 
         assert!(
             mesh.texture().is_some(),
@@ -595,7 +717,7 @@ mod tests {
         std::fs::write(&path, obj).expect("the obj");
 
         let mut mesh = triangle();
-        attach(&mut mesh, &path, LocateKind::Obj, obj);
+        attach(&mut mesh, &path, LocateKind::Obj, obj).expect("companion attachment");
 
         assert!(
             mesh.texture().is_none(),
@@ -614,12 +736,12 @@ mod tests {
         std::fs::write(&path, obj).expect("the obj");
 
         let mut mesh = triangle();
-        attach(&mut mesh, &path, LocateKind::Obj, obj);
+        attach(&mut mesh, &path, LocateKind::Obj, obj).expect("companion attachment");
         assert!(mesh.texture().is_none());
 
         // A file that is not an image at all is refused by the decoder.
         std::fs::write(directory.join("gone.png"), b"not an image").expect("the file");
-        attach(&mut mesh, &path, LocateKind::Obj, obj);
+        attach(&mut mesh, &path, LocateKind::Obj, obj).expect("companion attachment");
         assert!(mesh.texture().is_none());
         let _ = std::fs::remove_dir_all(&directory);
     }

@@ -222,7 +222,7 @@ pub fn read_file_loaded_with_key_provider(
         path,
         crate::companions::LocateKind::for_kind(loaded.kind),
         bytes.as_slice(),
-    );
+    )?;
     Ok(loaded)
 }
 
@@ -248,7 +248,7 @@ pub fn read_file_shaded(
         path,
         crate::companions::LocateKind::for_kind(loaded.kind),
         bytes.as_slice(),
-    );
+    )?;
     Ok(loaded.mesh)
 }
 
@@ -452,7 +452,8 @@ fn parse_batch(
                 &input.path,
                 crate::companions::LocateKind::for_kind(input.kind),
                 input.bytes.as_slice(),
-            );
+            )
+            .map_err(|error| (input.path.clone(), error))?;
             Ok(loaded)
         })
         .collect()
