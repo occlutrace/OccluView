@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Scan matching reuses identical descriptor queries and stops matching when its retained correspondence list is full.
+
 - Scan matching skips refinement queries that cannot enter the selected common surface region.
 
 - Scan matching resumes interrupted refinement after completed verification and reuses unchanged exact evidence.
