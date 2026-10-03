@@ -73,6 +73,10 @@ pub(super) fn find_optional_element<'a>(
         )));
     };
     let open_end = open + relative_open_end;
+    let open_tag = &xml[open..=open_end];
+    if open_tag.ends_with("/>") {
+        return Ok(Some(XmlElement { open_tag, body: "" }));
+    }
     let close_tag = format!("</{name}>");
     let body_start = open_end + 1;
     let Some(relative_close) = xml[body_start..].find(&close_tag) else {
@@ -81,7 +85,7 @@ pub(super) fn find_optional_element<'a>(
     let close = body_start + relative_close;
 
     Ok(Some(XmlElement {
-        open_tag: &xml[open..=open_end],
+        open_tag,
         body: &xml[body_start..close],
     }))
 }

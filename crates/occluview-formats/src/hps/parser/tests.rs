@@ -194,6 +194,17 @@ fn hps_surface_rejects_a_base64_tail_that_emits_no_byte() {
 }
 
 #[test]
+fn self_closing_properties_preserve_unencrypted_surface_loading() {
+    for schema in ["CA", "CB", "CC"] {
+        for properties in ["<Properties/>", "<Properties />"] {
+            let surface = read(&schema_fixture(schema, 3, 1, &[4], properties))
+                .expect("empty properties do not change the surface");
+            assert_eq!(surface.indices(), &[0, 1, 2]);
+        }
+    }
+}
+
+#[test]
 fn incomplete_optional_elements_do_not_silently_remove_surface_attributes() {
     let png = encode_base64(&red_png_bytes());
     let text = String::from_utf8(cc_fixture(
