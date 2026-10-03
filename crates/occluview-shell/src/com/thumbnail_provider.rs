@@ -496,19 +496,14 @@ impl IInitializeWithItem_Impl for ThumbnailProvider_Impl {
                 let item = psi.ok()?;
                 // SAFETY: `GetDisplayName(SIGDN_FILESYSPATH)` returns a CoTaskMem
                 // allocated null-terminated UTF-16 path. We copy it into a Rust
-                // String before freeing the COM allocation.
+                // OS string before freeing the COM allocation.
                 let path_ptr = unsafe { item.GetDisplayName(SIGDN_FILESYSPATH)? };
-                // SAFETY: `path_ptr` is the CoTaskMem string GetDisplayName
-                // just returned.
-                let path_string = unsafe { path_ptr.to_string() }.map_err(|_| {
-                    // SAFETY: freeing the COM-owned pointer returned by
-                    // GetDisplayName.
-                    unsafe { CoTaskMemFree(Some(path_ptr.as_ptr().cast())) };
-                    e_fail()
-                })?;
+                // SAFETY: GetDisplayName returned a live NUL-terminated path.
+                // Preserve every filename code unit before freeing its COM allocation.
+                let path = std::ffi::OsString::from_wide(unsafe { path_ptr.as_wide() });
                 // SAFETY: freeing the COM-owned pointer returned by GetDisplayName.
                 unsafe { CoTaskMemFree(Some(path_ptr.as_ptr().cast())) };
-                self.this.initialize_path(PathBuf::from(path_string));
+                self.this.initialize_path(PathBuf::from(path));
                 Ok(())
             },
         )

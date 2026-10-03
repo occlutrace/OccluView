@@ -739,17 +739,12 @@ impl IInitializeWithItem_Impl for PreviewHandler_Impl {
                 // SAFETY: `GetDisplayName(SIGDN_FILESYSPATH)` returns a CoTaskMem
                 // path.
                 let path_ptr = unsafe { item.GetDisplayName(SIGDN_FILESYSPATH)? };
-                // SAFETY: `path_ptr` is the CoTaskMem string GetDisplayName
-                // just returned.
-                let path_string = unsafe { path_ptr.to_string() }.map_err(|_| {
-                    // SAFETY: freeing the COM-owned pointer returned by
-                    // GetDisplayName.
-                    unsafe { CoTaskMemFree(Some(path_ptr.as_ptr().cast())) };
-                    e_fail()
-                })?;
+                // SAFETY: GetDisplayName returned a live NUL-terminated path.
+                // Preserve every filename code unit before freeing its COM allocation.
+                let path = std::ffi::OsString::from_wide(unsafe { path_ptr.as_wide() });
                 // SAFETY: freeing the COM-owned pointer returned by GetDisplayName.
                 unsafe { CoTaskMemFree(Some(path_ptr.as_ptr().cast())) };
-                self.this.initialize_path(PathBuf::from(path_string));
+                self.this.initialize_path(PathBuf::from(path));
                 Ok(())
             },
         )
@@ -758,4 +753,46 @@ impl IInitializeWithItem_Impl for PreviewHandler_Impl {
 
 fn shell_error_to_hresult(error: ShellError) -> windows::core::Error {
     windows::core::Error::new(HRESULT(0x8000_4005_u32 as i32), format!("{error}"))
+}
+
+#[cfg(test)]
+mod item_tests {
+    use super::*;
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
+    use windows::Win32::UI::Shell::SHCreateItemFromParsingName;
+
+    #[test]
+    fn item_initialization_preserves_unpaired_filename_code_units() {
+        // SAFETY: this test initializes and balances COM on its own thread.
+        unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }
+            .ok()
+            .expect("COM apartment");
+        struct Apartment;
+        impl Drop for Apartment {
+            fn drop(&mut self) {
+                // SAFETY: balances the successful initialization above.
+                unsafe { CoUninitialize() };
+            }
+        }
+        let _apartment = Apartment;
+        let directory =
+            std::env::temp_dir().join(format!("occluview-shell-item-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("directory");
+        let name = std::ffi::OsString::from_wide(&[0xd800, 0x2e, 0x6f, 0x62, 0x6a]);
+        let path = directory.join(name);
+        std::fs::write(&path, b"v 0 0 0\n").expect("filename with an unpaired surrogate");
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        // SAFETY: the path is NUL-terminated and valid for this call.
+        let item: IShellItem = unsafe { SHCreateItemFromParsingName(PCWSTR(wide.as_ptr()), None) }
+            .expect("shell item");
+        let preview: IInitializeWithItem = PreviewHandler::new().into();
+        let thumbnail: IInitializeWithItem = ThumbnailProvider::new().into();
+        // SAFETY: both interfaces and the item remain live through initialization.
+        unsafe { preview.Initialize(&item, 0) }.expect("preview accepts OS filename");
+        // SAFETY: both interfaces and the item remain live through initialization.
+        unsafe { thumbnail.Initialize(&item, 0) }.expect("thumbnail accepts OS filename");
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_dir(directory);
+    }
 }
