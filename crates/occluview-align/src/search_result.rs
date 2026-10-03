@@ -441,18 +441,37 @@ impl Default for SearchBudget {
         }
     }
 }
-impl Default for SearchSettings {
-    fn default() -> Self {
+impl SearchSettings {
+    /// Construct the complete preset, including its wall and work allowances.
+    /// Callers can then lower individual limits explicitly. Merely changing
+    /// `profile` on an existing settings value preserves its explicit limits.
+    pub fn for_profile(profile: SearchProfile) -> Self {
+        let (wall, queries, triangles, pairs, edges) = match profile {
+            SearchProfile::Standard => (10, 8_000_000, 80_000_000, 32_000_000, 2_000_000),
+            SearchProfile::Extended => (30, 20_000_000, 240_000_000, 128_000_000, 8_000_000),
+            SearchProfile::Local => (2, 1_000_000, 10_000_000, 32_000_000, 2_000_000),
+        };
         Self {
             normal_policy: NormalPolicy::Match,
-            profile: SearchProfile::Standard,
+            profile,
             top_k: 5,
             reference_regions: RegionPolicy::AllEligible,
             influence_radius_mm: 2.,
             overlap_prior: None,
-            work_budget: SearchBudget::default(),
-            wall_limit: Duration::from_secs(10),
+            wall_limit: Duration::from_secs(wall),
+            work_budget: SearchBudget {
+                query_calls: queries,
+                triangle_tests: triangles,
+                point_pair_tests: pairs,
+                patch_edge_visits: edges,
+                memory_bytes: 256 * 1024 * 1024,
+            },
         }
+    }
+}
+impl Default for SearchSettings {
+    fn default() -> Self {
+        Self::for_profile(SearchProfile::Standard)
     }
 }
 /// A borrowed mesh and its finite authored frame; geometry is never mutated.
@@ -486,4 +505,44 @@ pub struct AlignmentInput<'a> {
     pub landmarks: &'a [PointPair],
     /// Optional rigid corrections of the authored moving frame.
     pub seeds: &'a [Rigid],
+}
+
+#[cfg(test)]
+mod preset_tests {
+    use super::*;
+    #[test]
+    fn profiles_set_effective_deadline_and_work_allowance() {
+        for (profile, seconds, queries, triangles, pairs) in [
+            (
+                SearchProfile::Standard,
+                10,
+                8_000_000,
+                80_000_000,
+                32_000_000,
+            ),
+            (
+                SearchProfile::Extended,
+                30,
+                20_000_000,
+                240_000_000,
+                128_000_000,
+            ),
+            (SearchProfile::Local, 2, 1_000_000, 10_000_000, 32_000_000),
+        ] {
+            let mut settings = SearchSettings::for_profile(profile);
+            let control = crate::SearchControl::new(crate::CancelFlag::new(), settings.wall_limit);
+            let limits = control.geometry_control(&settings).limits();
+            assert_eq!(settings.wall_limit, Duration::from_secs(seconds));
+            assert_eq!(
+                (
+                    limits.query_calls,
+                    limits.triangle_tests,
+                    limits.point_pair_tests
+                ),
+                (queries, triangles, pairs)
+            );
+            settings.work_budget.query_calls = 7;
+            assert_eq!(control.geometry_control(&settings).limits().query_calls, 7);
+        }
+    }
 }
