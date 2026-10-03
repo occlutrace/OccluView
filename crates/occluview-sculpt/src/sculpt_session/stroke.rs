@@ -541,6 +541,16 @@ impl SculptSession {
         // The grid bounds grow with the geometry while cell indices remain
         // relative to its fixed origin `lo`, which is also the bucket key base.
         let (min_cell, max_cell) = (self.rays.min_cell, self.rays.max_cell);
+        let min_cell = (
+            i64::from(min_cell.0),
+            i64::from(min_cell.1),
+            i64::from(min_cell.2),
+        );
+        let max_cell = (
+            i64::from(max_cell.0),
+            i64::from(max_cell.1),
+            i64::from(max_cell.2),
+        );
         let box_lo = DVec3::new(
             lo.x + min_cell.0 as f64 * cell,
             lo.y + min_cell.1 as f64 * cell,
@@ -573,19 +583,19 @@ impl SculptSession {
             return None;
         }
         let start = orig + (dir * (t0 + 1e-9));
-        let mut cx = ((start.x - lo.x) / cell).floor() as i32;
-        let mut cy = ((start.y - lo.y) / cell).floor() as i32;
-        let mut cz = ((start.z - lo.z) / cell).floor() as i32;
+        let mut cx = ((start.x - lo.x) / cell).floor() as i64;
+        let mut cy = ((start.y - lo.y) / cell).floor() as i64;
+        let mut cz = ((start.z - lo.z) / cell).floor() as i64;
         let step = (
-            if dir.x > 0.0 { 1i32 } else { -1 },
-            if dir.y > 0.0 { 1i32 } else { -1 },
-            if dir.z > 0.0 { 1i32 } else { -1 },
+            if dir.x > 0.0 { 1i64 } else { -1 },
+            if dir.y > 0.0 { 1i64 } else { -1 },
+            if dir.z > 0.0 { 1i64 } else { -1 },
         );
-        let next_t = |c: i32, o: f64, d: f64, l: f64| -> f64 {
+        let next_t = |c: i64, o: f64, d: f64, l: f64| -> f64 {
             if d.abs() < 1e-12 {
                 return f64::INFINITY;
             }
-            let edge = l + (c + i32::from(d > 0.0)) as f64 * cell;
+            let edge = l + (c as f64 + f64::from(u8::from(d > 0.0))) * cell;
             (edge - o) / d
         };
         let mut tmx = next_t(cx, orig.x, dir.x, lo.x);
@@ -618,7 +628,7 @@ impl SculptSession {
         let cell_span = (max_cell.0 - min_cell.0)
             .max(max_cell.1 - min_cell.1)
             .max(max_cell.2 - min_cell.2);
-        let guard_limit = cell_span as i64 * 3 + 16;
+        let guard_limit = cell_span * 3 + 16;
         let mut guard = 0;
         loop {
             guard += 1;
@@ -634,7 +644,11 @@ impl SculptSession {
             {
                 break;
             }
-            if let Some(list) = self.rays.map.get(&(cx, cy, cz)) {
+            let list = match [cx, cy, cz].map(i32::try_from) {
+                [Ok(x), Ok(y), Ok(z)] => self.rays.map.get(&(x, y, z)),
+                _ => None,
+            };
+            if let Some(list) = list {
                 for &ti in list {
                     let mark = &mut self.ray_test_marks[ti as usize];
                     if *mark == test_epoch {
@@ -726,6 +740,37 @@ impl SculptSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ray_grid_walk_does_not_overflow_at_the_cell_index_limit() {
+        let mut session = SculptSession::new(
+            vec![
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                -4_294_967_296.0,
+                0.0,
+                0.0,
+            ],
+            vec![0, 1, 2],
+        )
+        .expect("valid mesh fixture");
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            session.raycast(DVec3::new(1.0, 0.25, 0.25), -DVec3::X)
+        }));
+        assert!(
+            outcome.is_ok(),
+            "an isolated distant vertex must not overflow ray bounds"
+        );
+        let (hit, _) = outcome.expect("no panic").expect("visible triangle");
+        assert!((hit - DVec3::new(0.0, 0.25, 0.25)).length() < 1e-9);
+    }
 
     #[test]
     fn empty_surface_rays_return_no_hit_without_overflow() {

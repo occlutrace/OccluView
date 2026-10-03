@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Sculpt ray traversal avoids integer overflow when distant vertices push cells to their index limits.
+
 - Close Holes applies and records cleanup even when every remaining rim stays open.
 
 - Selected rim cleanup retains pre-existing degenerate faces outside the marked area.
