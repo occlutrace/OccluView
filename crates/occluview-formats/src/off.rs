@@ -164,6 +164,13 @@ fn read_binary(bytes: &[u8]) -> Result<Mesh, FormatError> {
         }
     }
 
+    if cur != bytes.len() {
+        return Err(FormatError::Malformed {
+            format: "OFF (binary)",
+            offset: cur,
+            reason: "data remains after the declared elements".to_string(),
+        });
+    }
     builder.build().map_err(FormatError::Core)
 }
 
@@ -280,6 +287,11 @@ fn read_ascii(bytes: &[u8]) -> Result<Mesh, FormatError> {
         }
     }
 
+    match lexer.next_token() {
+        Ok(_) => return Err(malformed("data remains after the declared elements")),
+        Err(FormatError::Truncated { .. }) => {}
+        Err(error) => return Err(error),
+    }
     builder.build().map_err(FormatError::Core)
 }
 
@@ -360,6 +372,37 @@ fn malformed(reason: &str) -> FormatError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn understated_off_face_counts_cannot_silently_discard_geometry() {
+        for declared in [0_i32, 1] {
+            for binary in [false, true] {
+                let bytes = if binary {
+                    let mut bytes = b"OFF BINARY\n".to_vec();
+                    for count in [3_i32, declared, 0] {
+                        bytes.extend_from_slice(&count.to_le_bytes());
+                    }
+                    for coordinate in [0.0_f64, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0] {
+                        bytes.extend_from_slice(&coordinate.to_le_bytes());
+                    }
+                    for _ in 0..2 {
+                        for index in [3_i32, 0, 1, 2] {
+                            bytes.extend_from_slice(&index.to_le_bytes());
+                        }
+                    }
+                    bytes
+                } else {
+                    format!("OFF\n3 {declared} 0\n0 0 0\n1 0 0\n0 1 0\n3 0 1 2\n3 0 1 2\n")
+                        .into_bytes()
+                };
+                let mesh = read(&bytes);
+                assert!(
+                    mesh.is_err() || mesh.as_ref().is_ok_and(|mesh| mesh.triangle_count() == 2),
+                    "binary={binary}, count {declared} discarded a complete face"
+                );
+            }
+        }
+    }
 
     #[test]
     fn rejects_invalid_ascii_edge_counts() {
