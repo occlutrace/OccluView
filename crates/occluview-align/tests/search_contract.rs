@@ -5,22 +5,7 @@ use glam::{DAffine3, DQuat, DVec3};
 use occluview_align::*;
 use support::{arch, metrics, operators};
 
-fn input<'a>(moving: Soup<'a>, fixed: Soup<'a>) -> AlignmentInput<'a> {
-    AlignmentInput {
-        moving: MeshInput {
-            soup: moving,
-            world_from_local: DAffine3::IDENTITY,
-            revision: 1,
-        },
-        fixed: MeshInput {
-            soup: fixed,
-            world_from_local: DAffine3::IDENTITY,
-            revision: 2,
-        },
-        landmarks: &[],
-        seeds: &[],
-    }
-}
+use support::alignment_input as input;
 fn search(i: &AlignmentInput<'_>) -> AlignmentSearchResult {
     search_alignment(
         i,
@@ -325,7 +310,7 @@ fn fixed_work_provenance_and_candidates_are_reproducible() {
         assert_eq!(effective.work_budget.query_calls, 99);
         assert_eq!(result.provenance.operation_limit, 32_000_000);
         assert_eq!(result.provenance.input_revisions, [1, 2]);
-        assert_eq!(result.provenance.algorithm_version, 8);
+        assert_eq!(result.provenance.algorithm_version, 9);
         assert_eq!(result.completion, Completion::WorkLimit);
         assert!(result.work.query_calls <= 99);
         for family in &result.work.families {

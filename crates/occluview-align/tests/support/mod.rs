@@ -92,3 +92,24 @@ impl Rng {
             * (std::f64::consts::TAU * self.uniform()).cos()
     }
 }
+
+/// Immutable authored-frame request shared by registration test binaries.
+pub fn alignment_input<'a>(
+    moving: Soup<'a>,
+    fixed: Soup<'a>,
+) -> occluview_align::AlignmentInput<'a> {
+    occluview_align::AlignmentInput {
+        moving: occluview_align::MeshInput {
+            soup: moving,
+            world_from_local: glam::DAffine3::IDENTITY,
+            revision: 1,
+        },
+        fixed: occluview_align::MeshInput {
+            soup: fixed,
+            world_from_local: glam::DAffine3::IDENTITY,
+            revision: 2,
+        },
+        landmarks: &[],
+        seeds: &[],
+    }
+}

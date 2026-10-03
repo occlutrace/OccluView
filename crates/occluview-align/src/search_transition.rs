@@ -165,7 +165,7 @@ fn initial_result(input: &AlignmentInput<'_>, settings: &SearchSettings) -> Alig
         },
         provenance: SearchProvenance {
             operation_limit: 0,
-            algorithm_version: 8,
+            algorithm_version: 9,
             effective_settings: None,
             threshold_set_id: "geometric-evidence-v1-unverified",
             grid_recipe_id: "haar-polar-6x12-12x24-farthest72-v1",
@@ -442,8 +442,22 @@ fn run_proposals(
     // These 16 retained basins form the numerical refinement boundary.
     // Only terminal publication reduces the reviewed result to the UI cap.
     pool.sort_by(crate::candidate_score::proposal_order);
+    let mut refined = crate::icp::run_multiscale(moving, fixed, pool, settings, geometry);
+    result.work.iterations = refined.iterations;
+    result.work.refinement_scored_poses = refined.scored;
+    result.work.examined_poses = result.work.examined_poses.saturating_add(refined.scored);
+    result.work.refined_basins = refined.basins;
+    if let Some(stop) = refined.stop {
+        result.completion = crate::sample::completion(stop);
+        result.work.unfinished_stages.push("multiscale-refinement");
+        reasons.push(EvidenceReason::BudgetExhausted);
+    }
+    refined
+        .candidates
+        .sort_by(|a, b| crate::candidate_score::proposal_order(&a.proposal, &b.proposal));
     let mut candidates = Vec::with_capacity(5);
-    for proposal in pool.into_iter().take(settings.top_k) {
+    for refined_proposal in refined.candidates.into_iter().take(settings.top_k) {
+        let proposal = refined_proposal.proposal;
         let Some(pose) = moving.frame.correction_to_world(fixed.frame, proposal.pose) else {
             continue;
         };
@@ -454,6 +468,16 @@ fn run_proposals(
         }
         if score.overlap < 0.2 {
             candidate_reasons.push(EvidenceReason::InsufficientSupport);
+        }
+        if refined_proposal.unsigned_fallback {
+            candidate_reasons.push(EvidenceReason::PolicyConflict);
+        }
+        if refined_proposal
+            .information
+            .as_ref()
+            .is_some_and(|info| !info.weak.is_empty())
+        {
+            candidate_reasons.push(EvidenceReason::UnobservableMotion);
         }
         candidates.push(AlignmentCandidate {
             id: proposal.id,
@@ -469,6 +493,14 @@ fn run_proposals(
                     fixed.represented_area_mm2,
                 ]),
                 original_surface_exact: [moving.exact_original, fixed.exact_original],
+                training_info_eigenvalues: refined_proposal
+                    .information
+                    .as_ref()
+                    .map_or_else(Metric::default, |info| Metric::Measured(info.values)),
+                training_weak_twists: refined_proposal
+                    .information
+                    .as_ref()
+                    .map_or_else(Vec::new, |info| info.weak.clone()),
                 score: Metric::Measured(score.score),
                 queried_population_area_mm2: Metric::Measured(score.population_area),
                 policy_compatible_area_mm2: Metric::Measured(score.policy_support),
@@ -484,7 +516,7 @@ fn run_proposals(
             },
             reasons: candidate_reasons,
             seeds: proposal.origins,
-            refinement: RefinementTermination::NotStarted,
+            refinement: refined_proposal.termination,
         });
     }
     if !candidates.is_empty() {

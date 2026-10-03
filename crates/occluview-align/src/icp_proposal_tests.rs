@@ -1,9 +1,7 @@
 //! Synthetic coarse proposal gates. Truth is used only after pool generation.
 use super::*;
 use crate::proposal_test_support::{arch, metrics, operators};
-use crate::{
-    AlignmentInput, Completion, MeshInput, NormalPolicy, SearchControl, SearchSettings, SurfaceSide,
-};
+use crate::{AlignmentInput, Completion, NormalPolicy, SearchControl, SearchSettings, SurfaceSide};
 use glam::DAffine3;
 use std::time::{Duration, Instant};
 
@@ -11,20 +9,7 @@ fn input<'a>(
     moving: &'a crate::proposal_test_support::SyntheticMesh,
     fixed: &'a crate::proposal_test_support::SyntheticMesh,
 ) -> AlignmentInput<'a> {
-    AlignmentInput {
-        moving: MeshInput {
-            soup: moving.soup(),
-            world_from_local: DAffine3::IDENTITY,
-            revision: 1,
-        },
-        fixed: MeshInput {
-            soup: fixed.soup(),
-            world_from_local: DAffine3::IDENTITY,
-            revision: 2,
-        },
-        landmarks: &[],
-        seeds: &[],
-    }
+    crate::proposal_test_support::alignment_input(moving.soup(), fixed.soup())
 }
 fn shortlist(
     request: &AlignmentInput<'_>,

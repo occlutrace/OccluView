@@ -36,11 +36,16 @@ use icp_search::{coarse_candidate_is_better, coarse_candidates_are_ambiguous, Co
 pub(crate) use icp_search::{generate_hypotheses, ProposalOptions};
 #[path = "icp_solve.rs"]
 mod icp_solve;
+#[path = "icp_surface.rs"]
+mod icp_surface;
+#[path = "icp_surface_step.rs"]
+mod icp_surface_step;
 use icp_solve::run_level;
 #[cfg(test)]
 use icp_solve::weak_axes_from_normal_matrix;
 #[cfg(test)]
 use icp_step::correspondences_at_radius;
+pub(crate) use icp_surface::run_multiscale;
 
 #[cfg(test)]
 #[path = "icp_internal_tests.rs"]
