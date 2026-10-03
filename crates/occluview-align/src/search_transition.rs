@@ -165,7 +165,8 @@ fn initial_result(input: &AlignmentInput<'_>, settings: &SearchSettings) -> Alig
         },
         provenance: SearchProvenance {
             operation_limit: 0,
-            algorithm_version: 11,
+            proposal_operation_allowance: 0,
+            algorithm_version: 12,
             effective_settings: None,
             threshold_set_id: "geometric-evidence-v1-unverified",
             grid_recipe_id: "haar-polar-6x12-12x24-farthest72-v1",
@@ -400,12 +401,22 @@ fn run_proposals(
         seeds: &seeds,
         ..*input
     };
+    // Ordinary bucket/sort work is bounded independently of query and triangle
+    // calls. Leave half of the post-preparation allowance to numerical work;
+    // an unfinished producer keeps its checkpoint and explicit partial status.
+    let proposal_allowance = geometry
+        .limits()
+        .operations
+        .saturating_sub(geometry.counters().operations)
+        / 2;
+    result.provenance.proposal_operation_allowance = proposal_allowance;
+    let proposal_control = geometry.with_operation_allowance(proposal_allowance);
     let proposals = crate::icp::generate_hypotheses(
         moving,
         fixed,
         &request,
         settings,
-        geometry,
+        &proposal_control,
         crate::icp::ProposalOptions::default(),
     );
     result.work.examined_poses = proposals.examined;

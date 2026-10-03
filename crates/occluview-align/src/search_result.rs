@@ -427,6 +427,8 @@ pub struct SearchWork {
 pub struct SearchProvenance {
     /// Effective ordinary-operation ceiling, including topology and bucket work.
     pub operation_limit: u64,
+    /// Ordinary work allocated to proposals after completed preparation.
+    pub proposal_operation_allowance: u64,
     /// Effective settings after validation/clamping and profile ceilings;
     /// absent if interruption precedes numeric validation.
     pub effective_settings: Option<SearchSettings>,
