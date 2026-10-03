@@ -953,24 +953,32 @@ impl SurfaceIndex {
         let Some(base) = self.cell_index(start) else {
             return Ok(());
         };
-        for offset in 0..length {
-            traversal.control.charge_operations(1)?;
-            let Some(cell) = usize::try_from(offset).ok().map(|step| base + step) else {
-                continue;
-            };
-            let (Some(&from), Some(&to)) = (self.starts.get(cell), self.starts.get(cell + 1))
-            else {
-                continue;
-            };
-            if from == to {
-                continue;
-            }
-            self.visit_cell(
-                query,
-                [start[0] + offset, start[1], start[2]],
-                from..to,
-                traversal,
+        // Admit at most 128 cell visits at once. Successful traversals charge
+        // exactly the same visits; interrupted chunks may conservatively charge
+        // unvisited cells, never perform uncharged work.
+        for start_offset in (0..length).step_by(128) {
+            let end_offset = start_offset.saturating_add(128).min(length);
+            traversal.control.charge_operations(
+                u64::try_from(end_offset - start_offset).map_err(|_| GeometryStop::Numerical)?,
             )?;
+            for offset in start_offset..end_offset {
+                let Some(cell) = usize::try_from(offset).ok().map(|step| base + step) else {
+                    continue;
+                };
+                let (Some(&from), Some(&to)) = (self.starts.get(cell), self.starts.get(cell + 1))
+                else {
+                    continue;
+                };
+                if from == to {
+                    continue;
+                }
+                self.visit_cell(
+                    query,
+                    [start[0] + offset, start[1], start[2]],
+                    from..to,
+                    traversal,
+                )?;
+            }
         }
         Ok(())
     }
@@ -990,66 +998,68 @@ impl SurfaceIndex {
         let Some(bucket) = self.items.get(bucket.start as usize..bucket.end as usize) else {
             return Ok(());
         };
-        for &slot in bucket {
-            traversal.control.charge_operations(1)?;
-            // Small indexes have a collision-free direct map. Larger indexes
-            // keep fixed scratch and spread both adjacent facets and mesh rows.
-            let cache_slot = if self.corners.len() <= traversal.tested.len() {
-                slot as usize
-            } else {
-                (slot.wrapping_mul(0x9e37_79b9) >> 22) as usize
-            };
-            let tag = (u64::from(traversal.generation) << 32) | u64::from(slot);
-            if traversal.tested[cache_slot] == tag {
-                continue;
-            }
-            traversal.tested[cache_slot] = tag;
-            let slot = slot as usize;
-            let Some(corners) = self.corners.get(slot) else {
-                continue;
-            };
-            // A bucket covers whole cells and may contain distant facets.
-            // Their boxes give conservative lower bounds before expensive
-            // triangle distances. Keep equality (and rounding slack) eligible
-            // so shared-feature/source-id ties still follow the exact rule.
-            let low = corners[0].min(corners[1]).min(corners[2]);
-            let high = corners[0].max(corners[1]).max(corners[2]);
-            let floor = (query.point.clamp(low, high) - query.point).length_squared();
-            let ceiling = traversal.best.map_or(query.limit, |found| found.distance);
-            if floor > ceiling + 32. * f64::EPSILON * ceiling.max(1.) {
-                continue;
-            }
-            traversal.control.triangle_test(&mut traversal.tests)?;
-            let (candidate, feature) =
-                closest_feature_on_triangle(query.point, corners[0], corners[1], corners[2]);
-            let distance = (candidate - query.point).length_squared();
-            if !distance.is_finite() || !candidate.is_finite() {
-                return Err(GeometryStop::Numerical);
-            }
-            if distance > query.limit {
-                continue;
-            }
-            let source = self.sources.get(slot).copied().unwrap_or(u32::MAX);
-            // The exact equality is deliberate: an exact tie is what a shared
-            // edge or a duplicated facet produces, and breaking it on the lower
-            // source index is what makes the answer independent of traversal
-            // order.
-            #[allow(clippy::float_cmp)]
-            let better = match traversal.best {
-                None => true,
-                Some(found) => {
-                    distance < found.distance
-                        || (distance == found.distance && source < found.source)
+        for chunk in bucket.chunks(128) {
+            traversal.control.charge_operations(chunk.len() as u64)?;
+            for &slot in chunk {
+                // Small indexes have a collision-free direct map. Larger indexes
+                // keep fixed scratch and spread both adjacent facets and mesh rows.
+                let cache_slot = if self.corners.len() <= traversal.tested.len() {
+                    slot as usize
+                } else {
+                    (slot.wrapping_mul(0x9e37_79b9) >> 22) as usize
+                };
+                let tag = (u64::from(traversal.generation) << 32) | u64::from(slot);
+                if traversal.tested[cache_slot] == tag {
+                    continue;
                 }
-            };
-            if better {
-                traversal.best = Some(Candidate {
-                    distance,
-                    source,
-                    point: candidate,
-                    slot,
-                    feature,
-                });
+                traversal.tested[cache_slot] = tag;
+                let slot = slot as usize;
+                let Some(corners) = self.corners.get(slot) else {
+                    continue;
+                };
+                // A bucket covers whole cells and may contain distant facets.
+                // Their boxes give conservative lower bounds before expensive
+                // triangle distances. Keep equality (and rounding slack) eligible
+                // so shared-feature/source-id ties still follow the exact rule.
+                let low = corners[0].min(corners[1]).min(corners[2]);
+                let high = corners[0].max(corners[1]).max(corners[2]);
+                let floor = (query.point.clamp(low, high) - query.point).length_squared();
+                let ceiling = traversal.best.map_or(query.limit, |found| found.distance);
+                if floor > ceiling + 32. * f64::EPSILON * ceiling.max(1.) {
+                    continue;
+                }
+                traversal.control.triangle_test(&mut traversal.tests)?;
+                let (candidate, feature) =
+                    closest_feature_on_triangle(query.point, corners[0], corners[1], corners[2]);
+                let distance = (candidate - query.point).length_squared();
+                if !distance.is_finite() || !candidate.is_finite() {
+                    return Err(GeometryStop::Numerical);
+                }
+                if distance > query.limit {
+                    continue;
+                }
+                let source = self.sources.get(slot).copied().unwrap_or(u32::MAX);
+                // The exact equality is deliberate: an exact tie is what a shared
+                // edge or a duplicated facet produces, and breaking it on the lower
+                // source index is what makes the answer independent of traversal
+                // order.
+                #[allow(clippy::float_cmp)]
+                let better = match traversal.best {
+                    None => true,
+                    Some(found) => {
+                        distance < found.distance
+                            || (distance == found.distance && source < found.source)
+                    }
+                };
+                if better {
+                    traversal.best = Some(Candidate {
+                        distance,
+                        source,
+                        point: candidate,
+                        slot,
+                        feature,
+                    });
+                }
             }
         }
         Ok(())
