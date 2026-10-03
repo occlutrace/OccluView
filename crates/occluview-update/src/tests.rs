@@ -26,10 +26,12 @@ fn artifact_limit_rejects_a_signed_prefix_of_an_oversized_body() {
         let result = stream_and_verify(
             response,
             &path,
-            &artifact,
-            &[pubkey.as_str()],
+            ArtifactVerification {
+                artifact: &artifact,
+                pubkeys: &[pubkey.as_str()],
+                max_bytes: payload.len() as u64,
+            },
             &mut |_, _| {},
-            payload.len() as u64,
         );
         if oversized {
             assert!(
