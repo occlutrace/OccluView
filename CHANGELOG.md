@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Scan matching skips polygon reconstructions for cell boundaries that contain every vertex.
+
 - Scan matching shares one distance order between overlap refresh and refinement pairing.
 
 - Scan matching reuses immutable facet bounds and avoids testing a temporal hint twice.

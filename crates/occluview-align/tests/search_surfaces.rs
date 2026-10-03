@@ -211,42 +211,67 @@ fn cancel_every_stage_of_surface_preparation() {
     drop(p);
     let operations = baseline.counters().operations;
     for fraction in [0.01, 0.20, 0.75, 0.92, 0.99] {
-        let flag = CancelFlag::new();
-        let c = GeometryControl::new(
-            flag.clone(),
-            Duration::from_secs(10),
-            GeometryLimits::default(),
-        );
-        let threshold = (operations as f64 * fraction) as u64;
-        let (sent, received) = std::sync::mpsc::channel();
-        std::thread::scope(|scope| {
-            let echo = c.clone();
-            scope.spawn(move || {
-                let start = Instant::now();
-                while echo.counters().operations < threshold
-                    && start.elapsed() < Duration::from_secs(2)
-                {
-                    std::thread::yield_now();
-                }
-                let at = Instant::now();
-                flag.cancel();
-                sent.send(at).unwrap();
+        let mut injected = false;
+        for _ in 0..8 {
+            let flag = CancelFlag::new();
+            let c = GeometryControl::new(
+                flag.clone(),
+                Duration::from_secs(10),
+                GeometryLimits::default(),
+            );
+            let threshold = (operations as f64 * fraction) as u64;
+            let (sent, received) = std::sync::mpsc::channel();
+            let ready = std::sync::Barrier::new(2);
+            injected = std::thread::scope(|scope| {
+                let echo = c.clone();
+                let ready = &ready;
+                scope.spawn(move || {
+                    ready.wait();
+                    let start = Instant::now();
+                    while echo.counters().operations < threshold
+                        && start.elapsed() < Duration::from_secs(2)
+                    {
+                        std::thread::yield_now();
+                    }
+                    let at = Instant::now();
+                    flag.cancel();
+                    sent.send(at).unwrap();
+                });
+                ready.wait();
+                let result = prepare_alignment_surface(
+                    mesh(base.soup(), DAffine3::IDENTITY),
+                    SurfaceSide::Moving,
+                    RegionPolicy::AllEligible,
+                    &c,
+                )
+                .unwrap();
+                let terminal = Instant::now();
+                let at = received.recv().unwrap();
+                let in_flight = at <= terminal;
+                // A request after return did not exercise cancellation. Only
+                // that scheduling race is retried, with a fixed attempt cap.
+                assert_eq!(
+                    result.completion,
+                    if in_flight {
+                        Completion::Cancelled
+                    } else {
+                        Completion::Complete
+                    },
+                    "fraction={fraction}, baseline={operations}, terminal_ops={}, cancel_after_return={:?}",
+                    c.counters().operations,
+                    at.checked_duration_since(terminal),
+                );
+                assert!(terminal.saturating_duration_since(at) < Duration::from_millis(100));
+                drop(result);
+                assert!(at.elapsed() < Duration::from_millis(500));
+                in_flight
             });
-            let result = prepare_alignment_surface(
-                mesh(base.soup(), DAffine3::IDENTITY),
-                SurfaceSide::Moving,
-                RegionPolicy::AllEligible,
-                &c,
-            )
-            .unwrap();
-            let terminal = Instant::now();
-            let at = received.recv().unwrap();
-            assert_eq!(result.completion, Completion::Cancelled);
-            assert!(terminal.saturating_duration_since(at) < Duration::from_millis(100));
-            drop(result);
-            assert!(at.elapsed() < Duration::from_millis(500));
-        });
-        assert_eq!(c.counters().memory_bytes, 0);
+            assert_eq!(c.counters().memory_bytes, 0);
+            if injected {
+                break;
+            }
+        }
+        assert!(injected, "no in-flight cancellation at fraction={fraction}");
     }
 }
 

@@ -8,6 +8,8 @@ use crate::Soup;
 mod population;
 mod prepared;
 mod proxy;
+#[cfg(feature = "search-probe")]
+pub use population::{probe_cell_clipping, CellClipProbe};
 pub use prepared::*;
 
 /// Read one vertex position, or `None` when it is out of range or not finite.
