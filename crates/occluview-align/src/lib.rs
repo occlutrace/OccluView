@@ -40,6 +40,10 @@
 #![forbid(unsafe_code)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::float_cmp))]
 
+#[cfg(test)]
+extern crate self as occluview_align;
+mod candidate_score;
+mod congruent_seed;
 mod deviation;
 mod icp;
 #[cfg(test)]
@@ -51,8 +55,13 @@ mod observability_tests;
 mod pairs;
 #[cfg(test)]
 mod pairs_tests;
-mod rigid;
+mod proposal_geometry;
+mod proposal_patches;
+mod proposal_proxy;
 #[cfg(test)]
+#[path = "../tests/support/mod.rs"]
+mod proposal_test_support;
+mod rigid;
 mod rotation_grid;
 mod sample;
 mod search_control;

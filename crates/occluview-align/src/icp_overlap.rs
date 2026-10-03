@@ -1,10 +1,17 @@
-//! Bounded reciprocal overlap evidence for ICP trial validation.
+//! Common-area and reciprocal overlap evidence.
+//!
+//! Area prefix populations follow the independently specified fractional
+//! objective inspired by Phillips et al. (2006),
+//! <https://arxiv.org/abs/cs/0606098>. Complete original-surface queries and
+//! proposal-only proxy queries keep distinct border/evidence contracts.
 //!
 //! The forward ICP statistics remain the public measurement. This module only
 //! checks that a proposed pose does not discard the fixed surface that helped
 //! justify the current pose.
 
-use crate::Rigid;
+use crate::candidate_score::WeightedDistance;
+use crate::{NormalPolicy, PreparedSurface, Rigid, SurfaceIndex};
+use occluview_geometry::surface::{GeometryControl, GeometryStop, QueryOutcome};
 
 use super::{
     forward_coverage_is_sufficient, minimum_forward_matches, Level, Orientation,
@@ -269,4 +276,65 @@ pub(super) fn reciprocal_evidence(
         coverage: count / sample_count,
         geometric_rms: (sum_squares / count).sqrt(),
     })
+}
+
+/// Conservative intersection estimator, with explicit directional denominators.
+pub(crate) fn common_area(areas: [f64; 2], coverage: [f64; 2]) -> f64 {
+    (areas[0] * coverage[0]).min(areas[1] * coverage[1])
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "directed surface query population and policy share one control"
+)]
+pub(crate) fn directional_support(
+    source: &PreparedSurface,
+    target: &SurfaceIndex,
+    pose: Rigid,
+    policy: NormalPolicy,
+    count: usize,
+    exclude_border: bool,
+    control: &GeometryControl,
+) -> Result<Vec<WeightedDistance>, GeometryStop> {
+    let samples = &source.samples[0].samples;
+    let count = count.min(samples.len());
+    let mut result = Vec::new();
+    result
+        .try_reserve_exact(count)
+        .map_err(|_| GeometryStop::ResourceLimit)?;
+    for i in 0..count {
+        control.charge_operations(1)?;
+        let start = i * samples.len() / count;
+        let end = (i + 1) * samples.len() / count;
+        let sample = samples[(start + end - 1) / 2];
+        // Prepared populations use equal-area strata. One representative
+        // carries the exact weight of its contiguous stratum block, without
+        // visiting all 1,024 population weights for every cheap placement.
+        #[allow(clippy::cast_precision_loss)]
+        let weight = sample.area_weight_mm2 * (end - start) as f64;
+        let point = pose.apply(sample.point);
+        // The cheap pass measures the 1 mm soft support band. Retained poses
+        // receive the wider prefix sweep; this pass is only a proposal rank.
+        let radius = if count <= 16 { 1. } else { 4. };
+        let hit = match target.nearest_controlled(point, radius, control) {
+            QueryOutcome::Complete(hit) => hit.filter(|h| !exclude_border || !h.on_border),
+            QueryOutcome::Interrupted { reason, .. } => return Err(reason),
+        };
+        result.push(WeightedDistance {
+            distance: hit.map(|h| point.distance(h.point)),
+            weight,
+            compatible: hit.filter(|_| target.orientation_coherent()).and_then(|h| {
+                sample.normal.map(|normal| {
+                    let dot = pose.apply_normal(normal).dot(h.normal);
+                    match policy {
+                        NormalPolicy::Match => dot > 0.5,
+                        NormalPolicy::Opposed => dot < -0.5,
+                        NormalPolicy::Unsigned => dot.abs() > 0.5,
+                    }
+                })
+            }),
+            cell: sample.point.to_array().map(|v| (v.floor() + 0.).to_bits()),
+        });
+    }
+    Ok(result)
 }

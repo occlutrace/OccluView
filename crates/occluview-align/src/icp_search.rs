@@ -1,4 +1,10 @@
 //! Bounded coarse pose search for scan registration.
+//!
+//! Common-patch proposals are independently derived from fractional overlap
+//! (Phillips et al., 2006, <https://arxiv.org/abs/cs/0606098>) and area moments
+//! (Horn, 1987, <https://doi.org/10.1364/JOSAA.4.000629>). All proper principal
+//! frames and Haar-coordinate rotations share one quota pool. Normal facing
+//! constrains evidence rather than the rotations or translations examined.
 
 use glam::{DMat3, DQuat, DVec3, EulerRot};
 use std::collections::BTreeMap;
@@ -970,3 +976,614 @@ fn coarse_orientation_deltas() -> [DQuat; 24] {
         }
     })
 }
+
+/// Completed proposal families share one quota pool and one global checkpoint.
+/// Coarse training scores are not independent verification.
+pub(crate) struct ProposalSearch {
+    pub(crate) pool: Vec<crate::candidate_score::Proposal>,
+    pub(crate) best: Option<crate::candidate_score::Proposal>,
+    pub(crate) examined: u64,
+    pub(crate) graph_visits: u64,
+    pub(crate) stop: Option<occluview_geometry::surface::GeometryStop>,
+    pub(crate) incomplete_patches: bool,
+    pub(crate) landmark_warning: Option<FitRejection>,
+    pub(crate) landmark_scale: Option<f64>,
+    pub(crate) family_stops: Vec<occluview_geometry::surface::GeometryStop>,
+    pub(crate) rotations_attempted: u32,
+    pub(crate) families: Vec<crate::FamilyEvidence>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct ProposalOptions {
+    pub(crate) features: bool,
+    pub(crate) bases: bool,
+    pub(crate) optional_point_pair_limit: Option<u64>,
+}
+impl Default for ProposalOptions {
+    fn default() -> Self {
+        Self {
+            features: true,
+            bases: true,
+            optional_point_pair_limit: None,
+        }
+    }
+}
+
+/// One internal pool survives every publication cap and local family stop.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "immutable geometry, request and one shared lifetime"
+)]
+pub(crate) fn generate_hypotheses(
+    moving: &crate::PreparedSurface,
+    fixed: &crate::PreparedSurface,
+    input: &crate::AlignmentInput<'_>,
+    settings: &crate::SearchSettings,
+    control: &occluview_geometry::surface::GeometryControl,
+    options: ProposalOptions,
+) -> ProposalSearch {
+    let mut result = generate_hypotheses_inner(moving, fixed, input, settings, control, options);
+    for family in &mut result.families {
+        family.enabled = match family.family {
+            crate::SeedOrigin::Start | crate::SeedOrigin::Landmarks => true,
+            crate::SeedOrigin::FeatureSame | crate::SeedOrigin::FeatureOpposed => {
+                options.features && settings.profile != crate::SearchProfile::Local
+            }
+            crate::SeedOrigin::CongruentBasis => {
+                options.bases && settings.profile != crate::SearchProfile::Local
+            }
+            crate::SeedOrigin::MaskFrame => {
+                settings.reference_regions == crate::RegionPolicy::ReferenceRoi
+                    && settings.profile != crate::SearchProfile::Local
+            }
+            crate::SeedOrigin::PrincipalFrame => {
+                settings.reference_regions != crate::RegionPolicy::ReferenceRoi
+                    && settings.profile != crate::SearchProfile::Local
+            }
+            crate::SeedOrigin::GridPatch => settings.profile != crate::SearchProfile::Local,
+        };
+        family.retained = u32::try_from(
+            result
+                .pool
+                .iter()
+                .filter(|p| p.id.family == family.family as u8)
+                .count(),
+        )
+        .unwrap_or(32);
+        if family.enabled && !family.complete && family.interruption.is_none() {
+            family.interruption = result.stop.map(crate::sample::completion);
+        }
+    }
+    result
+}
+
+/// Generate rigid corrections in the private f64 frames. Signed normal policy
+/// changes evidence only; all proper frames and grid rotations remain eligible.
+#[expect(
+    clippy::too_many_lines,
+    clippy::too_many_arguments,
+    reason = "fixed family schedule with one shared budget and candidate checkpoint"
+)]
+#[allow(clippy::cast_possible_truncation)] // Ordinals are capped below 8,192.
+fn generate_hypotheses_inner(
+    moving: &crate::PreparedSurface,
+    fixed: &crate::PreparedSurface,
+    input: &crate::AlignmentInput<'_>,
+    settings: &crate::SearchSettings,
+    control: &occluview_geometry::surface::GeometryControl,
+    options: ProposalOptions,
+) -> ProposalSearch {
+    use crate::candidate_score::{
+        insert_candidate, proposal_order, score_common_region, CoarseScoring, Proposal,
+    };
+    use crate::{CandidateId, SeedOrigin};
+    let mut result = ProposalSearch {
+        pool: Vec::with_capacity(33),
+        best: None,
+        examined: 0,
+        graph_visits: 0,
+        stop: None,
+        incomplete_patches: false,
+        landmark_warning: None,
+        landmark_scale: None,
+        family_stops: Vec::new(),
+        rotations_attempted: 0,
+        families: [
+            SeedOrigin::Start,
+            SeedOrigin::Landmarks,
+            SeedOrigin::MaskFrame,
+            SeedOrigin::FeatureSame,
+            SeedOrigin::FeatureOpposed,
+            SeedOrigin::PrincipalFrame,
+            SeedOrigin::GridPatch,
+            SeedOrigin::CongruentBasis,
+        ]
+        .into_iter()
+        .map(|family| crate::FamilyEvidence {
+            family,
+            enabled: false,
+            attempted: 0,
+            scored: 0,
+            retained: 0,
+            rotations_attempted: 0,
+            translations_attempted: 0,
+            point_pair_tests: 0,
+            local_point_pair_limit: None,
+            interruption: None,
+            complete: false,
+        })
+        .collect(),
+    };
+    let Ok(_memory) = control.reserve(2 * 1024 * 1024) else {
+        result.stop = Some(occluview_geometry::surface::GeometryStop::ResourceLimit);
+        return result;
+    };
+    let probes = &moving.samples[0].samples;
+    let mut accurate = 0;
+    let accurate_cap = if settings.profile == crate::SearchProfile::Extended {
+        8_192
+    } else {
+        4_096
+    };
+    let ceiling = settings.overlap_prior.unwrap_or(1.);
+    // Reserve a quarter of exact-query work for subsequent verification.
+    let admitted = || {
+        let counts = control.counters();
+        let limits = control.limits();
+        if let Some(stop) = control.checkpoint() {
+            Err(stop)
+        } else if counts.query_calls >= limits.query_calls - limits.query_calls.div_ceil(4)
+            || counts.triangle_tests >= limits.triangle_tests - limits.triangle_tests.div_ceil(4)
+        {
+            Err(occluview_geometry::surface::GeometryStop::WorkLimit)
+        } else {
+            Ok(())
+        }
+    };
+    let mut submit =
+        |pose: Rigid, origin: SeedOrigin, ordinal: u32, result: &mut ProposalSearch| -> bool {
+            if let Err(stop) = admitted() {
+                result.stop = Some(stop);
+                return false;
+            }
+            if accurate >= accurate_cap {
+                result.stop = Some(occluview_geometry::surface::GeometryStop::WorkLimit);
+                return false;
+            }
+            if !pose.is_finite() {
+                return true;
+            }
+            accurate += 1;
+            result.examined += 1;
+            result.families[origin as usize].attempted += 1;
+            let score = match score_common_region(
+                moving,
+                fixed,
+                pose,
+                CoarseScoring {
+                    policy: settings.normal_policy,
+                    samples_per_side: 128,
+                    ceiling,
+                    proxies: None,
+                },
+                control,
+            ) {
+                Ok(score) => score,
+                Err(stop) => {
+                    result.stop = Some(stop);
+                    return false;
+                }
+            };
+            result.families[origin as usize].scored += 1;
+            let candidate = Proposal {
+                id: CandidateId {
+                    family: origin as u8,
+                    proposal: ordinal,
+                },
+                pose,
+                origins: vec![origin],
+                score,
+            };
+            crate::candidate_score::retain_best(&mut result.best, Some(&candidate));
+            if let Err(stop) = insert_candidate(
+                &mut result.pool,
+                candidate,
+                probes,
+                control,
+                settings.normal_policy,
+            ) {
+                result.stop = Some(stop);
+                return false;
+            }
+            true
+        };
+    let world_start = input.seeds.first().copied().unwrap_or(Rigid::IDENTITY);
+    // Search boundary has already canonicalized arbitrary finite seed quaternions.
+    let start = moving
+        .frame
+        .correction_to_query(fixed.frame, world_start)
+        .unwrap_or(Rigid::IDENTITY);
+    if !submit(start, SeedOrigin::Start, 0, &mut result) {
+        return result;
+    }
+    for (i, &seed) in input.seeds.iter().take(32).enumerate() {
+        if let Some(pose) = moving.frame.correction_to_query(fixed.frame, seed) {
+            if !submit(pose, SeedOrigin::Start, i as u32 + 1, &mut result) {
+                return result;
+            }
+        }
+    }
+    for (i, axis) in [DVec3::X, DVec3::Y, DVec3::Z].into_iter().enumerate() {
+        for (j, sign) in [-1., 1.].into_iter().enumerate() {
+            let ordinal = (2 * i + j) as u32;
+            if !submit(
+                Rigid {
+                    translation: start.translation + axis * sign,
+                    ..start
+                },
+                SeedOrigin::Start,
+                33 + ordinal,
+                &mut result,
+            ) {
+                return result;
+            }
+            let rotation = DQuat::from_axis_angle(axis, sign * 5f64.to_radians()) * start.rotation;
+            if !submit(
+                Rigid::new(rotation, start.translation),
+                SeedOrigin::Start,
+                39 + ordinal,
+                &mut result,
+            ) {
+                return result;
+            }
+        }
+    }
+    match crate::pairs::coherent_landmark_scale(input, control) {
+        Ok(scale) => result.landmark_scale = scale,
+        Err(stop) => {
+            result.stop = Some(stop);
+            return result;
+        }
+    }
+    let landmarks = crate::pairs::landmark_hypotheses(input, moving.frame, fixed.frame);
+    if !input.landmarks.is_empty() && landmarks.is_empty() {
+        result.landmark_warning = Some(if input.landmarks.len() < 2 {
+            FitRejection::TooFewPairs {
+                have: input.landmarks.len(),
+                need: 2,
+            }
+        } else {
+            FitRejection::Degenerate {
+                weak_axes: [true; 3],
+            }
+        });
+    }
+    for (i, pose) in landmarks.into_iter().enumerate() {
+        if !submit(pose, SeedOrigin::Landmarks, i as u32, &mut result) {
+            return result;
+        }
+    }
+    result.families[0].complete = true;
+    result.families[1].complete = true;
+    if settings.profile == crate::SearchProfile::Local {
+        return result;
+    }
+    let origin = if settings.reference_regions == crate::RegionPolicy::ReferenceRoi {
+        SeedOrigin::MaskFrame
+    } else {
+        SeedOrigin::PrincipalFrame
+    };
+    let moving_frame =
+        match crate::proposal_geometry::principal_index_frame(&moving.original_index, control) {
+            Ok(frame) => frame,
+            Err(stop) => {
+                result.stop = Some(stop);
+                return result;
+            }
+        };
+    let fixed_frame =
+        match crate::proposal_geometry::principal_index_frame(&fixed.original_index, control) {
+            Ok(frame) => frame,
+            Err(stop) => {
+                result.stop = Some(stop);
+                return result;
+            }
+        };
+    if let (Some((p, pa)), Some((q, qa))) = (moving_frame, fixed_frame) {
+        for (i, rotation) in crate::proposal_geometry::proper_frame_matches(pa, qa)
+            .into_iter()
+            .enumerate()
+        {
+            if !submit(
+                Rigid::new(rotation, q - rotation * p),
+                origin,
+                i as u32,
+                &mut result,
+            ) {
+                return result;
+            }
+        }
+    }
+    let swapped = moving.eligible_area_mm2 > fixed.eligible_area_mm2;
+    let (small, large) = if swapped {
+        (fixed, moving)
+    } else {
+        (moving, fixed)
+    };
+    let small_patches = match crate::proposal_patches::smaller_patches(small, control) {
+        Ok(patches) => patches,
+        Err(stop) => {
+            result.stop = Some(stop);
+            return result;
+        }
+    };
+    let large_patches = match crate::proposal_patches::larger_patches(
+        large,
+        small.eligible_area_mm2 * crate::proposal_patches::TRANSLATION_PATCH_FRACTION,
+        48,
+        settings.work_budget.patch_edge_visits.min(
+            if settings.profile == crate::SearchProfile::Extended {
+                8_000_000
+            } else {
+                2_000_000
+            },
+        ),
+        &mut result.graph_visits,
+        control,
+    ) {
+        Ok(patches) => patches,
+        Err(stop) => {
+            result.stop = Some(stop);
+            return result;
+        }
+    };
+    result.incomplete_patches = large_patches
+        .translations
+        .iter()
+        .chain(&large_patches.components)
+        .any(|p| !p.complete);
+    if let Some((p, axes)) = if swapped { fixed_frame } else { moving_frame } {
+        for (component, patch) in large_patches.components.iter().enumerate() {
+            if let Some(target_axes) = patch.axes {
+                for (i, rotation) in
+                    crate::proposal_geometry::proper_frame_matches(axes, target_axes)
+                        .into_iter()
+                        .enumerate()
+                {
+                    let pose = Rigid::new(rotation, patch.center - rotation * p);
+                    if !submit(
+                        if swapped { pose.inverse() } else { pose },
+                        origin,
+                        2_000 + (component * 24 + i) as u32,
+                        &mut result,
+                    ) {
+                        return result;
+                    }
+                }
+            }
+        }
+    }
+    let large_patches = large_patches.translations;
+    // Up to eight patch frames per side, all 24 proper matches (at most 2,048).
+    let mut ordinal = 24;
+    let mut frames = Vec::with_capacity(1536);
+    for p in small_patches.iter().take(8) {
+        for q in large_patches.iter().take(8) {
+            if let (Some(pa), Some(qa)) = (p.axes, q.axes) {
+                for rotation in crate::proposal_geometry::proper_frame_matches(pa, qa) {
+                    let pose = Rigid::new(rotation, q.center - rotation * p.center);
+                    frames.push((if swapped { pose.inverse() } else { pose }, ordinal));
+                    ordinal += 1;
+                }
+            }
+        }
+    }
+    let moving_proxy = match crate::proposal_proxy::proposal_proxy(input.moving, moving, control) {
+        Ok(index) => index,
+        Err(stop) => {
+            result.stop = Some(stop);
+            return result;
+        }
+    };
+    let fixed_proxy = match crate::proposal_proxy::proposal_proxy(input.fixed, fixed, control) {
+        Ok(index) => index,
+        Err(stop) => {
+            result.stop = Some(stop);
+            return result;
+        }
+    };
+    let proxies = moving_proxy.as_ref().zip(fixed_proxy.as_ref());
+    macro_rules! visit_rotation {
+        ($rotation_id:expr, $rotation:expr) => {{
+            let rotation_id: u32 = $rotation_id;
+            let rotation: DQuat = $rotation;
+            let mut visit = || {
+                if let Err(stop) = admitted() {
+                    result.stop = Some(stop);
+                    return false;
+                }
+                let mut translations = Vec::with_capacity(5);
+                for (i, p) in small_patches.iter().enumerate() {
+                    for (j, q) in large_patches.iter().enumerate() {
+                        if let Err(stop) = admitted() {
+                            result.stop = Some(stop);
+                            return false;
+                        }
+                        if let Err(stop) = control.charge_point_pairs(1) {
+                            result.stop = Some(stop);
+                            return false;
+                        }
+                        let pose = Rigid::new(rotation, q.center - rotation * p.center);
+                        let pose = if swapped { pose.inverse() } else { pose };
+                        result.examined += 1;
+                        result.families[6].attempted += 1;
+                        result.families[6].translations_attempted += 1;
+                        let score = match score_common_region(
+                            moving,
+                            fixed,
+                            pose,
+                            CoarseScoring {
+                                policy: settings.normal_policy,
+                                samples_per_side: 16,
+                                ceiling,
+                                proxies,
+                            },
+                            control,
+                        ) {
+                            Ok(score) => score,
+                            Err(stop) => {
+                                result.stop = Some(stop);
+                                return false;
+                            }
+                        };
+                        result.families[6].scored += 1;
+                        translations.push(Proposal {
+                            id: CandidateId {
+                                family: 6,
+                                proposal: rotation_id * 192 + (i * 48 + j) as u32,
+                            },
+                            pose,
+                            origins: vec![SeedOrigin::GridPatch],
+                            score,
+                        });
+                        translations.sort_by(proposal_order);
+                        translations.truncate(4);
+                    }
+                }
+                for candidate in translations {
+                    if !submit(
+                        candidate.pose,
+                        SeedOrigin::GridPatch,
+                        candidate.id.proposal,
+                        &mut result,
+                    ) {
+                        return false;
+                    }
+                }
+                true
+            };
+            visit()
+        }};
+    }
+    let mut rotations = Vec::with_capacity(3480);
+    crate::rotation_grid::hopf_grid(settings.profile, |id, q| {
+        rotations.push((id, q));
+        true
+    });
+    for &(id, q) in rotations.iter().take(72) {
+        if !visit_rotation!(id, q) {
+            return result;
+        }
+        result.rotations_attempted += 1;
+        result.families[6].rotations_attempted += 1;
+    }
+    // Optional work has a local allowance; its exhaustion cannot stop another producer.
+    // A fixed feature schedule needs more pair work than a congruent-base
+    // producer. These independent ceilings leave global pair work available
+    // for geometry, while cancellation and the global 32M/128M caps still win.
+    let feature_allowance = options.optional_point_pair_limit.unwrap_or(
+        if settings.profile == crate::SearchProfile::Extended {
+            80_000_000
+        } else {
+            20_000_000
+        },
+    );
+    let basis_allowance = options.optional_point_pair_limit.unwrap_or(
+        if settings.profile == crate::SearchProfile::Extended {
+            16_000_000
+        } else {
+            4_000_000
+        },
+    );
+    if options.features {
+        let local = control.with_point_pair_allowance(feature_allowance);
+        let before = control.counters().point_pair_tests;
+        result.families[3].local_point_pair_limit = Some(feature_allowance);
+        result.families[4].local_point_pair_limit = Some(feature_allowance);
+        match super::feature_seed::feature_hypotheses(moving, fixed, &local) {
+            Ok(mut poses) => {
+                result.families[3].complete = true;
+                result.families[4].complete = true;
+                // Preferred-policy proposals use the reserved slots first;
+                // conflicting signs still enter unsigned geometry scoring.
+                poses.sort_by_key(|(_, sign)| match (settings.normal_policy, sign) {
+                    (crate::NormalPolicy::Match, SeedOrigin::FeatureSame)
+                    | (crate::NormalPolicy::Opposed, SeedOrigin::FeatureOpposed)
+                    | (crate::NormalPolicy::Unsigned, _) => 0,
+                    _ => 1,
+                });
+                for (i, (pose, origin)) in poses.into_iter().enumerate() {
+                    if !submit(pose, origin, i as u32, &mut result) {
+                        return result;
+                    }
+                }
+            }
+            Err(stop) => {
+                if let Some(global) = control.checkpoint() {
+                    result.stop = Some(global);
+                    return result;
+                }
+                result.families[3].interruption = Some(crate::sample::completion(stop));
+                result.families[4].interruption = Some(crate::sample::completion(stop));
+                result.family_stops.push(stop);
+            }
+        }
+        result.families[3].point_pair_tests = control.counters().point_pair_tests - before;
+    }
+    if options.bases {
+        let local = control.with_point_pair_allowance(basis_allowance);
+        let before = control.counters().point_pair_tests;
+        result.families[7].local_point_pair_limit = Some(basis_allowance);
+        match crate::congruent_seed::congruent_basis_hypotheses(moving, fixed, &local) {
+            Ok(poses) => {
+                result.families[7].complete = true;
+                for (i, pose) in poses.into_iter().enumerate() {
+                    if !submit(pose, SeedOrigin::CongruentBasis, i as u32, &mut result) {
+                        return result;
+                    }
+                }
+            }
+            Err(stop) => {
+                if let Some(global) = control.checkpoint() {
+                    result.stop = Some(global);
+                    return result;
+                }
+                result.families[7].interruption = Some(crate::sample::completion(stop));
+                result.family_stops.push(stop);
+            }
+        }
+        result.families[7].point_pair_tests = control.counters().point_pair_tests - before;
+    }
+    // Remaining grid and frame proposals yield in fixed chunks, preserving
+    // broad rotation coverage if an accurate frame producer exhausts work.
+    let mut frames = frames.into_iter();
+    for chunk in rotations[72..].chunks(32) {
+        for &(id, q) in chunk {
+            if !visit_rotation!(id, q) {
+                return result;
+            }
+            result.rotations_attempted += 1;
+            result.families[6].rotations_attempted += 1;
+        }
+        for (pose, ordinal) in frames.by_ref().take(32) {
+            if !submit(pose, origin, ordinal, &mut result) {
+                return result;
+            }
+        }
+    }
+    for (pose, ordinal) in frames {
+        if !submit(pose, origin, ordinal, &mut result) {
+            return result;
+        }
+    }
+    result.families[origin as usize].complete = !result.incomplete_patches;
+    result.families[6].complete = !result.incomplete_patches;
+    if result.incomplete_patches && result.stop.is_none() {
+        result.stop = Some(occluview_geometry::surface::GeometryStop::WorkLimit);
+    }
+    result
+}
+
+#[cfg(test)]
+#[path = "icp_proposal_tests.rs"]
+mod proposal_tests;

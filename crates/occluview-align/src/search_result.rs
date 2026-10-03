@@ -249,6 +249,11 @@ pub struct ResidualSummary {
 pub struct CandidateEvidence {
     /// Moving/fixed eligible areas; unavailable until full area accounting.
     pub eligible_area_mm2: Metric<[f64; 2]>,
+    /// Moving/fixed area actually queried. Unqueried eligible area contributes
+    /// no support; role evidence is never extrapolated to whole surface area.
+    pub queried_population_area_mm2: Metric<[f64; 2]>,
+    /// Compatible queried common area per direction, absent without normals.
+    pub policy_compatible_area_mm2: Metric<[Option<f64>; 2]>,
     /// Directional area fractions within .2 mm, denominators eligible areas.
     pub coverage_02: Metric<[f64; 2]>,
     /// Directional area fractions within .5 mm, denominators eligible areas.
@@ -348,9 +353,39 @@ pub struct SearchSettings {
     pub wall_limit: Duration,
 }
 
+/// Work and coverage of one deterministic proposal family.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FamilyEvidence {
+    /// Stable proposal origin.
+    pub family: SeedOrigin,
+    /// This family is enabled for the profile/request.
+    pub enabled: bool,
+    /// Attempted scoring passes, including cheap proxy passes.
+    pub attempted: u64,
+    /// Completed scoring passes.
+    pub scored: u64,
+    /// Basins retained under this primary family id.
+    pub retained: u32,
+    /// Fully evaluated grid rotations; zero for non-grid families.
+    pub rotations_attempted: u32,
+    /// Grid translation placements attempted before accurate rescoring.
+    pub translations_attempted: u64,
+    /// Charged local point-pair work.
+    pub point_pair_tests: u64,
+    /// Optional family's explicit local point-pair ceiling.
+    pub local_point_pair_limit: Option<u64>,
+    /// Local/global interruption, or none after a completed schedule.
+    pub interruption: Option<Completion>,
+    /// The configured family schedule finished. An interrupted grid prefix
+    /// does not have the complete grid's covering certificate.
+    pub complete: bool,
+}
+
 /// Completed work; elapsed time is excluded from determinism comparisons.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct SearchWork {
+    /// Family schedules, including interruption and actual grid coverage.
+    pub families: Vec<FamilyEvidence>,
     /// Examined proposal count.
     pub examined_poses: u64,
     /// Returned finite pose count.
@@ -378,6 +413,15 @@ pub struct SearchWork {
 /// Versioned interpretation of a result, independent of scene authority.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SearchProvenance {
+    /// Effective ordinary-operation ceiling, including topology and bucket work.
+    pub operation_limit: u64,
+    /// Effective settings after validation/clamping and profile ceilings;
+    /// absent if interruption precedes numeric validation.
+    pub effective_settings: Option<SearchSettings>,
+    /// Version of physical evidence thresholds; absent verifier remains explicit.
+    pub threshold_set_id: &'static str,
+    /// Version of rotation recipe and frozen prefix ordering.
+    pub grid_recipe_id: &'static str,
     /// Algorithm contract version.
     pub algorithm_version: u32,
     /// Caller moving/fixed revision tokens.

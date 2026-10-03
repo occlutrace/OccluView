@@ -665,21 +665,50 @@ fn the_mask_removes_vertices_from_the_fit() {
 }
 
 #[test]
-fn a_start_with_no_surface_in_reach_is_refused() {
+fn a_start_with_no_surface_in_reach_keeps_a_weak_candidate() {
+    use crate::{
+        AlignmentInput, Confidence, MeshInput, Metric, SearchControl, SearchProfile, SearchSettings,
+    };
     let (positions, indices) = dome(8, 0.5);
     let mesh = soup(&positions, &indices);
-    let index = SurfaceIndex::build(mesh).unwrap();
     let start = Rigid::new(DQuat::IDENTITY, DVec3::new(900.0, 0.0, 0.0));
-
-    let outcome = refine(mesh, &index, start, &settings(), &CancelFlag::new());
-
-    // The variant matters: an unreachable start is not an ambiguous one, and
-    // the operator's next step differs. `is_err()` would accept every
-    // rejection this crate can produce, including a swapped variant.
-    assert!(
-        matches!(outcome, Err(FitRejection::TooFewPairs { .. })),
-        "a hopeless start must be refused as unreachable, got {outcome:?}"
-    );
+    let input = AlignmentInput {
+        moving: MeshInput {
+            soup: mesh,
+            world_from_local: glam::DAffine3::IDENTITY,
+            revision: 1,
+        },
+        fixed: MeshInput {
+            soup: mesh,
+            world_from_local: glam::DAffine3::IDENTITY,
+            revision: 2,
+        },
+        seeds: &[start],
+        landmarks: &[],
+    };
+    let settings = SearchSettings::for_profile(SearchProfile::Local);
+    let result = crate::search_alignment(
+        &input,
+        &settings,
+        &SearchControl::new(CancelFlag::new(), settings.wall_limit),
+    )
+    .unwrap();
+    assert!(!result.candidates.is_empty());
+    for candidate in &result.candidates {
+        assert!(candidate.pose.is_finite());
+        assert_eq!(candidate.confidence, Confidence::Weak);
+        assert!(matches!(
+            candidate.evidence.euclidean_mm,
+            Metric::Missing(_)
+        ));
+        assert!(candidate
+            .reasons
+            .contains(&crate::EvidenceReason::InsufficientSupport));
+    }
+    assert!(result
+        .candidates
+        .iter()
+        .any(|candidate| candidate.pose == start));
 }
 
 #[test]

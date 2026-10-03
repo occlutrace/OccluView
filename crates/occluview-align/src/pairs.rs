@@ -391,7 +391,7 @@ fn dominant_direction(spread: &DMat3) -> DVec3 {
 /// check line-by-line against the paper, which is the only way anyone verifies
 /// it.
 #[allow(clippy::similar_names)]
-fn horn_quaternion(covariance: &DMat3) -> DQuat {
+pub(crate) fn horn_quaternion(covariance: &DMat3) -> DQuat {
     let entries = covariance.to_cols_array_2d();
     let (sxx, sxy, sxz) = (entries[0][0], entries[1][0], entries[2][0]);
     let (syx, syy, syz) = (entries[0][1], entries[1][1], entries[2][1]);
@@ -647,4 +647,104 @@ fn median(values: &mut [f64]) -> f64 {
     }
     values.sort_by(f64::total_cmp);
     values[values.len() / 2]
+}
+
+/// Proposal fits use a numerical 0.2 mm span; two points retain eight roll
+/// alternatives instead of requiring authored normals to fix unobserved roll.
+pub(crate) fn landmark_hypotheses(
+    input: &crate::AlignmentInput<'_>,
+    moving: crate::SurfaceFrame,
+    fixed: crate::SurfaceFrame,
+) -> Vec<Rigid> {
+    let source: Vec<_> = input
+        .landmarks
+        .iter()
+        .take(128)
+        .map(|p| moving.query_from_local.transform_point3(p.moving_local))
+        .collect();
+    let target: Vec<_> = input
+        .landmarks
+        .iter()
+        .take(128)
+        .map(|p| fixed.query_from_local.transform_point3(p.fixed_local))
+        .collect();
+    if source.len() >= 3 {
+        return crate::proposal_geometry::fit_geometry_pairs(&source, &target)
+            .into_iter()
+            .collect();
+    }
+    if source.len() != 2 {
+        return Vec::new();
+    }
+    let from = source[1] - source[0];
+    let to = target[1] - target[0];
+    if !from.is_finite() || !to.is_finite() || from.length() < 0.2 || to.length() < 0.2 {
+        return Vec::new();
+    }
+    let source_center = source[0] / 2. + source[1] / 2.;
+    let target_center = target[0] / 2. + target[1] / 2.;
+    let (Some(axis), Some(source_axis)) = (to.try_normalize(), from.try_normalize()) else {
+        return Vec::new();
+    };
+    let base = DQuat::from_rotation_arc(source_axis, axis);
+    (0..8)
+        .filter_map(|i| {
+            let rotation =
+                DQuat::from_axis_angle(axis, f64::from(i) * std::f64::consts::FRAC_PI_4) * base;
+            let pose = Rigid::new(rotation, target_center - rotation * source_center);
+            pose.is_finite().then_some(pose)
+        })
+        .collect()
+}
+
+/// Coherent landmark edge ratios screen units/deformation without confusing
+/// unequal surface extents with physical scale. At least three noncollinear
+/// pairs and three 5 mm baselines are required; incoherent ratios stay absent.
+pub(crate) fn coherent_landmark_scale(
+    input: &crate::AlignmentInput<'_>,
+    control: &occluview_geometry::surface::GeometryControl,
+) -> Result<Option<f64>, occluview_geometry::surface::GeometryStop> {
+    let mut source = Vec::with_capacity(input.landmarks.len().min(128));
+    let mut target = Vec::with_capacity(input.landmarks.len().min(128));
+    for pair in input.landmarks.iter().take(128) {
+        control.charge_operations(1)?;
+        source.push(
+            input
+                .moving
+                .world_from_local
+                .transform_point3(pair.moving_local),
+        );
+        target.push(
+            input
+                .fixed
+                .world_from_local
+                .transform_point3(pair.fixed_local),
+        );
+    }
+    if crate::proposal_geometry::fit_geometry_pairs(&source, &target).is_none() {
+        return Ok(None);
+    }
+    let mut ratios = Vec::with_capacity(source.len().saturating_mul(source.len()));
+    for i in 0..source.len() {
+        for j in i + 1..source.len() {
+            control.charge_point_pairs(1)?;
+            let length = source[i].distance(source[j]);
+            let other = target[i].distance(target[j]);
+            if length >= 5. && other >= 5. && length.is_finite() && other.is_finite() {
+                let ratio = other / length;
+                if ratio.is_finite() {
+                    ratios.push(ratio);
+                }
+            }
+        }
+    }
+    if ratios.len() < 3 {
+        return Ok(None);
+    }
+    let ratio = median(&mut ratios);
+    for edge in &mut ratios {
+        *edge = (*edge - ratio).abs();
+    }
+    let dispersion = median(&mut ratios) / ratio;
+    Ok((dispersion <= 0.01).then_some(ratio))
 }
