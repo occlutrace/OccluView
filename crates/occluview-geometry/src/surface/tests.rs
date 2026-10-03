@@ -668,6 +668,34 @@ fn reusable_query_scratch_preserves_exactness_and_forgets_prior_surfaces() {
     assert_eq!(control.counters().memory_bytes, 0);
 }
 
+#[test]
+fn local_query_stop_does_not_poison_later_exact_queries() {
+    use super::super::{CancelFlag, GeometryLimits, GeometryStop, QueryOutcome};
+    use super::GeometryControl;
+    let (positions, indices) = plane(4, 1.);
+    let mut index = SurfaceIndex::build(soup(&positions, &indices)).unwrap();
+    let parent = GeometryControl::new(
+        CancelFlag::new(),
+        std::time::Duration::from_secs(10),
+        GeometryLimits::default(),
+    );
+    index.set_query_control(parent.clone());
+    let local = parent.with_operation_allowance(0);
+    let point = DVec3::new(1.1, 1.3, 0.2);
+    assert!(matches!(
+        index.nearest_controlled(point, 1., &local),
+        QueryOutcome::Interrupted {
+            reason: GeometryStop::WorkLimit,
+            ..
+        }
+    ));
+    assert_eq!(parent.checkpoint(), None);
+    assert_eq!(
+        index.nearest_controlled(point, 1., &parent),
+        QueryOutcome::Complete(brute_nearest(&index, point, 1.))
+    );
+}
+
 /// ID35: a dense bucket's upper bound never becomes exact nearest evidence.
 #[test]
 fn deadline_and_work_caps_are_honest_in_dense_queries() {
