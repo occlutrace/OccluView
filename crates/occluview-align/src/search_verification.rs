@@ -277,6 +277,23 @@ pub(crate) fn verify_results(
             settings.profile,
         );
     }
+    // Publish a confident class only after mandatory verification establishes
+    // population, scale and rival coverage. Keep finite candidates and
+    // established ambiguity reviewable before that authority boundary.
+    for candidate in &mut candidates {
+        if candidate.confidence == Confidence::Probable && !candidate.evidence.verification_complete
+        {
+            candidate.confidence = Confidence::Weak;
+            if !candidate
+                .reasons
+                .contains(&EvidenceReason::UniquenessNotEstablished)
+            {
+                candidate
+                    .reasons
+                    .push(EvidenceReason::UniquenessNotEstablished);
+            }
+        }
+    }
     // Missing passes keep their original numerical order. Measured scores share
     // one definition and never compare against proposal scores.
     candidates.sort_by(verified_order);
