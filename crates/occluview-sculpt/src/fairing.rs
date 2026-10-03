@@ -284,11 +284,17 @@ fn selection_is_valid<S: FairingSurface + ?Sized>(surface: &S, selection: &[(u32
             (vertex as usize) < surface.vertex_count()
                 && weight.is_finite()
                 && (0.0..=1.0).contains(&weight)
+                && surface
+                    .neighbors(vertex)
+                    .iter()
+                    .all(|&neighbor| (neighbor as usize) < surface.vertex_count())
         })
 }
 
 impl FairingJob {
     /// Create a reusable general-purpose fairing job.
+    /// Returns `None` for invalid weights, selected ids, or neighbor ids before
+    /// constructing rows or consuming scratch storage.
     pub fn new<S: FairingSurface + ?Sized>(
         surface: &S,
         selection: &[(u32, f64)],
@@ -740,6 +746,24 @@ mod tests {
             positions,
             neighbors,
         }
+    }
+
+    #[test]
+    fn fairing_refuses_unaddressable_neighbors_before_building_rows() {
+        let surface = GridSurface {
+            positions: vec![DVec3::ZERO],
+            neighbors: vec![vec![u32::MAX]],
+        };
+        let mut scratch = FairingScratch::default();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            FairingJob::new(&surface, &[(0, 1.0)], 1.0, &mut scratch)
+        }));
+        assert!(result.is_ok(), "invalid adjacency must not panic");
+        assert!(result.ok().flatten().is_none());
+        assert!(
+            scratch.written.is_empty(),
+            "refusal must not populate scratch rows"
+        );
     }
 
     #[test]

@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Smoothing refuses invalid neighbor ids before constructing its solve instead of crashing.
+
 - Sculpt refuses fractional sheet identities in decoded topology history instead of rounding them.
 
 - Sculpt ray traversal avoids integer overflow when distant vertices push cells to their index limits.
@@ -48,6 +50,8 @@ remain in the Git history.
 - Close Holes refuses a fully zero-area minimum-area cover while retaining supported indexed seams.
 
 - Automatic section views face the exposed cross-section instead of the retained exterior.
+
+- Scan matching reports bounded surface work and stops interrupted nearest queries without treating them as exact evidence.
 
 - Reject malformed HPS base64 tails and padding before decoding geometry.
 

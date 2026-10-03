@@ -2,8 +2,8 @@
 //!
 //! Refinement runs at coarse and dense sample resolutions.
 //!
-//! Correspondence search is parallel, while normal equations are accumulated
-//! serially in sample order to keep floating-point results deterministic.
+//! Correspondence queries and normal-equation reductions run serially in
+//! sample order to keep work cutoffs and floating-point results deterministic.
 
 use glam::DVec3;
 
@@ -454,7 +454,17 @@ pub(crate) fn refine_checkpointed(
     // The moving index is built from the same masked soup as the forward
     // correspondence path. It is optional because a soup can have vertices
     // and triangles but no usable non-degenerate triangle after masking.
-    let moving_surface = SurfaceIndex::build(moving);
+    let moving_surface = if let Some(control) = fixed.query_control() {
+        match SurfaceIndex::build_controlled(moving, glam::DAffine3::IDENTITY, control) {
+            occluview_geometry::surface::BuildOutcome::Complete(mut index) => {
+                index.set_query_control(control.clone());
+                Some(index)
+            }
+            _ => None,
+        }
+    } else {
+        SurfaceIndex::build(moving)
+    };
     let fixed_samples = fixed.representative_samples(RECIPROCAL_BUDGET);
     let (center, extent) = bounds_of(moving).unwrap_or((DVec3::ZERO, 0.0));
     let initial_samples = sample_vertices(moving, COARSE_BUDGET);

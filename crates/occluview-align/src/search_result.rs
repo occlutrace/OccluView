@@ -128,7 +128,8 @@ pub enum InputCheck {
     Partial {
         /// Scalars checked in stable input order.
         checked: usize,
-        /// Total supplied scalars, saturated if necessary.
+        /// Total scalar ceiling, saturated if necessary; optional landmark
+        /// normals are conservatively included when their shape was not inspected.
         total: usize,
     },
 }
@@ -364,6 +365,10 @@ pub struct SearchWork {
     pub point_pair_tests: u64,
     /// Charged graph edge visits.
     pub patch_edge_visits: u64,
+    /// Charged numeric/topology/bucket/cell operations.
+    pub preprocessing_operations: u64,
+    /// Conservative largest additional allocation reservation.
+    pub peak_memory_bytes: u64,
     /// Elapsed wall time.
     pub elapsed: Duration,
     /// Scheduled evidence not completed.

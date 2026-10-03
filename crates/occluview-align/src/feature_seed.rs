@@ -81,20 +81,8 @@ pub(super) fn find_feature_seed(
     if cancel.is_cancelled() {
         return None;
     }
-    let moving_cloud = moving.feature_cloud();
-    let fixed_cloud = fixed.feature_cloud();
-    if moving_cloud.len() < MIN_CLOUD_POINTS {
-        return None;
-    }
-    if fixed_cloud.len() < MIN_CLOUD_POINTS {
-        return None;
-    }
-    let moving_descriptors = descriptors(&moving_cloud, cancel)?;
-    let fixed_descriptors = descriptors(&fixed_cloud, cancel)?;
-    let matches = match_features(&moving_descriptors, &fixed_descriptors, cancel)?;
-    if matches.len() < MIN_SUPPORT {
-        return None;
-    }
+    let control = fixed.query_control();
+    let (moving_cloud, fixed_cloud, matches) = feature_inputs(moving, fixed, cancel)?;
     let bounds = fit_bounds(moving, fixed);
     let mut state = 0x9e37_79b9_7f4a_7c15_u64;
     let modulus = u64::try_from(matches.len()).ok()?;
@@ -123,6 +111,9 @@ pub(super) fn find_feature_seed(
         let Ok(fit) = fit_pairs(&source, &target, None, &bounds) else {
             continue;
         };
+        if control.is_some_and(|c| c.charge_point_pairs(matches.len() as u64).is_err()) {
+            return None;
+        }
         let candidate = consensus(fit.rigid, &matches, &moving_cloud, &fixed_cloud);
         if candidate.inliers < MIN_SUPPORT || candidate.span < MIN_SPAN_MM {
             continue;
@@ -171,12 +162,38 @@ pub(super) fn find_feature_seed(
         }
         let slots: Vec<usize> = (0..source.len()).collect();
         let fit = horn_fit(&source, &target, &slots).ok()?;
+        if control.is_some_and(|c| c.charge_point_pairs(matches.len() as u64).is_err()) {
+            return None;
+        }
         best = consensus(fit, &matches, &moving_cloud, &fixed_cloud);
     }
     if best.inliers < MIN_SUPPORT || best.span < MIN_SPAN_MM {
         return None;
     }
     Some(FeatureSeed { rigid: best.rigid })
+}
+
+fn feature_inputs(
+    moving: &SurfaceIndex,
+    fixed: &SurfaceIndex,
+    cancel: &CancelFlag,
+) -> Option<(Vec<FeaturePoint>, Vec<FeaturePoint>, Vec<Match>)> {
+    let moving_cloud = moving.feature_cloud();
+    let fixed_cloud = fixed.feature_cloud();
+    if moving_cloud.len() < MIN_CLOUD_POINTS {
+        return None;
+    }
+    if fixed_cloud.len() < MIN_CLOUD_POINTS {
+        return None;
+    }
+    let control = fixed.query_control();
+    let moving_descriptors = descriptors(&moving_cloud, cancel, control)?;
+    let fixed_descriptors = descriptors(&fixed_cloud, cancel, control)?;
+    let matches = match_features(&moving_descriptors, &fixed_descriptors, cancel, control)?;
+    if matches.len() < MIN_SUPPORT {
+        return None;
+    }
+    Some((moving_cloud, fixed_cloud, matches))
 }
 
 fn fit_bounds(moving: &SurfaceIndex, fixed: &SurfaceIndex) -> FitBounds {
@@ -265,9 +282,13 @@ fn match_features(
     moving: &[[f64; DESCRIPTOR_SIZE]],
     fixed: &[[f64; DESCRIPTOR_SIZE]],
     cancel: &CancelFlag,
+    control: Option<&occluview_geometry::surface::GeometryControl>,
 ) -> Option<Vec<Match>> {
     let mut tree = KdTree::new(DESCRIPTOR_SIZE);
     for (index, descriptor) in fixed.iter().enumerate() {
+        if cancel.is_cancelled() || control.is_some_and(|c| c.charge_operations(1).is_err()) {
+            return None;
+        }
         tree.add(*descriptor, index).ok()?;
     }
     let mut matches = Vec::new();
@@ -275,7 +296,16 @@ fn match_features(
         if index % 64 == 0 && cancel.is_cancelled() {
             return None;
         }
-        let nearest = tree.nearest(descriptor, 2, &squared_euclidean).ok()?;
+        let metric = |a: &[f64], b: &[f64]| {
+            if control.is_some_and(|c| c.charge_point_pairs(1).is_err()) {
+                return f64::MAX;
+            }
+            squared_euclidean(a, b)
+        };
+        let nearest = tree.nearest(descriptor, 2, &metric).ok()?;
+        if control.is_some_and(|c| c.checkpoint().is_some()) {
+            return None;
+        }
         if nearest.len() < 2 || nearest[1].0 <= f64::EPSILON {
             continue;
         }
@@ -293,8 +323,12 @@ fn match_features(
 }
 
 #[allow(clippy::cast_precision_loss)]
-fn descriptors(cloud: &[FeaturePoint], cancel: &CancelFlag) -> Option<Vec<[f64; DESCRIPTOR_SIZE]>> {
-    let neighbors = neighbor_lists(cloud, cancel)?;
+fn descriptors(
+    cloud: &[FeaturePoint],
+    cancel: &CancelFlag,
+    control: Option<&occluview_geometry::surface::GeometryControl>,
+) -> Option<Vec<[f64; DESCRIPTOR_SIZE]>> {
+    let neighbors = neighbor_lists(cloud, cancel, control)?;
     let mut spfh = vec![[0.0; DESCRIPTOR_SIZE]; cloud.len()];
     for (index, local) in neighbors.iter().enumerate() {
         if index % 64 == 0 && cancel.is_cancelled() {
@@ -375,9 +409,16 @@ fn bin(value: f64, low: f64, high: f64) -> usize {
     (((value - low) / (high - low) * BINS as f64).floor() as usize).min(BINS - 1)
 }
 
-fn neighbor_lists(cloud: &[FeaturePoint], cancel: &CancelFlag) -> Option<Vec<Vec<(usize, f64)>>> {
+fn neighbor_lists(
+    cloud: &[FeaturePoint],
+    cancel: &CancelFlag,
+    control: Option<&occluview_geometry::surface::GeometryControl>,
+) -> Option<Vec<Vec<(usize, f64)>>> {
     let mut cells: BTreeMap<(i32, i32, i32), Vec<usize>> = BTreeMap::new();
     for (index, point) in cloud.iter().enumerate() {
+        if cancel.is_cancelled() || control.is_some_and(|c| c.charge_operations(1).is_err()) {
+            return None;
+        }
         cells
             .entry(feature_voxel_key(point.position)?)
             .or_default()
@@ -385,31 +426,53 @@ fn neighbor_lists(cloud: &[FeaturePoint], cancel: &CancelFlag) -> Option<Vec<Vec
     }
     let mut lists = Vec::with_capacity(cloud.len());
     for (index, point) in cloud.iter().enumerate() {
+        if cancel.is_cancelled() || control.is_some_and(|c| c.charge_operations(1).is_err()) {
+            return None;
+        }
         if index % 64 == 0 && cancel.is_cancelled() {
             return None;
         }
         let (x, y, z) = feature_voxel_key(point.position)?;
         let mut local = Vec::new();
+        local.try_reserve_exact(MAX_NEIGHBORS).ok()?;
         for dx in -5..=5 {
             for dy in -5..=5 {
                 for dz in -5..=5 {
+                    if control.is_some_and(|c| c.charge_operations(1).is_err())
+                        || cancel.is_cancelled()
+                    {
+                        return None;
+                    }
                     if let Some(indices) = cells.get(&(x + dx, y + dy, z + dz)) {
                         for &other in indices {
                             if other == index {
                                 continue;
                             }
+                            if control.is_some_and(|c| c.charge_point_pairs(1).is_err()) {
+                                return None;
+                            }
                             let distance_sq =
                                 point.position.distance_squared(cloud[other].position);
                             if distance_sq > 1e-12 && distance_sq <= FEATURE_RADIUS_SQ {
-                                local.push((other, distance_sq));
+                                let rank =
+                                    local.partition_point(|&(held, distance): &(usize, f64)| {
+                                        distance
+                                            .total_cmp(&distance_sq)
+                                            .then_with(|| held.cmp(&other))
+                                            .is_lt()
+                                    });
+                                if rank < MAX_NEIGHBORS {
+                                    if local.len() == MAX_NEIGHBORS {
+                                        local.pop();
+                                    }
+                                    local.insert(rank, (other, distance_sq));
+                                }
                             }
                         }
                     }
                 }
             }
         }
-        local.sort_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
-        local.truncate(MAX_NEIGHBORS);
         lists.push(local);
     }
     Some(lists)

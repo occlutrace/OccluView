@@ -4,8 +4,6 @@
 //! checks that a proposed pose does not discard the fixed surface that helped
 //! justify the current pose.
 
-use rayon::prelude::*;
-
 use crate::Rigid;
 
 use super::{
@@ -239,7 +237,7 @@ pub(super) fn reciprocal_evidence(
     let inverse = pose.inverse();
     let distances: Vec<Option<f64>> = level
         .fixed_samples
-        .par_iter()
+        .iter()
         .map(|sample| {
             let local = inverse.apply(sample.point);
             let hit = moving_surface.nearest(local, influence_radius_mm)?;
