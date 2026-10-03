@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Reject binary STL data beyond its declared triangle count instead of dropping geometry.
+
 - Accept finite nonzero thumbnail triangles at very small and very large scales.
 
 - Detect hole caps that pierce fine surface triangles.
