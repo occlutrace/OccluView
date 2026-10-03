@@ -191,9 +191,9 @@ fn thumbnail_mesh_is_renderable(mesh: &Mesh) -> bool {
 fn mesh_has_drawable_triangle(mesh: &Mesh) -> bool {
     let vertices = mesh.vertices();
     for triangle in mesh.indices().as_chunks::<3>().0 {
-        let a = Vec3::from_array(vertices[triangle[0] as usize].position);
-        let b = Vec3::from_array(vertices[triangle[1] as usize].position);
-        let c = Vec3::from_array(vertices[triangle[2] as usize].position);
+        let a = Vec3::from_array(vertices[triangle[0] as usize].position).as_dvec3();
+        let b = Vec3::from_array(vertices[triangle[1] as usize].position).as_dvec3();
+        let c = Vec3::from_array(vertices[triangle[2] as usize].position).as_dvec3();
         if a.is_finite()
             && b.is_finite()
             && c.is_finite()

@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Accept finite nonzero thumbnail triangles at very small and very large scales.
+
 - Detect hole caps that pierce fine surface triangles.
 
 - Refuse self-crossing hole rims at tiny scales.

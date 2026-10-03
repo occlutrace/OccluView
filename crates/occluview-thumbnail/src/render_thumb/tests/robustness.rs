@@ -13,6 +13,33 @@ fn spec_256() -> ThumbnailSpec {
 }
 
 #[test]
+fn finite_nonzero_triangles_load_at_extreme_scales() {
+    for scale in [1e-20_f32, 1.0, 1e20] {
+        let bytes = occluview_core::test_support::binary_stl(&[[
+            1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, scale, 0.0, 0.0, 0.0, scale,
+        ]]);
+        let mesh = load_thumbnail_mesh_from_bytes_kind(FormatKind::Stl, &bytes)
+            .unwrap_or_else(|error| panic!("finite triangle at scale {scale}: {error}"));
+        assert_eq!(mesh.triangle_count(), 1);
+        let collinear = occluview_core::test_support::binary_stl(&[[
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            scale,
+            0.0,
+            0.0,
+            scale * 2.0,
+            0.0,
+        ]]);
+        assert!(load_thumbnail_mesh_from_bytes_kind(FormatKind::Stl, &collinear).is_err());
+    }
+}
+
+#[test]
 fn stl_far_outlier_above_gate_thumbnails_solid_through_public_entry_point() {
     let spec = spec_256();
     let bytes = fixtures::dense_binary_stl_sphere_with_far_outlier(44 * 1024 * 1024);
