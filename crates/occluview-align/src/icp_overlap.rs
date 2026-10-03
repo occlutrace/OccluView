@@ -372,3 +372,17 @@ pub(crate) fn directional_support_into(
     }
     Ok(())
 }
+
+/// Prove absence only outside an expanded axis-aligned surface box. An
+/// overflow or invalid query falls through to the authoritative nearest API.
+/// Rounding slack expands the box and can only retain extra queries.
+pub(crate) fn outside_query_bounds(target: &SurfaceIndex, point: glam::DVec3, radius: f64) -> bool {
+    if !point.is_finite() || !radius.is_finite() || radius < 0. {
+        return false;
+    }
+    let (lower, upper) = target.bounds();
+    let scale =
+        1. + point.abs().max_element() + lower.abs().max_element() + upper.abs().max_element();
+    let padding = glam::DVec3::splat(radius + 64. * f64::EPSILON * scale);
+    point.cmplt(lower - padding).any() || point.cmpgt(upper + padding).any()
+}
