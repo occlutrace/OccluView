@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Disabled cuts preserve the uncut mesh without drawing a cross-section cap.
+
 - Close Windows registry keys after failed shell registration or cleanup operations.
 
 - Report the actual Windows registry error when shell registration fails.
