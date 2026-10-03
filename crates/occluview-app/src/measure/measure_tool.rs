@@ -486,15 +486,33 @@ fn nearest_exit(
     origin: Vec3,
     direction: Vec3,
 ) -> Option<(f32, Vec3)> {
-    // Step off the entry wall so the ray cannot immediately re-hit it, then
-    // cast in the layer's own local frame, which is where the BVH lives.
+    // Recover the known entry plane before stepping in the BVH's local frame.
+    // A small world-space step can disappear at a large scene translation, and
+    // inverse-transform rounding can otherwise put the ray behind its entry wall.
     let inverse = entry.transform.inverse();
-    let start = origin + direction * SELF_HIT_EPS_MM;
-    let local_origin = inverse.transform_point3(start);
     let local_direction = inverse.transform_vector3(direction);
-    if local_direction.length_squared() <= f32::EPSILON {
+    if !local_direction.is_finite() || local_direction.length_squared() <= f32::EPSILON {
         return None;
     }
+    let base = origin_triangle.checked_mul(3)?;
+    let tri = entry.mesh.indices().get(base..base.checked_add(3)?)?;
+    let vertices = entry.mesh.vertices();
+    let corner = |index: u32| {
+        vertices
+            .get(index as usize)
+            .map(|vertex| Vec3::from_array(vertex.position).as_dvec3())
+    };
+    let a = corner(tri[0])?;
+    let normal = (corner(tri[1])? - a)
+        .cross(corner(tri[2])? - a)
+        .normalize_or_zero();
+    if !normal.is_finite() || normal.length_squared() <= f64::EPSILON {
+        return None;
+    }
+    let local_hit = inverse.transform_point3(origin).as_dvec3();
+    let on_plane = local_hit - normal * (local_hit - a).dot(normal);
+    let local_origin =
+        (on_plane + local_direction.as_dvec3() * f64::from(SELF_HIT_EPS_MM)).as_vec3();
     let (triangle, local_point) =
         entry
             .mesh
@@ -892,6 +910,40 @@ mod tests {
             vec![0, 1, 2, 0, 2, 3],
         )
         .expect("sheet mesh")
+    }
+
+    #[test]
+    fn transformed_two_wall_probe_does_not_stop_at_its_entry_triangle() {
+        let front = sheet_mesh();
+        let mut vertices = front.vertices().to_vec();
+        vertices.extend(
+            front
+                .vertices()
+                .iter()
+                .map(|v| Vertex::at(Vec3::from_array(v.position) - Vec3::X * 2.0)),
+        );
+        let mut indices = front.indices().to_vec();
+        indices.extend(front.indices().iter().map(|index| index + 4));
+        let mesh = Mesh::new(Some("two walls".into()), vertices, indices).expect("walls");
+        for shift in [0.0, 1_000.0, 10_000.0, 100_000.0] {
+            for angle in [0.1, 0.33, 0.7, 1.3] {
+                let mut entry = SceneMesh::new(mesh.clone());
+                entry.transform = glam::Affine3A::from_rotation_translation(
+                    glam::Quat::from_rotation_z(angle),
+                    Vec3::splat(shift),
+                );
+                let origin = entry.transform.transform_point3(Vec3::new(0.0, 0.2, 0.1));
+                let direction = entry.transform.transform_vector3(-Vec3::X).normalize();
+                let (distance, _) =
+                    nearest_exit(&entry, 0, origin, direction).unwrap_or_else(|| {
+                        panic!("lost the farther wall at shift {shift}, angle {angle}")
+                    });
+                assert!(
+                    (distance - 2.0).abs() < 0.05,
+                    "shift {shift}, angle {angle}, distance {distance}"
+                );
+            }
+        }
     }
 
     #[test]
