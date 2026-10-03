@@ -518,6 +518,18 @@ fn match_features(
     target: &[[f64; SIZE]],
     control: &GeometryControl,
 ) -> Result<Vec<Match>, GeometryStop> {
+    // Two empty histogram populations have distance zero everywhere. The
+    // fixed tie order selects one target for every source (ratio zero), so
+    // no nondegenerate rigid triplet can be produced by this schedule.
+    let empty =
+        |descriptors: &[[f64; SIZE]]| descriptors.iter().all(|d| d.iter().all(|v| *v == 0.));
+    control.charge_operations(
+        u64::try_from(source.len().saturating_add(target.len()))
+            .map_err(|_| GeometryStop::ResourceLimit)?,
+    )?;
+    if empty(source) && empty(target) {
+        return Ok(Vec::new());
+    }
     let mut tree = KdTree::new(SIZE);
     for (i, descriptor) in target.iter().enumerate() {
         control.charge_operations(1)?;
@@ -605,6 +617,15 @@ fn consensus(
 mod tests {
     use super::*;
     use glam::DQuat;
+
+    #[test]
+    fn empty_feature_histograms_cannot_supply_a_rigid_triplet() {
+        let control = GeometryControl::unlimited();
+        let empty = vec![[0.; SIZE]; 128];
+        let matches = match_features(&empty, &empty, &control).unwrap();
+        assert!(matches.is_empty());
+        assert_eq!(control.counters().point_pair_tests, 0);
+    }
 
     #[test]
     fn descriptor_variants_share_one_geometric_neighborhood_search() {
