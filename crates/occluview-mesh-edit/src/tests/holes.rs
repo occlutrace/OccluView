@@ -514,9 +514,5 @@ fn selected_hole_healing_preserves_an_unselected_island() {
         result.report.removed_triangles, 0,
         "unmarked geometry cannot be removed"
     );
-    assert!(result
-        .mesh
-        .indices
-        .chunks_exact(3)
-        .any(|triangle| triangle == [5, 6, 7]));
+    assert!(result.mesh.indices.as_chunks::<3>().0.contains(&[5, 6, 7]));
 }
