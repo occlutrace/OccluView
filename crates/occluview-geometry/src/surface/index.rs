@@ -65,7 +65,52 @@ struct Traversal<'a> {
     // The same query has the same distance/feature for a triangle in every
     // overlapping bucket. A fixed cache removes repeat arithmetic without
     // allocating or changing the traversal, pruning or source-id tie-break.
-    tested: [u32; 1024],
+    tested: &'a mut [u64; 1024],
+    generation: u32,
+}
+
+/// Reusable, bounded scratch for a serial sequence of exact surface queries.
+///
+/// Admission and all work use the control supplied to [`Self::new`]. Scratch
+/// can be used across indices: tags are invalidated at every query. It caches
+/// only triangles already tested within the current traversal, never hits or
+/// distances from a previous pose, surface or revision. It is not cloneable.
+pub struct SurfaceQueryScratch {
+    tested: [u64; 1024],
+    generation: u32,
+    control: GeometryControl,
+    _memory: GeometryMemory,
+}
+
+impl SurfaceQueryScratch {
+    /// Admit 8 KiB once for a sequence of queries; release it on drop.
+    ///
+    /// # Errors
+    /// Returns cancellation, deadline or allocation admission exhaustion.
+    pub fn new(control: &GeometryControl) -> Result<Self, GeometryStop> {
+        let memory = control.reserve(size_of::<Self>())?;
+        Ok(Self {
+            tested: [0; 1024],
+            generation: 0,
+            control: control.clone(),
+            _memory: memory,
+        })
+    }
+
+    fn begin(&mut self) -> Result<(), GeometryStop> {
+        if let Some(stop) = self.control.checkpoint() {
+            return Err(stop);
+        }
+        if self.generation == u32::MAX {
+            for chunk in self.tested.chunks_mut(128) {
+                self.control.charge_operations(chunk.len() as u64)?;
+                chunk.fill(0);
+            }
+            self.generation = 0;
+        }
+        self.generation += 1;
+        Ok(())
+    }
 }
 
 /// One query's fixed terms: the point, the squared radius, and the cell window
@@ -674,7 +719,7 @@ impl SurfaceIndex {
     /// Charges each distance calculation, every bucket entry, cell and ring.
     /// A fixed 1,024-entry map avoids repeat triangle arithmetic in overlapping
     /// buckets, with no collisions for indexes of at most 1,024 triangles.
-    /// Its 4 KiB stack scratch is admitted against resident work memory.
+    /// Its 8 KiB stack scratch is admitted against resident work memory.
     /// Larger-index cache collisions only repeat work. A dense query cannot exceed
     /// its triangle-test ceiling. Invalid query coordinates/radius give exact
     /// absence; incomplete traversal never masquerades as exact absence.
@@ -684,17 +729,33 @@ impl SurfaceIndex {
         radius: f64,
         control: &GeometryControl,
     ) -> QueryOutcome<SurfaceHit> {
-        let Ok(_scratch) = control.reserve(size_of::<[u32; 1024]>()) else {
-            return QueryOutcome::Interrupted {
-                best: None,
-                reason: control.checkpoint().unwrap_or(GeometryStop::ResourceLimit),
-            };
+        let mut scratch = match SurfaceQueryScratch::new(control) {
+            Ok(scratch) => scratch,
+            Err(reason) => return QueryOutcome::Interrupted { best: None, reason },
         };
+        self.nearest_with_scratch(point, radius, &mut scratch)
+    }
+
+    /// Exact controlled nearest query using previously admitted serial scratch.
+    ///
+    /// Uses the scratch's original shared control and the same traversal,
+    /// triangle-test accounting, tie-breaking and interruption contract as
+    /// [`Self::nearest_controlled`]. No evidence persists across calls.
+    pub fn nearest_with_scratch(
+        &self,
+        point: DVec3,
+        radius: f64,
+        scratch: &mut SurfaceQueryScratch,
+    ) -> QueryOutcome<SurfaceHit> {
+        if let Err(reason) = scratch.begin() {
+            return QueryOutcome::Interrupted { best: None, reason };
+        }
         let mut traversal = Traversal {
             best: None,
             tests: 0,
-            control,
-            tested: [u32::MAX; 1024],
+            control: &scratch.control,
+            tested: &mut scratch.tested,
+            generation: scratch.generation,
         };
         let outcome = self.query(point, radius, &mut traversal);
         let hit = traversal
@@ -704,7 +765,7 @@ impl SurfaceIndex {
             Ok(()) => QueryOutcome::Complete(hit),
             Err(reason) => {
                 if self.query_control.is_some() {
-                    control.stop(reason);
+                    scratch.control.stop(reason);
                 }
                 QueryOutcome::Interrupted { best: hit, reason }
             }
@@ -897,10 +958,11 @@ impl SurfaceIndex {
             } else {
                 (slot.wrapping_mul(0x9e37_79b9) >> 22) as usize
             };
-            if traversal.tested[cache_slot] == slot {
+            let tag = (u64::from(traversal.generation) << 32) | u64::from(slot);
+            if traversal.tested[cache_slot] == tag {
                 continue;
             }
-            traversal.tested[cache_slot] = slot;
+            traversal.tested[cache_slot] = tag;
             let slot = slot as usize;
             let Some(corners) = self.corners.get(slot) else {
                 continue;

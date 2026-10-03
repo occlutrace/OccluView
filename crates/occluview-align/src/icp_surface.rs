@@ -14,7 +14,9 @@ use crate::candidate_score::{
     Proposal, WeightedDistance,
 };
 use crate::{NormalPolicy, PreparedSurface, RefinementTermination, Rigid, SearchSettings};
-use occluview_geometry::surface::{GeometryControl, GeometryStop, QueryOutcome};
+use occluview_geometry::surface::{
+    GeometryControl, GeometryStop, QueryOutcome, SurfaceQueryScratch,
+};
 use std::collections::BTreeSet;
 
 #[derive(Clone)]
@@ -337,6 +339,7 @@ fn gather(
     result
         .try_reserve_exact(samples.len())
         .map_err(|_| GeometryStop::ResourceLimit)?;
+    let mut scratch = SurfaceQueryScratch::new(control)?;
     for sample in samples {
         control.charge_operations(1)?;
         let point = pose.apply(sample.point);
@@ -345,7 +348,7 @@ fn gather(
         }
         let hit = match target
             .original_index
-            .nearest_controlled(point, reach, control)
+            .nearest_with_scratch(point, reach, &mut scratch)
         {
             QueryOutcome::Complete(hit) => hit.filter(|h| !target.exact_original || !h.on_border),
             QueryOutcome::Interrupted { reason, .. } => return Err(reason),

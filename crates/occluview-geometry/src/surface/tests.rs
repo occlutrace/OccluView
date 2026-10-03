@@ -614,6 +614,60 @@ fn controlled_queries_agree_on_ten_thousand_probes() {
     assert_eq!(control.counters().query_calls, 10_000);
 }
 
+#[test]
+fn reusable_query_scratch_preserves_exactness_and_forgets_prior_surfaces() {
+    use super::super::{CancelFlag, GeometryLimits, GeometryStop, QueryOutcome};
+    use super::{GeometryControl, SurfaceQueryScratch};
+    let (positions, indices) = awkward_mesh();
+    let index = SurfaceIndex::build(soup(&positions, &indices)).unwrap();
+    let shifted: Vec<_> = positions
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .flat_map(|p| [p[0], p[1], p[2] + 2.])
+        .collect();
+    let other = SurfaceIndex::build(soup(&shifted, &indices)).unwrap();
+    let cancel = CancelFlag::new();
+    let control = GeometryControl::new(
+        cancel.clone(),
+        std::time::Duration::from_secs(10),
+        GeometryLimits::default(),
+    );
+    let mut scratch = SurfaceQueryScratch::new(&control).unwrap();
+    for i in 0..10_000usize {
+        let selected = if i % 2 == 0 { &index } else { &other };
+        let point = DVec3::new(
+            super::radical_inverse(i + 1, 2) * 70. - 20.,
+            super::radical_inverse(i + 1, 3) * 70. - 20.,
+            super::radical_inverse(i + 1, 5) * 12. - 6.,
+        );
+        let radius = 0.1 + super::radical_inverse(i + 1, 7) * 15.;
+        assert_eq!(
+            selected.nearest_with_scratch(point, radius, &mut scratch),
+            QueryOutcome::Complete(brute_nearest(selected, point, radius))
+        );
+    }
+    assert_eq!(control.counters().query_calls, 10_000);
+    // Force generation wrap: no old cache entry may suppress a distance test.
+    scratch.generation = u32::MAX;
+    let point = DVec3::new(2., 2., 1.);
+    assert_eq!(
+        index.nearest_with_scratch(point, 5., &mut scratch),
+        QueryOutcome::Complete(brute_nearest(&index, point, 5.))
+    );
+    cancel.cancel();
+    assert!(matches!(
+        index.nearest_with_scratch(point, 5., &mut scratch),
+        QueryOutcome::Interrupted {
+            reason: GeometryStop::Cancelled,
+            ..
+        }
+    ));
+    assert!(control.counters().memory_bytes > 0);
+    drop(scratch);
+    assert_eq!(control.counters().memory_bytes, 0);
+}
+
 /// ID35: a dense bucket's upper bound never becomes exact nearest evidence.
 #[test]
 fn deadline_and_work_caps_are_honest_in_dense_queries() {

@@ -11,7 +11,9 @@
 
 use crate::candidate_score::WeightedDistance;
 use crate::{NormalPolicy, PreparedSurface, Rigid, SurfaceIndex};
-use occluview_geometry::surface::{GeometryControl, GeometryStop, QueryOutcome};
+use occluview_geometry::surface::{
+    GeometryControl, GeometryStop, QueryOutcome, SurfaceQueryScratch,
+};
 
 use super::{
     forward_coverage_is_sufficient, minimum_forward_matches, Level, Orientation,
@@ -302,6 +304,7 @@ pub(crate) fn directional_support(
     result
         .try_reserve_exact(count)
         .map_err(|_| GeometryStop::ResourceLimit)?;
+    let mut scratch = SurfaceQueryScratch::new(control)?;
     for i in 0..count {
         control.charge_operations(1)?;
         let start = i * samples.len() / count;
@@ -316,7 +319,7 @@ pub(crate) fn directional_support(
         // The cheap pass measures the 1 mm soft support band. Retained poses
         // receive the wider prefix sweep; this pass is only a proposal rank.
         let radius = if count <= 16 { 1. } else { 4. };
-        let hit = match target.nearest_controlled(point, radius, control) {
+        let hit = match target.nearest_with_scratch(point, radius, &mut scratch) {
             QueryOutcome::Complete(hit) => hit.filter(|h| !exclude_border || !h.on_border),
             QueryOutcome::Interrupted { reason, .. } => return Err(reason),
         };
