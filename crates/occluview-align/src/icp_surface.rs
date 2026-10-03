@@ -25,6 +25,9 @@ pub(crate) struct RefinedProposal {
     pub termination: RefinementTermination,
     pub information: Option<PlaneInformation>,
     pub unsigned_fallback: bool,
+    /// Resolutions already attempted in this basin, independent of which
+    /// completed checkpoint wins. This never certifies its residuals.
+    pub attempted_scales: u8,
 }
 
 pub(crate) struct RefinementBatch {
@@ -91,6 +94,7 @@ pub(crate) fn run_multiscale(
                 termination: RefinementTermination::NotStarted,
                 information: None,
                 unsigned_fallback: false,
+                attempted_scales: 0,
             })
             .collect(),
         iterations: 0,
@@ -125,13 +129,93 @@ pub(crate) fn run_multiscale(
     for (held, score) in batch.candidates.iter_mut().zip(scores) {
         held.proposal.score = score;
     }
+    batch
+        .candidates
+        .sort_by(|a, b| proposal_order(&a.proposal, &b.proposal));
+    let mut leading_alternative = batch
+        .candidates
+        .first()
+        .cloned()
+        .filter(|p| p.proposal.score.supported_prefix.is_some());
+    // Deliver a fully examined leading checkpoint before weaker basins can
+    // consume the allowance. Each resolution is still charged once to its
+    // 16/8/5 itinerary; all other basins retain their completed checkpoints.
+    if !batch.candidates.is_empty() {
+        for scale in SCALES {
+            if let Some(stop) = refinement_admission(control) {
+                batch.stop = Some(stop);
+                return batch;
+            }
+            batch.basins[scale.slot] += 1;
+            let held = &mut batch.candidates[0];
+            if let Err(stop) = refine_candidate(
+                moving,
+                fixed,
+                held,
+                scale,
+                settings,
+                control,
+                &mut batch.iterations,
+                &mut batch.scored,
+                None,
+            ) {
+                held.termination = stop_termination(stop);
+                batch.stop = Some(stop);
+                return batch;
+            }
+            held.attempted_scales |= 1 << scale.slot;
+            if matches!(
+                held.termination,
+                RefinementTermination::NoCorrespondences
+                    | RefinementTermination::Singular
+                    | RefinementTermination::NumericalTrialRejected
+            ) {
+                break;
+            }
+        }
+    }
+    if let Some(mut alternative) = leading_alternative.take() {
+        if let Some((fraction, _)) = alternative.proposal.score.supported_prefix {
+            if let Some(id) = alternative.proposal.id.proposal.checked_add(1 << 31) {
+                alternative.proposal.id.proposal = id;
+                let outcome = refine_candidate(
+                    moving,
+                    fixed,
+                    &mut alternative,
+                    SCALES[0],
+                    settings,
+                    control,
+                    &mut batch.iterations,
+                    &mut batch.scored,
+                    Some(fraction),
+                );
+                alternative.attempted_scales |= 1;
+                batch.candidates.push(alternative);
+                if let Err(stop) = outcome {
+                    batch.stop = Some(stop);
+                    return batch;
+                }
+            }
+        }
+    }
     for scale in SCALES {
         batch
             .candidates
             .sort_by(|a, b| proposal_order(&a.proposal, &b.proposal));
-        let count = batch.candidates.len().min(scale.basins);
+        let indices: Vec<_> = batch
+            .candidates
+            .iter()
+            .enumerate()
+            .filter(|(_, held)| held.attempted_scales & (1 << scale.slot) == 0)
+            .take(
+                scale
+                    .basins
+                    .saturating_sub(batch.basins[scale.slot] as usize),
+            )
+            .map(|(i, _)| i)
+            .collect();
         let mut alternatives = Vec::new();
-        for i in 0..count {
+        for i in indices {
             // Final evidence owns the reserved quarter. This admission stop
             // does not poison the geometry control needed by verification.
             if let Some(stop) = refinement_admission(control) {
@@ -159,6 +243,7 @@ pub(crate) fn run_multiscale(
                     return batch;
                 }
             }
+            held.attempted_scales |= 1 << scale.slot;
             if let Some(mut alternative) = alternative.take() {
                 if let Some((fraction, _)) = alternative.proposal.score.supported_prefix {
                     if let Some(id) = alternative.proposal.id.proposal.checked_add(1 << 31) {
@@ -174,6 +259,7 @@ pub(crate) fn run_multiscale(
                             &mut batch.scored,
                             Some(fraction),
                         );
+                        alternative.attempted_scales |= 1 << scale.slot;
                         alternatives.push(alternative);
                         if let Err(stop) = outcome {
                             batch.candidates.extend(alternatives);
@@ -230,6 +316,7 @@ fn coalesce_basins(
         }
     }
     for &(from, to) in &drop {
+        candidates[to].attempted_scales |= candidates[from].attempted_scales;
         let origins = candidates[from].proposal.origins.clone();
         for origin in origins {
             if !candidates[to].proposal.origins.contains(&origin) {
@@ -640,6 +727,51 @@ mod tests {
         assert!(result.candidates[0].information.is_some());
     }
     #[test]
+    fn leading_basin_reaches_dense_before_distant_basins_exhaust_work() {
+        let unlimited = GeometryControl::unlimited();
+        let surface = surface(&unlimited);
+        let proposals = (0..16)
+            .map(|i| {
+                proposal(
+                    &surface,
+                    if i == 0 {
+                        Rigid::IDENTITY
+                    } else {
+                        Rigid::new(DQuat::IDENTITY, DVec3::Y * 100. * f64::from(i))
+                    },
+                    i,
+                    &unlimited,
+                )
+            })
+            .collect();
+        let control = GeometryControl::new(
+            crate::CancelFlag::new(),
+            std::time::Duration::from_secs(10),
+            occluview_geometry::surface::GeometryLimits {
+                query_calls: 100_000,
+                ..occluview_geometry::surface::GeometryLimits::default()
+            },
+        );
+        let result = run_multiscale(
+            &surface,
+            &surface,
+            proposals,
+            &SearchSettings::default(),
+            &control,
+        );
+        assert_eq!(result.stop, Some(GeometryStop::WorkLimit));
+        assert!(result.basins[2] >= 1, "dense work={:?}", result.basins);
+        assert!(result.basins[0] <= 16 && result.basins[1] <= 8 && result.basins[2] <= 5);
+        let leading = result
+            .candidates
+            .iter()
+            .find(|p| p.proposal.id.proposal == 0)
+            .unwrap();
+        assert_eq!(leading.proposal.pose, Rigid::IDENTITY);
+        assert!(leading.information.is_some());
+        assert!(control.counters().query_calls <= 100_000);
+    }
+    #[test]
     fn common_region_and_separated_rival_survive_coalescing() {
         let control = GeometryControl::unlimited();
         let surface = surface(&control);
@@ -648,6 +780,7 @@ mod tests {
             termination: RefinementTermination::Stationary,
             information: None,
             unsigned_fallback: false,
+            attempted_scales: 0,
         };
         let first = make(Rigid::IDENTITY, 0);
         let mut other_region = make(Rigid::IDENTITY, 1);
