@@ -355,6 +355,7 @@ pub fn prepare_alignment_surface(
         .memory_bytes
         .saturating_sub(usize::try_from(control.counters().memory_bytes).unwrap_or(usize::MAX));
     let exact_original = estimate <= available / 3;
+    let indexing = crate::search_probe::Span::new(crate::search_probe::Phase::Indices, control);
     let mut index = if exact_original {
         match SurfaceIndex::build_controlled(mesh.soup, frame.query_from_local, control) {
             BuildOutcome::Complete(index) => index,
@@ -376,6 +377,8 @@ pub fn prepare_alignment_surface(
             }
         }
     };
+    drop(indexing);
+    let _sampling = crate::search_probe::Span::new(crate::search_probe::Phase::Sampling, control);
     let represented_area_mm2 = index.surface_area_mm2();
     result.quality.orientation_coherent = exact_original
         && index.orientation_coherent()

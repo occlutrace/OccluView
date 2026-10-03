@@ -65,6 +65,7 @@ mod rigid;
 mod rotation_grid;
 mod sample;
 mod search_control;
+mod search_probe;
 mod search_result;
 mod search_transition;
 

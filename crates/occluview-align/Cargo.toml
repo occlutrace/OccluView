@@ -13,6 +13,10 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Aggregate synthetic phase measurements; never participates in ranking.
+search-probe = []
+
 [dependencies]
 glam = { workspace = true }
 rayon = { workspace = true }

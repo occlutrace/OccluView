@@ -385,6 +385,12 @@ fn refine_candidate(
     scored: &mut u64,
     initial_fraction: Option<f64>,
 ) -> Result<(), GeometryStop> {
+    let phase = match scale.slot {
+        0 => crate::search_probe::Phase::Coarse,
+        1 => crate::search_probe::Phase::Middle,
+        _ => crate::search_probe::Phase::Dense,
+    };
+    let _phase = crate::search_probe::Span::new(phase, control);
     let mut pose = held.proposal.pose;
     let mut fraction = initial_fraction;
     let reach = scale.reach * (settings.influence_radius_mm / 2.).clamp(0.25, 2.);
