@@ -32,11 +32,11 @@
 //! iteration ceilings and ordered reductions make completed numeric work
 //! reproducible. Cancellation and wall deadlines can return different finite
 //! prefixes under different loads. The review boundary records unfinished
-//! evidence; legacy indexing and nearest queries still need controlled work
-//! accounting before their cancellation latency can be guaranteed.
+//! evidence. Controlled f64 surface construction and nearest queries share
+//! work and memory admission; incomplete answers cannot supply exact evidence.
 //!
-//! Units are millimetres. Every transform is rigid: dental scans are metric,
-//! so a scale difference is *detected and reported*, never fitted away.
+//! Units are millimetres. Every correction is rigid; finite authored scale
+//! and shear stay in the immutable input view and are never fitted away.
 #![forbid(unsafe_code)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::float_cmp))]
 
@@ -63,12 +63,17 @@ pub use deviation::{
     Validity, MIN_MEASURED, NO_DATA_COLOR,
 };
 pub use icp::{refine, search_alignment, IcpReport, Orientation, RefineSettings};
-pub use mask::{apply_brush, invert, set_all, MaskEdit, EXCLUDED, INCLUDED};
+pub use mask::{apply_brush, eligible_region, invert, set_all, MaskEdit, EXCLUDED, INCLUDED};
 pub use observability::{observability, Observability};
 pub use occluview_geometry::surface::{CancelFlag, Soup, SurfaceHit, SurfaceIndex};
 pub use pairs::{fit_pairs, FitBounds, FitRejection, PairFit};
 pub use rigid::Rigid;
-pub use sample::bounds_of;
+pub use sample::{
+    area_samples, bounds_of, prepare_alignment_surface, spatial_stratum, split_samples,
+    PreparedSurface, SampleBatch, SampleSplit, SurfaceFrame, SurfacePreparation, SurfaceQuality,
+    SurfaceSample, SurfaceSide, AREA_SAMPLE_SEED, COARSE_AREA_SAMPLES, DENSE_AREA_SAMPLES,
+    MID_AREA_SAMPLES, VERIFY_AREA_SAMPLES,
+};
 
 pub use search_control::SearchControl;
 pub use search_result::*;

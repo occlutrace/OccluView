@@ -5,6 +5,9 @@ use glam::DVec3;
 
 use crate::Soup;
 
+mod prepared;
+pub use prepared::*;
+
 /// Read one vertex position, or `None` when it is out of range or not finite.
 pub(crate) fn vertex_at(positions: &[f32], vertex: usize) -> Option<DVec3> {
     let start = vertex.checked_mul(3)?;

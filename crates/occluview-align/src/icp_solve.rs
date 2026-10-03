@@ -1,7 +1,6 @@
 //! Deterministic point-to-plane solve for one ICP resolution level.
 
 use glam::{DMat3, DQuat, DVec3};
-use rayon::prelude::*;
 
 use crate::pairs::FitRejection;
 use crate::sample::vertex_at;
@@ -188,8 +187,8 @@ pub(super) fn run_level_checkpointed(
 
 /// Find each sampled vertex's nearest fixed surface point under `pose`.
 ///
-/// Parallel because it is pure: every entry reads only its own vertex, and the
-/// output keeps sample order, so the fold that follows stays deterministic.
+/// Serial query admission preserves a deterministic work-limit prefix and
+/// output order for the reduction that follows.
 pub(super) fn correspondences(
     level: &Level<'_>,
     pose: Rigid,
@@ -197,7 +196,7 @@ pub(super) fn correspondences(
 ) -> Vec<Option<Correspondence>> {
     level
         .samples
-        .par_iter()
+        .iter()
         .map(|&raw| {
             let vertex = raw as usize;
             let local = vertex_at(level.moving.positions, vertex)?;

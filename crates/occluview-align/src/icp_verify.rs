@@ -25,7 +25,6 @@
 //!   with its cusps off — has a near-zero eigenvalue there.
 
 use glam::DVec3;
-use rayon::prelude::*;
 
 use crate::sample::{sample_vertices, vertex_at};
 use crate::{Rigid, Soup, SurfaceIndex};
@@ -163,7 +162,7 @@ pub(crate) fn verify_with_budget(input: VerificationInput<'_>, budget: usize) ->
     }
     let reach = settings.influence_radius_mm.abs();
     let found: Vec<(f64, DVec3, DVec3)> = samples
-        .par_iter()
+        .iter()
         .filter_map(|&raw| {
             let vertex = raw as usize;
             let point = pose.apply(vertex_at(moving.positions, vertex)?);

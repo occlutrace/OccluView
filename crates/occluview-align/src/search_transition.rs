@@ -15,22 +15,37 @@ use crate::search_result::{
 use crate::{
     fit_pairs, FitBounds, FitRejection, RefineSettings, Rigid, SearchControl, SurfaceIndex,
 };
+use crate::{prepare_alignment_surface, SurfaceSide};
 use glam::{DAffine3, DMat3, DQuat, DVec3};
+use occluview_geometry::surface::GeometryControl;
 
 const MAX_TRANSITION_TRIANGLES: usize = 80_000;
 const MAX_TRANSITION_VERTICES: usize = 100_000;
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "ordered preparation and checkpoint accounting share one result lifetime"
+)]
 pub(crate) fn search(
     input: &AlignmentInput<'_>,
     settings: &SearchSettings,
     control: &SearchControl,
 ) -> Result<AlignmentSearchResult, AlignmentInputError> {
     let mut result = initial_result(input, settings);
-    if let Some(done) = validate(input, settings, control, &mut result)? {
+    let geometry = control.geometry_control(settings);
+    let limits = geometry.limits();
+    result.provenance.budget.query_calls = limits.query_calls;
+    result.provenance.budget.triangle_tests = limits.triangle_tests;
+    result.provenance.budget.point_pair_tests = limits.point_pair_tests;
+    result.provenance.budget.memory_bytes = limits.memory_bytes;
+    if let Some(done) = validate(input, settings, control, &geometry, &mut result)? {
         result.completion = done;
         result.candidates[0]
             .reasons
             .push(EvidenceReason::UnvalidatedInput);
+        let counters = geometry.counters();
+        result.work.preprocessing_operations = counters.operations;
+        result.work.peak_memory_bytes = counters.peak_memory_bytes;
         result.work.elapsed = control.elapsed();
         return Ok(result);
     }
@@ -55,35 +70,71 @@ pub(crate) fn search(
             &mut candidate.reasons,
         )
     });
-    if [input.moving.soup, input.fixed.soup].iter().any(|soup| {
-        !soup.positions.len().is_multiple_of(3)
-            || !soup.indices.len().is_multiple_of(3)
-            || soup
-                .indices
-                .iter()
-                .any(|&i| usize::try_from(i).unwrap_or(usize::MAX) >= soup.vertex_count())
-    }) {
-        candidate.reasons.push(EvidenceReason::InvalidTopology);
-    }
-    if oversized(input)
-        || input.landmarks.len() > 128
-        || settings.work_budget.memory_bytes < 64 * 1024 * 1024
+    let moving = prepare_alignment_surface(
+        input.moving,
+        SurfaceSide::Moving,
+        settings.reference_regions,
+        &geometry,
+    )?;
+    let fixed = prepare_alignment_surface(
+        input.fixed,
+        SurfaceSide::Fixed,
+        settings.reference_regions,
+        &geometry,
+    )?;
+    if let (Metric::Measured(a), Metric::Measured(b)) =
+        (moving.eligible_area_mm2, fixed.eligible_area_mm2)
     {
-        result.completion = Completion::ResourceLimit;
-        candidate.reasons.push(EvidenceReason::PartialGeometry);
-    } else if settings.work_budget.query_calls == 0 || settings.work_budget.triangle_tests == 0 {
-        result.completion = Completion::WorkLimit;
-        candidate.reasons.push(EvidenceReason::BudgetExhausted);
-    } else if let Some(authored) = rigid_affine(input.moving.world_from_local) {
-        // The legacy index consumes world-space f32 fixed vertices. A different
-        // fixed frame or a nonrigid moving frame requires the f64 surface view.
-        if input.fixed.world_from_local == DAffine3::IDENTITY {
-            run_legacy(input, &effective, control, authored, &mut result);
+        result.candidates[0].evidence.eligible_area_mm2 = Metric::Measured([a, b]);
+        result.provenance.processed_area_fraction = Metric::Measured([1., 1.]);
+        result
+            .work
+            .unfinished_stages
+            .retain(|&stage| stage != "area-accounting");
+    }
+    record_preparation(&fixed, &mut result);
+    record_preparation(&moving, &mut result);
+    if let (Some(_moving_surface), Some(fixed_surface)) = (&moving.surface, &fixed.surface) {
+        if oversized(input) || input.landmarks.len() > 128 {
+            result.completion = Completion::ResourceLimit;
+            result.candidates[0]
+                .reasons
+                .push(EvidenceReason::PartialGeometry);
+        } else if effective.work_budget.query_calls == 0
+            || effective.work_budget.triangle_tests == 0
+        {
+            result.completion = Completion::WorkLimit;
+            result.candidates[0]
+                .reasons
+                .push(EvidenceReason::BudgetExhausted);
+        } else if let Some(authored) = rigid_affine(input.moving.world_from_local) {
+            run_legacy(
+                input,
+                &effective,
+                control,
+                &geometry,
+                authored,
+                &fixed_surface.original_index,
+                fixed_surface.frame.center_world,
+                &mut result,
+            );
         } else {
-            candidate.reasons.push(EvidenceReason::PartialGeometry);
+            result.candidates[0]
+                .reasons
+                .push(EvidenceReason::PartialGeometry);
         }
-    } else {
-        candidate.reasons.push(EvidenceReason::PartialGeometry);
+    }
+    let counters = geometry.counters();
+    result.work.query_calls = counters.query_calls;
+    result.work.triangle_tests = counters.triangle_tests;
+    result.work.point_pair_tests = counters.point_pair_tests;
+    result.work.preprocessing_operations = counters.operations;
+    result.work.peak_memory_bytes = counters.peak_memory_bytes;
+    if let Some(stop) = geometry.checkpoint() {
+        result.completion = crate::sample::completion(stop);
+        result.candidates[0]
+            .reasons
+            .push(EvidenceReason::BudgetExhausted);
     }
     if let Some(done) = control.checkpoint(settings.wall_limit) {
         result.completion = done;
@@ -150,8 +201,23 @@ fn validate(
     input: &AlignmentInput<'_>,
     settings: &SearchSettings,
     control: &SearchControl,
+    geometry: &GeometryControl,
     result: &mut AlignmentSearchResult,
 ) -> Result<Option<Completion>, AlignmentInputError> {
+    if input.landmarks.len() > 128 {
+        let total = input
+            .moving
+            .soup
+            .positions
+            .len()
+            .saturating_add(input.fixed.soup.positions.len())
+            .saturating_add(24)
+            .saturating_add(input.seeds.len().saturating_mul(7))
+            .saturating_add(input.landmarks.len().saturating_mul(12))
+            .saturating_add(2);
+        result.input_check = InputCheck::Partial { checked: 0, total };
+        return Ok(Some(Completion::ResourceLimit));
+    }
     let total = input
         .moving
         .soup
@@ -182,6 +248,10 @@ fn validate(
                 return Ok(Some(done));
             }
         }
+        if let Err(stop) = geometry.charge_operations(1) {
+            result.input_check = InputCheck::Partial { checked, total };
+            return Ok(Some(crate::sample::completion(stop)));
+        }
         if !value.is_finite() {
             return Err(AlignmentInputError::NonFinite { field, index });
         }
@@ -193,6 +263,21 @@ fn validate(
         (input.fixed.soup, InputField::FixedPositions),
     ] {
         for (i, &value) in soup.positions.iter().enumerate() {
+            if i >= geometry
+                .limits()
+                .input_vertices
+                .saturating_mul(3)
+                .saturating_add(if soup.vertex_count() <= geometry.limits().input_vertices {
+                    soup.positions.len() % 3
+                } else {
+                    0
+                })
+            {
+                // Stop before reading another record; excluded input is still
+                // subject to the same scalar validation ceiling.
+                result.input_check = InputCheck::Partial { checked, total };
+                return Ok(Some(Completion::ResourceLimit));
+            }
             if let Some(done) = check(field, i, f64::from(value))? {
                 return Ok(Some(done));
             }
@@ -327,30 +412,38 @@ fn oversized(input: &AlignmentInput<'_>) -> bool {
     [input.moving, input.fixed].iter().any(|mesh| {
         mesh.soup.triangle_count() > MAX_TRANSITION_TRIANGLES
             || mesh.soup.vertex_count() > MAX_TRANSITION_VERTICES
-            || mesh.soup.positions.iter().any(|x| x.abs() > 100_000.)
     })
 }
 
 #[expect(
     clippy::too_many_lines,
+    clippy::too_many_arguments,
     reason = "paired legacy diagnostics and correction composition at one boundary"
 )]
 fn run_legacy(
     input: &AlignmentInput<'_>,
     settings: &SearchSettings,
     control: &SearchControl,
+    geometry: &GeometryControl,
     authored: Rigid,
+    fixed: &SurfaceIndex,
+    fixed_center: DVec3,
     result: &mut AlignmentSearchResult,
 ) {
-    let Some(fixed) = SurfaceIndex::build(input.fixed.soup) else {
-        result.completion = Completion::NoUsableSurface;
-        result.candidates[0]
-            .reasons
-            .push(EvidenceReason::InsufficientSupport);
+    if geometry.checkpoint().is_some() {
+        return;
+    }
+    // Covers bounded legacy numeric scratch and feature containers. The exact
+    // indices have their own resident reservations under this same cap.
+    let Ok(_numeric_memory) = geometry.reserve(64 * 1024 * 1024) else {
         return;
     };
+    let fixed_shift = Rigid::new(DQuat::IDENTITY, -fixed_center);
+    let restore_fixed = fixed_shift.inverse();
     // A finite landmark failure is a seed warning; scan search still runs.
-    let mut start = result.candidates[0].pose.compose(&authored);
+    let mut start = fixed_shift
+        .compose(&result.candidates[0].pose)
+        .compose(&authored);
     if !start.is_finite() {
         result.candidates[0]
             .reasons
@@ -363,7 +456,11 @@ fn run_legacy(
             .iter()
             .map(|p| authored.apply(p.moving_local))
             .collect();
-        let fixed_points: Vec<_> = input.landmarks.iter().map(|p| p.fixed_local).collect();
+        let fixed_points: Vec<_> = input
+            .landmarks
+            .iter()
+            .map(|p| input.fixed.world_from_local.transform_point3(p.fixed_local) - fixed_center)
+            .collect();
         if moving.iter().chain(&fixed_points).all(|p| p.is_finite()) {
             let bounds = FitBounds {
                 moving_center: DVec3::ZERO,
@@ -382,9 +479,9 @@ fn run_legacy(
                 .map(|p| {
                     p.normals_local.map(|n| {
                         if settings.normal_policy == NormalPolicy::Opposed {
-                            -n[1]
+                            -transform_normal(input.fixed.world_from_local.matrix3, n[1])
                         } else {
-                            n[1]
+                            transform_normal(input.fixed.world_from_local.matrix3, n[1])
                         }
                     })
                 })
@@ -437,7 +534,9 @@ fn run_legacy(
         let watchdog = std::thread::Builder::new()
             .name("alignment-deadline".into())
             .spawn_scoped(scope, move || loop {
-                if control.checkpoint(settings.wall_limit).is_some() {
+                if control.checkpoint(settings.wall_limit).is_some()
+                    || geometry.checkpoint().is_some()
+                {
                     cancel.cancel();
                     break;
                 }
@@ -453,7 +552,7 @@ fn run_legacy(
         }
         let outcome = crate::icp::refine_checkpointed(
             input.moving.soup,
-            &fixed,
+            fixed,
             start,
             &refine_settings,
             &legacy_cancel,
@@ -461,7 +560,9 @@ fn run_legacy(
                 if report.rigid.is_finite() {
                     last = Some(report);
                 }
-                if control.checkpoint(settings.wall_limit).is_some() {
+                if control.checkpoint(settings.wall_limit).is_some()
+                    || geometry.checkpoint().is_some()
+                {
                     legacy_cancel.cancel();
                 }
             },
@@ -482,7 +583,9 @@ fn run_legacy(
         }
     }
     if let Some(report) = last {
-        let correction = report.rigid.compose(&authored.inverse());
+        let correction = restore_fixed
+            .compose(&report.rigid)
+            .compose(&authored.inverse());
         if correction.is_finite() {
             result.candidates[0].pose =
                 canonical_seed(correction, &mut result.candidates[0].reasons);
@@ -505,7 +608,10 @@ fn run_legacy(
             .into_iter()
             .all(f64::is_finite)
             {
-                result.candidates[0].evidence.legacy_report = Some(report);
+                result.candidates[0].evidence.legacy_report = Some(crate::IcpReport {
+                    rigid: restore_fixed.compose(&report.rigid),
+                    ..report
+                });
             }
             result.candidates[0].refinement = if report.converged {
                 RefinementTermination::Stationary
@@ -525,5 +631,44 @@ fn run_legacy(
             }
             _ => RefinementTermination::NumericalTrialRejected,
         };
+    }
+}
+
+fn transform_normal(matrix: DMat3, normal: DVec3) -> DVec3 {
+    let determinant = matrix.determinant();
+    if !determinant.is_finite() || determinant == 0. {
+        return DVec3::ZERO;
+    }
+    let transformed = matrix.inverse().transpose() * normal;
+    if transformed.is_finite() {
+        transformed.normalize_or_zero()
+    } else {
+        DVec3::ZERO
+    }
+}
+
+fn record_preparation(prepared: &crate::SurfacePreparation, result: &mut AlignmentSearchResult) {
+    if prepared.quality.invalid_triangles != 0
+        || prepared.quality.degenerate_triangles != 0
+        || prepared.quality.trailing_positions != 0
+        || prepared.quality.trailing_indices != 0
+    {
+        result.candidates[0]
+            .reasons
+            .push(EvidenceReason::InvalidTopology);
+    }
+    if !prepared.quality.orientation_coherent && prepared.surface.is_some() {
+        result.candidates[0]
+            .reasons
+            .push(EvidenceReason::MissingNormals);
+    }
+    if prepared.completion != Completion::Complete {
+        result.completion = prepared.completion;
+        if prepared.input_check != InputCheck::Complete {
+            result.input_check = prepared.input_check;
+        }
+        result.candidates[0]
+            .reasons
+            .push(EvidenceReason::PartialGeometry);
     }
 }

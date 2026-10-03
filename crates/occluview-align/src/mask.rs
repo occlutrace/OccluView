@@ -10,6 +10,23 @@ use rayon::prelude::{IndexedParallelIterator, ParallelIterator, ParallelSlice};
 use crate::sample::vertex_at;
 use crate::Rigid;
 
+/// Registration eligibility of a complete triangle under the operator mask.
+/// Reference ROI uses the same exclusion bytes; its distinct policy records
+/// that these included triangles define the reference, while outside geometry
+/// remains available for rendering and later measurement.
+pub fn eligible_region(
+    soup: crate::Soup<'_>,
+    corners: [u32; 3],
+    _policy: crate::RegionPolicy,
+) -> Option<u16> {
+    corners
+        .iter()
+        .all(|&corner| {
+            (corner as usize) < soup.vertex_count() && !soup.is_excluded(corner as usize)
+        })
+        .then_some(0)
+}
+
 /// The mask byte meaning "excluded from matching".
 pub const EXCLUDED: u8 = 1;
 /// The mask byte meaning "included in matching".
