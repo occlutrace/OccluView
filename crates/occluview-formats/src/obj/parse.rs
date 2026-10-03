@@ -126,17 +126,26 @@ where
         let v_str = parts.next().unwrap_or("");
         let texcoord_idx_str = parts.next();
         let normal_idx_str = parts.next();
+        if parts.next().is_some() {
+            return Err(FormatError::Malformed {
+                format: "OBJ",
+                offset: line_no,
+                reason: format!("too many components in face reference {tok:?}"),
+            });
+        }
 
         let v_idx = resolve_index(v_str, positions.len(), line_no, raw)?;
-        // normal_idx_str may be None (no normal on this face vertex) or Some("")
-        // (e.g. `v//vt` shape). Both mean: no normal.
+        // Missing components are optional; present references must resolve.
         let normal = match normal_idx_str {
-            Some(s) if !s.is_empty() => resolve_normal(s, normals),
+            Some(s) if !s.is_empty() => {
+                Some(normals[resolve_index(s, normals.len(), line_no, raw)?])
+            }
             _ => None,
         };
-        // texcoord_idx_str follows the same lenient resolve as normals.
         let uv = match texcoord_idx_str {
-            Some(s) if !s.is_empty() => resolve_texcoord(s, texcoords),
+            Some(s) if !s.is_empty() => {
+                Some(texcoords[resolve_index(s, texcoords.len(), line_no, raw)?])
+            }
             _ => None,
         };
 
@@ -170,32 +179,6 @@ where
         builder.push_triangle(f0, window[0], window[1]);
     }
     Ok(())
-}
-
-/// Resolve a `vn` index string (1-based positive, or negative relative) to a
-/// normal vector. Returns `None` if the index is missing or out of range; in
-/// that case the face vertex is emitted without a normal.
-fn resolve_normal(s: &str, normals: &[Vec3]) -> Option<Vec3> {
-    let n: i64 = s.parse().ok()?;
-    let n_idx = match n.cmp(&0) {
-        std::cmp::Ordering::Greater => (n - 1) as usize,
-        std::cmp::Ordering::Less => normals.len().checked_sub(n.unsigned_abs() as usize)?,
-        std::cmp::Ordering::Equal => return None,
-    };
-    normals.get(n_idx).copied()
-}
-
-/// Resolve a `vt` index string (1-based positive, or negative relative) to a
-/// UV pair. Returns `None` if the index is missing or out of range; in that
-/// case the face vertex is emitted without a UV.
-fn resolve_texcoord(s: &str, texcoords: &[[f32; 2]]) -> Option<[f32; 2]> {
-    let n: i64 = s.parse().ok()?;
-    let idx = match n.cmp(&0) {
-        std::cmp::Ordering::Greater => (n - 1) as usize,
-        std::cmp::Ordering::Less => texcoords.len().checked_sub(n.unsigned_abs() as usize)?,
-        std::cmp::Ordering::Equal => return None,
-    };
-    texcoords.get(idx).copied()
 }
 
 /// Resolve a single OBJ index string (1-based positive, or negative relative)
@@ -278,6 +261,25 @@ fn parse_color_channel(s: &str, line_no: usize, raw: &str) -> Result<u8, FormatE
 mod tests {
     use super::*;
     use crate::obj;
+
+    #[test]
+    fn invalid_face_attribute_indices_are_refused_without_losing_attributes() {
+        let prefix = "v 0 0 0\nv 1 0 0\nv 0 1 0\nvt 0.25 0.75\nvn 0 0 1\n";
+        for invalid in ["0", "2", "-2", "junk", "1.5", "9223372036854775808"] {
+            for reference in [format!("1/{invalid}/1"), format!("1/1/{invalid}")] {
+                let text = format!("{prefix}f {reference} 2/1/1 3/1/1\n");
+                assert!(obj::read(text.as_bytes()).is_err(), "discarded {reference}");
+            }
+        }
+        for reference in ["1/1/1/1", "1/1/1/"] {
+            let text = format!("{prefix}f {reference} 2/1/1 3/1/1\n");
+            assert!(obj::read(text.as_bytes()).is_err(), "accepted {reference}");
+        }
+        for reference in ["1", "1/1", "1//1", "1/-1/-1"] {
+            let text = format!("{prefix}f {reference} 2/1/1 3/1/1\n");
+            assert!(obj::read(text.as_bytes()).is_ok(), "refused {reference}");
+        }
+    }
 
     #[test]
     fn rejects_non_finite_vertex_color_channels() {
