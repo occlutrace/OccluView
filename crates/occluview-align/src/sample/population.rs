@@ -6,6 +6,7 @@
 //! Cell roles have measured area; no half-population extrapolation is used.
 
 use super::prepared::{cell_hash, empty_batch, uniform};
+use crate::search_control::charge_linear_element;
 use crate::{SampleBatch, SampleRole, SurfaceIndex, SurfaceSample};
 use glam::DVec3;
 use occluview_geometry::surface::{GeometryControl, GeometryStop};
@@ -164,7 +165,7 @@ impl<'a> CellPopulation<'a> {
                 let weight = area / budget as f64;
                 let mut state = seed;
                 for id in 0..budget {
-                    control.charge_operations(1)?;
+                    charge_linear_element(control, id, budget)?;
                     requests[which].push(Request {
                         coordinate: (id as f64 + uniform(&mut state)) * weight,
                         stream,

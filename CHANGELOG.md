@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Scan matching batches control checks in bounded sampling and scoring loops.
+
 - Scan matching skips polygon reconstructions for cell boundaries that contain every vertex.
 
 - Scan matching shares one distance order between overlap refresh and refinement pairing.

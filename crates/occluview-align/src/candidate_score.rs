@@ -4,6 +4,7 @@
 //! not the paper's fractional RMSD exponent or a confidence certificate.
 
 use crate::icp::{common_area, directional_support};
+use crate::search_control::charge_linear_element;
 use crate::{
     CandidateId, NormalPolicy, PreparedSurface, Rigid, SeedOrigin, SurfaceIndex, SurfaceSample,
 };
@@ -118,8 +119,9 @@ impl<'a> TranslationScorer<'a> {
             .min(self.fixed.eligible_area_mm2);
         let mut soft = 0.;
         let mut finite = 0.;
-        for sample in &self.distances[smaller] {
-            self.control.charge_operations(1)?;
+        let distances = &self.distances[smaller];
+        for (index, sample) in distances.iter().enumerate() {
+            charge_linear_element(self.control, index, distances.len())?;
             if let Some(distance) = sample.distance {
                 soft += (1. - distance * distance).max(0.) * sample.weight;
                 finite += sample.weight;
@@ -238,7 +240,7 @@ pub(crate) fn weighted_trim_sweep(
 /// # Errors
 /// Returns interruption before publishing a partial prefix or objective.
 pub(crate) fn weighted_trim_sweep_ordered<'a>(
-    distances: impl Iterator<Item = &'a WeightedDistance> + Clone,
+    distances: impl ExactSizeIterator<Item = &'a WeightedDistance> + Clone,
     area: f64,
     ceiling: f64,
     control: &GeometryControl,
@@ -250,8 +252,8 @@ pub(crate) fn weighted_trim_sweep_ordered<'a>(
         return Ok(None);
     }
     let mut available = 0.;
-    for sample in distances.clone() {
-        control.charge_operations(1)?;
+    for (index, sample) in distances.clone().enumerate() {
+        charge_linear_element(control, index, distances.len())?;
         if sample.distance.is_some() {
             available += sample.weight;
         }
