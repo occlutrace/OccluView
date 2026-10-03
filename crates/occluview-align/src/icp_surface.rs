@@ -13,6 +13,7 @@ use crate::candidate_score::{
     pose_distance, proposal_order, score_common_region, weighted_trim_sweep_ordered, CoarseScoring,
     Proposal, WeightedDistance,
 };
+use crate::search_control::charge_linear_element;
 use crate::{NormalPolicy, PreparedSurface, RefinementTermination, Rigid, SearchSettings};
 use occluview_geometry::surface::{
     GeometryControl, GeometryStop, QueryOutcome, SurfaceQueryHint, SurfaceQueryScratch,
@@ -610,7 +611,7 @@ fn gather(
         .map_err(|_| GeometryStop::ResourceLimit)?;
     let mut scratch = SurfaceQueryScratch::new(control)?;
     for (ordinal, sample) in samples.iter().enumerate() {
-        control.charge_operations(1)?;
+        charge_linear_element(control, ordinal, samples.len())?;
         scratch.set_facet_hint(hints.get(ordinal).copied().flatten());
         let point = pose.apply(sample.point);
         if !point.is_finite() {
