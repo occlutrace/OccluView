@@ -600,6 +600,7 @@ fn gather(
     reverse: bool,
     policy: NormalPolicy,
     hints: &mut [Option<SurfaceQueryHint>],
+    region: Option<&CommonQueryRegion<'_>>,
     control: &GeometryControl,
 ) -> Result<Vec<Gathered>, GeometryStop> {
     let samples = &source.samples[slot].samples;
@@ -615,7 +616,12 @@ fn gather(
         if !point.is_finite() {
             return Err(GeometryStop::Numerical);
         }
-        let hit = if super::icp_overlap::outside_query_bounds(&target.original_index, point, reach)
+        let outside_region = match region {
+            Some(region) => !region.could_contain(point, control)?,
+            None => false,
+        };
+        let hit = if outside_region
+            || super::icp_overlap::outside_query_bounds(&target.original_index, point, reach)
         {
             None
         } else {
@@ -674,6 +680,109 @@ fn gather(
     }
     Ok(result)
 }
+/// A necessary condition for a larger-side projection to supply a pair:
+/// its target point must lie in a selected 1 mm cell and within the frozen
+/// distance cutoff. Every coordinate therefore lies within cutoff of that
+/// cell's cube. This bound rejects no eligible pair and supplies no residual.
+struct CommonQueryRegion<'a> {
+    cells: &'a BTreeSet<[u64; 3]>,
+    minimum: glam::DVec3,
+    maximum: glam::DVec3,
+    radius: f64,
+}
+
+impl<'a> CommonQueryRegion<'a> {
+    fn new(
+        cells: &'a BTreeSet<[u64; 3]>,
+        radius: f64,
+        control: &GeometryControl,
+    ) -> Result<Option<Self>, GeometryStop> {
+        if cells.is_empty() || !radius.is_finite() || radius < 0. {
+            return Ok(None);
+        }
+        let mut minimum = glam::DVec3::splat(f64::INFINITY);
+        let mut maximum = glam::DVec3::splat(f64::NEG_INFINITY);
+        for key in cells {
+            control.charge_operations(1)?;
+            let corner = glam::DVec3::from_array(key.map(f64::from_bits));
+            // Optimization availability only: large or malformed cells use
+            // ordinary controlled queries instead of unsafe integer ranges.
+            if !corner.is_finite() || corner.abs().max_element() >= 4_503_599_627_370_496. {
+                return Ok(None);
+            }
+            minimum = minimum.min(corner);
+            maximum = maximum.max(corner + glam::DVec3::ONE);
+        }
+        Ok(Some(Self {
+            cells,
+            minimum,
+            maximum,
+            radius,
+        }))
+    }
+
+    #[expect(
+        clippy::float_cmp,
+        reason = "detect whether consecutive integer cells are representable"
+    )]
+    fn could_contain(
+        &self,
+        point: glam::DVec3,
+        control: &GeometryControl,
+    ) -> Result<bool, GeometryStop> {
+        control.charge_operations(1)?;
+        if !point.is_finite() {
+            return Ok(true);
+        }
+        let magnitude = point
+            .abs()
+            .max_element()
+            .max(self.minimum.abs().max_element())
+            .max(self.maximum.abs().max_element());
+        let radius = self.radius + 1e-10 + 64. * f64::EPSILON * magnitude;
+        if !radius.is_finite() {
+            return Ok(true);
+        }
+        if point.cmplt(self.minimum - glam::DVec3::splat(radius)).any()
+            || point.cmpgt(self.maximum + glam::DVec3::splat(radius)).any()
+        {
+            return Ok(false);
+        }
+        // Broad reaches use only the cheap box bound. Narrow reaches visit
+        // at most 27 candidate cells, with explicit controlled admission.
+        if radius > 0.5 {
+            return Ok(true);
+        }
+        let mut keys = [[0; 3]; 3];
+        let mut lengths = [0; 3];
+        for (axis, coordinate) in point.to_array().into_iter().enumerate() {
+            let low = (coordinate - radius).floor();
+            let high = (coordinate + radius).floor();
+            if !low.is_finite() || !high.is_finite() || high - low > 2. || low + 1. == low {
+                return Ok(true);
+            }
+            for offset in 0..3 {
+                let coordinate = low + f64::from(offset);
+                if coordinate <= high {
+                    keys[axis][lengths[axis]] = (coordinate + 0.).to_bits();
+                    lengths[axis] += 1;
+                }
+            }
+        }
+        for i in 0..lengths[0] {
+            for j in 0..lengths[1] {
+                for k in 0..lengths[2] {
+                    control.charge_operations(1)?;
+                    if self.cells.contains(&[keys[0][i], keys[1][j], keys[2][k]]) {
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+        Ok(false)
+    }
+}
+
 fn cell(point: glam::DVec3) -> [u64; 3] {
     point.to_array().map(|v| (v.floor() + 0.).to_bits())
 }
@@ -695,33 +804,33 @@ fn correspondences(
     hints: &mut [Vec<Option<SurfaceQueryHint>>; 2],
     control: &GeometryControl,
 ) -> Result<(Vec<SurfacePair>, bool), GeometryStop> {
-    let forward = gather(
-        moving,
-        fixed,
-        pose,
-        slot,
-        reach,
-        false,
-        settings.normal_policy,
-        &mut hints[0],
-        control,
-    )?;
-    let reverse = gather(
-        fixed,
-        moving,
-        pose.inverse(),
-        slot,
-        reach,
-        true,
-        settings.normal_policy,
-        &mut hints[1],
-        control,
-    )?;
     let moving_smaller = moving.eligible_area_mm2 <= fixed.eligible_area_mm2;
-    let (mut smaller, other) = if moving_smaller {
-        (forward, reverse)
+    let mut smaller = if moving_smaller {
+        gather(
+            moving,
+            fixed,
+            pose,
+            slot,
+            reach,
+            false,
+            settings.normal_policy,
+            &mut hints[0],
+            None,
+            control,
+        )?
     } else {
-        (reverse, forward)
+        gather(
+            fixed,
+            moving,
+            pose.inverse(),
+            slot,
+            reach,
+            true,
+            settings.normal_policy,
+            &mut hints[1],
+            None,
+            control,
+        )?
     };
     let area = moving.eligible_area_mm2.min(fixed.eligible_area_mm2);
     if refresh || fraction.is_none() {
@@ -756,7 +865,7 @@ fn correspondences(
     let mut cutoff = 0.;
     let mut pairs = Vec::new();
     pairs
-        .try_reserve_exact(smaller.len() + other.len())
+        .try_reserve_exact(moving.samples[slot].samples.len() + fixed.samples[slot].samples.len())
         .map_err(|_| GeometryStop::ResourceLimit)?;
     let mut cells = BTreeSet::new();
     let mut compatible = 0;
@@ -779,6 +888,34 @@ fn correspondences(
     if remaining > area * 1e-12 {
         return Ok((Vec::new(), false));
     }
+    let region = CommonQueryRegion::new(&cells, cutoff + 1e-9, control)?;
+    let other = if moving_smaller {
+        gather(
+            fixed,
+            moving,
+            pose.inverse(),
+            slot,
+            reach,
+            true,
+            settings.normal_policy,
+            &mut hints[1],
+            region.as_ref(),
+            control,
+        )?
+    } else {
+        gather(
+            moving,
+            fixed,
+            pose,
+            slot,
+            reach,
+            false,
+            settings.normal_policy,
+            &mut hints[0],
+            region.as_ref(),
+            control,
+        )?
+    };
     for entry in &other {
         control.charge_operations(1)?;
         let Some(pair) = entry.pair else {
@@ -865,12 +1002,135 @@ mod tests {
             false,
             NormalPolicy::Unsigned,
             &mut [],
+            None,
             &control,
         )
         .unwrap();
         assert_eq!(gathered.len(), surface.samples[2].samples.len());
         assert!(gathered.iter().all(|pair| pair.pair.is_none()));
         assert_eq!(control.counters().query_calls, before);
+    }
+
+    #[test]
+    fn common_region_bound_preserves_eligible_pairs_and_skips_queries() {
+        let prepared = GeometryControl::unlimited();
+        let surface = surface(&prepared);
+        for reverse in [false, true] {
+            for policy in [
+                NormalPolicy::Unsigned,
+                NormalPolicy::Match,
+                NormalPolicy::Opposed,
+            ] {
+                let pose = Rigid::new(DQuat::from_rotation_x(0.001), DVec3::Z * 0.01);
+                let cold = GeometryControl::unlimited();
+                let expected = gather(
+                    &surface,
+                    &surface,
+                    pose,
+                    2,
+                    0.3,
+                    reverse,
+                    policy,
+                    &mut [],
+                    None,
+                    &cold,
+                )
+                .unwrap();
+                let cells: BTreeSet<_> = expected
+                    .iter()
+                    .filter_map(|entry| entry.pair)
+                    .skip(1024)
+                    .take(32)
+                    .map(|pair| cell(if reverse { pair.moving } else { pair.fixed }))
+                    .collect();
+                let bounded = GeometryControl::unlimited();
+                let region = CommonQueryRegion::new(&cells, 0.08, &bounded)
+                    .unwrap()
+                    .unwrap();
+                let actual = gather(
+                    &surface,
+                    &surface,
+                    pose,
+                    2,
+                    0.3,
+                    reverse,
+                    policy,
+                    &mut [],
+                    Some(&region),
+                    &bounded,
+                )
+                .unwrap();
+                let signature = |entries: &[Gathered]| {
+                    entries
+                        .iter()
+                        .filter_map(|entry| {
+                            let pair = entry.pair?;
+                            let projection = if reverse { pair.moving } else { pair.fixed };
+                            (cells.contains(&cell(projection))
+                                && entry.distance.distance.is_some_and(|d| d <= 0.08))
+                            .then_some((
+                                pair.moving,
+                                pair.fixed,
+                                pair.normal,
+                                pair.weight,
+                                entry.distance.distance,
+                                entry.distance.compatible,
+                                entry.distance.cell,
+                            ))
+                        })
+                        .collect::<Vec<_>>()
+                };
+                let eligible = signature(&expected);
+                assert!(!eligible.is_empty());
+                assert_eq!(signature(&actual), eligible);
+                assert!(
+                    bounded.counters().query_calls < cold.counters().query_calls / 2,
+                    "bounded={} cold={}",
+                    bounded.counters().query_calls,
+                    cold.counters().query_calls
+                );
+                assert_eq!(bounded.counters().memory_bytes, 0);
+            }
+        }
+    }
+
+    #[test]
+    fn common_region_bound_includes_cell_edges_and_disables_unsafe_ranges() {
+        let control = GeometryControl::unlimited();
+        for corner in [DVec3::splat(-1.), DVec3::ZERO, DVec3::new(1., -2., 0.)] {
+            let cells = BTreeSet::from([cell(corner)]);
+            let region = CommonQueryRegion::new(&cells, 0.1, &control)
+                .unwrap()
+                .unwrap();
+            for offset in [DVec3::ZERO, DVec3::ONE, DVec3::new(1., 0., 1.)] {
+                for delta in [-0.1, 0., 0.1] {
+                    assert!(region
+                        .could_contain(corner + offset + DVec3::X * delta, &control)
+                        .unwrap());
+                }
+            }
+            assert!(!region
+                .could_contain(corner + DVec3::splat(3.), &control)
+                .unwrap());
+            assert!(region
+                .could_contain(DVec3::splat(f64::NAN), &control)
+                .unwrap());
+        }
+        for point in [DVec3::splat(1e100), DVec3::splat(f64::NAN)] {
+            let cells = BTreeSet::from([cell(point)]);
+            assert!(CommonQueryRegion::new(&cells, 0.1, &control)
+                .unwrap()
+                .is_none());
+        }
+        let cells = BTreeSet::from([cell(DVec3::ZERO)]);
+        assert!(CommonQueryRegion::new(&cells, f64::INFINITY, &control)
+            .unwrap()
+            .is_none());
+        let stopped = control.with_operation_allowance(0);
+        assert!(matches!(
+            CommonQueryRegion::new(&cells, 0.1, &stopped),
+            Err(GeometryStop::WorkLimit)
+        ));
     }
 
     #[test]
@@ -999,6 +1259,7 @@ mod tests {
             false,
             NormalPolicy::Unsigned,
             &mut hints,
+            None,
             &unlimited,
         )
         .unwrap();
@@ -1012,6 +1273,7 @@ mod tests {
             false,
             NormalPolicy::Unsigned,
             &mut [],
+            None,
             &cold,
         )
         .unwrap();
@@ -1024,6 +1286,7 @@ mod tests {
             false,
             NormalPolicy::Unsigned,
             &mut hints,
+            None,
             &warm,
         )
         .unwrap();
