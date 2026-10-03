@@ -402,15 +402,15 @@ impl Offscreen {
         }
 
         {
-            let color_load = if !solid_cap {
+            let color_load = if solid_cap {
+                wgpu::LoadOp::Load
+            } else {
                 wgpu::LoadOp::Clear(wgpu::Color {
                     r: spec.background[0],
                     g: spec.background[1],
                     b: spec.background[2],
                     a: spec.background[3],
                 })
-            } else {
-                wgpu::LoadOp::Load
             };
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("occluview cut shaded pass"),
@@ -429,10 +429,10 @@ impl Offscreen {
                         // A solid cap writes the cut-plane depth. Keeping the
                         // depth buffer lets the final shaded pass remain
                         // behind it when the camera looks into the cut.
-                        load: if !solid_cap {
-                            wgpu::LoadOp::Clear(1.0)
-                        } else {
+                        load: if solid_cap {
                             wgpu::LoadOp::Load
+                        } else {
+                            wgpu::LoadOp::Clear(1.0)
                         },
                         store: wgpu::StoreOp::Store,
                     }),
