@@ -4,6 +4,8 @@
 //! skip empty space. Queries remain equivalent to a full triangle scan,
 //! including tie-breaking. Normals come from triangle winding rather than
 //! imported vertex data so deviation signs use the indexed geometry.
+//! Facet boxes are computed once in the immutable query frame. Recomputed
+//! temporal hints enter the current query's tested set, never a result cache.
 
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
@@ -68,6 +70,22 @@ struct Traversal<'a> {
     tested: &'a mut [u64; 1024],
     generation: u32,
     hint: Option<(usize, [DVec3; 3])>,
+}
+
+impl Traversal<'_> {
+    fn already_tested(&mut self, slot: u32, triangles: usize) -> bool {
+        // Small indexes have a collision-free direct map. Larger indexes
+        // spread adjacent facets and mesh rows; collisions only repeat work.
+        let cache_slot = if triangles <= self.tested.len() {
+            slot as usize
+        } else {
+            (slot.wrapping_mul(0x9e37_79b9) >> 22) as usize
+        };
+        let tag = (u64::from(self.generation) << 32) | u64::from(slot);
+        let seen = self.tested[cache_slot] == tag;
+        self.tested[cache_slot] = tag;
+        seen
+    }
 }
 
 /// Opaque facet upper-bound hint for a later query of the same sample.
@@ -248,6 +266,7 @@ fn bounded_grid(extent: DVec3, mean_edge: f64) -> (f64, [i64; 3]) {
 #[derive(Debug)]
 pub struct SurfaceIndex {
     corners: Vec<[DVec3; 3]>,
+    facet_bounds: Vec<(DVec3, DVec3)>,
     normals: Vec<DVec3>,
     sources: Vec<u32>,
     min: DVec3,
@@ -345,6 +364,7 @@ impl SurfaceIndex {
             .ok_or(GeometryStop::ResourceLimit)?;
         let mut allocation = control.reserve(bytes)?;
         let mut corners = allocated_vec(triangles, control)?;
+        let mut facet_bounds = allocated_vec(triangles, control)?;
         let mut normals = allocated_vec(triangles, control)?;
         let mut sources = allocated_vec(triangles, control)?;
         let mut parent: Vec<usize> = allocated_vec(vertices, control)?;
@@ -419,6 +439,10 @@ impl SurfaceIndex {
             let normal = mapped.unwrap_or(cross / length);
             topology.add_kept(welded, &points, normal, control)?;
             corners.push(points);
+            facet_bounds.push((
+                points[0].min(points[1]).min(points[2]),
+                points[0].max(points[1]).max(points[2]),
+            ));
             normals.push(normal);
             sources.push(u32::try_from(source).map_err(|_| GeometryStop::ResourceLimit)?);
             edge_total += edge;
@@ -427,11 +451,9 @@ impl SurfaceIndex {
         if corners.is_empty() {
             return Ok(None);
         }
-        for (points, &anchor) in corners.iter().zip(&anchors) {
+        for (&(low, high), &anchor) in facet_bounds.iter().zip(&anchors) {
             control.charge_operations(1)?;
             let root = find(&mut parent, anchor);
-            let low = points[0].min(points[1]).min(points[2]);
-            let high = points[0].max(points[1]).max(points[2]);
             let entry = &mut bounds[root];
             *entry = Some(entry.map_or((low, high), |(a, b)| (a.min(low), b.max(high))));
         }
@@ -459,7 +481,8 @@ impl SurfaceIndex {
         drop(positions);
         drop(roots);
         // Builder scratch is gone. Retain conservative capacity accounting for
-        // the arrays that remain resident, including component and topology data.
+        // the arrays that remain resident, including facet boxes, component
+        // and topology data (at most 253 bytes per facet plus vertex arrays).
         let resident = corners
             .capacity()
             .saturating_mul(256)
@@ -470,6 +493,7 @@ impl SurfaceIndex {
         memory.push(allocation);
         let index = Self {
             corners,
+            facet_bounds,
             normals,
             sources,
             min,
@@ -838,6 +862,8 @@ impl SurfaceIndex {
                 if !distance.is_finite() || !candidate.is_finite() {
                     return Err(GeometryStop::Numerical);
                 }
+                let slot_id = u32::try_from(slot).map_err(|_| GeometryStop::Numerical)?;
+                traversal.already_tested(slot_id, self.corners.len());
                 if distance <= radius * radius {
                     traversal.best = Some(Candidate {
                         distance,
@@ -1026,18 +1052,9 @@ impl SurfaceIndex {
         for chunk in bucket.chunks(128) {
             traversal.control.charge_operations(chunk.len() as u64)?;
             for &slot in chunk {
-                // Small indexes have a collision-free direct map. Larger indexes
-                // keep fixed scratch and spread both adjacent facets and mesh rows.
-                let cache_slot = if self.corners.len() <= traversal.tested.len() {
-                    slot as usize
-                } else {
-                    (slot.wrapping_mul(0x9e37_79b9) >> 22) as usize
-                };
-                let tag = (u64::from(traversal.generation) << 32) | u64::from(slot);
-                if traversal.tested[cache_slot] == tag {
+                if traversal.already_tested(slot, self.corners.len()) {
                     continue;
                 }
-                traversal.tested[cache_slot] = tag;
                 let slot = slot as usize;
                 let Some(corners) = self.corners.get(slot) else {
                     continue;
@@ -1046,8 +1063,9 @@ impl SurfaceIndex {
                 // Their boxes give conservative lower bounds before expensive
                 // triangle distances. Keep equality (and rounding slack) eligible
                 // so shared-feature/source-id ties still follow the exact rule.
-                let low = corners[0].min(corners[1]).min(corners[2]);
-                let high = corners[0].max(corners[1]).max(corners[2]);
+                let Some(&(low, high)) = self.facet_bounds.get(slot) else {
+                    return Err(GeometryStop::Numerical);
+                };
                 let floor = (query.point.clamp(low, high) - query.point).length_squared();
                 let ceiling = traversal.best.map_or(query.limit, |found| found.distance);
                 if floor > ceiling + 32. * f64::EPSILON * ceiling.max(1.) {
@@ -1103,8 +1121,8 @@ impl SurfaceIndex {
             control.charge_operations(1)?;
             counts.push(0u32);
         }
-        for corners in &self.corners {
-            self.for_each_cell(corners, control, |cell| {
+        for &bounds in &self.facet_bounds {
+            self.for_each_cell(bounds, control, |cell| {
                 counts[cell + 1] = counts[cell + 1]
                     .checked_add(1)
                     .ok_or(GeometryStop::ResourceLimit)?;
@@ -1134,9 +1152,9 @@ impl SurfaceIndex {
             control.charge_operations(1)?;
             cursor.push(count);
         }
-        for (triangle, corners) in self.corners.iter().enumerate() {
+        for (triangle, &bounds) in self.facet_bounds.iter().enumerate() {
             let triangle = u32::try_from(triangle).map_err(|_| GeometryStop::ResourceLimit)?;
-            self.for_each_cell(corners, control, |cell| {
+            self.for_each_cell(bounds, control, |cell| {
                 let slot = cursor[cell] as usize;
                 if let Some(item) = items.get_mut(slot) {
                     *item = triangle;
@@ -1157,12 +1175,12 @@ impl SurfaceIndex {
 
     fn for_each_cell(
         &self,
-        corners: &[DVec3; 3],
+        bounds: (DVec3, DVec3),
         control: &GeometryControl,
         mut visit: impl FnMut(usize) -> Result<(), GeometryStop>,
     ) -> Result<(), GeometryStop> {
-        let low = self.cell_of(corners[0].min(corners[1]).min(corners[2]));
-        let high = self.cell_of(corners[0].max(corners[1]).max(corners[2]));
+        let low = self.cell_of(bounds.0);
+        let high = self.cell_of(bounds.1);
         for z in low[2]..=high[2] {
             for y in low[1]..=high[1] {
                 for x in low[0]..=high[0] {

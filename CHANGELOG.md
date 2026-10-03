@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Scan matching reuses immutable facet bounds and avoids testing a temporal hint twice.
+
 - Scan matching reuses identical descriptor queries and stops matching when its retained correspondence list is full.
 
 - Scan matching skips refinement queries that cannot enter the selected common surface region.
