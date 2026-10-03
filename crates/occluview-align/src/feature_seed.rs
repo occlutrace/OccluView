@@ -79,6 +79,12 @@ pub(super) fn find_feature_seed(
         .map(|&(rigid, _)| FeatureSeed { rigid })
 }
 
+/// Produce deterministic descriptor-consensus proposals from bounded area
+/// populations. An empty list means no nondegenerate consensus; it supplies
+/// no confidence or independent surface evidence.
+///
+/// # Errors
+/// Returns the actual control stop, allocation refusal or numeric failure.
 pub(crate) fn feature_hypotheses(
     moving: &PreparedSurface,
     fixed: &PreparedSurface,
@@ -513,11 +519,59 @@ fn normalize(histogram: &mut [f64; SIZE]) {
         }
     }
 }
+// Exact descriptor bits identify one completed query on this call's immutable
+// target tree. Source ordinals are preserved separately in every match.
+struct DescriptorQuery<'a> {
+    descriptor: &'a [f64; SIZE],
+    nearest: Option<Vec<(f64, usize)>>,
+}
+
+fn descriptor_order(a: &[f64; SIZE], b: &[f64; SIZE]) -> std::cmp::Ordering {
+    a.iter()
+        .zip(b)
+        .map(|(a, b)| a.to_bits().cmp(&b.to_bits()))
+        .find(|order| !order.is_eq())
+        .unwrap_or(std::cmp::Ordering::Equal)
+}
+
+fn descriptor_queries<'a>(
+    source: &'a [[f64; SIZE]],
+    control: &GeometryControl,
+) -> Result<Vec<DescriptorQuery<'a>>, GeometryStop> {
+    let mut queries = Vec::new();
+    queries
+        .try_reserve_exact(source.len())
+        .map_err(|_| GeometryStop::ResourceLimit)?;
+    for descriptor in source {
+        control.charge_operations(1)?;
+        queries.push(DescriptorQuery {
+            descriptor,
+            nearest: None,
+        });
+    }
+    let mut stopped = None;
+    queries.sort_unstable_by(|a, b| {
+        if stopped.is_none() {
+            stopped = control.charge_operations(1).err();
+        }
+        descriptor_order(a.descriptor, b.descriptor)
+    });
+    if let Some(stop) = stopped {
+        return Err(stop);
+    }
+    control.charge_operations(queries.len() as u64)?;
+    queries.dedup_by(|a, b| descriptor_order(a.descriptor, b.descriptor).is_eq());
+    Ok(queries)
+}
+
 fn match_features(
     source: &[[f64; SIZE]],
     target: &[[f64; SIZE]],
     control: &GeometryControl,
 ) -> Result<Vec<Match>, GeometryStop> {
+    if source.len() > 4_096 || target.len() > 4_096 {
+        return Err(GeometryStop::ResourceLimit);
+    }
     // Two empty histogram populations have distance zero everywhere. The
     // fixed tie order selects one target for every source (ratio zero), so
     // no nondegenerate rigid triplet can be produced by this schedule.
@@ -530,6 +584,8 @@ fn match_features(
     if empty(source) && empty(target) {
         return Ok(Vec::new());
     }
+    let _cache_memory = control.reserve(source.len().saturating_mul(128))?;
+    let mut queries = descriptor_queries(source, control)?;
     let mut tree = KdTree::new(SIZE);
     for (i, descriptor) in target.iter().enumerate() {
         control.charge_operations(1)?;
@@ -540,8 +596,10 @@ fn match_features(
     matches
         .try_reserve_exact(4_096)
         .map_err(|_| GeometryStop::ResourceLimit)?;
-    let mut zero_nearest: Option<Vec<(f64, usize)>> = None;
     for (i, descriptor) in source.iter().enumerate() {
+        if matches.len() >= 4_096 {
+            break;
+        }
         let metric = |a: &[f64], b: &[f64]| {
             if control.charge_point_pairs(1).is_err() {
                 f64::MAX
@@ -549,11 +607,20 @@ fn match_features(
                 squared_euclidean(a, b)
             }
         };
-        // An empty local histogram has the same exact descriptor query at
-        // every anchor. Cache only this constant, not approximate neighbors.
-        let zero = descriptor.iter().all(|value| *value == 0.);
         control.charge_operations(1)?;
-        let nearest = if let Some(held) = zero.then_some(zero_nearest.as_ref()).flatten() {
+        let mut stopped = None;
+        let slot = queries
+            .binary_search_by(|query| {
+                if stopped.is_none() {
+                    stopped = control.charge_operations(1).err();
+                }
+                descriptor_order(query.descriptor, descriptor)
+            })
+            .map_err(|_| GeometryStop::Numerical)?;
+        if let Some(stop) = stopped {
+            return Err(stop);
+        }
+        let nearest = if let Some(held) = &queries[slot].nearest {
             held.clone()
         } else {
             let mut nearest = tree
@@ -566,9 +633,7 @@ fn match_features(
                 return Err(stop);
             }
             nearest.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-            if zero {
-                zero_nearest = Some(nearest.clone());
-            }
+            queries[slot].nearest = Some(nearest.clone());
             nearest
         };
         let ratio = if nearest.len() > 1 {
@@ -633,6 +698,117 @@ fn consensus(
 mod tests {
     use super::*;
     use glam::DQuat;
+
+    #[test]
+    fn repeated_nonzero_descriptor_queries_reuse_exact_matches() {
+        let mut target = vec![[0.; SIZE]; 128];
+        for (i, descriptor) in target.iter_mut().enumerate() {
+            descriptor[i % SIZE] = 1.;
+        }
+        let mut first = [0.; SIZE];
+        first[3] = 0.4;
+        first[12] = 0.6;
+        let mut second = [0.; SIZE];
+        second[8] = 0.3;
+        second[17] = 0.7;
+        let queries = [first, second, first, second];
+        let cold = GeometryControl::unlimited();
+        let expected = queries
+            .into_iter()
+            .enumerate()
+            .flat_map(|(i, descriptor)| {
+                let mut matches = match_features(&[descriptor], &target, &cold).unwrap();
+                for entry in &mut matches {
+                    entry.source = i;
+                }
+                matches
+            })
+            .collect::<Vec<_>>();
+        let shared = GeometryControl::unlimited();
+        let actual = match_features(&queries, &target, &shared).unwrap();
+        let signature = |matches: &[Match]| {
+            matches
+                .iter()
+                .map(|m| (m.source, m.target, m.ratio.to_bits()))
+                .collect::<Vec<_>>()
+        };
+        let mut expected = expected;
+        expected.sort_by(|a, b| {
+            a.ratio
+                .total_cmp(&b.ratio)
+                .then(a.source.cmp(&b.source))
+                .then(a.target.cmp(&b.target))
+        });
+        assert_eq!(signature(&actual), signature(&expected));
+        assert_eq!(
+            shared.counters().point_pair_tests * 2,
+            cold.counters().point_pair_tests
+        );
+        assert_eq!(shared.counters().memory_bytes, 0);
+    }
+
+    #[test]
+    fn completed_match_prefix_stops_unused_queries() {
+        let mut target = vec![[0.; SIZE]; 128];
+        for (i, descriptor) in target.iter_mut().enumerate() {
+            descriptor[i % SIZE] = 1.;
+        }
+        let source = (0..2048u32)
+            .map(|i| {
+                let mut descriptor = [0.5; SIZE];
+                descriptor[0] += f64::from(i) * 1e-7;
+                descriptor
+            })
+            .collect::<Vec<_>>();
+        let prefix = GeometryControl::unlimited();
+        let expected = match_features(&source[..1366], &target, &prefix).unwrap();
+        assert_eq!(expected.len(), 4096);
+        let full = GeometryControl::unlimited();
+        let actual = match_features(&source, &target, &full).unwrap();
+        let signature = |matches: &[Match]| {
+            matches
+                .iter()
+                .map(|m| (m.source, m.target, m.ratio.to_bits()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(signature(&actual), signature(&expected));
+        assert_eq!(
+            full.counters().point_pair_tests,
+            prefix.counters().point_pair_tests
+        );
+        assert_eq!(full.counters().memory_bytes, 0);
+    }
+
+    #[test]
+    fn descriptor_query_cache_preserves_control_and_invalid_input_errors() {
+        let control = GeometryControl::unlimited();
+        let source = [[0.5; SIZE]];
+        let target = [[1.; SIZE]];
+        assert!(matches!(
+            match_features(&[[f64::NAN; SIZE]], &target, &control),
+            Err(GeometryStop::Numerical)
+        ));
+        assert!(matches!(
+            match_features(&source, &[[f64::INFINITY; SIZE]], &control),
+            Err(GeometryStop::Numerical)
+        ));
+        assert!(matches!(
+            match_features(&vec![[0.; SIZE]; 4097], &target, &control),
+            Err(GeometryStop::ResourceLimit)
+        ));
+        let cancel = CancelFlag::new();
+        cancel.cancel();
+        let cancelled = GeometryControl::new(
+            cancel,
+            std::time::Duration::MAX,
+            occluview_geometry::surface::GeometryLimits::default(),
+        );
+        assert!(matches!(
+            match_features(&source, &target, &cancelled),
+            Err(GeometryStop::Cancelled)
+        ));
+        assert_eq!(control.counters().memory_bytes, 0);
+    }
 
     #[test]
     fn zero_descriptor_queries_reuse_exact_matches() {
