@@ -2,6 +2,18 @@
 //!
 //! Fixed work allowances define reproducible prefixes; wall deadlines and
 //! caller cancellation can end at different prefixes under different loads.
+//!
+//! Ordinary-operation calibration (2026-10-03): release build on an AMD Ryzen
+//! 5 3600 (6 cores / 12 threads, 15.6 GiB RAM), `CARGO_BUILD_JOBS=2`. A synthetic
+//! independently remeshed arch processed 255,999,965 ordinary units in 4.983 s
+//! after conservative pruning and bounded accounting batches. With streamed
+//! quadrature, cached feature neighborhoods and exact miss bounds it processed
+//! 511,999,985 units in 8.866 s (about 58 million units/s). Rounded cooperative
+//! ceilings are 576M / 1728M / 96M for 10 / 30 / 2 s; Local stays conservative.
+//! These are work ceilings, not timing promises. Shared load can reduce
+//! throughput; wall deadlines and independent query, triangle, point-pair and
+//! allocation limits still stop slower/pathological work. Interrupted evidence
+//! and counters remain visible.
 
 use crate::{CancelFlag, Completion, SearchProfile, SearchSettings};
 use occluview_geometry::surface::{GeometryControl, GeometryLimits};
@@ -54,9 +66,9 @@ impl SearchControl {
             // Bucket-cache probes are ordinary operations as well as the
             // independent distance-test allowance. Keep both bounded without
             // spending the distance allowance on reused arithmetic.
-            SearchProfile::Standard => (10, 8_000_000, 80_000_000, 256_000_000),
-            SearchProfile::Extended => (30, 20_000_000, 240_000_000, 768_000_000),
-            SearchProfile::Local => (2, 1_000_000, 10_000_000, 32_000_000),
+            SearchProfile::Standard => (10, 8_000_000, 80_000_000, 576_000_000),
+            SearchProfile::Extended => (30, 20_000_000, 240_000_000, 1_728_000_000),
+            SearchProfile::Local => (2, 1_000_000, 10_000_000, 96_000_000),
         };
         GeometryControl::from_start(
             self.cancel.clone(),
