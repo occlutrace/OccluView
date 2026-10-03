@@ -310,7 +310,7 @@ fn fixed_work_provenance_and_candidates_are_reproducible() {
         assert_eq!(effective.work_budget.query_calls, 99);
         assert_eq!(result.provenance.operation_limit, 32_000_000);
         assert_eq!(result.provenance.input_revisions, [1, 2]);
-        assert_eq!(result.provenance.algorithm_version, 17);
+        assert_eq!(result.provenance.algorithm_version, 18);
         assert_eq!(result.completion, Completion::WorkLimit);
         assert!(result.work.query_calls <= 99);
         for family in &result.work.families {
