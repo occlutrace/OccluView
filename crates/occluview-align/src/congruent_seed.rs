@@ -10,6 +10,12 @@ use glam::DVec3;
 use occluview_geometry::surface::{GeometryControl, GeometryStop};
 use std::collections::BTreeMap;
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Basis {
+    points: [DVec3; 4],
+    ratios: [f64; 2],
+}
+
 /// Up to 256 finite proper transforms from 64 fixed-seed near-planar bases.
 /// No normals, descriptors, centroid equality or confidence floor is required.
 #[expect(
@@ -29,6 +35,12 @@ pub(crate) fn congruent_basis_hypotheses(
         (0..count)
             .map(|i| samples[i * samples.len() / count].point)
             .collect::<Vec<_>>()
+    };
+    let swapped = source.eligible_area_mm2 > target.eligible_area_mm2;
+    let (source, target) = if swapped {
+        (target, source)
+    } else {
+        (source, target)
     };
     let source = points(source);
     let target = points(target);
@@ -50,35 +62,18 @@ pub(crate) fn congruent_basis_hypotheses(
             entries.extend([(i, j), (j, i)]);
         }
     }
-    let mut state = 0x4f56_5f41_4c52_3107u64;
     let mut output = Vec::new();
     output
         .try_reserve_exact(256)
         .map_err(|_| GeometryStop::ResourceLimit)?;
-    let mut quads = 0;
-    for _ in 0..64 {
-        control.charge_operations(1)?;
-        let ids: [usize; 4] = std::array::from_fn(|_| {
-            state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
-            (crate::sample::mix_seed(state) % source.len() as u64) as usize
-        });
-        if ids.iter().enumerate().any(|(i, id)| ids[..i].contains(id)) {
-            continue;
-        }
-        let initial = ids.map(|i| source[i]);
-        let base = [[0, 1, 2, 3], [0, 2, 1, 3], [0, 3, 1, 2]]
-            .into_iter()
-            .find_map(|order| {
-                let corners = order.map(|i| initial[i]);
-                crossing(corners).map(|ratios| (corners, ratios))
-            });
-        let Some((base, ratios)) = base else {
-            continue;
-        };
+    for Basis {
+        points: base,
+        ratios,
+    } in select_bases(&source, control)?
+    {
+        let mut quads = 0;
+        let mut emitted = 0;
         let lengths = [base[0].distance(base[1]), base[2].distance(base[3])];
-        if lengths[0].max(lengths[1]) < 4. {
-            continue;
-        }
         let pair_lists: [Vec<(usize, usize)>; 2] = lengths.map(|length| {
             let key = (length / 0.25).floor() as i64;
             bins.range(key - 2..=key + 2)
@@ -101,7 +96,7 @@ pub(crate) fn congruent_basis_hypotheses(
                 .map_err(|_| GeometryStop::ResourceLimit)?;
             records.push((i, j, p));
         }
-        for &(k, l) in &pair_lists[1] {
+        'joins: for &(k, l) in &pair_lists[1] {
             control.charge_point_pairs(1)?;
             if (target[k].distance(target[l]) - lengths[1]).abs() > 0.5 {
                 continue;
@@ -121,8 +116,11 @@ pub(crate) fn congruent_basis_hypotheses(
                                 if i == k || i == l || j == k || j == l || p.distance(q) > 0.5 {
                                     continue;
                                 }
-                                if quads >= 4_096 || output.len() >= 256 {
-                                    return Ok(output);
+                                // Every one of 64 bases owns part of the fixed
+                                // 4,096-quad / 256-transform allowance. Early
+                                // aliases cannot consume later bases' work.
+                                if quads >= 64 || emitted >= 4 {
+                                    break 'joins;
                                 }
                                 quads += 1;
                                 let other = [target[i], target[j], target[k], target[l]];
@@ -148,7 +146,8 @@ pub(crate) fn congruent_basis_hypotheses(
                                     if let Some(pose) =
                                         crate::proposal_geometry::fit_geometry_pairs(&base, &other)
                                     {
-                                        output.push(pose);
+                                        output.push(if swapped { pose.inverse() } else { pose });
+                                        emitted += 1;
                                     }
                                 }
                             }
@@ -159,6 +158,72 @@ pub(crate) fn congruent_basis_hypotheses(
         }
     }
     Ok(output)
+}
+
+/// A fixed family stream supplies near-planar, spatially extended bases.
+#[allow(clippy::cast_possible_truncation)]
+fn select_bases(source: &[DVec3], control: &GeometryControl) -> Result<Vec<Basis>, GeometryStop> {
+    let mut output = Vec::new();
+    output
+        .try_reserve_exact(64)
+        .map_err(|_| GeometryStop::ResourceLimit)?;
+    if source.len() < 4 || source.len() > 256 {
+        return Ok(output);
+    }
+    let mut state = 0x4f56_5f41_4c52_3107u64;
+    for _ in 0..64 {
+        // Select a fourth point that actually completes a near-planar base,
+        // rather than counting unsuccessful random quadruples as bases. The
+        // bounded retries retain the original gap, ratio and span predicates.
+        'triples: for _ in 0..16 {
+            control.charge_operations(1)?;
+            let ids: [usize; 3] = std::array::from_fn(|_| {
+                state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+                (crate::sample::mix_seed(state) % source.len() as u64) as usize
+            });
+            if ids.iter().enumerate().any(|(i, id)| ids[..i].contains(id)) {
+                continue;
+            }
+            state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+            let start = (crate::sample::mix_seed(state) % source.len() as u64) as usize;
+            for offset in 0..source.len() {
+                control.charge_point_pairs(1)?;
+                let fourth = (start + offset) % source.len();
+                if ids.contains(&fourth) {
+                    continue;
+                }
+                if let Some(base) = ordered_base([
+                    source[ids[0]],
+                    source[ids[1]],
+                    source[ids[2]],
+                    source[fourth],
+                ]) {
+                    output.push(base);
+                    break 'triples;
+                }
+            }
+        }
+    }
+    Ok(output)
+}
+
+fn ordered_base(initial: [DVec3; 4]) -> Option<Basis> {
+    [[0, 1, 2, 3], [0, 2, 1, 3], [0, 3, 1, 2]]
+        .into_iter()
+        .find_map(|order| {
+            let corners = order.map(|i| initial[i]);
+            crossing(corners)
+                .filter(|_| {
+                    corners[0]
+                        .distance(corners[1])
+                        .max(corners[2].distance(corners[3]))
+                        >= 4.
+                })
+                .map(|ratios| Basis {
+                    points: corners,
+                    ratios,
+                })
+        })
 }
 
 /// Closest points of two supporting lines; crossing parameters and plane gap
@@ -188,6 +253,44 @@ fn cell(p: DVec3) -> Option<[i64; 3]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn curved_surface_supplies_all_bases_without_relaxing_planarity() {
+        let points: Vec<_> = (0..256u32)
+            .map(|i| {
+                let x = f64::from(i % 16) * 0.8;
+                let y = f64::from(i / 16) * 0.8;
+                DVec3::new(x, y, 0.08 * x * x + 0.03 * y * y)
+            })
+            .collect();
+        let bases = select_bases(&points, &GeometryControl::unlimited()).unwrap();
+        assert_eq!(bases.len(), 64, "near-planar schedule was underfilled");
+        for base in &bases {
+            assert_eq!(crossing(base.points), Some(base.ratios));
+        }
+        assert_eq!(
+            bases,
+            select_bases(&points, &GeometryControl::unlimited()).unwrap()
+        );
+        assert!(select_bases(&[], &GeometryControl::unlimited())
+            .unwrap()
+            .is_empty());
+        assert!(
+            select_bases(&[DVec3::ZERO; 256], &GeometryControl::unlimited())
+                .unwrap()
+                .is_empty()
+        );
+        let flag = crate::CancelFlag::new();
+        let control = GeometryControl::new(
+            flag.clone(),
+            std::time::Duration::MAX,
+            occluview_geometry::surface::GeometryLimits::default(),
+        );
+        flag.cancel();
+        assert_eq!(
+            select_bases(&points, &control),
+            Err(GeometryStop::Cancelled)
+        );
+    }
     #[test]
     fn congruent_ratios_are_rigid_invariants() {
         let base = [
