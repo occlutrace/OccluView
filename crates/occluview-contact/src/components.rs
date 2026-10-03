@@ -132,7 +132,15 @@ pub(crate) fn connected_components(points: &[DVec3], radius_mm: f64) -> (Vec<usi
         &mut cell_of_point,
     );
     let mut parent: Vec<usize> = (0..cells.len()).collect();
-    tree.join_neighbors(&tree, points, &cells, radius_mm, &mut parent);
+    tree.join_neighbors(
+        &tree,
+        &mut ComponentLinks {
+            points,
+            cells: &cells,
+            radius: radius_mm,
+            parent: &mut parent,
+        },
+    );
 
     let mut label_of_root: HashMap<usize, usize> = HashMap::new();
     let mut labels = vec![0_usize; count];
@@ -151,6 +159,14 @@ pub(crate) fn connected_components(points: &[DVec3], radius_mm: f64) -> (Vec<usi
 /// Distance comparison that cannot overflow or underflow when squared.
 fn within_radius(delta: DVec3, radius: f64) -> bool {
     delta.abs().max_element() <= radius && (delta / radius).length_squared() <= 1.0
+}
+
+/// Shared inputs and union state for one spatial join traversal.
+struct ComponentLinks<'a> {
+    points: &'a [DVec3],
+    cells: &'a [Vec<usize>],
+    radius: f64,
+    parent: &'a mut [usize],
 }
 
 /// Spatial partitions with a diameter no larger than the chaining radius.
@@ -216,39 +232,33 @@ impl ComponentTree {
         }
     }
 
-    fn join_neighbors(
-        &self,
-        other: &Self,
-        points: &[DVec3],
-        cells: &[Vec<usize>],
-        radius: f64,
-        parent: &mut [usize],
-    ) {
+    fn join_neighbors(&self, other: &Self, links: &mut ComponentLinks<'_>) {
         let gap = (self.low - other.high)
             .max(other.low - self.high)
             .max(DVec3::ZERO);
-        if !within_radius(gap, radius) {
+        if !within_radius(gap, links.radius) {
             return;
         }
         match (&self.children, &other.children) {
             (Some(children), _) => {
-                children
-                    .0
-                    .join_neighbors(other, points, cells, radius, parent);
-                children
-                    .1
-                    .join_neighbors(other, points, cells, radius, parent);
+                children.0.join_neighbors(other, links);
+                children.1.join_neighbors(other, links);
             }
             (None, Some(children)) => {
-                self.join_neighbors(&children.0, points, cells, radius, parent);
-                self.join_neighbors(&children.1, points, cells, radius, parent);
+                self.join_neighbors(&children.0, links);
+                self.join_neighbors(&children.1, links);
             }
             (None, None)
                 if self.cell < other.cell
-                    && find(parent, self.cell) != find(parent, other.cell) =>
+                    && find(links.parent, self.cell) != find(links.parent, other.cell) =>
             {
-                if cells_touch(points, &cells[self.cell], &cells[other.cell], radius) {
-                    union(parent, self.cell, other.cell);
+                if cells_touch(
+                    links.points,
+                    &links.cells[self.cell],
+                    &links.cells[other.cell],
+                    links.radius,
+                ) {
+                    union(links.parent, self.cell, other.cell);
                 }
             }
             (None, None) => {}
