@@ -377,7 +377,8 @@ pub fn prepare_alignment_surface(
         }
     };
     let represented_area_mm2 = index.surface_area_mm2();
-    result.quality.orientation_coherent = index.orientation_coherent()
+    result.quality.orientation_coherent = exact_original
+        && index.orientation_coherent()
         && mesh.world_from_local.matrix3.determinant().is_finite()
         && mesh.world_from_local.matrix3.determinant() != 0.;
     index.set_query_control(control.clone());

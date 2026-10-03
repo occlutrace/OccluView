@@ -8,6 +8,7 @@ use super::vertex_at;
 use crate::{MeshInput, RegionPolicy, SurfaceFrame, SurfaceIndex};
 use occluview_geometry::surface::{BuildOutcome, GeometryControl, GeometryStop, Soup};
 use std::collections::{HashMap, HashSet};
+use std::hash::{BuildHasherDefault, DefaultHasher};
 
 const VERTICES: usize = 32_768;
 const TRIANGLES: usize = 64_000;
@@ -28,8 +29,8 @@ pub(super) fn prepare_bounded_proxy(
     let _memory = control.reserve(VERTICES * 160 + TRIANGLES * 96 + 4096)?;
     for attempt in 0..8 {
         let cell = 0.02 * 2f64.powi(attempt);
-        let mut vertices = HashMap::new();
-        let mut faces = HashSet::new();
+        let mut vertices = HashMap::<_, _, BuildHasherDefault<DefaultHasher>>::default();
+        let mut faces = HashSet::<_, BuildHasherDefault<DefaultHasher>>::default();
         let mut positions = Vec::new();
         let mut indices = Vec::new();
         vertices
