@@ -70,6 +70,16 @@ struct Traversal<'a> {
     hint: Option<(usize, [DVec3; 3])>,
 }
 
+/// Opaque facet upper-bound hint for a later query of the same sample.
+///
+/// This stores geometry, never a nearest answer or distance. Every use checks
+/// the facet corners against the current index and recomputes its distance;
+/// stale or cross-index hints cannot change exact answers or source-id ties.
+#[derive(Clone, Copy, Debug)]
+pub struct SurfaceQueryHint {
+    facet: (usize, [DVec3; 3]),
+}
+
 /// Reusable, bounded scratch for a serial sequence of exact surface queries.
 ///
 /// Admission and all work use the control supplied to [`Self::new`]. Scratch
@@ -100,6 +110,21 @@ impl SurfaceQueryScratch {
             control: control.clone(),
             _memory: memory,
         })
+    }
+
+    /// Snapshot the preceding query's facet as a recomputable upper bound.
+    /// An interrupted query may supply a hint, never completed evidence.
+    pub fn facet_hint(&self) -> Option<SurfaceQueryHint> {
+        self.hint.map(|facet| SurfaceQueryHint { facet })
+    }
+
+    /// Prefer a previous pass's facet for the current sample. `None` leaves
+    /// the preceding sample's hint available. The next query validates and
+    /// recomputes the bound before traversing the complete eligible grid.
+    pub fn set_facet_hint(&mut self, hint: Option<SurfaceQueryHint>) {
+        if let Some(hint) = hint {
+            self.hint = Some(hint.facet);
+        }
     }
 
     fn begin(&mut self) -> Result<(), GeometryStop> {

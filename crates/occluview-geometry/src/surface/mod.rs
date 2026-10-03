@@ -11,7 +11,7 @@ pub use cancel::{
     BuildOutcome, CancelFlag, GeometryControl, GeometryCounters, GeometryLimits, GeometryMemory,
     GeometryStop, QueryOutcome,
 };
-pub use index::{SurfaceHit, SurfaceIndex, SurfaceQueryScratch};
+pub use index::{SurfaceHit, SurfaceIndex, SurfaceQueryHint, SurfaceQueryScratch};
 pub use soup::Soup;
 
 /// Alignment sampling support consumed by `occluview-align`, not part of the public API.
