@@ -165,7 +165,7 @@ fn initial_result(input: &AlignmentInput<'_>, settings: &SearchSettings) -> Alig
         },
         provenance: SearchProvenance {
             operation_limit: 0,
-            algorithm_version: 6,
+            algorithm_version: 7,
             effective_settings: None,
             threshold_set_id: "geometric-evidence-v1-unverified",
             grid_recipe_id: "haar-polar-6x12-12x24-farthest72-v1",
