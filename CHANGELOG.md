@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Reject PLY payload beyond its declared elements instead of silently dropping mesh data.
+
 - Reject binary STL data beyond its declared triangle count instead of dropping geometry.
 
 - Accept finite nonzero thumbnail triangles at very small and very large scales.

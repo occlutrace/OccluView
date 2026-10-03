@@ -267,6 +267,13 @@ fn read_with(
         }
     }
 
+    if cursor.pos != parsed.data.len() {
+        return Err(FormatError::Malformed {
+            format: "PLY (binary)",
+            offset: cursor.pos,
+            reason: "data remains after the declared elements".to_string(),
+        });
+    }
     uvs.apply(&mut builder)?;
 
     shading.build(builder).map_err(FormatError::Core)
