@@ -4,6 +4,8 @@
 //! Phillips, Liu and Tomasi (2006), <https://arxiv.org/abs/cs/0606098>.
 //! Area prefixes replace vertex counts. A frozen robust local objective chooses
 //! steps; the same bidirectional fractional score compares every checkpoint.
+//! Two common-region trajectories share a basin's coarse iteration allowance;
+//! each receives half, while a single trajectory keeps the full allowance.
 //! Local convergence supplies no independent confidence or uniqueness.
 
 use super::icp_surface_step::{accumulate_robust, line_search, PlaneInformation, SurfacePair};
@@ -69,6 +71,13 @@ const SCALES: [Scale; 3] = [
         basins: 5,
     },
 ];
+
+fn trajectory_scale(mut scale: Scale, paired: bool) -> Scale {
+    if scale.slot == 0 && paired {
+        scale.iterations /= 2;
+    }
+    scale
+}
 
 /// Retain all completed basins until publication. The 16 -> 8 -> 5 itinerary
 /// is independent of public top-k. Earlier better checkpoints survive any
@@ -146,11 +155,12 @@ pub(crate) fn run_multiscale(
             }
             batch.basins[scale.slot] += 1;
             let held = &mut batch.candidates[0];
+            let trajectory = trajectory_scale(scale, leading_alternative.is_some());
             if let Err(stop) = refine_candidate(
                 moving,
                 fixed,
                 held,
-                scale,
+                trajectory,
                 settings,
                 control,
                 &mut batch.iterations,
@@ -180,7 +190,7 @@ pub(crate) fn run_multiscale(
                     moving,
                     fixed,
                     &mut alternative,
-                    SCALES[0],
+                    trajectory_scale(SCALES[0], true),
                     settings,
                     control,
                     &mut batch.iterations,
@@ -222,12 +232,18 @@ pub(crate) fn run_multiscale(
             }
             batch.basins[scale.slot] += 1;
             let mut alternative = (scale.slot == 0).then(|| batch.candidates[i].clone());
+            let trajectory = trajectory_scale(
+                scale,
+                alternative
+                    .as_ref()
+                    .is_some_and(|p| p.proposal.score.supported_prefix.is_some()),
+            );
             let held = &mut batch.candidates[i];
             match refine_candidate(
                 moving,
                 fixed,
                 held,
-                scale,
+                trajectory,
                 settings,
                 control,
                 &mut batch.iterations,
@@ -250,7 +266,7 @@ pub(crate) fn run_multiscale(
                             moving,
                             fixed,
                             &mut alternative,
-                            scale,
+                            trajectory_scale(scale, true),
                             settings,
                             control,
                             &mut batch.iterations,
@@ -758,6 +774,54 @@ mod tests {
         assert_eq!(gathered.len(), surface.samples[2].samples.len());
         assert!(gathered.iter().all(|pair| pair.pair.is_none()));
         assert_eq!(control.counters().query_calls, before);
+    }
+
+    #[test]
+    fn overlap_trajectories_share_the_coarse_basin_iteration_cap() {
+        let control = GeometryControl::unlimited();
+        let mesh = crate::proposal_test_support::arch::dental_arch(
+            &crate::proposal_test_support::arch::ArchSpec::default(),
+        );
+        let mut surface = crate::prepare_alignment_surface(
+            MeshInput {
+                soup: mesh.soup(),
+                world_from_local: DAffine3::IDENTITY,
+                revision: 1,
+            },
+            SurfaceSide::Moving,
+            RegionPolicy::AllEligible,
+            &control,
+        )
+        .unwrap()
+        .surface
+        .unwrap();
+        let pose = Rigid::new(
+            DQuat::from_axis_angle(DVec3::new(1., 2., 3.).normalize(), 5f64.to_radians()),
+            DVec3::new(3., -2., 1.),
+        );
+        let mut seed = proposal(&surface, pose, 0, &control);
+        // Deliberately keep a second supported common-region hypothesis.
+        seed.score.supported_prefix = Some((0.2, 1.));
+        surface.samples[1].samples.clear();
+        surface.samples[2].samples.clear();
+        let result = run_multiscale(
+            &surface,
+            &surface,
+            vec![seed],
+            &SearchSettings::default(),
+            &control,
+        );
+        assert!(result.stop.is_none());
+        assert_eq!(result.basins[0], 1);
+        assert!(
+            result.iterations <= 12,
+            "one coarse basin spent {} iterations across its overlap hypotheses",
+            result.iterations
+        );
+        assert!(result
+            .candidates
+            .iter()
+            .all(|p| p.proposal.pose.is_finite()));
     }
 
     #[test]
