@@ -1037,3 +1037,76 @@ fn coherent_queries_reuse_a_recomputed_facet_bound() {
     let cold = control.counters().operations - before;
     assert!(warm < cold, "warm {warm}, cold {cold}");
 }
+
+#[test]
+fn recomputed_hint_is_tested_once_without_losing_source_ties() {
+    use super::super::QueryOutcome;
+    use super::{GeometryControl, SurfaceQueryScratch};
+    let positions = [0., 0., 0., 1., 0., 0., 0., 1., 0.];
+    let index = SurfaceIndex::build(soup(&positions, &[0, 1, 2])).unwrap();
+    let control = GeometryControl::unlimited();
+    let mut scratch = SurfaceQueryScratch::new(&control).unwrap();
+    for i in 0..16u32 {
+        let point = DVec3::new(0.2 + f64::from(i) * 0.01, 0.3, 0.5);
+        let before = control.counters().triangle_tests;
+        assert_eq!(
+            index.nearest_with_scratch(point, 1., &mut scratch),
+            QueryOutcome::Complete(brute_nearest(&index, point, 1.))
+        );
+        assert_eq!(control.counters().triangle_tests - before, 1);
+    }
+    let duplicate = SurfaceIndex::build(soup(&positions, &[0, 1, 2, 0, 1, 2])).unwrap();
+    scratch.hint = Some((1, duplicate.corners[1]));
+    let point = DVec3::new(0.2, 0.3, 0.5);
+    let expected = brute_nearest(&duplicate, point, 1.).unwrap();
+    assert_eq!(expected.triangle, 0);
+    assert_eq!(
+        duplicate.nearest_with_scratch(point, 1., &mut scratch),
+        QueryOutcome::Complete(Some(expected))
+    );
+    drop(scratch);
+    assert_eq!(control.counters().memory_bytes, 0);
+}
+
+#[test]
+fn cached_facet_bounds_fit_resident_admission() {
+    use super::super::BuildOutcome;
+    use super::GeometryControl;
+    let (positions, indices) = plane(32, 0.5);
+    let control = GeometryControl::unlimited();
+    let BuildOutcome::Complete(index) = SurfaceIndex::build_controlled(
+        soup(&positions, &indices),
+        glam::DAffine3::IDENTITY,
+        &control,
+    ) else {
+        panic!("finite synthetic grid must build");
+    };
+    assert_eq!(index.facet_bounds.len(), index.corners.len());
+    let capacity_bytes = |capacity, size| capacity * size;
+    let arrays = [
+        capacity_bytes(index.corners.capacity(), size_of::<[DVec3; 3]>()),
+        capacity_bytes(index.facet_bounds.capacity(), size_of::<(DVec3, DVec3)>()),
+        capacity_bytes(index.normals.capacity(), size_of::<DVec3>()),
+        capacity_bytes(index.sources.capacity(), size_of::<u32>()),
+        capacity_bytes(index.starts.capacity(), size_of::<u32>()),
+        capacity_bytes(index.items.capacity(), size_of::<u32>()),
+        index.gaps.capacity(),
+        capacity_bytes(index.components.capacity(), size_of::<(DVec3, DVec3)>()),
+        capacity_bytes(index.triangle_components.capacity(), size_of::<usize>()),
+        capacity_bytes(index.topology.corners.capacity(), size_of::<[u32; 3]>()),
+        capacity_bytes(
+            index.topology.edge_normals.capacity(),
+            size_of::<[glam::Vec3; 3]>(),
+        ),
+        index.topology.edge_border.capacity(),
+        capacity_bytes(
+            index.topology.vertex_normals.capacity(),
+            size_of::<glam::Vec3>(),
+        ),
+        capacity_bytes(index.topology.vertex_border.capacity(), size_of::<bool>()),
+    ];
+    assert!(index.resident_size_bytes() >= arrays.into_iter().sum::<usize>() as u64);
+    assert_eq!(control.counters().memory_bytes, index.resident_size_bytes());
+    drop(index);
+    assert_eq!(control.counters().memory_bytes, 0);
+}
