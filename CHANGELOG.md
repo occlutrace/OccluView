@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Keep thickness probes on their known wall after large scene translations and rotations.
+
 - Prevent concurrent Unix launches from both becoming the primary window.
 
 - Preserve a file created at an implicit thumbnail destination while rendering.
