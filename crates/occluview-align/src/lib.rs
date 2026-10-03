@@ -88,6 +88,8 @@ pub use sample::{
     SurfaceQuality, SurfaceSample, SurfaceSide, AREA_SAMPLE_SEED, COARSE_AREA_SAMPLES,
     DENSE_AREA_SAMPLES, MID_AREA_SAMPLES, VERIFY_AREA_SAMPLES,
 };
+#[cfg(feature = "search-probe")]
+pub use sample::{probe_cell_clipping, CellClipProbe};
 
 pub use search_control::SearchControl;
 pub use search_result::*;

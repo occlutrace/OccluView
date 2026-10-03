@@ -29,6 +29,63 @@ struct Request {
     angular: f64,
 }
 
+/// Fixed storage and exact work for one synthetic cell-clipping diagnostic.
+#[cfg(feature = "search-probe")]
+#[derive(Clone, Debug, PartialEq)]
+pub struct CellClipProbe {
+    /// Active polygon vertices occupy the prefix ending at `len`.
+    pub points: [DVec3; 12],
+    /// Original-triangle coordinates of the corresponding vertices.
+    pub barycentric: [DVec3; 12],
+    /// Number of active vertices, at most twelve.
+    pub len: usize,
+    /// Ordinary units charged by clipping, excluding input validation.
+    pub operations: u64,
+}
+
+/// Inspect the authoritative clipping of a synthetic triangle into one slab.
+///
+/// The slab includes both boundaries `[coordinate, coordinate + 1]` on `axis`.
+/// Points and cell coordinates must have magnitude below 1e9. Degenerate
+/// triangles are accepted; their polygon need not have positive area. Fixed
+/// storage bounds work and allocation; serial control use isolates the count.
+///
+/// # Errors
+/// Returns `Numerical` for non-finite points or an invalid axis, `ResourceLimit`
+/// for unsupported coordinates, or the control's interruption reason.
+#[cfg(feature = "search-probe")]
+pub fn probe_cell_clipping(
+    points: [DVec3; 3],
+    axis: usize,
+    coordinate: i64,
+    control: &GeometryControl,
+) -> Result<CellClipProbe, GeometryStop> {
+    control.charge_operations(3)?;
+    if axis >= 3 || points.iter().any(|p| !p.is_finite()) {
+        return Err(GeometryStop::Numerical);
+    }
+    if coordinate.unsigned_abs() >= 1_000_000_000
+        || points.iter().any(|p| p.abs().max_element() >= 1e9)
+    {
+        return Err(GeometryStop::ResourceLimit);
+    }
+    let mut polygon = [Vertex::default(); 12];
+    for (i, point) in points.into_iter().enumerate() {
+        polygon[i] = Vertex {
+            point,
+            barycentric: [DVec3::X, DVec3::Y, DVec3::Z][i],
+        };
+    }
+    let before = control.counters().operations;
+    let len = clip_cell(&mut polygon, 3, axis, coordinate, control)?;
+    Ok(CellClipProbe {
+        points: polygon.map(|v| v.point),
+        barycentric: polygon.map(|v| v.barycentric),
+        len,
+        operations: control.counters().operations - before,
+    })
+}
+
 /// Two serial passes retain area totals and requested samples, never all of the
 /// potentially millions of clipped fragments. The second pass reconstructs
 /// the same source-order CDF; every stream keeps its own fixed PRNG sequence.
@@ -306,42 +363,63 @@ fn clip_cell(
     coordinate: i64,
     control: &GeometryControl,
 ) -> Result<usize, GeometryStop> {
+    if axis >= 3 {
+        return Err(GeometryStop::Numerical);
+    }
+    if len > polygon.len() {
+        return Err(GeometryStop::ResourceLimit);
+    }
+    if len == 0 {
+        return Ok(0);
+    }
     #[allow(clippy::cast_precision_loss)]
     let plane = coordinate as f64;
-    let len = clip(polygon, len, axis, plane, true, control)?;
-    clip(polygon, len, axis, plane + 1., false, control)
+    let mut lower = [false; 12];
+    let mut upper = [false; 12];
+    let mut all_lower = true;
+    let mut all_upper = true;
+    // One classification pass covers both planes. Each tiny edge run remains
+    // bounded, and no vertex is reconstructed for a satisfied half-space.
+    control.charge_operations(u64::try_from(len).map_err(|_| GeometryStop::ResourceLimit)?)?;
+    for (i, vertex) in polygon[..len].iter().enumerate() {
+        lower[i] = vertex.point[axis] >= plane;
+        upper[i] = vertex.point[axis] <= plane + 1.;
+        all_lower &= lower[i];
+        all_upper &= upper[i];
+    }
+    let len = if all_lower {
+        len
+    } else {
+        clip(polygon, len, axis, plane, &lower)?
+    };
+    // A lower-plane intersection lies inside the upper half-space whenever
+    // both original endpoints do. Clipping cannot invalidate this proof.
+    if all_upper || len == 0 {
+        return Ok(len);
+    }
+    control.charge_operations(u64::try_from(len).map_err(|_| GeometryStop::ResourceLimit)?)?;
+    if !all_lower {
+        for (i, vertex) in polygon[..len].iter().enumerate() {
+            upper[i] = vertex.point[axis] <= plane + 1.;
+        }
+    }
+    clip(polygon, len, axis, plane + 1., &upper)
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "fixed polygon buffer and clipping half-space"
-)]
 fn clip(
     polygon: &mut [Vertex; 12],
     len: usize,
     axis: usize,
     plane: f64,
-    positive: bool,
-    control: &GeometryControl,
+    inside: &[bool; 12],
 ) -> Result<usize, GeometryStop> {
-    if len == 0 {
-        return Ok(0);
-    }
     let mut output = [Vertex::default(); 12];
     let mut count = 0;
-    let inside = |v: Vertex| {
-        if positive {
-            v.point[axis] >= plane
-        } else {
-            v.point[axis] <= plane
-        }
-    };
-    // At most twelve vertices are admitted together. Successful accounting
-    // is unchanged; cancellation remains bounded by one tiny polygon edge run.
-    control.charge_operations(u64::try_from(len).map_err(|_| GeometryStop::ResourceLimit)?)?;
     let mut previous = polygon[len - 1];
-    for &current in &polygon[..len] {
-        if inside(previous) != inside(current) {
+    let mut previous_inside = inside[len - 1];
+    for (i, &current) in polygon[..len].iter().enumerate() {
+        let current_inside = inside[i];
+        if previous_inside != current_inside {
             let t = (plane - previous.point[axis]) / (current.point[axis] - previous.point[axis]);
             let mut point = previous.point.lerp(current.point, t);
             point[axis] = plane;
@@ -352,11 +430,12 @@ fn clip(
             *output.get_mut(count).ok_or(GeometryStop::ResourceLimit)? = v;
             count += 1;
         }
-        if inside(current) {
+        if current_inside {
             *output.get_mut(count).ok_or(GeometryStop::ResourceLimit)? = current;
             count += 1;
         }
         previous = current;
+        previous_inside = current_inside;
     }
     *polygon = output;
     Ok(count)
@@ -366,6 +445,74 @@ fn clip(
 mod tests {
     use super::*;
     use crate::Soup;
+
+    #[test]
+    fn contained_cell_classification_avoids_two_polygon_reconstructions() {
+        for axis in 0..3 {
+            for coordinate in -2..=2i64 {
+                let mut polygon = [Vertex::default(); 12];
+                for (i, offset) in [0.1, 0.4, 0.9].into_iter().enumerate() {
+                    polygon[i] = Vertex {
+                        point: DVec3::new(0.2, 0.3, 0.4),
+                        barycentric: [DVec3::X, DVec3::Y, DVec3::Z][i],
+                    };
+                    #[allow(clippy::cast_precision_loss)]
+                    {
+                        polygon[i].point[axis] = coordinate as f64 + offset;
+                    }
+                }
+                let expected = polygon[..3]
+                    .iter()
+                    .map(|v| (v.point, v.barycentric))
+                    .collect::<Vec<_>>();
+                let control = GeometryControl::unlimited();
+                let len = clip_cell(&mut polygon, 3, axis, coordinate, &control).unwrap();
+                assert_eq!(len, 3);
+                assert_eq!(
+                    polygon[..len]
+                        .iter()
+                        .map(|v| (v.point, v.barycentric))
+                        .collect::<Vec<_>>(),
+                    expected
+                );
+                assert_eq!(control.counters().operations, 3);
+            }
+        }
+    }
+
+    #[test]
+    fn one_sided_cell_cut_keeps_exact_barycentric_vertices() {
+        let mut polygon = [Vertex::default(); 12];
+        for (i, point) in [
+            DVec3::new(-0.5, 0., 0.),
+            DVec3::new(0.5, 0., 0.),
+            DVec3::new(0.5, 1., 0.),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            polygon[i] = Vertex {
+                point,
+                barycentric: [DVec3::X, DVec3::Y, DVec3::Z][i],
+            };
+        }
+        let control = GeometryControl::unlimited();
+        let len = clip_cell(&mut polygon, 3, 0, 0, &control).unwrap();
+        assert_eq!(len, 4);
+        assert_eq!(
+            polygon[..len]
+                .iter()
+                .map(|v| (v.point, v.barycentric))
+                .collect::<Vec<_>>(),
+            [
+                (DVec3::new(0., 0.5, 0.), DVec3::new(0.5, 0., 0.5)),
+                (DVec3::ZERO, DVec3::new(0.5, 0.5, 0.)),
+                (DVec3::new(0.5, 0., 0.), DVec3::Y),
+                (DVec3::new(0.5, 1., 0.), DVec3::Z),
+            ]
+        );
+        assert_eq!(control.counters().operations, 3);
+    }
 
     #[test]
     fn broad_surface_populations_fit_without_retaining_cell_fragments() {
