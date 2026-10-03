@@ -16,6 +16,9 @@ pub(crate) fn proposal_proxy(
     surface: &PreparedSurface,
     control: &GeometryControl,
 ) -> Result<Option<SurfaceIndex>, GeometryStop> {
+    if !surface.exact_original {
+        return Ok(None);
+    }
     let samples = &surface.samples[1].samples;
     let count = samples.len().min(1_024);
     let _memory = control.reserve(count * 16 + 64)?;
