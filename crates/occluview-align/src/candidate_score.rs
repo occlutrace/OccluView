@@ -96,24 +96,36 @@ pub(crate) fn weighted_trim_sweep(
     let available = available.min(area) / area;
     let endpoint = available.min(ceiling);
     let mut best = None;
+    let mut slot = 0;
+    let mut full_weight = 0.;
+    let mut full_squared = 0.;
+    // Eligible fractions increase monotonically, including the available
+    // endpoint. Integrate full strata once; only the final fractional stratum
+    // is recomputed for each requested prefix.
     for fraction in FRACTIONS.into_iter().chain([endpoint]) {
+        control.charge_operations(1)?;
         if fraction <= 0. || fraction > endpoint + 1e-12 {
             continue;
         }
         let target = fraction * area;
-        let mut weight = 0.;
-        let mut squared = 0.;
-        for sample in distances.iter() {
-            control.charge_operations(1)?;
-            let Some(distance) = sample.distance else {
-                break;
-            };
-            let w = sample.weight.min((target - weight).max(0.));
-            squared += distance * distance * w;
-            weight += w;
-            if weight >= target - area * 1e-12 {
+        while let Some(sample) = distances.get(slot) {
+            if full_weight + sample.weight >= target || sample.distance.is_none() {
                 break;
             }
+            control.charge_operations(1)?;
+            let distance = sample.distance.unwrap_or(0.);
+            full_squared += distance * distance * sample.weight;
+            full_weight += sample.weight;
+            slot += 1;
+        }
+        let mut squared = full_squared;
+        let mut weight = full_weight;
+        if let Some(sample) = distances.get(slot).filter(|s| s.distance.is_some()) {
+            control.charge_operations(1)?;
+            let distance = sample.distance.unwrap_or(0.);
+            let w = sample.weight.min((target - full_weight).max(0.));
+            squared += distance * distance * w;
+            weight += w;
         }
         if weight < target - area * 1e-12 {
             continue;
@@ -487,6 +499,49 @@ pub(crate) fn insert_candidate(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn trim_sweep_visits_each_sorted_weight_once() {
+        let mut distances: Vec<_> = (0..512u32)
+            .map(|i| WeightedDistance {
+                distance: Some(0.001 * f64::from(i)),
+                weight: 1.,
+                compatible: None,
+                cell: [u64::from(i), 0, 0],
+            })
+            .collect();
+        let control = GeometryControl::new(
+            crate::CancelFlag::new(),
+            std::time::Duration::from_secs(10),
+            occluview_geometry::surface::GeometryLimits {
+                operations: 2_100,
+                ..occluview_geometry::surface::GeometryLimits::default()
+            },
+        );
+        let selected = weighted_trim_sweep(&mut distances, 512., 1., &control)
+            .unwrap()
+            .unwrap();
+        // Independent literal prefix integration, including a fractional last
+        // stratum, checks the objective while bounded work checks the sweep.
+        let oracle = FRACTIONS
+            .into_iter()
+            .map(|q| {
+                let mut remaining = q * 512.;
+                let mut squared = 0.;
+                for i in 0..512u32 {
+                    let weight = remaining.clamp(0., 1.);
+                    squared += weight * (0.001 * f64::from(i)).powi(2);
+                    remaining -= weight;
+                }
+                let rms = (squared / (q * 512.)).sqrt();
+                (q, rms, (rms * rms + 0.0004).sqrt() / q.sqrt())
+            })
+            .min_by(|a, b| a.2.total_cmp(&b.2))
+            .unwrap();
+        assert_eq!(selected.0, oracle.0);
+        assert!((selected.1 - oracle.1).abs() <= 1e-12);
+        assert!((selected.2 - oracle.2).abs() <= 1e-12);
+        assert!(control.counters().operations <= 2_100);
+    }
     #[test]
     fn missing_area_cannot_shrink_fraction_denominator() {
         let mut d = [
