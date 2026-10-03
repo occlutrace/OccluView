@@ -255,15 +255,17 @@ pub(super) fn frozen_objective(
 
 /// Frozen correspondences, prefix, area weights and robust scale at every
 /// backtrack. No seating veto, seed tether or distance-from-start refusal.
+/// An accepted step carries its completed before/after objective reductions;
+/// callers can evaluate stability without repeating identical serial sums.
 pub(super) fn line_search(
     pairs: &[SurfacePair],
     pose: Rigid,
     model: &Linearization,
     dense: bool,
     control: &GeometryControl,
-) -> Result<(Rigid, RefinementTermination), GeometryStop> {
+) -> Result<(Rigid, RefinementTermination, Option<[f64; 2]>), GeometryStop> {
     let Some(step) = solve_observable_step(&model.matrix, model.gradient) else {
-        return Ok((pose, RefinementTermination::Singular));
+        return Ok((pose, RefinementTermination::Singular, None));
     };
     let mut rotation = DVec3::new(step[0], step[1], step[2]) / model.radius;
     let mut translation = DVec3::new(step[3], step[4], step[5]);
@@ -274,12 +276,12 @@ pub(super) fn line_search(
     };
     let translation_bound = if dense { 0.1 } else { 0.5 };
     if !rotation.is_finite() || !translation.is_finite() {
-        return Ok((pose, RefinementTermination::NumericalTrialRejected));
+        return Ok((pose, RefinementTermination::NumericalTrialRejected, None));
     }
     rotation = capped_vector(rotation, angular_bound);
     translation = capped_vector(translation, translation_bound);
     if rotation.length() <= 1e-5 && translation.length() <= 1e-4 {
-        return Ok((pose, RefinementTermination::StepSmall));
+        return Ok((pose, RefinementTermination::StepSmall, None));
     }
     let before = frozen_objective(pairs, pose, model, control)?;
     for fraction in [1., 0.5, 0.25, 0.125] {
@@ -294,10 +296,14 @@ pub(super) fn line_search(
         }
         let after = frozen_objective(pairs, trial, model, control)?;
         if after.is_finite() && after <= before * (1. - 1e-4) {
-            return Ok((trial, RefinementTermination::NotStarted));
+            return Ok((
+                trial,
+                RefinementTermination::NotStarted,
+                Some([before, after]),
+            ));
         }
     }
-    Ok((pose, RefinementTermination::Stationary))
+    Ok((pose, RefinementTermination::Stationary, None))
 }
 
 fn capped_vector(vector: DVec3, bound: f64) -> DVec3 {
@@ -317,6 +323,49 @@ fn capped_vector(vector: DVec3, bound: f64) -> DVec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accepted_line_search_returns_the_exact_completed_objectives() {
+        let mut pairs = analytic_pairs(0);
+        for pair in &mut pairs {
+            pair.fixed.z = 0.1;
+        }
+        let unlimited = GeometryControl::unlimited();
+        let model = accumulate_robust(&pairs, Rigid::IDENTITY, &unlimited)
+            .unwrap()
+            .unwrap();
+        let control = GeometryControl::new(
+            crate::CancelFlag::new(),
+            std::time::Duration::MAX,
+            occluview_geometry::surface::GeometryLimits {
+                operations: pairs.len() as u64 * 2,
+                ..occluview_geometry::surface::GeometryLimits::default()
+            },
+        );
+        let (next, termination, objectives) =
+            line_search(&pairs, Rigid::IDENTITY, &model, false, &control).unwrap();
+        assert_eq!(termination, RefinementTermination::NotStarted);
+        assert_eq!(
+            objectives,
+            Some([
+                frozen_objective(&pairs, Rigid::IDENTITY, &model, &unlimited).unwrap(),
+                frozen_objective(&pairs, next, &model, &unlimited).unwrap(),
+            ])
+        );
+        assert_eq!(control.counters().operations, pairs.len() as u64 * 2);
+        assert_eq!(control.counters().query_calls, 0);
+        let cancel = crate::CancelFlag::new();
+        cancel.cancel();
+        let cancelled = GeometryControl::new(
+            cancel,
+            std::time::Duration::MAX,
+            occluview_geometry::surface::GeometryLimits::default(),
+        );
+        assert!(matches!(
+            line_search(&pairs, Rigid::IDENTITY, &model, false, &cancelled),
+            Err(GeometryStop::Cancelled)
+        ));
+    }
 
     #[test]
     fn overflowing_twist_is_rejected_without_losing_the_pose() {
@@ -461,7 +510,7 @@ mod tests {
         assert_eq!(first.matrix, second.matrix);
         assert_eq!(first.gradient, second.gradient);
         assert!((first.delta - 1.345 * 0.02).abs() < 1e-12);
-        let (pose, _) = line_search(
+        let (pose, _, _) = line_search(
             &pairs,
             Rigid::IDENTITY,
             &second,

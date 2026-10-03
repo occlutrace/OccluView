@@ -662,7 +662,7 @@ pub(crate) fn perturb_refine(
         else {
             return Ok(None);
         };
-        let (next, termination) =
+        let (next, termination, _) =
             super::super::icp_surface_step::line_search(&pairs, pose, &model, true, control)?;
         pose = next;
         if termination != crate::RefinementTermination::NotStarted {

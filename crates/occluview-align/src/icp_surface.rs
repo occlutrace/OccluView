@@ -6,16 +6,14 @@
 //! steps; the same bidirectional fractional score compares every checkpoint.
 //! Local convergence supplies no independent confidence or uniqueness.
 
-use super::icp_surface_step::{
-    accumulate_robust, frozen_objective, line_search, PlaneInformation, SurfacePair,
-};
+use super::icp_surface_step::{accumulate_robust, line_search, PlaneInformation, SurfacePair};
 use crate::candidate_score::{
     pose_distance, proposal_order, score_common_region, weighted_trim_sweep, CoarseScoring,
     Proposal, WeightedDistance,
 };
 use crate::{NormalPolicy, PreparedSurface, RefinementTermination, Rigid, SearchSettings};
 use occluview_geometry::surface::{
-    GeometryControl, GeometryStop, QueryOutcome, SurfaceQueryScratch,
+    GeometryControl, GeometryStop, QueryOutcome, SurfaceQueryHint, SurfaceQueryScratch,
 };
 use std::collections::BTreeSet;
 
@@ -395,6 +393,15 @@ fn refine_candidate(
     let mut fraction = initial_fraction;
     let reach = scale.reach * (settings.influence_radius_mm / 2.).clamp(0.25, 2.);
     let mut stable = 0;
+    // A facet from the previous iteration bounds this sample's new nearest
+    // distance after exact recomputation. Geometry validates every hint.
+    let mut hints = [Vec::new(), Vec::new()];
+    for (surface, hints) in [moving, fixed].into_iter().zip(&mut hints) {
+        hints
+            .try_reserve_exact(surface.samples[scale.slot].samples.len())
+            .map_err(|_| GeometryStop::ResourceLimit)?;
+        hints.resize(surface.samples[scale.slot].samples.len(), None);
+    }
     held.termination = RefinementTermination::IterationLimit;
     for iteration in 0..scale.iterations {
         if let Some(stop) = refinement_admission(control) {
@@ -409,6 +416,7 @@ fn refine_candidate(
             settings,
             &mut fraction,
             iteration.is_multiple_of(3) && (iteration != 0 || initial_fraction.is_none()),
+            &mut hints,
             control,
         )?;
         if pairs.len() < 6 {
@@ -426,13 +434,16 @@ fn refine_candidate(
             held.information.clone_from(&model.information);
             held.unsigned_fallback |= fallback;
         }
-        let before = frozen_objective(&pairs, pose, &model, control)?;
-        let (next, termination) = line_search(&pairs, pose, &model, scale.slot == 2, control)?;
+        let (next, termination, objectives) =
+            line_search(&pairs, pose, &model, scale.slot == 2, control)?;
         if termination != RefinementTermination::NotStarted {
             held.termination = termination;
             break;
         }
-        let after = frozen_objective(&pairs, next, &model, control)?;
+        let Some([before, after]) = objectives else {
+            held.termination = RefinementTermination::NumericalTrialRejected;
+            break;
+        };
         control.charge_point_pairs(moving.samples[0].samples.len().min(256) as u64)?;
         let displacement = pose_distance(pose, next, &moving.samples[0].samples)[0];
         let score = rescore(moving, fixed, next, settings, control)?;
@@ -466,7 +477,7 @@ fn refine_candidate(
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "directed immutable populations and one shared control"
+    reason = "directed population and optional per-sample facet hints"
 )]
 fn gather(
     source: &PreparedSurface,
@@ -476,6 +487,7 @@ fn gather(
     reach: f64,
     reverse: bool,
     policy: NormalPolicy,
+    hints: &mut [Option<SurfaceQueryHint>],
     control: &GeometryControl,
 ) -> Result<Vec<Gathered>, GeometryStop> {
     let samples = &source.samples[slot].samples;
@@ -484,8 +496,9 @@ fn gather(
         .try_reserve_exact(samples.len())
         .map_err(|_| GeometryStop::ResourceLimit)?;
     let mut scratch = SurfaceQueryScratch::new(control)?;
-    for sample in samples {
+    for (ordinal, sample) in samples.iter().enumerate() {
         control.charge_operations(1)?;
+        scratch.set_facet_hint(hints.get(ordinal).copied().flatten());
         let point = pose.apply(sample.point);
         if !point.is_finite() {
             return Err(GeometryStop::Numerical);
@@ -504,6 +517,9 @@ fn gather(
                 QueryOutcome::Interrupted { reason, .. } => return Err(reason),
             }
         };
+        if let Some(hint) = hints.get_mut(ordinal) {
+            *hint = scratch.facet_hint();
+        }
         let agreement = hit.and_then(|h| {
             sample
                 .normal
@@ -564,6 +580,7 @@ fn correspondences(
     settings: &SearchSettings,
     fraction: &mut Option<f64>,
     refresh: bool,
+    hints: &mut [Vec<Option<SurfaceQueryHint>>; 2],
     control: &GeometryControl,
 ) -> Result<(Vec<SurfacePair>, bool), GeometryStop> {
     let forward = gather(
@@ -574,6 +591,7 @@ fn correspondences(
         reach,
         false,
         settings.normal_policy,
+        &mut hints[0],
         control,
     )?;
     let reverse = gather(
@@ -584,6 +602,7 @@ fn correspondences(
         reach,
         true,
         settings.normal_policy,
+        &mut hints[1],
         control,
     )?;
     let moving_smaller = moving.eligible_area_mm2 <= fixed.eligible_area_mm2;
@@ -732,12 +751,79 @@ mod tests {
             0.3,
             false,
             NormalPolicy::Unsigned,
+            &mut [],
             &control,
         )
         .unwrap();
         assert_eq!(gathered.len(), surface.samples[2].samples.len());
         assert!(gathered.iter().all(|pair| pair.pair.is_none()));
         assert_eq!(control.counters().query_calls, before);
+    }
+
+    #[test]
+    fn temporal_population_bounds_preserve_pairs_and_reduce_traversal() {
+        let unlimited = GeometryControl::unlimited();
+        let surface = surface(&unlimited);
+        let cold = GeometryControl::unlimited();
+        let warm = GeometryControl::unlimited();
+        let mut hints = vec![None; surface.samples[2].samples.len()];
+        // Initial nearest facets precede a new pose; no old point/distance is
+        // allowed to stand in for its recomputed exact surface answer.
+        gather(
+            &surface,
+            &surface,
+            Rigid::IDENTITY,
+            2,
+            4.,
+            false,
+            NormalPolicy::Unsigned,
+            &mut hints,
+            &unlimited,
+        )
+        .unwrap();
+        let pose = Rigid::new(DQuat::from_rotation_x(0.001), DVec3::Z * 0.02);
+        let expected = gather(
+            &surface,
+            &surface,
+            pose,
+            2,
+            4.,
+            false,
+            NormalPolicy::Unsigned,
+            &mut [],
+            &cold,
+        )
+        .unwrap();
+        let actual = gather(
+            &surface,
+            &surface,
+            pose,
+            2,
+            4.,
+            false,
+            NormalPolicy::Unsigned,
+            &mut hints,
+            &warm,
+        )
+        .unwrap();
+        for (a, b) in actual.iter().zip(&expected) {
+            assert_eq!(a.distance.distance, b.distance.distance);
+            assert_eq!(a.distance.weight, b.distance.weight);
+            assert_eq!(a.distance.compatible, b.distance.compatible);
+            assert_eq!(a.distance.cell, b.distance.cell);
+            assert_eq!(
+                a.pair.map(|p| (p.moving, p.fixed, p.normal, p.weight)),
+                b.pair.map(|p| (p.moving, p.fixed, p.normal, p.weight))
+            );
+        }
+        assert_eq!(cold.counters().query_calls, warm.counters().query_calls);
+        assert!(
+            warm.counters().operations < cold.counters().operations,
+            "temporal={} preceding-sample={}",
+            warm.counters().operations,
+            cold.counters().operations
+        );
+        assert_eq!(warm.counters().memory_bytes, 0);
     }
 
     #[test]

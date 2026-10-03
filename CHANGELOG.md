@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Scan matching reuses validated facet bounds between refinement iterations without changing exact surface distances.
+
 - Scan matching reduces repeated search work with conservative shortlist bounds and reusable query scratch.
 
 - Scan matching merges converged placements only when their measured common regions agree, preserving distinct alternatives.
