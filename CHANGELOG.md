@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Reject invalid OBJ normal and texture references instead of dropping their attributes.
+
 - Reject PLY payload beyond its declared elements instead of silently dropping mesh data.
 
 - Reject binary STL data beyond its declared triangle count instead of dropping geometry.
