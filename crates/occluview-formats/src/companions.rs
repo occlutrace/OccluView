@@ -236,7 +236,7 @@ fn validate_map_properties(mut tokens: &[&str]) -> Result<(), FormatError> {
             let Some(value) = tokens.first().and_then(|value| value.parse::<f64>().ok()) else {
                 break;
             };
-            if value != expected {
+            if value.partial_cmp(&expected) != Some(std::cmp::Ordering::Equal) {
                 return Err(unsupported_material(option));
             }
             tokens = &tokens[1..];

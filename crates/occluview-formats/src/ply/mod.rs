@@ -112,7 +112,7 @@ impl FaceUvs {
         };
         if let Some(slot) = self.per_vertex.get_mut(index) {
             if let Some(existing) = *slot {
-                self.conflicting |= existing != uv;
+                self.conflicting |= existing.partial_cmp(&uv) != Some(std::cmp::Ordering::Equal);
             } else {
                 *slot = Some(uv);
             }

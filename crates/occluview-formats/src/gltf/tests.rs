@@ -72,13 +72,13 @@ fn unsupported_glb_geometry_features_are_refused() {
         let mut doc: serde_json::Value = serde_json::from_slice(json).expect("JSON");
         match feature {
             "sparse" => {
-                doc["accessors"][0]["sparse"] = serde_json::json!({"count":1,"indices":{"bufferView":1,"componentType":5125},"values":{"bufferView":0}})
+                doc["accessors"][0]["sparse"] = serde_json::json!({"count":1,"indices":{"bufferView":1,"componentType":5125},"values":{"bufferView":0}});
             }
             "extensionsRequired" => {
-                doc[feature] = serde_json::json!(["KHR_draco_mesh_compression"])
+                doc[feature] = serde_json::json!(["KHR_draco_mesh_compression"]);
             }
             "targets" => {
-                doc["meshes"][0]["primitives"][0][feature] = serde_json::json!([{"POSITION":0}])
+                doc["meshes"][0]["primitives"][0][feature] = serde_json::json!([{"POSITION":0}]);
             }
             "skin" => doc["nodes"][0][feature] = serde_json::json!(0),
             "animations" => doc[feature] = serde_json::json!([{"channels":[],"samplers":[]}]),

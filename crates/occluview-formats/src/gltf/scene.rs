@@ -111,6 +111,13 @@ fn first_primitive_material_from(
     None
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SceneMaterial {
+    NoPrimitives,
+    Unassigned,
+    Assigned(usize),
+}
+
 /// One traversal of one document's node hierarchy.
 ///
 /// The visit set lives here rather than in a parameter so it spans every root
@@ -121,7 +128,7 @@ pub(super) struct SceneWalk<'a> {
     bin_chunk: &'a [u8],
     builder: &'a mut MeshBuilder,
     visited: VisitedNodes,
-    material: Option<Option<usize>>,
+    material: SceneMaterial,
 }
 
 impl<'a> SceneWalk<'a> {
@@ -136,7 +143,7 @@ impl<'a> SceneWalk<'a> {
             bin_chunk,
             builder,
             visited,
-            material: None,
+            material: SceneMaterial::NoPrimitives,
         }
     }
 
@@ -172,13 +179,13 @@ impl<'a> SceneWalk<'a> {
                 .get(mesh_idx)
                 .ok_or_else(|| malformed("mesh out of range"))?;
             for prim in &mesh.primitives {
-                if self
+                let material = prim
                     .material
-                    .is_some_and(|material| material != prim.material)
-                {
+                    .map_or(SceneMaterial::Unassigned, SceneMaterial::Assigned);
+                if self.material != SceneMaterial::NoPrimitives && self.material != material {
                     return Err(malformed("multiple primitive materials cannot be represented by one mesh; export separate material meshes"));
                 }
-                self.material = Some(prim.material);
+                self.material = material;
                 emit_primitive(
                     self.doc,
                     prim,
