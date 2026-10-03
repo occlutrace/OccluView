@@ -86,7 +86,7 @@ fn stream_thumbnail_cache_key_changes_when_kind_or_bytes_change() {
 #[test]
 fn large_streams_with_different_interior_bytes_have_distinct_cache_keys() {
     let length =
-        usize::try_from(cache::EXACT_CONTENT_HASH_BYTES).expect("hash budget fits usize") + 1;
+        usize::try_from(cache::LARGE_CONTENT_FIXTURE_BYTES).expect("hash budget fits usize") + 1;
     let mut bytes = vec![0u8; length];
     let first = cache::ThumbnailStreamCacheKey::new(occluview_formats::FormatKind::Obj, &bytes);
     bytes[length / 4] = 1;
@@ -95,6 +95,27 @@ fn large_streams_with_different_interior_bytes_have_distinct_cache_keys() {
         first, second,
         "different stream payloads must not share pixels"
     );
+}
+
+#[test]
+fn large_file_keys_include_interior_bytes_even_when_metadata_matches() {
+    use std::io::{Seek, SeekFrom, Write};
+    let path = fixtures::write_temp_fixture("large-content-key.obj", b"");
+    let mut file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .expect("file");
+    let length = cache::LARGE_CONTENT_FIXTURE_BYTES + 1;
+    file.set_len(length).expect("sparse file");
+    let metadata = cache::thumbnail_file_metadata(&path).expect("metadata");
+    let first = thumbnail_file_content_key(&path, &metadata).expect("key");
+    file.seek(SeekFrom::Start(length / 4)).expect("interior");
+    file.write_all(&[1]).expect("changed geometry byte");
+    let second = thumbnail_file_content_key(&path, &metadata).expect("key with matching metadata");
+    assert_ne!(first, second, "different scans must not share pixels");
+    drop(file);
+    let _ = fs::remove_file(path);
 }
 
 #[test]
@@ -594,41 +615,35 @@ fn a_scan_that_differs_only_inside_gets_its_own_thumbnail() {
     let _ = fs::remove_file(second_path);
 }
 
-/// Past the exact budget the key is a sample, so it carries the timestamp too.
-///
-/// Sampling three windows can be fooled by a file that differs only between
-/// them. Mixing the modification time in bounds what that costs: two files
-/// then have to share a length, three windows and a timestamp before one can
-/// be served the other's picture.
+/// Large copies share pixels, but changed interior geometry receives a new key.
 #[test]
-fn a_sampled_content_key_is_not_shared_by_two_moments() {
-    let path = fixtures::write_temp_fixture("stl", &fixtures::binary_stl_cube());
-    let measured = cache::thumbnail_file_metadata(&path).expect("fixture metadata");
-    // Claim a size past the exact budget so the sampled branch is taken; the
-    // window reads stop at end of file.
-    let sampled = |modified_nanos| ThumbnailFileMetadata {
-        byte_len: cache::EXACT_CONTENT_HASH_BYTES + 1,
+fn large_content_keys_track_geometry_across_moments_and_copies() {
+    use std::io::{Seek, SeekFrom, Write};
+    let path = fixtures::write_temp_fixture("large-moments.stl", &fixtures::binary_stl_cube());
+    let mut file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .expect("file");
+    let length = cache::LARGE_CONTENT_FIXTURE_BYTES + 1;
+    file.set_len(length).expect("large file");
+    let metadata = |modified_nanos| ThumbnailFileMetadata {
+        byte_len: length,
         modified_nanos,
     };
-    let morning =
-        thumbnail_file_content_key(&path, &sampled(1_000)).expect("a key for the earlier stamp");
-    let evening =
-        thumbnail_file_content_key(&path, &sampled(2_000)).expect("a key for the later stamp");
+    let morning = thumbnail_file_content_key(&path, &metadata(1_000)).expect("earlier scan");
+    file.seek(SeekFrom::Start(length / 4)).expect("interior");
+    file.write_all(&[1]).expect("new scan geometry");
+    let evening = thumbnail_file_content_key(&path, &metadata(2_000)).expect("later scan");
     assert_ne!(
         morning, evening,
-        "a sampled key must distinguish two files that merely sample alike"
+        "a later scan must not share an earlier scan's pixels"
     );
-
-    // And the exact branch keeps deduplicating copies, whatever their stamps.
-    let exact = |modified_nanos| ThumbnailFileMetadata {
-        byte_len: measured.byte_len,
-        modified_nanos,
-    };
-    let copied = thumbnail_file_content_key(&path, &exact(1_000)).expect("a key");
-    let original = thumbnail_file_content_key(&path, &exact(2_000)).expect("a key");
+    let copied = thumbnail_file_content_key(&path, &metadata(3_000)).expect("copied scan");
     assert_eq!(
-        copied, original,
-        "a scan copied into a folder must still share one decode with its twin"
+        copied, evening,
+        "identical large copies must share one decode"
     );
+    drop(file);
     let _ = fs::remove_file(path);
 }
