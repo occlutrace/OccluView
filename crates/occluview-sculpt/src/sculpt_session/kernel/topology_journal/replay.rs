@@ -196,6 +196,20 @@ impl TopoJournal {
             seen[kind] += 1;
         }
         seen == counts
+            && self
+                .added_tris
+                .iter()
+                .chain(
+                    self.rewired
+                        .iter()
+                        .flat_map(|rewire| [&rewire.before, &rewire.after]),
+                )
+                .chain(
+                    self.collapsed
+                        .iter()
+                        .flat_map(|slot| [&slot.at_removed_corners, &slot.at_last_corners]),
+                )
+                .all(|corners| corners.iter().all(|&vertex| vertex < end_vertices))
             && self.added_verts.iter().all(|added| {
                 added
                     .pos
@@ -214,62 +228,6 @@ impl TopoJournal {
                         .chain(&edit.after)
                         .all(|value| value.is_finite())
             })
-    }
-}
-
-#[cfg(test)]
-mod input_tests {
-    use super::*;
-
-    #[test]
-    fn invalid_topology_history_is_refused_atomically_in_both_directions() {
-        for redo in [true, false] {
-            let faces = if redo {
-                vec![0, 1, 2]
-            } else {
-                vec![0, 1, 2, 0, 1, 2, 0, 1, 2]
-            };
-            let mut session =
-                SculptSession::new(vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0], faces)
-                    .expect("valid mesh fixture");
-            let before = session.faces().to_vec();
-            let mut journal = TopoJournal {
-                base_verts: 3,
-                base_tris: 1,
-                base_groups: 3,
-                base_live_tris: 1,
-                live_tris: if redo { 2 } else { 3 },
-                ..TopoJournal::default()
-            };
-            if redo {
-                journal.push_rewire(TopoRewire {
-                    tri: 0,
-                    before: [0, 1, 2],
-                    after: [2, 1, 0],
-                });
-                journal.push_added_tri([0, 1, u32::MAX]);
-            } else {
-                journal.push_added_tri([0, 2, 1]);
-                journal.push_added_tri([0, 1, 2]);
-            }
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                session.restore_topo(&[], &[], redo, &journal)
-            }));
-            assert!(
-                result.is_ok(),
-                "malformed topology must not panic (redo={redo})"
-            );
-            assert!(
-                result.ok().flatten().is_none(),
-                "malformed topology must refuse"
-            );
-            assert_eq!(
-                session.faces(),
-                before,
-                "a refused history record must leave every face intact"
-            );
-            assert_eq!(session.vertex_count(), 3);
-        }
     }
 }
 
@@ -731,5 +689,93 @@ impl SculptSession {
         self.next_stamp();
         self.hit_triangle = None;
         true
+    }
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::*;
+
+    #[test]
+    fn history_refuses_invalid_corners_in_either_half_of_a_rewire() {
+        for redo in [true, false] {
+            let mut session = SculptSession::new(
+                vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+                vec![0, 1, 2],
+            )
+            .expect("valid mesh fixture");
+            let before = session.faces().to_vec();
+            session.remesh_armed = true;
+            let mut journal = TopoJournal {
+                base_verts: 3,
+                base_tris: 1,
+                base_groups: 3,
+                base_live_tris: 1,
+                live_tris: 1,
+                ..TopoJournal::default()
+            };
+            journal.push_rewire(TopoRewire {
+                tri: 0,
+                before: if redo { [0, 1, u32::MAX] } else { [2, 1, 0] },
+                after: if redo { [2, 1, 0] } else { [0, 1, u32::MAX] },
+            });
+            assert!(
+                session.restore_topo(&[], &[], redo, &journal).is_none(),
+                "invalid corners must refuse even in the opposite direction's payload"
+            );
+            assert_eq!(session.faces(), before);
+            assert!(session.remesh_armed, "refusal must preserve session state");
+        }
+    }
+
+    #[test]
+    fn invalid_topology_history_is_refused_atomically_in_both_directions() {
+        for redo in [true, false] {
+            let faces = if redo {
+                vec![0, 1, 2]
+            } else {
+                vec![0, 1, 2, 0, 1, 2, 0, 1, 2]
+            };
+            let mut session =
+                SculptSession::new(vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0], faces)
+                    .expect("valid mesh fixture");
+            let before = session.faces().to_vec();
+            let mut journal = TopoJournal {
+                base_verts: 3,
+                base_tris: 1,
+                base_groups: 3,
+                base_live_tris: 1,
+                live_tris: if redo { 2 } else { 3 },
+                ..TopoJournal::default()
+            };
+            if redo {
+                journal.push_rewire(TopoRewire {
+                    tri: 0,
+                    before: [0, 1, 2],
+                    after: [2, 1, 0],
+                });
+                journal.push_added_tri([0, 1, u32::MAX]);
+            } else {
+                journal.push_added_tri([0, 2, 1]);
+                journal.push_added_tri([0, 1, 2]);
+            }
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                session.restore_topo(&[], &[], redo, &journal)
+            }));
+            assert!(
+                result.is_ok(),
+                "malformed topology must not panic (redo={redo})"
+            );
+            assert!(
+                result.ok().flatten().is_none(),
+                "malformed topology must refuse"
+            );
+            assert_eq!(
+                session.faces(),
+                before,
+                "a refused history record must leave every face intact"
+            );
+            assert_eq!(session.vertex_count(), 3);
+        }
     }
 }
