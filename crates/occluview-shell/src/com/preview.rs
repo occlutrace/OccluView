@@ -767,19 +767,20 @@ mod item_tests {
     use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
     use windows::Win32::UI::Shell::SHCreateItemFromParsingName;
 
+    struct Apartment;
+    impl Drop for Apartment {
+        fn drop(&mut self) {
+            // SAFETY: the guard is created only after successful COM initialization.
+            unsafe { CoUninitialize() };
+        }
+    }
+
     #[test]
     fn item_initialization_preserves_unpaired_filename_code_units() {
         // SAFETY: this test initializes and balances COM on its own thread.
         unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }
             .ok()
             .expect("COM apartment");
-        struct Apartment;
-        impl Drop for Apartment {
-            fn drop(&mut self) {
-                // SAFETY: balances the successful initialization above.
-                unsafe { CoUninitialize() };
-            }
-        }
         let _apartment = Apartment;
         let directory =
             std::env::temp_dir().join(format!("occluview-shell-item-{}", std::process::id()));
