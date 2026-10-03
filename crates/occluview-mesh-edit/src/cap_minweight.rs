@@ -97,18 +97,18 @@ fn segment_distance(a0: DVec3, a1: DVec3, b0: DVec3, b1: DVec3) -> f64 {
     let len_a = dir_a.length_squared();
     let len_b = dir_b.length_squared();
     let proj_b = dir_b.dot(offset);
-    let (param_a, param_b) = if len_a <= f64::EPSILON && len_b <= f64::EPSILON {
+    let (param_a, param_b) = if len_a == 0.0 && len_b == 0.0 {
         (0.0, 0.0)
-    } else if len_a <= f64::EPSILON {
+    } else if len_a == 0.0 {
         (0.0, (proj_b / len_b).clamp(0.0, 1.0))
     } else {
         let proj_a = dir_a.dot(offset);
-        if len_b <= f64::EPSILON {
+        if len_b == 0.0 {
             ((-proj_a / len_a).clamp(0.0, 1.0), 0.0)
         } else {
             let dot_dirs = dir_a.dot(dir_b);
             let denom = len_a * len_b - dot_dirs * dot_dirs;
-            let param_a = if denom.abs() > f64::EPSILON {
+            let param_a = if denom > f64::EPSILON * len_a * len_b {
                 ((dot_dirs * proj_b - proj_a * len_b) / denom).clamp(0.0, 1.0)
             } else {
                 0.0
@@ -285,6 +285,24 @@ fn balanced_far_split(points: &[DVec3], arc: &[usize]) -> (usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rim_simplicity_is_scale_independent() {
+        let crossed = [
+            Vec3::new(-1.0, -1.0, 0.0),
+            Vec3::new(1.0, 1.0, 0.0),
+            Vec3::new(-1.0, 1.0, 0.0),
+            Vec3::new(1.0, -1.0, 0.0),
+        ];
+        let square = [crossed[0], crossed[3], crossed[1], crossed[2]];
+        for scale in [1.0e-20_f32, 1.0e-10, 1.0e-4, 1.0, 1.0e20] {
+            assert!(rim_is_simple_3d(&square.map(|point| point * scale)));
+            assert!(
+                !rim_is_simple_3d(&crossed.map(|point| point * scale)),
+                "a crossing remains damage at scale {scale}"
+            );
+        }
+    }
 
     #[test]
     fn minimum_area_cap_refuses_a_zero_area_rim() {
