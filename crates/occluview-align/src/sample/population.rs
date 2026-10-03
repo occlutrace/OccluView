@@ -336,9 +336,11 @@ fn clip(
             v.point[axis] <= plane
         }
     };
+    // At most twelve vertices are admitted together. Successful accounting
+    // is unchanged; cancellation remains bounded by one tiny polygon edge run.
+    control.charge_operations(u64::try_from(len).map_err(|_| GeometryStop::ResourceLimit)?)?;
     let mut previous = polygon[len - 1];
     for &current in &polygon[..len] {
-        control.charge_operations(1)?;
         if inside(previous) != inside(current) {
             let t = (plane - previous.point[axis]) / (current.point[axis] - previous.point[axis]);
             let mut point = previous.point.lerp(current.point, t);
