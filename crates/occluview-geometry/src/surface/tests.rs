@@ -787,3 +787,31 @@ fn assert_inner_query_cancelled() {
         assert!(terminal.saturating_duration_since(cancelled) < Duration::from_millis(100));
     });
 }
+
+/// Overlapping buckets cannot consume the distance budget by retesting a small
+/// surface. This also checks tie/border/normal equality with the brute oracle.
+#[test]
+fn overlapping_buckets_reuse_distances_without_changing_exact_hits() {
+    use super::super::{CancelFlag, GeometryLimits};
+    use super::{GeometryControl, QueryOutcome};
+    let (positions, indices) = plane(6, 1.);
+    let index = SurfaceIndex::build(soup(&positions, &indices)).unwrap();
+    for lift in [0., 0.5, 2.] {
+        let point = DVec3::new(index.cell_size(), index.cell_size(), lift);
+        let control = GeometryControl::new(
+            CancelFlag::new(),
+            std::time::Duration::from_secs(10),
+            GeometryLimits {
+                triangle_tests: 72,
+                single_query_tests: 72,
+                ..GeometryLimits::default()
+            },
+        );
+        let actual = index.nearest_controlled(point, 5., &control);
+        assert_eq!(
+            actual,
+            QueryOutcome::Complete(brute_nearest(&index, point, 5.))
+        );
+        assert!(control.counters().triangle_tests <= 72);
+    }
+}

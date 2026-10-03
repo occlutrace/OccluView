@@ -1,5 +1,5 @@
-use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -83,7 +83,8 @@ struct ControlState {
     point_pairs: AtomicU64,
     memory: AtomicU64,
     peak: AtomicU64,
-    stopped: std::sync::Mutex<Option<GeometryStop>>,
+    clock_ticks: AtomicU64,
+    stopped: AtomicU8,
 }
 
 /// Product-neutral lifetime, work counters and fallible allocation admission.
@@ -91,7 +92,14 @@ struct ControlState {
 /// Clones share counters. Serial calls have deterministic work-limit prefixes;
 /// cancellation and wall time may end at different prefixes under load.
 #[derive(Clone, Debug)]
-pub struct GeometryControl(Arc<ControlState>);
+pub struct GeometryControl(Arc<ControlState>, Option<Arc<PointPairAllowance>>);
+
+#[derive(Debug)]
+struct PointPairAllowance {
+    limit: u64,
+    used: AtomicU64,
+    stopped: AtomicBool,
+}
 
 impl GeometryControl {
     /// Start one shared lifetime with explicit wall and resource ceilings.
@@ -106,19 +114,23 @@ impl GeometryControl {
         wall: Duration,
         limits: GeometryLimits,
     ) -> Self {
-        Self(Arc::new(ControlState {
-            cancel,
-            started,
-            wall,
-            limits,
-            queries: AtomicU64::new(0),
-            triangles: AtomicU64::new(0),
-            operations: AtomicU64::new(0),
-            point_pairs: AtomicU64::new(0),
-            memory: AtomicU64::new(0),
-            peak: AtomicU64::new(0),
-            stopped: std::sync::Mutex::new(None),
-        }))
+        Self(
+            Arc::new(ControlState {
+                cancel,
+                started,
+                wall,
+                limits,
+                queries: AtomicU64::new(0),
+                triangles: AtomicU64::new(0),
+                operations: AtomicU64::new(0),
+                point_pairs: AtomicU64::new(0),
+                memory: AtomicU64::new(0),
+                peak: AtomicU64::new(0),
+                clock_ticks: AtomicU64::new(0),
+                stopped: AtomicU8::new(0),
+            }),
+            None,
+        )
     }
 
     /// Unlimited admission for existing non-registration consumers.
@@ -144,6 +156,11 @@ impl GeometryControl {
         self.0.limits
     }
 
+    /// Effective wall allowance, including the caller's existing lifetime.
+    pub fn wall_limit(&self) -> Duration {
+        self.0.wall
+    }
+
     /// Check cancellation, deadline and any previously exhausted allowance.
     pub fn checkpoint(&self) -> Option<GeometryStop> {
         if self.0.cancel.is_cancelled() {
@@ -152,11 +169,14 @@ impl GeometryControl {
         if self.0.started.elapsed() >= self.0.wall {
             return Some(GeometryStop::Deadline);
         }
-        *self
-            .0
-            .stopped
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        self.recorded_stop().or_else(|| {
+            self.1.as_ref().and_then(|local| {
+                local
+                    .stopped
+                    .load(Ordering::Relaxed)
+                    .then_some(GeometryStop::WorkLimit)
+            })
+        })
     }
 
     /// Current charged work; no counter exceeds its allowance.
@@ -171,7 +191,9 @@ impl GeometryControl {
         }
     }
 
-    /// Charge before executing scalar/topology/cell work, checking every call.
+    /// Charge before executing scalar/topology/cell work. Cancellation and
+    /// deterministic limits are checked on every call; the wall clock is
+    /// checked at most 128 charged operations apart, including inside queries.
     ///
     /// # Errors
     /// Returns the interruption reason without executing the rejected work.
@@ -179,11 +201,49 @@ impl GeometryControl {
         self.charge(&self.0.operations, self.0.limits.operations, count)
     }
 
+    /// Create a local point-pair allowance while sharing global counters,
+    /// cancellation, deadline and resident memory. Exhausting this allowance
+    /// stops only its clones; the parent can continue independent work.
+    /// Nested allowances are capped by the parent's remaining local allowance.
+    #[must_use]
+    pub fn with_point_pair_allowance(&self, count: u64) -> Self {
+        let count = self.1.as_ref().map_or(count, |local| {
+            count.min(
+                local
+                    .limit
+                    .saturating_sub(local.used.load(Ordering::Relaxed)),
+            )
+        });
+        Self(
+            self.0.clone(),
+            Some(Arc::new(PointPairAllowance {
+                limit: count,
+                used: AtomicU64::new(0),
+                stopped: AtomicBool::new(false),
+            })),
+        )
+    }
+
     /// Charge distance/descriptor tests before evaluating point pairs.
     ///
     /// # Errors
     /// Returns interruption without beginning rejected work.
     pub fn charge_point_pairs(&self, count: u64) -> Result<(), GeometryStop> {
+        if let Some(stop) = self.checkpoint() {
+            return Err(stop);
+        }
+        if let Some(local) = &self.1 {
+            if local
+                .used
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |old| {
+                    old.checked_add(count).filter(|&next| next <= local.limit)
+                })
+                .is_err()
+            {
+                local.stopped.store(true, Ordering::Relaxed);
+                return Err(GeometryStop::WorkLimit);
+            }
+        }
         self.charge(&self.0.point_pairs, self.0.limits.point_pair_tests, count)
     }
 
@@ -199,8 +259,24 @@ impl GeometryControl {
         Ok(())
     }
     fn charge(&self, counter: &AtomicU64, limit: u64, count: u64) -> Result<(), GeometryStop> {
-        if let Some(stop) = self.checkpoint() {
+        if self.0.cancel.is_cancelled() {
+            return Err(GeometryStop::Cancelled);
+        }
+        if let Some(stop) = self.recorded_stop().or_else(|| {
+            self.1.as_ref().and_then(|local| {
+                local
+                    .stopped
+                    .load(Ordering::Relaxed)
+                    .then_some(GeometryStop::WorkLimit)
+            })
+        }) {
             return Err(stop);
+        }
+        let ticks = self.0.clock_ticks.fetch_add(count, Ordering::Relaxed);
+        if (ticks == 0 || count >= 128 || ticks % 128 >= 128 - count)
+            && self.0.started.elapsed() >= self.0.wall
+        {
+            return Err(GeometryStop::Deadline);
         }
         counter
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |old| {
@@ -210,12 +286,28 @@ impl GeometryControl {
             .map_err(|_| self.stop(GeometryStop::WorkLimit))
     }
     pub(super) fn stop(&self, reason: GeometryStop) -> GeometryStop {
-        let mut state = self
+        let encoded = match reason {
+            GeometryStop::Cancelled => 1,
+            GeometryStop::Deadline => 2,
+            GeometryStop::WorkLimit => 3,
+            GeometryStop::ResourceLimit => 4,
+            GeometryStop::Numerical => 5,
+        };
+        let _ = self
             .0
             .stopped
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        *state.get_or_insert(reason)
+            .compare_exchange(0, encoded, Ordering::Relaxed, Ordering::Relaxed);
+        self.recorded_stop().unwrap_or(reason)
+    }
+    fn recorded_stop(&self) -> Option<GeometryStop> {
+        match self.0.stopped.load(Ordering::Relaxed) {
+            1 => Some(GeometryStop::Cancelled),
+            2 => Some(GeometryStop::Deadline),
+            3 => Some(GeometryStop::WorkLimit),
+            4 => Some(GeometryStop::ResourceLimit),
+            5 => Some(GeometryStop::Numerical),
+            _ => None,
+        }
     }
 
     /// Reserve conservative resident bytes before allocating; release them on drop.
@@ -331,7 +423,25 @@ impl CancelFlag {
 
 #[cfg(test)]
 mod tests {
-    use super::CancelFlag;
+    use super::{CancelFlag, GeometryControl, GeometryLimits, GeometryStop};
+
+    #[test]
+    fn local_point_pair_exhaustion_preserves_global_work() {
+        let parent = GeometryControl::new(
+            CancelFlag::new(),
+            std::time::Duration::from_secs(10),
+            GeometryLimits::default(),
+        );
+        let local = parent.with_point_pair_allowance(2);
+        assert!(local.charge_point_pairs(2).is_ok());
+        assert_eq!(local.charge_point_pairs(1), Err(GeometryStop::WorkLimit));
+        assert_eq!(local.checkpoint(), Some(GeometryStop::WorkLimit));
+        assert_eq!(parent.checkpoint(), None);
+        assert!(parent.charge_point_pairs(1).is_ok());
+        assert_eq!(parent.counters().point_pair_tests, 3);
+        parent.0.cancel.cancel();
+        assert_eq!(local.checkpoint(), Some(GeometryStop::Cancelled));
+    }
 
     #[test]
     fn cloned_flags_share_cancellation() {

@@ -62,6 +62,10 @@ struct Traversal<'a> {
     best: Option<Candidate>,
     tests: u64,
     control: &'a GeometryControl,
+    // The same query has the same distance/feature for a triangle in every
+    // overlapping bucket. A fixed cache removes repeat arithmetic without
+    // allocating or changing the traversal, pruning or source-id tie-break.
+    tested: [u32; 128],
 }
 
 /// One query's fixed terms: the point, the squared radius, and the cell window
@@ -667,8 +671,9 @@ impl SurfaceIndex {
 
     /// Exact nearest answer, or an explicitly interrupted upper bound.
     ///
-    /// Charges each tested triangle (including repeats in overlapping buckets),
-    /// every visited cell and every ring. A single dense query cannot exceed
+    /// Charges each distance calculation, every bucket entry, cell and ring.
+    /// A fixed 128-entry direct-mapped cache avoids repeat triangle arithmetic
+    /// in overlapping buckets. Cache collisions only repeat work. A single dense query cannot exceed
     /// its triangle-test ceiling. Invalid query coordinates/radius give exact
     /// absence; incomplete traversal never masquerades as exact absence.
     pub fn nearest_controlled(
@@ -681,6 +686,7 @@ impl SurfaceIndex {
             best: None,
             tests: 0,
             control,
+            tested: [u32::MAX; 128],
         };
         let outcome = self.query(point, radius, &mut traversal);
         let hit = traversal
@@ -875,7 +881,15 @@ impl SurfaceIndex {
             return Ok(());
         };
         for &slot in bucket {
+            traversal.control.charge_operations(1)?;
+            // Spread adjacent rows as well as adjacent facets: regular mesh
+            // strides can otherwise alias every neighbouring bucket.
+            let cache_slot = (slot.wrapping_mul(0x9e37_79b9) >> 25) as usize;
+            if traversal.tested[cache_slot] == slot {
+                continue;
+            }
             traversal.control.triangle_test(&mut traversal.tests)?;
+            traversal.tested[cache_slot] = slot;
             let slot = slot as usize;
             let Some(corners) = self.corners.get(slot) else {
                 continue;
