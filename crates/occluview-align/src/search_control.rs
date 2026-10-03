@@ -51,9 +51,12 @@ impl SearchControl {
     /// the returned control share counters and allocation admission.
     pub fn geometry_control(&self, settings: &SearchSettings) -> GeometryControl {
         let (wall, queries, triangles, operations) = match settings.profile {
-            SearchProfile::Standard => (10, 8_000_000, 80_000_000, 80_000_000),
-            SearchProfile::Extended => (30, 20_000_000, 240_000_000, 240_000_000),
-            SearchProfile::Local => (2, 1_000_000, 10_000_000, 10_000_000),
+            // Bucket-cache probes are ordinary operations as well as the
+            // independent distance-test allowance. Keep both bounded without
+            // spending the distance allowance on reused arithmetic.
+            SearchProfile::Standard => (10, 8_000_000, 80_000_000, 256_000_000),
+            SearchProfile::Extended => (30, 20_000_000, 240_000_000, 768_000_000),
+            SearchProfile::Local => (2, 1_000_000, 10_000_000, 32_000_000),
         };
         GeometryControl::from_start(
             self.cancel.clone(),

@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Best-fit alignment searches multiple surface placements and retains finite candidates with explicit incomplete evidence.
+
 - Preserve HPS loading when optional properties use self-closing XML tags.
 
 - Name the detected format in thumbnail errors for mislabeled files.

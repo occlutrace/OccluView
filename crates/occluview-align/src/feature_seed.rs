@@ -1,479 +1,506 @@
-//! Global surface proposal for scans with changed anatomy.
-//!
-//! The 33-bin local normal histogram follows the FPFH construction used by
-//! `Open3D` (MIT, Copyright 2018-2024 www.open3d.org;
-//! <https://github.com/isl-org/Open3D/blob/v0.19.0/cpp/open3d/pipelines/registration/Feature.cpp>).
-//! The independent matches
-//! are only proposals: a rigid pose needs spatially extended geometric
-//! consensus before the existing surface ICP can refine it.
+//! Normal-histogram consensus proposals, independently derived from Rusu,
+//! Blodow and Beetz, FPFH (2009), <https://doi.org/10.1109/ROBOT.2009.5152473>.
+//! Two physical radii and both relative normal signs share a fixed round-robin
+//! trial schedule. Small clouds remain eligible; consensus supplies proposals,
+//! never confidence. No reference implementation is transcribed.
 
-use std::collections::BTreeMap;
-
+use crate::{
+    area_samples, CancelFlag, PreparedSurface, Rigid, SeedOrigin, SurfaceIndex, SurfaceSample,
+};
 use glam::DVec3;
 use kdtree::{distance::squared_euclidean, KdTree};
+use occluview_geometry::surface::{GeometryControl, GeometryStop};
+use std::collections::{BTreeMap, BTreeSet};
 
-use crate::pairs::{fit_pairs, horn_fit, FitBounds};
-use crate::{CancelFlag, Rigid, SurfaceIndex};
-use occluview_geometry::surface::{feature_voxel_key, FeaturePoint, FEATURE_VOXEL_MM};
-
-const FEATURE_RADIUS_MM: f64 = FEATURE_VOXEL_MM * 5.0;
-const FEATURE_RADIUS_SQ: f64 = FEATURE_RADIUS_MM * FEATURE_RADIUS_MM;
-const MAX_NEIGHBORS: usize = 99; // Open3D's 100 includes the query itself.
-                                 // A handful of synthetic facets has no distinctive local histogram. Keep the
-                                 // established geometry path for such surfaces, including cropped tooth tests.
-const MIN_CLOUD_POINTS: usize = 2_000;
-const BINS: usize = 11;
-const DESCRIPTOR_SIZE: usize = BINS * 3;
-const MATCH_RATIO_SQUARED: f64 = 0.8 * 0.8;
-const CONSENSUS_MM: f64 = 0.5;
-/// The band that separates a seating from an illusion, in millimetres.
-///
-/// Two agreements can both reach hundreds of matches within the coarse
-/// consensus distance and still be different answers: a prepared model's
-/// operated region slides onto the original within half a millimetre almost
-/// everywhere, while only the unchanged region seats exactly. Counting the
-/// matches inside this tighter band is what tells those two apart, and it is
-/// the same band the ICP refinement treats as seated.
-const TIGHT_CONSENSUS_MM: f64 = 0.05;
-/// Independent matches one agreement must carry before it can seed a fit.
-///
-/// This is a floor on evidence, not on the fraction of the cloud: a prepared
-/// model keeps only its unchanged region rigid, and that region can be a small
-/// minority of the surface. On a real prepared arch pair the true seating
-/// carries 12 spatially extended agreements; a floor of 24 refuses that one
-/// correct hypothesis and leaves the search to a coarse orientation sweep that
-/// lands 2.5 mm away. The floor is only safe because the seed is not trusted
-/// on its own: `refine` refuses any pose more than a millimetre from it, so a
-/// coincidental twelve-point agreement produces a refusal, not a wrong pose.
-const MIN_SUPPORT: usize = 12;
-const MIN_SPAN_MM: f64 = 4.0;
-const TRIAL_BUDGET: usize = 15_000;
-
+const SIZE: usize = 33;
 #[derive(Clone, Copy, Debug)]
 pub(super) struct FeatureSeed {
     pub(super) rigid: Rigid,
 }
-
+#[derive(Clone, Copy)]
+struct Feature {
+    point: DVec3,
+    normal: DVec3,
+}
 #[derive(Clone, Copy)]
 struct Match {
-    moving: usize,
-    fixed: usize,
+    source: usize,
+    target: usize,
     ratio: f64,
 }
-
+struct Schedule {
+    matches: Vec<Match>,
+    state: u64,
+    origin: SeedOrigin,
+}
 #[derive(Clone, Copy)]
 struct Consensus {
-    rigid: Rigid,
-    inliers: usize,
-    /// Matches inside [`TIGHT_CONSENSUS_MM`]: the matches that are actually
-    /// seated rather than merely near.
-    tight: usize,
+    pose: Rigid,
+    cells: usize,
     residual: f64,
-    span: f64,
+    schedule: usize,
 }
 
+/// Legacy pair-fit consumer uses the same bounded feature proposal producer.
 pub(super) fn find_feature_seed(
     moving: Option<&SurfaceIndex>,
     fixed: &SurfaceIndex,
     cancel: &CancelFlag,
 ) -> Option<FeatureSeed> {
     let moving = moving?;
+    let unrestricted = GeometryControl::new(
+        cancel.clone(),
+        std::time::Duration::MAX,
+        occluview_geometry::surface::GeometryLimits::default(),
+    );
+    let control = fixed.query_control().unwrap_or(&unrestricted);
     if cancel.is_cancelled() {
         return None;
     }
-    let control = fixed.query_control();
-    let (moving_cloud, fixed_cloud, matches) = feature_inputs(moving, fixed, cancel)?;
-    let bounds = fit_bounds(moving, fixed);
-    let mut state = 0x9e37_79b9_7f4a_7c15_u64;
-    let modulus = u64::try_from(matches.len()).ok()?;
-    let mut best: Option<Consensus> = None;
-    let mut rival: Option<Consensus> = None;
-    for trial in 0..TRIAL_BUDGET {
-        if trial % 64 == 0 && cancel.is_cancelled() {
-            return None;
+    let source = area_samples(
+        moving,
+        4_096,
+        0x4f56_5f41_4c52_3103,
+        moving.orientation_coherent(),
+        control,
+    )
+    .ok()?;
+    let target = area_samples(
+        fixed,
+        4_096,
+        0x4f56_5f41_4c52_3103,
+        fixed.orientation_coherent(),
+        control,
+    )
+    .ok()?;
+    hypotheses(&source.samples, &target.samples, control)
+        .ok()?
+        .first()
+        .map(|&(rigid, _)| FeatureSeed { rigid })
+}
+
+pub(crate) fn feature_hypotheses(
+    moving: &PreparedSurface,
+    fixed: &PreparedSurface,
+    control: &GeometryControl,
+) -> Result<Vec<(Rigid, SeedOrigin)>, GeometryStop> {
+    hypotheses(
+        &moving.samples[1].samples,
+        &fixed.samples[1].samples,
+        control,
+    )
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "four fixed consensus schedules share bounded clouds and descriptors"
+)]
+fn hypotheses(
+    source: &[SurfaceSample],
+    target: &[SurfaceSample],
+    control: &GeometryControl,
+) -> Result<Vec<(Rigid, SeedOrigin)>, GeometryStop> {
+    let _memory = control.reserve(24 * 1024 * 1024)?;
+    let source = cloud(source, control)?;
+    let target = cloud(target, control)?;
+    if source.len() < 32 || target.len() < 32 {
+        return Ok(Vec::new());
+    }
+    let mut schedules = Vec::new();
+    schedules
+        .try_reserve_exact(4)
+        .map_err(|_| GeometryStop::ResourceLimit)?;
+    for radius in [2., 4.] {
+        let a = sign_descriptors(&source, radius, false, control)?;
+        for reversed in [false, true] {
+            let b = sign_descriptors(&target, radius, reversed, control)?;
+            let matches = match_features(&a, &b, control)?;
+            let ordinal = schedules.len() as u64;
+            schedules.push(Schedule {
+                matches,
+                state: crate::sample::mix_seed(0x4f56_5f41_4c52_3100 ^ (3 + ordinal)),
+                origin: if reversed {
+                    SeedOrigin::FeatureOpposed
+                } else {
+                    SeedOrigin::FeatureSame
+                },
+            });
         }
-        let mut slots = [0usize; 3];
+    }
+    let mut retained: Vec<Consensus> = Vec::with_capacity(8);
+    for trial in 0..4_096 {
+        control.charge_operations(1)?;
+        let which = trial % 4;
+        let schedule = &mut schedules[which];
+        if schedule.matches.len() < 3 {
+            continue;
+        }
+        let mut slots = [0; 3];
         for slot in &mut slots {
-            state ^= state << 13;
-            state ^= state >> 7;
-            state ^= state << 17;
-            *slot = usize::try_from(state % modulus).ok()?;
+            schedule.state = schedule.state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+            *slot = usize::try_from(
+                crate::sample::mix_seed(schedule.state) % schedule.matches.len() as u64,
+            )
+            .map_err(|_| GeometryStop::ResourceLimit)?;
         }
         if slots[0] == slots[1] || slots[0] == slots[2] || slots[1] == slots[2] {
             continue;
         }
-        let triplet = slots.map(|slot| matches[slot]);
-        let source = triplet.map(|pair| moving_cloud[pair.moving].position);
-        let target = triplet.map(|pair| fixed_cloud[pair.fixed].position);
-        if !triplet_is_consistent(&source, &target) {
+        let triplet = slots.map(|i| schedule.matches[i]);
+        let from = triplet.map(|m| source[m.source].point);
+        let to = triplet.map(|m| target[m.target].point);
+        let mut consistent = true;
+        for (i, j) in [(0, 1), (0, 2), (1, 2)] {
+            control.charge_point_pairs(1)?;
+            let length = from[i].distance(from[j]);
+            consistent &= (length - to[i].distance(to[j])).abs() <= (0.10 * length).max(0.15);
+        }
+        if !consistent {
             continue;
         }
-        let Ok(fit) = fit_pairs(&source, &target, None, &bounds) else {
+        let Some(pose) = crate::proposal_geometry::fit_geometry_pairs(&from, &to) else {
             continue;
         };
-        if control.is_some_and(|c| c.charge_point_pairs(matches.len() as u64).is_err()) {
-            return None;
+        let (cells, residual) = consensus(pose, &schedule.matches, &source, &target, 512, control)?;
+        let candidate = Consensus {
+            pose,
+            cells,
+            residual,
+            schedule: which,
+        };
+        let duplicate = retained.iter().position(|p| {
+            p.pose.translation.distance(pose.translation) < 0.2
+                && p.pose.rotation.dot(pose.rotation).abs() > (0.5f64.to_radians()).cos()
+        });
+        if let Some(i) = duplicate {
+            if consensus_order(&candidate, &retained[i]).is_lt() {
+                retained[i] = candidate;
+            }
+        } else {
+            retained.push(candidate);
         }
-        let candidate = consensus(fit.rigid, &matches, &moving_cloud, &fixed_cloud);
-        if candidate.inliers < MIN_SUPPORT || candidate.span < MIN_SPAN_MM {
+        retained.sort_by(consensus_order);
+        if retained.len() > 8 {
+            let mut counts = [0; 2];
+            for held in &retained {
+                counts[held.schedule % 2] += 1;
+            }
+            let drop = retained
+                .iter()
+                .rposition(|p| counts[p.schedule % 2] > 4)
+                .unwrap_or(retained.len() - 1);
+            retained.remove(drop);
+        }
+    }
+    let mut result = Vec::with_capacity(8);
+    for mut held in retained {
+        let schedule = &schedules[held.schedule];
+        // Fit only a geometrically coherent consensus, not all descriptor matches.
+        let mut from = Vec::new();
+        let mut to = Vec::new();
+        from.try_reserve_exact(schedule.matches.len())
+            .map_err(|_| GeometryStop::ResourceLimit)?;
+        to.try_reserve_exact(schedule.matches.len())
+            .map_err(|_| GeometryStop::ResourceLimit)?;
+        for m in &schedule.matches {
+            control.charge_point_pairs(1)?;
+            if held
+                .pose
+                .apply(source[m.source].point)
+                .distance(target[m.target].point)
+                <= 0.8
+            {
+                from.push(source[m.source].point);
+                to.push(target[m.target].point);
+            }
+        }
+        if let Some(polished) = crate::proposal_geometry::fit_geometry_pairs(&from, &to) {
+            held.pose = polished;
+        }
+        let (cells, _) = consensus(
+            held.pose,
+            &schedule.matches,
+            &source,
+            &target,
+            4_096,
+            control,
+        )?;
+        if cells >= 3 {
+            result.push((held.pose, schedule.origin));
+        }
+    }
+    Ok(result)
+}
+fn consensus_order(a: &Consensus, b: &Consensus) -> std::cmp::Ordering {
+    b.cells
+        .cmp(&a.cells)
+        .then_with(|| a.residual.total_cmp(&b.residual))
+        .then_with(|| a.schedule.cmp(&b.schedule))
+}
+
+#[allow(clippy::cast_possible_truncation)]
+fn cloud(
+    samples: &[SurfaceSample],
+    control: &GeometryControl,
+) -> Result<Vec<Feature>, GeometryStop> {
+    let mut voxels = BTreeMap::new();
+    for sample in samples.iter().take(4_096) {
+        control.charge_operations(1)?;
+        let Some(normal) = sample.normal else {
+            continue;
+        };
+        let p = (sample.point / 0.6).floor();
+        if !p.is_finite() || p.abs().max_element() >= 9_223_372_036_854_775_808. {
             continue;
         }
-        if best.is_none_or(|current| better(candidate, current)) {
-            if let Some(current) = best {
-                if distinct(candidate.rigid, current.rigid, bounds.moving_center) {
-                    rival = Some(current);
-                }
-            }
-            best = Some(candidate);
-        } else if best
-            .is_some_and(|current| distinct(candidate.rigid, current.rigid, bounds.moving_center))
-            && rival.is_none_or(|current| better(candidate, current))
-        {
-            rival = Some(candidate);
-        }
+        let key = p.to_array().map(|v| v as i64);
+        voxels.entry(key).or_insert(Feature {
+            point: sample.point,
+            normal,
+        });
     }
-    let mut best = best?;
-    // Not a fixed fraction of the matched cloud: a changed arch supplies most
-    // of its features from the changed region, which does not match, so
-    // requiring a share of them would refuse the case this seed exists for. What
-    // matters is that no rival explains as much, and that the support is
-    // spatially extended rather than a coincidental cluster.
-    // A rival is only a rival if it seats as well. Two hypotheses that both
-    // explain the coarse distance are not equally supported when one of them
-    // seats hundreds of matches exactly and the other seats a handful.
-    if rival.is_some_and(|other| {
-        other.tight * 10 >= best.tight * 9 && other.inliers * 10 >= best.inliers * 9
-    }) {
-        return None;
-    }
-    for _ in 0..4 {
-        let mut source = Vec::new();
-        let mut target = Vec::new();
-        for pair in &matches {
-            let moving_point = moving_cloud[pair.moving].position;
-            let fixed_point = fixed_cloud[pair.fixed].position;
-            if best.rigid.apply(moving_point).distance(fixed_point) < 0.6 {
-                source.push(moving_point);
-                target.push(fixed_point);
-            }
-        }
-        if source.len() < MIN_SUPPORT {
-            return None;
-        }
-        let slots: Vec<usize> = (0..source.len()).collect();
-        let fit = horn_fit(&source, &target, &slots).ok()?;
-        if control.is_some_and(|c| c.charge_point_pairs(matches.len() as u64).is_err()) {
-            return None;
-        }
-        best = consensus(fit, &matches, &moving_cloud, &fixed_cloud);
-    }
-    if best.inliers < MIN_SUPPORT || best.span < MIN_SPAN_MM {
-        return None;
-    }
-    Some(FeatureSeed { rigid: best.rigid })
-}
-
-fn feature_inputs(
-    moving: &SurfaceIndex,
-    fixed: &SurfaceIndex,
-    cancel: &CancelFlag,
-) -> Option<(Vec<FeaturePoint>, Vec<FeaturePoint>, Vec<Match>)> {
-    let moving_cloud = moving.feature_cloud();
-    let fixed_cloud = fixed.feature_cloud();
-    if moving_cloud.len() < MIN_CLOUD_POINTS {
-        return None;
-    }
-    if fixed_cloud.len() < MIN_CLOUD_POINTS {
-        return None;
-    }
-    let control = fixed.query_control();
-    let moving_descriptors = descriptors(&moving_cloud, cancel, control)?;
-    let fixed_descriptors = descriptors(&fixed_cloud, cancel, control)?;
-    let matches = match_features(&moving_descriptors, &fixed_descriptors, cancel, control)?;
-    if matches.len() < MIN_SUPPORT {
-        return None;
-    }
-    Some((moving_cloud, fixed_cloud, matches))
-}
-
-fn fit_bounds(moving: &SurfaceIndex, fixed: &SurfaceIndex) -> FitBounds {
-    let (moving_min, moving_max) = moving.bounds();
-    let (fixed_min, fixed_max) = fixed.bounds();
-    FitBounds {
-        moving_center: (moving_min + moving_max) * 0.5,
-        moving_extent: moving_min.distance(moving_max),
-        fixed_center: (fixed_min + fixed_max) * 0.5,
-        fixed_extent: fixed_min.distance(fixed_max),
-    }
-}
-
-fn triplet_is_consistent(source: &[DVec3; 3], target: &[DVec3; 3]) -> bool {
-    let mut span = 0.0_f64;
-    for (left, right) in [(0, 1), (0, 2), (1, 2)] {
-        let a = source[left].distance(source[right]);
-        let b = target[left].distance(target[right]);
-        if (a - b).abs() > 0.4 {
-            return false;
-        }
-        span = span.max(a);
-    }
-    span >= MIN_SPAN_MM
+    let mut cloud = Vec::new();
+    cloud
+        .try_reserve_exact(voxels.len())
+        .map_err(|_| GeometryStop::ResourceLimit)?;
+    cloud.extend(voxels.into_values());
+    Ok(cloud)
 }
 
 #[allow(clippy::cast_precision_loss)]
-fn consensus(
-    rigid: Rigid,
-    matches: &[Match],
-    moving: &[FeaturePoint],
-    fixed: &[FeaturePoint],
-) -> Consensus {
-    let mut inliers = 0;
-    let mut tight = 0;
-    let mut residual = 0.0;
-    let mut minimum = DVec3::splat(f64::INFINITY);
-    let mut maximum = DVec3::splat(f64::NEG_INFINITY);
-    for pair in matches {
-        let point = moving[pair.moving].position;
-        let distance = rigid.apply(point).distance(fixed[pair.fixed].position);
-        if distance < TIGHT_CONSENSUS_MM {
-            tight += 1;
+fn sign_descriptors(
+    cloud: &[Feature],
+    radius: f64,
+    reversed: bool,
+    control: &GeometryControl,
+) -> Result<Vec<[f64; SIZE]>, GeometryStop> {
+    let mut tree = KdTree::new(3);
+    for (i, p) in cloud.iter().enumerate() {
+        control.charge_operations(1)?;
+        tree.add(p.point.to_array(), i)
+            .map_err(|_| GeometryStop::Numerical)?;
+    }
+    let mut neighbors = Vec::new();
+    neighbors
+        .try_reserve_exact(cloud.len())
+        .map_err(|_| GeometryStop::ResourceLimit)?;
+    let mut spfh = Vec::new();
+    spfh.try_reserve_exact(cloud.len())
+        .map_err(|_| GeometryStop::ResourceLimit)?;
+    for (i, p) in cloud.iter().enumerate() {
+        let metric = |a: &[f64], b: &[f64]| {
+            if control.charge_point_pairs(1).is_err() {
+                f64::MAX
+            } else {
+                squared_euclidean(a, b)
+            }
+        };
+        let nearest = tree
+            .nearest(&p.point.to_array(), 65, &metric)
+            .map_err(|_| GeometryStop::Numerical)?;
+        if let Some(stop) = control.checkpoint() {
+            return Err(stop);
         }
-        if distance < CONSENSUS_MM {
-            inliers += 1;
-            residual += distance;
-            minimum = minimum.min(point);
-            maximum = maximum.max(point);
+        let mut local = Vec::new();
+        local
+            .try_reserve_exact(64)
+            .map_err(|_| GeometryStop::ResourceLimit)?;
+        for (distance, &other) in nearest {
+            if other != i && distance > 1e-12 && distance <= radius * radius {
+                local.push((other, distance.sqrt()));
+            }
+        }
+        local.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
+        let mut histogram = [0.; SIZE];
+        for &(other, distance) in &local {
+            control.charge_operations(1)?;
+            let mut delta = (cloud[other].point - p.point) / distance;
+            let sign = if reversed { -1. } else { 1. };
+            let mut first = p.normal * sign;
+            let mut second = cloud[other].normal * sign;
+            let a = first.dot(delta);
+            let b = second.dot(delta);
+            let phi = if a.abs() < b.abs() {
+                std::mem::swap(&mut first, &mut second);
+                delta = -delta;
+                -b
+            } else {
+                a
+            };
+            let tangent = delta.cross(first).normalize_or_zero();
+            if tangent.length_squared() < 0.5 {
+                continue;
+            }
+            let theta = first.cross(tangent).dot(second).atan2(first.dot(second));
+            histogram[bin(theta / std::f64::consts::PI)] += 1.;
+            histogram[11 + bin(tangent.dot(second))] += 1.;
+            histogram[22 + bin(phi)] += 1.;
+        }
+        normalize(&mut histogram);
+        spfh.push(histogram);
+        neighbors.push(local);
+    }
+    let mut result = Vec::new();
+    result
+        .try_reserve_exact(spfh.len())
+        .map_err(|_| GeometryStop::ResourceLimit)?;
+    for (i, local) in neighbors.iter().enumerate() {
+        let mut histogram = spfh[i];
+        let mut weighted = [0.; SIZE];
+        for &(other, distance) in local {
+            control.charge_operations(1)?;
+            for (slot, value) in weighted.iter_mut().enumerate() {
+                *value += spfh[other][slot] / distance;
+            }
+        }
+        normalize(&mut weighted);
+        for (value, extra) in histogram.iter_mut().zip(weighted) {
+            *value += extra;
+        }
+        normalize(&mut histogram);
+        result.push(histogram);
+    }
+    Ok(result)
+}
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn bin(value: f64) -> usize {
+    (((value.clamp(-1., 1.) + 1.) * 5.5).floor() as usize).min(10)
+}
+fn normalize(histogram: &mut [f64; SIZE]) {
+    for block in histogram.chunks_mut(11) {
+        let sum: f64 = block.iter().sum();
+        if sum > 0. {
+            for value in block {
+                *value /= sum;
+            }
         }
     }
-    Consensus {
-        rigid,
-        inliers,
-        tight,
-        residual: residual / inliers.max(1) as f64,
-        span: if inliers == 0 {
-            0.0
-        } else {
-            minimum.distance(maximum)
-        },
-    }
 }
-
-fn better(left: Consensus, right: Consensus) -> bool {
-    // Exact seating first. A prepared model's operated region can reach as many
-    // coarse matches as the unchanged one, so ranking on the coarse count picks
-    // between them by luck; the count inside the tight band is what says which
-    // agreement actually seats a surface.
-    if left.tight != right.tight {
-        return left.tight > right.tight;
-    }
-    left.inliers > right.inliers
-        || (left.inliers == right.inliers && left.residual < right.residual)
-}
-
-fn distinct(left: Rigid, right: Rigid, center: DVec3) -> bool {
-    left.apply(center).distance(right.apply(center)) > 1.0
-        || (left.rotation * right.rotation.inverse())
-            .to_scaled_axis()
-            .length()
-            > 0.1
-}
-
 fn match_features(
-    moving: &[[f64; DESCRIPTOR_SIZE]],
-    fixed: &[[f64; DESCRIPTOR_SIZE]],
-    cancel: &CancelFlag,
-    control: Option<&occluview_geometry::surface::GeometryControl>,
-) -> Option<Vec<Match>> {
-    let mut tree = KdTree::new(DESCRIPTOR_SIZE);
-    for (index, descriptor) in fixed.iter().enumerate() {
-        if cancel.is_cancelled() || control.is_some_and(|c| c.charge_operations(1).is_err()) {
-            return None;
-        }
-        tree.add(*descriptor, index).ok()?;
+    source: &[[f64; SIZE]],
+    target: &[[f64; SIZE]],
+    control: &GeometryControl,
+) -> Result<Vec<Match>, GeometryStop> {
+    let mut tree = KdTree::new(SIZE);
+    for (i, descriptor) in target.iter().enumerate() {
+        control.charge_operations(1)?;
+        tree.add(*descriptor, i)
+            .map_err(|_| GeometryStop::Numerical)?;
     }
     let mut matches = Vec::new();
-    for (index, descriptor) in moving.iter().enumerate() {
-        if index % 64 == 0 && cancel.is_cancelled() {
-            return None;
-        }
+    matches
+        .try_reserve_exact(4_096)
+        .map_err(|_| GeometryStop::ResourceLimit)?;
+    for (i, descriptor) in source.iter().enumerate() {
         let metric = |a: &[f64], b: &[f64]| {
-            if control.is_some_and(|c| c.charge_point_pairs(1).is_err()) {
-                return f64::MAX;
+            if control.charge_point_pairs(1).is_err() {
+                f64::MAX
+            } else {
+                squared_euclidean(a, b)
             }
-            squared_euclidean(a, b)
         };
-        let nearest = tree.nearest(descriptor, 2, &metric).ok()?;
-        if control.is_some_and(|c| c.checkpoint().is_some()) {
-            return None;
+        let mut nearest = tree
+            .nearest(descriptor, 3, &metric)
+            .map_err(|_| GeometryStop::Numerical)?;
+        if let Some(stop) = control.checkpoint() {
+            return Err(stop);
         }
-        if nearest.len() < 2 || nearest[1].0 <= f64::EPSILON {
-            continue;
-        }
-        let ratio = nearest[0].0 / nearest[1].0;
-        if ratio < MATCH_RATIO_SQUARED {
-            matches.push(Match {
-                moving: index,
-                fixed: *nearest[0].1,
-                ratio,
-            });
-        }
-    }
-    matches.sort_by(|a, b| a.ratio.total_cmp(&b.ratio));
-    Some(matches)
-}
-
-#[allow(clippy::cast_precision_loss)]
-fn descriptors(
-    cloud: &[FeaturePoint],
-    cancel: &CancelFlag,
-    control: Option<&occluview_geometry::surface::GeometryControl>,
-) -> Option<Vec<[f64; DESCRIPTOR_SIZE]>> {
-    let neighbors = neighbor_lists(cloud, cancel, control)?;
-    let mut spfh = vec![[0.0; DESCRIPTOR_SIZE]; cloud.len()];
-    for (index, local) in neighbors.iter().enumerate() {
-        if index % 64 == 0 && cancel.is_cancelled() {
-            return None;
-        }
-        if local.is_empty() {
-            continue;
-        }
-        let increment = 100.0 / local.len() as f64;
-        for &(other, distance_sq) in local {
-            let source = cloud[index];
-            let target = cloud[other];
-            let mut delta = target.position - source.position;
-            let distance = distance_sq.sqrt();
-            let mut source_normal = source.normal;
-            let mut target_normal = target.normal;
-            let angle1 = source_normal.dot(delta) / distance;
-            let angle2 = target_normal.dot(delta) / distance;
-            let phi = if angle1.abs() < angle2.abs() {
-                std::mem::swap(&mut source_normal, &mut target_normal);
-                delta = -delta;
-                -angle2
-            } else {
-                angle1
-            };
-            let cross = delta.cross(source_normal);
-            let (theta, alpha, phi) = if cross.length_squared() <= f64::EPSILON {
-                (0.0, 0.0, 0.0)
-            } else {
-                let side = cross.normalize();
-                let third = source_normal.cross(side);
-                (
-                    third
-                        .dot(target_normal)
-                        .atan2(source_normal.dot(target_normal)),
-                    side.dot(target_normal),
-                    phi,
-                )
-            };
-            spfh[index][bin(theta, -std::f64::consts::PI, std::f64::consts::PI)] += increment;
-            spfh[index][BINS + bin(alpha, -1.0, 1.0)] += increment;
-            spfh[index][2 * BINS + bin(phi, -1.0, 1.0)] += increment;
-        }
-    }
-    let mut result = spfh.clone();
-    for (index, local) in neighbors.iter().enumerate() {
-        if index % 64 == 0 && cancel.is_cancelled() {
-            return None;
-        }
-        if local.is_empty() {
-            continue;
-        }
-        let mut weighted = [0.0; DESCRIPTOR_SIZE];
-        for &(other, distance_sq) in local {
-            for (slot, value) in weighted.iter_mut().enumerate() {
-                *value += spfh[other][slot] / distance_sq;
-            }
-        }
-        for part in 0..3 {
-            let range = part * BINS..(part + 1) * BINS;
-            let sum: f64 = weighted[range.clone()].iter().sum();
-            if sum > 0.0 {
-                for slot in range {
-                    result[index][slot] += weighted[slot] * 100.0 / sum;
-                }
+        nearest.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(b.1)));
+        let ratio = if nearest.len() > 1 {
+            nearest[0].0 / nearest[1].0.max(f64::MIN_POSITIVE)
+        } else {
+            1.
+        };
+        for (_, &other) in nearest
+            .into_iter()
+            .take(if ratio < 0.9f64.powi(2) { 1 } else { 3 })
+        {
+            if matches.len() < 4_096 {
+                matches.push(Match {
+                    source: i,
+                    target: other,
+                    ratio,
+                });
             }
         }
     }
-    Some(result)
+    matches.sort_by(|a, b| {
+        a.ratio
+            .total_cmp(&b.ratio)
+            .then(a.source.cmp(&b.source))
+            .then(a.target.cmp(&b.target))
+    });
+    Ok(matches)
 }
-
-#[allow(
-    clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss
+#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "paired clouds, match population, pose and work control are explicit"
 )]
-fn bin(value: f64, low: f64, high: f64) -> usize {
-    (((value - low) / (high - low) * BINS as f64).floor() as usize).min(BINS - 1)
+fn consensus(
+    pose: Rigid,
+    matches: &[Match],
+    source: &[Feature],
+    target: &[Feature],
+    count: usize,
+    control: &GeometryControl,
+) -> Result<(usize, f64), GeometryStop> {
+    let mut cells = BTreeSet::new();
+    let mut residual = 0.;
+    let mut inliers = 0;
+    let count = count.min(matches.len());
+    for i in 0..count {
+        control.charge_point_pairs(1)?;
+        let m = matches[i * matches.len() / count];
+        let distance = pose
+            .apply(source[m.source].point)
+            .distance(target[m.target].point);
+        if distance <= 0.8 {
+            cells.insert(source[m.source].point.floor().to_array().map(|v| v as i64));
+            residual += distance;
+            inliers += 1;
+        }
+    }
+    Ok((cells.len(), residual / f64::from(inliers.max(1))))
 }
 
-fn neighbor_lists(
-    cloud: &[FeaturePoint],
-    cancel: &CancelFlag,
-    control: Option<&occluview_geometry::surface::GeometryControl>,
-) -> Option<Vec<Vec<(usize, f64)>>> {
-    let mut cells: BTreeMap<(i32, i32, i32), Vec<usize>> = BTreeMap::new();
-    for (index, point) in cloud.iter().enumerate() {
-        if cancel.is_cancelled() || control.is_some_and(|c| c.charge_operations(1).is_err()) {
-            return None;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use glam::DQuat;
+
+    #[test]
+    fn histograms_preserve_rigid_geometry_and_both_normal_signs() {
+        let source = (0..64u32)
+            .map(|i| {
+                let x = f64::from(i % 8) * 0.71;
+                let y = f64::from(i / 8) * 0.83;
+                let point = DVec3::new(x, y, 0.031 * x * x + 0.067 * y * y + 0.017 * x * y);
+                let normal =
+                    DVec3::new(-0.062 * x - 0.017 * y, -0.134 * y - 0.017 * x, 1.).normalize();
+                Feature { point, normal }
+            })
+            .collect::<Vec<_>>();
+        let rotation = DQuat::from_axis_angle(DVec3::new(2., 3., 5.).normalize(), 1.137);
+        let target = source
+            .iter()
+            .map(|s| Feature {
+                point: rotation * s.point + DVec3::new(7., 11., 13.),
+                normal: -(rotation * s.normal),
+            })
+            .collect::<Vec<_>>();
+        for radius in [2., 4.] {
+            let a =
+                sign_descriptors(&source, radius, false, &GeometryControl::unlimited()).unwrap();
+            let b = sign_descriptors(&target, radius, true, &GeometryControl::unlimited()).unwrap();
+            assert!(a
+                .iter()
+                .flatten()
+                .zip(b.iter().flatten())
+                .all(|(x, y)| (x - y).abs() < 1e-10));
         }
-        cells
-            .entry(feature_voxel_key(point.position)?)
-            .or_default()
-            .push(index);
+        assert!(hypotheses(&[], &[], &GeometryControl::unlimited())
+            .unwrap()
+            .is_empty());
     }
-    let mut lists = Vec::with_capacity(cloud.len());
-    for (index, point) in cloud.iter().enumerate() {
-        if cancel.is_cancelled() || control.is_some_and(|c| c.charge_operations(1).is_err()) {
-            return None;
-        }
-        if index % 64 == 0 && cancel.is_cancelled() {
-            return None;
-        }
-        let (x, y, z) = feature_voxel_key(point.position)?;
-        let mut local = Vec::new();
-        local.try_reserve_exact(MAX_NEIGHBORS).ok()?;
-        for dx in -5..=5 {
-            for dy in -5..=5 {
-                for dz in -5..=5 {
-                    if control.is_some_and(|c| c.charge_operations(1).is_err())
-                        || cancel.is_cancelled()
-                    {
-                        return None;
-                    }
-                    if let Some(indices) = cells.get(&(x + dx, y + dy, z + dz)) {
-                        for &other in indices {
-                            if other == index {
-                                continue;
-                            }
-                            if control.is_some_and(|c| c.charge_point_pairs(1).is_err()) {
-                                return None;
-                            }
-                            let distance_sq =
-                                point.position.distance_squared(cloud[other].position);
-                            if distance_sq > 1e-12 && distance_sq <= FEATURE_RADIUS_SQ {
-                                let rank =
-                                    local.partition_point(|&(held, distance): &(usize, f64)| {
-                                        distance
-                                            .total_cmp(&distance_sq)
-                                            .then_with(|| held.cmp(&other))
-                                            .is_lt()
-                                    });
-                                if rank < MAX_NEIGHBORS {
-                                    if local.len() == MAX_NEIGHBORS {
-                                        local.pop();
-                                    }
-                                    local.insert(rank, (other, distance_sq));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        lists.push(local);
-    }
-    Some(lists)
 }

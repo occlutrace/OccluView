@@ -87,7 +87,7 @@ fn finite_empty_or_masked_returns_weak() {
 }
 
 /// ID33: every supplied numeric field, including excluded/trailing positions,
-/// is checked before invoking legacy geometry. A partial pass is explicit.
+/// is checked before surface queries. A partial pass is explicit.
 #[test]
 #[expect(
     clippy::too_many_lines,
@@ -252,7 +252,7 @@ fn nonfinite_input_is_the_only_numeric_error() {
 }
 
 #[test]
-fn finite_legacy_refusals_retain_checkpoint_reasons() {
+fn finite_unverified_candidates_retain_checkpoint_reasons() {
     let plane = arch::plane();
     let fixed = arch::sphere();
     let result = search(&input(plane.soup(), fixed.soup()));
@@ -266,15 +266,18 @@ fn finite_legacy_refusals_retain_checkpoint_reasons() {
         Rigid::new(DQuat::IDENTITY, DVec3::new(100., 0., 0.)),
     );
     let result = search(&input(far.soup(), plane.soup()));
-    assert!(result.candidates[0].reasons.iter().any(|r| matches!(
-        r,
-        EvidenceReason::LegacyRejected(FitRejection::TooFewPairs { .. })
-    )));
+    assert!(result
+        .candidates
+        .iter()
+        .all(|c| c.confidence == Confidence::Weak));
+    assert!(result.candidates[0]
+        .reasons
+        .contains(&EvidenceReason::InsufficientSupport));
     proper(&result);
 }
 
-/// Independent negative controls exercise legacy geometry, not a fabricated
-/// evidence struct. The transitional boundary cannot certify any of them.
+/// Independent negative controls exercise the public geometry path. Missing
+/// independent verification cannot certify any of them.
 #[test]
 fn negative_controls_remain_uncertified() {
     let shapes = [arch::plane(), arch::cylinder(), arch::sphere()];
@@ -298,6 +301,41 @@ fn negative_controls_remain_uncertified() {
             .candidates
             .iter()
             .all(|c| c.confidence == Confidence::Weak));
+    }
+}
+
+#[test]
+fn fixed_work_provenance_and_candidates_are_reproducible() {
+    let plane = arch::plane();
+    let request = input(plane.soup(), plane.soup());
+    let mut settings = SearchSettings::for_profile(SearchProfile::Local);
+    settings.top_k = usize::MAX;
+    settings.influence_radius_mm = 6.;
+    settings.overlap_prior = Some(-0.2);
+    settings.work_budget.query_calls = 99;
+    let mut previous = None;
+    for _ in 0..3 {
+        let mut result = search_alignment(&request, &settings, &SearchControl::default()).unwrap();
+        proper(&result);
+        let effective = result.provenance.effective_settings.as_ref().unwrap();
+        assert_eq!(effective.top_k, 5);
+        assert_eq!(effective.influence_radius_mm, 4.);
+        assert_eq!(effective.overlap_prior, Some(0.01));
+        assert_eq!(effective.wall_limit, std::time::Duration::from_secs(2));
+        assert_eq!(effective.work_budget.query_calls, 99);
+        assert_eq!(result.provenance.operation_limit, 32_000_000);
+        assert_eq!(result.provenance.input_revisions, [1, 2]);
+        assert_eq!(result.provenance.algorithm_version, 3);
+        assert_eq!(result.completion, Completion::WorkLimit);
+        assert!(result.work.query_calls <= 99);
+        for family in &result.work.families {
+            assert!(family.scored <= family.attempted);
+        }
+        result.work.elapsed = std::time::Duration::ZERO;
+        if let Some(previous) = &previous {
+            assert_eq!(previous, &result);
+        }
+        previous = Some(result);
     }
 }
 
@@ -438,7 +476,7 @@ fn synthetic_support_has_independent_truth_and_operators() {
 }
 
 #[test]
-fn legacy_landmarks_and_untrusted_reports_keep_finite_evidence() {
+fn landmarks_and_unverified_scores_keep_finite_evidence() {
     let plane = arch::plane();
     let pairs = [
         PointPair {
@@ -457,8 +495,18 @@ fn legacy_landmarks_and_untrusted_reports_keep_finite_evidence() {
     let result = search(&request);
     proper(&result);
     assert_eq!(result.candidates[0].confidence, Confidence::Weak);
-    assert!(result.candidates[0].seeds.contains(&SeedOrigin::Landmarks));
-    assert!(result.candidates[0].evidence.legacy_report.is_some());
+    assert!(result
+        .candidates
+        .iter()
+        .any(|c| c.seeds.contains(&SeedOrigin::Landmarks)));
+    assert!(result
+        .candidates
+        .iter()
+        .all(|c| c.evidence.legacy_report.is_none()));
+    assert!(matches!(
+        result.candidates[0].evidence.score,
+        Metric::Measured(_)
+    ));
     let gum = arch::dental_arch(&arch::ArchSpec {
         teeth: 0,
         grid: [80, 16],
@@ -469,7 +517,7 @@ fn legacy_landmarks_and_untrusted_reports_keep_finite_evidence() {
     proper(&result);
     assert_eq!(result.candidates[0].confidence, Confidence::Weak);
     assert!(
-        result.candidates[0].evidence.legacy_report.is_some(),
-        "measured finite diagnostics survive without authorization"
+        matches!(result.candidates[0].evidence.score, Metric::Measured(_)),
+        "measured finite proposal diagnostics survive without authorization"
     );
 }

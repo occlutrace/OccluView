@@ -17,6 +17,7 @@ mod feature_seed;
 
 #[path = "icp_overlap.rs"]
 mod icp_overlap;
+pub(crate) use icp_overlap::{common_area, directional_support};
 use icp_overlap::{common_support_coverage, reciprocal_evidence};
 #[path = "icp_step.rs"]
 mod icp_step;
@@ -32,6 +33,7 @@ mod icp_search;
 use icp_search::{choose_start_pose, StartPose};
 #[cfg(test)]
 use icp_search::{coarse_candidate_is_better, coarse_candidates_are_ambiguous, CoarseCandidate};
+pub(crate) use icp_search::{generate_hypotheses, ProposalOptions};
 #[path = "icp_solve.rs"]
 mod icp_solve;
 use icp_solve::run_level;

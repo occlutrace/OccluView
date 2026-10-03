@@ -1,30 +1,24 @@
-//! Retain legacy registration checkpoints under the reviewable result contract.
+//! Bounded proposal search under the reviewable result contract.
 //!
-//! The numerical kernels remain the independently implemented Horn pair fit
-//! (Horn, 1987, <https://doi.org/10.1364/JOSAA.4.000629>) and trimmed plane ICP
-//! (Chetverikov et al., 2005, <https://doi.org/10.1016/j.imavis.2004.05.007>).
-//! This boundary changes authority, not those algorithms: vertex diagnostics
-//! never stand in for independent area-weighted verification.
+//! Area-based proposals use Horn (1987),
+//! <https://doi.org/10.1364/JOSAA.4.000629>, and the independently specified
+//! fractional common-area score inspired by Phillips et al. (2006),
+//! <https://arxiv.org/abs/cs/0606098>. Completed training scores survive
+//! interruption but never stand in for independent verification.
 
 use crate::search_result::{
     AlignmentCandidate, AlignmentInput, AlignmentInputError, AlignmentSearchResult,
     CandidateEvidence, CandidateId, Completion, Confidence, EvidenceReason, InputCheck, InputField,
-    Metric, NormalPolicy, RefinementTermination, SearchProfile, SearchProvenance, SearchSettings,
-    SearchWork, SeedOrigin,
-};
-use crate::{
-    fit_pairs, FitBounds, FitRejection, RefineSettings, Rigid, SearchControl, SurfaceIndex,
+    Metric, RefinementTermination, SearchProvenance, SearchSettings, SearchWork, SeedOrigin,
 };
 use crate::{prepare_alignment_surface, SurfaceSide};
-use glam::{DAffine3, DMat3, DQuat, DVec3};
+use crate::{Rigid, SearchControl};
+use glam::DQuat;
 use occluview_geometry::surface::GeometryControl;
-
-const MAX_TRANSITION_TRIANGLES: usize = 80_000;
-const MAX_TRANSITION_VERTICES: usize = 100_000;
 
 #[expect(
     clippy::too_many_lines,
-    reason = "ordered preparation and checkpoint accounting share one result lifetime"
+    reason = "ordered preparation and terminal checkpoint accounting"
 )]
 pub(crate) fn search(
     input: &AlignmentInput<'_>,
@@ -34,10 +28,18 @@ pub(crate) fn search(
     let mut result = initial_result(input, settings);
     let geometry = control.geometry_control(settings);
     let limits = geometry.limits();
+    result.provenance.operation_limit = limits.operations;
     result.provenance.budget.query_calls = limits.query_calls;
     result.provenance.budget.triangle_tests = limits.triangle_tests;
     result.provenance.budget.point_pair_tests = limits.point_pair_tests;
     result.provenance.budget.memory_bytes = limits.memory_bytes;
+    result.provenance.budget.patch_edge_visits = settings.work_budget.patch_edge_visits.min(
+        if settings.profile == crate::SearchProfile::Extended {
+            8_000_000
+        } else {
+            2_000_000
+        },
+    );
     if let Some(done) = validate(input, settings, control, &geometry, &mut result)? {
         result.completion = done;
         result.candidates[0]
@@ -70,6 +72,10 @@ pub(crate) fn search(
             &mut candidate.reasons,
         )
     });
+    let mut recorded_settings = effective.clone();
+    recorded_settings.work_budget = result.provenance.budget.clone();
+    recorded_settings.wall_limit = geometry.wall_limit();
+    result.provenance.effective_settings = Some(recorded_settings);
     let moving = prepare_alignment_surface(
         input.moving,
         SurfaceSide::Moving,
@@ -94,35 +100,15 @@ pub(crate) fn search(
     }
     record_preparation(&fixed, &mut result);
     record_preparation(&moving, &mut result);
-    if let (Some(_moving_surface), Some(fixed_surface)) = (&moving.surface, &fixed.surface) {
-        if oversized(input) || input.landmarks.len() > 128 {
-            result.completion = Completion::ResourceLimit;
-            result.candidates[0]
-                .reasons
-                .push(EvidenceReason::PartialGeometry);
-        } else if effective.work_budget.query_calls == 0
-            || effective.work_budget.triangle_tests == 0
-        {
-            result.completion = Completion::WorkLimit;
-            result.candidates[0]
-                .reasons
-                .push(EvidenceReason::BudgetExhausted);
-        } else if let Some(authored) = rigid_affine(input.moving.world_from_local) {
-            run_legacy(
-                input,
-                &effective,
-                control,
-                &geometry,
-                authored,
-                &fixed_surface.original_index,
-                fixed_surface.frame.center_world,
-                &mut result,
-            );
-        } else {
-            result.candidates[0]
-                .reasons
-                .push(EvidenceReason::PartialGeometry);
-        }
+    if let (Some(moving_surface), Some(fixed_surface)) = (&moving.surface, &fixed.surface) {
+        run_proposals(
+            input,
+            &effective,
+            &geometry,
+            moving_surface,
+            fixed_surface,
+            &mut result,
+        );
     }
     let counters = geometry.counters();
     result.work.query_calls = counters.query_calls;
@@ -178,7 +164,11 @@ fn initial_result(input: &AlignmentInput<'_>, settings: &SearchSettings) -> Alig
             ..SearchWork::default()
         },
         provenance: SearchProvenance {
-            algorithm_version: 1,
+            operation_limit: 0,
+            algorithm_version: 3,
+            effective_settings: None,
+            threshold_set_id: "geometric-evidence-v1-unverified",
+            grid_recipe_id: "haar-polar-6x12-12x24-farthest72-v1",
             input_revisions: [input.moving.revision, input.fixed.revision],
             seed: 0x4f56_5f41_4c52_3100,
             normal_policy: settings.normal_policy,
@@ -386,264 +376,123 @@ fn clamp_setting(
     effective
 }
 
-fn rigid_affine(affine: DAffine3) -> Option<Rigid> {
-    let columns = [
-        affine.matrix3.x_axis,
-        affine.matrix3.y_axis,
-        affine.matrix3.z_axis,
-    ];
-    if columns
-        .iter()
-        .any(|x| (x.length_squared() - 1.).abs() > 1e-5)
-        || [(0, 1), (0, 2), (1, 2)]
-            .into_iter()
-            .any(|(a, b)| columns[a].dot(columns[b]).abs() > 1e-5)
-        || affine.matrix3.determinant() <= 0.
-    {
-        return None;
-    }
-    Some(Rigid::new(
-        DQuat::from_mat3(&DMat3::from_cols(columns[0], columns[1], columns[2])),
-        affine.translation,
-    ))
-}
-
-fn oversized(input: &AlignmentInput<'_>) -> bool {
-    [input.moving, input.fixed].iter().any(|mesh| {
-        mesh.soup.triangle_count() > MAX_TRANSITION_TRIANGLES
-            || mesh.soup.vertex_count() > MAX_TRANSITION_VERTICES
-    })
-}
-
 #[expect(
-    clippy::too_many_lines,
     clippy::too_many_arguments,
-    reason = "paired legacy diagnostics and correction composition at one boundary"
+    clippy::too_many_lines,
+    reason = "result lifetime includes both prepared surfaces and immutable request"
 )]
-fn run_legacy(
+fn run_proposals(
     input: &AlignmentInput<'_>,
     settings: &SearchSettings,
-    control: &SearchControl,
     geometry: &GeometryControl,
-    authored: Rigid,
-    fixed: &SurfaceIndex,
-    fixed_center: DVec3,
+    moving: &crate::PreparedSurface,
+    fixed: &crate::PreparedSurface,
     result: &mut AlignmentSearchResult,
 ) {
-    if geometry.checkpoint().is_some() {
-        return;
-    }
-    // Covers bounded legacy numeric scratch and feature containers. The exact
-    // indices have their own resident reservations under this same cap.
-    let Ok(_numeric_memory) = geometry.reserve(64 * 1024 * 1024) else {
-        return;
+    let mut reasons = result.candidates[0].reasons.clone();
+    let seeds: Vec<_> = input
+        .seeds
+        .iter()
+        .take(32)
+        .map(|&seed| canonical_seed(seed, &mut reasons))
+        .collect();
+    let request = AlignmentInput {
+        seeds: &seeds,
+        ..*input
     };
-    let fixed_shift = Rigid::new(DQuat::IDENTITY, -fixed_center);
-    let restore_fixed = fixed_shift.inverse();
-    // A finite landmark failure is a seed warning; scan search still runs.
-    let mut start = fixed_shift
-        .compose(&result.candidates[0].pose)
-        .compose(&authored);
-    if !start.is_finite() {
-        result.candidates[0]
-            .reasons
-            .push(EvidenceReason::InvalidSeed);
-        return;
+    let proposals = crate::icp::generate_hypotheses(
+        moving,
+        fixed,
+        &request,
+        settings,
+        geometry,
+        crate::icp::ProposalOptions::default(),
+    );
+    result.work.examined_poses = proposals.examined;
+    result.work.families.clone_from(&proposals.families);
+    if !proposals.family_stops.is_empty() {
+        result.completion = Completion::WorkLimit;
+        result.work.unfinished_stages.push("optional-proposals");
+        reasons.push(EvidenceReason::BudgetExhausted);
     }
-    if !input.landmarks.is_empty() {
-        let moving: Vec<_> = input
-            .landmarks
-            .iter()
-            .map(|p| authored.apply(p.moving_local))
-            .collect();
-        let fixed_points: Vec<_> = input
-            .landmarks
-            .iter()
-            .map(|p| input.fixed.world_from_local.transform_point3(p.fixed_local) - fixed_center)
-            .collect();
-        if moving.iter().chain(&fixed_points).all(|p| p.is_finite()) {
-            let bounds = FitBounds {
-                moving_center: DVec3::ZERO,
-                fixed_center: DVec3::ZERO,
-                moving_extent: 1e6,
-                fixed_extent: 1e6,
-            };
-            let moving_normals: Option<Vec<_>> = input
-                .landmarks
-                .iter()
-                .map(|p| p.normals_local.map(|n| authored.apply_normal(n[0])))
-                .collect();
-            let fixed_normals: Option<Vec<_>> = input
-                .landmarks
-                .iter()
-                .map(|p| {
-                    p.normals_local.map(|n| {
-                        if settings.normal_policy == NormalPolicy::Opposed {
-                            -transform_normal(input.fixed.world_from_local.matrix3, n[1])
-                        } else {
-                            transform_normal(input.fixed.world_from_local.matrix3, n[1])
-                        }
-                    })
-                })
-                .collect();
-            let normals = moving_normals
-                .as_ref()
-                .zip(fixed_normals.as_ref())
-                .map(|(moving, fixed)| (moving.as_slice(), fixed.as_slice()));
-            match fit_pairs(&moving, &fixed_points, normals, &bounds) {
-                Ok(fit) => {
-                    start = fit.rigid.compose(&authored);
-                    result.candidates[0].id = CandidateId {
-                        family: 1,
-                        proposal: 0,
-                    };
-                    if (fit.unit_ratio - 1.).abs() > 0.02 {
-                        result.candidates[0]
-                            .reasons
-                            .push(EvidenceReason::SuspectedUnitsOrDeformation);
-                    }
-                    result.candidates[0].seeds.push(SeedOrigin::Landmarks);
-                }
-                Err(reason) => result.candidates[0]
-                    .reasons
-                    .push(EvidenceReason::LandmarkRejected(reason)),
-            }
-        } else {
-            result.candidates[0]
-                .reasons
-                .push(EvidenceReason::PartialGeometry);
+    result.work.patch_edge_visits = proposals.graph_visits;
+    if let Some(stop) = proposals.stop {
+        result.completion = crate::sample::completion(stop);
+        reasons.push(EvidenceReason::BudgetExhausted);
+    }
+    if proposals.incomplete_patches {
+        reasons.push(EvidenceReason::PartialGeometry);
+    }
+    if proposals
+        .landmark_scale
+        .is_some_and(|ratio| (ratio - 1.).abs() > 0.02)
+    {
+        reasons.push(EvidenceReason::SuspectedUnitsOrDeformation);
+    }
+    if let Some(warning) = proposals.landmark_warning {
+        reasons.push(EvidenceReason::LandmarkRejected(warning));
+    }
+    let mut pool = proposals.pool;
+    if let Some(best) = proposals.best {
+        if !pool.iter().any(|p| p.id == best.id) {
+            pool.push(best);
         }
     }
-    let refine_settings = RefineSettings {
-        influence_radius_mm: settings.influence_radius_mm,
-        matching_ratio: settings.overlap_prior.unwrap_or(0.8),
-        orientation: match settings.normal_policy {
-            NormalPolicy::Match => crate::Orientation::Match,
-            NormalPolicy::Opposed => crate::Orientation::Inverted,
-            NormalPolicy::Unsigned => crate::Orientation::Ignored,
-        },
-        local_only: settings.profile == SearchProfile::Local,
-        max_iterations: 40,
-    };
-    let mut last = None;
-    let mut watchdog_failed = false;
-    let legacy_cancel = crate::CancelFlag::new();
-    let outcome = std::thread::scope(|scope| {
-        let (finished, stopped) = std::sync::mpsc::channel::<()>();
-        let cancel = &legacy_cancel;
-        let watchdog = std::thread::Builder::new()
-            .name("alignment-deadline".into())
-            .spawn_scoped(scope, move || loop {
-                if control.checkpoint(settings.wall_limit).is_some()
-                    || geometry.checkpoint().is_some()
-                {
-                    cancel.cancel();
-                    break;
-                }
-                if stopped.recv_timeout(std::time::Duration::from_millis(5))
-                    != Err(std::sync::mpsc::RecvTimeoutError::Timeout)
-                {
-                    break;
-                }
-            });
-        if watchdog.is_err() {
-            watchdog_failed = true;
-            legacy_cancel.cancel();
-        }
-        let outcome = crate::icp::refine_checkpointed(
-            input.moving.soup,
-            fixed,
-            start,
-            &refine_settings,
-            &legacy_cancel,
-            &mut |report| {
-                if report.rigid.is_finite() {
-                    last = Some(report);
-                }
-                if control.checkpoint(settings.wall_limit).is_some()
-                    || geometry.checkpoint().is_some()
-                {
-                    legacy_cancel.cancel();
-                }
-            },
-        );
-        let _ = finished.send(());
-        outcome
-    });
-    if watchdog_failed {
-        result.completion = Completion::ResourceLimit;
-        result.candidates[0]
-            .reasons
-            .push(EvidenceReason::BudgetExhausted);
-    }
-    result.work.examined_poses = 1;
-    if let Ok(report) = outcome {
-        if report.rigid.is_finite() {
-            last = Some(report);
-        }
-    }
-    if let Some(report) = last {
-        let correction = restore_fixed
-            .compose(&report.rigid)
-            .compose(&authored.inverse());
-        if correction.is_finite() {
-            result.candidates[0].pose =
-                canonical_seed(correction, &mut result.candidates[0].reasons);
-            result.work.iterations = u64::from(report.iterations);
-            // Infinite/missing legacy statistics must never enter diagnostics.
-            if [
-                report.rms,
-                report.geometric_rms,
-                report.median_abs,
-                report.p95_abs,
-                report.coverage,
-                report.support_coverage,
-                report.inlier_ratio,
-                report.effective_matching_ratio,
-                report.verified_coverage,
-                report.verified_support_coverage,
-                report.verified_median_mm,
-                report.verified_stability,
-            ]
-            .into_iter()
-            .all(f64::is_finite)
-            {
-                result.candidates[0].evidence.legacy_report = Some(crate::IcpReport {
-                    rigid: restore_fixed.compose(&report.rigid),
-                    ..report
-                });
-            }
-            result.candidates[0].refinement = if report.converged {
-                RefinementTermination::Stationary
-            } else {
-                RefinementTermination::IterationLimit
-            };
-        }
-    }
-    if let Err(reason) = outcome {
-        result.candidates[0]
-            .reasons
-            .push(EvidenceReason::LegacyRejected(reason));
-        result.candidates[0].refinement = match reason {
-            FitRejection::TooFewPairs { .. } => RefinementTermination::NoCorrespondences,
-            FitRejection::NoImprovement | FitRejection::Ambiguous => {
-                RefinementTermination::Stationary
-            }
-            _ => RefinementTermination::NumericalTrialRejected,
+    let mut pool = crate::candidate_score::refinement_candidates(&pool, settings.normal_policy);
+    // These 16 retained basins form the numerical refinement boundary.
+    // Only terminal publication reduces the reviewed result to the UI cap.
+    pool.sort_by(crate::candidate_score::proposal_order);
+    let mut candidates = Vec::with_capacity(5);
+    for proposal in pool.into_iter().take(settings.top_k) {
+        let Some(pose) = moving.frame.correction_to_world(fixed.frame, proposal.pose) else {
+            continue;
         };
+        let score = proposal.score;
+        let mut candidate_reasons = reasons.clone();
+        if score.orientation.is_some_and(|fraction| fraction < 0.75) {
+            candidate_reasons.push(EvidenceReason::PolicyConflict);
+        }
+        if score.overlap < 0.2 {
+            candidate_reasons.push(EvidenceReason::InsufficientSupport);
+        }
+        candidates.push(AlignmentCandidate {
+            id: proposal.id,
+            pose,
+            confidence: Confidence::Weak,
+            evidence: CandidateEvidence {
+                eligible_area_mm2: Metric::Measured([
+                    moving.eligible_area_mm2,
+                    fixed.eligible_area_mm2,
+                ]),
+                score: Metric::Measured(score.score),
+                queried_population_area_mm2: Metric::Measured(score.population_area),
+                policy_compatible_area_mm2: Metric::Measured(score.policy_support),
+                coverage_02: Metric::Measured(score.coverage_02),
+                coverage_05: Metric::Measured(score.coverage_05),
+                common_area_mm2: Metric::Measured(score.common_area),
+                overlap_smaller: Metric::Measured(score.overlap),
+                trim_fraction: Metric::Measured(score.fraction),
+                orientation_fraction: score
+                    .orientation
+                    .map_or_else(Metric::default, Metric::Measured),
+                ..CandidateEvidence::default()
+            },
+            reasons: candidate_reasons,
+            seeds: proposal.origins,
+            refinement: RefinementTermination::NotStarted,
+        });
     }
-}
-
-fn transform_normal(matrix: DMat3, normal: DVec3) -> DVec3 {
-    let determinant = matrix.determinant();
-    if !determinant.is_finite() || determinant == 0. {
-        return DVec3::ZERO;
+    if !candidates.is_empty() {
+        result.candidates = candidates;
     }
-    let transformed = matrix.inverse().transpose() * normal;
-    if transformed.is_finite() {
-        transformed.normalize_or_zero()
+    result.work.retained_poses = u32::try_from(result.candidates.len()).unwrap_or(5);
+    if proposals.stop.is_none() {
+        result
+            .work
+            .unfinished_stages
+            .retain(|&stage| stage != "controlled-query-accounting");
     } else {
-        DVec3::ZERO
+        result.work.unfinished_stages.push("proposal-families");
     }
 }
 
