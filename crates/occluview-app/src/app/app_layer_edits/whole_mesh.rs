@@ -195,7 +195,7 @@ pub(super) fn apply_layer_mesh_edit_action_with_limit(
     // the mesh alone so the caller reports a no-op status instead of recording
     // an edit. The report still rides along so a no-op can say so.
     let content_changed = match action {
-        LayerContextAction::CloseHoles => edited.report.filled_holes > 0,
+        LayerContextAction::CloseHoles => close_holes_changes_content(&edited.report),
         _ => true,
     };
     if !content_changed {
@@ -204,6 +204,14 @@ pub(super) fn apply_layer_mesh_edit_action_with_limit(
 
     entry.mesh = Arc::new(edited.mesh);
     Ok((structural_scene_apply(), Some(edited.report)))
+}
+
+/// Cleanup and topology changes are edits even when no cap can be completed.
+pub(super) fn close_holes_changes_content(report: &MeshEditReport) -> bool {
+    report.filled_holes > 0
+        || report.removed_triangles > 0
+        || report.healed_rims > 0
+        || report.input_vertices != report.output_vertices
 }
 
 /// Run the canonical Close Holes kernel used by both the layer menu and the

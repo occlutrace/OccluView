@@ -74,7 +74,7 @@ pub(crate) fn selection_batch_status(
                     &label(*id),
                     Some(report),
                     limit,
-                    report.filled_holes > 0,
+                    outcome.changed_layers.contains(id),
                     locale,
                 )
             })

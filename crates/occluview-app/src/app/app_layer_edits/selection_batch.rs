@@ -6,7 +6,9 @@ use super::structural::{
     clone_layer_with_mesh, cut_selection_meshes, split_selection_into_meshes,
     structural_scene_apply, MAX_SEPARATE_COMPONENTS,
 };
-use super::whole_mesh::{close_holes_in_mesh, edit_command_for_layer_action};
+use super::whole_mesh::{
+    close_holes_changes_content, close_holes_in_mesh, edit_command_for_layer_action,
+};
 use occluview_core::{CoreError, Mesh, SceneMeshId};
 use occluview_mesh_edit::{selected_connected_components_in_mesh, FaceSelection, MeshEditReport};
 use std::sync::Arc;
@@ -268,7 +270,7 @@ fn apply_visible_close_holes(
         }
         let repaired = close_holes_in_mesh(&source.mesh, &selection, close_holes_limit_mm)?;
         holes.push((layer_id, repaired.report.clone()));
-        if repaired.report.filled_holes > 0 {
+        if close_holes_changes_content(&repaired.report) {
             planned.push(PlannedEdit::Replace {
                 layer_id,
                 mesh: repaired.mesh,
