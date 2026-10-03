@@ -298,13 +298,44 @@ pub(crate) fn directional_support(
     exclude_border: bool,
     control: &GeometryControl,
 ) -> Result<Vec<WeightedDistance>, GeometryStop> {
+    let mut result = Vec::new();
+    let mut scratch = SurfaceQueryScratch::new(control)?;
+    directional_support_into(
+        source,
+        target,
+        pose,
+        policy,
+        count,
+        exclude_border,
+        &mut scratch,
+        &mut result,
+        control,
+    )?;
+    Ok(result)
+}
+
+/// Reuse admitted query scratch and output storage across a fixed population.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "directed query and reusable serial workspace"
+)]
+pub(crate) fn directional_support_into(
+    source: &PreparedSurface,
+    target: &SurfaceIndex,
+    pose: Rigid,
+    policy: NormalPolicy,
+    count: usize,
+    exclude_border: bool,
+    scratch: &mut SurfaceQueryScratch,
+    result: &mut Vec<WeightedDistance>,
+    control: &GeometryControl,
+) -> Result<(), GeometryStop> {
     let samples = &source.samples[0].samples;
     let count = count.min(samples.len());
-    let mut result = Vec::new();
+    result.clear();
     result
         .try_reserve_exact(count)
         .map_err(|_| GeometryStop::ResourceLimit)?;
-    let mut scratch = SurfaceQueryScratch::new(control)?;
     for i in 0..count {
         control.charge_operations(1)?;
         let start = i * samples.len() / count;
@@ -319,7 +350,7 @@ pub(crate) fn directional_support(
         // The cheap pass measures the 1 mm soft support band. Retained poses
         // receive the wider prefix sweep; this pass is only a proposal rank.
         let radius = if count <= 16 { 1. } else { 4. };
-        let hit = match target.nearest_with_scratch(point, radius, &mut scratch) {
+        let hit = match target.nearest_with_scratch(point, radius, scratch) {
             QueryOutcome::Complete(hit) => hit.filter(|h| !exclude_border || !h.on_border),
             QueryOutcome::Interrupted { reason, .. } => return Err(reason),
         };
@@ -339,5 +370,5 @@ pub(crate) fn directional_support(
             cell: sample.point.to_array().map(|v| (v.floor() + 0.).to_bits()),
         });
     }
-    Ok(result)
+    Ok(())
 }

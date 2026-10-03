@@ -17,7 +17,7 @@ mod feature_seed;
 
 #[path = "icp_overlap.rs"]
 mod icp_overlap;
-pub(crate) use icp_overlap::{common_area, directional_support};
+pub(crate) use icp_overlap::{common_area, directional_support, directional_support_into};
 use icp_overlap::{common_support_coverage, reciprocal_evidence};
 #[path = "icp_step.rs"]
 mod icp_step;

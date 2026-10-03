@@ -45,9 +45,9 @@ impl Span {
     }
 }
 
-#[cfg(feature = "search-probe")]
 impl Drop for Span {
     fn drop(&mut self) {
+        #[cfg(feature = "search-probe")]
         self.measurement.finish();
     }
 }
