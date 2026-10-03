@@ -37,6 +37,16 @@ mod tests {
     use super::{reciprocal_coverage_ok, reciprocal_summary_is_usable, ReciprocalSummary};
 
     #[test]
+    fn zero_common_area_has_one_canonical_representation() {
+        for coverage in [[0., 0.], [-0., 0.], [0., -0.], [-0., -0.]] {
+            assert_eq!(
+                super::common_area([1., 2.], coverage).to_bits(),
+                0f64.to_bits()
+            );
+        }
+    }
+
+    #[test]
     fn reciprocal_guard_does_not_validate_a_six_point_patch() {
         let tiny_patch = ReciprocalSummary {
             matched: 6,
@@ -282,7 +292,14 @@ pub(super) fn reciprocal_evidence(
 
 /// Conservative intersection estimator, with explicit directional denominators.
 pub(crate) fn common_area(areas: [f64; 2], coverage: [f64; 2]) -> f64 {
-    (areas[0] * coverage[0]).min(areas[1] * coverage[1])
+    let area = (areas[0] * coverage[0]).min(areas[1] * coverage[1]);
+    // Empty floating sums can produce -0; unsupported area has one ranking
+    // representation so a sign bit cannot outrank an otherwise equal basin.
+    if area == 0. {
+        0.
+    } else {
+        area
+    }
 }
 
 #[expect(

@@ -70,6 +70,10 @@ pub(crate) struct TranslationScorer<'a> {
 }
 
 impl<'a> TranslationScorer<'a> {
+    /// Admit reusable scratch for sixteen-point directed translation scores.
+    ///
+    /// # Errors
+    /// Returns the cooperative control stop or failed memory admission.
     pub(crate) fn new(
         moving: &'a PreparedSurface,
         fixed: &'a PreparedSurface,
@@ -93,11 +97,16 @@ impl<'a> TranslationScorer<'a> {
     }
 
     /// Return None only when a complete upper bound is strictly below cutoff.
-    /// Ties and unavailable bounds receive the complete original score.
+    /// Ties receive the complete original score unless the full ranking tuple
+    /// proves a no-support placement cannot displace the retained candidate.
+    ///
+    /// # Errors
+    /// Propagates exact-query, arithmetic or cooperative work interruptions.
     pub(crate) fn score(
         &mut self,
         pose: Rigid,
-        cutoff: Option<f64>,
+        cutoff: Option<&Proposal>,
+        id: CandidateId,
     ) -> Result<Option<CoarseScore>, GeometryStop> {
         let _phase =
             crate::search_probe::Span::new(crate::search_probe::Phase::Scoring, self.control);
@@ -122,7 +131,23 @@ impl<'a> TranslationScorer<'a> {
         } else {
             0.
         };
-        if cutoff.is_some_and(|cutoff| upper.is_finite() && upper + 1e-12 < cutoff) {
+        if cutoff.is_some_and(|cutoff| upper.is_finite() && upper + 1e-12 < cutoff.score.score) {
+            return Ok(None);
+        }
+        // No finite smaller-side hit implies exactly zero common area and
+        // score, and no cost prefix/residual. A later tuple can be rejected
+        // only if all secondary ranking fields prove it cannot displace held.
+        if finite == 0.
+            && cutoff.is_some_and(|held| {
+                held.score
+                    .score
+                    .total_cmp(&0.)
+                    .then(held.score.common_area.total_cmp(&0.))
+                    .then(f64::INFINITY.total_cmp(&held.score.rms.unwrap_or(f64::INFINITY)))
+                    .then(id.cmp(&held.id))
+                    .is_gt()
+            })
+        {
             return Ok(None);
         }
         self.query_direction(1 - smaller, pose)?;
@@ -697,6 +722,70 @@ pub(crate) fn insert_candidate(
 mod tests {
     use super::*;
     #[test]
+    fn zero_support_translations_keep_the_same_stable_shortlist() {
+        let mesh = crate::proposal_test_support::arch::plane();
+        let prepare = |side| {
+            crate::prepare_alignment_surface(
+                crate::MeshInput {
+                    soup: mesh.soup(),
+                    world_from_local: glam::DAffine3::IDENTITY,
+                    revision: 1,
+                },
+                side,
+                crate::RegionPolicy::AllEligible,
+                &GeometryControl::unlimited(),
+            )
+            .unwrap()
+            .surface
+            .unwrap()
+        };
+        let moving = prepare(crate::SurfaceSide::Moving);
+        let fixed = prepare(crate::SurfaceSide::Fixed);
+        let config = CoarseScoring {
+            policy: NormalPolicy::Unsigned,
+            samples_per_side: 16,
+            ceiling: 1.,
+            proxies: None,
+        };
+        let full = GeometryControl::unlimited();
+        let bounded = GeometryControl::unlimited();
+        let mut scorer = TranslationScorer::new(&moving, &fixed, config, &bounded).unwrap();
+        let mut oracle = Vec::new();
+        let mut selected: Vec<Proposal> = Vec::new();
+        for i in 0..64u32 {
+            let pose = Rigid::new(
+                glam::DQuat::IDENTITY,
+                glam::DVec3::Z * (100. + f64::from(i)),
+            );
+            let mut proposal = candidate(i, 0.);
+            proposal.pose = pose;
+            proposal.score = score_common_region(&moving, &fixed, pose, config, &full).unwrap();
+            oracle.push(proposal);
+            let cutoff = (selected.len() == 4).then(|| &selected[3]);
+            if let Some(score) = scorer.score(pose, cutoff, candidate(i, 0.).id).unwrap() {
+                let mut p = candidate(i, score.score);
+                p.pose = pose;
+                p.score = score;
+                selected.push(p);
+                selected.sort_by(proposal_order);
+                selected.truncate(4);
+            }
+        }
+        oracle.sort_by(proposal_order);
+        oracle.truncate(4);
+        assert_eq!(
+            selected.iter().map(|p| p.id).collect::<Vec<_>>(),
+            oracle.iter().map(|p| p.id).collect::<Vec<_>>()
+        );
+        assert!(
+            bounded.counters().query_calls * 10 <= full.counters().query_calls * 6,
+            "{} vs {}",
+            bounded.counters().query_calls,
+            full.counters().query_calls
+        );
+    }
+
+    #[test]
     fn bounded_translation_scoring_preserves_shortlist_and_cuts_queries() {
         use glam::{DAffine3, DQuat, DVec3};
         let mesh = crate::proposal_test_support::arch::plane();
@@ -743,8 +832,8 @@ mod tests {
             proposal.pose = pose;
             proposal.score = score;
             oracle.push(proposal);
-            let cutoff = (selected.len() == 4).then(|| selected[3].score.score);
-            let Some(score) = scorer.score(pose, cutoff).unwrap() else {
+            let cutoff = (selected.len() == 4).then(|| &selected[3]);
+            let Some(score) = scorer.score(pose, cutoff, candidate(i, 0.).id).unwrap() else {
                 continue;
             };
             let mut proposal = candidate(i, score.score);
@@ -766,7 +855,7 @@ mod tests {
         // Ties can still win on common area, residual or stable ordinal.
         let best = &oracle[0];
         let tied = scorer
-            .score(best.pose, Some(best.score.score))
+            .score(best.pose, Some(best), best.id)
             .unwrap()
             .unwrap();
         assert_eq!(tied.score.to_bits(), best.score.score.to_bits());
