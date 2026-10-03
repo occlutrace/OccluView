@@ -98,5 +98,14 @@ fn large_representation_remains_useful() {
         }
         assert!(clock.elapsed() <= Duration::from_millis(10_100));
         assert!(control.counters().peak_memory_bytes <= 256 * 1024 * 1024);
+        #[cfg(target_os = "linux")]
+        {
+            let status = std::fs::read_to_string("/proc/self/status").unwrap();
+            let rss = status
+                .lines()
+                .find(|line| line.starts_with("VmHWM:"))
+                .unwrap();
+            println!("triangles={count} process_peak_rss={rss}");
+        }
     }
 }

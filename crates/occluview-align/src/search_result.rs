@@ -282,6 +282,10 @@ pub struct CandidateEvidence {
     pub orientation_fraction: Metric<f64>,
     /// Back-projection passing common area divided by queried common area.
     pub reciprocal_fraction: Metric<f64>,
+    /// Undamped training plane information; never independent verification.
+    pub training_info_eigenvalues: Metric<[f64; 6]>,
+    /// Training null twists in radius-normalized coordinates.
+    pub training_weak_twists: Vec<[f64; 6]>,
     /// Undamped area-weighted common plane information eigenvalues.
     pub info_eigenvalues: Metric<[f64; 6]>,
     /// Unconstrained normalized motion eigenvectors.
@@ -396,6 +400,10 @@ pub struct SearchWork {
     pub retained_poses: u32,
     /// Completed local iterations.
     pub iterations: u64,
+    /// Completed comparable numerical checkpoint scoring passes.
+    pub refinement_scored_poses: u64,
+    /// Numerical basins entered at coarse, middle and dense resolution.
+    pub refined_basins: [u32; 3],
     /// Charged nearest calls.
     pub query_calls: u64,
     /// Charged distance tests.

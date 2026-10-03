@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Scan matching refines retained placements with robust area weights and preserves completed poses after interruption.
+
 - Scan matching keeps a bounded representation of large scans and reports approximate surface evidence.
 
 - Scan matching retains later precise four-point proposals when earlier approximate matches fill their output reserve.
