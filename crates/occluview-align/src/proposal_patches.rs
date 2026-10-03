@@ -50,19 +50,61 @@ impl PartialOrd for Frontier {
     }
 }
 
-/// Four overlapping quantile windows of 25–50% of smaller eligible area.
-/// Source-order representatives carry area weights, rather than vertex counts.
+/// Four overlapping windows each contain 30% of the eligible facet area.
+/// Serial source-order moments are independent of the training/holdout split.
+/// A boundary facet contributes only the window's remaining area weight.
 pub(crate) fn smaller_patches(
     surface: &PreparedSurface,
     control: &GeometryControl,
 ) -> Result<Vec<Patch>, GeometryStop> {
-    let samples = &surface.samples[0].samples;
-    let mut patches = Vec::with_capacity(4);
+    let _memory = control.reserve(
+        surface
+            .original_index
+            .triangle_count()
+            .checked_mul(size_of::<SurfaceSample>())
+            .and_then(|bytes| bytes.checked_add(1024))
+            .ok_or(GeometryStop::ResourceLimit)?,
+    )?;
+    let mut patches = Vec::new();
+    patches
+        .try_reserve_exact(4)
+        .map_err(|_| GeometryStop::ResourceLimit)?;
+    let mut population = Vec::new();
+    population
+        .try_reserve_exact(surface.original_index.triangle_count())
+        .map_err(|_| GeometryStop::ResourceLimit)?;
     for i in 0..4 {
-        let start = i * (samples.len() * 7 / 10) / 3;
-        let end = (start + samples.len() * 3 / 10).min(samples.len());
+        let start =
+            surface.eligible_area_mm2 * (1. - TRANSLATION_PATCH_FRACTION) * f64::from(i) / 3.;
+        let end = start + surface.eligible_area_mm2 * TRANSLATION_PATCH_FRACTION;
+        let mut area = 0f64;
+        population.clear();
+        for (triangle, points, _) in surface.original_index.triangles() {
+            control.charge_operations(1)?;
+            let weight = (points[1] - points[0])
+                .cross(points[2] - points[0])
+                .length()
+                * 0.5;
+            let next = area + weight;
+            let included = (next.min(end) - area.max(start)).max(0.);
+            area = next;
+            if included > 0. {
+                population.push(SurfaceSample {
+                    id: triangle,
+                    point: points[0] / 3. + points[1] / 3. + points[2] / 3.,
+                    normal: None,
+                    triangle,
+                    barycentric: [1. / 3.; 3],
+                    area_weight_mm2: included,
+                    region_id: 0,
+                });
+            }
+            if area >= end {
+                break;
+            }
+        }
         if let Some((center, axes)) =
-            crate::proposal_geometry::principal_frame(&samples[start..end], control)?
+            crate::proposal_geometry::principal_frame(&population, control)?
         {
             patches.push(Patch {
                 center,
@@ -231,6 +273,40 @@ pub(crate) fn larger_patches(
                 axes: Some(axes),
                 complete,
             });
+            // Closed shells join opposite skins through their rim. Their
+            // combined centroid lies between two possible fitting surfaces.
+            // Coherent normal hemispheres provide additional area frames;
+            // they change proposals only, never the eligible score population.
+            // Both signs are generated so winding reversal swaps the groups.
+            if complete && surface.original_index.orientation_coherent() {
+                let mut skin = Vec::new();
+                skin.try_reserve_exact(population.len())
+                    .map_err(|_| GeometryStop::ResourceLimit)?;
+                for sign in [-1., 1.] {
+                    if components.len() >= 8 {
+                        break;
+                    }
+                    skin.clear();
+                    for &sample in &population {
+                        control.charge_operations(1)?;
+                        if sample
+                            .normal
+                            .is_some_and(|normal| sign * normal.dot(axes[2]) > 0.5)
+                        {
+                            skin.push(sample);
+                        }
+                    }
+                    if let Some((center, axes)) =
+                        crate::proposal_geometry::principal_frame(&skin, control)?
+                    {
+                        components.push(Patch {
+                            center,
+                            axes: Some(axes),
+                            complete: true,
+                        });
+                    }
+                }
+            }
         }
         if !complete {
             break;
@@ -321,4 +397,106 @@ pub(crate) fn larger_patches(
         translations: patches,
         components,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{MeshInput, RegionPolicy, SurfaceSide};
+    use glam::DAffine3;
+    use occluview_geometry::surface::Soup;
+
+    #[test]
+    fn quantile_patch_centroids_follow_authored_rigid_frames() {
+        let mesh = crate::proposal_test_support::arch::dental_arch(
+            &crate::proposal_test_support::arch::ArchSpec {
+                grid: [32, 8],
+                ..crate::proposal_test_support::arch::ArchSpec::default()
+            },
+        );
+        let rotation =
+            glam::DQuat::from_axis_angle(DVec3::new(1., 2., 3.).normalize(), 57.3f64.to_radians());
+        let mut baseline: Option<Vec<DVec3>> = None;
+        for affine in [
+            DAffine3::IDENTITY,
+            DAffine3::from_rotation_translation(rotation, DVec3::new(17., -11., 23.)),
+        ] {
+            let control = GeometryControl::unlimited();
+            let surface = crate::prepare_alignment_surface(
+                MeshInput {
+                    soup: mesh.soup(),
+                    world_from_local: affine,
+                    revision: 1,
+                },
+                SurfaceSide::Moving,
+                RegionPolicy::AllEligible,
+                &control,
+            )
+            .unwrap()
+            .surface
+            .unwrap();
+            let centers: Vec<_> = smaller_patches(&surface, &control)
+                .unwrap()
+                .iter()
+                .map(|patch| {
+                    affine
+                        .inverse()
+                        .transform_point3(patch.center + surface.frame.center_world)
+                })
+                .collect();
+            assert_eq!(centers.len(), 4);
+            if let Some(baseline) = &baseline {
+                for (index, (&first, &second)) in baseline.iter().zip(&centers).enumerate() {
+                    assert!(
+                        first.distance(second) < 1e-8,
+                        "patch {index} depends on the sample role: {} mm",
+                        first.distance(second)
+                    );
+                }
+            } else {
+                baseline = Some(centers);
+            }
+        }
+    }
+
+    #[test]
+    fn opposite_skins_keep_separate_centroid_frames() {
+        let positions = [
+            -5., -5., 0., 5., -5., 0., 5., 5., 0., -5., 5., 0., -5., -5., 2., 5., -5., 2., 5., 5.,
+            2., -5., 5., 2.,
+        ];
+        let indices = [
+            0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 4, 7, 0, 7, 3, 1, 2, 6, 1, 6, 5, 0, 1, 5, 0, 5,
+            4, 3, 7, 6, 3, 6, 2,
+        ];
+        let control = GeometryControl::unlimited();
+        let surface = crate::prepare_alignment_surface(
+            MeshInput {
+                soup: Soup {
+                    positions: &positions,
+                    indices: &indices,
+                    mask: None,
+                },
+                world_from_local: DAffine3::IDENTITY,
+                revision: 1,
+            },
+            SurfaceSide::Fixed,
+            RegionPolicy::AllEligible,
+            &control,
+        )
+        .unwrap()
+        .surface
+        .unwrap();
+        assert!(surface.original_index.orientation_coherent());
+        let mut visits = 0;
+        let patches = larger_patches(&surface, 30., 4, 2_000_000, &mut visits, &control).unwrap();
+        for world_center in [DVec3::ZERO, DVec3::Z * 2.] {
+            let center = world_center - surface.frame.center_world;
+            assert!(patches
+                .components
+                .iter()
+                .any(|patch| patch.complete && patch.center.distance(center) < 1e-10));
+        }
+        assert!(patches.components.len() <= 8);
+    }
 }
