@@ -1436,8 +1436,15 @@ fn generate_hypotheses_inner(
                         result.examined += 1;
                         result.families[6].attempted += 1;
                         result.families[6].translations_attempted += 1;
-                        let cutoff = (translations.len() == 4).then(|| translations[3].score.score);
-                        let score = match translation_scorer.score(pose, cutoff) {
+                        let cutoff = (translations.len() == 4).then(|| &translations[3]);
+                        let score = match translation_scorer.score(
+                            pose,
+                            cutoff,
+                            CandidateId {
+                                family: 6,
+                                proposal: rotation_id * 192 + (i * 48 + j) as u32,
+                            },
+                        ) {
                             Ok(Some(score)) => score,
                             Ok(None) => continue,
                             Err(stop) => {
