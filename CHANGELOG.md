@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Scan matching shares one distance order between overlap refresh and refinement pairing.
+
 - Scan matching reuses immutable facet bounds and avoids testing a temporal hint twice.
 
 - Scan matching reuses identical descriptor queries and stops matching when its retained correspondence list is full.
