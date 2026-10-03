@@ -577,10 +577,16 @@ fn cmd_info_one(file: &Path) -> Result<()> {
     let [w, h, d] = bbox.dimensions_mm();
 
     println!("File:       {}", file.display());
-    println!(
-        "Format:     {}",
-        file.extension().and_then(|e| e.to_str()).unwrap_or("?")
-    );
+    let format = match loaded.kind {
+        occluview_formats::FormatKind::Stl => "stl",
+        occluview_formats::FormatKind::Ply => "ply",
+        occluview_formats::FormatKind::Obj => "obj",
+        occluview_formats::FormatKind::Gltf => "glb",
+        occluview_formats::FormatKind::Threemf => "3mf",
+        occluview_formats::FormatKind::Off => "off",
+        occluview_formats::FormatKind::Hps => "hps",
+    };
+    println!("Format:     {format}");
     println!("Units:      {}", loaded.units);
     println!(
         "Kind:       {}",

@@ -37,6 +37,29 @@ fn triangle_obj() -> &'static str {
 }
 
 #[test]
+fn info_reports_the_detected_format_for_mislabeled_files() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    std::fs::write(
+        directory.path().join("scan.obj"),
+        b"ply\nformat ascii 1.0\nelement vertex 1\nproperty float x\nproperty float y\nproperty float z\nend_header\n1 2 3\n",
+    )
+    .expect("mislabeled PLY");
+    let output = run(directory.path(), &["info", "scan.obj"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout
+            .lines()
+            .any(|line| line.strip_prefix("Format:").map(str::trim) == Some("ply")),
+        "{stdout}"
+    );
+}
+
+#[test]
 fn help_is_answered_on_stdout_and_writes_nothing() {
     let directory = scratch("help");
     for args in [

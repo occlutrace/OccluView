@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Report the detected mesh format in CLI info for mislabeled files.
+
 - Reject invalid ASCII OFF edge counts consistently with binary OFF.
 
 - Open BOM-prefixed OFF files consistently with format detection.
