@@ -52,6 +52,7 @@ pub fn read(bytes: &[u8]) -> Result<Mesh, FormatError> {
 }
 
 pub(crate) fn read_admitted(bytes: &[u8]) -> Result<Mesh, FormatError> {
+    let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
     // Detect ASCII vs binary by the first line.
     if bytes.starts_with(b"OFF BINARY") {
         read_binary(bytes)
@@ -354,6 +355,18 @@ fn malformed(reason: &str) -> FormatError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bom_prefixed_ascii_off_agrees_with_format_probing() {
+        let bytes = b"\xef\xbb\xbfOFF\n3 1 0\n0 0 0\n1 0 0\n0 1 0\n3 0 1 2\n";
+        assert_eq!(
+            crate::probe::probe(Some("off"), bytes).expect("OFF signature"),
+            crate::probe::FormatKind::Off
+        );
+        let mesh = crate::dispatch_by_extension("off", bytes).expect("BOM-prefixed OFF");
+        assert_eq!(mesh.indices(), &[0, 1, 2]);
+        assert_eq!(mesh.vertices()[1].position, [1.0, 0.0, 0.0]);
+    }
 
     #[test]
     fn rejects_ascii_indices_that_are_not_unsigned_integers() {

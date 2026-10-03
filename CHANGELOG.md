@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Open BOM-prefixed OFF files consistently with format detection.
+
 - Reject incomplete HPS XML instead of silently discarding surface attributes.
 
 - Reject invalid OBJ normal and texture references instead of dropping their attributes.
