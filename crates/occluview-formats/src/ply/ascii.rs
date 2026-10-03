@@ -166,6 +166,13 @@ pub fn read_shaded(
             other => skip_element(&mut tokens, element, other)?,
         }
     }
+    if tokens.next().is_some() {
+        return Err(FormatError::Malformed {
+            format: "PLY (ascii)",
+            offset: 0,
+            reason: "data remains after the declared elements".to_string(),
+        });
+    }
     uvs.apply(&mut builder)?;
 
     shading.build(builder).map_err(FormatError::Core)

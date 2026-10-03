@@ -286,6 +286,62 @@ fn embedded_texture(comments: &header::TextureComments) -> Option<MeshTexture> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn understated_face_counts_cannot_silently_discard_geometry() {
+        for encoding in ["ascii", "binary_little_endian", "binary_big_endian"] {
+            for declared in [0, 1] {
+                let mut bytes = format!(
+                    "ply\nformat {encoding} 1.0\nelement vertex 4\n\
+                     property float x\nproperty float y\nproperty float z\n\
+                     element face {declared}\nproperty list uchar int vertex_indices\nend_header\n"
+                )
+                .into_bytes();
+                for position in [
+                    [0.0_f32, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [1.0, 1.0, 0.0],
+                ] {
+                    if encoding == "ascii" {
+                        bytes.extend_from_slice(
+                            format!("{} {} {}\n", position[0], position[1], position[2]).as_bytes(),
+                        );
+                    } else {
+                        for component in position {
+                            bytes.extend_from_slice(&if encoding == "binary_little_endian" {
+                                component.to_le_bytes()
+                            } else {
+                                component.to_be_bytes()
+                            });
+                        }
+                    }
+                }
+                for triangle in [[0_i32, 1, 2], [2, 1, 3]] {
+                    if encoding == "ascii" {
+                        bytes.extend_from_slice(
+                            format!("3 {} {} {}\n", triangle[0], triangle[1], triangle[2])
+                                .as_bytes(),
+                        );
+                    } else {
+                        bytes.push(3);
+                        for index in triangle {
+                            bytes.extend_from_slice(&if encoding == "binary_little_endian" {
+                                index.to_le_bytes()
+                            } else {
+                                index.to_be_bytes()
+                            });
+                        }
+                    }
+                }
+                let mesh = read(&bytes);
+                assert!(
+                    mesh.is_err() || mesh.as_ref().is_ok_and(|mesh| mesh.triangle_count() == 2),
+                    "{encoding} count {declared} discarded a complete face"
+                );
+            }
+        }
+    }
+
     use super::*;
 
     fn face_uv_file(format: &str, faces: &[([u32; 3], Vec<f32>)], faces_first: bool) -> Vec<u8> {
