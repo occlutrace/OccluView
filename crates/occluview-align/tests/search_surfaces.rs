@@ -481,3 +481,67 @@ fn unrelated_plane_cylinder_sphere_surface_evidence_is_not_certified() {
         }
     }
 }
+
+/// Prepared role weights account for actual clipped cells, including a surface
+/// whose area falls very unevenly between the fixed spatial roles.
+#[test]
+fn prepared_population_weights_never_double_support() {
+    for base in [gum(), operators::resample_density(&gum(), 20.)] {
+        let p = prepare(mesh(base.soup(), DAffine3::IDENTITY))
+            .surface
+            .unwrap();
+        for batch in &p.samples {
+            let population = batch.population_area_mm2;
+            let sum: f64 = batch.samples.iter().map(|s| s.area_weight_mm2).sum();
+            assert!(
+                (population + batch.unqueried_area_mm2 - p.eligible_area_mm2).abs()
+                    <= p.eligible_area_mm2 * 1e-10
+            );
+            assert!(sum / population <= 1. + 1e-12);
+            assert!((sum / population - 1.).abs() <= 1e-12);
+            assert!((sum - batch.represented_area_mm2).abs() <= population * 1e-12);
+        }
+        let verification = &p.samples[3];
+        let mut seated = 0.;
+        for sample in &verification.samples {
+            let QueryOutcome::Complete(Some(hit)) =
+                p.original_index
+                    .nearest_controlled(sample.point, 0.2, &control())
+            else {
+                panic!("incomplete self query");
+            };
+            if !hit.on_border {
+                seated += sample.area_weight_mm2;
+            }
+        }
+        assert!((seated / verification.population_area_mm2 - 1.).abs() <= 0.01);
+    }
+}
+
+#[test]
+fn split_population_conserves_area_without_inclusion_scaling() {
+    let prepared = prepare(mesh(gum().soup(), DAffine3::IDENTITY));
+    let surface = prepared.surface.unwrap();
+    let samples = area_samples(&surface.original_index, 4_096, 73, true, &control()).unwrap();
+    for budget in [0, 1, 64, 4_096] {
+        let split = split_samples(&samples.samples, budget, &control()).unwrap();
+        assert!(
+            (split.training.population_area_mm2 + split.holdout.population_area_mm2
+                - samples.population_area_mm2)
+                .abs()
+                <= samples.population_area_mm2 * 1e-12
+        );
+        for batch in [&split.training, &split.holdout] {
+            let sum: f64 = batch.samples.iter().map(|s| s.area_weight_mm2).sum();
+            assert!(sum <= batch.population_area_mm2 * (1. + 1e-12));
+            if budget > 0 {
+                assert!(
+                    (sum - batch.population_area_mm2).abs() <= samples.population_area_mm2 * 1e-12
+                );
+            }
+        }
+    }
+    let empty = area_samples(&surface.original_index, 0, 73, true, &control()).unwrap();
+    assert_eq!(empty.population_area_mm2, surface.eligible_area_mm2);
+    assert_eq!(empty.represented_area_mm2, 0.);
+}

@@ -5,6 +5,7 @@ use glam::DVec3;
 
 use crate::Soup;
 
+mod population;
 mod prepared;
 pub use prepared::*;
 

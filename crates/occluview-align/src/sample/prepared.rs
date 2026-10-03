@@ -64,11 +64,31 @@ pub struct SurfaceSample {
     pub region_id: u16,
 }
 
-/// Bounded samples and their completeness, with resident memory admission.
+/// Population represented by a batch; roles occupy disjoint spatial cells.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SampleRole {
+    /// Whole eligible surface before splitting.
+    Full,
+    /// Cells used for proposals and optimization.
+    Training,
+    /// Separate cells used for independent evidence.
+    Holdout,
+}
+
+/// Bounded samples and their explicit area population and completeness.
 #[derive(Debug)]
 pub struct SampleBatch {
     /// Stable sample order; an interrupted batch is a partial prefix.
     pub samples: Vec<SurfaceSample>,
+    /// Measured area of this declared population, in square millimetres.
+    pub population_area_mm2: f64,
+    /// Area weight actually represented by returned points.
+    pub represented_area_mm2: f64,
+    /// Eligible area outside the declared role; whole support contribution is
+    /// bounded by zero and this area, rather than extrapolated from the role.
+    pub unqueried_area_mm2: f64,
+    /// Population role.
+    pub role: SampleRole,
     /// Complete or an explicit interruption reason.
     pub completion: Completion,
     _memory: GeometryMemory,
@@ -332,6 +352,17 @@ pub fn prepare_alignment_surface(
         && mesh.world_from_local.matrix3.determinant().is_finite()
         && mesh.world_from_local.matrix3.determinant() != 0.;
     index.set_query_control(control.clone());
+    let population = match super::population::CellPopulation::build(
+        &index,
+        result.quality.orientation_coherent,
+        control,
+    ) {
+        Ok(population) => population,
+        Err(stop) => {
+            result.completion = completion(stop);
+            return Ok(result);
+        }
+    };
     let mut batches = Vec::new();
     if batches.try_reserve_exact(4).is_err() {
         result.completion = Completion::ResourceLimit;
@@ -346,36 +377,30 @@ pub fn prepare_alignment_surface(
     .into_iter()
     .enumerate()
     {
-        let raw = match area_samples(
-            &index,
-            budget * 2,
+        let role = if stream == 3 {
+            SampleRole::Holdout
+        } else {
+            SampleRole::Training
+        };
+        let batch = match population.samples(
+            role,
+            budget,
             mix_seed(AREA_SAMPLE_SEED ^ stream as u64),
-            result.quality.orientation_coherent,
             control,
         ) {
-            Ok(raw) => raw,
+            Ok(batch) => batch,
             Err(stop) => {
                 result.completion = completion(stop);
                 return Ok(result);
             }
         };
-        if raw.completion != Completion::Complete {
-            result.completion = raw.completion;
+        if batch.completion != Completion::Complete {
+            result.completion = batch.completion;
             return Ok(result);
         }
-        let split = match split_samples(&raw.samples, budget, control) {
-            Ok(split) => split,
-            Err(stop) => {
-                result.completion = completion(stop);
-                return Ok(result);
-            }
-        };
-        batches.push(if stream == 3 {
-            split.holdout
-        } else {
-            split.training
-        });
+        batches.push(batch);
     }
+    drop(population);
     let Ok(samples) = batches.try_into() else {
         result.completion = Completion::ResourceLimit;
         return Ok(result);
@@ -446,6 +471,7 @@ pub fn area_samples(
         cdf.push((area, triangle, corners, normal));
     }
     let mut result = empty_batch(budget, control)?;
+    result.population_area_mm2 = area;
     if budget == 0 || area <= 0. {
         return Ok(result);
     }
@@ -483,6 +509,7 @@ pub fn area_samples(
             region_id: 0,
         });
     }
+    result.represented_area_mm2 = weight * result.samples.len() as f64;
     Ok(result)
 }
 
@@ -490,9 +517,10 @@ pub fn area_samples(
 ///
 /// Cells own a role, so adjacent points inside one cell cannot occur in both
 /// populations. Eight independent low hash bits label holdout strata. Equal
-/// area contributions use the half-cell inclusion factor of two; thinning
-/// preserves each population's sampled-area estimator rather than inventing
-/// evidence in absent cells. A deficient single-cell surface may have no
+/// area contributions define the input quadrature, not an estimate of twice
+/// that population. Thinning transfers each omitted block's actual weight to
+/// its selected representative. Prepared batches use exact clipped cell areas.
+/// A deficient single-cell surface may have no
 /// holdout, which later verification must report as missing evidence.
 ///
 /// # Errors
@@ -504,44 +532,56 @@ pub fn split_samples(
     control: &GeometryControl,
 ) -> Result<SampleSplit, GeometryStop> {
     let mut counts = [0usize; 2];
+    let mut areas = [0.; 2];
     for sample in samples {
         control.charge_operations(1)?;
-        counts[usize::from(cell_hash(sample.point)? & 8 != 0)] += 1;
+        let role = usize::from(cell_hash(sample.point)? & 8 != 0);
+        counts[role] += 1;
+        if !sample.area_weight_mm2.is_finite() || sample.area_weight_mm2 < 0. {
+            return Err(GeometryStop::Numerical);
+        }
+        areas[role] += sample.area_weight_mm2;
+        if !areas[role].is_finite() {
+            return Err(GeometryStop::Numerical);
+        }
     }
     let mut training = empty_batch(budget.min(counts[0]), control)?;
     let mut holdout = empty_batch(budget.min(counts[1]), control)?;
+    training.role = SampleRole::Training;
+    holdout.role = SampleRole::Holdout;
+    training.population_area_mm2 = areas[0];
+    holdout.population_area_mm2 = areas[1];
+    training.unqueried_area_mm2 = areas[1];
+    holdout.unqueried_area_mm2 = areas[0];
     let retained = [
         training.samples.capacity().min(budget).min(counts[0]),
         holdout.samples.capacity().min(budget).min(counts[1]),
     ];
     let mut seen = [0usize; 2];
-    let mut emitted = [0usize; 2];
     for &sample in samples {
         control.charge_operations(1)?;
         let role = usize::from(cell_hash(sample.point)? & 8 != 0);
-        let rank = seen[role];
-        seen[role] += 1;
-        // Even quantiles across the complete role population; no prefix bias.
-        if emitted[role] >= retained[role]
-            || rank
-                != emitted[role]
-                    .checked_mul(counts[role])
-                    .ok_or(GeometryStop::ResourceLimit)?
-                    / retained[role].max(1)
-        {
+        let batch = if role == 0 {
+            &mut training
+        } else {
+            &mut holdout
+        };
+        if retained[role] == 0 {
             continue;
         }
-        let mut selected = sample;
-        selected.area_weight_mm2 *= 2. * counts[role] as f64 / retained[role].max(1) as f64;
-        if !selected.area_weight_mm2.is_finite() {
-            return Err(GeometryStop::Numerical);
+        let group = seen[role]
+            .checked_mul(retained[role])
+            .ok_or(GeometryStop::ResourceLimit)?
+            / counts[role];
+        seen[role] += 1;
+        if group == batch.samples.len() {
+            batch.samples.push(SurfaceSample {
+                area_weight_mm2: 0.,
+                ..sample
+            });
         }
-        if role == 0 {
-            training.samples.push(selected);
-        } else {
-            holdout.samples.push(selected);
-        }
-        emitted[role] += 1;
+        batch.samples[group].area_weight_mm2 += sample.area_weight_mm2;
+        batch.represented_area_mm2 += sample.area_weight_mm2;
     }
     Ok(SampleSplit { training, holdout })
 }
@@ -554,7 +594,10 @@ pub fn spatial_stratum(point: DVec3) -> Result<u8, GeometryStop> {
     u8::try_from(cell_hash(point)? & 7).map_err(|_| GeometryStop::Numerical)
 }
 
-fn empty_batch(capacity: usize, control: &GeometryControl) -> Result<SampleBatch, GeometryStop> {
+pub(super) fn empty_batch(
+    capacity: usize,
+    control: &GeometryControl,
+) -> Result<SampleBatch, GeometryStop> {
     let bytes = capacity
         .checked_mul(size_of::<SurfaceSample>())
         .and_then(|n| n.checked_add(64))
@@ -566,13 +609,17 @@ fn empty_batch(capacity: usize, control: &GeometryControl) -> Result<SampleBatch
         .map_err(|_| GeometryStop::ResourceLimit)?;
     Ok(SampleBatch {
         samples,
+        population_area_mm2: 0.,
+        represented_area_mm2: 0.,
+        unqueried_area_mm2: 0.,
+        role: SampleRole::Full,
         completion: Completion::Complete,
         _memory: memory,
     })
 }
 
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-fn cell_hash(point: DVec3) -> Result<u64, GeometryStop> {
+pub(super) fn cell_hash(point: DVec3) -> Result<u64, GeometryStop> {
     let mut hash = AREA_SAMPLE_SEED;
     for coordinate in point.to_array() {
         let floor = coordinate.floor();
@@ -591,7 +638,7 @@ pub fn mix_seed(mut value: u64) -> u64 {
     value ^ (value >> 31)
 }
 #[allow(clippy::cast_precision_loss)]
-fn uniform(state: &mut u64) -> f64 {
+pub(super) fn uniform(state: &mut u64) -> f64 {
     *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
     ((mix_seed(*state) >> 12) as f64 + 0.5) / 4_503_599_627_370_496.
 }

@@ -27,6 +27,8 @@ remain in the Git history.
 
 - Detect hole caps that pierce fine surface triangles.
 
+- Scan matching uses measured surface area without doubling sampled support.
+
 - Refuse self-crossing hole rims at tiny scales.
 
 - Reject malformed OBJ texture coordinates before they shift later UV references.
