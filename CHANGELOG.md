@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Detect hole caps that pierce fine surface triangles.
+
 - Refuse self-crossing hole rims at tiny scales.
 
 - Reject malformed OBJ texture coordinates before they shift later UV references.
