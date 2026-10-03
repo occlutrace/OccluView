@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Scan matching retains later precise four-point proposals when earlier approximate matches fill their output reserve.
+
 - Best-fit alignment searches multiple surface placements and retains finite candidates with explicit incomplete evidence.
 
 - Preserve HPS loading when optional properties use self-closing XML tags.

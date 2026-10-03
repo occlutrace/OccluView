@@ -18,10 +18,6 @@ struct Basis {
 
 /// Up to 256 finite proper transforms from 64 fixed-seed near-planar bases.
 /// No normals, descriptors, centroid equality or confidence floor is required.
-#[expect(
-    clippy::too_many_lines,
-    reason = "bounded distance-bin and affine-ratio joins share one reservation"
-)]
 #[allow(clippy::cast_possible_truncation)]
 pub(crate) fn congruent_basis_hypotheses(
     source: &PreparedSurface,
@@ -47,6 +43,40 @@ pub(crate) fn congruent_basis_hypotheses(
     if source.len() < 4 || target.len() < 4 {
         return Ok(Vec::new());
     }
+    let bins = distance_bins(&target, control)?;
+    let mut output = Vec::new();
+    output
+        .try_reserve_exact(256)
+        .map_err(|_| GeometryStop::ResourceLimit)?;
+    for Basis {
+        points: base,
+        ratios,
+    } in select_bases(&source, control)?
+    {
+        output.extend(
+            match_basis(
+                Basis {
+                    points: base,
+                    ratios,
+                },
+                &target,
+                &bins,
+                control,
+            )?
+            .into_iter()
+            .map(|pose| if swapped { pose.inverse() } else { pose }),
+        );
+    }
+    Ok(output)
+}
+
+type DistanceBins = BTreeMap<i64, Vec<(usize, usize)>>;
+
+#[allow(clippy::cast_possible_truncation)] // Finite lengths below 1e12 enter physical bins.
+fn distance_bins(
+    target: &[DVec3],
+    control: &GeometryControl,
+) -> Result<DistanceBins, GeometryStop> {
     let mut bins: BTreeMap<i64, Vec<(usize, usize)>> = BTreeMap::new();
     for i in 0..target.len() {
         for j in i + 1..target.len() {
@@ -62,92 +92,112 @@ pub(crate) fn congruent_basis_hypotheses(
             entries.extend([(i, j), (j, i)]);
         }
     }
-    let mut output = Vec::new();
-    output
-        .try_reserve_exact(256)
-        .map_err(|_| GeometryStop::ResourceLimit)?;
-    for Basis {
+    Ok(bins)
+}
+
+// The finite base comes from the same bounded coordinate population as the bins.
+#[allow(clippy::cast_possible_truncation)]
+fn match_basis(
+    Basis {
         points: base,
         ratios,
-    } in select_bases(&source, control)?
-    {
-        let mut quads = 0;
-        let mut emitted = 0;
-        let lengths = [base[0].distance(base[1]), base[2].distance(base[3])];
-        let pair_lists: [Vec<(usize, usize)>; 2] = lengths.map(|length| {
-            let key = (length / 0.25).floor() as i64;
-            bins.range(key - 2..=key + 2)
-                .flat_map(|(_, pairs)| pairs.iter().copied())
-                .collect()
-        });
-        let mut intersections: BTreeMap<[i64; 3], Vec<(usize, usize, DVec3)>> = BTreeMap::new();
-        for &(i, j) in &pair_lists[0] {
-            control.charge_point_pairs(1)?;
-            if (target[i].distance(target[j]) - lengths[0]).abs() > 0.5 {
-                continue;
-            }
-            let p = target[i].lerp(target[j], ratios[0]);
-            let Some(key) = cell(p) else {
-                continue;
-            };
-            let records = intersections.entry(key).or_default();
-            records
-                .try_reserve(1)
-                .map_err(|_| GeometryStop::ResourceLimit)?;
-            records.push((i, j, p));
+    }: Basis,
+    target: &[DVec3],
+    bins: &DistanceBins,
+    control: &GeometryControl,
+) -> Result<Vec<Rigid>, GeometryStop> {
+    let mut output: Vec<(f64, [usize; 4], Rigid)> = Vec::new();
+    output
+        .try_reserve_exact(5)
+        .map_err(|_| GeometryStop::ResourceLimit)?;
+    let mut quads = 0;
+    let lengths = [base[0].distance(base[1]), base[2].distance(base[3])];
+    let pair_lists: [Vec<(usize, usize)>; 2] = lengths.map(|length| {
+        let key = (length / 0.25).floor() as i64;
+        bins.range(key - 2..=key + 2)
+            .flat_map(|(_, pairs)| pairs.iter().copied())
+            .collect()
+    });
+    let mut intersections: BTreeMap<[i64; 3], Vec<(usize, usize, DVec3)>> = BTreeMap::new();
+    for &(i, j) in &pair_lists[0] {
+        control.charge_point_pairs(1)?;
+        if (target[i].distance(target[j]) - lengths[0]).abs() > 0.5 {
+            continue;
         }
-        'joins: for &(k, l) in &pair_lists[1] {
-            control.charge_point_pairs(1)?;
-            if (target[k].distance(target[l]) - lengths[1]).abs() > 0.5 {
-                continue;
-            }
-            let p = target[k].lerp(target[l], ratios[1]);
-            let Some(key) = cell(p) else {
-                continue;
-            };
-            for dx in -1..=1 {
-                for dy in -1..=1 {
-                    for dz in -1..=1 {
-                        control.charge_operations(1)?;
-                        let near = [key[0] + dx, key[1] + dy, key[2] + dz];
-                        if let Some(records) = intersections.get(&near) {
-                            for &(i, j, q) in records {
-                                control.charge_point_pairs(1)?;
-                                if i == k || i == l || j == k || j == l || p.distance(q) > 0.5 {
-                                    continue;
+        let p = target[i].lerp(target[j], ratios[0]);
+        let Some(key) = cell(p) else {
+            continue;
+        };
+        let records = intersections.entry(key).or_default();
+        records
+            .try_reserve(1)
+            .map_err(|_| GeometryStop::ResourceLimit)?;
+        records.push((i, j, p));
+    }
+    'joins: for &(k, l) in &pair_lists[1] {
+        control.charge_point_pairs(1)?;
+        if (target[k].distance(target[l]) - lengths[1]).abs() > 0.5 {
+            continue;
+        }
+        let p = target[k].lerp(target[l], ratios[1]);
+        let Some(key) = cell(p) else {
+            continue;
+        };
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for dz in -1..=1 {
+                    control.charge_operations(1)?;
+                    let near = [key[0] + dx, key[1] + dy, key[2] + dz];
+                    if let Some(records) = intersections.get(&near) {
+                        for &(i, j, q) in records {
+                            control.charge_point_pairs(1)?;
+                            if i == k || i == l || j == k || j == l || p.distance(q) > 0.5 {
+                                continue;
+                            }
+                            // Each base owns at most 64 geometrically
+                            // consistent quads and four ranked transforms.
+                            // A loose intersection is not a congruent quad;
+                            // earlier approximate aliases cannot fill the
+                            // transform reserve before its best fits.
+                            if quads >= 64 {
+                                break 'joins;
+                            }
+                            let other = [target[i], target[j], target[k], target[l]];
+                            let Some(other_ratios) = crossing(other) else {
+                                continue;
+                            };
+                            if (ratios[0] - other_ratios[0]).abs() > 0.05
+                                || (ratios[1] - other_ratios[1]).abs() > 0.05
+                            {
+                                continue;
+                            }
+                            let mut consistent = true;
+                            for a in 0..4 {
+                                for b in a + 1..4 {
+                                    control.charge_point_pairs(1)?;
+                                    consistent &= (base[a].distance(base[b])
+                                        - other[a].distance(other[b]))
+                                    .abs()
+                                        <= 0.5;
                                 }
-                                // Every one of 64 bases owns part of the fixed
-                                // 4,096-quad / 256-transform allowance. Early
-                                // aliases cannot consume later bases' work.
-                                if quads >= 64 || emitted >= 4 {
-                                    break 'joins;
-                                }
+                            }
+                            if consistent {
                                 quads += 1;
-                                let other = [target[i], target[j], target[k], target[l]];
-                                let Some(other_ratios) = crossing(other) else {
-                                    continue;
-                                };
-                                if (ratios[0] - other_ratios[0]).abs() > 0.05
-                                    || (ratios[1] - other_ratios[1]).abs() > 0.05
+                                if let Some(pose) =
+                                    crate::proposal_geometry::fit_geometry_pairs(&base, &other)
                                 {
-                                    continue;
-                                }
-                                let mut consistent = true;
-                                for a in 0..4 {
-                                    for b in a + 1..4 {
-                                        control.charge_point_pairs(1)?;
-                                        consistent &= (base[a].distance(base[b])
-                                            - other[a].distance(other[b]))
-                                        .abs()
-                                            <= 0.5;
-                                    }
-                                }
-                                if consistent {
-                                    if let Some(pose) =
-                                        crate::proposal_geometry::fit_geometry_pairs(&base, &other)
-                                    {
-                                        output.push(if swapped { pose.inverse() } else { pose });
-                                        emitted += 1;
+                                    control.charge_point_pairs(4)?;
+                                    let error = base
+                                        .iter()
+                                        .zip(&other)
+                                        .map(|(&p, &q)| pose.apply(p).distance_squared(q))
+                                        .sum::<f64>();
+                                    if error.is_finite() {
+                                        output.push((error, [i, j, k, l], pose));
+                                        output.sort_by(|a, b| {
+                                            a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1))
+                                        });
+                                        output.truncate(4);
                                     }
                                 }
                             }
@@ -157,7 +207,7 @@ pub(crate) fn congruent_basis_hypotheses(
             }
         }
     }
-    Ok(output)
+    Ok(output.into_iter().map(|(_, _, pose)| pose).collect())
 }
 
 /// A fixed family stream supplies near-planar, spatially extended bases.
@@ -253,6 +303,42 @@ fn cell(p: DVec3) -> Option<[i64; 3]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn later_exact_quad_survives_earlier_approximate_aliases() {
+        let base = Basis {
+            points: [
+                DVec3::new(-4., 0., 0.),
+                DVec3::new(6., 0., 0.),
+                DVec3::new(0., -3., 0.),
+                DVec3::new(0., 7., 0.),
+            ],
+            ratios: [0.4, 0.3],
+        };
+        let mut target = Vec::new();
+        for i in 0..4 {
+            let offset = DVec3::new(f64::from(i) * 30., 0., 0.);
+            target.extend(base.points.map(|p| offset + p * 1.025));
+        }
+        let truth = Rigid::new(glam::DQuat::IDENTITY, DVec3::new(150., 0., 0.));
+        target.extend(base.points.map(|p| truth.apply(p)));
+        let control = GeometryControl::unlimited();
+        let poses = match_basis(
+            base,
+            &target,
+            &distance_bins(&target, &control).unwrap(),
+            &control,
+        )
+        .unwrap();
+        assert!(
+            poses.iter().any(|pose| base
+                .points
+                .iter()
+                .all(|&p| pose.apply(p).distance(truth.apply(p)) < 1e-9)),
+            "later exact congruence lost to early aliases: {poses:?}"
+        );
+        assert!(poses.len() <= 4);
+    }
+
     #[test]
     fn curved_surface_supplies_all_bases_without_relaxing_planarity() {
         let points: Vec<_> = (0..256u32)
