@@ -236,11 +236,14 @@ fn assert_hps_imported_extension(root: Node<'_, '_>) {
 #[cfg(target_os = "macos")]
 #[test]
 fn system_uniform_type_identifiers_resolve_each_supported_extension() {
-    let extensions: Vec<&str> = MACOS_CONTENT_TYPES
-        .iter()
-        .map(|(extension, _)| *extension)
-        .filter(|extension| *extension != "hps")
-        .collect();
+    // The viewer's own types exist only once its bundle is registered with
+    // Launch Services; a bare runner knows the system's types alone.
+    let system_types = || {
+        MACOS_CONTENT_TYPES
+            .iter()
+            .filter(|(_, identifier)| !identifier.starts_with("ai.occlutrace."))
+    };
+    let extensions: Vec<&str> = system_types().map(|(extension, _)| *extension).collect();
     let source = r#"
 import Foundation
 import UniformTypeIdentifiers
@@ -269,10 +272,7 @@ for ext in extensions.split(separator: ",") {
         .filter_map(|line| line.split_once('='))
         .map(|(extension, identifier)| (extension.to_owned(), identifier.to_owned()))
         .collect();
-    for (extension, expected) in MACOS_CONTENT_TYPES
-        .iter()
-        .filter(|(extension, _)| *extension != "hps")
-    {
+    for (extension, expected) in system_types() {
         assert_eq!(
             resolved.get(*extension).map(String::as_str),
             Some(*expected),
