@@ -280,7 +280,11 @@ impl SceneContext<'_> {
                 world_per_pixel,
             );
             return Some(Affine3A::from_translation(
-                crate::align::align_drag::constrain_translation(moved, self.tools.align.constraint),
+                crate::align::align_drag::constrain_translation(
+                    moved,
+                    self.tools.align.constraint,
+                    -camera.view_direction(),
+                ),
             ));
         }
         // The translation constraint chips do not enter here. They are labelled

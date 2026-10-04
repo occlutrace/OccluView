@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Adjust pose: with Move in z-direction or Move in xy-plane the scan keeps pace with the cursor in a tilted view instead of trailing it.
+
 - Delete removes an object that is a whole layer, as one undoable step, instead of refusing and asking for the layer to be removed by hand.
 
 - The Mesh Editing window opens clear of the status row, so a refusal of one of its buttons stays readable.
