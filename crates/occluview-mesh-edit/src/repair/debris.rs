@@ -5,7 +5,7 @@
 //! mesh bounding-box diagonal). The largest component is never dropped, so a
 //! two-jaw scan where both halves are large keeps both.
 
-use glam::Vec3;
+use glam::DVec3;
 
 use super::{Components, RepairOptions, RepairReport};
 use crate::MeshEditBuffers;
@@ -28,8 +28,7 @@ pub(super) fn remove_debris(
     }
     let face_limit =
         f64::from(options.debris_face_fraction) * count_f64(components.members[largest].len());
-    let diameter_limit =
-        f64::from(options.debris_diameter_fraction) * f64::from(referenced_diagonal(mesh));
+    let diameter_limit = f64::from(options.debris_diameter_fraction) * referenced_diagonal(mesh);
 
     let mut drop = vec![false; components.members.len()];
     let mut dropped_any = false;
@@ -38,7 +37,7 @@ pub(super) fn remove_debris(
             continue;
         }
         let small_count = count_f64(members.len()) < face_limit;
-        let small_extent = f64::from(triangles_diagonal(mesh, members)) < diameter_limit;
+        let small_extent = triangles_diagonal(mesh, members) < diameter_limit;
         if small_count && small_extent {
             drop[component] = true;
             dropped_any = true;
@@ -60,7 +59,7 @@ pub(super) fn remove_debris(
 }
 
 /// Bounding-box diagonal over the vertices referenced by `triangles`.
-fn triangles_diagonal(mesh: &MeshEditBuffers, triangles: &[usize]) -> f32 {
+fn triangles_diagonal(mesh: &MeshEditBuffers, triangles: &[usize]) -> f64 {
     diagonal_of(
         triangles
             .iter()
@@ -70,7 +69,7 @@ fn triangles_diagonal(mesh: &MeshEditBuffers, triangles: &[usize]) -> f32 {
 }
 
 /// Bounding-box diagonal over every vertex any triangle references.
-fn referenced_diagonal(mesh: &MeshEditBuffers) -> f32 {
+fn referenced_diagonal(mesh: &MeshEditBuffers) -> f64 {
     diagonal_of(
         mesh.indices
             .iter()
@@ -78,12 +77,12 @@ fn referenced_diagonal(mesh: &MeshEditBuffers) -> f32 {
     )
 }
 
-fn diagonal_of(positions: impl Iterator<Item = [f32; 3]>) -> f32 {
-    let mut min = Vec3::splat(f32::INFINITY);
-    let mut max = Vec3::splat(f32::NEG_INFINITY);
+fn diagonal_of(positions: impl Iterator<Item = [f32; 3]>) -> f64 {
+    let mut min = DVec3::splat(f64::INFINITY);
+    let mut max = DVec3::splat(f64::NEG_INFINITY);
     let mut any = false;
     for position in positions {
-        let position = Vec3::from_array(position);
+        let position = DVec3::from_array(position.map(f64::from));
         min = min.min(position);
         max = max.max(position);
         any = true;

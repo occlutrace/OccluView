@@ -226,6 +226,27 @@ impl CapMesh {
 mod tests {
     use super::*;
 
+    #[test]
+    fn lawson_diagonal_choice_is_scale_independent() {
+        for scale in [1.0e-20, 1.0e-4, 1.0, 1.0e20] {
+            let uv = [
+                Vec2::ZERO,
+                Vec2::new(4.0, 0.0),
+                Vec2::new(4.0, 3.0),
+                Vec2::new(0.5, 1.0),
+            ]
+            .map(|point| point * scale);
+            let mut cap = CapMesh::new(vec![[0, 1, 2], [0, 2, 3]]);
+            cap.lawson(&uv, cap.edges_sorted().into_iter().collect());
+            assert!(
+                cap.owner_pair((1, 3)).is_some(),
+                "the non-Delaunay diagonal must flip at scale {scale}: {:?}",
+                cap.triangles()
+            );
+            assert!(cap.owner_pair((0, 2)).is_none());
+        }
+    }
+
     /// A quad whose fourth corner sits strictly inside the circumcircle of the
     /// first triangle: Lawson must flip the shared diagonal.
     #[test]

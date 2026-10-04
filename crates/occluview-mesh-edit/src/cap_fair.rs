@@ -258,6 +258,25 @@ mod tests {
     use crate::{EditVertex, MeshEditBuffers, MeshTopology};
 
     #[test]
+    fn fairing_fold_guard_is_scale_independent() {
+        let triangles = [[0, 1, 2]];
+        for scale in [0.015, 1.0e-20, 1.0e-4, 1.0, 1.0e20] {
+            let positions = [Vec3::ZERO, Vec3::X * scale, Vec3::Y * scale];
+            let guard = FoldGuard::at_start(&positions, &triangles);
+            assert!(guard.step_keeps_normals(&positions, &[0], 2, Vec3::Y * scale));
+            assert!(
+                !guard.step_keeps_normals(&positions, &[0], 2, -Vec3::Y * scale),
+                "an inverted facet must be refused at scale {scale}"
+            );
+            assert!(
+                !guard.step_keeps_normals(&positions, &[0], 2, Vec3::ZERO),
+                "a healthy facet must not collapse at scale {scale}"
+            );
+            assert!(!guard.step_keeps_normals(&positions, &[0], 2, Vec3::splat(f32::NAN)));
+        }
+    }
+
+    #[test]
     fn cap_fairing_mean_keeps_large_outside_valence_and_translation_invariance() {
         let count = 70_000;
         let mut vertices = vec![
