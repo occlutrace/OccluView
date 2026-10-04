@@ -27,7 +27,7 @@ use crate::edit_mode::{EditModeController, EditSessionStartFailure, EditSessionT
 use occluview_core::{CoreError, SceneMesh, SceneMeshId};
 use repair::apply_layer_repair_action_with_status;
 use selection_ops::apply_visible_selection_action_with_status;
-pub(crate) use selection_ops::selection_batch_status;
+pub(crate) use selection_ops::{selection_batch_status, SelectionActionOptions};
 
 #[cfg(test)]
 pub(crate) use selection_batch::apply_visible_selected_face_mesh_edit_action;

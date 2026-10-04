@@ -173,8 +173,8 @@ pub(super) struct SeparatedMeshes {
 /// in a single sweep over the triangles. Every triangle is routed to a bucket:
 /// its component id, or the shared remainder bucket for any triangle in no
 /// component (i.e. unselected — components only ever contain selected faces). A
-/// reused per-vertex stamp assigns compact local indices — O(vertices +
-/// triangles) total, not O(components × mesh). Vertex attributes (color/UV/
+/// vertex map for each output bucket assigns and reuses compact local indices
+/// without re-scanning the whole source for every component. Vertex attributes (color/UV/
 /// normal) are copied verbatim and the source name/texture are preserved,
 /// matching a per-component crop without re-scanning the whole mesh each time.
 pub(super) fn split_selection_into_meshes(

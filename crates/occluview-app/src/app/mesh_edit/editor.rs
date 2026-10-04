@@ -206,8 +206,10 @@ impl SceneContext<'_> {
                         &outcome,
                         scene.as_ref(),
                         &self.document.current_paths,
-                        layer_action,
-                        close_holes_limit_mm,
+                        super::super::app_layer_edits::SelectionActionOptions {
+                            action: layer_action,
+                            close_holes_limit_mm,
+                        },
                         &self.ui.locale,
                     ));
             }
@@ -217,8 +219,10 @@ impl SceneContext<'_> {
                         &outcome,
                         scene.as_ref(),
                         &self.document.current_paths,
-                        layer_action,
-                        close_holes_limit_mm,
+                        super::super::app_layer_edits::SelectionActionOptions {
+                            action: layer_action,
+                            close_holes_limit_mm,
+                        },
                         &self.ui.locale,
                     ));
                 ctx.request_repaint();

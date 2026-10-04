@@ -390,19 +390,22 @@ mod tests {
             .nodes
             .iter()
             .find_map(|(_, node)| {
-                let name = node.label().map(str::to_owned).unwrap_or_else(|| {
-                    node.labelled_by()
-                        .iter()
-                        .filter_map(|id| {
-                            update
-                                .nodes
-                                .iter()
-                                .find(|(candidate, _)| candidate == id)
-                                .and_then(|(_, label)| label.value())
-                        })
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                });
+                let name = node.label().map_or_else(
+                    || {
+                        node.labelled_by()
+                            .iter()
+                            .filter_map(|id| {
+                                update
+                                    .nodes
+                                    .iter()
+                                    .find(|(candidate, _)| candidate == id)
+                                    .and_then(|(_, label)| label.value())
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    },
+                    str::to_owned,
+                );
                 (node.role() == role && name == label)
                     .then(|| node.bounds())
                     .flatten()

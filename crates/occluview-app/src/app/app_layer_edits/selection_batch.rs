@@ -1,6 +1,8 @@
 //! Atomic operations over the canonical visible multi-layer selection plan.
 
-use super::super::{EditModeController, LayerContextAction, LayerContextApply, Scene};
+use super::super::{
+    EditModeCommand, EditModeController, LayerContextAction, LayerContextApply, Scene,
+};
 use super::selection_ops::selected_face_edit_result;
 use super::structural::{
     clone_layer_with_mesh, cut_selection_meshes, split_selection_into_meshes,
@@ -198,14 +200,28 @@ pub(crate) fn apply_visible_selected_face_mesh_edit_action_with_limit(
         });
     }
 
+    Ok(commit_selection_plan(
+        scene,
+        edit_mode,
+        focus_layer_id,
+        command,
+        planned,
+    ))
+}
+
+fn commit_selection_plan(
+    scene: &mut Scene,
+    edit_mode: &mut EditModeController,
+    focus_layer_id: SceneMeshId,
+    command: EditModeCommand,
+    planned: Vec<PlannedEdit>,
+) -> SelectionBatchOutcome {
     let Some(token) = edit_mode.begin_scene_edit(scene, focus_layer_id, command) else {
-        return Ok(SelectionBatchOutcome::refused(SelectionBatchRefusal::Busy));
+        return SelectionBatchOutcome::refused(SelectionBatchRefusal::Busy);
     };
     if !edit_mode.last_edit_undoable() {
         let _ = edit_mode.finish_layer_edit_noop(token);
-        return Ok(SelectionBatchOutcome::refused(
-            SelectionBatchRefusal::HistoryBudget,
-        ));
+        return SelectionBatchOutcome::refused(SelectionBatchRefusal::HistoryBudget);
     }
 
     let changed_layers = planned.iter().map(PlannedEdit::layer_id).collect();
@@ -215,19 +231,13 @@ pub(crate) fn apply_visible_selected_face_mesh_edit_action_with_limit(
             // This can only indicate an internal stale-plan mismatch. The
             // caller's scene is still untouched, so discard the token cleanly.
             let _ = edit_mode.finish_layer_edit_noop(token);
-            return Ok(SelectionBatchOutcome::refused(
-                SelectionBatchRefusal::StaleSelection,
-            ));
+            return SelectionBatchOutcome::refused(SelectionBatchRefusal::StaleSelection);
         }
     }
 
     let _ = edit_mode.finish_scene_edit_success(token, &draft);
     *scene = draft;
-    Ok(SelectionBatchOutcome::completed(
-        structural_scene_apply(),
-        Vec::new(),
-        changed_layers,
-    ))
+    SelectionBatchOutcome::completed(structural_scene_apply(), Vec::new(), changed_layers)
 }
 
 fn apply_visible_close_holes(
@@ -285,11 +295,9 @@ fn apply_visible_close_holes(
         ));
     }
 
-    let Some(token) = edit_mode.begin_scene_edit(
-        scene,
-        focus_layer_id,
-        super::super::EditModeCommand::CloseHoles,
-    ) else {
+    let Some(token) =
+        edit_mode.begin_scene_edit(scene, focus_layer_id, EditModeCommand::CloseHoles)
+    else {
         return Ok(SelectionBatchOutcome::refused(SelectionBatchRefusal::Busy));
     };
     if !edit_mode.last_edit_undoable() {
