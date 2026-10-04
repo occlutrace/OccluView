@@ -695,7 +695,7 @@ fn late_replace_arriving_mid_align_drag_does_not_discard_the_pose() {
     target.tools.align.drag = Some(AlignDrag {
         layer: layer_id,
         start: Affine3A::IDENTITY,
-        pivot_local: glam::Vec3::ZERO,
+        grab_local: glam::Vec3::ZERO,
     });
     target.nudge_align_layer(
         layer_id,
@@ -769,7 +769,7 @@ fn a_drag_that_returns_to_its_start_leaves_no_unsaved_mark_or_history_step() {
     target.tools.align.drag = Some(AlignDrag {
         layer: layer_id,
         start,
-        pivot_local: glam::Vec3::ZERO,
+        grab_local: glam::Vec3::ZERO,
     });
 
     let out = Affine3A::from_translation(glam::Vec3::new(3.0, 0.0, 0.0));
@@ -815,7 +815,7 @@ fn a_drag_that_returns_to_its_start_keeps_edits_that_were_already_unsaved() {
     target.tools.align.drag = Some(AlignDrag {
         layer: layer_id,
         start,
-        pivot_local: glam::Vec3::ZERO,
+        grab_local: glam::Vec3::ZERO,
     });
     target.nudge_align_layer(
         layer_id,
@@ -848,7 +848,7 @@ fn a_drag_that_returns_to_its_start_keeps_another_layers_unsaved_edits() {
     target.tools.align.drag = Some(AlignDrag {
         layer: layer_id,
         start,
-        pivot_local: glam::Vec3::ZERO,
+        grab_local: glam::Vec3::ZERO,
     });
     target.nudge_align_layer(
         layer_id,
@@ -879,7 +879,7 @@ fn a_drag_that_ends_somewhere_else_is_still_one_undoable_unsaved_edit() {
     target.tools.align.drag = Some(AlignDrag {
         layer: layer_id,
         start,
-        pivot_local: glam::Vec3::ZERO,
+        grab_local: glam::Vec3::ZERO,
     });
     target.nudge_align_layer(
         layer_id,
@@ -923,7 +923,7 @@ fn a_round_trip_drag_does_not_clear_work_committed_mid_gesture() {
     target.tools.align.drag = Some(AlignDrag {
         layer: layer_id,
         start,
-        pivot_local: glam::Vec3::ZERO,
+        grab_local: glam::Vec3::ZERO,
     });
 
     target.nudge_align_layer(
@@ -963,7 +963,7 @@ fn a_second_nudge_does_not_forget_a_mid_gesture_commit() {
     target.tools.align.drag = Some(AlignDrag {
         layer: layer_id,
         start,
-        pivot_local: glam::Vec3::ZERO,
+        grab_local: glam::Vec3::ZERO,
     });
 
     let out = Affine3A::from_translation(glam::Vec3::new(3.0, 0.0, 0.0));
@@ -999,7 +999,7 @@ fn an_unreleased_drag_does_not_enter_the_committed_edit_set() {
     target.tools.align.drag = Some(AlignDrag {
         layer: layer_id,
         start,
-        pivot_local: glam::Vec3::ZERO,
+        grab_local: glam::Vec3::ZERO,
     });
     target.nudge_align_layer(
         layer_id,
@@ -1034,7 +1034,7 @@ fn a_scene_replace_clears_an_open_drags_provisional_pose() {
     target.tools.align.drag = Some(AlignDrag {
         layer: layer_id,
         start,
-        pivot_local: glam::Vec3::ZERO,
+        grab_local: glam::Vec3::ZERO,
     });
     target.nudge_align_layer(
         layer_id,
@@ -1077,7 +1077,7 @@ fn clearing_the_scene_clears_an_open_drags_provisional_pose() {
     target.tools.align.drag = Some(AlignDrag {
         layer: layer_id,
         start,
-        pivot_local: glam::Vec3::ZERO,
+        grab_local: glam::Vec3::ZERO,
     });
     target.nudge_align_layer(
         layer_id,
@@ -1106,7 +1106,7 @@ fn the_guard_save_flow_does_not_report_nothing_to_save_about_a_held_drag() {
     target.tools.align.drag = Some(AlignDrag {
         layer: layer_id,
         start,
-        pivot_local: glam::Vec3::ZERO,
+        grab_local: glam::Vec3::ZERO,
     });
     target.nudge_align_layer(
         layer_id,
@@ -1152,7 +1152,7 @@ fn an_append_does_not_discard_a_held_drag_pose_it_carries_forward() {
     target.tools.align.drag = Some(AlignDrag {
         layer: layer_id,
         start,
-        pivot_local: glam::Vec3::ZERO,
+        grab_local: glam::Vec3::ZERO,
     });
     target.nudge_align_layer(
         layer_id,

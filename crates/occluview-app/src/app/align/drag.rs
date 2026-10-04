@@ -76,9 +76,10 @@ pub(crate) struct AlignDrag {
     /// Its pose when the gesture began, so the whole drag is one undo step.
     pub(in crate::app) start: Affine3A,
     /// The surface point the operator grabbed, in the layer's own local frame.
-    /// Each Ctrl-drag step maps it through the current pose and turns around
-    /// that world point, so an earlier plain drag carries the anchor with it.
-    pub(in crate::app) pivot_local: Vec3,
+    /// Each Ctrl-drag step maps it through the current pose to find where on
+    /// the scan's ball the cursor is, so an earlier plain drag carries the
+    /// grab with it.
+    pub(in crate::app) grab_local: Vec3,
 }
 
 impl SceneContext<'_> {
@@ -169,11 +170,8 @@ impl SceneContext<'_> {
         };
         // Keep the clicked surface point in layer-local coordinates. Each Ctrl
         // step resolves it through the live pose, so an earlier plain
-        // translation carries the anchor with it.
-        //
-        // The inverse is guarded, and the guard has to be a magnitude check,
-        // not `is_finite` alone. A nearly singular pose can invert to finite
-        // matrix entries around 1e30 and throw the pivot off the scene.
+        // translation carries the grab with it. A pose that cannot be inverted
+        // leaves the centre, which the turn reads as a grab with no direction.
         let inverse = entry.transform.inverse();
         let mapped = if inverse.is_finite() {
             inverse.transform_point3(hit.point)
@@ -183,7 +181,7 @@ impl SceneContext<'_> {
         self.tools.align.drag = Some(AlignDrag {
             layer: hit.layer_id,
             start: entry.transform,
-            pivot_local: mapped,
+            grab_local: mapped,
         });
         self.tools.align.drag_pose_changed = false;
         true
@@ -285,30 +283,34 @@ impl SceneContext<'_> {
                 crate::align::align_drag::constrain_translation(moved, self.tools.align.constraint),
             ));
         }
-        let right = camera
-            .view_direction()
-            .cross(camera.view_up())
-            .normalize_or_zero();
-        let world_per_pixel =
-            crate::align::align_drag::mm_per_pixel(camera.orthographic_height, viewport.height());
-        // The clicked point is the rotation anchor in the current pose. Using
-        // the current transform matters when the operator begins with a plain
-        // translation and presses Ctrl partway through the same held drag.
-        // A grab outside the mesh bounds falls back to the bounds centre.
-        //
         // The translation constraint chips do not enter here. They are labelled
         // for movement, and a Ctrl-drag is a turn: letting a chip choose the
         // axis made the same gesture behave differently depending on a chip
         // about translation, and dropped the vertical component of the drag.
+        let (grabbed, turn_frame) = self.align_turn_frame(drag, camera)?;
+        let travel = crate::align::align_drag::screen_delta_to_world(
+            motion,
+            turn_frame.camera_right,
+            turn_frame.camera_up,
+            crate::align::align_drag::mm_per_pixel(camera.orthographic_height, viewport.height()),
+        );
+        Some(crate::align::align_drag::rotation_about_pivot(
+            crate::align::align_drag::turn_following_grab(grabbed, travel, turn_frame),
+            turn_frame.centre,
+        ))
+    }
+
+    /// Where the grabbed point is now, and the frame a Ctrl-drag turns its
+    /// scan in. Read through the live pose, so a plain drag earlier in the
+    /// same gesture has already carried both the grab and the centre along.
+    pub(in crate::app) fn align_turn_frame(
+        &self,
+        drag: AlignDrag,
+        camera: &occluview_core::Camera,
+    ) -> Option<(Vec3, crate::align::align_drag::TurnFrame)> {
         let scene = self.document.scene.as_ref()?;
         let entry = layer_of(scene, drag.layer)?;
-        let centre_local = entry.mesh.bbox_cached().center();
-        let radius_local = entry.mesh.bbox_cached().size().length() * 0.5;
-        let pivot_local = crate::align::align_drag::drag_pivot_local(
-            drag.pivot_local,
-            centre_local,
-            radius_local,
-        );
+        let bounds = entry.mesh.bbox_cached();
         let pose_scale = entry
             .transform
             .matrix3
@@ -316,22 +318,49 @@ impl SceneContext<'_> {
             .length()
             .max(entry.transform.matrix3.y_axis.length())
             .max(entry.transform.matrix3.z_axis.length());
-        let radius_world = radius_local * pose_scale;
-        let turn = crate::align::align_drag::anchored_rotation_from_drag(
-            motion,
-            crate::align::align_drag::AnchoredRotationFrame::new(
-                camera.view_direction(),
-                right,
-                camera.view_up(),
-                world_per_pixel,
-                radius_world,
-            ),
-        );
-        let pivot_world = entry.transform.transform_point3(pivot_local);
-        Some(crate::align::align_drag::rotation_about_pivot(
-            turn,
-            pivot_world,
+        let view = camera.view_direction();
+        Some((
+            entry.transform.transform_point3(drag.grab_local),
+            crate::align::align_drag::TurnFrame {
+                toward_viewer: -view,
+                camera_right: view.cross(camera.view_up()).normalize_or_zero(),
+                camera_up: camera.view_up(),
+                centre: entry.transform.transform_point3(bounds.center()),
+                radius: bounds.size().length() * 0.5 * pose_scale,
+            },
         ))
+    }
+
+    /// While a Ctrl-drag is live, show what the scan turns about.
+    pub(in crate::app) fn paint_align_turn_ball(
+        &self,
+        painter: &egui::Painter,
+        viewport: egui::Rect,
+    ) {
+        let turning = self
+            .tools
+            .align
+            .drag_modifiers
+            .is_some_and(|modifiers| modifiers.ctrl || modifiers.command);
+        let (Some(drag), Some(camera), true) = (self.tools.align.drag, self.render.camera, turning)
+        else {
+            return;
+        };
+        let Some((_, turn_frame)) = self.align_turn_frame(drag, &camera) else {
+            return;
+        };
+        let Some((centre, _)) =
+            crate::viewer::project_world_to_viewport(&camera, viewport, turn_frame.centre)
+        else {
+            return;
+        };
+        let world_per_pixel =
+            crate::align::align_drag::mm_per_pixel(camera.orthographic_height, viewport.height());
+        crate::align::align_overlay::paint_turn_ball(
+            painter,
+            centre,
+            turn_frame.radius / world_per_pixel,
+        );
     }
 
     /// Apply one drag step directly to the scene, without touching history.
