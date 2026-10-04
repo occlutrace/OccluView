@@ -427,10 +427,12 @@ fn a_real_third_of_a_millimetre_shows_a_transition_the_legend_agrees_with() {
     }
 }
 
-/// The precise refusal can vary with the optimizer's coarse-seed path; the
-/// worker contract is that rank-deficient evidence never authorizes a pose.
+/// Rank-deficient evidence is classed Ambiguous (unobservable motion) or Weak,
+/// never Probable or Verified, so the worker cannot authorize such a pose.
 #[test]
 fn worker_does_not_authorize_a_rank_deficient_refinement() {
+    use occluview_align::Confidence;
+
     let mut job = measure_job(0);
     job.kind = super::AlignJobKind::Refine;
     let cancel = occluview_align::CancelFlag::new();
@@ -439,8 +441,12 @@ fn worker_does_not_authorize_a_rank_deficient_refinement() {
     let outcome = super::execute(&job, &cancel, &mut cache);
 
     assert!(
-        matches!(outcome, super::AlignOutcome::Candidates(ref result) if result.candidates.iter().all(|candidate| candidate.confidence == occluview_align::Confidence::Weak)),
+        matches!(outcome, super::AlignOutcome::Candidates(ref result) if result.candidates.iter().all(|candidate| matches!(candidate.confidence, Confidence::Weak | Confidence::Ambiguous))),
         "rank-deficient evidence remains a reviewable uncertain pose"
+    );
+    assert!(
+        matches!(outcome, super::AlignOutcome::Candidates(ref result) if !result.candidates.iter().any(|candidate| matches!(candidate.confidence, Confidence::Probable | Confidence::Verified))),
+        "rank-deficient evidence is never Probable or Verified"
     );
 }
 
