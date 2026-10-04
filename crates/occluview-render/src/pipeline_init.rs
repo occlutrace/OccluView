@@ -41,9 +41,7 @@ impl Renderer {
     /// - [`RenderError::NoAdapter`] when no adapter is available (incl. WARP-less sandboxes).
     /// - [`RenderError::Surface`] for device-creation failure.
     pub async fn new_headless(target_format: wgpu::TextureFormat) -> Result<Self, RenderError> {
-        let (renderer, _adapter_result) =
-            Self::new_headless_on_adapter(target_format, true).await?;
-        Ok(renderer)
+        Self::new_headless_with(target_format, true, None).await
     }
 
     /// Create a headless renderer on one explicit adapter kind.
@@ -51,10 +49,23 @@ impl Renderer {
     /// The offscreen policy layer owns fallback and verification. This lower
     /// layer makes exactly one adapter request, so a consumer cannot
     /// mistake a successful device allocation for a verified hardware frame.
+    ///
+    /// # Errors
+    /// [`RenderError::NoAdapter`] when the machine offers no adapter of that
+    /// kind, and the errors of [`Self::new_headless`].
     pub(crate) async fn new_headless_on_adapter(
         target_format: wgpu::TextureFormat,
+        wanted: crate::offscreen::AdapterResult,
+    ) -> Result<Self, RenderError> {
+        let force_fallback_adapter = matches!(wanted, crate::offscreen::AdapterResult::Fallback);
+        Self::new_headless_with(target_format, force_fallback_adapter, Some(wanted)).await
+    }
+
+    async fn new_headless_with(
+        target_format: wgpu::TextureFormat,
         force_fallback_adapter: bool,
-    ) -> Result<(Self, crate::offscreen::AdapterResult), RenderError> {
+        wanted: Option<crate::offscreen::AdapterResult>,
+    ) -> Result<Self, RenderError> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -69,8 +80,14 @@ impl Renderer {
             })
             .await
             .map_err(|_| RenderError::NoAdapter)?;
+        // The adapter's kind is known before any device exists. Refusing here
+        // keeps a machine with only a software adapter from building every
+        // pipeline for the hardware attempt and again for the fallback.
         let adapter_result =
             crate::offscreen::adapter_result_for_device_type(adapter.get_info().device_type);
+        if wanted.is_some_and(|wanted| wanted != adapter_result) {
+            return Err(RenderError::NoAdapter);
+        }
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
@@ -96,10 +113,7 @@ impl Renderer {
             .await
             .map_err(|e| RenderError::Surface(e.to_string()))?;
 
-        Ok((
-            Self::with_device(device, queue, target_format)?,
-            adapter_result,
-        ))
+        Self::with_device(device, queue, target_format)
     }
 
     /// Build the pipeline against an externally-created device/queue (used by
