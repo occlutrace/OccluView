@@ -481,7 +481,7 @@ align-commit-done-hint = Garder l’alignement et fermer — exporter pour écri
 
 align-map-heatmap = Carte de chaleur
 align-map-heatmap-hint = Colorer un scan par sa distance à l’autre
-align-map-requires-accept = Acceptez d’abord un candidat d’alignement
+align-map-requires-refine = Lancez d’abord Best fit matching
 align-map-max = max
 align-map-min = min
 align-map-not-measured = non mesuré
@@ -547,10 +547,13 @@ align-status-worker-unavailable = Le processus d’alignement s’est arrêté �
 align-fit-busy = Un ajustement est déjà en cours — la fenêtre se débloque à la fin
 align-status-measure-dropped = Mesure jetée — le pinceau possède les couleurs
 align-status-measure-unavailable = Mesure non appliquée — le scan a changé ; relancez Best fit matching
-align-status-map-elsewhere = La carte est sur l’onglet Auto — elle y revient
+align-status-map-elsewhere = Carte de chaleur retirée : la pose peut changer ici — relancez Ajustement fin pour la retrouver
 ## Align result status lines — DRAFT.
 
 align-status-measured = Carte de chaleur mise à jour
+align-status-aligned-points = Aligné sur points
+align-status-aligned = Aligné par points — lancez Best fit matching pour caler les surfaces.
+align-status-refined = Best fit prêt
 align-status-remeasure = { $reason } — relancer l’ajustement fin pour mesurer
 align-status-settings-changed = Réglages du matching modifiés
 align-status-visibility-changed = Visibilité d’un scan sélectionné modifiée
@@ -875,6 +878,7 @@ align-markings-dropped = Marques jetées — la surface a changé depuis
 ## Worker-built align failures — DRAFT.
 
 align-fail-no-surface-fixed = Le scan fixe n’a pas de surface utile
+align-fail-no-surface-moving = Le scan mobile n’a pas de surface utile
 align-fail-recolor = Mesure jetée avant coloriage
 align-fail-unobservable = La surface ne permet pas une carte d’écart fiable
 align-reject-toofew = Ajoutez des flèches ou rapprochez les scans
@@ -1016,19 +1020,7 @@ workspace-stale-target = La scène ou le calque n’est plus disponible.
 workspace-close-dialog = Fermez d’abord la boîte de dialogue ouverte.
 workspace-import-cancelled = Les imports en attente ont été annulés à la fermeture de leur scène.
 
-# Candidate review and explicit alignment acceptance.
-align-review-ready = Candidat prêt à examiner. Acceptez pour déplacer le scan.
-align-review-accepted = Alignement accepté. La confiance géométrique reste inchangée.
-align-review-invalidated = Candidat périmé. Relancez la correspondance.
-align-review-count = Candidat { $current } sur { $total }
-align-review-overlap = Recouvrement commun : { $percent }% de la plus petite surface sélectionnée
-align-review-evidence-missing = Données indépendantes de recouvrement et d’incertitude indisponibles.
-align-review-previous = Précédent
-align-review-next = Suivant
-align-review-preview = Aperçu
-align-review-accept = Accepter l’alignement
-align-confidence-verified = Géométrie vérifiée
-align-confidence-probable = Probable
-align-confidence-ambiguous = Ambigu
-align-confidence-weak = Indices faibles
+# Applying a finished fit.
+align-fit-outdated = Les scans ont changé pendant la correspondance — relancez-la
+align-fit-unsure = L’ajustement est incertain — vérifiez-le sur la carte de chaleur
 align-input-nonfinite = Valeur numérique invalide : { $field } à la position { $index }.

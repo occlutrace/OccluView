@@ -481,7 +481,7 @@ align-commit-done-hint = Ausrichtung behalten und schließen — Scan exportiere
 
 align-map-heatmap = Heatmap
 align-map-heatmap-hint = Einen Scan nach Abstand zum anderen einfärben
-align-map-requires-accept = Zuerst einen Ausrichtungskandidaten akzeptieren
+align-map-requires-refine = Zuerst „Best fit matching“ ausführen
 align-map-max = max
 align-map-min = min
 align-map-not-measured = nicht gemessen
@@ -547,10 +547,13 @@ align-status-worker-unavailable = Align-Worker angehalten — Alignment-Tool neu
 align-fit-busy = Eine Anpassung läuft bereits — das Fenster wird frei, sobald sie fertig ist
 align-status-measure-dropped = Messung verworfen — Pinsel besitzt die Farben
 align-status-measure-unavailable = Messung nicht angewendet — Scan geändert; Best fit matching erneut ausführen
-align-status-map-elsewhere = Distanzkarte liegt auf dem Automatik-Tab — dort kommt sie zurück
+align-status-map-elsewhere = Heatmap entfernt: hier kann sich die Lage ändern — Best-Fit-Matching erneut ausführen, um sie zurückzuholen
 ## Align result status lines — DRAFT.
 
 align-status-measured = Heatmap aktualisiert
+align-status-aligned-points = Auf Punkten ausgerichtet
+align-status-aligned = Nach Punkten ausgerichtet — zuerst „Best fit matching“ ausführen.
+align-status-refined = Best fit bereit
 align-status-remeasure = { $reason } — Best-Fit-Matching erneut laufen lassen
 align-status-settings-changed = Matching-Einstellungen geändert
 align-status-visibility-changed = Sichtbarkeit eines ausgewählten Scans geändert
@@ -734,6 +737,7 @@ cut-footer-thickness = Ziehen = Schwenken · Klick Kontur = Wandstärke · Recht
 ## Worker-built align failures — DRAFT.
 
 align-fail-no-surface-fixed = Fixer Scan ohne brauchbare Oberfläche
+align-fail-no-surface-moving = Bewegter Scan ohne brauchbare Oberfläche
 align-fail-recolor = Messung vor dem Einfärben verworfen
 align-fail-unobservable = Die Oberfläche reicht für eine verlässliche Abweichungskarte nicht aus
 align-reject-toofew = Weitere Pfeilpaare setzen oder Scans näher platzieren
@@ -1014,19 +1018,7 @@ workspace-stale-target = Die Szene oder Ebene ist nicht mehr verfügbar.
 workspace-close-dialog = Schließen Sie zuerst den geöffneten Dialog.
 workspace-import-cancelled = Ausstehende Importe wurden beim Schließen ihrer Szene abgebrochen.
 
-# Candidate review and explicit alignment acceptance.
-align-review-ready = Kandidat zur Prüfung bereit. Akzeptieren, um den Scan zu bewegen.
-align-review-accepted = Ausrichtung akzeptiert. Geometrische Sicherheit unverändert.
-align-review-invalidated = Kandidat veraltet. Abgleich erneut starten.
-align-review-count = Kandidat { $current } von { $total }
-align-review-overlap = Gemeinsame Überlappung: { $percent }% der kleineren ausgewählten Fläche
-align-review-evidence-missing = Unabhängige Überlappungs- und Unsicherheitsdaten fehlen.
-align-review-previous = Zurück
-align-review-next = Weiter
-align-review-preview = Vorschau
-align-review-accept = Ausrichtung akzeptieren
-align-confidence-verified = Verifizierte Geometrie
-align-confidence-probable = Wahrscheinlich
-align-confidence-ambiguous = Mehrdeutig
-align-confidence-weak = Schwache Evidenz
+# Applying a finished fit.
+align-fit-outdated = Die Scans haben sich während des Abgleichs geändert — bitte erneut starten
+align-fit-unsure = Der Abgleich ist unsicher — auf der Heatmap prüfen
 align-input-nonfinite = Ungültige Zahl: { $field } an Position { $index }.

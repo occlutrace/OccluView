@@ -487,7 +487,7 @@ align-commit-done-hint = Keep the alignment and close — export the scan to wri
 
 align-map-heatmap = Heatmap
 align-map-heatmap-hint = Colour one scan by how far it sits from the other
-align-map-requires-accept = Accept an alignment candidate first
+align-map-requires-refine = Run Best fit matching first
 align-map-max = max
 align-map-min = min
 align-map-not-measured = not measured
@@ -553,10 +553,13 @@ align-status-worker-unavailable = Alignment worker stopped — restart the align
 align-fit-busy = A fit is already running — the window unlocks when it lands
 align-status-measure-dropped = Measurement dropped — the marking brush owns the colours
 align-status-measure-unavailable = Measurement not applied — the scan changed; run Best fit matching again
-align-status-map-elsewhere = Distance map is on the Automatically tab — it comes back there
+align-status-map-elsewhere = Heatmap removed: the pose can change here — run Best fit matching again to bring it back
 ## Align result status lines. Clinical numbers arrive pre-formatted.
 
 align-status-measured = Heatmap updated
+align-status-aligned-points = Aligned on points
+align-status-aligned = Aligned on points — run Best fit matching to seat the surfaces.
+align-status-refined = Best fit ready
 align-status-remeasure = { $reason } — run Best fit matching to measure again
 align-status-settings-changed = Matching settings changed
 align-status-visibility-changed = Selected scan visibility changed
@@ -880,6 +883,7 @@ align-markings-dropped = Markings dropped — the scan's surface changed since t
 ## details arrive pre-formatted in positional `$a`/`$b` (documented per key).
 
 align-fail-no-surface-fixed = The fixed scan has no usable surface
+align-fail-no-surface-moving = The moving scan has no usable surface
 align-fail-recolor = The measurement was dropped before it could be coloured
 align-fail-unobservable = The surface is not observable enough for a reliable heatmap
 align-reject-toofew = Place more matching arrows or move the scans closer
@@ -1023,19 +1027,7 @@ workspace-stale-target = The scene or layer is no longer available.
 workspace-close-dialog = Close the open dialog first.
 workspace-import-cancelled = Pending imports were cancelled when their scene closed.
 
-# Candidate review and explicit alignment acceptance.
-align-review-ready = Candidate ready for review. Accept to move the scan.
-align-review-accepted = Alignment accepted. Geometric confidence is unchanged.
-align-review-invalidated = Candidate is outdated. Run matching again.
-align-review-count = Candidate { $current } of { $total }
-align-review-overlap = Common overlap: { $percent }% of smaller selected surface
-align-review-evidence-missing = Independent overlap and uncertainty evidence unavailable.
-align-review-previous = Previous
-align-review-next = Next
-align-review-preview = Preview
-align-review-accept = Accept alignment
-align-confidence-verified = Verified geometry
-align-confidence-probable = Probable
-align-confidence-ambiguous = Ambiguous
-align-confidence-weak = Weak evidence
+# Applying a finished fit.
+align-fit-outdated = The scans changed while matching ran — run it again
+align-fit-unsure = The match is uncertain — check it on the heatmap
 align-input-nonfinite = Invalid numeric input: { $field } at scalar { $index }.

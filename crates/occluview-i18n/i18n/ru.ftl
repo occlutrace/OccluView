@@ -555,7 +555,7 @@ align-commit-done-hint = Сохранить сопоставление и зак
 
 align-map-heatmap = Теплокарта
 align-map-heatmap-hint = Окрасить один скан по расстоянию до другого
-align-map-requires-accept = Сначала примите кандидат совмещения
+align-map-requires-refine = Сначала выполните точное совмещение
 align-map-max = макс
 align-map-min = мин
 align-map-not-measured = не измерено
@@ -621,10 +621,13 @@ align-status-worker-unavailable = Обработчик совмещения ос
 align-fit-busy = Совмещение уже идёт — окно разблокируется, когда оно завершится
 align-status-measure-dropped = Измерение сброшено — цветами владеет кисть пометок
 align-status-measure-unavailable = Измерение не применено — скан изменился; снова выполните точное совмещение
-align-status-map-elsewhere = Карта расстояний на вкладке «Автоматически» — она вернётся туда
+align-status-map-elsewhere = Теплокарта убрана: здесь поза может измениться — выполните точное совмещение ещё раз, чтобы вернуть её
 ## Align result status lines — DRAFT.
 
 align-status-measured = Теплокарта обновлена
+align-status-aligned-points = Совмещено по точкам
+align-status-aligned = Совмещено по точкам — выполните точное совмещение для посадки поверхностей.
+align-status-refined = Точное совмещение готово
 align-status-remeasure = { $reason } — запустите точное совмещение для повторного измерения
 align-status-settings-changed = Настройки сопоставления изменены
 align-status-visibility-changed = Видимость выбранного скана изменена
@@ -826,6 +829,7 @@ cut-footer-thickness = Перетаскивание = панорама · кли
 ## Worker-built align failures — DRAFT.
 
 align-fail-no-surface-fixed = У неподвижного скана нет пригодной поверхности
+align-fail-no-surface-moving = У подвижного скана нет пригодной поверхности
 align-fail-recolor = Измерение сброшено до окраски
 align-fail-unobservable = Поверхность недостаточно наблюдаема для надёжной теплокарты
 align-reject-toofew = Поставьте больше пар стрелок или приблизьте сканы
@@ -1106,19 +1110,7 @@ workspace-stale-target = Сцена или слой больше недосту�
 workspace-close-dialog = Сначала закройте открытый диалог.
 workspace-import-cancelled = Ожидающие загрузки отменены: их сцена закрыта.
 
-# Candidate review and explicit alignment acceptance.
-align-review-ready = Кандидат готов к просмотру. Примите его, чтобы переместить скан.
-align-review-accepted = Совмещение принято. Геометрическая уверенность не изменилась.
-align-review-invalidated = Кандидат устарел. Повторите сопоставление.
-align-review-count = Кандидат { $current } из { $total }
-align-review-overlap = Общее перекрытие: { $percent }% меньшей выбранной поверхности
-align-review-evidence-missing = Независимые данные о перекрытии и неопределённости недоступны.
-align-review-previous = Предыдущий
-align-review-next = Следующий
-align-review-preview = Предпросмотр
-align-review-accept = Принять совмещение
-align-confidence-verified = Проверенная геометрия
-align-confidence-probable = Вероятное
-align-confidence-ambiguous = Неоднозначное
-align-confidence-weak = Слабые данные
+# Applying a finished fit.
+align-fit-outdated = Сканы изменились, пока шло сопоставление — запустите его ещё раз
+align-fit-unsure = Совмещение неуверенное — проверьте его по теплокарте
 align-input-nonfinite = Недопустимое число: { $field }, позиция { $index }.

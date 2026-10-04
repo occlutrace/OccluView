@@ -29,12 +29,12 @@ pub(crate) struct AlignState {
     pub(crate) settings: AlignSettings,
     pub(crate) status: Option<String>,
     pub(crate) stats: Option<DeviationStats>,
-    /// Candidate review never owns scene pose or measurement authority.
-    pub(crate) review: Option<AlignmentReview>,
-    /// Only explicit acceptance can authorize a derived measurement.
-    pub(crate) accepted: Option<AcceptedAlignment>,
-    /// Input authority captured before worker submission.
-    pub(crate) pending_review: Option<ReviewKey>,
+    /// The Best fit result the pair currently sits in. Only this authorizes a
+    /// heatmap: a map describes one fitted pose of one pair of surfaces.
+    pub(crate) fitted: Option<FittedAlignment>,
+    /// What the job in flight was computed from, captured at submission. A
+    /// result that lands on anything else is dropped instead of applied.
+    pub(crate) pending_fit: Option<FitKey>,
     pub(crate) rejected: Vec<u32>,
     /// Per-layer overlay colours currently on screen.
     pub(crate) overlay_colors: Vec<(SceneMeshId, Arc<Vec<[u8; 4]>>)>,
@@ -77,10 +77,11 @@ pub(crate) struct AlignState {
     pub(crate) ghosted: Vec<SceneMeshId>,
 }
 
-/// Immutable authority snapshot; comparisons use complete values, not hashes.
+/// The scene and the matching settings one fit was computed from. Compared
+/// whole, never hashed: equal keys mean the fit still describes what is on
+/// screen.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct ReviewKey {
-    pub(crate) generation: u64,
+pub(crate) struct FitKey {
     pub(crate) content_revision: u64,
     pub(crate) roles: [SceneMeshId; 2],
     pub(crate) geometry: [u64; 2],
@@ -91,32 +92,9 @@ pub(crate) struct ReviewKey {
     pub(crate) orientation: occluview_align::Orientation,
 }
 
-pub(crate) struct AlignmentReview {
-    pub(crate) key: ReviewKey,
-    pub(crate) candidates: occluview_align::AlignmentSearchResult,
-    pub(crate) selected: usize,
-    pub(crate) preview_enabled: bool,
-}
-
-/// Operator authorization and geometric confidence remain separate facts.
-pub(crate) struct AcceptedAlignment {
-    pub(crate) key: Option<ReviewKey>,
-    pub(crate) candidate_id: occluview_align::CandidateId,
+/// A landed Best fit: the state it left the pair in, and how sure the geometry
+/// is of it. Applying a fit never raises its confidence.
+pub(crate) struct FittedAlignment {
+    pub(crate) key: FitKey,
     pub(crate) confidence: occluview_align::Confidence,
-    pub(crate) evidence: occluview_align::CandidateEvidence,
-}
-#[cfg(test)]
-impl AcceptedAlignment {
-    /// Existing map tests isolate map invalidation from candidate search.
-    pub(crate) fn test_authority() -> Self {
-        Self {
-            key: None,
-            candidate_id: occluview_align::CandidateId {
-                family: 0,
-                proposal: 0,
-            },
-            confidence: occluview_align::Confidence::Weak,
-            evidence: occluview_align::CandidateEvidence::default(),
-        }
-    }
 }

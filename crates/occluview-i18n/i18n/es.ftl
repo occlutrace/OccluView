@@ -481,7 +481,7 @@ align-commit-done-hint = Conservar la alineación y cerrar — exporta para guar
 
 align-map-heatmap = Mapa de calor
 align-map-heatmap-hint = Colorear un escaneo por su distancia al otro
-align-map-requires-accept = Acepta primero un candidato de alineación
+align-map-requires-refine = Ejecuta primero Best fit matching
 align-map-max = máx
 align-map-min = mín
 align-map-not-measured = no medido
@@ -547,10 +547,13 @@ align-status-worker-unavailable = El proceso de alineación se detuvo — reinic
 align-fit-busy = Ya hay un ajuste en curso — la ventana se desbloquea cuando termine
 align-status-measure-dropped = Medición descartada — el pincel posee los colores
 align-status-measure-unavailable = Medición no aplicada — el escaneo cambió; ejecuta Best fit matching de nuevo
-align-status-map-elsewhere = El mapa está en la pestaña Automático — vuelve allí
+align-status-map-elsewhere = Mapa de calor retirado: aquí la pose puede cambiar — ejecuta de nuevo Ajuste fino para recuperarlo
 ## Align result status lines — DRAFT.
 
 align-status-measured = Mapa de calor actualizado
+align-status-aligned-points = Alineado por puntos
+align-status-aligned = Alineado por puntos — ejecuta Best fit matching para asentar las superficies.
+align-status-refined = Best fit listo
 align-status-remeasure = { $reason } — ejecuta el ajuste fino para medir de nuevo
 align-status-settings-changed = Ajustes de matching cambiados
 align-status-visibility-changed = Cambió la visibilidad de un escaneo seleccionado
@@ -875,6 +878,7 @@ align-markings-dropped = Marcas soltadas — la superficie cambió tras pintar
 ## Worker-built align failures — DRAFT.
 
 align-fail-no-surface-fixed = El escaneo fijo no tiene superficie útil
+align-fail-no-surface-moving = El escaneo móvil no tiene superficie útil
 align-fail-recolor = Medición descartada antes de colorear
 align-fail-unobservable = La superficie no permite un mapa de desviación fiable
 align-reject-toofew = Coloca más flechas o acerca los escaneos
@@ -1016,19 +1020,7 @@ workspace-stale-target = La escena o capa ya no está disponible.
 workspace-close-dialog = Primero cierre el diálogo abierto.
 workspace-import-cancelled = Las importaciones pendientes se cancelaron al cerrar su escena.
 
-# Candidate review and explicit alignment acceptance.
-align-review-ready = Candidato listo para revisar. Acepta para mover el escaneo.
-align-review-accepted = Alineación aceptada. La confianza geométrica no cambia.
-align-review-invalidated = Candidato desactualizado. Repite la comparación.
-align-review-count = Candidato { $current } de { $total }
-align-review-overlap = Solapamiento común: { $percent }% de la superficie seleccionada menor
-align-review-evidence-missing = Datos independientes de solapamiento e incertidumbre no disponibles.
-align-review-previous = Anterior
-align-review-next = Siguiente
-align-review-preview = Vista previa
-align-review-accept = Aceptar alineación
-align-confidence-verified = Geometría verificada
-align-confidence-probable = Probable
-align-confidence-ambiguous = Ambiguo
-align-confidence-weak = Evidencia débil
+# Applying a finished fit.
+align-fit-outdated = Los escaneos cambiaron durante la comparación — repítela
+align-fit-unsure = El ajuste es incierto — revísalo en el mapa de calor
 align-input-nonfinite = Valor numérico inválido: { $field } en la posición { $index }.

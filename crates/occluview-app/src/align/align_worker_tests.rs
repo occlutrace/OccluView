@@ -718,6 +718,66 @@ fn a_job_of_the_current_generation_comes_back() {
     ));
 }
 
+/// Perform alignment is the closed-form fit of the clicked pairs. It answers
+/// with a correction of the placement the job was submitted with, so a scaled
+/// placement keeps its scale, and no surface is searched to get there.
+#[test]
+fn a_point_fit_corrects_the_submitted_placement() {
+    use glam::{Affine3A, DQuat, DVec3, Quat, Vec3};
+    use occluview_align::Rigid;
+
+    let placed = Affine3A::from_scale_rotation_translation(
+        Vec3::splat(1.25),
+        Quat::from_rotation_z(0.4),
+        Vec3::new(3.0, -2.0, 1.0),
+    );
+    // The correction that leaves only the scale: it undoes the placement's
+    // turn and shift.
+    let back = DQuat::from_rotation_z(-f64::from(0.4_f32));
+    let correction = Rigid::new(back, -(back * DVec3::new(3.0, -2.0, 1.0)));
+    let world = placed.as_daffine3();
+    let pairs = [
+        DVec3::new(1.0, 1.0, 0.2),
+        DVec3::new(9.0, 2.0, -0.1),
+        DVec3::new(5.0, 9.0, 0.3),
+        DVec3::new(2.0, 7.0, 0.0),
+    ]
+    .map(|moving| super::WorldPair {
+        moving,
+        moving_normal: DVec3::Z,
+        fixed: correction.apply(world.transform_point3(moving)),
+        fixed_normal: DVec3::Z,
+    });
+
+    let (worker, repaint_rx) = worker_with_repaint();
+    let generation = worker.generation();
+    worker.submit(super::AlignJob {
+        kind: super::AlignJobKind::Align,
+        authored_pose: placed,
+        pairs: pairs.to_vec(),
+        ..observable_measure_job(generation)
+    });
+    let completions = harvest_one(&worker, &repaint_rx);
+    let [super::AlignCompletion {
+        outcome: super::AlignOutcome::Aligned {
+            correction: found,
+            rejected,
+        },
+        ..
+    }] = completions.as_slice()
+    else {
+        panic!("a point fit answers with one fitted correction");
+    };
+    assert!(rejected.is_empty(), "{rejected:?}");
+    assert!(found.rotation.angle_between(correction.rotation) < 1e-6);
+    assert!(
+        (found.translation - correction.translation).length() < 1e-5,
+        "{:?} against {:?}",
+        found.translation,
+        correction.translation
+    );
+}
+
 /// Publishing a result wakes the UI independently of the busy flag. The
 /// busy guard ends immediately after publication, which can race the frame's
 /// last `is_busy` check.

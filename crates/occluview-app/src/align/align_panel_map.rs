@@ -19,24 +19,18 @@ use crate::{align::align_overlay, ui::ui_theme};
 pub(crate) fn show(
     ui: &mut egui::Ui,
     settings: &mut AlignSettings,
-    accepted_ready: bool,
+    fit_ready: bool,
     enabled: bool,
     locale: &crate::i18n::LocaleManager,
 ) -> Option<AlignPanelAction> {
     // A persisted checkbox must not resurrect a map for a pose that was never
     // refined in this session. The application state owns this invariant, but
     // this presentation boundary also guards stale settings loaded from disk.
-    if !accepted_ready {
+    if !fit_ready {
         settings.show_deviation = false;
     }
-    let mut action = toggle(
-        ui,
-        settings,
-        enabled && accepted_ready,
-        accepted_ready,
-        locale,
-    );
-    if !accepted_ready || !settings.show_deviation {
+    let mut action = toggle(ui, settings, enabled && fit_ready, fit_ready, locale);
+    if !fit_ready || !settings.show_deviation {
         return action;
     }
 
@@ -49,7 +43,7 @@ fn toggle(
     ui: &mut egui::Ui,
     settings: &mut AlignSettings,
     enabled: bool,
-    accepted_ready: bool,
+    fit_ready: bool,
     locale: &crate::i18n::LocaleManager,
 ) -> Option<AlignPanelAction> {
     let mut action = None;
@@ -81,10 +75,10 @@ fn toggle(
                 ),
             )
             .on_hover_text(locale.tr(crate::i18n::message_id!("align-map-heatmap-hint")))
-            .on_disabled_hover_text(if accepted_ready {
+            .on_disabled_hover_text(if fit_ready {
                 locale.tr(crate::i18n::message_id!("align-job-measure"))
             } else {
-                locale.tr(crate::i18n::message_id!("align-map-requires-accept"))
+                locale.tr(crate::i18n::message_id!("align-map-requires-refine"))
             })
             .changed()
         {
@@ -206,10 +200,7 @@ mod tests {
 
     #[test]
     fn disabled_heatmap_explains_missing_refinement_or_busy_measurement() {
-        for (ready, expected) in [
-            (false, "Accept an alignment candidate first"),
-            (true, "Measuring…"),
-        ] {
+        for (ready, expected) in [(false, "Run Best fit matching first"), (true, "Measuring…")] {
             let ctx = egui::Context::default();
             ctx.all_styles_mut(|style| {
                 style.interaction.tooltip_delay = 0.0;

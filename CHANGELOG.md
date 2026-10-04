@@ -5,11 +5,13 @@ remain in the Git history.
 
 ## Unreleased
 
-- Adjust pose: Ctrl+drag turns a scan about its own centre the way the cursor pushes it, and a drag at its outline rolls it; the turn no longer swings the scan around the grabbed point.
-
 - Best fit aligns scans that are only partly alike: a part of a jaw against the whole jaw, a scan before and after preparation, a scan with scan bodies, a bite scan, or the fitting side of a prosthesis against the tissue it sits on.
 
-- Best fit always returns the best placement it finds with a confidence class and never refuses a pair of scans; competing placements are offered for review and the scan changes only after Accept alignment.
+- Best fit matching moves the scan to the best placement it finds at once and shows the heatmap, with no candidate to pick or accept; Ctrl+Z takes the placement back, and a match the geometry leaves in doubt is marked as uncertain.
+
+- Perform alignment fits the clicked points at once instead of running a surface search.
+
+- Adjust pose: Ctrl+drag turns a scan about its own centre the way the cursor pushes it, and a drag at its outline rolls it; the turn no longer swings the scan around the grabbed point.
 
 - Best fit finishes in a few seconds on scans of more than a million triangles.
 
@@ -182,8 +184,6 @@ remain in the Git history.
 - Binary PLY imports reject negative or fractional list counts and indices instead of silently coercing them.
 
 - Thumbnail stream copying handles zero and maximum byte limits without overflowing.
-
-- Scan alignment previews uncertain candidates and changes the scan only after Accept alignment.
 
 - OBJ thumbnails retain positive face references to vertices declared later in the file.
 
