@@ -30,8 +30,9 @@ fn app_with_a_landed_fit(name: &str) -> (OccluViewApp, SceneMeshId, SceneMeshId)
         .align
         .tool
         .imply_pair(&[moving_id, fixed_id]);
-    app.workspace.scenes[0].tools.align.accepted =
-        Some(crate::align::align_state::AcceptedAlignment::test_authority());
+    app.active_context()
+        .expect("live test scene")
+        .mark_fitted_for_tests();
     app.workspace.scenes[0].tools.align.settings.show_deviation = true;
     app.active_context()
         .expect("live test scene")
@@ -260,7 +261,7 @@ fn a_geometry_change_forgets_the_whole_fit() {
          must not survive it"
     );
     assert!(
-        app.workspace.scenes[0].tools.align.accepted.is_none(),
+        app.workspace.scenes[0].tools.align.fitted.is_none(),
         "a fit measured against the old surface is not a refined match for this one"
     );
     assert!(!app.workspace.scenes[0].tools.align.settings.show_deviation);
@@ -295,31 +296,29 @@ fn a_geometry_change_forgets_the_whole_fit() {
 /// A result the operator has overtaken is never applied.
 ///
 /// Two completions of the same generation can be in hand at once. Applying the
-/// first one commits a pose and invalidates the fit, which moves the generation
-/// — so the second belongs to a state that no longer exists. Without the
-/// per-completion re-read it lands on top of the first as a fresh history step,
-/// and the scan jumps back to a pose the operator never asked for.
+/// first one commits a pose, which is a different state from the one the
+/// second was computed for. Applied anyway, the second would land on top of
+/// the first as a fresh history step and the scan would jump to a pose the
+/// operator never asked for.
 #[test]
 fn a_result_the_operator_has_overtaken_is_never_applied() {
-    let (mut app, moving_id, _fixed_id) = app_with_a_landed_fit("align-overtaken-result");
+    let (mut app, _moving_id, _fixed_id) = app_with_a_landed_fit("align-overtaken-result");
     let first = Rigid::new(glam::DQuat::IDENTITY, glam::DVec3::new(1.0, 0.0, 0.0));
     let second = Rigid::new(glam::DQuat::IDENTITY, glam::DVec3::new(0.0, 9.0, 0.0));
 
     let mut scene = app.active_context().expect("live test scene");
+    scene.tools.align.pending_fit = scene.current_fit_key();
     let worker = scene.align_worker_mut();
     let generation = worker.generation();
     worker.publish_for_tests(
         generation,
-        AlignOutcome::Candidates(review_tests::candidate_result(first)),
+        AlignOutcome::Candidates(fit_tests::candidate_result(first)),
     );
     worker.publish_for_tests(
         generation,
-        AlignOutcome::Candidates(review_tests::candidate_result(second)),
+        AlignOutcome::Candidates(fit_tests::candidate_result(second)),
     );
-
-    app.active_context()
-        .expect("live test scene")
-        .drain_align_worker(&egui::Context::default());
+    scene.drain_align_worker(&egui::Context::default());
 
     assert_eq!(
         app.workspace.scenes[0]
@@ -329,25 +328,14 @@ fn a_result_the_operator_has_overtaken_is_never_applied() {
             .expect("scene")
             .meshes()[1]
             .transform,
-        glam::Affine3A::IDENTITY,
-        "completion only installs review evidence"
+        first.to_affine(),
+        "the first result lands; the second belongs to the state before it"
     );
     assert_eq!(
         app.workspace.scenes[0].document.edit_mode.undo_len(),
-        0,
-        "candidate delivery must not create history"
+        1,
+        "one applied result is one history step"
     );
-    assert_ne!(
-        app.workspace.scenes[0]
-            .document
-            .scene
-            .as_ref()
-            .expect("scene")
-            .meshes()[1]
-            .transform,
-        second.to_affine()
-    );
-    let _ = moving_id;
 }
 
 /// A measurement that finishes after the operator has hidden the map, or after
@@ -387,7 +375,7 @@ fn late_measurement_cannot_reopen_hidden_or_unrefined_map() {
 
     // The refined claim went away under the running job.
     app.workspace.scenes[0].tools.align.settings.show_deviation = true;
-    app.workspace.scenes[0].tools.align.accepted = None;
+    app.workspace.scenes[0].tools.align.fitted = None;
     app.active_context()
         .expect("live test scene")
         .apply_measured_outcome(colors, a_summary(), a_measurement_that_can_be_seen(), 0.2);
@@ -406,8 +394,9 @@ fn late_measurement_cannot_reopen_hidden_or_unrefined_map() {
 
     // Positive control: the same call paints once the map is authorized, so the
     // two refusals above cannot pass on a call that never paints at all.
-    app.workspace.scenes[0].tools.align.accepted =
-        Some(crate::align::align_state::AcceptedAlignment::test_authority());
+    app.active_context()
+        .expect("live test scene")
+        .mark_fitted_for_tests();
     let colors = map_colors(&app, moving_id);
     app.active_context()
         .expect("live test scene")
@@ -535,8 +524,9 @@ fn dropping_a_stale_map_also_drops_the_work_behind_it() {
 
     // Positive control: the worker still takes work and still publishes, so the
     // empty drain above is not an empty worker.
-    app.workspace.scenes[0].tools.align.accepted =
-        Some(crate::align::align_state::AcceptedAlignment::test_authority());
+    app.active_context()
+        .expect("live test scene")
+        .mark_fitted_for_tests();
     app.workspace.scenes[0].tools.align.settings.show_deviation = true;
     app.active_context()
         .expect("live test scene")
@@ -577,7 +567,7 @@ fn dropping_a_stale_map_also_drops_the_work_behind_it() {
 fn measurement_requires_a_landed_refined_match() {
     let (mut app, _moving_id, _fixed_id) = app_with_a_landed_fit("align-measure-authority");
 
-    app.workspace.scenes[0].tools.align.accepted = None;
+    app.workspace.scenes[0].tools.align.fitted = None;
     app.active_context()
         .expect("live test scene")
         .run_align_measure();
@@ -596,8 +586,9 @@ fn measurement_requires_a_landed_refined_match() {
         "and no job may be submitted"
     );
 
-    app.workspace.scenes[0].tools.align.accepted =
-        Some(crate::align::align_state::AcceptedAlignment::test_authority());
+    app.active_context()
+        .expect("live test scene")
+        .mark_fitted_for_tests();
     app.active_context()
         .expect("live test scene")
         .run_align_measure();
@@ -641,7 +632,7 @@ fn a_click_that_turns_the_pair_around_invalidates_the_fit() {
         .adopt_swapped_roles(status);
 
     assert!(
-        app.workspace.scenes[0].tools.align.accepted.is_none(),
+        app.workspace.scenes[0].tools.align.fitted.is_none(),
         "a fit measured one way round is not a fit for the pair the other way round"
     );
     assert!(!app.workspace.scenes[0].tools.align.settings.show_deviation);
@@ -679,7 +670,7 @@ fn optimizer_setting_changes_drop_the_refined_authority() {
         .forget_align_fit(&reason);
 
     assert!(
-        app.workspace.scenes[0].tools.align.accepted.is_none(),
+        app.workspace.scenes[0].tools.align.fitted.is_none(),
         "an optimizer change revokes the refined match"
     );
     assert!(!app.workspace.scenes[0].tools.align.settings.show_deviation);
@@ -744,7 +735,7 @@ fn returning_to_automatic_does_not_measure_implicitly() {
         .settle_align_tab_change();
 
     assert!(
-        app.workspace.scenes[0].tools.align.accepted.is_none(),
+        app.workspace.scenes[0].tools.align.fitted.is_none(),
         "the old refined match does not survive the tab change"
     );
     assert!(!app.workspace.scenes[0].tools.align.settings.show_deviation);

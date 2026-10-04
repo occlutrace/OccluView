@@ -7,9 +7,9 @@
 pub(super) mod brush;
 pub(crate) mod display;
 pub(crate) mod drag;
+mod fit;
 pub(super) mod panel;
 pub(super) mod results;
-mod review;
 pub(super) mod session;
 
 use eframe::egui;
@@ -110,7 +110,7 @@ impl SceneContext<'_> {
         for layer in named {
             if !live.contains(&layer) {
                 self.tools.align.tool.forget_layer(layer);
-                self.tools.align.accepted = None;
+                self.tools.align.fitted = None;
                 self.tools.align.settings.show_deviation = false;
                 // The mask indexes that layer's vertices. Left behind, it would
                 // be handed to the next pair and exclude an arbitrary region of
@@ -195,7 +195,7 @@ impl SceneContext<'_> {
         self.discard_align_drag();
         self.clear_deviation_overlay();
         self.clear_align_mask();
-        self.tools.align.accepted = None;
+        self.tools.align.fitted = None;
         // Tens of megabytes of cached arrays belong to a session the operator
         // has just left.
         self.tools.align.geometry.clear();
@@ -468,7 +468,7 @@ impl SceneContext<'_> {
             return;
         }
         let pose = rigid_pose.unwrap_or(Rigid::IDENTITY);
-        let review_key = self.current_alignment_key();
+        let fit_key = self.current_fit_key();
 
         // Geometry, not topology: a sculpt keeps the topology id and mints a
         // fresh geometry id so geometry-derived caches can tell that the
@@ -556,15 +556,11 @@ impl SceneContext<'_> {
         // that busy state unless accepted work schedules the next frame here.
         self.ui.repaint_ctx.request_repaint();
         if kind != AlignJobKind::Measure {
-            if self.tools.align.review.is_some() {
-                self.render.invalidation.scene_geometry_changed();
-            }
-            self.tools.align.review = None;
-            self.tools.align.pending_review = review_key;
+            self.tools.align.pending_fit = fit_key;
             // The previous heatmap belongs to the previous fit. Keep the
             // current geometry while the new job runs, but do not display an
             // old map beside a new refusal or let the toggle claim it is live.
-            self.tools.align.accepted = None;
+            self.tools.align.fitted = None;
             self.tools.align.settings.show_deviation = false;
             self.tools.align.stats = None;
             // Only a heatmap is the previous fit's picture. With the brush

@@ -61,6 +61,7 @@ fn placing_a_landmark_discards_the_fit_with_previous_points() {
     }
     assert!(scene.tools.align.tool.can_align());
     let generation = scene.align_worker_mut().generation();
+    scene.tools.align.pending_fit = scene.current_fit_key();
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 400.0));
     let (pointer, _) =
         crate::viewer::project_world_to_viewport(&camera, screen, Vec3::new(0.25, 0.25, 0.0))
@@ -93,10 +94,10 @@ fn placing_a_landmark_discards_the_fit_with_previous_points() {
     );
     scene.align_worker_mut().publish_for_tests(
         generation,
-        AlignOutcome::Candidates(results::review_tests::candidate_result(Rigid::new(
-            glam::DQuat::IDENTITY,
-            DVec3::X,
-        ))),
+        AlignOutcome::Aligned {
+            correction: Rigid::new(glam::DQuat::IDENTITY, DVec3::X),
+            rejected: Vec::new(),
+        },
     );
     scene.drain_align_worker(&ctx);
     assert_eq!(
@@ -305,8 +306,9 @@ fn removing_a_named_layer_revokes_refined_authority() {
         .align
         .tool
         .imply_pair(&[moving_id, fixed_id]);
-    app.workspace.scenes[0].tools.align.accepted =
-        Some(crate::align::align_state::AcceptedAlignment::test_authority());
+    app.active_context()
+        .expect("live test scene")
+        .mark_fitted_for_tests();
     app.workspace.scenes[0].tools.align.settings.show_deviation = true;
     app.workspace.scenes[0].tools.align.rejected = vec![0];
     app.active_context()
@@ -342,7 +344,7 @@ fn removing_a_named_layer_revokes_refined_authority() {
     .drop_without_applying_deltas();
 
     assert!(
-        app.workspace.scenes[0].tools.align.accepted.is_none(),
+        app.workspace.scenes[0].tools.align.fitted.is_none(),
         "a named layer that left the scene cannot still hold a refined match"
     );
     assert!(

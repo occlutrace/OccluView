@@ -87,9 +87,8 @@ impl SceneContext<'_> {
             // map claiming that the last pose was refined when no future
             // measurement can validate it. Region markings remain intact:
             // they are operator input, not worker output.
-            self.tools.align.accepted = None;
-            self.tools.align.review = None;
-            self.tools.align.pending_review = None;
+            self.tools.align.fitted = None;
+            self.tools.align.pending_fit = None;
             self.tools.align.settings.show_deviation = false;
             if self.tools.align.overlay == AlignOverlay::Map {
                 self.clear_deviation_overlay();
@@ -132,13 +131,32 @@ impl SceneContext<'_> {
     /// Apply one finished job.
     fn apply_align_outcome(&mut self, completion: AlignCompletion, ctx: &egui::Context) {
         match completion.outcome {
-            AlignOutcome::Candidates(candidates) => {
-                self.install_alignment_review(completion.generation, candidates);
+            AlignOutcome::Aligned {
+                correction,
+                rejected,
+            } => {
+                if !self.apply_fit_correction(correction) {
+                    return;
+                }
+                // A point fit changes the pose and invalidates any previous
+                // map; Best fit matching performs the next measurement.
+                self.forget_align_fit(
+                    &self
+                        .ui
+                        .locale
+                        .tr(crate::i18n::message_id!("align-status-aligned-points")),
+                );
+                self.tools.align.rejected = rejected;
+                self.tools.align.status = Some(
+                    self.ui
+                        .locale
+                        .tr(crate::i18n::message_id!("align-status-aligned")),
+                );
             }
+            AlignOutcome::Candidates(found) => self.apply_best_fit(&found),
             AlignOutcome::InvalidInput(error) => {
-                self.tools.align.review = None;
-                self.tools.align.pending_review = None;
-                self.tools.align.accepted = None;
+                self.tools.align.pending_fit = None;
+                self.tools.align.fitted = None;
                 let occluview_align::AlignmentInputError::NonFinite { field, index } = error;
                 tracing::warn!(?field, index, "alignment input is non-finite");
                 self.tools.align.status = Some(self.ui.locale.tr_with(
@@ -158,6 +176,7 @@ impl SceneContext<'_> {
                 self.apply_measured_outcome(colors, stats, seen, scale_mm);
             }
             AlignOutcome::Failed { rejection } => {
+                self.tools.align.pending_fit = None;
                 if matches!(rejection, AlignFailure::MeasurementUnobservable) {
                     // The old map, if any, belongs to a measurement whose
                     // geometry did not expose enough rigid motion. It must not
@@ -174,6 +193,43 @@ impl SceneContext<'_> {
             }
         }
         ctx.request_repaint();
+    }
+
+    /// Seat the moving scan in the best pose a search found and show how well
+    /// it fits.
+    ///
+    /// The search ranks its poses, so the first one is the answer; the operator
+    /// judges it on the heatmap that follows and undoes it if it is wrong.
+    fn apply_best_fit(&mut self, found: &occluview_align::AlignmentSearchResult) {
+        let Some(best) = found.candidates.first() else {
+            self.tools.align.pending_fit = None;
+            return;
+        };
+        if !self.apply_fit_correction(best.pose) {
+            return;
+        }
+        // The commit rebuilds the scene and takes every derived claim down with
+        // it, so the fit is recorded only now, against the pose that landed.
+        self.tools.align.fitted =
+            self.current_fit_key()
+                .map(|key| crate::align::align_state::FittedAlignment {
+                    key,
+                    confidence: best.confidence,
+                });
+        self.tools.align.status = Some(
+            self.ui
+                .locale
+                .tr(crate::i18n::message_id!("align-status-refined")),
+        );
+        // An open contact reading owns the per-surface colouring, and the two
+        // overlays describe different measurements, so a landed fit closes the
+        // reading before its own map goes up.
+        if self.tools.contacts.is_open() {
+            let ctx = self.ui.repaint_ctx.clone();
+            self.close_contacts(&ctx);
+        }
+        self.tools.align.settings.show_deviation = true;
+        self.measure_if_shown();
     }
 
     /// Apply one landed measurement: adopt its display scale, paint the
@@ -238,7 +294,7 @@ impl SceneContext<'_> {
             // but the layer can still disappear between the worker snapshot
             // and this UI poll. Never leave a refined/visible claim behind a
             // measurement that could not be attached to the current mesh.
-            self.tools.align.accepted = None;
+            self.tools.align.fitted = None;
             self.tools.align.settings.show_deviation = false;
             self.clear_deviation_overlay();
             self.tools.align.status = Some(
@@ -281,7 +337,7 @@ impl SceneContext<'_> {
         self.abandon_align_jobs();
         // A map and a refined-match claim describe the same pose and surface.
         // Invalidate the claim even when no map is currently visible.
-        self.tools.align.accepted = None;
+        self.tools.align.fitted = None;
         self.tools.align.settings.show_deviation = false;
         // Preserve operator markings; only the derived map is stale.
         if self.tools.align.overlay != AlignOverlay::Map {
@@ -300,12 +356,7 @@ impl SceneContext<'_> {
     /// Cheap: it moves a counter and empties two small lists. Nothing here waits
     /// on the worker thread.
     pub(in crate::app) fn abandon_align_jobs(&mut self) {
-        let had_preview = self.tools.align.review.is_some();
-        self.tools.align.review = None;
-        self.tools.align.pending_review = None;
-        if had_preview {
-            self.render.invalidation.scene_geometry_changed();
-        }
+        self.tools.align.pending_fit = None;
         if let Some(worker) = self.tools.align.worker.as_ref() {
             worker.bump_generation();
         }
@@ -324,7 +375,7 @@ impl SceneContext<'_> {
         // directions therefore revoke the old authority: returning to
         // Automatically must start with the map off and require a new refined
         // match; role inference alone is not a measurement.
-        self.tools.align.accepted = None;
+        self.tools.align.fitted = None;
         self.tools.align.settings.show_deviation = false;
         // Do not key cleanup only off the enum: a partial update can leave the
         // colour cache or the faded companion alive after the enum has already
@@ -417,8 +468,14 @@ impl SceneContext<'_> {
 /// presentation boundary.
 fn align_failure_parts(failure: AlignFailure) -> (crate::i18n::MessageId, String, String) {
     match failure {
+        AlignFailure::Fit(rejection) => fit_rejection_parts(rejection),
         AlignFailure::FixedSurfaceMissing => (
             crate::i18n::message_id!("align-fail-no-surface-fixed"),
+            String::new(),
+            String::new(),
+        ),
+        AlignFailure::MovingSurfaceMissing => (
+            crate::i18n::message_id!("align-fail-no-surface-moving"),
             String::new(),
             String::new(),
         ),
@@ -435,9 +492,7 @@ fn align_failure_parts(failure: AlignFailure) -> (crate::i18n::MessageId, String
     }
 }
 
-pub(super) fn fit_rejection_parts(
-    rejection: FitRejection,
-) -> (crate::i18n::MessageId, String, String) {
+fn fit_rejection_parts(rejection: FitRejection) -> (crate::i18n::MessageId, String, String) {
     let key = match rejection {
         FitRejection::TooFewPairs { .. } => crate::i18n::message_id!("align-reject-toofew"),
         FitRejection::Unpaired { .. } => crate::i18n::message_id!("align-reject-unpaired"),
@@ -510,12 +565,18 @@ mod tests {
                 super::AlignFailure::MeasurementUnobservable,
                 "align-fail-unobservable",
             ),
+            (
+                super::AlignFailure::MovingSurfaceMissing,
+                "align-fail-no-surface-moving",
+            ),
+            (
+                super::AlignFailure::Fit(occluview_align::FitRejection::NonFinite),
+                "align-reject-nonfinite",
+            ),
         ];
         for (failure, key) in cases {
             assert_eq!(super::align_failure_parts(failure).0.as_str(), key);
         }
-        // A refusal of the operator's arrows is an explanation on the
-        // candidates, not a failed job.
         for (reason, key) in [
             (
                 occluview_align::FitRejection::TooFewPairs { have: 2, need: 3 },
@@ -637,5 +698,5 @@ mod tests {
 }
 
 #[cfg(test)]
-#[path = "review_tests.rs"]
-pub(in crate::app) mod review_tests;
+#[path = "fit_tests.rs"]
+pub(in crate::app) mod fit_tests;

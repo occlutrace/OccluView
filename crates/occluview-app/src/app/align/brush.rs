@@ -693,15 +693,14 @@ mod tests {
         let mut scene = app.active_context().expect("live test scene");
         scene.tools.align.tool.arm();
         scene.tools.align.tool.imply_pair(&[moving, fixed]);
-        scene.tools.align.accepted =
-            Some(crate::align::align_state::AcceptedAlignment::test_authority());
+        scene.mark_fitted_for_tests();
         scene.tools.align.settings.show_deviation = true;
         assert!(scene.apply_deviation_colors(vec![[40, 90, 160, 255]; 3]));
         scene.tools.align.brush.set_armed(true);
         scene.refresh_align_region_preview();
         assert!(!scene.tools.align.markings.any());
         assert_eq!(scene.tools.align.overlay, AlignOverlay::Nothing);
-        assert!(scene.tools.align.accepted.is_some());
+        assert!(scene.tools.align.fitted.is_some());
         assert!(scene.tools.align.settings.show_deviation);
         assert!(scene.tools.align.worker.is_none());
 
@@ -744,6 +743,7 @@ mod tests {
         scene.tools.align.tool.imply_pair(&[moving, fixed]);
         scene.tools.align.brush.set_armed(true);
         let generation = scene.align_worker_mut().generation();
+        scene.tools.align.pending_fit = scene.current_fit_key();
         drop(scene);
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
         let (pointer, _) =
@@ -788,7 +788,7 @@ mod tests {
         );
         scene.align_worker_mut().publish_for_tests(
             generation,
-            AlignOutcome::Candidates(crate::app::align::results::review_tests::candidate_result(
+            AlignOutcome::Candidates(crate::app::align::results::fit_tests::candidate_result(
                 Rigid::new(DQuat::IDENTITY, DVec3::X),
             )),
         );
@@ -1007,8 +1007,9 @@ mod tests {
             "the pair has to be measurable, or a measurement could not be started anyway"
         );
         app.workspace.scenes[0].tools.align.settings.show_deviation = true;
-        app.workspace.scenes[0].tools.align.accepted =
-            Some(crate::align::align_state::AcceptedAlignment::test_authority());
+        app.active_context()
+            .expect("live test scene")
+            .mark_fitted_for_tests();
         assert!(
             app.active_context()
                 .expect("live test scene")
@@ -1086,7 +1087,7 @@ mod tests {
             "the toggle must not keep claiming a map is visible"
         );
         assert!(
-            app.workspace.scenes[0].tools.align.accepted.is_none(),
+            app.workspace.scenes[0].tools.align.fitted.is_none(),
             "the fit the map described is revoked with it"
         );
         assert!(

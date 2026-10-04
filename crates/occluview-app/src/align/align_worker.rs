@@ -16,9 +16,9 @@ use eframe::egui;
 use glam::DVec3;
 use occluview_align::suggested_scale_mm;
 use occluview_align::{
-    deviation, deviation_stats, observability, ramp_color, CancelFlag, DeviationMap,
-    DeviationSettings, DeviationStats, Observability, Orientation, RampMode, RampSettings, Rigid,
-    Soup, SurfaceIndex, Validity, NO_DATA_COLOR,
+    deviation, deviation_stats, fit_pairs, observability, ramp_color, CancelFlag, DeviationMap,
+    DeviationSettings, DeviationStats, FitBounds, FitRejection, Observability, Orientation,
+    RampMode, RampSettings, Rigid, Soup, SurfaceIndex, Validity, NO_DATA_COLOR,
 };
 use rayon::prelude::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
@@ -236,8 +236,13 @@ pub(crate) struct AlignJob {
 /// typed reason.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum AlignFailure {
+    /// The clicked pairs do not determine a pose, carrying the refusal to
+    /// report.
+    Fit(FitRejection),
     /// The fixed scan has no usable surface.
     FixedSurfaceMissing,
+    /// The moving scan has no usable surface.
+    MovingSurfaceMissing,
     /// The cached measurement was dropped before it could be coloured.
     MeasurementDropped,
     /// The map has samples, but they do not expose enough rigid motion to be
@@ -247,7 +252,16 @@ pub(crate) enum AlignFailure {
 
 /// What a finished job produced.
 pub(crate) enum AlignOutcome {
-    /// Search result for explicit operator review; pose is an input-frame correction.
+    /// The clicked pairs were fitted. The pose corrects the placement the job
+    /// was submitted with.
+    Aligned {
+        /// The correction to compose with the submitted placement.
+        correction: Rigid,
+        /// Pairs dropped as outliers.
+        rejected: Vec<u32>,
+    },
+    /// A surface search finished, best pose first. Each pose corrects the
+    /// placement the job was submitted with.
     Candidates(occluview_align::AlignmentSearchResult),
     /// Encountered non-finite numeric input, with its field and scalar index.
     InvalidInput(occluview_align::AlignmentInputError),
@@ -715,8 +729,10 @@ fn execute(job: &AlignJob, cancel: &CancelFlag, cached: &mut WorkerCache) -> Ali
         mask: job.mask.as_ref().map(|mask| mask.as_slice()),
     };
 
-    if job.kind != AlignJobKind::Measure {
-        return execute_search(job, cancel);
+    match job.kind {
+        AlignJobKind::Align => return align_from_pairs(job, moving),
+        AlignJobKind::Refine => return execute_search(job, cancel),
+        AlignJobKind::Measure => {}
     }
 
     // Re-colouring changes only the display, so reuse the cached map.
@@ -850,18 +866,75 @@ fn surface_index<'a>(
     cached.as_ref().map(|(_, index)| index)
 }
 
-/// Search geometry without allowing numerical confidence to edit the scene.
-fn execute_search(job: &AlignJob, cancel: &CancelFlag) -> AlignOutcome {
-    use occluview_align::{AlignmentInput, MeshInput, PointPair, SearchControl};
-    let pairs: Vec<_> = job
+/// Fit the clicked pairs in closed form. No surface is searched, so the pose
+/// lands as soon as the job is taken.
+///
+/// Both point sets are fitted in world, the moving one through the placement
+/// the job was submitted with, so the result corrects that placement and any
+/// authored scale in it stays where it was.
+fn align_from_pairs(job: &AlignJob, moving: Soup<'_>) -> AlignOutcome {
+    let placed = job.authored_pose.as_daffine3();
+    let facing = placed.matrix3.inverse().transpose();
+    let moving_points: Vec<DVec3> = job
         .pairs
         .iter()
-        .map(|p| PointPair {
-            moving_local: p.moving,
-            fixed_local: p.fixed,
-            normals_local: Some([p.moving_normal, p.fixed_normal]),
-        })
+        .map(|pair| placed.transform_point3(pair.moving))
         .collect();
+    let fixed_points: Vec<DVec3> = job.pairs.iter().map(|pair| pair.fixed).collect();
+    let moving_normals: Vec<DVec3> = job
+        .pairs
+        .iter()
+        .map(|pair| (facing * pair.moving_normal).normalize_or_zero())
+        .collect();
+    let fixed_normals: Vec<DVec3> = job.pairs.iter().map(|pair| pair.fixed_normal).collect();
+    let fixed_soup = Soup {
+        positions: &job.fixed_world_positions,
+        indices: &job.fixed_indices,
+        mask: job.fixed_mask.as_ref().map(|mask| mask.as_slice()),
+    };
+    // Missing bounds are reported instead of inventing an overlap allowance.
+    let Some((moving_center, moving_extent)) = occluview_align::bounds_of(moving) else {
+        return AlignOutcome::Failed {
+            rejection: AlignFailure::MovingSurfaceMissing,
+        };
+    };
+    let Some((fixed_center, fixed_extent)) = occluview_align::bounds_of(fixed_soup) else {
+        return AlignOutcome::Failed {
+            rejection: AlignFailure::FixedSurfaceMissing,
+        };
+    };
+    let placed_scale = placed
+        .matrix3
+        .x_axis
+        .length()
+        .max(placed.matrix3.y_axis.length())
+        .max(placed.matrix3.z_axis.length());
+    let bounds = FitBounds {
+        moving_center: placed.transform_point3(moving_center),
+        moving_extent: moving_extent * placed_scale,
+        fixed_center,
+        fixed_extent,
+    };
+
+    match fit_pairs(
+        &moving_points,
+        &fixed_points,
+        Some((&moving_normals, &fixed_normals)),
+        &bounds,
+    ) {
+        Ok(fit) => AlignOutcome::Aligned {
+            correction: fit.rigid,
+            rejected: fit.rejected,
+        },
+        Err(rejection) => AlignOutcome::Failed {
+            rejection: AlignFailure::Fit(rejection),
+        },
+    }
+}
+
+/// Search the two surfaces for the poses that seat one on the other.
+fn execute_search(job: &AlignJob, cancel: &CancelFlag) -> AlignOutcome {
+    use occluview_align::{AlignmentInput, MeshInput, SearchControl};
     let input = AlignmentInput {
         moving: MeshInput {
             soup: Soup {
@@ -881,7 +954,7 @@ fn execute_search(job: &AlignJob, cancel: &CancelFlag) -> AlignOutcome {
             world_from_local: glam::DAffine3::IDENTITY,
             revision: job.fixed_key.geometry,
         },
-        landmarks: &pairs,
+        landmarks: &[],
         seeds: &[],
     };
     let settings = job.settings.search();

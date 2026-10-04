@@ -859,8 +859,26 @@ fn a_surface_drag_can_release_outside_the_viewport() {
 fn a_surface_click_without_motion_keeps_the_landed_fit() {
     let (mut app, _, ctx, rect, press_at, _modifiers, viewport_id, _) =
         actual_drag_fixture("align-grab-without-move");
-    app.workspace.scenes[0].tools.align.accepted =
-        Some(crate::align::align_state::AcceptedAlignment::test_authority());
+    // A fit is about a pair, so the grabbed scan needs a partner; it stands
+    // well clear of the press.
+    let mut scene = app.workspace.scenes[0]
+        .document
+        .scene
+        .as_ref()
+        .expect("scene")
+        .as_ref()
+        .clone();
+    let grabbed = scene.meshes()[0].id();
+    let partner = crate::app::app_test_support::push_named_layer(&mut scene, "partner", 500.0);
+    app.workspace.scenes[0].document.scene = Some(std::sync::Arc::new(scene));
+    app.workspace.scenes[0]
+        .tools
+        .align
+        .tool
+        .imply_pair(&[grabbed, partner]);
+    app.active_context()
+        .expect("live test scene")
+        .mark_fitted_for_tests();
     app.workspace.scenes[0].tools.align.settings.show_deviation = true;
     drive_actual_drag_frame(&mut app, &ctx, rect, viewport_id, vec![]);
     assert!(drive_actual_drag_frame(
@@ -873,7 +891,7 @@ fn a_surface_click_without_motion_keeps_the_landed_fit() {
             pointer_button(press_at, true, egui::Modifiers::NONE),
         ],
     ));
-    assert!(app.workspace.scenes[0].tools.align.accepted.is_some());
+    assert!(app.workspace.scenes[0].tools.align.fitted.is_some());
     assert!(app.workspace.scenes[0].tools.align.settings.show_deviation);
     assert!(drive_actual_drag_frame(
         &mut app,
@@ -882,7 +900,7 @@ fn a_surface_click_without_motion_keeps_the_landed_fit() {
         viewport_id,
         vec![pointer_button(press_at, false, egui::Modifiers::NONE,)],
     ));
-    assert!(app.workspace.scenes[0].tools.align.accepted.is_some());
+    assert!(app.workspace.scenes[0].tools.align.fitted.is_some());
     assert!(app.workspace.scenes[0].tools.align.settings.show_deviation);
     assert_eq!(app.workspace.scenes[0].document.edit_mode.undo_len(), 0);
 }
