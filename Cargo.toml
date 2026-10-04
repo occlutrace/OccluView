@@ -144,8 +144,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 wgpu = "=30.0.1"             # pinned; bumps need tests
 
 # Windowing / GUI.
-egui    = "=0.36.1"
-eframe  = { version = "=0.36.1", default-features = false, features = ["accesskit", "wgpu", "default_fonts", "links"] }
+egui    = "=0.36.2"
+eframe  = { version = "=0.36.2", default-features = false, features = ["accesskit", "wgpu", "default_fonts", "links"] }
 
 # Localization (OccluView i18n foundation). Pure-Rust Fluent stack:
 # named variables, per-locale plural/select, build-time validatable catalogs.
