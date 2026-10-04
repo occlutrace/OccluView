@@ -130,7 +130,7 @@ pollster   = "1.0.1"
 # texture images (dental GLBs commonly embed JPEG textures). The <0.25.10 bound
 # prevents decoder-graph changes without malformed-input, golden-thumbnail, and
 # allocation-bound coverage.
-image      = { version = ">=0.25.5, <0.25.10", default-features = false, features = ["png", "jpeg"] }
+image      = { version = ">=0.25.5, <0.25.11", default-features = false, features = ["png", "jpeg"] }
 
 # ZIP package container support for HPS archives. Keep features
 # narrow: ordinary scanner packages use stored/deflated entries.
