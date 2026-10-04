@@ -138,6 +138,7 @@ impl SceneContext<'_> {
         self.render.prepared_scene = None;
         self.render.prepared_selection_overlay = None;
         self.document.current_paths.clear();
+        self.document.departed_layer_paths.clear();
         self.render.camera = None;
         self.render.rendered = None;
         self.render.invalidation.reset();

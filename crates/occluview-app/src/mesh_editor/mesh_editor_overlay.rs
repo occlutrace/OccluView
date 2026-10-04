@@ -103,11 +103,23 @@ fn window_width(viewport: egui::Rect) -> f32 {
         .min(max_width)
 }
 
+/// Where the window may sit: the viewport without the bottom strip that
+/// holds the status row and the scale bar. The window opens at the bottom
+/// left, and every refusal of its own buttons is written to that row, so a
+/// window over it would hide the answer to the click it just took.
+fn window_bounds(viewport: egui::Rect) -> egui::Rect {
+    let floor = crate::ui::app_chrome::status_overlay_rect(viewport).top() - 6.0;
+    egui::Rect::from_min_max(
+        viewport.min,
+        egui::pos2(viewport.max.x, floor.max(viewport.min.y)),
+    )
+}
+
 fn default_pos(viewport: egui::Rect) -> egui::Pos2 {
     let width = window_width(viewport);
     let estimated_height = 380.0;
     let x = viewport.min.x + 16.0;
-    let y = (viewport.max.y - estimated_height - 16.0).max(viewport.min.y + 16.0);
+    let y = (window_bounds(viewport).max.y - estimated_height).max(viewport.min.y + 16.0);
     egui::pos2(x.min(viewport.max.x - width - 16.0), y)
 }
 
@@ -278,7 +290,7 @@ pub(crate) fn show(
     egui::Window::new(locale.text(crate::i18n::message_id!("meshedit-window-title")))
         .id(scoped_id("occluview_mesh_editor_window", scene_key))
         .default_pos(default_pos(viewport_rect))
-        .constrain_to(viewport_rect)
+        .constrain_to(window_bounds(viewport_rect))
         .resizable(false)
         .collapsible(false)
         .title_bar(false)
@@ -476,6 +488,30 @@ mod tests {
                 "Close holes"
             ),
             Some(super::MeshEditorAction::CloseHoles),
+        );
+    }
+
+    /// The window opens at the bottom left, which is where the status row is.
+    /// It has to stop above that row: the row is where the window's own
+    /// buttons say why they refused.
+    #[test]
+    fn the_window_opens_clear_of_the_status_row() {
+        let ctx = egui::Context::default();
+        let state = super::MeshEditorPanelState::default();
+        for _ in 0..3 {
+            let (mut output, _) = panel_frame(&ctx, &state, Vec::new());
+            output.textures_delta.clear();
+        }
+        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 1024.0));
+        let window = ctx
+            .memory(|memory| {
+                memory.area_rect(scoped_id("occluview_mesh_editor_window", SceneKey::INITIAL))
+            })
+            .expect("the window was laid out");
+        let status = crate::ui::app_chrome::status_overlay_rect(viewport);
+        assert!(
+            window.bottom() <= status.top(),
+            "the window ({window:?}) covers the status row ({status:?})"
         );
     }
 

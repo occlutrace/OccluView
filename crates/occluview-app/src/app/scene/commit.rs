@@ -47,6 +47,29 @@ pub(in crate::app) fn reconcile_scene_paths(
 }
 
 impl SceneContext<'_> {
+    /// [`reconcile_scene_paths`], with the source path of a layer that leaves
+    /// kept for the history step that brings the same layer back.
+    fn reconcile_paths_across_history(&mut self, old_scene: &Scene, draft: &Scene) -> Vec<PathBuf> {
+        let document = &mut *self.document;
+        for (entry, path) in old_scene.meshes().iter().zip(&document.current_paths) {
+            let leaves = !draft.meshes().iter().any(|kept| kept.id() == entry.id());
+            if leaves && !path.as_os_str().is_empty() {
+                document
+                    .departed_layer_paths
+                    .insert(entry.id(), path.clone());
+            }
+        }
+        let mut paths = reconcile_scene_paths(old_scene, &document.current_paths, draft);
+        for (entry, path) in draft.meshes().iter().zip(&mut paths) {
+            if let Some(returned) = document.departed_layer_paths.remove(&entry.id()) {
+                if path.as_os_str().is_empty() {
+                    *path = returned;
+                }
+            }
+        }
+        paths
+    }
+
     fn retain_unsaved_edit_layer_ids(&mut self, scene: &Scene) {
         let retained_ids: BTreeSet<_> = scene
             .meshes()
@@ -72,7 +95,7 @@ impl SceneContext<'_> {
 
         let reconciled_paths = previous_scene.map_or_else(
             || vec![PathBuf::new(); draft.meshes().len()],
-            |scene| reconcile_scene_paths(scene, &self.document.current_paths, &draft),
+            |scene| self.reconcile_paths_across_history(scene, &draft),
         );
         self.retain_unsaved_edit_layer_ids(&draft);
         self.document.current_paths = reconciled_paths;
@@ -110,6 +133,29 @@ mod tests {
             scene.add(layer);
         }
         scene
+    }
+
+    /// A layer that a history step brings back returns with the file it was
+    /// loaded from, so it keeps its name and its place to save to.
+    #[test]
+    fn a_layer_restored_by_history_keeps_its_source_path() {
+        let lower = named_layer("Lower");
+        let upper = named_layer("Upper");
+        let both = scene_with_layers([lower, upper.clone()]);
+        let only_upper = scene_with_layers([upper]);
+        let paths = vec![PathBuf::from("lower.stl"), PathBuf::from("upper.stl")];
+        let mut app = crate::app::app_test_support::test_app("departed-layer-path");
+        let ctx = egui::Context::default();
+        let mut context = app.active_context().expect("live test scene");
+        context.document.scene = Some(std::sync::Arc::new(both.clone()));
+        context.document.current_paths.clone_from(&paths);
+
+        context.commit_structural_scene(Some(&both), only_upper.clone(), &ctx);
+        assert_eq!(context.document.current_paths, paths[1..]);
+
+        context.commit_structural_scene(Some(&only_upper), both, &ctx);
+        assert_eq!(context.document.current_paths, paths);
+        assert!(context.document.departed_layer_paths.is_empty());
     }
 
     #[test]

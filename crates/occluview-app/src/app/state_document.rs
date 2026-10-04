@@ -33,6 +33,10 @@ use std::sync::Arc;
 pub(super) struct DocumentState {
     pub(super) scene: Option<Arc<Scene>>,
     pub(super) current_paths: Vec<std::path::PathBuf>,
+    /// Source paths of layers that left the scene while its history can still
+    /// bring them back. A history step restores a layer's mesh, and without
+    /// this the layer would return with no name and no file to save to.
+    pub(super) departed_layer_paths: std::collections::HashMap<SceneMeshId, std::path::PathBuf>,
     pub(super) focused_layer_id: Option<SceneMeshId>,
     edit_metadata: Option<EditMetadata>,
     /// Bumped when committed scene content or unsaved mesh edits change.
@@ -134,6 +138,7 @@ impl DocumentState {
         Self {
             scene: None,
             current_paths: Vec::new(),
+            departed_layer_paths: std::collections::HashMap::new(),
             focused_layer_id: None,
             edit_metadata: None,
             content_revision: 0,
