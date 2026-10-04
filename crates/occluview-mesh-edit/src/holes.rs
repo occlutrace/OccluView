@@ -2,7 +2,7 @@ use super::adjacency::vertex_index;
 use super::cap_fair::fair_cap_interior;
 use super::cap_guard::{candidate_folds, candidate_pierces, CapCandidate, VertexTriangleIncidence};
 use super::cap_minweight::{min_area_triangulation_any, rim_is_simple_3d};
-use super::cap_refine::refine_and_relax;
+use super::cap_refine::{refine_and_relax, refine_projectionless, RefinedCap};
 use super::cap_support::{build_vertex_adjacency, gather_support_band, rim_outside_support};
 use super::holes_gate::{
     border_perimeter_threshold, collect_boundary_loops, refuse_unweldable_soup,
@@ -620,6 +620,30 @@ fn triangulate_loop(
     } else {
         None
     };
+
+    // 3a) Projection-free smooth cap. The planar interpolated path above needs
+    // an ear clip whose projection does not fold; a strongly curved rim has
+    // none, and the raw membrane is a flat lid with no interior vertices to
+    // fair. Refine the membrane and fair it instead, so the patch continues the
+    // surrounding surface curvature across the seam.
+    if loop_len >= MIN_INTERPOLATED_LOOP {
+        if let Some(membrane) = membrane.as_ref() {
+            if emit_projectionless_cap(
+                context,
+                boundary_loop,
+                &rim_positions,
+                &support,
+                membrane.clone(),
+                options,
+                new_indices,
+                added_vertices,
+            )? {
+                return Ok(true);
+            }
+        }
+    }
+
+    // 3b) Plain guarded fallbacks; the membrane first, then the flat ear lid.
     let ear_lid = (!ear.is_empty()).then_some(ear);
     for cap in [membrane.as_ref(), ear_lid.as_ref()].into_iter().flatten() {
         if !plain_cap_pierces(
@@ -678,25 +702,13 @@ fn emit_plain_cap(
     Ok(())
 }
 
-/// Interpolated-cap tail of [`triangulate_loop`]: refine with interior
-/// vertices matched to the rim edge density, relax to the harmonic surface
-/// spanning the 3D rim, fair the interior against the fixed outside ring so
-/// curvature continues across the seam, and emit — unless the (faired, then
-/// unfaired) cap pierces the surroundings, in which case the loop is refused.
-#[allow(clippy::too_many_arguments)] // Internal tail call sharing one context.
-fn emit_interpolated_cap(
-    context: &LoopFillContext<'_>,
+/// The full vertex payloads of a rim, in ring order. Shared by the planar and
+/// projection-free cap builders.
+fn rim_edit_vertices(
+    mesh: &MeshEditBuffers,
     boundary_loop: &[usize],
-    rim_positions: &[Vec3],
-    support: &super::cap_support::SupportBand,
-    cap_triangles: Vec<[usize; 3]>,
-    options: MeshEditOptions,
-    new_indices: &mut Vec<u32>,
-    added_vertices: &mut Vec<EditVertex>,
-) -> Result<bool, MeshEditError> {
-    let mesh = context.mesh;
-    let loop_len = boundary_loop.len();
-    let rim: Vec<EditVertex> = boundary_loop
+) -> Result<Vec<EditVertex>, MeshEditError> {
+    boundary_loop
         .iter()
         .map(|&vertex_index| {
             mesh.vertices
@@ -710,14 +722,98 @@ fn emit_interpolated_cap(
                     ),
                 })
         })
-        .collect::<Result<_, _>>()?;
-    let mut cap = refine_and_relax(
+        .collect::<Result<_, _>>()
+}
+
+/// Interpolated-cap tail of [`triangulate_loop`]: build the refined tangential
+/// cap, then finalize it (fair, guard, emit).
+#[allow(clippy::too_many_arguments)] // Internal tail call sharing one context.
+fn emit_interpolated_cap(
+    context: &LoopFillContext<'_>,
+    boundary_loop: &[usize],
+    rim_positions: &[Vec3],
+    support: &super::cap_support::SupportBand,
+    cap_triangles: Vec<[usize; 3]>,
+    options: MeshEditOptions,
+    new_indices: &mut Vec<u32>,
+    added_vertices: &mut Vec<EditVertex>,
+) -> Result<bool, MeshEditError> {
+    let rim = rim_edit_vertices(context.mesh, boundary_loop)?;
+    let cap = refine_and_relax(
         &rim,
         &support.positions,
         &support.distances,
         cap_triangles,
         options.attribute_policy.generated_vertex_policy,
     );
+    finalize_refined_cap(
+        context,
+        boundary_loop,
+        rim_positions,
+        support,
+        cap,
+        new_indices,
+        added_vertices,
+    )
+}
+
+/// Projection-free smooth-cap tail: refine the minimum-area membrane with 3D
+/// bisection and fair it, for rims whose planar projection folds (or whose
+/// interpolated cap the guards refused).
+///
+/// Returns `false` — leaving the loop to the plain guarded fallbacks — when the
+/// membrane is already at rim density (nothing to fair) or the refined cap
+/// folds or pierces.
+#[allow(clippy::too_many_arguments)] // Internal tail call sharing one context.
+fn emit_projectionless_cap(
+    context: &LoopFillContext<'_>,
+    boundary_loop: &[usize],
+    rim_positions: &[Vec3],
+    support: &super::cap_support::SupportBand,
+    membrane: Vec<[usize; 3]>,
+    options: MeshEditOptions,
+    new_indices: &mut Vec<u32>,
+    added_vertices: &mut Vec<EditVertex>,
+) -> Result<bool, MeshEditError> {
+    let rim = rim_edit_vertices(context.mesh, boundary_loop)?;
+    let cap = refine_projectionless(
+        &rim,
+        membrane,
+        options.attribute_policy.generated_vertex_policy,
+    );
+    // No interior vertices means the membrane already matches the rim density:
+    // emit it through the plain guarded path so the extra fold gate does not
+    // change behaviour for small or already-coarse rims.
+    if cap.generated.is_empty() {
+        return Ok(false);
+    }
+    finalize_refined_cap(
+        context,
+        boundary_loop,
+        rim_positions,
+        support,
+        cap,
+        new_indices,
+        added_vertices,
+    )
+}
+
+/// Fair a refined cap against the fixed rim and outside ring, guard it against
+/// folds and piercing, and emit — unless both the faired and unfaired variants
+/// are refused, in which case the loop is left open. Shared by the planar
+/// interpolated cap and the projection-free membrane cap.
+#[allow(clippy::too_many_arguments)] // Cohesive finalize parameters.
+fn finalize_refined_cap(
+    context: &LoopFillContext<'_>,
+    boundary_loop: &[usize],
+    rim_positions: &[Vec3],
+    support: &super::cap_support::SupportBand,
+    mut cap: RefinedCap,
+    new_indices: &mut Vec<u32>,
+    added_vertices: &mut Vec<EditVertex>,
+) -> Result<bool, MeshEditError> {
+    let mesh = context.mesh;
+    let loop_len = boundary_loop.len();
 
     let unfaired: Vec<Vec3> = cap
         .generated
