@@ -38,16 +38,17 @@ fn best_fit_runs_the_full_search_not_a_local_only_refinement() {
          and the radius ladder, which is what made it stop finding a scan that \
          was more than a couple of millimetres out"
     );
-    // The operator's own inputs still reach the solver unchanged.
-    let tuned = AlignSettings {
-        influence_radius_mm: 1.5,
-        matching_ratio: 0.6,
+    // The operator's facing rule reaches the search unchanged.
+    let inverted = AlignSettings {
+        orientation: Orientation::Inverted,
         ..AlignSettings::default()
     }
     .search();
-    assert!((tuned.influence_radius_mm - 1.5).abs() < f64::EPSILON);
-    assert!((tuned.overlap_prior.unwrap_or_default() - 0.6).abs() < f64::EPSILON);
-    assert_eq!(tuned.profile, occluview_align::SearchProfile::Standard);
+    assert_eq!(
+        inverted.normal_policy,
+        occluview_align::NormalPolicy::Opposed
+    );
+    assert_eq!(inverted.profile, occluview_align::SearchProfile::Standard);
 }
 
 /// A map with one of everything: a hard negative, nominal, a hard positive,
@@ -247,10 +248,6 @@ fn production_heatmap_ignores_banding_and_stays_continuous() {
 #[test]
 fn optimizer_inputs_invalidate_a_refined_match_but_display_inputs_do_not() {
     let base = AlignSettings::default();
-
-    let mut ratio = base;
-    ratio.matching_ratio = 0.7;
-    assert!(matching_inputs_changed(base, ratio));
 
     let mut radius = base;
     radius.influence_radius_mm = 4.0;

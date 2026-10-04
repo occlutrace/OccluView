@@ -131,13 +131,10 @@ impl SceneContext<'_> {
         let Some(focus) = next.meshes().first().map(occluview_core::SceneMesh::id) else {
             return Some(false);
         };
-        let Some(token) =
+        let token =
             self.document
                 .edit_mode
-                .begin_scene_edit(&next, focus, EditModeCommand::MoveLayer)
-        else {
-            return None;
-        };
+                .begin_scene_edit(&next, focus, EditModeCommand::MoveLayer)?;
         // Discard the open gesture only after restoration owns the scene.
         // The restore records all movement as one step before set_scene runs.
         self.discard_align_drag();

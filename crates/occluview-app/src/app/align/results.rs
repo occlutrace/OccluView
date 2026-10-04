@@ -446,11 +446,6 @@ pub(super) fn fit_rejection_parts(
         }
         FitRejection::UnitMismatch { .. } => crate::i18n::message_id!("align-reject-unit"),
         FitRejection::Apart { .. } => crate::i18n::message_id!("align-reject-apart"),
-        FitRejection::Runaway { .. } => crate::i18n::message_id!("align-reject-runaway"),
-        FitRejection::NoImprovement => {
-            crate::i18n::message_id!("align-reject-no-improvement")
-        }
-        FitRejection::Ambiguous => crate::i18n::message_id!("align-reject-ambiguous"),
         FitRejection::NonFinite => crate::i18n::message_id!("align-reject-nonfinite"),
         FitRejection::Inconsistent { .. } => {
             crate::i18n::message_id!("align-reject-inconsistent")
@@ -519,7 +514,8 @@ mod tests {
         for (failure, key) in cases {
             assert_eq!(super::align_failure_parts(failure).0.as_str(), key);
         }
-        // Geometric refusals are now candidate explanations, not failed jobs.
+        // A refusal of the operator's arrows is an explanation on the
+        // candidates, not a failed job.
         for (reason, key) in [
             (
                 occluview_align::FitRejection::TooFewPairs { have: 2, need: 3 },
@@ -554,21 +550,6 @@ mod tests {
                     allowed: 3.0,
                 },
                 "align-reject-apart",
-            ),
-            (
-                occluview_align::FitRejection::Runaway {
-                    moved_by: 20.0,
-                    allowed: 5.0,
-                },
-                "align-reject-runaway",
-            ),
-            (
-                occluview_align::FitRejection::NoImprovement,
-                "align-reject-no-improvement",
-            ),
-            (
-                occluview_align::FitRejection::Ambiguous,
-                "align-reject-ambiguous",
             ),
             (
                 occluview_align::FitRejection::NonFinite,

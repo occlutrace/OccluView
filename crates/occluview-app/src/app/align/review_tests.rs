@@ -235,7 +235,7 @@ fn accept_is_one_current_transaction() {
                     Affine3A::from_translation(Vec3::Y);
             }
             3 => scene.document.live_scene_mut().unwrap().meshes_mut()[0].visible = false,
-            4 => scene.tools.align.settings.matching_ratio = 0.3,
+            4 => scene.tools.align.settings.influence_radius_mm = 0.3,
             5 => {
                 scene.tools.align.tool.swap_roles();
             }
