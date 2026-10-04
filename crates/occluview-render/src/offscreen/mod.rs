@@ -169,8 +169,11 @@ impl RenderDeadline {
         if self.unbounded {
             Ok(Duration::MAX)
         } else {
+            // A deadline reached exactly has no budget left either; clocks
+            // with a coarse tick report that instant as a zero remainder.
             self.deadline
                 .checked_duration_since(Instant::now())
+                .filter(|left| !left.is_zero())
                 .ok_or_else(|| self.timeout_error())
         }
     }
@@ -179,10 +182,7 @@ impl RenderDeadline {
         if self.unbounded {
             Ok(None)
         } else {
-            self.deadline
-                .checked_duration_since(Instant::now())
-                .map(Some)
-                .ok_or_else(|| self.timeout_error())
+            self.remaining().map(Some)
         }
     }
 
@@ -580,14 +580,9 @@ impl Offscreen {
         deadline: RenderDeadline,
     ) -> Result<Self, RenderError> {
         let _ = deadline.remaining()?;
-        let (renderer, actual_result) = Renderer::new_headless_on_adapter(
-            wgpu::TextureFormat::Rgba8Unorm,
-            matches!(adapter_result, AdapterResult::Fallback),
-        )
-        .await?;
-        if actual_result != adapter_result {
-            return Err(RenderError::NoAdapter);
-        }
+        let renderer =
+            Renderer::new_headless_on_adapter(wgpu::TextureFormat::Rgba8Unorm, adapter_result)
+                .await?;
         let _ = deadline.remaining()?;
         Ok(Self::from_renderer(renderer, adapter_result))
     }
