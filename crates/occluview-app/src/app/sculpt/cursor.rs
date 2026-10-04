@@ -1,7 +1,5 @@
 //! Painting the sculpt cursor.
 
-use std::f32::consts::TAU;
-
 use super::super::{egui, live_viewport, mesh_editor_overlay, SceneContext};
 use super::geometry::{orient_tool_axis, sculpt_face_normal};
 use crate::app::workspace::id::SceneKey;
@@ -178,37 +176,24 @@ impl SceneContext<'_> {
         // A CAD crosshair replaces the arrow while a sculpt tool is armed, so
         // the contact point is readable against the surface mark.
         ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
-        let ortho_height = camera.orthographic_height.max(f32::EPSILON);
-        let radius_px = radius_world * viewport_rect.height() / ortho_height;
-        if radius_px.is_finite() && radius_px >= 2.0 {
-            let canvas = ui.painter();
-            let intensity = strength;
-            // A hairline circle only: a filled disc at small radii read as a
-            // blob covering the very surface the operator is judging.
-            let edge_color = color.gamma_multiply(0.58 + intensity * 0.18);
-            if mode == BrushMode::Relax {
-                paint_dashed_cursor_edge(canvas, pointer, radius_px, edge_color);
-            } else {
-                canvas.circle_stroke(pointer, radius_px, egui::Stroke::new(1.0_f32, edge_color));
-            }
-            // A cross marks the centre without hiding it.
-            let cross = color.gamma_multiply(0.62);
-            let stroke = egui::Stroke::new(1.0_f32, cross);
-            canvas.line_segment(
-                [
-                    pointer + egui::vec2(-3.0, 0.0),
-                    pointer + egui::vec2(3.0, 0.0),
-                ],
-                stroke,
-            );
-            canvas.line_segment(
-                [
-                    pointer + egui::vec2(0.0, -3.0),
-                    pointer + egui::vec2(0.0, 3.0),
-                ],
-                stroke,
-            );
-        }
+        // A cross marks the centre without hiding it; the footprint is the
+        // surface light alone.
+        let stroke = egui::Stroke::new(1.0_f32, color.gamma_multiply(0.62));
+        let canvas = ui.painter();
+        canvas.line_segment(
+            [
+                pointer + egui::vec2(-3.0, 0.0),
+                pointer + egui::vec2(3.0, 0.0),
+            ],
+            stroke,
+        );
+        canvas.line_segment(
+            [
+                pointer + egui::vec2(0.0, -3.0),
+                pointer + egui::vec2(0.0, 3.0),
+            ],
+            stroke,
+        );
     }
 
     pub(in crate::app) fn publish_sculpt_cursor(
@@ -326,24 +311,5 @@ pub(super) fn sculpt_cursor_action(mode: BrushMode) -> [f32; 2] {
         BrushMode::Add => [0.0, 0.0],
         BrushMode::Remove => [1.0, 0.0],
         BrushMode::Relax | BrushMode::Smooth => [0.0, 1.0],
-    }
-}
-
-#[allow(
-    clippy::cast_precision_loss,
-    reason = "24 fixed segments are exactly representable"
-)]
-fn paint_dashed_cursor_edge(
-    painter: &egui::Painter,
-    center: egui::Pos2,
-    radius: f32,
-    color: egui::Color32,
-) {
-    const DASH_COUNT: usize = 24;
-    for dash in 0..DASH_COUNT {
-        let start = (dash as f32 + 0.12) * TAU / DASH_COUNT as f32;
-        let end = (dash as f32 + 0.68) * TAU / DASH_COUNT as f32;
-        let point = |angle: f32| center + egui::vec2(radius * angle.cos(), radius * angle.sin());
-        painter.line_segment([point(start), point(end)], egui::Stroke::new(1.0, color));
     }
 }
