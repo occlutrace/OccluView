@@ -13,7 +13,7 @@ $ErrorActionPreference = "Stop"
 $supportedExtensions = @("stl", "ply", "obj", "glb", "dcm", "hps", "off")
 # Extensions the installer may claim machine-wide: default ProgID, DefaultIcon
 # and the ShellEx handlers under both the bare key and SystemFileAssociations.
-$ownedExtensions = @("stl", "ply", "obj", "glb", "hps")
+$ownedExtensions = @("stl", "ply", "obj", "glb", "hps", "off")
 # Read, offered in "Open with", never claimed. .dcm belongs to medical DICOM as
 # much as it does to 3Shape's HPS container, and this reader rejects DICOM, so
 # owning it would put a failing thumbnail on every CBCT file on the workstation.
@@ -26,6 +26,7 @@ $formatProgIds = @{
     glb = "MeshFile.GLB"
     dcm = "MeshFile.HPS"
     hps = "MeshFile.HPS"
+    off = "MeshFile.OFF"
 }
 $formatFriendlyNames = @{
     "MeshFile.STL" = "STL File"
@@ -33,6 +34,7 @@ $formatFriendlyNames = @{
     "MeshFile.OBJ" = "OBJ File"
     "MeshFile.GLB" = "GLB File"
     "MeshFile.HPS" = "HPS File"
+    "MeshFile.OFF" = "OFF File"
 }
 $legacyFormatProgIds = @{
     stl = "OccluView.Mesh.STL"
@@ -66,6 +68,7 @@ $formatIconFiles = @{
     glb = Join-Path $installDir "occluview-3d.ico"
     dcm = Join-Path $installDir "occluview-3d.ico"
     hps = Join-Path $installDir "occluview-3d.ico"
+    off = Join-Path $installDir "occluview-3d.ico"
 }
 $formatDefaultIcons = @{
     stl = Join-Path $installDir "occluview-3d.ico"
@@ -74,6 +77,7 @@ $formatDefaultIcons = @{
     glb = Join-Path $installDir "occluview-3d.ico"
     dcm = Join-Path $installDir "occluview-3d.ico"
     hps = Join-Path $installDir "occluview-3d.ico"
+    off = Join-Path $installDir "occluview-3d.ico"
 }
 $startMenuDir = Join-Path ${env:ProgramData} "Microsoft\Windows\Start Menu\Programs\OccluView"
 
