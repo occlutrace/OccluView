@@ -74,7 +74,7 @@ roxmltree             = { workspace = true }
 # Linux-only: send `_NET_ACTIVE_WINDOW` ourselves to raise the window past WM
 # focus-stealing prevention on the file handoff. See activation.rs.
 [target.'cfg(target_os = "linux")'.dependencies]
-x11rb             = "0.13.2"
+x11rb             = "0.14.0"
 wayland-client    = { workspace = true }
 wayland-protocols = { workspace = true }
 

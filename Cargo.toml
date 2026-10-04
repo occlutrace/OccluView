@@ -157,7 +157,7 @@ sys-locale     = "0.3"
 # probing, headless UI wireframes. Same crates already in the tree.
 fluent-syntax        = "0.12"
 epaint_default_fonts = "0.36"
-skrifa               = "0.44"
+skrifa               = "0.46"
 rfd     = { version = "0.17.2", default-features = false, features = ["xdg-portal", "wayland"] }
 
 # Linux window activation. The app uses the system Wayland connection exposed
