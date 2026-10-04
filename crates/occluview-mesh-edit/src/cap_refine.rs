@@ -1,35 +1,32 @@
-//! Interpolated hole caps (the dental CAD "close holes" convention): refine a planar
-//! ear-clip cap with interior vertices until it matches the rim's edge
-//! density, then drape the interior onto a smooth surface fitted to the rim so
-//! the patch follows the surrounding shape instead of denting inward.
+//! Cap refinement: interior vertices for a rim-only cap, at the rim's density.
 //!
-//! All connectivity work is done in the cap's 2D tangent plane, where a
-//! Delaunay triangulation is well defined and unique. This matters: refining an
-//! ear-clip fan in 3D and flipping toward "max-min angle" leaves a high-valence
-//! hub of radiating sliver triangles (a visible starburst). In 2D, iterating
-//! Lawson edge flips to convergence reaches the (constrained) Delaunay
-//! triangulation — bounded valence, no hub, no slivers.
+//! A cap triangulated on its rim alone is a fan of long slivers with nothing
+//! inside to carry a shape. This pass densifies it until its edges match the
+//! rim's (Liepa 2003, with Rivara-style splitting): longest-interior-edge
+//! bisection of every edge longer than the local target edge scale, with
+//! Lawson flips between passes.
 //!
-//! Two-part scheme:
-//!  1. Size-driven refinement (Liepa 2003, with Rivara-style splitting):
-//!     longest-interior-edge bisection of every triangle larger than the
-//!     local target edge scale, with Lawson flips between passes.
-//!  2. Curvature-following lift: a quadric height field is least-squares fitted
-//!     to the rim and a band of surface samples just outside it (the rim ring
-//!     alone is nearly planar and carries no curvature). Interior vertices are
-//!     distributed evenly in-plane, then lifted onto that quadric. Pure
-//!     umbrella relaxation in 3D converges to the minimal surface, which sinks
-//!     into a visible dent on any curved hole; lifting onto the fitted surface
-//!     removes the dent.
+//! Where the rim projects onto a plane without folding, the connectivity work
+//! is done in that plane, where a Delaunay triangulation is well defined and
+//! unique. This matters: refining an ear-clip fan in 3D and flipping toward
+//! "max-min angle" leaves a high-valence hub of radiating sliver triangles (a
+//! visible starburst). In 2D, iterating Lawson edge flips to convergence
+//! reaches the (constrained) Delaunay triangulation — bounded valence, no hub,
+//! no slivers. A rim whose projection folds has no such plane; its cap is
+//! refined on the triangulation's own 3D geometry, each flip judged in the
+//! tangent frame of its quad.
+//!
+//! The refinement decides connectivity only. A generated vertex is placed
+//! midway between the two it was split from, and the cap is recorded after
+//! every pass; `cap_fair` takes those levels and gives the cap its shape.
 //!
 //! Rim vertices are never moved and rim edges are never split, so the cap stays
 //! a drop-in watertight patch with no T-junctions.
 
-use super::cap_delaunay::relax_uv;
-use super::cap_fit::fit_cap_surface;
 use super::cap_lawson::CapMesh;
+use super::cap_minweight::TakenTriangles;
 use super::{EditVertex, GeneratedVertexPolicy};
-use crate::numeric::count_as_f32;
+use crate::numeric::{basis_from_normal, count_as_f32};
 use glam::{Vec2, Vec3};
 use std::collections::BTreeSet;
 
@@ -40,10 +37,6 @@ const ALPHA: f32 = std::f32::consts::SQRT_2;
 /// halving the worst edge, so the pass count needed is logarithmic in
 /// (cap diameter / target scale) — 16 covers every practical hole.
 const MAX_REFINE_PASSES: usize = 16;
-/// Harmonic sweeps that blend the rim residual into the cap interior. The rim
-/// residual decays over a few vertex rings, so this needs to be generous enough
-/// to propagate across a large cap.
-const HARMONIC_ITERATIONS: usize = 128;
 /// Hard cap on generated vertices per hole, as a multiple of the rim length.
 /// Density is set by the rim edge scale; this is only a runaway safety valve.
 const MAX_GENERATED_PER_RIM: usize = 32;
@@ -54,63 +47,98 @@ const MAX_GENERATED_PER_RIM: usize = 32;
 /// exhausting the per-hole vertex budget.
 const CAP_INTERIOR_BUDGET: usize = 12_000;
 
-/// A refined cap: generated interior vertices plus the full cap triangulation
-/// in local indices (`0..rim_len` = rim order, `rim_len..` = generated).
-pub(super) struct RefinedCap {
-    pub(super) generated: Vec<EditVertex>,
+/// Where a cap's edges are measured and its flips judged.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(super) enum CapDomain {
+    /// The rim's own plane: for a triangulation that is valid in it.
+    Plane,
+    /// The triangulation's 3D geometry: for a rim whose projection folds.
+    Space,
+}
+
+/// The cap after one refinement pass: the vertices it has so far (the rim
+/// first, then generated ones in the order they were made) and its triangles.
+pub(super) struct CapLevel {
+    pub(super) vertex_count: usize,
     pub(super) triangles: Vec<[usize; 3]>,
 }
 
-/// Refine and relax an ear-clip cap over `rim` (ring order, 3D positions).
-/// `support` / `support_distances` hold surface samples just outside the rim
-/// (curvature pinning) with their walked distance back to the rim.
-/// `initial` holds ear-clip triangles in local rim indices with the final
-/// winding already applied by the caller.
-pub(super) fn refine_and_relax(
+/// A refined cap in local indices (`0..rim_len` = rim order, `rim_len..` =
+/// generated).
+pub(super) struct RefinedCap {
+    /// Generated interior vertices: blended rim attributes, each positioned
+    /// midway between its parents.
+    pub(super) generated: Vec<EditVertex>,
+    /// The two vertices each generated vertex was split from; both precede it.
+    pub(super) parents: Vec<[usize; 2]>,
+    /// The cap after each pass, coarse to fine. The first is the rim-only
+    /// triangulation; the last is the cap.
+    pub(super) levels: Vec<CapLevel>,
+}
+
+impl RefinedCap {
+    /// The cap's triangles.
+    pub(super) fn triangles(&self) -> &[[usize; 3]] {
+        self.levels
+            .last()
+            .map_or(&[], |level| level.triangles.as_slice())
+    }
+}
+
+/// Refine a rim-only cap over `rim` (ring order). `initial` holds the cap's
+/// triangles in local rim indices with the final winding already applied by the
+/// caller: an ear clip for [`CapDomain::Plane`], a minimum-area membrane for
+/// [`CapDomain::Space`]. No flip produces a `taken` triangle.
+pub(super) fn refine_cap(
     rim: &[EditVertex],
-    support: &[[f32; 3]],
-    support_distances: &[f32],
     initial: Vec<[usize; 3]>,
+    domain: CapDomain,
+    taken: &TakenTriangles,
     policy: GeneratedVertexPolicy,
 ) -> RefinedCap {
     let rim_len = rim.len();
-    let rim_positions: Vec<Vec3> = rim
+    let positions: Vec<Vec3> = rim
         .iter()
         .map(|vertex| Vec3::from_array(vertex.position))
         .collect();
-    let surface = fit_cap_surface(&rim_positions, support, support_distances);
-
-    // Work in the cap's tangent plane. Rim vertices keep their exact projected
-    // coordinates; generated vertices are created and relaxed here.
-    let uv: Vec<Vec2> = rim_positions.iter().map(|&p| surface.local_ab(p)).collect();
-    let attrs: Vec<EditVertex> = rim.to_vec();
+    let mut patch = CapPatch {
+        uv: (domain == CapDomain::Plane).then(|| project_to_rim_plane(&positions)),
+        positions,
+        scale: Vec::new(),
+        attrs: rim.to_vec(),
+        parents: Vec::new(),
+    };
     // Target edge scale per vertex: rim vertices average their two rim edges.
     #[expect(
         clippy::manual_midpoint,
         reason = "preserve established last-bit cap geometry"
     )]
-    let mut scale: Vec<f32> = (0..rim_len)
+    let scale = (0..rim_len)
         .map(|index| {
-            let prev = uv[(index + rim_len - 1) % rim_len];
-            let next = uv[(index + 1) % rim_len];
-            let here = uv[index];
-            (here.distance(prev) + here.distance(next)) * 0.5
+            let prev = (index + rim_len - 1) % rim_len;
+            let next = (index + 1) % rim_len;
+            (patch.length(index, prev) + patch.length(index, next)) * 0.5
         })
         .collect();
-    rescale_for_budget(&uv, rim_len, &mut scale);
+    patch.scale = scale;
+    patch.rescale_for_budget(rim_len, &initial);
 
-    // A first Lawson repair turns the ear-clip fan into the Delaunay
+    // A first Lawson repair turns the rim-only fan into the Delaunay
     // triangulation of the rim before any splitting, so we densify a clean
     // base. The edge→owner map built here stays live through every bisection
     // and flip below (`CapMesh`), so each repair touches only rewritten edges
     // instead of sweeping the whole cap.
-    let mut cap_mesh = CapMesh::new(initial);
+    let mut cap_mesh = CapMesh::avoiding(initial, taken.clone());
     let all_edges: BTreeSet<(usize, usize)> = cap_mesh.edges_sorted().into_iter().collect();
-    cap_mesh.lawson(&uv, all_edges);
+    patch.repair(&mut cap_mesh, all_edges);
+    let mut levels = vec![CapLevel {
+        vertex_count: rim_len,
+        triangles: cap_mesh.triangles().to_vec(),
+    }];
 
     // Density refinement by longest-interior-edge bisection (Rivara-style),
     // with incremental Lawson repair between passes. Bisection is the
-    // sliver-proof choice: the ear-clip base of a many-thousand-edge rim is a
+    // sliver-proof choice: the rim-only base of a many-thousand-edge rim is a
     // fan of long slivers that flips alone cannot fully regularize, and
     // centroid (1:3) splits of slivers cascade — an 8000-edge rim runs
     // straight to the runaway valve.
@@ -118,107 +146,126 @@ pub(super) fn refine_and_relax(
     // terminates (each split halves one edge, lengths are bounded below by
     // the target scale), and the per-pass repairs restore Delaunay quality —
     // seeded only by the edges the pass's splits actually rewrote.
-    let mut patch = CapPatch { uv, scale, attrs };
     for _ in 0..MAX_REFINE_PASSES {
-        let split_any = bisect_pass(
-            &mut patch,
-            &mut cap_mesh,
-            rim_len,
-            |ab| surface.lift(ab),
-            policy,
-        );
-        if !split_any {
+        if !patch.bisect_pass(&mut cap_mesh, rim_len, policy) {
             break;
         }
+        levels.push(CapLevel {
+            vertex_count: patch.positions.len(),
+            triangles: cap_mesh.triangles().to_vec(),
+        });
     }
-    let triangles = cap_mesh.into_triangles();
-    let CapPatch {
-        mut uv,
-        scale: _,
-        attrs,
-    } = patch;
 
-    relax_uv(&mut uv, rim_len, &triangles);
-
-    // Blend the quadric base with the rim's residual (its deviation from the
-    // quadric). The rim of a wavy surface undulates off the smooth quadric; a
-    // pure quadric cap meets it with a slope crease. Harmonically interpolating
-    // that residual inward makes the cap meet the rim tangentially, then decays
-    // to the quadric in the interior. Only the small residual is harmonic, so
-    // no minimal-surface dent is reintroduced.
-    let mut residual = vec![0.0f32; uv.len()];
-    for index in 0..rim_len {
-        let rim_height = (rim_positions[index] - surface.centroid).dot(surface.normal);
-        residual[index] = rim_height - surface.height(uv[index]);
-    }
-    harmonic_interior(&mut residual, rim_len, &triangles);
-
-    // Lift the final planar cap onto the fitted surface plus blended residual.
-    let generated = attrs
-        .into_iter()
-        .zip(uv.iter().zip(&residual))
-        .skip(rim_len)
-        .map(|(mut vertex, (&ab, &extra))| {
-            vertex.position = surface.lift_with(ab, extra).to_array();
-            vertex
-        })
-        .collect();
     RefinedCap {
-        generated,
-        triangles,
+        generated: patch.attrs.split_off(rim_len),
+        parents: patch.parents,
+        levels,
     }
 }
 
-/// Refine a projection-free cap (the minimum-area membrane) with 3D
-/// longest-interior-edge bisection and per-quad Delaunay flips, then let the
-/// caller fair it. This is the fallback used when the rim's planar projection
-/// self-overlaps, so [`refine_and_relax`]'s tangent-plane parameterization does
-/// not exist. Without it the membrane is emitted as a flat lid with no interior
-/// vertices to fair — the "needles and flat cover" artifact on deep, irregular
-/// lasso cuts.
-///
-/// The initial triangulation supplies the topology; bisection density matches
-/// the rim edge scale, the flips keep the triangles well shaped, and the caller
-/// fairs the interior against the fixed outside ring.
-pub(super) fn refine_projectionless(
-    rim: &[EditVertex],
-    initial: Vec<[usize; 3]>,
-    policy: GeneratedVertexPolicy,
-) -> RefinedCap {
+/// The rim's vertices in its own plane: the plane through the rim's centroid
+/// with the rim's Newell normal.
+fn project_to_rim_plane(rim: &[Vec3]) -> Vec<Vec2> {
     let rim_len = rim.len();
-    let mut positions: Vec<Vec3> = rim
-        .iter()
-        .map(|vertex| Vec3::from_array(vertex.position))
-        .collect();
-    let mut attrs: Vec<EditVertex> = rim.to_vec();
-    // Target edge scale per rim vertex: the average of its two rim edges, the
-    // same density rule the interpolated cap uses.
-    #[expect(
-        clippy::manual_midpoint,
-        reason = "preserve established last-bit cap geometry"
-    )]
-    let mut scale: Vec<f32> = (0..rim_len)
-        .map(|index| {
-            let prev = positions[(index + rim_len - 1) % rim_len];
-            let next = positions[(index + 1) % rim_len];
-            (positions[index].distance(prev) + positions[index].distance(next)) * 0.5
+    let mut centroid = Vec3::ZERO;
+    for &point in rim {
+        centroid += point;
+    }
+    centroid /= count_as_f32(rim_len.max(1));
+
+    // Newell's method: robust polygon normal for a non-planar rim. Vertices
+    // are taken relative to the centroid: Newell is translation-invariant in
+    // exact arithmetic, and centering avoids the catastrophic f32 cancellation
+    // a small far-from-origin rim would otherwise hit.
+    let mut normal = Vec3::ZERO;
+    for index in 0..rim_len {
+        let current = rim[index] - centroid;
+        let next = rim[(index + 1) % rim_len] - centroid;
+        normal.x += (current.y - next.y) * (current.z + next.z);
+        normal.y += (current.z - next.z) * (current.x + next.x);
+        normal.z += (current.x - next.x) * (current.y + next.y);
+    }
+    let normal = if normal.is_finite() && normal.length_squared() > f32::EPSILON {
+        normal.normalize()
+    } else {
+        Vec3::Z
+    };
+    let (tangent_u, tangent_v) = basis_from_normal(normal);
+    rim.iter()
+        .map(|&point| {
+            let relative = point - centroid;
+            Vec2::new(relative.dot(tangent_u), relative.dot(tangent_v))
         })
-        .collect();
+        .collect()
+}
 
-    let mut cap_mesh = CapMesh::new(initial);
-    let seeds: BTreeSet<(usize, usize)> = cap_mesh.edges_sorted().into_iter().collect();
-    cap_mesh.lawson_3d(&positions, seeds);
+/// The growable cap state shared by the refinement passes. The triangulation
+/// itself lives in [`CapMesh`], which keeps its edge→owner map live across
+/// passes.
+struct CapPatch {
+    /// Planar coordinates, for a cap refined in its rim's plane.
+    uv: Option<Vec<Vec2>>,
+    /// 3D positions: the rim's own, and each generated vertex midway between
+    /// its parents.
+    positions: Vec<Vec3>,
+    /// Target edge scale per vertex.
+    scale: Vec<f32>,
+    attrs: Vec<EditVertex>,
+    /// Parents of each generated vertex.
+    parents: Vec<[usize; 2]>,
+}
 
-    let generated_budget = rim_len
-        .saturating_mul(MAX_GENERATED_PER_RIM)
-        .min(CAP_INTERIOR_BUDGET);
-    for _ in 0..MAX_REFINE_PASSES {
-        let mut suspects: BTreeSet<(usize, usize)> = BTreeSet::new();
+impl CapPatch {
+    /// Length of edge `(u, v)` in the cap's domain.
+    fn length(&self, u: usize, v: usize) -> f32 {
+        match &self.uv {
+            Some(uv) => uv[u].distance(uv[v]),
+            None => self.positions[u].distance(self.positions[v]),
+        }
+    }
+
+    /// Area of a triangle in the cap's domain.
+    fn area(&self, [a, b, c]: [usize; 3]) -> f64 {
+        let doubled = if let Some(uv) = &self.uv {
+            (uv[b] - uv[a]).perp_dot(uv[c] - uv[a]).abs()
+        } else {
+            let (pa, pb, pc) = (self.positions[a], self.positions[b], self.positions[c]);
+            (pb - pa).cross(pc - pa).length()
+        };
+        f64::from(doubled * 0.5)
+    }
+
+    /// Lawson repair from a seed set, judged in the cap's domain.
+    fn repair(&self, cap_mesh: &mut CapMesh, suspects: BTreeSet<(usize, usize)>) {
+        match &self.uv {
+            Some(uv) => cap_mesh.lawson(uv, suspects),
+            None => cap_mesh.lawson_3d(&self.positions, suspects),
+        }
+    }
+
+    /// One bisection pass: every interior edge longer than `ALPHA` times its
+    /// local target scale is split at its midpoint with a conforming 2:4
+    /// rewrite of both owner triangles (edge→owner map updated in place), then
+    /// one incremental Lawson repair seeded by the rewritten edges. Returns
+    /// whether anything split. Rim edges (one owner) are never touched.
+    /// Deterministic: the edge snapshot is processed in sorted order, and
+    /// edges a split removed disappear from the live map, so stale snapshot
+    /// entries skip themselves.
+    fn bisect_pass(
+        &mut self,
+        cap_mesh: &mut CapMesh,
+        rim_len: usize,
+        policy: GeneratedVertexPolicy,
+    ) -> bool {
+        let generated_limit = rim_len.saturating_mul(MAX_GENERATED_PER_RIM);
         let mut split_any = false;
+        let mut suspects: BTreeSet<(usize, usize)> = BTreeSet::new();
         for key in cap_mesh.edges_sorted() {
-            if positions.len() - rim_len >= generated_budget {
+            if self.positions.len() - rim_len >= generated_limit {
                 break;
             }
+            // Rim edges (one owner), non-manifold noise, and snapshot entries a
+            // split already removed all fail the live owner-pair lookup.
             let Some(owners) = cap_mesh.owner_pair(key) else {
                 continue;
             };
@@ -227,181 +274,68 @@ pub(super) fn refine_projectionless(
                 clippy::manual_midpoint,
                 reason = "preserve established last-bit cap geometry"
             )]
-            let target = (scale[u] + scale[v]) * 0.5;
-            if positions[u].distance(positions[v]) <= ALPHA * target {
+            let target = (self.scale[u] + self.scale[v]) * 0.5;
+            if self.length(u, v) <= ALPHA * target {
                 continue;
             }
-            let midpoint_index = positions.len();
-            let midpoint = (positions[u] + positions[v]) * 0.5;
-            let vertex = midpoint_vertex(midpoint, &attrs, [u, v], policy);
-            attrs.push(vertex);
-            positions.push(midpoint);
-            scale.push(target);
+            let midpoint_index = self.positions.len();
+            let midpoint = (self.positions[u] + self.positions[v]) * 0.5;
+            if let Some(uv) = self.uv.as_mut() {
+                let planar = (uv[u] + uv[v]) * 0.5;
+                uv.push(planar);
+            }
+            self.attrs
+                .push(midpoint_vertex(midpoint, &self.attrs, [u, v], policy));
+            self.positions.push(midpoint);
+            self.scale.push(target);
+            self.parents.push([u, v]);
             cap_mesh.bisect(key, owners, midpoint_index, &mut suspects);
             split_any = true;
         }
-        cap_mesh.lawson_3d(&positions, suspects);
-        if !split_any {
-            break;
-        }
+        self.repair(cap_mesh, suspects);
+        split_any
     }
 
-    let triangles = cap_mesh.into_triangles();
-    let generated = attrs.into_iter().skip(rim_len).collect();
-    RefinedCap {
-        generated,
-        triangles,
-    }
-}
-
-/// The growable cap state shared by the refinement passes: planar positions,
-/// per-vertex target scales, and vertex attributes. The triangulation itself
-/// lives in [`CapMesh`], which keeps its edge→owner map live across passes.
-struct CapPatch {
-    uv: Vec<Vec2>,
-    scale: Vec<f32>,
-    attrs: Vec<EditVertex>,
-}
-
-/// One bisection pass: every interior edge longer than `ALPHA` times its
-/// local target scale is split at its midpoint with a conforming 2:4 rewrite
-/// of both owner triangles (edge→owner map updated in place), then one
-/// incremental Lawson repair seeded by the rewritten edges. Returns whether
-/// anything split. Rim edges (one owner) are never touched. Deterministic:
-/// the edge snapshot is processed in sorted order, and edges a split removed
-/// disappear from the live map, so stale snapshot entries skip themselves.
-fn bisect_pass(
-    patch: &mut CapPatch,
-    cap_mesh: &mut CapMesh,
-    rim_len: usize,
-    lift: impl Fn(Vec2) -> Vec3,
-    policy: GeneratedVertexPolicy,
-) -> bool {
-    let CapPatch { uv, scale, attrs } = patch;
-    let mut split_any = false;
-    let mut suspects: BTreeSet<(usize, usize)> = BTreeSet::new();
-    for key in cap_mesh.edges_sorted() {
-        if uv.len() - rim_len >= rim_len * MAX_GENERATED_PER_RIM {
-            break;
+    /// Raise the target edge scale so the estimated interior vertex count
+    /// stays within [`CAP_INTERIOR_BUDGET`]. Refinement density is quadratic
+    /// in the rim length for round holes; without this, a 20 000-edge rim can
+    /// exceed the per-hole vertex budget. Rims small enough to fit the budget
+    /// (~250 edges for a round hole) are left byte-for-byte unchanged.
+    fn rescale_for_budget(&mut self, rim_len: usize, initial: &[[usize; 3]]) {
+        if rim_len < 3 {
+            return;
         }
-        // Rim edges (one owner), non-manifold noise, and snapshot entries a
-        // split already removed all fail the live owner-pair lookup.
-        let Some(owners) = cap_mesh.owner_pair(key) else {
-            continue;
-        };
-        let (u, v) = key;
-        #[expect(
-            clippy::manual_midpoint,
-            reason = "preserve established last-bit cap geometry"
-        )]
-        let target = (scale[u] + scale[v]) * 0.5;
-        if uv[u].distance(uv[v]) <= ALPHA * target {
-            continue;
+        // The rim-only triangulation covers the cap, so its area is the
+        // cap's; summed in f64 for stable summation.
+        let area: f64 = initial.iter().map(|&triangle| self.area(triangle)).sum();
+        let mut mean_scale = 0.0_f64;
+        for &s in self.scale.iter().take(rim_len) {
+            mean_scale += f64::from(s);
         }
-        let midpoint_index = uv.len();
-        let midpoint = (uv[u] + uv[v]) * 0.5;
-        let vertex = midpoint_vertex(lift(midpoint), attrs, [u, v], policy);
-        attrs.push(vertex);
-        uv.push(midpoint);
-        scale.push(target);
-        cap_mesh.bisect(key, owners, midpoint_index, &mut suspects);
-        split_any = true;
-    }
-    cap_mesh.lawson(uv, suspects);
-    split_any
-}
-
-/// Raise the target edge scale so the estimated interior vertex count stays
-/// within [`CAP_INTERIOR_BUDGET`]. Refinement density is quadratic in the rim
-/// length for round holes; without this, a 20 000-edge rim can exceed the
-/// per-hole vertex budget. Rims small enough to fit the budget (~250 edges for
-/// a round hole) are left byte-for-byte unchanged.
-fn rescale_for_budget(uv: &[Vec2], rim_len: usize, scale: &mut [f32]) {
-    if rim_len < 3 {
-        return;
-    }
-    // Shoelace area of the projected rim polygon, in f64 for stable summation.
-    let mut doubled_area = 0.0_f64;
-    for index in 0..rim_len {
-        let a = uv[index];
-        let b = uv[(index + 1) % rim_len];
-        doubled_area += f64::from(a.x) * f64::from(b.y) - f64::from(b.x) * f64::from(a.y);
-    }
-    let area = (doubled_area * 0.5).abs();
-    let mut mean_scale = 0.0_f64;
-    for &s in scale.iter().take(rim_len) {
-        mean_scale += f64::from(s);
-    }
-    mean_scale /= f64::from(count_as_f32(rim_len));
-    // Equilateral-triangle area at the target edge scale.
-    let per_triangle = 3.0_f64.sqrt() / 4.0 * mean_scale * mean_scale;
-    if !(per_triangle.is_finite() && per_triangle > 0.0) {
-        return;
-    }
-    // Interior vertices approach half the triangle count for a dense patch;
-    // bisection stops at edges up to ALPHA times the target scale, which
-    // doubles the realized density versus the equilateral estimate (ALPHA^2),
-    // so the two 2x factors cancel: estimate = area / per_triangle * 0.5 * 2.
-    let estimated = area / per_triangle;
-    let budget = f64::from(u32::try_from(CAP_INTERIOR_BUDGET).unwrap_or(u32::MAX));
-    if estimated <= budget {
-        return;
-    }
-    let factor = (estimated / budget).sqrt();
-    if !factor.is_finite() {
-        return;
-    }
-    // f64 -> f32: factor is in (1, sqrt(area/budget)]; well within f32 range.
-    #[allow(clippy::cast_possible_truncation)]
-    let factor = factor.min(f64::from(f32::MAX)) as f32;
-    for s in scale.iter_mut() {
-        *s *= factor;
-    }
-}
-
-/// Harmonically interpolate a scalar field over the cap interior with the rim
-/// values held fixed (Laplace with Dirichlet boundary): each interior value
-/// converges to the mean of its neighbors. Used to blend the rim residual
-/// inward so the cap meets the surrounding surface without a slope crease.
-fn harmonic_interior(values: &mut [f32], rim_len: usize, triangles: &[[usize; 3]]) {
-    if values.len() <= rim_len {
-        return;
-    }
-    let mut neighbors: Vec<Vec<usize>> = vec![Vec::new(); values.len()];
-    for &[a, b, c] in triangles {
-        for (u, v) in [(a, b), (b, c), (c, a)] {
-            if !neighbors[u].contains(&v) {
-                neighbors[u].push(v);
-            }
-            if !neighbors[v].contains(&u) {
-                neighbors[v].push(u);
-            }
+        mean_scale /= f64::from(count_as_f32(rim_len));
+        // Equilateral-triangle area at the target edge scale.
+        let per_triangle = 3.0_f64.sqrt() / 4.0 * mean_scale * mean_scale;
+        if !(per_triangle.is_finite() && per_triangle > 0.0) {
+            return;
         }
-    }
-    // Convergence tolerance relative to the boundary data magnitude: once a
-    // sweep moves nothing beyond it, further sweeps are numeric noise.
-    let mut max_abs = 0.0_f32;
-    for &value in values.iter().take(rim_len) {
-        max_abs = max_abs.max(value.abs());
-    }
-    let tolerance = max_abs * 1e-4;
-    for _ in 0..HARMONIC_ITERATIONS {
-        let mut max_delta = 0.0_f32;
-        for index in rim_len..values.len() {
-            let ring = &neighbors[index];
-            if ring.is_empty() {
-                continue;
-            }
-            let mut sum = 0.0;
-            for &neighbor in ring {
-                sum += values[neighbor];
-            }
-            let updated = sum / count_as_f32(ring.len());
-            max_delta = max_delta.max((updated - values[index]).abs());
-            values[index] = updated;
+        // Interior vertices approach half the triangle count for a dense patch;
+        // bisection stops at edges up to ALPHA times the target scale, which
+        // doubles the realized density versus the equilateral estimate (ALPHA^2),
+        // so the two 2x factors cancel: estimate = area / per_triangle * 0.5 * 2.
+        let estimated = area / per_triangle;
+        let budget = f64::from(u32::try_from(CAP_INTERIOR_BUDGET).unwrap_or(u32::MAX));
+        if estimated <= budget {
+            return;
         }
-        if max_delta <= tolerance {
-            break;
+        let factor = (estimated / budget).sqrt();
+        if !factor.is_finite() {
+            return;
+        }
+        // f64 -> f32: factor is in (1, sqrt(area/budget)]; well within f32 range.
+        #[allow(clippy::cast_possible_truncation)]
+        let factor = factor.min(f64::from(f32::MAX)) as f32;
+        for s in &mut self.scale {
+            *s *= factor;
         }
     }
 }
@@ -444,10 +378,9 @@ mod tests {
     /// A coarse fan membrane over a small rim must densify through 3D
     /// bisection, keep every edge's incidence exact (rim one owner, interior
     /// two), produce only finite positions, and leave no degenerate triangle.
-    /// This is the projection-free path the folded-rim fallback now uses
-    /// instead of emitting the flat membrane.
+    /// This is the path a rim whose projection folds takes.
     #[test]
-    fn projectionless_refinement_densifies_a_coarse_membrane_and_stays_manifold() {
+    fn spatial_refinement_densifies_a_coarse_membrane_and_stays_manifold() {
         let rim_len = 8usize;
         let radius = 5.0_f32;
         let rim: Vec<EditVertex> = (0..rim_len)
@@ -463,7 +396,13 @@ mod tests {
         // A coarse fan membrane: one hub at rim vertex 0.
         let membrane: Vec<[usize; 3]> = (1..rim_len - 1).map(|i| [0, i, i + 1]).collect();
 
-        let cap = refine_projectionless(&rim, membrane, GeneratedVertexPolicy::InterpolateBoundary);
+        let cap = refine_cap(
+            &rim,
+            membrane,
+            CapDomain::Space,
+            &TakenTriangles::new(),
+            GeneratedVertexPolicy::InterpolateBoundary,
+        );
 
         assert!(
             !cap.generated.is_empty(),
@@ -480,7 +419,7 @@ mod tests {
             u < rim_len && v < rim_len && ((u + 1) % rim_len == v || (v + 1) % rim_len == u)
         };
         let mut incidence: HashMap<(usize, usize), usize> = HashMap::new();
-        for &[a, b, c] in &cap.triangles {
+        for &[a, b, c] in cap.triangles() {
             for (u, v) in [(a, b), (b, c), (c, a)] {
                 *incidence.entry((u.min(v), u.max(v))).or_default() += 1;
             }
@@ -500,12 +439,64 @@ mod tests {
                 Vec3::from_array(cap.generated[index - rim_len].position)
             }
         };
-        for &[a, b, c] in &cap.triangles {
+        for &[a, b, c] in cap.triangles() {
             let (pa, pb, pc) = (position(a), position(b), position(c));
             assert!(
                 (pb - pa).cross(pc - pa).length() > 1e-9,
                 "refinement left a degenerate cap triangle"
             );
+        }
+    }
+
+    /// Every level is the cap as one pass left it: its triangles name only the
+    /// vertices that existed then, and each generated vertex sits midway
+    /// between two earlier ones. The shape solve walks the levels on that.
+    #[test]
+    fn levels_grow_from_the_rim_and_parents_precede_their_midpoints() {
+        let rim_len = 24usize;
+        let rim: Vec<EditVertex> = (0..rim_len)
+            .map(|index| {
+                let theta = std::f32::consts::TAU * (index as f32) / (rim_len as f32);
+                EditVertex::at([4.0 * theta.cos(), 4.0 * theta.sin(), 0.0])
+            })
+            .collect();
+        let fan: Vec<[usize; 3]> = (1..rim_len - 1).map(|i| [0, i + 1, i]).collect();
+        for domain in [CapDomain::Plane, CapDomain::Space] {
+            let cap = refine_cap(
+                &rim,
+                fan.clone(),
+                domain,
+                &TakenTriangles::new(),
+                GeneratedVertexPolicy::InterpolateBoundary,
+            );
+            assert_eq!(cap.levels[0].vertex_count, rim_len);
+            assert!(cap.levels.len() > 1, "{domain:?}: a 24-gon must densify");
+            assert_eq!(
+                cap.levels.last().map(|level| level.vertex_count),
+                Some(rim_len + cap.generated.len())
+            );
+            for pair in cap.levels.windows(2) {
+                assert!(pair[0].vertex_count < pair[1].vertex_count);
+            }
+            for level in &cap.levels {
+                assert!(level
+                    .triangles
+                    .iter()
+                    .flatten()
+                    .all(|&vertex| vertex < level.vertex_count));
+            }
+            let position = |index: usize| -> Vec3 {
+                if index < rim_len {
+                    Vec3::from_array(rim[index].position)
+                } else {
+                    Vec3::from_array(cap.generated[index - rim_len].position)
+                }
+            };
+            for (offset, &[a, b]) in cap.parents.iter().enumerate() {
+                let index = rim_len + offset;
+                assert!(a < index && b < index);
+                assert!(position(index).distance((position(a) + position(b)) * 0.5) < 1e-5);
+            }
         }
     }
 }

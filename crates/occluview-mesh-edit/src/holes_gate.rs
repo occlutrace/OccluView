@@ -1,15 +1,16 @@
 //! Fill gating: loop collection (with pinch-merge splitting), the scan-border
-//! guard, size caps, and selection-majority qualification.
+//! guard, size caps, and whether a mark holds a rim.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use glam::Vec3;
 
+use super::holes_region::MarkRings;
 use super::holes_walk::{
     split_loop_at_coincident_positions, vertex_position, walk_boundary_loop, BoundaryNextMap,
-    BoundaryOwners,
+    BoundaryOwners, BoundaryWalk,
 };
-use super::{FaceSelection, MeshEditBuffers, MeshEditError, MeshEditOptions};
+use super::{MeshEditBuffers, MeshEditError, MeshEditOptions};
 use crate::holes::{FillLoopStats, CLOSE_HOLES_EDGE_CEILING};
 
 /// Border guard: a rim must reach this fraction of the largest rim's
@@ -31,34 +32,82 @@ const BORDER_BBOX_FRACTION: f64 = 0.5;
 /// while letting a socket close.
 const SOLE_RIM_BBOX_FRACTION: f64 = 1.0;
 
+/// What a mark says about the vertices of the region cut out around it.
+pub(super) struct MarkedVertices {
+    /// Corners of marked faces: damage is reported where the operator pointed.
+    pub(super) marked_corners: Vec<bool>,
+    /// Corners of the region's outermost faces. The surface goes on past
+    /// them, so a chain of boundary edges cannot be followed any further there.
+    pub(super) outermost_corners: Vec<bool>,
+}
+
 /// Walk every boundary chain into loops (skipping already-visited starts),
 /// splitting merged pinch loops at coincident-position revisits, and pairing
 /// each loop with its mm perimeter. Failed / too-short chains are tallied as
 /// degenerate in `stats`.
+///
+/// With `marked` the mesh is the region around a mark, and a chain that does
+/// not close is damage only when it starts on a corner of a marked face and
+/// stays inside the region: a chain that runs to the region's edge is a rim
+/// that leaves the marked area, which the mark touches at most.
 pub(super) fn collect_boundary_loops(
     mesh: &MeshEditBuffers,
     next_boundary_vertex: &BoundaryNextMap,
     boundary_starts: &[usize],
+    marked: Option<&MarkedVertices>,
     stats: &mut FillLoopStats,
 ) -> Result<Vec<(Vec<usize>, f64)>, MeshEditError> {
+    let flagged = |flags: &[bool], vertex: usize| flags.get(vertex).copied().unwrap_or(false);
     let mut visited = HashSet::new();
+    // Rims that run to the region's edge: for each vertex of one, which rim,
+    // and per rim whether it has been counted as partly marked. A rim is
+    // walked in stretches, the one that reaches the edge first and the ones
+    // behind it as they run into it.
+    let mut leaving: HashMap<usize, usize> = HashMap::new();
+    let mut counted: Vec<bool> = Vec::new();
     let mut loops: Vec<(Vec<usize>, f64)> = Vec::new();
     for &start in boundary_starts {
         if visited.contains(&start) {
             continue;
         }
-        let Some(boundary_loop) = walk_boundary_loop(
+        let pointed_at = marked.is_none_or(|marked| flagged(&marked.marked_corners, start));
+        let boundary_loop = match walk_boundary_loop(
             start,
             next_boundary_vertex,
             mesh.vertices.len(),
             &mut visited,
-        ) else {
-            // Non-simple / numerically stalled chain: not a fillable loop.
-            stats.skipped_degenerate += 1;
-            continue;
+        ) {
+            BoundaryWalk::Rim(boundary_loop) => boundary_loop,
+            BoundaryWalk::Open { path, stopped_at } => {
+                let at_edge =
+                    marked.is_some_and(|marked| flagged(&marked.outermost_corners, stopped_at));
+                let rim = match leaving.get(&stopped_at) {
+                    Some(&rim) => Some(rim),
+                    None if at_edge => {
+                        counted.push(false);
+                        Some(counted.len() - 1)
+                    }
+                    None => None,
+                };
+                if let Some(rim) = rim {
+                    let touched = marked.is_some_and(|marked| {
+                        path.iter()
+                            .any(|&vertex| flagged(&marked.marked_corners, vertex))
+                    });
+                    if touched && !std::mem::replace(&mut counted[rim], true) {
+                        stats.skipped_partial += 1;
+                    }
+                    leaving.extend(path.into_iter().map(|vertex| (vertex, rim)));
+                } else if pointed_at {
+                    // Non-simple / numerically stalled chain: not a fillable
+                    // loop.
+                    stats.skipped_degenerate += 1;
+                }
+                continue;
+            }
         };
         if boundary_loop.len() < 3 {
-            stats.skipped_degenerate += 1;
+            stats.skipped_degenerate += usize::from(pointed_at);
             continue;
         }
         // A hole pinched onto the border (or onto another hole) walks as one
@@ -150,30 +199,52 @@ pub(super) fn rim_exceeds_size_cap(
         .is_some_and(|limit_mm| perimeter_mm > f64::from(limit_mm))
 }
 
-/// A rim qualifies for selection-scoped filling when at least half of its
-/// owning faces are selected. Half of the rim being explicitly marked is
-/// unambiguous intent, yet a stray selection that only clips a small share of a
-/// large unrelated rim stays well under the threshold and is refused.
-pub(super) fn rim_selection_qualifies(
+/// What a mark has of a rim.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(super) enum RimHold {
+    /// The mark holds the rim: it closes.
+    Held,
+    /// The mark touches the rim without holding it.
+    Partial,
+    /// No face of the rim is marked.
+    Untouched,
+}
+
+/// Whether the operator's mark holds a rim: at least half of the rim's faces
+/// are marked, and none of them lies beyond reach of the mark.
+///
+/// Half of the rim being explicitly marked is unambiguous intent, and with the
+/// reach it leaves room for the faces a lasso misses on a rim it encloses: the
+/// ones that look away from the camera in surface mode. A rim that runs out of
+/// the marked area is not held however much of it is marked: the hole is then
+/// only partly inside the mark, and closing it would close what the operator
+/// did not select.
+pub(super) fn rim_hold(
     boundary_loop: &[usize],
     owner_by_edge: &BoundaryOwners,
-    selection: &FaceSelection,
-) -> bool {
+    rings: &MarkRings,
+) -> RimHold {
     let loop_len = boundary_loop.len();
-    if loop_len == 0 {
-        return false;
+    let (mut marked, mut out_of_reach) = (0_usize, false);
+    for index in 0..loop_len {
+        let a = boundary_loop[index];
+        let b = boundary_loop[(index + 1) % loop_len];
+        // The zero-length edge between the two copies of a split junction has
+        // no face; it counts toward the rim's length and is never marked.
+        let Some(owner) = owner_by_edge.owner(a, b) else {
+            continue;
+        };
+        marked += usize::from(rings.is_marked(owner));
+        out_of_reach |= !rings.is_near(owner);
     }
-    let selected = (0..loop_len)
-        .filter(|&index| {
-            let a = boundary_loop[index];
-            let b = boundary_loop[(index + 1) % loop_len];
-            owner_by_edge
-                .owner(a, b)
-                .is_some_and(|owner| selection.as_slice().get(owner).copied().unwrap_or(false))
-        })
-        .count();
-    // `selected / loop_len >= 0.5`, done in integers to stay exact.
-    2 * selected >= loop_len
+    if marked == 0 {
+        RimHold::Untouched
+    // `marked / loop_len >= 0.5`, done in integers to stay exact.
+    } else if out_of_reach || 2 * marked < loop_len {
+        RimHold::Partial
+    } else {
+        RimHold::Held
+    }
 }
 
 /// Sum of a rim's edge lengths, widened to `f64` for a stable mm comparison.

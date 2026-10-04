@@ -9,6 +9,7 @@
 //! rejects self-piercing results.
 
 use glam::{DVec3, Vec3};
+use std::collections::HashSet;
 
 /// Leaf size for the min-area dynamic program: 256^3 is milliseconds. Rims
 /// longer than this are triangulated by [`min_area_triangulation_any`], which
@@ -127,18 +128,36 @@ fn segment_distance(a0: DVec3, a1: DVec3, b0: DVec3, b1: DVec3) -> f64 {
     ((a0 + dir_a * param_a) - (b0 + dir_b * param_b)).length()
 }
 
-/// Triangulate a cyclic rim (positions in ring order) by minimum total area.
-/// Returns local-index triangles in the caller's watertight winding
-/// convention (`[i, j, k]` with `i < k < j`, matching the ear-clip's
+/// The triangles a cap may not use, as ascending triples of rim-local indices:
+/// the ones the surface already has on the rim's own vertices. A cap triangle
+/// on one of them is its reverse twin.
+pub(super) type TakenTriangles = HashSet<[usize; 3]>;
+
+/// Triangulate a cyclic rim (positions in ring order) by minimum total area,
+/// using none of the `taken` triangles; `rim_index` gives the rim-local index
+/// of each point. Returns local-index triangles in the caller's watertight
+/// winding convention (`[i, j, k]` with `i < k < j`, matching the ear-clip's
 /// reversed-rim-edge emit order), or `None` when the rim is too long, too
-/// short, or numerically degenerate.
-pub(super) fn min_area_triangulation(points: &[Vec3]) -> Option<Vec<[usize; 3]>> {
+/// short, numerically degenerate, or has no triangulation free of taken
+/// triangles.
+fn min_area_triangulation(
+    points: &[Vec3],
+    rim_index: &[usize],
+    taken: &TakenTriangles,
+) -> Option<Vec<[usize; 3]>> {
     let n = points.len();
     if !(3..=MIN_WEIGHT_MAX_RIM).contains(&n) {
         return None;
     }
     let points: Vec<DVec3> = points.iter().map(|point| point.as_dvec3()).collect();
     let area = |i: usize, k: usize, j: usize| -> f64 {
+        if !taken.is_empty() {
+            let mut triple = [rim_index[i], rim_index[k], rim_index[j]];
+            triple.sort_unstable();
+            if taken.contains(&triple) {
+                return f64::INFINITY;
+            }
+        }
         let ab = points[k] - points[i];
         let ac = points[j] - points[i];
         ab.cross(ac).length() * 0.5
@@ -198,17 +217,21 @@ pub(super) fn min_area_triangulation(points: &[Vec3]) -> Option<Vec<[usize; 3]>>
 ///
 /// Returns local-index triangles into the original `points` ordering, in the
 /// same watertight winding convention as [`min_area_triangulation`], or `None`
-/// when the rim is out of range or numerically degenerate. Geometric
-/// self-piercing is left to the caller's cap guard, as for the direct DP.
-/// Deterministic: the split pair is chosen by a fixed rule and ties break on
-/// the lowest index.
-pub(super) fn min_area_triangulation_any(points: &[Vec3]) -> Option<Vec<[usize; 3]>> {
+/// when the rim is out of range, numerically degenerate, or cannot be covered
+/// without a `taken` triangle. Geometric self-piercing is left to the caller's
+/// cap guard, as for the direct DP. Deterministic: the split pair is chosen by
+/// a fixed rule and ties break on the lowest index.
+pub(super) fn min_area_triangulation_any(
+    points: &[Vec3],
+    taken: &TakenTriangles,
+) -> Option<Vec<[usize; 3]>> {
     let n = points.len();
     if !(3..=MIN_WEIGHT_HIER_MAX_RIM).contains(&n) {
         return None;
     }
     if n <= MIN_WEIGHT_MAX_RIM {
-        return min_area_triangulation(points);
+        let whole: Vec<usize> = (0..n).collect();
+        return min_area_triangulation(points, &whole, taken);
     }
     let dpoints: Vec<DVec3> = points.iter().map(|point| point.as_dvec3()).collect();
 
@@ -236,7 +259,7 @@ pub(super) fn min_area_triangulation_any(points: &[Vec3]) -> Option<Vec<[usize; 
         }
         if m <= MIN_WEIGHT_MAX_RIM {
             let sub_points: Vec<Vec3> = arc.iter().map(|&idx| points[idx]).collect();
-            let leaf = min_area_triangulation(&sub_points)?;
+            let leaf = min_area_triangulation(&sub_points, &arc, taken)?;
             for [a, b, c] in leaf {
                 triangles.push([arc[a], arc[b], arc[c]]);
             }
@@ -307,7 +330,46 @@ mod tests {
     #[test]
     fn minimum_area_cap_refuses_a_zero_area_rim() {
         let points = [Vec3::ZERO, Vec3::X, Vec3::X * 2.0, Vec3::X * 3.0];
-        assert!(min_area_triangulation(&points).is_none());
-        assert!(min_area_triangulation_any(&points).is_none());
+        assert!(min_area_triangulation_any(&points, &TakenTriangles::new()).is_none());
+    }
+
+    /// A tooth of the cut line: three rim vertices in a row that the scan
+    /// already joins. The cheapest cover of the rim lays a triangle on it; the
+    /// membrane has to go round.
+    #[test]
+    fn minimum_area_cap_goes_round_a_triangle_the_surface_already_has() {
+        // A long hole with a tooth standing up out of its plane at vertex 1.
+        // Covering the tooth with itself and running the cap under it is
+        // smaller than lifting the cap to the tip.
+        let points = [
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 1.0),
+            Vec3::new(2.0, 0.0, 0.0),
+            Vec3::new(2.0, 10.0, 0.0),
+            Vec3::new(0.0, 10.0, 0.0),
+        ];
+        let on_tooth = |triangles: &[[usize; 3]]| {
+            triangles.iter().any(|triangle| {
+                let mut triple = *triangle;
+                triple.sort_unstable();
+                triple == [0, 1, 2]
+            })
+        };
+        let free = min_area_triangulation_any(&points, &TakenTriangles::new()).expect("cover");
+        assert!(
+            on_tooth(&free),
+            "the smallest cover clips the tooth: {free:?}"
+        );
+
+        let taken = TakenTriangles::from([[0, 1, 2]]);
+        let round = min_area_triangulation_any(&points, &taken).expect("a cover exists");
+        assert_eq!(round.len(), points.len() - 2);
+        assert!(
+            !on_tooth(&round),
+            "the cover reuses a taken triangle: {round:?}"
+        );
+
+        // A rim that is nothing but a taken triangle has no cover at all.
+        assert!(min_area_triangulation_any(&points[..3], &taken).is_none());
     }
 }

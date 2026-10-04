@@ -1,9 +1,10 @@
 //! Post-cap self-intersection guard.
 //!
-//! A cap over a strongly curved or badly damaged rim can fold onto itself or
-//! poke through nearby surface (mesh-repair tools generally refuse such
-//! caps). This module answers one question: does a candidate cap pierce
-//! itself or the surface around its rim?
+//! A cap over a strongly curved or badly damaged rim can poke through itself
+//! or nearby surface, or lie flat on a triangle the surface already has
+//! (mesh-repair tools generally refuse such caps). This module answers one
+//! question: does a candidate cap run into itself or the surface around its
+//! rim?
 //!
 //! Test model: segment-vs-triangle piercing between triangles that share no
 //! vertex id, evaluated in `f64`. Pairs sharing a vertex (cap fans around rim
@@ -19,6 +20,7 @@ use std::collections::HashSet;
 
 use glam::{DVec3, Vec3};
 
+use super::cap_minweight::TakenTriangles;
 use super::MeshEditBuffers;
 
 /// Strict-interior margin for the segment parameter and barycentrics: contact
@@ -62,7 +64,8 @@ impl VertexTriangleIncidence {
         }
     }
 
-    fn triangles_of(&self, vertex: usize) -> &[usize] {
+    /// The triangles around `vertex`, ascending.
+    pub(super) fn triangles_of(&self, vertex: usize) -> &[usize] {
         if vertex + 1 >= self.offsets.len() {
             return &[];
         }
@@ -151,6 +154,20 @@ pub(super) fn candidate_pierces(
         .collect();
 
     cap_pierces(&cap, &surround)
+}
+
+/// Whether the cap lays a triangle onto one the surface already has: a
+/// `taken` triangle, which for a cap is the scan triangle's reverse twin. The
+/// two enclose nothing and the seam between them is a fold flat on itself. It
+/// happens where a rim's planar triangulation is inside out, at a tooth of the
+/// cut line that reads as a notch.
+pub(super) fn cap_doubles_surface(triangles: &[[usize; 3]], taken: &TakenTriangles) -> bool {
+    !taken.is_empty()
+        && triangles.iter().any(|&triangle| {
+            let mut triple = triangle;
+            triple.sort_unstable();
+            taken.contains(&triple)
+        })
 }
 
 /// One triangle in the guard's world: global vertex ids (generated cap
@@ -243,62 +260,6 @@ pub(super) fn cap_pierces(cap: &[GuardTriangle], surround: &[GuardTriangle]) -> 
 
 fn shares_vertex(t1: &GuardTriangle, t2: &GuardTriangle) -> bool {
     t1.ids.iter().any(|id| t2.ids.contains(id))
-}
-
-/// Interior dihedral beyond this is a fold, not curvature: the cap's
-/// parameterization collapsed (e.g. a strongly wrapped rim whose projection
-/// folds over, making the quadric height field two-valued).
-const FOLD_COSINE_LIMIT: f32 = -0.5; // 120 degrees
-
-/// Whether the candidate cap folds onto itself: any pair of cap triangles
-/// sharing an interior edge whose normals point more than 120 degrees apart.
-/// Degenerate (near-zero-area) triangles are skipped — they carry no
-/// direction, and the piercing guard covers actual overlap.
-pub(super) fn candidate_folds(candidate: &CapCandidate<'_>) -> bool {
-    let position = |index: usize| -> Vec3 {
-        if index < candidate.rim.len() {
-            candidate.rim_positions[index]
-        } else {
-            candidate
-                .generated
-                .get(index - candidate.rim.len())
-                .copied()
-                .unwrap_or(Vec3::ZERO)
-        }
-    };
-    let normals: Vec<Vec3> = candidate
-        .triangles
-        .iter()
-        .map(|&[a, b, c]| {
-            let (pa, pb, pc) = (position(a), position(b), position(c));
-            (pb - pa).cross(pc - pa)
-        })
-        .collect();
-
-    // Sorted undirected-edge incidence (deterministic, allocation-light).
-    let mut incidence: Vec<((usize, usize), usize)> =
-        Vec::with_capacity(candidate.triangles.len() * 3);
-    for (triangle_index, &[a, b, c]) in candidate.triangles.iter().enumerate() {
-        for (u, v) in [(a, b), (b, c), (c, a)] {
-            incidence.push(((u.min(v), u.max(v)), triangle_index));
-        }
-    }
-    incidence.sort_unstable();
-    for pair in incidence.windows(2) {
-        let ((edge_a, t1), (edge_b, t2)) = (pair[0], pair[1]);
-        if edge_a != edge_b {
-            continue;
-        }
-        let (n1, n2) = (normals[t1], normals[t2]);
-        let scale = n1.length() * n2.length();
-        if scale <= f32::EPSILON {
-            continue;
-        }
-        if n1.dot(n2) / scale < FOLD_COSINE_LIMIT {
-            return true;
-        }
-    }
-    false
 }
 
 /// Symmetric piercing test: any edge of one triangle passing strictly through

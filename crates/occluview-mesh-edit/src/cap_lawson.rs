@@ -14,6 +14,7 @@ use glam::{Vec2, Vec3};
 use super::cap_delaunay::{
     apex_of, circumcircle_verdict, replace_edge, signed_area, CircleVerdict,
 };
+use super::cap_minweight::TakenTriangles;
 
 /// Safety valve on total flips per repair call, as a multiple of the triangle
 /// count. Lawson terminates on planar inputs (inside-flips lexicographically
@@ -33,26 +34,38 @@ fn edge_key(u: usize, v: usize) -> (usize, usize) {
 pub(super) struct CapMesh {
     triangles: Vec<[usize; 3]>,
     owners: HashMap<(usize, usize), Vec<usize>>,
+    /// Triangles no flip may produce: the ones the surface already has.
+    taken: TakenTriangles,
 }
 
 impl CapMesh {
+    #[cfg(test)]
     pub(super) fn new(triangles: Vec<[usize; 3]>) -> Self {
+        Self::avoiding(triangles, TakenTriangles::new())
+    }
+
+    /// A cap triangulation whose flips never produce a `taken` triangle.
+    pub(super) fn avoiding(triangles: Vec<[usize; 3]>, taken: TakenTriangles) -> Self {
         let mut owners: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
         for (slot, &[a, b, c]) in triangles.iter().enumerate() {
             for (u, v) in [(a, b), (b, c), (c, a)] {
                 owners.entry(edge_key(u, v)).or_default().push(slot);
             }
         }
-        Self { triangles, owners }
+        Self {
+            triangles,
+            owners,
+            taken,
+        }
     }
 
-    #[cfg(test)]
+    fn is_taken(&self, mut triangle: [usize; 3]) -> bool {
+        triangle.sort_unstable();
+        self.taken.contains(&triangle)
+    }
+
     pub(super) fn triangles(&self) -> &[[usize; 3]] {
         &self.triangles
-    }
-
-    pub(super) fn into_triangles(self) -> Vec<[usize; 3]> {
-        self.triangles
     }
 
     /// Every edge currently in the triangulation, ascending. Snapshot for a
@@ -239,6 +252,9 @@ impl CapMesh {
             let area1 = signed_area(&quad, local(candidate1));
             let area2 = signed_area(&quad, local(candidate2));
             if area1 * sign <= f32::EPSILON || area2 * sign <= f32::EPSILON {
+                continue;
+            }
+            if self.is_taken(candidate1) || self.is_taken(candidate2) {
                 continue;
             }
             let verdict = circumcircle_verdict(quad[0], quad[1], quad[2], quad[3]);
@@ -447,7 +463,7 @@ mod tests {
             let mut cap = CapMesh::new(fan.clone());
             let seeds: BTreeSet<(usize, usize)> = cap.edges_sorted().into_iter().collect();
             cap.lawson(&uv, seeds);
-            cap.into_triangles()
+            cap.triangles().to_vec()
         };
         assert_eq!(run(), run());
     }

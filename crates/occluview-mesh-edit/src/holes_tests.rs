@@ -89,7 +89,7 @@ fn adjacent_pinched_rims_both_close() {
     let mesh = two_bowls_sharing_a_pinch_vertex();
 
     // Direct evidence the junction is detected and split exactly once.
-    let split = crate::pinch::split_boundary_pinch_vertices(&mesh).expect("pinch split");
+    let split = crate::pinch::split_boundary_pinch_vertices(&mesh, None).expect("pinch split");
     let (_, split_count) = split.expect("one pinch vertex split");
     assert_eq!(split_count, 1);
 
