@@ -759,10 +759,11 @@ fn a_point_fit_corrects_the_submitted_placement() {
     });
     let completions = harvest_one(&worker, &repaint_rx);
     let [super::AlignCompletion {
-        outcome: super::AlignOutcome::Aligned {
-            correction: found,
-            rejected,
-        },
+        outcome:
+            super::AlignOutcome::Aligned {
+                correction: found,
+                rejected,
+            },
         ..
     }] = completions.as_slice()
     else {
