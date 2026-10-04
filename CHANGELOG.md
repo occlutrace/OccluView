@@ -5,447 +5,66 @@ remain in the Git history.
 
 ## Unreleased
 
-- Close Holes works on the marked area instead of the whole scan, so a click costs what the marked area costs: about a fifth of the former time on a 326,000-triangle arch.
+### Align
 
-- Close Holes lays its cap on the surface that leaves the rim the way the scan arrives at it, so a cut closes with a patch that continues its surroundings instead of a flat lid, and the single-edge teeth of a lasso cut go with the cap.
-
-- Close Holes closes a hole only when the mark holds its rim: at least half of the rim marked and the rest within reach of the mark. A hole that runs out of the marked area stays open, and the status says how many holes were only partly selected.
-
-- Adjust pose: with Move in z-direction or Move in xy-plane the scan keeps pace with the cursor in a tilted view instead of trailing it.
-
-- Delete removes an object that is a whole layer, as one undoable step, instead of refusing and asking for the layer to be removed by hand.
-
-- The Mesh Editing window opens clear of the status row, so a refusal of one of its buttons stays readable.
-
-- Best fit aligns scans that are only partly alike: a part of a jaw against the whole jaw, a scan before and after preparation, a scan with scan bodies, a bite scan, or the fitting side of a prosthesis against the tissue it sits on.
-
-- Best fit matching moves the scan to the best placement it finds at once and shows the heatmap, with no candidate to pick or accept; Ctrl+Z takes the placement back, and a match the geometry leaves in doubt is marked as uncertain.
-
+- Best fit matching moves the scan to the best placement it finds at once and shows the heatmap, with no candidate to pick or accept. Ctrl+Z takes the placement back, and a match the geometry leaves in doubt is marked as uncertain.
 - Perform alignment fits the clicked points at once instead of running a surface search.
-
-- Adjust pose: Ctrl+drag turns a scan about its own centre the way the cursor pushes it, and a drag at its outline rolls it; the turn no longer swings the scan around the grabbed point.
-
-- Best fit finishes in a few seconds on scans of more than a million triangles.
-
-- Best fit reports scans that differ in size, as scans in other units do, and scans whose triangles do not face one way.
-
-- The matching parts setting is removed from Best fit; how much of the two scans is shared is found automatically.
-
-- Preserve HPS loading when optional properties use self-closing XML tags.
-
-- Name the detected format in thumbnail errors for mislabeled files.
-
-- Reject OFF payload beyond its declared elements instead of silently dropping faces.
-
-- Report the detected mesh format in CLI info for mislabeled files.
-
-- Reject invalid ASCII OFF edge counts consistently with binary OFF.
-
-- Open BOM-prefixed OFF files consistently with format detection.
-
-- Reject incomplete HPS XML instead of silently discarding surface attributes.
-
-- Reject invalid OBJ normal and texture references instead of dropping their attributes.
-
-- Reject PLY payload beyond its declared elements instead of silently dropping mesh data.
-
-- Reject binary STL data beyond its declared triangle count instead of dropping geometry.
-
-- Accept finite nonzero thumbnail triangles at very small and very large scales.
-
-- Detect hole caps that pierce fine surface triangles.
-
-- Scan matching uses measured surface area without doubling sampled support.
-
-- Refuse self-crossing hole rims at tiny scales.
-
-- Reject malformed OBJ texture coordinates before they shift later UV references.
-
-- Preserve OBJ positions, normals and texture coordinates without rounding away small values.
-
-- Keep connected STL objects together when shared corners differ only in the sign of zero.
-
-- Disabled cuts preserve the uncut mesh without drawing a cross-section cap.
-
-- Close Windows registry keys after failed shell registration or cleanup operations.
-
-- Report the actual Windows registry error when shell registration fails.
-
-- Keep the preview object alive while window callbacks or modal menus are active.
-
-- Preserve Windows shell-item filenames containing unpaired UTF-16 code units.
-
-- Keep thickness probes on their known wall after large scene translations and rotations.
-
-- Prevent concurrent Unix launches from both becoming the primary window.
-
-- Preserve a file created at an implicit thumbnail destination while rendering.
-
-- Hash complete large scan files so different interior geometry cannot share a thumbnail identity.
-
-- Reject update responses that exceed the download limit even when their prefix has a valid signature.
-
-- Keep adjacent OBJ textures when a later material switch is unused by every face.
-
-- Keep contact patches and counts separate at extreme scan coordinates.
-
-- Refuse OBJ materials whose diffuse factors or texture options would be silently discarded.
-
-- Smoothing refuses invalid neighbor ids before constructing its solve instead of crashing.
-
-- Sculpt refuses fractional sheet identities in decoded topology history instead of rounding them.
-
-- Sculpt ray traversal avoids integer overflow when distant vertices push cells to their index limits.
-
-- Close Holes applies and records cleanup even when every remaining rim stays open.
-
-- Selected rim cleanup retains pre-existing degenerate faces outside the marked area.
-
-- Refuse GLB base color factors and texture transforms that cannot be represented faithfully.
-
-- Sculpt cursor and stroke rays use the rendered scene depth range, including visible geometry behind the orbital eye.
-
-- Close Holes honors an enabled perimeter limit for selected rims and reports holes left open because of it.
-
-- Surface bridge splits leave regions open when a damaged inner contour prevents safe capping.
-
-- Hole-cap fairing uses the full outside support count for large vertex fans.
-
-- Sections preserve closed contours for finite transformed meshes with local plane offsets beyond the f32 range.
-
-- Separate refuses invalid or overlapping component partitions before creating layers.
-
-- Refuse GLB scenes that merge incompatible primitive materials.
-
-- Use the OBJ face material atlas and refuse unsupported mixed face materials.
-
-- Invalid Sculpt position-history records are refused before changing the surface.
-
-- Refuse GLB sparse, required-extension, animated, skinned and morph-target assets that cannot be preserved.
-
-- Reject incomplete or surplus PLY face UV lists and fractional integer UV tokens.
-
-- A failed final file append preserves camera navigation made while the load was running.
-
-- Refuse PLY texture seams that cannot preserve the original mesh topology.
-
-- Sculpt refuses malformed mesh buffers before preparing a session instead of crashing.
-
-- Solid section caps remain visible when a mesh is translated away from the origin.
-
-- Close Holes refuses a fully zero-area minimum-area cover while retaining supported indexed seams.
-
-- Automatic section views face the exposed cross-section instead of the retained exterior.
-
-- Scan matching reports bounded surface work and stops interrupted nearest queries without treating them as exact evidence.
-
-- Reject malformed HPS base64 tails and padding before decoding geometry.
-
-- Oversized render deadlines return a timeout instead of crashing.
-
-- Selected Close Holes preserves unmarked faces and protects their boundary vertices during cleanup.
-
-- Close Holes keeps selected rims open with a warning when every candidate cap intersects the surrounding surface.
-
-- OFF imports reject negative structural counts and non-integer face degrees instead of silently discarding geometry.
-
-- Repair Mesh refuses non-finite coordinates before changing geometry.
-
-- Mesh Editor and layer menus explain whole-selection, component-limit and undo-capacity refusals and retain Close Holes reports.
-
-- Preserve GLB normals and mirrored winding at extreme node scales.
-
-- Large mesh streams with different interior content no longer share a cached thumbnail.
-
-- Reject non-finite OBJ vertex color channels instead of silently changing their color.
-
-- Thumbnail stream copying refuses impossible byte counts instead of returning fabricated data.
-
-- Preserve STL face normals for very small and very large triangles.
-
-- Sculpt accepts small positive uniform layer scales instead of incorrectly treating them as unsupported transforms.
-
-- Sculpt rejects overflowing vertex and group counts in topology history instead of crashing.
-
-- Sculpt shows a complete localized message when its preparation worker cannot start.
-
-- Thumbnail stream copying rejects a zero chunk limit instead of reporting unread data as complete.
-
-- OBJ imports retain textures named on the first line of BOM-prefixed material libraries.
-
-- Mesh export resolves the full supported chain of eight destination symbolic links.
-
-- OBJ fallback textures cannot escape the mesh folder through symbolic links.
-
-- Contact pointer readouts refuse extreme triangle indices without overflowing.
-
-- Thickness probing refuses extreme triangle indices instead of overflowing.
-
-- Update checks ignore build metadata when deciding whether a release is newer.
-
-- ASCII STL memory admission accounts for facets sharing a line.
-
-- OBJ imports resolve companion images relative to their material library while retaining folder confinement.
-
-- GLB imports transform normals correctly for small nonuniform scales.
-
-- Contact overlays respect the graphics device limit on both texture dimensions.
-
-- GLB imports reject attribute streams whose counts differ from the position stream.
-
-- Binary PLY imports reject negative or fractional list counts and indices instead of silently coercing them.
-
-- Thumbnail stream copying handles zero and maximum byte limits without overflowing.
-
-- OBJ thumbnails retain positive face references to vertices declared later in the file.
-
-- OBJ companion textures retain filenames after MTL options with optional vector components.
-
-- Mesh imports reject non-finite coordinates and GLB transform overflow before constructing geometry.
-
-- Sculpt rejects invalid remesh vertex indices before changing any display geometry.
-
-- GLB imports reject incomplete, misordered, duplicate, or unaligned chunks and inconsistent file lengths.
-
-- BOM-prefixed PLY and OBJ imports retain their named companion textures.
-
-- Sculpt protection skirts keep one weight per vertex when a shorter surface path is found.
-
-- Sculpt rejects non-finite vertex data in topology history before replay.
-
-- PLY thumbnails refuse files whose ASCII vertex body ends before the declared count.
-
-
-- ASCII STL imports accept solid names containing spaces.
-
-- GLB imports preserve front-face winding when node transforms mirror the geometry.
-
-- PLY imports preserve integer positions, normals, and UVs and reject invalid integer vertex fields.
-
-- OBJ thumbnails resolve relative faces against the vertices preceding each face.
-
-
-- Sculpt rejects malformed collapse history before it can address a face beyond the saved tail.
-
-- CLI thumbnail output refuses exhausted automatic names instead of overwriting an existing image.
-
-
-- Sculpt leaves non-manifold edges unchanged instead of creating partial splits.
-
-- File-open handoff publishes complete requests before the running window reads them.
-
-
-- GLB texture decoding validates image buffer sources and byte ranges without overflowing.
-
-- Sculpt reports the actual display-geometry failure instead of always reporting a poisoned lock.
-
-- Sculpt welds equal coordinates consistently when one corner uses negative zero.
-
-- OBJ thumbnails reject extreme relative face indices without crashing.
-
-
-- Sculpt preserves the live preview of a later stroke when an earlier stroke is saved.
-
-- Shape-preserving smoothing rejects invalid selection weights before changing the surface.
-
-- PLY imports consume vertex list properties correctly in ASCII and both binary byte orders.
-
-- Sculpt queries handle very large brush radii without overflowing the spatial grid.
-
-- OFF imports reject negative and non-integer face indices instead of changing their vertex references.
-
-- Sculpt keeps its editing target when that layer is hidden or removed, preventing strokes on another layer.
-
-- GLB imports reject overflowing or out-of-bounds accessor layouts before decoding.
-
-- Contact hover refuses invalid triangles instead of crashing or inventing a partial reading.
-
-- Malformed Unicode STL signatures return an error instead of crashing the reader.
-
-- Viewport projections follow pane and window resizing even when the render texture keeps its previous size.
-
-- Blocked viewport presses report focus, dialogs, and the scene input owner in debug logs.
-
-- Switching between Mesh Editing and viewport tools releases the previous tool and preserves completed edits.
-
-- Layer controls pause while a decision dialog is open and resume when it is dismissed.
-
-- The first mesh in a scene gets a camera even when automatic framing is disabled; existing views stay unchanged.
-
-- Empty scene panes respond to right-clicks before a viewport image is rendered.
-
-- Graphics startup retains software fallback when every hardware adapter fails to create a device.
-
-- Background and cut-ghost preference changes refresh every scene.
-
-- Bridge Split remembers size-slider changes before placement and displays the selected disc size.
-
-- Orthographic scene picking selects visible surfaces even when they lie behind the orbit camera.
-
-- Mesh region selection preserves existing marks when its outline or projection input is invalid.
-
-- Sculpt strength falls back to the brush default when an invalid numeric value is supplied.
-
-- Switching Sculpt tips or redrawing the panel preserves the chosen brush size until the size control is changed.
-
-- GPU vertex updates reject changed vertex counts before uploading data.
-
-- Close Holes stays disabled until faces are selected, matching the repair operation and its tooltip.
-
-- Edit is disabled when no visible triangle mesh can be opened.
-
-- Mesh selection shortcuts keep face marks unchanged while a mesh operation is running.
-
-- Mesh editing preserves the current undo and redo history when an outdated operation finishes.
-
-- Invalid contact-field updates clear previous contact paint instead of displaying a stale measurement.
-
-- Cut View and Bridge Split preserve the disc and section framing when wheel input is non-finite.
-
-- Closing the viewer preserves a sculpt brush change made on the closing frame.
-
-- Restarting Bridge Split can prepare a new source without waiting for an abandoned preparation.
-
-- Sculpt brush preferences save after the last slider change settles.
-
-- Cut View zoom keeps the section point under the cursor fixed while resizing the disc.
-
-- Scale bars retain nonzero millimeter and inch labels when zoomed in.
-
-- Closing the Bridge Split Section window cancels the separator and preserves the scene.
-
-- Bridge Split discards previews after position edits, including sculpt changes that preserve mesh topology.
-
-- Tool keyboard shortcuts obey the same availability rules as their toolbar buttons.
-
-- Viewport right-click menus remain visible and respond to actions while mouse navigation stays confined to its scene.
-
-- Mesh edits preserve correct facet normals for very small and very large geometry.
-
-- Section contours remain visible on layers with small nonzero scales.
-
-- Closest-surface queries preserve valid face and edge projections on small triangles.
-
-- Closing holes no longer overflows rim-weld grid coordinates on distant geometry.
-
-- Repair no longer merges distinct vertices when a mesh is stored far from the coordinate origin.
-
-- Closing holes with an empty face selection now preserves the complete mesh.
-
-- Section contours skip triangles containing invalid coordinates instead of emitting NaN points.
-
-- Repeated faces no longer turn open section contours into artificial closed loops.
-
-- Surface queries handle small triangles separated by very large distances without overflowing their grid.
-
-- Resizing a short scene pane with the Section panel open no longer crashes the axis gizmo.
-
-- Malformed triangles are skipped safely when calculating surface normals.
-
-- Bridge Split rejects zero-area triangles before accepting an input or output as a closed mesh.
-
-- Knife strokes keep their radial fallback when a bearing cannot be normalized.
+- Best fit aligns scans that are only partly alike: part of a jaw against the whole jaw, a scan before and after preparation, a scan with scan bodies, a bite scan, or the fitting side of a prosthesis. It finishes in a few seconds on scans of more than a million triangles, and the matching parts setting is gone.
+- Best fit reports scans that differ in size and scans whose triangles do not face one way.
+- Adjust pose: Ctrl+drag turns a scan about its own centre the way the cursor pushes it, and a drag at its outline rolls it. With Move in z-direction or Move in xy-plane the scan keeps pace with the cursor in a tilted view.
+- The deviation map opens at 0.000 to 0.100 mm, its legend keeps 0.001 mm precision, and invalid limits fall back to a usable range.
+- Changing the alignment points, the exclusion markings or the matching settings cancels a fit computed from the old ones.
+- Disabled alignment controls say why they are disabled.
 
 ### Mesh editing
 
-- Selection actions ignore stale layer-menu requests before changing any marked layer.
-- Undo and redo keep every restored mesh, including cut parts, in the next save operation.
-- Layer-menu mesh edits wait for pending Sculpt work to settle.
-- Selection actions preserve hidden layers and reject marks from replaced mesh geometry.
-
-### Formats
-
-- Opening or dropping a 3MF (or any ZIP) file now reports that the format is
-  not read and suggests exporting to STL, PLY, OBJ, or GLB. The dialog
-  previously showed an internal error that named an implementation crate.
-
-### Layers
-
-- Dragging a layer name moves the layer instead of selecting its text. The name
-  shows a grab cursor, the drag carries a translucent chip with the layer's name
-  and tint, the drop target fades in and out instead of flashing, and the edge
-  band highlights only the strip that will actually take the layer.
+- Close Holes works on the marked area instead of the whole scan: about a fifth of the former time on a 326,000-triangle arch.
+- Close Holes closes a hole only when the mark holds its rim. A hole that runs out of the marked area stays open, and the status says how many holes were only partly selected.
+- The cap continues the surface around the hole instead of a flat lid, and a cap that would pierce the scan is refused.
+- Delete removes an object that is a whole layer, as one undoable step.
+- The Mesh Editing window opens clear of the status row, and a refused selection action says why it was refused.
+- Undo and redo keep every restored mesh, including cut parts, in the next save.
+- Repair and Separate refuse invalid input before changing geometry.
 
 ### Sculpt
 
-- The brush cursor is a pale wash of the tool colour, matching the brightness of
-  the reference viewer, so the footprint marks the surface instead of covering
-  it. The screen ring is a hairline with a crosshair centre, and the translucent
-  tool body uses its own rim shading and is occluded by geometry in front of it.
-- The pointer becomes a crosshair while a Sculpt tool is armed.
-- The layer guard runs more rollback waves before it restores a whole dab, so a
-  Smooth stroke leaves fewer untouched patches on dense geometry.
-- Remove no longer builds an opening distance field inside a stroke, and a group
-  whose opening thickness was never measured keeps the widest reserve instead of
-  a made-up thin one.
-- Incremental shading no longer publishes a zero normal for a vertex whose faces
-  are all filtered out, which read as a spike on the surface.
-- Relax is warmed with the other brushes, so its first stroke is as responsive.
+- The brush cursor is a pale wash of the tool colour with a hairline ring, so the footprint marks the surface instead of covering it. The pointer becomes a crosshair while a tool is armed.
+- Smooth leaves fewer untouched patches on dense geometry, and the first Relax stroke is as responsive as the others.
+- The chosen brush size survives switching tips, and layers with a small uniform scale can be sculpted.
+- Malformed mesh buffers and history records are refused instead of crashing a session.
 
-### Align
+### Layers
 
-- Suggested deviation scales expand beyond 10 mm when the measured range requires it.
-- Non-finite heatmap limits recover to a finite working range instead of interrupting alignment or panel rendering.
-- Signed deviation bands use matching distance intervals above and below zero.
-- Perform alignment explains its two-arrow requirement when only one complete arrow is placed.
-- A quick exclusion-brush tap paints the mesh even when press and release arrive in the same frame, without placing an alignment point.
-- Disabled Heatmap controls explain whether refinement is missing or deviation measurement is running.
-- Cancel keeps alignment open for retry when another layer edit temporarily prevents restoring scan positions.
-- Invalid or overflowing manual drag input no longer writes a non-finite scan position.
-- Deviation legend labels retain 0.001 mm precision instead of rounding small limits to zero.
-- Typing a matching percentage now sets the intended ratio, including values with a percent sign or decimal comma.
-- Painting exclusion regions immediately cancels fits computed with the old markings.
-- Changing or removing alignment points cancels fits that used the previous points.
-- Deviation summaries average both middle readings when computing an even-count median.
-- Deviation maps and statistics exclude distances that overflow storage and non-finite readings.
-- Closing the exclusion brush without changing markings restores the deviation map.
-- Cancel preserves the save prompt for restored scan positions, including an unfinished drag or a position already exported during the session.
-- Unavailable alignment controls now show their refusal tooltips and expose the correct disabled state.
-- Deviation sensitivity uses only measured overlap, excluding vertices beyond the fixed scan's border.
-- Best-fit matching scores its coarse hypotheses on the seed sample set instead
-  of the dense one, which removes most of the work one press performed. Searching
-  a small scan against a large one no longer takes minutes.
-- Best-fit matching compares what two candidate poses explain about the other
-  scan again, so two placements that explain it equally are still reported as
-  ambiguous while a seating with more support wins outright.
-- The fixed-to-moving overlap signal no longer discards hits on an open border,
-  which is what a small scan's own rim produces.
-- The deviation map opens on the clinical range, 0.000 to 0.100 mm, instead of
-  0.050 to 0.200 mm. The hottest colour is now 100 um rather than 200 um, and the
-  bar starts at zero instead of hiding everything below 50 um.
-
-- Best-fit ambiguity checks remain consistent when a scan is stored far from the coordinate origin.
-- Point-pair alignment rejects bounds whose overlap calculations overflow instead of accepting an unchecked pose.
-- Cancelled surface refinement cannot report a trustworthy pose after the dense solve.
-- Alignment vertex lookup rejects overflowing indices without panicking.
-- Exclusion brushes with very large finite coordinates keep vertices outside their radius unchanged.
+- Dragging a layer name moves the layer instead of selecting its text, with a drag chip and a highlighted drop target.
 
 ### Viewer
 
-- The section view recomputes its contour after a sculpt. The section cache was
-  keyed on the mesh's topology revision, which a sculpt commit deliberately keeps
-  frozen, so the view kept drawing the pre-sculpt contour for the rest of the
-  session.
-- The Explorer preview menu no longer offers "Edit in OccluView". The item
-  launched the viewer with no editing verb, so it did exactly what Open does;
-  the menu promised an action the application does not have.
+- The section view recomputes its contour after a sculpt, stays visible on translated and scaled layers, and faces the exposed cross-section.
+- Picking selects the visible surface even when it lies behind the orbit camera.
+- Tool shortcuts follow the same availability rules as their toolbar buttons.
+- Scale bars keep their labels when zoomed in.
+- Graphics startup keeps the software fallback when no hardware adapter can create a device.
+- The Explorer preview menu no longer offers "Edit in OccluView", which did what Open does.
 
-### Reliability
+### Formats
 
-- The viewer stops polling for hand-off requests once no listener is left. The
-  fallback listener only noticed a closed channel when it had something to send,
-  so an idle listener kept a 50 ms directory poll and its repaint bursts running
-  for the life of the process on Linux and macOS.
+- Opening or dropping a 3MF, or any ZIP file, reports that the format is not read and suggests exporting to STL, PLY, OBJ or GLB.
+- The STL, PLY, OBJ, OFF, GLB and HPS readers reject truncated, surplus or malformed data instead of silently dropping geometry or attributes.
+- OBJ resolves companion images relative to its material library and keeps them inside the mesh folder.
+- GLB assets that cannot be represented faithfully (sparse, animated, skinned, morph targets, incompatible materials) are refused.
+- CLI info and thumbnail errors name the detected format of a mislabeled file.
+
+### Platform
+
+- Windows shell registration reports the actual registry error.
+- Large scans with different interior geometry no longer share a cached thumbnail.
+- Update checks ignore build metadata and reject responses over the download limit.
+- Two launches at once on Linux or macOS can no longer both become the primary window.
 
 ### Localisation
 
-- The Repair report's "Copy details" payload and the thickness probe's "open: no
-  opposite wall" label now follow the interface language. Both were hardcoded
-  English, so they stayed English in all seven languages.
-- Measurements, the deviation and contact legends, and grouped counts use the
-  interface language's decimal and grouping separators, so German and Russian
-  read "0,05 mm" instead of "0.05 mm".
-
+- The Repair report's copied details and the thickness probe's "open" label follow the interface language.
+- Measurements, legends and grouped counts use the interface language's decimal and grouping separators.
 
 ## 1.2.1 - 2026-09-30
 

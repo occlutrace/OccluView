@@ -44,12 +44,10 @@ A new crate needs a reason and a row in the README workspace table; the reposito
 
 ## Repository hygiene
 
-Keep process material outside the repository. Do not commit prompts, exported
-agent sessions, handoffs, audit dumps, scratch plans, generated process
-documents, agent instruction files such as `AGENTS.md`, or files whose only
-purpose is to direct an automated tool. Add a file only when it is product
-documentation or an explicit build, release, security, or contribution
-contract.
+Keep process material outside the repository. Do not commit working notes,
+plans, review logs, generated reports, or configuration for a personal
+workflow. Add a file only when it is product documentation or an explicit
+build, release, security, or contribution contract.
 
 Comments and doc comments describe current behaviour: an invariant, ownership
 rule, format contract, or reproducible measurement. Do not use them as a work
