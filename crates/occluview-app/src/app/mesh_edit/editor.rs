@@ -1040,6 +1040,68 @@ mod tests {
             assert_eq!(context.document.unsaved_edit_layer_ids, edited_ids);
         }
     }
+    /// An Object pick on a scan that is one piece marks the whole layer.
+    /// Delete then takes the layer out, as one history step like any other
+    /// deletion, instead of telling the operator to go and remove it. The
+    /// layer the session was opened on is the hard case: history must still
+    /// find the step once that layer is gone.
+    #[test]
+    fn deleting_a_whole_object_removes_its_layer() {
+        for with_partial_mark_elsewhere in [false, true] {
+            let ctx = egui::Context::default();
+            let (mut app, _) = marked_app(&ctx);
+            let Some(mut context) = app.active_context() else {
+                panic!("active scene");
+            };
+            let Some(scene) = context.document.scene.clone() else {
+                panic!("scene");
+            };
+            let (whole, other) = (scene.meshes()[0].id(), scene.meshes()[1].id());
+            if !with_partial_mark_elsewhere {
+                assert!(context.document.edit_mode.clear_visible_selections(&scene));
+            }
+            assert!(context.document.edit_mode.select_component_hit(
+                &scene,
+                ScenePickHit {
+                    layer_index: 0,
+                    layer_id: whole,
+                    triangle_index: 1,
+                    point: Vec3::ZERO,
+                    distance: 1.0,
+                },
+                false,
+            ));
+            drop(scene);
+
+            context.request_edit_session_action(LayerContextAction::DeleteSelectedFaces, &ctx);
+            let layers = |context: &SceneContext<'_>| {
+                context.document.scene.as_ref().map(|scene| {
+                    scene
+                        .meshes()
+                        .iter()
+                        .map(|entry| (entry.id(), entry.mesh.triangle_count()))
+                        .collect::<Vec<_>>()
+                })
+            };
+            let left = if with_partial_mark_elsewhere { 1 } else { 2 };
+            assert_eq!(
+                layers(&context),
+                Some(vec![(other, left)]),
+                "the whole object is gone and the other layer lost only its marked faces"
+            );
+            assert!(
+                !context.document.unsaved_edit_layer_ids.contains(&whole),
+                "a layer that left the scene has nothing left to save"
+            );
+            assert_eq!(context.document.edit_mode.undo_len(), 1);
+
+            context.apply_history_navigation(false, &ctx);
+            assert_eq!(layers(&context), Some(vec![(whole, 2), (other, 2)]));
+            context.apply_history_navigation(true, &ctx);
+            assert_eq!(layers(&context), Some(vec![(other, left)]));
+        }
+    }
+
     #[test]
     fn whole_selection_refusal_is_visible_from_panel_and_menu() {
         for action in [

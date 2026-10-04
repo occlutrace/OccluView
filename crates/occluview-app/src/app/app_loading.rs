@@ -565,6 +565,7 @@ impl SceneContext<'_> {
 
     fn forget_replaced_scene_state(&mut self) {
         self.document.edit_mode.clear();
+        self.document.departed_layer_paths.clear();
         self.document.discard_edit_metadata();
         self.discard_align_drag();
         self.document.clear_unsaved_mesh_edits();

@@ -225,37 +225,42 @@ fn visible_selection_batch_skips_hidden_layer_byte_for_byte() {
     assert_eq!(format!("{:?}", scene.meshes()[1]), hidden_before);
 }
 
+/// Crop, Cut and Separate have nothing to do with a whole mesh, and a refusal
+/// on one layer leaves the others alone. Delete is not in this list: a whole
+/// mesh marked for deletion is removed.
 #[test]
 fn visible_selection_batch_refuses_whole_selection_without_touching_other_layers() {
-    let Some(mut scene) = batch_scene_with_two_layers() else {
-        panic!("required test setup or expected result was missing");
-    };
-    let mut edit_mode = EditModeController::new(4, 1_000_000);
-    assert!(edit_mode.select_face_hit(
-        &scene,
-        ScenePickHit {
-            layer_index: 0,
-            layer_id: scene.meshes()[0].id(),
-            triangle_index: 0,
-            point: Vec3::ZERO,
-            distance: 1.0,
-        },
-    ));
-    assert!(edit_mode.begin_face_selection(&scene.meshes()[1].clone(), &scene));
-    assert!(edit_mode.select_all_faces());
-    let before = batch_scene_signature(&scene);
+    for action in [
+        LayerContextAction::CropToSelectedFaces,
+        LayerContextAction::CutSelectionToNewLayer,
+        LayerContextAction::SeparateSelectedComponents,
+    ] {
+        let Some(mut scene) = batch_scene_with_two_layers() else {
+            panic!("required test setup or expected result was missing");
+        };
+        let mut edit_mode = EditModeController::new(4, 1_000_000);
+        assert!(edit_mode.select_face_hit(
+            &scene,
+            ScenePickHit {
+                layer_index: 0,
+                layer_id: scene.meshes()[0].id(),
+                triangle_index: 0,
+                point: Vec3::ZERO,
+                distance: 1.0,
+            },
+        ));
+        assert!(edit_mode.begin_face_selection(&scene.meshes()[1].clone(), &scene));
+        assert!(edit_mode.select_all_faces());
+        let before = batch_scene_signature(&scene);
 
-    let Some(apply) = apply_batch(
-        &mut scene,
-        &mut edit_mode,
-        LayerContextAction::DeleteSelectedFaces,
-    ) else {
-        panic!("required test setup or expected result was missing");
-    };
+        let Some(apply) = apply_batch(&mut scene, &mut edit_mode, action) else {
+            panic!("required test setup or expected result was missing");
+        };
 
-    assert!(!apply.scene_changed);
-    assert_eq!(batch_scene_signature(&scene), before);
-    assert_eq!(edit_mode.undo_layer_id(), None);
+        assert!(!apply.scene_changed, "{action:?}");
+        assert_eq!(batch_scene_signature(&scene), before, "{action:?}");
+        assert_eq!(edit_mode.undo_layer_id(), None, "{action:?}");
+    }
 }
 
 #[test]

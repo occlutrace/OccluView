@@ -5,6 +5,10 @@ remain in the Git history.
 
 ## Unreleased
 
+- Delete removes an object that is a whole layer, as one undoable step, instead of refusing and asking for the layer to be removed by hand.
+
+- The Mesh Editing window opens clear of the status row, so a refusal of one of its buttons stays readable.
+
 - Best fit aligns scans that are only partly alike: a part of a jaw against the whole jaw, a scan before and after preparation, a scan with scan bodies, a bite scan, or the fitting side of a prosthesis against the tissue it sits on.
 
 - Best fit matching moves the scan to the best placement it finds at once and shows the heatmap, with no candidate to pick or accept; Ctrl+Z takes the placement back, and a match the geometry leaves in doubt is marked as uncertain.

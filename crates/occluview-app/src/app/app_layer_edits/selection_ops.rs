@@ -95,7 +95,7 @@ pub(crate) fn selection_batch_status(
             "label",
             &super::whole_mesh::batch_action_label(action, locale),
         )],
-        &[("n", outcome.changed_layers.len())],
+        &[("n", outcome.changed_layers.len() + outcome.removed_layers)],
     )
 }
 

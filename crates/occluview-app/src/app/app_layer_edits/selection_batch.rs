@@ -20,7 +20,10 @@ pub(crate) struct SelectionBatchOutcome {
     pub(crate) apply: LayerContextApply,
     pub(crate) refusal: Option<SelectionBatchRefusal>,
     pub(crate) holes: Vec<(SceneMeshId, MeshEditReport)>,
+    /// Layers whose mesh changed and that are still in the scene.
     pub(crate) changed_layers: Vec<SceneMeshId>,
+    /// Layers a whole-mesh deletion took out of the scene.
+    pub(crate) removed_layers: usize,
 }
 
 #[derive(Debug)]
@@ -40,6 +43,7 @@ impl SelectionBatchOutcome {
             refusal: Some(reason),
             holes: Vec::new(),
             changed_layers: Vec::new(),
+            removed_layers: 0,
         }
     }
     fn completed(
@@ -52,6 +56,7 @@ impl SelectionBatchOutcome {
             refusal: None,
             holes,
             changed_layers,
+            removed_layers: 0,
         }
     }
 }
@@ -60,6 +65,10 @@ enum PlannedEdit {
     Replace {
         layer_id: SceneMeshId,
         mesh: Mesh,
+    },
+    /// Every face of the layer was marked for deletion, so the layer goes.
+    Remove {
+        layer_id: SceneMeshId,
     },
     Cut {
         layer_id: SceneMeshId,
@@ -77,9 +86,15 @@ impl PlannedEdit {
     fn layer_id(&self) -> SceneMeshId {
         match self {
             Self::Replace { layer_id, .. }
+            | Self::Remove { layer_id }
             | Self::Cut { layer_id, .. }
             | Self::Separate { layer_id, .. } => *layer_id,
         }
+    }
+
+    /// Whether the layer is still in the scene after the edit.
+    fn keeps_layer(&self) -> bool {
+        !matches!(self, Self::Remove { .. })
     }
 }
 
@@ -156,9 +171,20 @@ pub(crate) fn apply_visible_selected_face_mesh_edit_action_with_limit(
             ));
         }
         if selection.selection.selected_count() == source.mesh.triangle_count() {
-            return Ok(SelectionBatchOutcome::refused(
-                SelectionBatchRefusal::WholeSelection(source.id()),
-            ));
+            // A whole object marked and deleted is the object deleted: an
+            // Object pick on a scan that is one piece marks all of it, and
+            // leaving a layer with no triangles behind would only be a
+            // refusal with extra steps. The other three have nothing to do
+            // with a whole mesh.
+            if action != LayerContextAction::DeleteSelectedFaces {
+                return Ok(SelectionBatchOutcome::refused(
+                    SelectionBatchRefusal::WholeSelection(source.id()),
+                ));
+            }
+            planned.push(PlannedEdit::Remove {
+                layer_id: source.id(),
+            });
+            continue;
         }
 
         planned.push(match action {
@@ -200,6 +226,15 @@ pub(crate) fn apply_visible_selected_face_mesh_edit_action_with_limit(
         });
     }
 
+    // Deleting the last layer would close the scene, which is not what a
+    // face deletion is for; that stays with the layer's own Remove.
+    let removed = planned.iter().filter(|edit| !edit.keeps_layer()).count();
+    if removed == scene.meshes().len() {
+        return Ok(SelectionBatchOutcome::refused(
+            SelectionBatchRefusal::WholeSelection(focus_layer_id),
+        ));
+    }
+
     Ok(commit_selection_plan(
         scene,
         edit_mode,
@@ -216,7 +251,26 @@ fn commit_selection_plan(
     command: EditModeCommand,
     planned: Vec<PlannedEdit>,
 ) -> SelectionBatchOutcome {
-    let Some(token) = edit_mode.begin_scene_edit(scene, focus_layer_id, command) else {
+    // History reaches a scene step through a layer that is in the scene on
+    // both sides of it, so a step that removes its own focus is filed under a
+    // layer that stays.
+    let stays = |id: SceneMeshId| {
+        planned
+            .iter()
+            .all(|edit| edit.keeps_layer() || edit.layer_id() != id)
+    };
+    let focus_layer_id = if stays(focus_layer_id) {
+        Some(focus_layer_id)
+    } else {
+        scene
+            .meshes()
+            .iter()
+            .map(occluview_core::SceneMesh::id)
+            .find(|id| stays(*id))
+    };
+    let Some(token) =
+        focus_layer_id.and_then(|focus| edit_mode.begin_scene_edit(scene, focus, command))
+    else {
         return SelectionBatchOutcome::refused(SelectionBatchRefusal::Busy);
     };
     if !edit_mode.last_edit_undoable() {
@@ -224,7 +278,12 @@ fn commit_selection_plan(
         return SelectionBatchOutcome::refused(SelectionBatchRefusal::HistoryBudget);
     }
 
-    let changed_layers = planned.iter().map(PlannedEdit::layer_id).collect();
+    let changed_layers = planned
+        .iter()
+        .filter(|edit| edit.keeps_layer())
+        .map(PlannedEdit::layer_id)
+        .collect();
+    let removed_layers = planned.iter().filter(|edit| !edit.keeps_layer()).count();
     let mut draft = scene.clone();
     for edit in planned {
         if !apply_planned_edit(&mut draft, edit) {
@@ -237,7 +296,10 @@ fn commit_selection_plan(
 
     let _ = edit_mode.finish_scene_edit_success(token, &draft);
     *scene = draft;
-    SelectionBatchOutcome::completed(structural_scene_apply(), Vec::new(), changed_layers)
+    SelectionBatchOutcome {
+        removed_layers,
+        ..SelectionBatchOutcome::completed(structural_scene_apply(), Vec::new(), changed_layers)
+    }
 }
 
 fn apply_visible_close_holes(
@@ -327,11 +389,7 @@ fn apply_visible_close_holes(
 }
 
 fn apply_planned_edit(scene: &mut Scene, edit: PlannedEdit) -> bool {
-    let layer_id = match &edit {
-        PlannedEdit::Replace { layer_id, .. }
-        | PlannedEdit::Cut { layer_id, .. }
-        | PlannedEdit::Separate { layer_id, .. } => *layer_id,
-    };
+    let layer_id = edit.layer_id();
     let Some(index) = scene
         .meshes()
         .iter()
@@ -342,6 +400,9 @@ fn apply_planned_edit(scene: &mut Scene, edit: PlannedEdit) -> bool {
     let source = scene.meshes()[index].clone();
     match edit {
         PlannedEdit::Replace { mesh, .. } => scene.meshes_mut()[index].mesh = Arc::new(mesh),
+        PlannedEdit::Remove { .. } => {
+            scene.remove(index);
+        }
         PlannedEdit::Cut {
             remainder,
             extracted,
