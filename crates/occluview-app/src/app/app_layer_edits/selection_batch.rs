@@ -165,65 +165,10 @@ pub(crate) fn apply_visible_selected_face_mesh_edit_action_with_limit(
                 SelectionBatchRefusal::StaleSelection,
             ));
         };
-        if selection.selection.selected_count() == 0 {
-            return Ok(SelectionBatchOutcome::refused(
-                SelectionBatchRefusal::NoSelection,
-            ));
+        match plan_layer_edit(source, &selection.selection, action)? {
+            Ok(edit) => planned.push(edit),
+            Err(refusal) => return Ok(SelectionBatchOutcome::refused(refusal)),
         }
-        if selection.selection.selected_count() == source.mesh.triangle_count() {
-            // A whole object marked and deleted is the object deleted: an
-            // Object pick on a scan that is one piece marks all of it, and
-            // leaving a layer with no triangles behind would only be a
-            // refusal with extra steps. The other three have nothing to do
-            // with a whole mesh.
-            if action != LayerContextAction::DeleteSelectedFaces {
-                return Ok(SelectionBatchOutcome::refused(
-                    SelectionBatchRefusal::WholeSelection(source.id()),
-                ));
-            }
-            planned.push(PlannedEdit::Remove {
-                layer_id: source.id(),
-            });
-            continue;
-        }
-
-        planned.push(match action {
-            LayerContextAction::DeleteSelectedFaces | LayerContextAction::CropToSelectedFaces => {
-                PlannedEdit::Replace {
-                    layer_id: source.id(),
-                    mesh: selected_face_edit_result(&source.mesh, &selection.selection, action)?
-                        .mesh,
-                }
-            }
-            LayerContextAction::CutSelectionToNewLayer => {
-                let (remainder, extracted) = cut_selection_meshes(source, &selection.selection)?;
-                PlannedEdit::Cut {
-                    layer_id: source.id(),
-                    remainder,
-                    extracted,
-                }
-            }
-            LayerContextAction::SeparateSelectedComponents => {
-                let components =
-                    selected_connected_components_in_mesh(&source.mesh, &selection.selection)?;
-                if components.len() > MAX_SEPARATE_COMPONENTS {
-                    return Ok(SelectionBatchOutcome::refused(
-                        SelectionBatchRefusal::TooManyComponents(source.id(), components.len()),
-                    ));
-                }
-                let split = split_selection_into_meshes(&source.mesh, &components)?;
-                PlannedEdit::Separate {
-                    layer_id: source.id(),
-                    remainder: split.remainder,
-                    components: split.components,
-                }
-            }
-            _ => {
-                return Ok(SelectionBatchOutcome::refused(
-                    SelectionBatchRefusal::StaleSelection,
-                ))
-            }
-        });
     }
 
     // Deleting the last layer would close the scene, which is not what a
@@ -242,6 +187,63 @@ pub(crate) fn apply_visible_selected_face_mesh_edit_action_with_limit(
         command,
         planned,
     ))
+}
+
+/// What `action` does to one layer whose marked faces are `selection`, or why
+/// it does nothing to it. The mesh work happens here, before any history
+/// snapshot is taken.
+fn plan_layer_edit(
+    source: &occluview_core::SceneMesh,
+    selection: &FaceSelection,
+    action: LayerContextAction,
+) -> Result<Result<PlannedEdit, SelectionBatchRefusal>, CoreError> {
+    let layer_id = source.id();
+    if selection.selected_count() == 0 {
+        return Ok(Err(SelectionBatchRefusal::NoSelection));
+    }
+    if selection.selected_count() == source.mesh.triangle_count() {
+        // A whole object marked and deleted is the object deleted: an Object
+        // pick on a scan that is one piece marks all of it, and leaving a
+        // layer with no triangles behind would only be a refusal with extra
+        // steps. The other three have nothing to do with a whole mesh.
+        return Ok(if action == LayerContextAction::DeleteSelectedFaces {
+            Ok(PlannedEdit::Remove { layer_id })
+        } else {
+            Err(SelectionBatchRefusal::WholeSelection(layer_id))
+        });
+    }
+    Ok(Ok(match action {
+        LayerContextAction::DeleteSelectedFaces | LayerContextAction::CropToSelectedFaces => {
+            PlannedEdit::Replace {
+                layer_id,
+                mesh: selected_face_edit_result(&source.mesh, selection, action)?.mesh,
+            }
+        }
+        LayerContextAction::CutSelectionToNewLayer => {
+            let (remainder, extracted) = cut_selection_meshes(source, selection)?;
+            PlannedEdit::Cut {
+                layer_id,
+                remainder,
+                extracted,
+            }
+        }
+        LayerContextAction::SeparateSelectedComponents => {
+            let components = selected_connected_components_in_mesh(&source.mesh, selection)?;
+            if components.len() > MAX_SEPARATE_COMPONENTS {
+                return Ok(Err(SelectionBatchRefusal::TooManyComponents(
+                    layer_id,
+                    components.len(),
+                )));
+            }
+            let split = split_selection_into_meshes(&source.mesh, &components)?;
+            PlannedEdit::Separate {
+                layer_id,
+                remainder: split.remainder,
+                components: split.components,
+            }
+        }
+        _ => return Ok(Err(SelectionBatchRefusal::StaleSelection)),
+    }))
 }
 
 fn commit_selection_plan(
