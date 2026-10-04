@@ -11,7 +11,9 @@ fuzz_target!(|data: &[u8]| {
     let _ = occluview_formats::dispatch::dispatch_by_extension("off", data);
     let _ = occluview_formats::dispatch::dispatch_by_extension("3mf", data);
     let _ = occluview_formats::probe::probe(None, data);
-    for ext in ["stl", "ply", "obj", "hps", "glb", "gltf", "off", "3mf", "xyz"] {
+    for ext in [
+        "stl", "ply", "obj", "hps", "glb", "gltf", "off", "3mf", "xyz",
+    ] {
         let _ = occluview_formats::probe::probe(Some(ext), data);
     }
 });
