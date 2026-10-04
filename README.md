@@ -85,17 +85,22 @@ Open both scans as layers, choose **A** (Align), and use the automatic workflow:
 2. Click `Best fit matching` to seat corresponding surfaces.
 3. Read the colour map with the explicit millimetre legend and bounded range.
 
-The heatmap shows the latest confirmed matching result. Changing the pair, the
-matching settings or the exclusion markings, or returning to Automatic, clears
-it until a new matching result is available. Manual alignment remains
-available when the automatic pair is not appropriate.
+The heatmap shows the latest matching result. Changing the pair, the matching
+settings or the exclusion markings, moving a scan by hand, or opening
+**Adjust pose** clears it until `Best fit matching` runs again.
 
-When Best fit finds more than one equally plausible pose, it refuses to confirm
-the alignment. Mark the corresponding area or move the scans closer, then try
-again.
+Best fit seats the scan in the best pose it finds, as one step that `Ctrl+Z`
+takes back. When the geometry leaves that pose in doubt (more than one
+equally plausible placement, or too little shared surface) the panel marks the
+match as uncertain. Mark the corresponding area or place the scans closer,
+then run it again.
 
-Point-pair placement supplies a starting pose. It remains unverified until
-surface refinement passes, and the deviation map stays unavailable until then.
+`Perform alignment` moves the scan onto the clicked point pairs at once and
+supplies the starting pose; the deviation map appears after Best fit.
+
+In **Adjust pose**, drag a scan to move it. `Ctrl`+drag turns it about its own
+centre the way the cursor pushes it, and at the scan's outline the same drag
+rolls it.
 
 ## Mesh Editing
 
