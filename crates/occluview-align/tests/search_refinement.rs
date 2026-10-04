@@ -5,6 +5,7 @@ use glam::{DQuat, DVec3};
 use occluview_align::{
     Completion, Confidence, Metric, NormalPolicy, Rigid, SearchControl, SearchSettings,
 };
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use support::{alignment_input, arch, metrics, operators, SyntheticMesh};
 
@@ -47,10 +48,19 @@ fn observe_input(
     accuracy: &Accuracy<'_>,
     settings: &SearchSettings,
 ) -> Observation {
-    let clock = Instant::now();
-    let result =
-        occluview_align::search_alignment(input, settings, &SearchControl::default()).unwrap();
-    let elapsed = clock.elapsed();
+    // Every search owns the whole machine for its wall-clock limit. The
+    // harness runs these tests on parallel threads, where each search would
+    // spend the others' budget and fail on time rather than on its answer.
+    static TIMED_SEARCH: Mutex<()> = Mutex::new(());
+    let (result, elapsed) = {
+        let _alone = TIMED_SEARCH
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let clock = Instant::now();
+        let result =
+            occluview_align::search_alignment(input, settings, &SearchControl::default()).unwrap();
+        (result, clock.elapsed())
+    };
     assert!((1..=5).contains(&result.candidates.len()));
     let count = if accuracy.top1 {
         1
