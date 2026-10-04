@@ -31,10 +31,7 @@ impl SceneContext<'_> {
             transforms: [moving.transform, fixed.transform],
             visible: [moving.visible, fixed.visible],
             mask_revision: self.tools.align.markings.revision(),
-            matching: [
-                self.tools.align.settings.influence_radius_mm.to_bits(),
-                self.tools.align.settings.matching_ratio.to_bits(),
-            ],
+            influence_radius: self.tools.align.settings.influence_radius_mm.to_bits(),
             orientation: self.tools.align.settings.orientation,
         })
     }
@@ -87,7 +84,7 @@ impl SceneContext<'_> {
             .and_then(|r| r.candidates.candidates.first())
             .and_then(|c| {
                 c.reasons.iter().find_map(|reason| match reason {
-                    occluview_align::EvidenceReason::LegacyRejected(reason) => Some(*reason),
+                    occluview_align::EvidenceReason::LandmarkRejected(reason) => Some(*reason),
                     _ => None,
                 })
             })

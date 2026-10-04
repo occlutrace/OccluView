@@ -39,8 +39,6 @@ pub(crate) const WORKING_MIN_MM: f64 = 0.01;
 pub(crate) struct AlignSettings {
     /// Farthest a moving vertex looks for fixed surface, in millimetres.
     pub(crate) influence_radius_mm: f64,
-    /// Fraction of correspondences kept after trimming.
-    pub(crate) matching_ratio: f64,
     /// How the two surfaces are taken to face each other.
     pub(crate) orientation: Orientation,
     /// Deviation mapped to the ends of the colour ramp, in millimetres.
@@ -64,7 +62,6 @@ impl Default for AlignSettings {
         Self {
             // Allow a roughly placed mesh to find the other surface.
             influence_radius_mm: 2.0,
-            matching_ratio: 0.8,
             orientation: Orientation::Match,
             // Start at the clinical range: zero to 100 um.
             scale_mm: WORKING_MAX_MM,
@@ -85,8 +82,6 @@ impl AlignSettings {
     fn search(self) -> occluview_align::SearchSettings {
         use occluview_align::{NormalPolicy, SearchSettings};
         SearchSettings {
-            influence_radius_mm: self.influence_radius_mm,
-            overlap_prior: Some(self.matching_ratio),
             normal_policy: match self.orientation {
                 Orientation::Match => NormalPolicy::Match,
                 Orientation::Inverted => NormalPolicy::Opposed,
@@ -135,13 +130,12 @@ impl AlignSettings {
     }
 }
 
-/// Whether a settings edit changes the optimizer's interpretation of a fit.
+/// Whether a settings edit changes what a fit or its measurement means.
 /// Display range and visibility are excluded: they can recolour
-/// an already landed measurement, while these three inputs require a new Best
+/// an already landed measurement, while these two inputs require a new Best
 /// fit result before the heatmap may describe the session again.
 pub(crate) fn matching_inputs_changed(before: AlignSettings, after: AlignSettings) -> bool {
-    before.matching_ratio.to_bits() != after.matching_ratio.to_bits()
-        || before.influence_radius_mm.to_bits() != after.influence_radius_mm.to_bits()
+    before.influence_radius_mm.to_bits() != after.influence_radius_mm.to_bits()
         || before.orientation != after.orientation
 }
 

@@ -87,7 +87,7 @@ pub(crate) struct ReviewKey {
     pub(crate) transforms: [Affine3A; 2],
     pub(crate) visible: [bool; 2],
     pub(crate) mask_revision: u64,
-    pub(crate) matching: [u64; 2],
+    pub(crate) influence_radius: u64,
     pub(crate) orientation: occluview_align::Orientation,
 }
 
