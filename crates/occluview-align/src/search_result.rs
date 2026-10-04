@@ -27,19 +27,17 @@ pub enum Confidence {
 pub enum Completion {
     /// All scheduled work completed.
     Complete,
-    /// A deterministic work allowance was exhausted.
-    WorkLimit,
     /// The wall deadline was reached.
     Deadline,
     /// The caller requested cancellation.
     Cancelled,
     /// No eligible nondegenerate triangles were available.
     NoUsableSurface,
-    /// The representation exceeded available resources.
+    /// An input is larger than the search admits.
     ResourceLimit,
 }
 
-/// Correspondence orientation, independent of rotation proposals.
+/// Correspondence orientation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum NormalPolicy {
     /// Same facing normals.
@@ -47,7 +45,7 @@ pub enum NormalPolicy {
     Match,
     /// Opposite facing normals.
     Opposed,
-    /// Ignore facing sign.
+    /// Either facing; both are searched.
     Unsigned,
 }
 
@@ -56,14 +54,10 @@ pub enum NormalPolicy {
 pub enum MissingReason {
     /// No counterparts.
     NoSupport,
-    /// Insufficient independent samples.
-    TooFewSamples,
     /// The geometric constraint is deficient.
     Degenerate,
     /// This quantity has not been evaluated.
     NotEvaluated,
-    /// Its evaluation was interrupted.
-    Interrupted,
 }
 
 /// Numeric field and side for an invalid input.
@@ -87,10 +81,6 @@ pub enum InputField {
     LandmarkFixed,
     /// Landmark normal scalar.
     LandmarkNormals,
-    /// Search radius.
-    InfluenceRadius,
-    /// Overlap prior.
-    OverlapPrior,
 }
 
 /// The only numeric hard error; indices address scalars in the named field.
@@ -128,30 +118,24 @@ pub enum InputCheck {
     Partial {
         /// Scalars checked in stable input order.
         checked: usize,
-        /// Total scalar ceiling, saturated if necessary; optional landmark
-        /// normals are conservatively included when their shape was not inspected.
+        /// Total scalar count, saturated if necessary.
         total: usize,
     },
 }
-/// Stable proposal family (order defines family ids).
+
+/// Where a candidate's motion came from (order defines family ids).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SeedOrigin {
-    /// Current placement.
+    /// Current placement, or a caller's seed.
     Start,
     /// Operator landmarks.
     Landmarks,
-    /// Eligible region frame.
-    MaskFrame,
-    /// Authored relative feature sign.
+    /// Look-alike places, surfaces facing the same way.
     FeatureSame,
-    /// Reversed relative feature sign.
+    /// Look-alike places, surfaces facing opposite ways.
     FeatureOpposed,
-    /// Proper principal frame rotation.
+    /// Principal frames of the two surfaces.
     PrincipalFrame,
-    /// Rotation grid and patch translation.
-    GridPatch,
-    /// Descriptor-free congruent base.
-    CongruentBasis,
 }
 
 /// Stable family and proposal ordinals; never a random identifier.
@@ -162,27 +146,26 @@ pub struct CandidateId {
     /// Proposal ordinal within that family.
     pub proposal: u32,
 }
-/// Local termination is independent of pose confidence.
+
+/// How the seating of a pose ended; independent of pose confidence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum RefinementTermination {
-    /// No local solve ran.
+    /// No seating ran.
     #[default]
     NotStarted,
-    /// No improving trial remained.
-    Stationary,
-    /// The local step became small.
+    /// The step became small.
     StepSmall,
-    /// Iteration allowance exhausted.
+    /// The rounds ran out.
     IterationLimit,
     /// No usable correspondence set.
     NoCorrespondences,
     /// The numerical constraint was deficient.
     Singular,
-    /// A trial was invalid or out of bounds.
+    /// A step left the finite range.
     NumericalTrialRejected,
-    /// Cancelled local work.
+    /// Cancelled.
     Cancelled,
-    /// Deadline ended local work.
+    /// The deadline ended it.
     Deadline,
 }
 
@@ -193,45 +176,26 @@ pub enum EvidenceReason {
     InsufficientSupport,
     /// Geometric motion is unconstrained.
     UnobservableMotion,
-    /// A competing basin remains.
+    /// A competing pose remains.
     CloseRival,
-    /// Requested normal policy is not supported.
+    /// The common surfaces do not face the way the normal policy asks.
     PolicyConflict,
-    /// Coherent edge ratios suggest physical scale or deformation.
+    /// The two surfaces differ in size: other units, or a deformed object.
     SuspectedUnitsOrDeformation,
-    /// Competing fitting surfaces remain.
-    ShellAlternatives,
-    /// Only unsupported border projections were found.
-    BorderOnly,
-    /// No reliable surface normals.
+    /// Triangles of a scan do not face one way; its normals are unreliable.
     MissingNormals,
-    /// The representation is incomplete or unsuitable for this solve.
-    PartialGeometry,
     /// Some numeric input is not yet checked.
     UnvalidatedInput,
-    /// Local optimization stopped improving.
-    Stalled,
-    /// Work or time ended before all evidence was evaluated.
+    /// Time ended before all evidence was evaluated.
     BudgetExhausted,
     /// Finite zero seed quaternion was replaced with identity.
     InvalidSeed,
-    /// Landmark fitting did not determine a pose.
+    /// The operator's landmarks did not determine a pose.
     LandmarkRejected(FitRejection),
-    /// A finite legacy refusal retained its last checkpoint.
-    LegacyRejected(FitRejection),
-    /// Independent holdout/rival verification has not been established.
+    /// The pose has not been shown to be the only one.
     UniquenessNotEstablished,
     /// Malformed or degenerate triangles were omitted.
     InvalidTopology,
-    /// A numeric setting was clamped, with its original and effective values.
-    SettingClamped {
-        /// Numeric setting name.
-        field: InputField,
-        /// Supplied finite value.
-        original: f64,
-        /// Effective finite value.
-        effective: f64,
-    },
 }
 
 /// Residual statistics on the stated population, in millimetres.
@@ -244,88 +208,77 @@ pub struct ResidualSummary {
     /// Area-weighted 95th percentile.
     pub p95: f64,
 }
-/// Evidence populations are explicit; absent quantities never become zero.
+
+/// What one pose is worth. The common region is the surface of either scan
+/// that lies within half a millimetre of the other and faces the way the
+/// normal policy asks; absent quantities never become zero.
 #[derive(Clone, Debug, Default, PartialEq)]
 #[expect(
     clippy::struct_excessive_bools,
     reason = "independent evidence passes have separate completeness invariants"
 )]
 pub struct CandidateEvidence {
-    /// Moving/fixed eligible areas; unavailable until full area accounting.
+    /// Moving/fixed eligible areas.
     pub eligible_area_mm2: Metric<[f64; 2]>,
-    /// Measured represented areas; proxy area is never silently normalized.
-    pub representation_area_mm2: Metric<[f64; 2]>,
-    /// Complete original-surface representations, separately for each side.
+    /// Whether each scan was read on its triangles (true) or on an even
+    /// cloud of them (false), separately for moving and fixed.
     pub original_surface_exact: [bool; 2],
-    /// Moving/fixed area actually queried. Unqueried eligible area contributes
-    /// no support; role evidence is never extrapolated to whole surface area.
-    pub queried_population_area_mm2: Metric<[f64; 2]>,
-    /// Compatible queried common area per direction, absent without normals.
-    pub policy_compatible_area_mm2: Metric<[Option<f64>; 2]>,
-    /// Directional area fractions within .2 mm, denominators eligible areas.
+    /// Moving/fixed share of eligible area within 0.2 mm of the other scan.
     pub coverage_02: Metric<[f64; 2]>,
-    /// Directional area fractions within .5 mm, denominators eligible areas.
+    /// Moving/fixed share of eligible area within 0.5 mm of the other scan.
     pub coverage_05: Metric<[f64; 2]>,
-    /// Lesser matched directional area in square millimetres.
+    /// Lesser of the two directions' common area, in square millimetres.
     pub common_area_mm2: Metric<f64>,
-    /// Common area divided by smaller eligible area.
+    /// Common area divided by the smaller eligible area.
     pub overlap_smaller: Metric<f64>,
-    /// Retained fraction of smaller eligible area.
-    pub trim_fraction: Metric<f64>,
-    /// Eligible common-region area used for residuals.
-    pub common_region_area_mm2: Metric<f64>,
-    /// Independent common-region Euclidean residuals.
+    /// Distances over the common region, both directions.
     pub euclidean_mm: Metric<ResidualSummary>,
-    /// Independent common-region plane residuals.
-    pub plane_mm: Metric<ResidualSummary>,
-    /// Area within .2 divided by area within .5 on common region.
+    /// Common area within 0.2 mm divided by common area.
     pub inlier_ratio: Metric<f64>,
-    /// Lesser directional count of occupied 1 mm common cells.
+    /// Lesser directional count of occupied 1 mm cells of the common region.
     pub effective_cells: Metric<u32>,
-    /// Compatible normal area divided by queried common area.
+    /// Common area divided by all area within 0.5 mm, whichever way it faces.
     pub orientation_fraction: Metric<f64>,
-    /// Back-projection passing common area divided by queried common area.
+    /// Lesser directional common area divided by the greater.
     pub reciprocal_fraction: Metric<f64>,
-    /// Undamped training plane information; never independent verification.
-    pub training_info_eigenvalues: Metric<[f64; 6]>,
-    /// Training null twists in radius-normalized coordinates.
-    pub training_weak_twists: Vec<[f64; 6]>,
-    /// Undamped area-weighted common plane information eigenvalues.
+    /// Undamped area-weighted plane information of the common region, as
+    /// rising eigenvalues; rotations are scaled by the region's radius.
     pub info_eigenvalues: Metric<[f64; 6]>,
-    /// Paired normalized information eigenvectors, ascending eigenvalue order.
+    /// The eigenvectors paired with `info_eigenvalues`.
     pub info_eigenvectors: Metric<[[f64; 6]; 6]>,
-    /// Unconstrained normalized motion eigenvectors.
+    /// Motions the common region does not constrain.
     pub weak_twists: Vec<[f64; 6]>,
-    /// Relative score gap to fully evaluated distinct rival.
+    /// Share by which this pose's score exceeds its best rival's.
     pub rival_gap: Metric<f64>,
-    /// Holdout RMS divided by max(training RMS,.02 mm).
+    /// RMS over probes that did not seat the pose, divided by the RMS over
+    /// those that did (at least 0.02 mm).
     pub holdout_ratio: Metric<f64>,
-    /// Maximum jackknife centroid/rotation drift in mm/degrees.
+    /// Largest drift of the common region's centre, in millimetres, and
+    /// largest turn, in degrees, when each eighth of the surface is left out.
     pub jackknife_mm_deg: Metric<[f64; 2]>,
-    /// Common-region geometric ranking objective.
+    /// Common area of both directions, each place counted less the farther
+    /// it stands off; the ranking objective.
     pub score: Metric<f64>,
-    /// All mandatory independent evidence passes completed.
+    /// Share by which the moving surface would have to grow to lie better on
+    /// the fixed one; two scans of one object read zero.
+    pub size_trend: Metric<f64>,
+    /// All evidence passes completed.
     pub verification_complete: bool,
-    /// Both independent holdout directions finished without interrupted queries.
+    /// Probes that did not seat the pose were read in both directions.
     pub holdout_complete: bool,
-    /// All eight omitted-stratum solves completed.
+    /// All eight leave-one-out seatings completed.
     pub jackknife_complete: bool,
-    /// Every mandatory rival was measured on the common verification definition.
+    /// Every rival was seated and read to the end.
     pub rival_probes_complete: bool,
-    /// No eligible area is unrepresented, or a conservative calibrated bound exists.
-    pub population_coverage_complete: bool,
-    /// Transitional vertex-based diagnostics; never substituted for area evidence.
-    pub legacy_report: Option<crate::IcpReport>,
 }
-/// Search domain and default resource allowance.
+
+/// Search domain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum SearchProfile {
-    /// Global interactive search.
+    /// Global search.
     #[default]
     Standard,
-    /// Longer global search.
-    Extended,
-    /// Local neighborhood only; never Verified.
+    /// The neighbourhood of the given placements only; never Verified.
     Local,
 }
 
@@ -339,22 +292,7 @@ pub enum RegionPolicy {
     ReferenceRoi,
 }
 
-/// Deterministic work and memory ceilings.
-#[derive(Clone, Debug, PartialEq)]
-pub struct SearchBudget {
-    /// Total nearest queries.
-    pub query_calls: u64,
-    /// Total scalar triangle distance evaluations.
-    pub triangle_tests: u64,
-    /// Total descriptor and point-pair evaluations.
-    pub point_pair_tests: u64,
-    /// Total connected patch graph visits.
-    pub patch_edge_visits: u64,
-    /// Additional resident job allocations.
-    pub memory_bytes: usize,
-}
-
-/// Finite settings are clamped with recorded evidence.
+/// What the caller may choose about a search.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SearchSettings {
     /// Correspondence facing rule.
@@ -365,109 +303,49 @@ pub struct SearchSettings {
     pub top_k: usize,
     /// Registration population definition.
     pub reference_regions: RegionPolicy,
-    /// Radius, effective clamp .5 through 4 mm.
-    pub influence_radius_mm: f64,
-    /// Optional retained-area ceiling, clamp .01 through 1.
-    pub overlap_prior: Option<f64>,
-    /// Deterministic work ceilings.
-    pub work_budget: SearchBudget,
     /// Wall allowance including validation.
     pub wall_limit: Duration,
 }
 
-/// Work and coverage of one deterministic proposal family.
-#[derive(Clone, Debug, PartialEq)]
+/// Motions of one origin.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FamilyEvidence {
-    /// Stable proposal origin.
+    /// The origin.
     pub family: SeedOrigin,
-    /// This family is enabled for the profile/request.
-    pub enabled: bool,
-    /// Attempted scoring passes, including cheap proxy passes.
-    pub attempted: u64,
-    /// Completed scoring passes.
-    pub scored: u64,
-    /// Basins retained under this primary family id.
+    /// Motions examined.
+    pub examined: u32,
+    /// Candidates returned under this origin.
     pub retained: u32,
-    /// Fully evaluated grid rotations; zero for non-grid families.
-    pub rotations_attempted: u32,
-    /// Grid translation placements attempted before accurate rescoring.
-    pub translations_attempted: u64,
-    /// Charged local point-pair work.
-    pub point_pair_tests: u64,
-    /// Optional family's explicit local point-pair ceiling.
-    pub local_point_pair_limit: Option<u64>,
-    /// Local/global interruption, or none after a completed schedule.
-    pub interruption: Option<Completion>,
-    /// The configured family schedule finished. An interrupted grid prefix
-    /// does not have the complete grid's covering certificate.
-    pub complete: bool,
 }
 
 /// Completed work; elapsed time is excluded from determinism comparisons.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct SearchWork {
-    /// Numerical continuations after completed independent evidence releases headroom.
-    pub refinement_resumptions: u32,
-    /// Family schedules, including interruption and actual grid coverage.
+    /// Motions examined and candidates returned, per origin.
     pub families: Vec<FamilyEvidence>,
-    /// Examined proposal count.
+    /// Examined motion count.
     pub examined_poses: u64,
-    /// Returned finite pose count.
+    /// Returned pose count.
     pub retained_poses: u32,
-    /// Completed local iterations.
+    /// Completed seating rounds.
     pub iterations: u64,
-    /// Completed comparable numerical checkpoint scoring passes.
-    pub refinement_scored_poses: u64,
-    /// Numerical basins entered at coarse, middle and dense resolution.
-    pub refined_basins: [u32; 3],
-    /// Charged nearest calls.
-    pub query_calls: u64,
-    /// Charged distance tests.
-    pub triangle_tests: u64,
-    /// Charged point-pair tests.
-    pub point_pair_tests: u64,
-    /// Charged graph edge visits.
-    pub patch_edge_visits: u64,
-    /// Charged numeric/topology/bucket/cell operations.
-    pub preprocessing_operations: u64,
-    /// Conservative largest additional allocation reservation.
-    pub peak_memory_bytes: u64,
     /// Elapsed wall time.
     pub elapsed: Duration,
-    /// Scheduled evidence not completed.
-    pub unfinished_stages: Vec<&'static str>,
 }
 
 /// Versioned interpretation of a result, independent of scene authority.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SearchProvenance {
-    /// Effective ordinary-operation ceiling, including topology and bucket work.
-    pub operation_limit: u64,
-    /// Ordinary work allocated to proposals after completed preparation.
-    pub proposal_operation_allowance: u64,
-    /// Effective settings after validation/clamping and profile ceilings;
-    /// absent if interruption precedes numeric validation.
-    pub effective_settings: Option<SearchSettings>,
-    /// Version of physical evidence thresholds; absent verifier remains explicit.
+    /// Settings in effect, after clamping.
+    pub settings: SearchSettings,
+    /// Version of the physical evidence thresholds.
     pub threshold_set_id: &'static str,
-    /// Version of rotation recipe and frozen prefix ordering.
-    pub grid_recipe_id: &'static str,
     /// Algorithm contract version.
     pub algorithm_version: u32,
     /// Caller moving/fixed revision tokens.
     pub input_revisions: [u64; 2],
-    /// Fixed PRNG seed.
-    pub seed: u64,
-    /// Effective facing policy.
-    pub normal_policy: NormalPolicy,
-    /// Effective eligibility policy.
-    pub reference_regions: RegionPolicy,
     /// Whether each input carries exclusions.
     pub masked: [bool; 2],
-    /// Area fraction covered by complete representation accounting.
-    pub processed_area_fraction: Metric<[f64; 2]>,
-    /// Effective work allowance.
-    pub budget: SearchBudget,
 }
 
 /// Finite proper rigid correction of the snapshotted moving input frame.
@@ -483,9 +361,9 @@ pub struct AlignmentCandidate {
     pub evidence: CandidateEvidence,
     /// Uncertainty and interruption explanations.
     pub reasons: Vec<EvidenceReason>,
-    /// Proposal origins.
+    /// Where the motion came from.
     pub seeds: Vec<SeedOrigin>,
-    /// Local solve termination.
+    /// How its seating ended.
     pub refinement: RefinementTermination,
 }
 
@@ -498,48 +376,24 @@ pub struct AlignmentSearchResult {
     pub completion: Completion,
     /// Validation coverage.
     pub input_check: InputCheck,
-    /// Completed work and unfinished evidence.
+    /// Completed work.
     pub work: SearchWork,
     /// Reproducible interpretation.
     pub provenance: SearchProvenance,
 }
 
-impl Default for SearchBudget {
-    fn default() -> Self {
-        Self {
-            query_calls: 8_000_000,
-            triangle_tests: 80_000_000,
-            point_pair_tests: 32_000_000,
-            patch_edge_visits: 2_000_000,
-            memory_bytes: 256 * 1024 * 1024,
-        }
-    }
-}
 impl SearchSettings {
-    /// Construct the complete preset, including its wall and work allowances.
-    /// Callers can then lower individual limits explicitly. Merely changing
-    /// `profile` on an existing settings value preserves its explicit limits.
+    /// The preset of a profile, including its wall allowance.
     pub fn for_profile(profile: SearchProfile) -> Self {
-        let (wall, queries, triangles, pairs, edges) = match profile {
-            SearchProfile::Standard => (10, 8_000_000, 80_000_000, 32_000_000, 2_000_000),
-            SearchProfile::Extended => (30, 20_000_000, 240_000_000, 128_000_000, 8_000_000),
-            SearchProfile::Local => (2, 1_000_000, 10_000_000, 32_000_000, 2_000_000),
-        };
         Self {
             normal_policy: NormalPolicy::Match,
             profile,
             top_k: 5,
             reference_regions: RegionPolicy::AllEligible,
-            influence_radius_mm: 2.,
-            overlap_prior: None,
-            wall_limit: Duration::from_secs(wall),
-            work_budget: SearchBudget {
-                query_calls: queries,
-                triangle_tests: triangles,
-                point_pair_tests: pairs,
-                patch_edge_visits: edges,
-                memory_bytes: 256 * 1024 * 1024,
-            },
+            wall_limit: Duration::from_secs(match profile {
+                SearchProfile::Standard => 10,
+                SearchProfile::Local => 5,
+            }),
         }
     }
 }
@@ -548,6 +402,7 @@ impl Default for SearchSettings {
         Self::for_profile(SearchProfile::Standard)
     }
 }
+
 /// A borrowed mesh and its finite authored frame; geometry is never mutated.
 #[derive(Clone, Copy, Debug)]
 pub struct MeshInput<'a> {
@@ -575,48 +430,8 @@ pub struct AlignmentInput<'a> {
     pub moving: MeshInput<'a>,
     /// Fixed local mesh and authored frame.
     pub fixed: MeshInput<'a>,
-    /// Optional operator constraints; unavailable fits remain warnings.
+    /// Optional operator constraints; an unusable set is reported, not fatal.
     pub landmarks: &'a [PointPair],
     /// Optional rigid corrections of the authored moving frame.
     pub seeds: &'a [Rigid],
-}
-
-#[cfg(test)]
-mod preset_tests {
-    use super::*;
-    #[test]
-    fn profiles_set_effective_deadline_and_work_allowance() {
-        for (profile, seconds, queries, triangles, pairs) in [
-            (
-                SearchProfile::Standard,
-                10,
-                8_000_000,
-                80_000_000,
-                32_000_000,
-            ),
-            (
-                SearchProfile::Extended,
-                30,
-                20_000_000,
-                240_000_000,
-                128_000_000,
-            ),
-            (SearchProfile::Local, 2, 1_000_000, 10_000_000, 32_000_000),
-        ] {
-            let mut settings = SearchSettings::for_profile(profile);
-            let control = crate::SearchControl::new(crate::CancelFlag::new(), settings.wall_limit);
-            let limits = control.geometry_control(&settings).limits();
-            assert_eq!(settings.wall_limit, Duration::from_secs(seconds));
-            assert_eq!(
-                (
-                    limits.query_calls,
-                    limits.triangle_tests,
-                    limits.point_pair_tests
-                ),
-                (queries, triangles, pairs)
-            );
-            settings.work_budget.query_calls = 7;
-            assert_eq!(control.geometry_control(&settings).limits().query_calls, 7);
-        }
-    }
 }

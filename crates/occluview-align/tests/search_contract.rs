@@ -63,11 +63,8 @@ fn finite_empty_or_masked_returns_weak() {
             r.candidates[0].evidence.euclidean_mm,
             Metric::Missing(_)
         ));
-        assert!(matches!(
-            r.candidates[0].evidence.plane_mm,
-            Metric::Missing(_)
-        ));
-        assert!(r.candidates[0].evidence.legacy_report.is_none());
+        assert!(matches!(r.candidates[0].evidence.score, Metric::Missing(_)));
+        assert_eq!(r.completion, Completion::NoUsableSurface);
     }
 }
 
@@ -199,18 +196,6 @@ fn nonfinite_input_is_the_only_numeric_error() {
                 })
             );
         }
-        for field in [InputField::InfluenceRadius, InputField::OverlapPrior] {
-            let mut s = SearchSettings::default();
-            if field == InputField::InfluenceRadius {
-                s.influence_radius_mm = bad;
-            } else {
-                s.overlap_prior = Some(bad);
-            }
-            assert_eq!(
-                search_alignment(&input(empty, empty), &s, &SearchControl::default()),
-                Err(AlignmentInputError::NonFinite { field, index: 0 })
-            );
-        }
     }
     let c = SearchControl::default();
     c.cancel();
@@ -236,16 +221,16 @@ fn nonfinite_input_is_the_only_numeric_error() {
     }
 }
 
+/// A pose the evidence does not support is returned Weak, with the reason.
 #[test]
-fn finite_unverified_candidates_retain_checkpoint_reasons() {
+fn unsupported_poses_are_weak_and_say_why() {
     let plane = arch::plane();
     let fixed = arch::sphere();
     let result = search(&input(plane.soup(), fixed.soup()));
     proper(&result);
-    assert_eq!(result.candidates[0].confidence, Confidence::Weak);
-    assert!(result.candidates[0]
-        .reasons
-        .contains(&EvidenceReason::UniquenessNotEstablished));
+    assert_ne!(result.candidates[0].confidence, Confidence::Verified);
+    assert_ne!(result.candidates[0].confidence, Confidence::Probable);
+    assert!(!result.candidates[0].reasons.is_empty());
     let far = operators::rigid_offset(
         &plane,
         Rigid::new(DQuat::IDENTITY, DVec3::new(100., 0., 0.)),
@@ -261,8 +246,9 @@ fn finite_unverified_candidates_retain_checkpoint_reasons() {
     proper(&result);
 }
 
-/// Independent negative controls exercise the public geometry path. Missing
-/// independent verification cannot certify any of them.
+/// Independent negative controls exercise the public geometry path, in the
+/// neighbourhood of the placement and globally. Shapes that slide on one
+/// another and arches of different patients are never certified.
 #[test]
 fn negative_controls_remain_uncertified() {
     let shapes = [arch::plane(), arch::cylinder(), arch::sphere()];
@@ -274,47 +260,78 @@ fn negative_controls_remain_uncertified() {
                 assert!(r
                     .candidates
                     .iter()
-                    .all(|c| c.confidence != Confidence::Verified));
+                    .all(|c| !matches!(c.confidence, Confidence::Verified | Confidence::Probable)));
             }
         }
     }
     for seed in 0..10 {
         let (a, b) = arch::negative_arch_pair(seed);
-        let r = search(&input(a.soup(), b.soup()));
-        proper(&r);
-        assert!(r
-            .candidates
-            .iter()
-            .all(|c| c.confidence == Confidence::Weak));
+        for profile in [SearchProfile::Local, SearchProfile::Standard] {
+            let r = search_alignment(
+                &input(a.soup(), b.soup()),
+                &SearchSettings::for_profile(profile),
+                &SearchControl::default(),
+            )
+            .unwrap();
+            proper(&r);
+            assert!(
+                r.candidates
+                    .iter()
+                    .all(|c| !matches!(c.confidence, Confidence::Verified | Confidence::Probable)),
+                "seed {seed} {profile:?}: {:?}",
+                r.candidates
+                    .iter()
+                    .map(|c| (
+                        c.confidence,
+                        c.evidence.overlap_smaller,
+                        c.evidence.common_area_mm2,
+                        c.evidence.inlier_ratio,
+                        c.evidence.euclidean_mm,
+                        c.evidence.rival_gap,
+                        c.evidence.size_trend,
+                        c.evidence.jackknife_mm_deg,
+                        c.evidence.reciprocal_fraction,
+                        c.evidence.orientation_fraction,
+                    ))
+                    .collect::<Vec<_>>()
+            );
+        }
     }
 }
 
+/// Equal input gives an equal result, down to the last bit of every pose and
+/// every measurement; only the elapsed time may differ.
 #[test]
-fn fixed_work_provenance_and_candidates_are_reproducible() {
-    let plane = arch::plane();
-    let request = input(plane.soup(), plane.soup());
-    let mut settings = SearchSettings::for_profile(SearchProfile::Local);
-    settings.top_k = usize::MAX;
-    settings.influence_radius_mm = 6.;
-    settings.overlap_prior = Some(-0.2);
-    settings.work_budget.query_calls = 99;
-    let mut previous = None;
+fn equal_requests_give_equal_results() {
+    let fixed = arch::dental_arch(&arch::ArchSpec::default());
+    let crop = operators::crop_by_area(
+        &operators::resample_density(&fixed, 1.),
+        0.5,
+        operators::CropWindow::OneSided,
+    );
+    let moving = operators::rigid_offset(
+        &crop,
+        Rigid::new(
+            DQuat::from_axis_angle(DVec3::new(0.2, 0.9, -0.4).normalize(), 1.9),
+            DVec3::new(14., -9., 6.),
+        ),
+    );
+    let request = input(moving.soup(), fixed.soup());
+    let settings = SearchSettings {
+        top_k: usize::MAX,
+        ..SearchSettings::default()
+    };
+    let mut previous: Option<AlignmentSearchResult> = None;
     for _ in 0..3 {
         let mut result = search_alignment(&request, &settings, &SearchControl::default()).unwrap();
         proper(&result);
-        let effective = result.provenance.effective_settings.as_ref().unwrap();
-        assert_eq!(effective.top_k, 5);
-        assert_eq!(effective.influence_radius_mm, 4.);
-        assert_eq!(effective.overlap_prior, Some(0.01));
-        assert_eq!(effective.wall_limit, std::time::Duration::from_secs(2));
-        assert_eq!(effective.work_budget.query_calls, 99);
-        assert_eq!(result.provenance.operation_limit, 96_000_000);
+        assert_eq!(result.completion, Completion::Complete);
+        assert_eq!(result.provenance.settings.top_k, 5);
         assert_eq!(result.provenance.input_revisions, [1, 2]);
-        assert_eq!(result.provenance.algorithm_version, 34);
-        assert_eq!(result.completion, Completion::WorkLimit);
-        assert!(result.work.query_calls <= 99);
+        assert_eq!(result.provenance.algorithm_version, 40);
+        assert_eq!(result.work.retained_poses as usize, result.candidates.len());
         for family in &result.work.families {
-            assert!(family.scored <= family.attempted);
+            assert!(family.retained <= family.examined);
         }
         result.work.elapsed = std::time::Duration::ZERO;
         if let Some(previous) = &previous {
@@ -322,6 +339,45 @@ fn fixed_work_provenance_and_candidates_are_reproducible() {
         }
         previous = Some(result);
     }
+}
+
+/// A search ended by the caller or the clock still returns finite poses,
+/// says why it ended, and certifies nothing.
+#[test]
+fn an_ended_search_returns_what_it_has() {
+    let fixed = arch::dental_arch(&arch::ArchSpec::default());
+    let moving = operators::rigid_offset(
+        &operators::resample_density(&fixed, 1.),
+        Rigid::new(DQuat::from_rotation_x(0.6), DVec3::new(5., 2., -3.)),
+    );
+    let request = input(moving.soup(), fixed.soup());
+    let late = SearchSettings {
+        wall_limit: std::time::Duration::from_millis(40),
+        ..SearchSettings::default()
+    };
+    let result = search_alignment(&request, &late, &SearchControl::default()).unwrap();
+    proper(&result);
+    assert_eq!(result.completion, Completion::Deadline);
+    assert!(result
+        .candidates
+        .iter()
+        .all(|c| c.confidence != Confidence::Verified));
+    assert!(result.work.elapsed < std::time::Duration::from_secs(2));
+
+    let control = SearchControl::default();
+    let flag = control.clone();
+    let stopper = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        flag.cancel();
+    });
+    let result = search_alignment(&request, &SearchSettings::default(), &control).unwrap();
+    stopper.join().unwrap();
+    proper(&result);
+    assert_eq!(result.completion, Completion::Cancelled);
+    assert!(result
+        .candidates
+        .iter()
+        .all(|c| c.confidence != Confidence::Verified));
 }
 
 #[test]
@@ -460,49 +516,71 @@ fn synthetic_support_has_independent_truth_and_operators() {
     }
 }
 
+/// Landmarks give a motion of their own; landmarks that cannot give one are
+/// reported and the search goes on without them.
 #[test]
-fn landmarks_and_unverified_scores_keep_finite_evidence() {
-    let plane = arch::plane();
-    let pairs = [
-        PointPair {
-            moving_local: DVec3::ZERO,
-            fixed_local: DVec3::X,
-            normals_local: Some([DVec3::Z; 2]),
-        },
-        PointPair {
-            moving_local: DVec3::new(3., 0., 0.),
-            fixed_local: DVec3::new(4., 0., 0.),
-            normals_local: Some([DVec3::Z; 2]),
-        },
-    ];
-    let mut request = input(plane.soup(), plane.soup());
+fn landmarks_are_used_or_their_refusal_is_reported() {
+    let fixed = arch::dental_arch(&arch::ArchSpec::default());
+    let truth = Rigid::new(
+        DQuat::from_axis_angle(DVec3::new(0.5, -0.3, 0.8).normalize(), 2.2),
+        DVec3::new(20., 8., -11.),
+    );
+    let moving = operators::rigid_offset(&operators::resample_density(&fixed, 1.), truth);
+    // Three clicked places of the moving scan and where each belongs, each
+    // click a fraction of a millimetre off.
+    let count = moving.positions.len() / 3;
+    let pairs: Vec<PointPair> = [count / 7, count / 2, count * 6 / 7]
+        .into_iter()
+        .enumerate()
+        .map(|(k, vertex)| {
+            let moved = moving.point(vertex);
+            #[allow(clippy::cast_precision_loss)]
+            let slip = DVec3::new(0.2, -0.15, 0.1) * (k as f64 - 1.);
+            PointPair {
+                moving_local: moved,
+                fixed_local: truth.apply(moved) + slip,
+                normals_local: None,
+            }
+        })
+        .collect();
+    let mut request = input(moving.soup(), fixed.soup());
     request.landmarks = &pairs;
     let result = search(&request);
     proper(&result);
-    assert_eq!(result.candidates[0].confidence, Confidence::Weak);
     assert!(result
-        .candidates
+        .work
+        .families
         .iter()
-        .any(|c| c.seeds.contains(&SeedOrigin::Landmarks)));
-    assert!(result
-        .candidates
-        .iter()
-        .all(|c| c.evidence.legacy_report.is_none()));
+        .any(|family| { family.family == SeedOrigin::Landmarks && family.examined == 1 }));
+    let probes: Vec<DVec3> = (0..count).step_by(97).map(|i| moving.point(i)).collect();
+    let error = metrics::probe_error(result.candidates[0].pose, truth, &probes);
+    assert!(
+        error[0] < 0.05,
+        "landmarks lead the local search home: {error:?}"
+    );
     assert!(matches!(
         result.candidates[0].evidence.score,
         Metric::Measured(_)
     ));
-    let gum = arch::dental_arch(&arch::ArchSpec {
-        teeth: 0,
-        grid: [80, 16],
-        ..arch::ArchSpec::default()
-    });
-    let crop = operators::crop_by_area(&gum, 0.3, operators::CropWindow::OneSided);
-    let result = search(&input(crop.soup(), gum.soup()));
+
+    // Three clicks on one line turn freely about it.
+    let line: Vec<PointPair> = (0..3)
+        .map(|k| PointPair {
+            moving_local: DVec3::new(f64::from(k) * 5., 0., 0.),
+            fixed_local: DVec3::new(f64::from(k) * 5., 1., 0.),
+            normals_local: None,
+        })
+        .collect();
+    request.landmarks = &line;
+    let result = search(&request);
     proper(&result);
-    assert_eq!(result.candidates[0].confidence, Confidence::Weak);
-    assert!(
-        matches!(result.candidates[0].evidence.score, Metric::Measured(_)),
-        "measured finite proposal diagnostics survive without authorization"
-    );
+    assert!(result.candidates[0].reasons.iter().any(|reason| matches!(
+        reason,
+        EvidenceReason::LandmarkRejected(FitRejection::Degenerate { .. })
+    )));
+    assert!(result
+        .work
+        .families
+        .iter()
+        .all(|family| family.family != SeedOrigin::Landmarks || family.examined == 0));
 }

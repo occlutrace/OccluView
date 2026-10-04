@@ -1,111 +1,94 @@
-//! Synthetic-only large representation regressions.
+//! Synthetic-only regression: scans of a million triangles are searched whole.
 #![allow(
     clippy::unwrap_used,
-    clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
-    clippy::panic,
     clippy::print_stdout
 )]
-use glam::{DAffine3, DVec3};
-use occluview_align::{prepare_alignment_surface, MeshInput, RegionPolicy, Soup, SurfaceSide};
-use occluview_geometry::surface::{GeometryControl, GeometryLimits, QueryOutcome};
-use std::time::Duration;
+mod support;
+use glam::{DQuat, DVec3};
+use occluview_align::{
+    search_alignment, Completion, Confidence, Rigid, SearchControl, SearchSettings,
+};
+use std::collections::HashMap;
+use support::{alignment_input, arch, metrics, operators, SyntheticMesh};
 
-/// D4: full area is accounted before a bounded distributed representation.
-#[test]
-fn large_representation_remains_useful() {
-    for count in [250_000, 1_000_000] {
-        // Independent triangles cover a fixed 10 x 10 mm planar region.
-        let width = 500usize;
-        let height = count / (2 * width);
-        let mut positions = Vec::new();
-        let mut indices = Vec::new();
-        for y in 0..=height {
-            for x in 0..=width {
-                positions.extend([
-                    10. * x as f32 / width as f32,
-                    10. * y as f32 / height as f32,
-                    0.,
-                ]);
-            }
-        }
-        for y in 0..height {
-            for x in 0..width {
-                let a = (y * (width + 1) + x) as u32;
-                let b = a + 1;
-                let c = a + (width + 1) as u32;
-                indices.extend([a, b, c, b, c + 1, c]);
-            }
-        }
-        let control = GeometryControl::new(
-            occluview_align::CancelFlag::default(),
-            Duration::from_secs(10),
-            GeometryLimits::default(),
+/// Every triangle cut into four at the middles of its edges, the middles
+/// shared between neighbours so the surface stays one piece.
+fn quartered(mesh: &SyntheticMesh) -> SyntheticMesh {
+    let mut out = mesh.clone();
+    out.triangles.clear();
+    out.region_ids.clear();
+    let mut middles: HashMap<(u32, u32), u32> = HashMap::new();
+    let mut middle = |a: u32, b: u32, out: &mut SyntheticMesh| {
+        *middles.entry((a.min(b), a.max(b))).or_insert_with(|| {
+            let point = (mesh.point(a as usize) + mesh.point(b as usize)) * 0.5;
+            out.positions
+                .extend(point.to_array().map(|value| value as f32));
+            out.parameters.push([0.; 2]);
+            (out.positions.len() / 3 - 1) as u32
+        })
+    };
+    for (t, &region) in mesh
+        .triangles
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(&mesh.region_ids)
+    {
+        let [a, b, c] = *t;
+        let (ab, bc, ca) = (
+            middle(a, b, &mut out),
+            middle(b, c, &mut out),
+            middle(c, a, &mut out),
         );
+        out.triangles
+            .extend([a, ab, ca, ab, b, bc, ca, bc, c, ab, bc, ca]);
+        out.region_ids.extend([region; 4]);
+    }
+    out
+}
+
+/// Scans of several hundred thousand triangles are read on their triangles
+/// and scans of more than a million on an even cloud of them; either way the
+/// search ends within its deadline at the true pose and says how it read.
+#[test]
+fn large_scans_are_searched_whole() {
+    let mut fixed = arch::dental_arch(&arch::ArchSpec::default());
+    for (least, exact) in [(300_000, true), (1_200_000, false)] {
+        while fixed.triangles.len() / 3 < least {
+            fixed = quartered(&fixed);
+        }
+        let truth = Rigid::new(
+            DQuat::from_axis_angle(DVec3::new(0.4, 0.1, -0.9).normalize(), 2.6),
+            DVec3::new(-17., 9., 12.),
+        );
+        let moving = operators::rigid_offset(&fixed, truth);
         let clock = std::time::Instant::now();
-        let mut surfaces = Vec::new();
-        for side in [SurfaceSide::Moving, SurfaceSide::Fixed] {
-            let prepared = prepare_alignment_surface(
-                MeshInput {
-                    soup: Soup {
-                        positions: &positions,
-                        indices: &indices,
-                        mask: None,
-                    },
-                    world_from_local: DAffine3::IDENTITY,
-                    revision: count as u64,
-                },
-                side,
-                RegionPolicy::AllEligible,
-                &control,
-            )
-            .unwrap();
-            assert!(
-                prepared.surface.is_some(),
-                "{count}: {:?}",
-                prepared.completion
-            );
-            let surface = prepared.surface.unwrap();
-            assert!(surface.original_index.triangle_count() <= 128_000);
-            assert!((surface.eligible_area_mm2 - 100.).abs() < 1e-6);
-            assert_eq!(surface.revision, count as u64);
-            assert!(!surface.exact_original);
-            assert!(!surface.quality.orientation_coherent);
-            assert!(surface
-                .samples
-                .iter()
-                .all(|set| set.samples.iter().all(|sample| sample.normal.is_none())));
-            let mut max_error = 0f64;
-            for i in 0..8192 {
-                let world = DVec3::new(
-                    0.03 + 9.94 * (f64::from(i) + 0.5) / 8192.,
-                    0.03 + 9.94 * (f64::from(i * 73 % 8192) + 0.5) / 8192.,
-                    0.,
-                );
-                let point = world - surface.frame.center_world;
-                let hit = match surface
-                    .original_index
-                    .nearest_controlled(point, 0.1, &control)
-                {
-                    QueryOutcome::Complete(Some(hit)) => hit,
-                    other => panic!("incomplete approximation: {other:?}"),
-                };
-                max_error = max_error.max(point.distance(hit.point));
-            }
-            println!("triangles={count} side={side:?} proxy={} original_area={} proxy_area={} max_error_mm={max_error} peak_bytes={}", surface.original_index.triangle_count(), surface.eligible_area_mm2, surface.represented_area_mm2, control.counters().peak_memory_bytes);
-            assert!(max_error <= 0.02);
-            surfaces.push(surface);
-        }
-        assert!(clock.elapsed() <= Duration::from_millis(10_100));
-        assert!(control.counters().peak_memory_bytes <= 256 * 1024 * 1024);
-        #[cfg(target_os = "linux")]
-        {
-            let status = std::fs::read_to_string("/proc/self/status").unwrap();
-            let rss = status
-                .lines()
-                .find(|line| line.starts_with("VmHWM:"))
-                .unwrap();
-            println!("triangles={count} process_peak_rss={rss}");
-        }
+        let result = search_alignment(
+            &alignment_input(moving.soup(), fixed.soup()),
+            &SearchSettings::default(),
+            &SearchControl::default(),
+        )
+        .unwrap();
+        let elapsed = clock.elapsed();
+        let probes: Vec<DVec3> = (0..moving.positions.len() / 3)
+            .step_by(977)
+            .map(|i| moving.point(i))
+            .collect();
+        let best = &result.candidates[0];
+        let error = metrics::probe_error(best.pose, truth, &probes);
+        println!(
+            "triangles={} completion={:?} class={:?} reasons={:?} gap={:?} probe_rms_mm={} elapsed={elapsed:?}",
+            fixed.triangles.len() / 3,
+            result.completion,
+            best.confidence,
+            best.reasons,
+            best.evidence.rival_gap,
+            error[0]
+        );
+        assert_eq!(result.completion, Completion::Complete);
+        assert_eq!(best.evidence.original_surface_exact, [exact; 2]);
+        assert_eq!(best.confidence, Confidence::Verified);
+        assert!(error[0] < 0.01, "{error:?}");
     }
 }
