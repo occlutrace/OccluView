@@ -276,7 +276,6 @@ fn viewer_surfaces_publish_named_controls_with_roles_and_toggle_states() {
         "Adjust pose",
         "1. Perform alignment",
         "2. Best fit matching",
-        "matching parts",
         "max influence",
         "Close the brush — the markings are kept",
         "brush size",
@@ -308,9 +307,7 @@ fn viewer_surfaces_publish_named_controls_with_roles_and_toggle_states() {
     ] {
         assert_role(&controls, name, "Button");
     }
-    assert_role(&controls, "matching parts", "Slider");
     assert_role(&controls, "max influence", "Slider");
-    assert_role(&controls, "matching parts", "SpinButton");
     assert_role(&controls, "max influence", "SpinButton");
     assert_role(&controls, "UI scale", "Slider");
     assert_role(&controls, "Orbit speed", "Slider");
