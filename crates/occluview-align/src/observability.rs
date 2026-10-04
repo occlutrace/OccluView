@@ -28,6 +28,12 @@ const MIN_SAMPLES: usize = 32;
 /// six rigid degrees of freedom — a single point, or a line of them.
 const MIN_PIVOT: f64 = 1e-12;
 
+/// At or below this a sensitivity is what rounding leaves of a blind mode, not
+/// a measured response. A mode that is exactly blind comes out near `1e-6`
+/// once the coordinates carry one ulp of error: a 1 mm displacement then moves
+/// the reading by a nanometre, which no `f32` scan resolves.
+const BLIND_SENSITIVITY: f64 = 1e-5;
+
 /// Cyclic Jacobi sweeps. A symmetric 6x6 converges in far fewer; the count is
 /// fixed rather than tolerance-driven so the result cannot vary with rounding.
 const JACOBI_SWEEPS: usize = 32;
@@ -93,7 +99,7 @@ impl Observability {
     #[must_use]
     pub fn hidden_displacement_mm(&self, reported_rms_mm: f64) -> f64 {
         let worst = self.worst_sensitivity();
-        if worst <= 0.0 || !reported_rms_mm.is_finite() {
+        if worst <= BLIND_SENSITIVITY || !reported_rms_mm.is_finite() {
             return f64::INFINITY;
         }
         reported_rms_mm / worst

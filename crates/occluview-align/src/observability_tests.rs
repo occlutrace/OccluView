@@ -207,17 +207,11 @@ fn the_hidden_displacement_bound_recovers_a_known_offset_along_the_blind_mode() 
     );
 }
 
-/// The same closing of the loop on a cylinder, where the slide along the axis
-/// is a blind mode. On exact coordinates the reading and the sensitivity are
-/// both zero and the bound is infinite. Rounding noise in the coordinates makes
-/// both tiny instead, and their ratio is then the slide itself. Either way the
-/// bound must not fall short of the slide.
+/// The same closing of the loop on a cylinder, where the blind mode is exact
+/// and the bound is therefore infinite — which is the correct answer, not a
+/// failure.
 #[test]
-fn a_free_slide_is_covered_by_the_hidden_displacement() {
-    const SLIDE_MM: f64 = 0.30;
-    /// The estimate may understate by a few percent, as in the test above.
-    const LOW: f64 = 0.9;
-
+fn a_free_slide_reports_an_unbounded_hidden_displacement() {
     let (positions, indices) = cylinder(5.0, 24.0, 96, 40);
     let mesh = soup(&positions, &indices);
     let index = SurfaceIndex::build(mesh).unwrap();
@@ -230,7 +224,7 @@ fn a_free_slide_is_covered_by_the_hidden_displacement() {
     )
     .unwrap();
 
-    let pose = Rigid::new(DQuat::IDENTITY, DVec3::Z * SLIDE_MM);
+    let pose = Rigid::new(DQuat::IDENTITY, DVec3::Z * 0.30);
     let map = deviation(mesh, &index, pose, &settings(), &CancelFlag::new());
     let reported = deviation_stats(&map, 0.2)
         .summary
@@ -239,12 +233,11 @@ fn a_free_slide_is_covered_by_the_hidden_displacement() {
 
     assert!(
         reported < 0.06,
-        "a {SLIDE_MM} mm axial slide is nearly invisible here: {reported}"
+        "a 0.30 mm axial slide is nearly invisible here: {reported}"
     );
-    let bound = seen.hidden_displacement_mm(reported);
     assert!(
-        bound >= SLIDE_MM * LOW,
-        "the bound must cover the slide: {bound} against {SLIDE_MM}"
+        seen.hidden_displacement_mm(reported) > 0.30,
+        "and the bound must not claim otherwise"
     );
 }
 
