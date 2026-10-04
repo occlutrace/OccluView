@@ -185,7 +185,7 @@ impl<'a> FoldGuard<'a> {
             .iter()
             .map(|&[a, b, c]| {
                 if a < vertex_count && b < vertex_count && c < vertex_count {
-                    (positions[b] - positions[a]).cross(positions[c] - positions[a])
+                    shape_normal(positions[a], positions[b], positions[c])
                 } else {
                     Vec3::ZERO
                 }
@@ -200,7 +200,7 @@ impl<'a> FoldGuard<'a> {
     /// Whether moving `moved` to `proposed` keeps every incident triangle's
     /// normal within [`TOTAL_NORMAL_COSINE_LIMIT`] of its direction at the
     /// start of fairing. Triangles whose initial normal is degenerate accept
-    /// any move.
+    /// any move; a move that collapses a healthy triangle is refused.
     fn step_keeps_normals(
         &self,
         positions: &[Vec3],
@@ -208,6 +208,9 @@ impl<'a> FoldGuard<'a> {
         moved: usize,
         proposed: Vec3,
     ) -> bool {
+        if !proposed.is_finite() {
+            return false;
+        }
         for &triangle_index in incident {
             let triangle = self.triangles[triangle_index];
             let at = |index: usize| -> Vec3 {
@@ -218,19 +221,42 @@ impl<'a> FoldGuard<'a> {
                 }
             };
             let initial = self.initial_normals[triangle_index];
-            let after = {
-                let [a, b, c] = triangle.map(at);
-                (b - a).cross(c - a)
-            };
-            let scale = initial.length() * after.length();
-            if scale <= f32::EPSILON {
+            let initial_length = initial.length();
+            if initial_length <= f32::EPSILON {
                 continue;
             }
-            if initial.dot(after) / scale < TOTAL_NORMAL_COSINE_LIMIT {
+            let after = {
+                let [a, b, c] = triangle.map(at);
+                shape_normal(a, b, c)
+            };
+            let after_length = after.length();
+            if after_length <= f32::EPSILON {
+                return false;
+            }
+            if initial.dot(after) / (initial_length * after_length) < TOTAL_NORMAL_COSINE_LIMIT {
                 return false;
             }
         }
         true
+    }
+}
+
+/// Triangle normal of the edges divided by their largest coordinate first.
+/// The length is then a unit-free shape measure (about twice the area over the
+/// squared longest edge), so the degeneracy tests do not depend on the model's
+/// size, and no coordinate magnitude can overflow or underflow the cross
+/// product. Zero for a collapsed or non-finite triangle.
+fn shape_normal(a: Vec3, b: Vec3, c: Vec3) -> Vec3 {
+    let (ab, ac) = (b - a, c - a);
+    let extent = ab.abs().max_element().max(ac.abs().max_element());
+    if !extent.is_finite() || extent <= 0.0 {
+        return Vec3::ZERO;
+    }
+    let normal = (ab / extent).cross(ac / extent);
+    if normal.is_finite() {
+        normal
+    } else {
+        Vec3::ZERO
     }
 }
 

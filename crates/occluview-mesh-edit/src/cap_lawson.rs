@@ -188,21 +188,43 @@ impl CapMesh {
             if self.owners.contains_key(&diagonal) {
                 continue;
             }
+            // Judge the quad in its own units: every predicate below carries an
+            // absolute tolerance, which only means "relative" once the quad is
+            // brought to unit size (and no square of a coordinate can overflow
+            // or underflow).
+            let Some(quad) = unit_quad([uv[u], uv[v], uv[apex1], uv[apex2]]) else {
+                continue;
+            };
+            // `quad` holds (u, v, apex1, apex2); only these four vertices occur
+            // in the two owner triangles and in both flip candidates.
+            let local = |triangle: [usize; 3]| {
+                triangle.map(|vertex| {
+                    if vertex == u {
+                        0
+                    } else if vertex == v {
+                        1
+                    } else if vertex == apex1 {
+                        2
+                    } else {
+                        3
+                    }
+                })
+            };
             // Convex-quad test: both candidates keep the original winding sign.
-            let sign = signed_area(uv, self.triangles[t1]).signum();
+            let sign = signed_area(&quad, local(self.triangles[t1])).signum();
             let candidate1 = replace_edge(self.triangles[t1], (u, v), apex2);
             let candidate2 = replace_edge(self.triangles[t2], (v, u), apex1);
-            let area1 = signed_area(uv, candidate1);
-            let area2 = signed_area(uv, candidate2);
+            let area1 = signed_area(&quad, local(candidate1));
+            let area2 = signed_area(&quad, local(candidate2));
             if area1 * sign <= f32::EPSILON || area2 * sign <= f32::EPSILON {
                 continue;
             }
-            let verdict = circumcircle_verdict(uv[u], uv[v], uv[apex1], uv[apex2]);
+            let verdict = circumcircle_verdict(quad[0], quad[1], quad[2], quad[3]);
             let flip = match verdict {
                 CircleVerdict::Inside => true,
                 CircleVerdict::Tie => {
-                    let old_len = uv[u].distance_squared(uv[v]);
-                    let new_len = uv[apex1].distance_squared(uv[apex2]);
+                    let old_len = quad[0].distance_squared(quad[1]);
+                    let new_len = quad[2].distance_squared(quad[3]);
                     new_len < old_len * 0.999
                 }
                 CircleVerdict::Outside => false,
@@ -220,6 +242,21 @@ impl CapMesh {
             }
         }
     }
+}
+
+/// The quad translated to its first corner and divided by its largest
+/// coordinate extent, or `None` when it is degenerate or not finite.
+fn unit_quad(points: [Vec2; 4]) -> Option<[Vec2; 4]> {
+    let origin = points[0];
+    let extent = points
+        .iter()
+        .map(|point| (*point - origin).abs().max_element())
+        .fold(0.0_f32, f32::max);
+    if !extent.is_finite() || extent <= 0.0 {
+        return None;
+    }
+    let unit = points.map(|point| (point - origin) / extent);
+    unit.iter().all(|point| point.is_finite()).then_some(unit)
 }
 
 #[cfg(test)]
