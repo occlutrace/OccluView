@@ -192,29 +192,20 @@ install -m 0644 THIRD-PARTY-NOTICES.md \
 # invisible to every Cargo tool, so their notices are carried by hand.
 install -m 0644 THIRD-PARTY-NOTICES-NATIVE.md \
   "$pkg_root/usr/share/doc/occluview/THIRD-PARTY-NOTICES-NATIVE.md"
-gzip -9 -n -c CHANGELOG.md > "$pkg_root/usr/share/doc/occluview/NEWS.gz"
 gzip -9 -n -c install/linux/occluview.1 \
   > "$pkg_root/usr/share/man/man1/occluview.1.gz"
 gzip -9 -n -c install/linux/occluview-cli.1 \
   > "$pkg_root/usr/share/man/man1/occluview-cli.1.gz"
 # The date in the Debian changelog is what `apt changelog` and the package
-# browser show. It has to come from the release notes for this version, not from
-# a fixed string: the shipped package used to claim the previous release's date.
-release_date="$(awk -v v="$version" '
-  index($0, "## " v " - ") == 1 {
-    if ($4 ~ /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/) { print $4; exit }
-  }
-' CHANGELOG.md)"
-if [[ -z "$release_date" ]]; then
-  echo "CHANGELOG.md has no '## $version - YYYY-MM-DD' heading; cannot date the package" >&2
+# browser show. It is the date of the commit the package is built from, so a
+# rebuild of the same source yields the same package.
+release_epoch="${SOURCE_DATE_EPOCH:-$(git log -1 --format=%ct 2>/dev/null || true)}"
+if [[ -z "$release_epoch" ]]; then
+  echo "no SOURCE_DATE_EPOCH and no Git history; cannot date the package" >&2
   exit 1
 fi
 # Debian expects RFC 2822 in the trailer.
-release_date_rfc="$(date -u -d "$release_date" '+%a, %d %b %Y 00:00:00 +0000' 2>/dev/null || true)"
-if [[ -z "$release_date_rfc" ]]; then
-  echo "could not format the release date $release_date" >&2
-  exit 1
-fi
+release_date_rfc="$(date -u -d "@$release_epoch" '+%a, %d %b %Y %H:%M:%S +0000')"
 
 cat <<CHANGELOG | gzip -9 -n > "$pkg_root/usr/share/doc/occluview/changelog.gz"
 occluview ($version) stable; urgency=medium

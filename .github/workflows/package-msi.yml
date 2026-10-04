@@ -651,18 +651,10 @@ jobs:
           echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
       - name: Write release notes
         run: |
-          version="${RELEASE_TAG#v}"
-          changelog_section="$(mktemp)"
-          awk -v version="$version" '
-            index($0, "## " version " ") == 1 { found = 1; next }
-            found && /^## / { exit }
-            found { print }
-          ' CHANGELOG.md > "$changelog_section"
-          if [[ ! -s "$changelog_section" ]]; then
-            echo "CHANGELOG.md has no '## $version' section." >&2
-            rm -f "$changelog_section"
-            exit 1
-          fi
+          # The change list is GitHub's own: the pull requests merged since the
+          # previous release.
+          changes="$(gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$RELEASE_TAG" -f target_commitish="$GITHUB_SHA" --jq .body)"
           {
             printf 'OccluView %s\n\n' "$RELEASE_TAG"
             printf '%s\n\n' '## Download for Windows'
@@ -676,10 +668,9 @@ jobs:
             if [[ -f dist/occluview-shell-revision.json ]]; then
               printf '%s\n\n' "- Explorer shell: $(python3 -c 'import json; print(json.load(open("dist/occluview-shell-revision.json"))["summary"])')."
             fi
-            cat "$changelog_section"
+            printf '%s\n' "$changes"
             printf '\nThe verification archive is for technical checks; regular users do not need it.\n'
           } > dist/release-notes.md
-          rm -f "$changelog_section"
       - name: Sign update artifacts and write latest.json
         env:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}

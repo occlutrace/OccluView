@@ -143,15 +143,11 @@ comments and commit bodies factual: explain an invariant, boundary, or user
 visible contract, and omit process narration, filler, and claims not backed by
 the implementation or its checks.
 
-For visible changes, add a short note to `CHANGELOG.md` under `## Unreleased`,
-creating that section above the newest version when it is missing. A release
-publishes only the section matching its version tag; draft notes stay out of
-the published release until they move into a versioned section.
-
 ## Releases
 
-Bump the workspace version, update `CHANGELOG.md`, and tag `vX.Y.Z`. The release
-workflow builds and verifies the distributable packages. Signing-key rotation is
+Bump the workspace version and tag `vX.Y.Z`. The release workflow builds and
+verifies the distributable packages and writes the release notes from the pull
+requests merged since the previous release. Signing-key rotation is
 described in `SECURITY.md`.
 
 Every crate is `publish = false`, so the workspace carries no semver obligation

@@ -141,7 +141,7 @@ tracing            = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # GPU / rendering.
-wgpu = "=30.0.1"             # pinned; bumps need tests and a changelog entry
+wgpu = "=30.0.1"             # pinned; bumps need tests
 
 # Windowing / GUI.
 egui    = "=0.36.1"
