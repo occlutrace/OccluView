@@ -169,6 +169,91 @@ pub(super) fn refine_and_relax(
     }
 }
 
+/// Refine a projection-free cap (the minimum-area membrane) with 3D
+/// longest-interior-edge bisection and per-quad Delaunay flips, then let the
+/// caller fair it. This is the fallback used when the rim's planar projection
+/// self-overlaps, so [`refine_and_relax`]'s tangent-plane parameterization does
+/// not exist. Without it the membrane is emitted as a flat lid with no interior
+/// vertices to fair — the "needles and flat cover" artifact on deep, irregular
+/// lasso cuts.
+///
+/// The initial triangulation supplies the topology; bisection density matches
+/// the rim edge scale, the flips keep the triangles well shaped, and the caller
+/// fairs the interior against the fixed outside ring.
+pub(super) fn refine_projectionless(
+    rim: &[EditVertex],
+    initial: Vec<[usize; 3]>,
+    policy: GeneratedVertexPolicy,
+) -> RefinedCap {
+    let rim_len = rim.len();
+    let mut positions: Vec<Vec3> = rim
+        .iter()
+        .map(|vertex| Vec3::from_array(vertex.position))
+        .collect();
+    let mut attrs: Vec<EditVertex> = rim.to_vec();
+    // Target edge scale per rim vertex: the average of its two rim edges, the
+    // same density rule the interpolated cap uses.
+    #[expect(
+        clippy::manual_midpoint,
+        reason = "preserve established last-bit cap geometry"
+    )]
+    let mut scale: Vec<f32> = (0..rim_len)
+        .map(|index| {
+            let prev = positions[(index + rim_len - 1) % rim_len];
+            let next = positions[(index + 1) % rim_len];
+            (positions[index].distance(prev) + positions[index].distance(next)) * 0.5
+        })
+        .collect();
+
+    let mut cap_mesh = CapMesh::new(initial);
+    let seeds: BTreeSet<(usize, usize)> = cap_mesh.edges_sorted().into_iter().collect();
+    cap_mesh.lawson_3d(&positions, seeds);
+
+    let generated_budget = rim_len
+        .saturating_mul(MAX_GENERATED_PER_RIM)
+        .min(CAP_INTERIOR_BUDGET);
+    for _ in 0..MAX_REFINE_PASSES {
+        let mut suspects: BTreeSet<(usize, usize)> = BTreeSet::new();
+        let mut split_any = false;
+        for key in cap_mesh.edges_sorted() {
+            if positions.len() - rim_len >= generated_budget {
+                break;
+            }
+            let Some(owners) = cap_mesh.owner_pair(key) else {
+                continue;
+            };
+            let (u, v) = key;
+            #[expect(
+                clippy::manual_midpoint,
+                reason = "preserve established last-bit cap geometry"
+            )]
+            let target = (scale[u] + scale[v]) * 0.5;
+            if positions[u].distance(positions[v]) <= ALPHA * target {
+                continue;
+            }
+            let midpoint_index = positions.len();
+            let midpoint = (positions[u] + positions[v]) * 0.5;
+            let vertex = midpoint_vertex(midpoint, &attrs, [u, v], policy);
+            attrs.push(vertex);
+            positions.push(midpoint);
+            scale.push(target);
+            cap_mesh.bisect(key, owners, midpoint_index, &mut suspects);
+            split_any = true;
+        }
+        cap_mesh.lawson_3d(&positions, suspects);
+        if !split_any {
+            break;
+        }
+    }
+
+    let triangles = cap_mesh.into_triangles();
+    let generated = attrs.into_iter().skip(rim_len).collect();
+    RefinedCap {
+        generated,
+        triangles,
+    }
+}
+
 /// The growable cap state shared by the refinement passes: planar positions,
 /// per-vertex target scales, and vertex attributes. The triangulation itself
 /// lives in [`CapMesh`], which keeps its edge→owner map live across passes.
@@ -347,6 +432,80 @@ fn midpoint_vertex(
             }
             vertex.uv = [uv[0] / 2.0, uv[1] / 2.0];
             vertex
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    /// A coarse fan membrane over a small rim must densify through 3D
+    /// bisection, keep every edge's incidence exact (rim one owner, interior
+    /// two), produce only finite positions, and leave no degenerate triangle.
+    /// This is the projection-free path the folded-rim fallback now uses
+    /// instead of emitting the flat membrane.
+    #[test]
+    fn projectionless_refinement_densifies_a_coarse_membrane_and_stays_manifold() {
+        let rim_len = 8usize;
+        let radius = 5.0_f32;
+        let rim: Vec<EditVertex> = (0..rim_len)
+            .map(|index| {
+                let theta = std::f32::consts::TAU * (index as f32) / (rim_len as f32);
+                EditVertex::at([
+                    radius * theta.cos(),
+                    radius * theta.sin(),
+                    0.4 * (2.0 * theta).sin(),
+                ])
+            })
+            .collect();
+        // A coarse fan membrane: one hub at rim vertex 0.
+        let membrane: Vec<[usize; 3]> = (1..rim_len - 1).map(|i| [0, i, i + 1]).collect();
+
+        let cap = refine_projectionless(&rim, membrane, GeneratedVertexPolicy::InterpolateBoundary);
+
+        assert!(
+            !cap.generated.is_empty(),
+            "a coarse fan over an 8-gon must densify"
+        );
+        assert!(
+            cap.generated
+                .iter()
+                .all(|vertex| vertex.position.iter().all(|c| c.is_finite())),
+            "generated positions stay finite"
+        );
+
+        let is_rim_edge = |u: usize, v: usize| {
+            u < rim_len && v < rim_len && ((u + 1) % rim_len == v || (v + 1) % rim_len == u)
+        };
+        let mut incidence: HashMap<(usize, usize), usize> = HashMap::new();
+        for &[a, b, c] in &cap.triangles {
+            for (u, v) in [(a, b), (b, c), (c, a)] {
+                *incidence.entry((u.min(v), u.max(v))).or_default() += 1;
+            }
+        }
+        for (&(u, v), &owners) in &incidence {
+            let expected = if is_rim_edge(u, v) { 1 } else { 2 };
+            assert_eq!(
+                owners, expected,
+                "edge ({u}, {v}): expected {expected} owners, got {owners}"
+            );
+        }
+
+        let position = |index: usize| -> Vec3 {
+            if index < rim_len {
+                Vec3::from_array(rim[index].position)
+            } else {
+                Vec3::from_array(cap.generated[index - rim_len].position)
+            }
+        };
+        for &[a, b, c] in &cap.triangles {
+            let (pa, pb, pc) = (position(a), position(b), position(c));
+            assert!(
+                (pb - pa).cross(pc - pa).length() > 1e-9,
+                "refinement left a degenerate cap triangle"
+            );
         }
     }
 }

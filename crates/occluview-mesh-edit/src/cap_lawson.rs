@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use glam::Vec2;
+use glam::{Vec2, Vec3};
 
 use super::cap_delaunay::{
     apex_of, circumcircle_verdict, replace_edge, signed_area, CircleVerdict,
@@ -162,8 +162,30 @@ impl CapMesh {
     /// Lawson repair from a seed set: pop suspect edges in ascending order,
     /// flip any interior edge violating the Delaunay criterion (with the
     /// cocircular shorter-diagonal tie-break), and re-seed the four quad
-    /// boundary edges of every flip.
-    pub(super) fn lawson(&mut self, uv: &[Vec2], mut suspects: BTreeSet<(usize, usize)>) {
+    /// boundary edges of every flip. The flip is judged in the cap's planar
+    /// parameterization `uv`.
+    pub(super) fn lawson(&mut self, uv: &[Vec2], suspects: BTreeSet<(usize, usize)>) {
+        self.lawson_with(suspects, |u, v, apex1, apex2| {
+            unit_quad([uv[u], uv[v], uv[apex1], uv[apex2]])
+        });
+    }
+
+    /// Projection-free Lawson repair: the same flip criterion, but each quad is
+    /// judged in its own tangent frame derived from the four 3D positions. Used
+    /// by the projection-free cap path, where no global planar parameterization
+    /// exists (the rim's projection self-overlaps).
+    pub(super) fn lawson_3d(&mut self, positions: &[Vec3], suspects: BTreeSet<(usize, usize)>) {
+        self.lawson_with(suspects, |u, v, apex1, apex2| {
+            quad_from_positions(positions, u, v, apex1, apex2)
+        });
+    }
+
+    /// Shared flip loop. `quad_of` projects the quad `(u, v, apex1, apex2)` into
+    /// 2D, unit-scaled, or returns `None` when it is degenerate.
+    fn lawson_with<F>(&mut self, mut suspects: BTreeSet<(usize, usize)>, quad_of: F)
+    where
+        F: Fn(usize, usize, usize, usize) -> Option<[Vec2; 4]>,
+    {
         let mut budget = self
             .triangles
             .len()
@@ -192,7 +214,7 @@ impl CapMesh {
             // absolute tolerance, which only means "relative" once the quad is
             // brought to unit size (and no square of a coordinate can overflow
             // or underflow).
-            let Some(quad) = unit_quad([uv[u], uv[v], uv[apex1], uv[apex2]]) else {
+            let Some(quad) = quad_of(u, v, apex1, apex2) else {
                 continue;
             };
             // `quad` holds (u, v, apex1, apex2); only these four vertices occur
@@ -242,6 +264,53 @@ impl CapMesh {
             }
         }
     }
+}
+
+/// Project a cap quad into its own tangent plane for a projection-free Delaunay
+/// test. The quad boundary runs `u -> apex1 -> v -> apex2` (the two owner
+/// triangles share edge `u..v` with opposite orientation). Returns `None` when
+/// the quad is degenerate or numerically unsafe, which simply skips the flip.
+fn quad_from_positions(
+    positions: &[Vec3],
+    u: usize,
+    v: usize,
+    apex1: usize,
+    apex2: usize,
+) -> Option<[Vec2; 4]> {
+    let (pu, pv, pa1, pa2) = (
+        positions[u],
+        positions[v],
+        positions[apex1],
+        positions[apex2],
+    );
+    let e1 = pv - pu;
+    if !e1.is_finite() || e1.length_squared() <= f32::EPSILON {
+        return None;
+    }
+    let e1 = e1.normalize();
+    // Newell normal over the quad boundary: robust for a non-planar quad and
+    // deterministic in the ring order.
+    let ring = [pu, pa1, pv, pa2];
+    let mut normal = Vec3::ZERO;
+    for i in 0..4 {
+        let a = ring[i];
+        let b = ring[(i + 1) % 4];
+        normal.x += (a.y - b.y) * (a.z + b.z);
+        normal.y += (a.z - b.z) * (a.x + b.x);
+        normal.z += (a.x - b.x) * (a.y + b.y);
+    }
+    if !normal.is_finite() || normal.length_squared() <= f32::EPSILON {
+        return None;
+    }
+    let e2 = normal.normalize().cross(e1);
+    if !e2.is_finite() || e2.length_squared() <= f32::EPSILON {
+        return None;
+    }
+    let project = |p: Vec3| {
+        let d = p - pu;
+        Vec2::new(d.dot(e1), d.dot(e2))
+    };
+    unit_quad([project(pu), project(pv), project(pa1), project(pa2)])
 }
 
 /// The quad translated to its first corner and divided by its largest
@@ -306,6 +375,32 @@ mod tests {
         assert!(
             has_flipped_diagonal,
             "expected the flip to diagonal (1,3), got {:?}",
+            cap.triangles()
+        );
+    }
+
+    /// The projection-free flip must reach the same verdict from the four 3D
+    /// positions alone, judged in the quad's own tangent frame. The quad here
+    /// lies in the `z = 0` plane, so the 3D positions are the same planar
+    /// configuration as [`Self::lawson_flips_a_non_delaunay_diagonal`].
+    #[test]
+    fn lawson_3d_flips_a_non_delaunay_quad() {
+        let positions = [
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(4.0, 0.0, 0.0),
+            Vec3::new(4.0, 3.0, 0.0),
+            Vec3::new(0.5, 1.0, 0.0),
+        ];
+        let mut cap = CapMesh::new(vec![[0, 1, 2], [0, 2, 3]]);
+        let seeds: BTreeSet<(usize, usize)> = cap.edges_sorted().into_iter().collect();
+        cap.lawson_3d(&positions, seeds);
+        let flipped = cap
+            .triangles()
+            .iter()
+            .any(|t| t.contains(&1) && t.contains(&3));
+        assert!(
+            flipped,
+            "the 3D quad must flip to diagonal (1,3), got {:?}",
             cap.triangles()
         );
     }
