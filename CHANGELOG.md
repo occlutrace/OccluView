@@ -5,6 +5,8 @@ remain in the Git history.
 
 ## Unreleased
 
+- Adjust pose: Ctrl+drag turns a scan about its own centre the way the cursor pushes it, and a drag at its outline rolls it; the turn no longer swings the scan around the grabbed point.
+
 - Best fit aligns scans that are only partly alike: a part of a jaw against the whole jaw, a scan before and after preparation, a scan with scan bodies, a bite scan, or the fitting side of a prosthesis against the tissue it sits on.
 
 - Best fit always returns the best placement it finds with a confidence class and never refuses a pair of scans; competing placements are offered for review and the scan changes only after Accept alignment.

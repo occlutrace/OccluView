@@ -102,96 +102,103 @@ pub(crate) fn screen_delta_to_world(
     }
 }
 
-/// Camera and mesh scale for one anchored Ctrl-drag turn.
+/// A grab this many radii from the scan's centre is not a point on the scan;
+/// it is read as a grab at the centre.
+pub(crate) const MAX_GRAB_RADII: f32 = 4.0;
+
+/// What one Ctrl-drag step turns a scan in: the camera's axes and the scan as
+/// it stands.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct AnchoredRotationFrame {
-    camera_view_direction: Vec3,
-    camera_right: Vec3,
-    camera_up: Vec3,
-    world_per_pixel: f32,
-    radius_world: f32,
+pub(crate) struct TurnFrame {
+    /// Unit vector from the scene towards the viewer.
+    pub(crate) toward_viewer: Vec3,
+    /// The camera's right axis.
+    pub(crate) camera_right: Vec3,
+    /// The camera's up axis.
+    pub(crate) camera_up: Vec3,
+    /// The world point the scan turns about: its own centre, so it turns in
+    /// place instead of swinging away from the scan it is being seated on.
+    pub(crate) centre: Vec3,
+    /// The scan's bounding radius, in world units: the radius of the ball.
+    pub(crate) radius: f32,
 }
 
-impl AnchoredRotationFrame {
-    pub(crate) fn new(
-        camera_view_direction: Vec3,
-        camera_right: Vec3,
-        camera_up: Vec3,
-        world_per_pixel: f32,
-        radius_world: f32,
-    ) -> Self {
-        Self {
-            camera_view_direction,
-            camera_right,
-            camera_up,
-            world_per_pixel,
-            radius_world,
-        }
+impl TurnFrame {
+    /// The camera's right, up and towards-the-viewer axes, when they form the
+    /// right-handed orthonormal basis the gesture is defined in.
+    ///
+    /// A partial or skewed basis would silently turn a two-axis gesture into
+    /// one-axis motion or reverse it, so anything else turns nothing.
+    fn axes(self) -> Option<[Vec3; 3]> {
+        let right = self.camera_right.normalize_or_zero();
+        let up = self.camera_up.normalize_or_zero();
+        let toward = self.toward_viewer.normalize_or_zero();
+        let handedness = right.cross(up).dot(toward);
+        (handedness.is_finite()
+            && handedness >= 0.99
+            && self.centre.is_finite()
+            && self.radius.is_finite()
+            && self.radius > 1e-3)
+            .then_some([right, up, toward])
     }
 }
 
-/// Turn a Ctrl-drag around the world point the operator grabbed.
+/// Where a point of the view plane lies on the virtual trackball, in camera
+/// axes (right, up, towards the viewer).
 ///
-/// The turn axis is `view_direction × screen_delta_to_world`, preserving the
-/// camera basis and screen-y direction. Its angle scales with screen travel in
-/// millimetres relative to the layer radius, so a similar gesture has
-/// comparable effect across zoom levels and scan sizes. The clicked point
-/// stays fixed; only the turn's orientation follows the camera basis.
-pub(crate) fn anchored_rotation_from_drag(
-    delta_px: egui::Vec2,
-    frame: AnchoredRotationFrame,
-) -> Quat {
-    let AnchoredRotationFrame {
-        camera_view_direction,
-        camera_right,
-        camera_up,
-        world_per_pixel,
-        radius_world,
-    } = frame;
-    if !delta_px.x.is_finite()
-        || !delta_px.y.is_finite()
-        || !world_per_pixel.is_finite()
-        || world_per_pixel <= 0.0
-        || !radius_world.is_finite()
-        || radius_world <= 1e-3
-        || !camera_view_direction.is_finite()
-        || !camera_right.is_finite()
-        || !camera_up.is_finite()
-    {
-        return Quat::IDENTITY;
-    }
-    let view = camera_view_direction.normalize_or_zero();
-    let right = camera_right.normalize_or_zero();
-    let up = camera_up.normalize_or_zero();
-    // A partial or skewed camera basis would silently turn a two-axis gesture
-    // into one-axis motion or change its polarity. Camera supplies an
-    // orthonormal basis with `right = view × up`.
-    let handedness = view.cross(right).dot(up);
-    if view.length_squared() <= f32::EPSILON
-        || right.length_squared() <= f32::EPSILON
-        || up.length_squared() <= f32::EPSILON
-        || !handedness.is_finite()
-        || handedness > -0.99
-    {
-        return Quat::IDENTITY;
-    }
-    let desired = screen_delta_to_world(delta_px, right, up, world_per_pixel);
-    let axis = view.cross(desired);
-    let axis_length = axis.length();
-    let distance_world = desired.length();
-    if !view.is_finite()
-        || view.length_squared() <= f32::EPSILON
-        || !axis_length.is_finite()
-        || axis_length <= 1e-6
-        || !distance_world.is_finite()
-    {
-        return Quat::IDENTITY;
-    }
-    let angle = (distance_world / radius_world).min(MAX_TILT_STEP_RAD);
-    Quat::from_axis_angle(axis / axis_length, angle)
+/// Bell's trackball: a sphere of the scan's radius over the middle of the
+/// picture and a hyperbolic sheet around it, meeting where the two have the
+/// same height. The sheet is what keeps the surface continuous past the
+/// sphere's outline, so the turn never jumps and a drag out there rolls the
+/// scan about the view axis.
+fn ball_point(offset: glam::Vec2, radius: f32) -> Vec3 {
+    let reach = offset.length();
+    let height = if reach < radius * std::f32::consts::FRAC_1_SQRT_2 {
+        (radius * radius - reach * reach).sqrt()
+    } else {
+        radius * radius / (2.0 * reach)
+    };
+    offset.extend(height)
 }
 
-/// Turn a scan around a world-space anchor.
+/// Turn a scan about its centre the way the cursor pushes it.
+///
+/// `grabbed` is where the grabbed surface point is now and `travel` is how far
+/// the cursor moved across the view plane since, both in world units. The
+/// scan is turned as a ball of its own radius would be (the virtual trackball
+/// of Chen et al., in Bell's continuous form): the place on the ball under the
+/// cursor goes with the cursor. Over the middle of the scan that tilts it
+/// towards the drag; out at its outline the same drag rolls it about the view
+/// axis, so one gesture reaches every orientation.
+pub(crate) fn turn_following_grab(grabbed: Vec3, travel: Vec3, frame: TurnFrame) -> Quat {
+    let Some([right, up, toward]) = frame.axes() else {
+        return Quat::IDENTITY;
+    };
+    if !travel.is_finite() {
+        return Quat::IDENTITY;
+    }
+    let arm = grabbed - frame.centre;
+    let mut from = glam::Vec2::new(arm.dot(right), arm.dot(up));
+    // A point of the scan cannot be far outside its own bounding sphere.
+    if !from.is_finite() || from.length() > frame.radius * MAX_GRAB_RADII {
+        from = glam::Vec2::ZERO;
+    }
+    let to = from + glam::Vec2::new(travel.dot(right), travel.dot(up));
+    let handle = ball_point(from, frame.radius);
+    let target = ball_point(to, frame.radius);
+    // The arc from the handle to its target, taken from the cross and dot
+    // products directly: a slow drag turns the scan by well under a milliradian
+    // a step, which a cosine alone cannot tell from no turn at all.
+    let normal = handle.cross(target);
+    let angle = normal.length().atan2(handle.dot(target));
+    let world_axis = (right * normal.x + up * normal.y + toward * normal.z).normalize_or_zero();
+    if !angle.is_finite() || angle <= 0.0 || world_axis.length_squared() <= f32::EPSILON {
+        return Quat::IDENTITY;
+    }
+    Quat::from_axis_angle(world_axis, angle.min(MAX_TILT_STEP_RAD))
+}
+
+/// Turn a scan around a world-space pivot.
 ///
 /// The returned step is a world-space transform, meant to be pre-multiplied onto
 /// the layer's pose exactly like the translation step.
@@ -207,52 +214,19 @@ pub(crate) fn rotation_about_pivot(turn: Quat, pivot: Vec3) -> Affine3A {
         * Affine3A::from_translation(-pivot)
 }
 
-/// How far a grabbed pivot may sit from the layer centre, as a multiple of the
-/// layer's own radius.
-///
-/// The bound is relative on purpose. An absolute metre says nothing about a
-/// 70 mm arch — it passes a pivot fourteen times the whole scan — and it is
-/// anchored to the world origin, so a layer legitimately placed a metre away
-/// would have every Ctrl-drag refused. A grab further than this multiple of
-/// the scan's own size is a pose artefact, not a point on the surface.
-pub(crate) const DRAG_PIVOT_EXTENT_MULTIPLE: f32 = 10.0;
-
-/// Floor for the relative bound, so a degenerate bounding box cannot reject
-/// every grab.
-pub(crate) const MIN_PIVOT_EXTENT_MM: f32 = 10.0;
-
-/// Which local point a Ctrl-drag uses as its fixed world-space anchor.
-///
-/// The surface point the operator grabbed, validated against the layer's own
-/// size. Invalid or distant points fall back to the bounds centre.
-///
-/// Returning a sane point keeps the gesture alive instead of freezing it.
-pub(crate) fn drag_pivot_local(grabbed_local: Vec3, centre_local: Vec3, radius_local: f32) -> Vec3 {
-    let limit = (radius_local * DRAG_PIVOT_EXTENT_MULTIPLE).max(MIN_PIVOT_EXTENT_MM);
-    let offset = (grabbed_local - centre_local).length();
-    if grabbed_local.is_finite() && offset.is_finite() && offset <= limit {
-        grabbed_local
-    } else {
-        centre_local
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn rotation_frame(
-        view: Vec3,
-        right: Vec3,
-        up: Vec3,
-        world_per_pixel: f32,
-        radius: f32,
-    ) -> AnchoredRotationFrame {
-        AnchoredRotationFrame::new(view, right, up, world_per_pixel, radius)
-    }
-
-    fn rotation(delta: egui::Vec2, frame: AnchoredRotationFrame) -> Quat {
-        anchored_rotation_from_drag(delta, frame)
+    /// A scan of radius 20 centred on the origin, seen down the -Z axis.
+    fn front_view() -> TurnFrame {
+        TurnFrame {
+            toward_viewer: Vec3::Z,
+            camera_right: Vec3::X,
+            camera_up: Vec3::Y,
+            centre: Vec3::ZERO,
+            radius: 20.0,
+        }
     }
 
     /// One conversion, one guard: the brush ring and the hand drag share it, so
@@ -284,14 +258,6 @@ mod tests {
             "a shorter viewport puts more millimetres in a pixel"
         );
     }
-
-    use super::{
-        anchored_rotation_from_drag, constrain_translation, drag_pivot_local, mm_per_pixel,
-        rotation_about_pivot, screen_delta_to_world, DragConstraint, DRAG_PIVOT_EXTENT_MULTIPLE,
-        MAX_TILT_STEP_RAD, MIN_PIVOT_EXTENT_MM,
-    };
-    use eframe::egui;
-    use glam::{Quat, Vec3};
 
     #[test]
     fn free_movement_passes_the_delta_through() {
@@ -367,60 +333,145 @@ mod tests {
     /// A Ctrl-drag at rest produces no rotation.
     #[test]
     fn an_empty_drag_produces_no_rotation() {
-        let rotation = rotation(
-            egui::Vec2::ZERO,
-            rotation_frame(-Vec3::Z, Vec3::X, Vec3::Y, 0.5, 10.0),
-        );
-        assert!(rotation.to_axis_angle().1.abs() < 1e-6);
+        let turn = turn_following_grab(Vec3::new(3.0, 4.0, 12.0), Vec3::ZERO, front_view());
+        assert!(turn.to_axis_angle().1.abs() < 1e-6);
     }
 
-    /// Camera orientation chooses the axis, while object radius chooses the
-    /// angular amount for the same screen-space movement.
+    /// The ball is continuous where the sphere hands over to the sheet, so a
+    /// drag across that line cannot make the scan jump.
     #[test]
-    fn an_anchored_turn_uses_camera_axes_and_relative_scan_scale() {
-        let turn = rotation(
-            egui::vec2(8.0, 0.0),
-            rotation_frame(-Vec3::Z, Vec3::X, Vec3::Y, 0.25, 20.0),
+    fn the_ball_is_continuous_across_the_sphere_outline() {
+        let radius = 20.0;
+        let seam = radius * std::f32::consts::FRAC_1_SQRT_2;
+        let inside = ball_point(glam::Vec2::new(seam - 1e-3, 0.0), radius);
+        let outside = ball_point(glam::Vec2::new(seam + 1e-3, 0.0), radius);
+        assert!(
+            (inside.z - outside.z).abs() < 1e-2,
+            "{inside:?} {outside:?}"
         );
+        assert!((ball_point(glam::Vec2::ZERO, radius).z - radius).abs() < 1e-6);
+        // Far out the sheet flattens but never reaches the view plane.
+        assert!(ball_point(glam::Vec2::new(10.0 * radius, 0.0), radius).z > 0.0);
+    }
+
+    /// A point on the ball goes with the cursor: grabbed on the side of the
+    /// scan that faces the viewer, it stays under the cursor.
+    #[test]
+    fn a_point_on_the_ball_follows_the_cursor() {
+        for offset in [
+            glam::Vec2::ZERO,
+            glam::Vec2::new(6.0, -3.0),
+            glam::Vec2::new(-9.0, 8.0),
+        ] {
+            let grabbed = ball_point(offset, 20.0);
+            for travel in [
+                Vec3::new(1.5, 0.0, 0.0),
+                Vec3::new(0.0, -1.0, 0.0),
+                Vec3::new(-0.8, 1.1, 0.0),
+            ] {
+                let moved = turn_following_grab(grabbed, travel, front_view()) * grabbed;
+                assert!(
+                    (moved.truncate() - (grabbed + travel).truncate()).length() < 1e-3,
+                    "{grabbed:?} dragged by {travel:?} landed at {moved:?}"
+                );
+            }
+        }
+    }
+
+    /// A slow drag is a run of very small steps, and each one has to turn the
+    /// scan: a step lost to rounding would make fine seating impossible.
+    #[test]
+    fn a_hair_of_travel_still_turns_the_scan() {
+        let grabbed = Vec3::new(0.0, 0.0, 20.0);
+        let travel = Vec3::new(0.002, 0.0, 0.0);
+        let turn = turn_following_grab(grabbed, travel, front_view());
         let (axis, angle) = turn.to_axis_angle();
-        assert!(axis.dot(-Vec3::Y) > 0.999, "horizontal drag axis: {axis:?}");
-        assert!((angle - 0.1).abs() < 1e-5, "relative angle: {angle}");
+        assert!(axis.dot(Vec3::Y) > 0.999, "{axis:?}");
+        assert!((angle - 1.0e-4).abs() < 2.0e-6, "{angle}");
+    }
 
-        let vertical = rotation(
-            egui::vec2(0.0, 8.0),
-            rotation_frame(-Vec3::Z, Vec3::X, Vec3::Y, 0.25, 20.0),
-        );
-        let (vertical_axis, vertical_angle) = vertical.to_axis_angle();
-        assert!(
-            vertical_axis.dot(-Vec3::X) > 0.999,
-            "downward drag axis: {vertical_axis:?}"
-        );
-        assert!((vertical_angle - angle).abs() < 1e-5);
+    /// The side facing the viewer goes the way the cursor goes: dragging right
+    /// turns the near surface to the right, not the far one. The grabbed
+    /// point's own depth does not enter, so a flat scan seen face on tilts
+    /// exactly as a deep one does.
+    #[test]
+    fn the_near_surface_turns_the_way_the_cursor_moves() {
+        for depth in [20.0, 0.0, -7.0] {
+            let grabbed = Vec3::new(0.0, 0.0, depth);
+            let right = turn_following_grab(grabbed, Vec3::new(2.0, 0.0, 0.0), front_view());
+            let (axis, angle) = right.to_axis_angle();
+            assert!(axis.dot(Vec3::Y) > 0.999, "rightward drag axis: {axis:?}");
+            assert!((angle - (2.0_f32 / 20.0).asin()).abs() < 1e-4, "{angle}");
 
-        let turned_view = rotation(
-            egui::vec2(8.0, 0.0),
-            rotation_frame(-Vec3::Z, Vec3::Y, -Vec3::X, 0.25, 20.0),
-        );
-        let (view_axis, view_angle) = turned_view.to_axis_angle();
-        assert!(
-            view_axis.dot(Vec3::X) > 0.999,
-            "rotated view axis: {view_axis:?}"
-        );
-        assert!((view_angle - angle).abs() < 1e-5);
+            let down = turn_following_grab(grabbed, Vec3::new(0.0, -2.0, 0.0), front_view());
+            assert!(down.to_axis_angle().0.dot(Vec3::X) > 0.999);
+        }
 
-        let larger_scan = rotation(
-            egui::vec2(8.0, 0.0),
-            rotation_frame(-Vec3::Z, Vec3::X, Vec3::Y, 0.25, 40.0),
-        );
-        assert!((larger_scan.to_axis_angle().1 - angle * 0.5).abs() < 1e-5);
+        // The same gesture seen through a rolled camera follows that camera.
+        let near_pole = Vec3::new(0.0, 0.0, 20.0);
+        let rolled = TurnFrame {
+            camera_right: Vec3::Y,
+            camera_up: -Vec3::X,
+            ..front_view()
+        };
+        let turn = turn_following_grab(near_pole, Vec3::new(0.0, 2.0, 0.0), rolled);
+        assert!((turn * near_pole).y > 1.9, "{:?}", turn * near_pole);
+    }
+
+    /// Every direction of drag turns the scan, wherever it was grabbed: a
+    /// grab at the outline of a flat scan must not leave a direction dead.
+    #[test]
+    fn no_grab_leaves_a_drag_direction_dead() {
+        for grabbed in [
+            Vec3::ZERO,
+            Vec3::new(14.0, 0.0, 0.0),
+            Vec3::new(20.0, 0.0, 0.0),
+            Vec3::new(0.0, -26.0, 3.0),
+        ] {
+            for travel in [Vec3::X, -Vec3::X, Vec3::Y, -Vec3::Y] {
+                let angle = turn_following_grab(grabbed, travel, front_view())
+                    .to_axis_angle()
+                    .1;
+                assert!(angle > 5e-3, "{grabbed:?} dragged by {travel:?}: {angle}");
+            }
+        }
+    }
+
+    /// Out at the outline a drag along it rolls the scan about the view axis.
+    #[test]
+    fn a_drag_along_the_outline_rolls_about_the_view_axis() {
+        let on_outline = Vec3::new(20.0, 0.0, 0.0);
+        let turn = turn_following_grab(on_outline, Vec3::new(0.0, 2.0, 0.0), front_view());
+        let (axis, angle) = turn.to_axis_angle();
+        assert!(axis.dot(Vec3::Z) > 0.85, "roll axis: {axis:?}");
+        assert!(angle > 0.05, "{angle}");
+    }
+
+    /// A grab with no usable position turns the scan as a grab at its centre
+    /// does, instead of freezing the gesture.
+    #[test]
+    fn a_grab_without_a_usable_position_turns_as_the_centre_does() {
+        let travel = Vec3::new(0.5, 0.0, 0.0);
+        let centred = turn_following_grab(Vec3::ZERO, travel, front_view());
+        for grabbed in [
+            Vec3::splat(f32::NAN),
+            Vec3::new(f32::INFINITY, 0.0, 0.0),
+            Vec3::new(1.0e9, 0.0, 0.0),
+        ] {
+            assert_eq!(turn_following_grab(grabbed, travel, front_view()), centred);
+        }
+        let (axis, angle) = centred.to_axis_angle();
+        assert!(axis.dot(Vec3::Y) > 0.999, "{axis:?}");
+        assert!((angle - (0.5_f32 / 20.0).asin()).abs() < 1e-4, "{angle}");
     }
 
     /// A coalesced pointer jump cannot spin the scan by a large angle at once.
     #[test]
     fn a_large_drag_is_capped_at_the_tilt_step() {
-        let turn = rotation(
-            egui::vec2(0.0, -4000.0),
-            rotation_frame(-Vec3::Z, Vec3::X, Vec3::Y, 1.0, 10.0),
+        let turn = turn_following_grab(
+            Vec3::new(0.0, 0.0, 20.0),
+            Vec3::new(0.0, -4000.0, 0.0),
+            front_view(),
         );
         assert!(
             (turn.to_axis_angle().1 - MAX_TILT_STEP_RAD).abs() < 1e-5,
@@ -431,37 +482,54 @@ mod tests {
     /// Invalid camera input or scale cannot produce a non-finite turn.
     #[test]
     fn a_degenerate_camera_or_scale_rotates_nothing() {
-        for (view, right, up, world_per_pixel, radius) in [
-            (Vec3::ZERO, Vec3::X, Vec3::Y, 1.0, 10.0),
-            (-Vec3::Z, Vec3::ZERO, Vec3::Y, 1.0, 10.0),
-            (-Vec3::Z, Vec3::X, Vec3::ZERO, 1.0, 10.0),
-            (-Vec3::Z, Vec3::X, Vec3::Y, 0.0, 10.0),
-            (-Vec3::Z, Vec3::X, Vec3::Y, f32::NAN, 10.0),
-            (-Vec3::Z, Vec3::X, Vec3::Y, 1.0, 0.0),
-            (-Vec3::Z, Vec3::X, Vec3::Y, 1.0, f32::NAN),
+        let grabbed = Vec3::new(0.0, 0.0, 15.0);
+        let travel = Vec3::new(1.0, 1.0, 0.0);
+        for frame in [
+            TurnFrame {
+                toward_viewer: Vec3::ZERO,
+                ..front_view()
+            },
+            TurnFrame {
+                camera_right: Vec3::ZERO,
+                ..front_view()
+            },
+            TurnFrame {
+                camera_up: Vec3::ZERO,
+                ..front_view()
+            },
+            // A mirrored basis would reverse the gesture.
+            TurnFrame {
+                toward_viewer: -Vec3::Z,
+                ..front_view()
+            },
+            TurnFrame {
+                radius: 0.0,
+                ..front_view()
+            },
+            TurnFrame {
+                radius: f32::NAN,
+                ..front_view()
+            },
+            TurnFrame {
+                centre: Vec3::splat(f32::NAN),
+                ..front_view()
+            },
         ] {
-            let turn = rotation(
-                egui::vec2(30.0, 30.0),
-                rotation_frame(view, right, up, world_per_pixel, radius),
-            );
-            assert_eq!(turn, Quat::IDENTITY);
+            assert_eq!(turn_following_grab(grabbed, travel, frame), Quat::IDENTITY);
         }
         assert_eq!(
-            rotation(
-                egui::vec2(f32::NAN, 0.0),
-                rotation_frame(-Vec3::Z, Vec3::X, Vec3::Y, 1.0, 10.0),
-            ),
+            turn_following_grab(grabbed, Vec3::new(f32::NAN, 0.0, 0.0), front_view()),
             Quat::IDENTITY
         );
     }
 
-    /// The point the operator grabbed stays fixed through the turn.
+    /// The pivot stays where it is and everything else goes round it.
     #[test]
-    fn a_ctrl_drag_turns_about_the_grabbed_point() {
-        let anchor = Vec3::new(2.0, -1.0, 0.5);
+    fn a_turn_about_a_pivot_leaves_the_pivot_in_place() {
+        let pivot = Vec3::new(2.0, -1.0, 0.5);
         let turn = Quat::from_axis_angle(Vec3::Y, 0.5);
-        let step = rotation_about_pivot(turn, anchor);
-        assert!((step.transform_point3(anchor) - anchor).length() < 1e-5);
+        let step = rotation_about_pivot(turn, pivot);
+        assert!((step.transform_point3(pivot) - pivot).length() < 1e-5);
         assert!(
             (step.transform_point3(Vec3::new(-9.0, 3.0, 0.0)) - Vec3::new(-9.0, 3.0, 0.0)).length()
                 > 0.1
@@ -477,64 +545,6 @@ mod tests {
         assert_eq!(
             rotation_about_pivot(Quat::from_xyzw(f32::NAN, 0.0, 0.0, 1.0), Vec3::ZERO),
             Affine3A::IDENTITY
-        );
-    }
-
-    /// Constraint chips affect plain translation and leave the rotation law
-    /// independent, because there is no constraint input to the turn.
-    #[test]
-    fn the_ctrl_turn_is_independent_of_translation_constraint() {
-        let turn = rotation(
-            egui::vec2(30.0, -18.0),
-            rotation_frame(-Vec3::Z, Vec3::X, Vec3::Y, 0.2, 20.0),
-        );
-        for constraint in [
-            DragConstraint::Free,
-            DragConstraint::ZOnly,
-            DragConstraint::XyPlane,
-        ] {
-            assert!(turn.to_axis_angle().1 > 1e-3, "{constraint:?}");
-        }
-    }
-
-    /// An unusable grab falls back to the centre instead of freezing the drag.
-    #[test]
-    fn an_unusable_pivot_falls_back_to_the_layer_centre() {
-        let centre = Vec3::new(1.0, 2.0, 0.0);
-        let radius = 35.0;
-        let limit = (radius * DRAG_PIVOT_EXTENT_MULTIPLE).max(MIN_PIVOT_EXTENT_MM);
-
-        for bad in [
-            Vec3::new(f32::NAN, 0.0, 0.0),
-            Vec3::new(f32::INFINITY, 0.0, 0.0),
-            // Just outside the layer's own extent bound.
-            centre + Vec3::splat(limit + 1.0),
-        ] {
-            assert_eq!(
-                drag_pivot_local(bad, centre, radius),
-                centre,
-                "a grab of {bad:?} must fall back to the centre"
-            );
-        }
-
-        // The bound is relative to the scan, so a grab a sane distance out is
-        // still honoured: this is what keeps a far-placed layer draggable.
-        assert_eq!(
-            drag_pivot_local(centre + Vec3::splat(limit * 0.5), centre, radius),
-            centre + Vec3::splat(limit * 0.5),
-            "a grab inside the layer's extent must be honoured"
-        );
-    }
-
-    /// A tiny or degenerate bounding box still leaves a usable pivot.
-    #[test]
-    fn a_degenerate_layer_extent_still_allows_a_grab() {
-        let centre = Vec3::ZERO;
-        // A zero radius would make a purely relative bound reject everything.
-        assert_eq!(
-            drag_pivot_local(Vec3::new(1.0, 0.0, 0.0), centre, 0.0),
-            Vec3::new(1.0, 0.0, 0.0),
-            "the floor must keep a small scan draggable"
         );
     }
 }

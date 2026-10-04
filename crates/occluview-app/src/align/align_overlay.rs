@@ -110,6 +110,17 @@ pub(crate) fn paint_pairs(painter: &egui::Painter, view: &PairPaint<'_>) {
     }
 }
 
+/// Paint the ball a Ctrl-drag turns a scan on: the centre, which stays put,
+/// and the outline, inside which a drag tilts the scan and at which it rolls.
+pub(crate) fn paint_turn_ball(painter: &egui::Painter, centre: egui::Pos2, radius_px: f32) {
+    painter.circle_stroke(
+        centre,
+        radius_px,
+        egui::Stroke::new(1.1_f32, ui_theme::accent().gamma_multiply(0.5)),
+    );
+    measure_draw::anchor_dot(painter, centre);
+}
+
 /// A head on the `from`→`to` line, set back far enough to clear the marker
 /// disc at the tip.
 fn arrowhead(painter: &egui::Painter, from: egui::Pos2, to: egui::Pos2, stroke: egui::Stroke) {

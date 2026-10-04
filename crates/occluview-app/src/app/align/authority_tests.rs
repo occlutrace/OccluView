@@ -784,7 +784,7 @@ fn cancel_marks_restored_layers_unsaved_after_an_open_drag_or_export() {
         scene.tools.align.drag = Some(crate::app::align::drag::AlignDrag {
             layer: moving,
             start: glam::Affine3A::IDENTITY,
-            pivot_local: Vec3::ZERO,
+            grab_local: Vec3::ZERO,
         });
         scene.nudge_align_layer(moving, glam::Affine3A::from_translation(Vec3::X));
         if committed {
@@ -824,7 +824,7 @@ fn cancel_keeps_the_session_retryable_when_another_edit_is_busy() {
     scene.tools.align.drag = Some(crate::app::align::drag::AlignDrag {
         layer: moving,
         start: glam::Affine3A::IDENTITY,
-        pivot_local: Vec3::ZERO,
+        grab_local: Vec3::ZERO,
     });
     scene.nudge_align_layer(moving, glam::Affine3A::from_translation(Vec3::X));
     let current = scene.document.scene.clone().expect("scene");

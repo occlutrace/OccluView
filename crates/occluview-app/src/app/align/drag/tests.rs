@@ -97,6 +97,9 @@ fn actual_drag_fixture(
     (app, id, ctx, rect, press_at, modifiers, viewport_id, target)
 }
 
+/// Bounds centre of the triangle `actual_drag_fixture` loads.
+const FIXTURE_CENTRE: Vec3 = Vec3::new(20.0, 20.0, 0.0);
+
 fn pointer_button(pos: egui::Pos2, pressed: bool, modifiers: egui::Modifiers) -> egui::Event {
     egui::Event::PointerButton {
         pos,
@@ -146,20 +149,21 @@ fn expected_free_translation(camera: &Camera, viewport: egui::Rect, motion: egui
     )
 }
 
-/// A Ctrl-drag of a transformed scan keeps the clicked world point fixed.
+/// A Ctrl-drag turns a transformed scan in place: its centre stays where it
+/// is and the grabbed point goes with the cursor.
 ///
 /// This exercises the transformed layer pose, camera-relative step, and
-/// world-space anchor together. The translation constraints must not alter
+/// world-space centre together. The translation constraints must not alter
 /// the Ctrl turn.
 #[test]
-fn a_ctrl_drag_step_pins_the_pressed_point_for_every_constraint() {
+fn a_ctrl_drag_step_turns_the_scan_about_its_centre_for_every_constraint() {
     let mut steps = Vec::new();
     for constraint in [
         crate::align::align_drag::DragConstraint::Free,
         crate::align::align_drag::DragConstraint::ZOnly,
         crate::align::align_drag::DragConstraint::XyPlane,
     ] {
-        let (mut app, id, _) = rig("ctrl-step-anchor");
+        let (mut app, id, _) = rig("ctrl-step-centre");
         app.workspace.scenes[0].tools.align.constraint = constraint;
         let pose = Affine3A::from_translation(Vec3::new(30.0, -12.0, 7.0))
             * Affine3A::from_quat(Quat::from_rotation_y(0.45));
@@ -194,29 +198,30 @@ fn a_ctrl_drag_step_pins_the_pressed_point_for_every_constraint() {
         let drag = AlignDrag {
             layer: id,
             start: pose,
-            pivot_local: grabbed_local,
+            grab_local: grabbed_local,
         };
-        let anchor_world = pose.transform_point3(grabbed_local);
+        let grabbed_world = pose.transform_point3(grabbed_local);
         let first_step = app
             .active_context()
             .expect("live test scene")
             .align_drag_step(drag, &camera, frame(true))
             .expect("a Ctrl-drag over a live layer must produce a step");
-        assert!(
-            (first_step.transform_point3(anchor_world) - anchor_world).length() < 1e-3,
-            "{constraint:?}: the clicked point moved"
-        );
         let scene = app.workspace.scenes[0]
             .document
             .scene
             .as_ref()
             .expect("scene");
         let entry = scene.meshes().iter().find(|e| e.id() == id).expect("layer");
-        let centre_local = entry.mesh.bbox_cached().center();
-        let centre_world = entry.transform.transform_point3(centre_local);
+        let centre_world = entry
+            .transform
+            .transform_point3(entry.mesh.bbox_cached().center());
         assert!(
-            (first_step.transform_point3(centre_world) - centre_world).length() > 1e-3,
-            "{constraint:?}: an off-centre anchor must tilt the rest of the layer"
+            (first_step.transform_point3(centre_world) - centre_world).length() < 1e-3,
+            "{constraint:?}: the scan must turn in place"
+        );
+        assert!(
+            (first_step.transform_point3(grabbed_world) - grabbed_world).length() > 1e-3,
+            "{constraint:?}: the grabbed point must go with the cursor"
         );
         steps.push(first_step);
     }
@@ -230,25 +235,90 @@ fn a_ctrl_drag_step_pins_the_pressed_point_for_every_constraint() {
     }
 }
 
-/// Switching modifiers during one held gesture keeps the same local
-/// surface anchor attached to the pose as translation moves it.
+/// On screen, a point of the scan's ball moves exactly as far as the cursor
+/// went: the step is built from the live camera, the layer's centre and its
+/// radius, and the pixel scale, and a slip in any of them would show here.
+#[test]
+fn a_ctrl_drag_step_keeps_the_ball_under_the_cursor() {
+    let (mut app, id, mut camera) = rig("ctrl-step-follows-cursor");
+    camera.orbit_view_by(0.35, -0.2);
+    app.workspace.scenes[0].render.camera = Some(camera);
+    let viewport = frame(true).viewport;
+    let bounds = app.workspace.scenes[0]
+        .document
+        .scene
+        .as_ref()
+        .expect("scene")
+        .meshes()[0]
+        .mesh
+        .bbox_cached();
+    let radius = bounds.size().length() * 0.5;
+    // A point of the ball over the scan, on the side facing the viewer.
+    let view = camera.view_direction();
+    let right = view.cross(camera.view_up()).normalize();
+    let offset = egui::vec2(0.2, -0.1) * radius;
+    let grabbed = bounds.center() + right * offset.x + camera.view_up() * offset.y
+        - view * (radius * radius - offset.length_sq()).sqrt();
+    let drag = AlignDrag {
+        layer: id,
+        start: Affine3A::IDENTITY,
+        grab_local: grabbed,
+    };
+    let project = |point: Vec3| {
+        crate::viewer::project_world_to_viewport(&camera, viewport, point)
+            .expect("the point projects into the viewport")
+            .0
+    };
+    // Short enough that the per-step cap on the turn does not cut in.
+    let motion = egui::vec2(1.2, -0.9);
+    let step = app
+        .active_context()
+        .expect("live test scene")
+        .align_drag_step(
+            drag,
+            &camera,
+            DragFrame {
+                viewport,
+                motion,
+                rotating: true,
+            },
+        )
+        .expect("a Ctrl-drag over a live layer must produce a step");
+    let landed = project(step.transform_point3(grabbed));
+    assert!(
+        (landed - (project(grabbed) + motion)).length() < 0.05,
+        "the cursor went {motion:?} and the point of the ball went {:?}",
+        landed - project(grabbed)
+    );
+}
+
+/// Switching modifiers during one held gesture keeps turning about the scan's
+/// centre wherever the plain movement has carried it.
 #[test]
 #[expect(
     clippy::too_many_lines,
     reason = "Keep the complete gesture and its state assertions in one regression scenario."
 )]
-fn changing_between_translation_and_tilt_keeps_the_current_grab_point() {
+fn changing_between_translation_and_tilt_turns_about_the_carried_centre() {
     let (mut app, id, mut camera) = rig("mixed-manual-gesture");
     camera.orbit_view_by(0.25, -0.18);
     app.workspace.scenes[0].render.camera = Some(camera);
     let pose = Affine3A::from_translation(Vec3::new(4.0, -2.0, 6.0))
         * Affine3A::from_quat(Quat::from_rotation_x(0.3));
-    let anchor_local = Vec3::new(0.75, 0.1, 0.0);
     let drag = AlignDrag {
         layer: id,
         start: pose,
-        pivot_local: anchor_local,
+        grab_local: Vec3::new(0.75, 0.1, 0.0),
     };
+    let centre_local = app.workspace.scenes[0]
+        .document
+        .scene
+        .as_ref()
+        .expect("scene")
+        .meshes()[0]
+        .mesh
+        .bbox_cached()
+        .center();
     app.workspace.scenes[0].tools.align.drag = Some(drag);
     let mut scene = app.workspace.scenes[0]
         .document
@@ -266,7 +336,7 @@ fn changing_between_translation_and_tilt_keeps_the_current_grab_point() {
     app.workspace.scenes[0].document.scene = Some(std::sync::Arc::new(scene));
 
     let viewport = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 600.0));
-    let anchor_before = pose.transform_point3(anchor_local);
+    let centre_before = pose.transform_point3(centre_local);
     let translation = app
         .active_context()
         .expect("live test scene")
@@ -294,10 +364,10 @@ fn changing_between_translation_and_tilt_keeps_the_current_grab_point() {
         .find(|entry| entry.id() == id)
         .expect("layer")
         .transform;
-    let translated_anchor = translated.transform_point3(anchor_local);
+    let translated_centre = translated.transform_point3(centre_local);
     assert!(
-        (translated_anchor - anchor_before - Vec3::from(translation.translation)).length() < 1e-3,
-        "plain movement should carry the grabbed point with the layer"
+        (translated_centre - centre_before - Vec3::from(translation.translation)).length() < 1e-3,
+        "plain movement should carry the centre with the layer"
     );
 
     let rotation = app
@@ -306,8 +376,8 @@ fn changing_between_translation_and_tilt_keeps_the_current_grab_point() {
         .align_drag_step(drag, &camera, frame(true))
         .expect("Ctrl movement step");
     assert!(
-        (rotation.transform_point3(translated_anchor) - translated_anchor).length() < 1e-3,
-        "adding Ctrl should turn around the point in its current pose"
+        (rotation.transform_point3(translated_centre) - translated_centre).length() < 1e-3,
+        "adding Ctrl should turn about the centre in its current pose"
     );
     app.active_context()
         .expect("live test scene")
@@ -324,8 +394,8 @@ fn changing_between_translation_and_tilt_keeps_the_current_grab_point() {
         .find(|entry| entry.id() == id)
         .expect("layer")
         .transform;
-    let turned_anchor = turned.transform_point3(anchor_local);
-    assert!((turned_anchor - translated_anchor).length() < 1e-3);
+    let turned_centre = turned.transform_point3(centre_local);
+    assert!((turned_centre - translated_centre).length() < 1e-3);
 
     let next_translation = app
         .active_context()
@@ -354,10 +424,10 @@ fn changing_between_translation_and_tilt_keeps_the_current_grab_point() {
         .find(|entry| entry.id() == id)
         .expect("layer")
         .transform;
-    let moved_anchor = moved_pose.transform_point3(anchor_local);
+    let moved_centre = moved_pose.transform_point3(centre_local);
     assert!(
-        (moved_anchor - turned_anchor - Vec3::from(next_translation.translation)).length() < 1e-3,
-        "plain movement after Ctrl should carry the same grabbed point"
+        (moved_centre - turned_centre - Vec3::from(next_translation.translation)).length() < 1e-3,
+        "plain movement after Ctrl should carry the same centre"
     );
 
     let final_rotation = app
@@ -366,20 +436,20 @@ fn changing_between_translation_and_tilt_keeps_the_current_grab_point() {
         .align_drag_step(drag, &camera, frame(true))
         .expect("second Ctrl movement");
     assert!(
-        (final_rotation.transform_point3(moved_anchor) - moved_anchor).length() < 1e-3,
-        "a later Ctrl step should preserve the translated grab point"
+        (final_rotation.transform_point3(moved_centre) - moved_centre).length() < 1e-3,
+        "a later Ctrl step should turn about the carried centre"
     );
 }
 
-/// A grab far outside the scan falls back to the centre rather than
-/// freezing the gesture or turning about a point at infinity.
+/// A grab far outside the scan still turns it in place rather than freezing
+/// the gesture or swinging it about a point at infinity.
 #[test]
 fn an_absurd_grab_still_produces_a_usable_step() {
     let (mut app, id, camera) = rig("absurd-grab");
     let drag = AlignDrag {
         layer: id,
         start: Affine3A::IDENTITY,
-        pivot_local: Vec3::splat(1.0e9),
+        grab_local: Vec3::splat(1.0e9),
     };
     let step = app
         .active_context()
@@ -387,8 +457,6 @@ fn an_absurd_grab_still_produces_a_usable_step() {
         .align_drag_step(drag, &camera, frame(true))
         .expect("an absurd grab must still leave the gesture alive");
     assert!(step.is_finite(), "{step:?}");
-    // The discarded grab is replaced by the layer's own centre, so the
-    // centre is what the turn fixes.
     let scene = app.workspace.scenes[0]
         .document
         .scene
@@ -398,7 +466,7 @@ fn an_absurd_grab_still_produces_a_usable_step() {
     let pinned = step.transform_point3(centre);
     assert!(
         (pinned - centre).length() < 1e-3,
-        "the fallback pivot should be the layer centre, which moved {pinned:?} \
+        "the turn must leave the layer centre in place, but it moved {pinned:?} \
          away from {centre:?}"
     );
 }
@@ -412,7 +480,7 @@ fn a_step_for_a_missing_layer_produces_nothing() {
     let drag = AlignDrag {
         layer: id,
         start: Affine3A::IDENTITY,
-        pivot_local: Vec3::ZERO,
+        grab_local: Vec3::ZERO,
     };
     assert!(
         app.active_context()
@@ -430,7 +498,7 @@ fn a_plain_drag_step_translates_instead_of_turning() {
     let drag = AlignDrag {
         layer: id,
         start: Affine3A::IDENTITY,
-        pivot_local: Vec3::new(5.0, 5.0, 5.0),
+        grab_local: Vec3::new(5.0, 5.0, 5.0),
     };
     let step = app
         .active_context()
@@ -444,14 +512,14 @@ fn a_plain_drag_step_translates_instead_of_turning() {
     );
 }
 
-/// The actual press ray must select a surface anchor that stays fixed
-/// through a camera-relative Ctrl turn.
+/// The actual press ray must select the surface point the Ctrl turn carries
+/// with the cursor, while the scan turns in place.
 #[test]
 #[expect(
     clippy::too_many_lines,
     reason = "One actual press-drag-release scenario keeps its UI setup and geometry assertions together."
 )]
-fn a_real_ctrl_drag_gesture_pivots_at_the_grabbed_surface_point() {
+fn a_real_ctrl_drag_gesture_carries_the_pressed_point_about_the_centre() {
     use crate::align::align_panel::AlignTab;
     use occluview_core::{Mesh, Scene, SceneMesh, Vertex};
     use std::sync::Arc;
@@ -525,7 +593,7 @@ fn a_real_ctrl_drag_gesture_pivots_at_the_grabbed_surface_point() {
     // press lands on the surface, then the pointer is already 60 px away by
     // the end of the same frame. The frame's current pointer position is
     // therefore NOT where the button went down, and neither `hover_pos` nor
-    // `interact_pointer_pos` can be used to anchor the turn.
+    // `interact_pointer_pos` can be used to place the grab.
     frame(vec![
         egui::Event::ModifiersChanged(modifiers),
         egui::Event::PointerMoved(press_at),
@@ -539,7 +607,7 @@ fn a_real_ctrl_drag_gesture_pivots_at_the_grabbed_surface_point() {
     ]);
     // Frame 2: a secondary press lands elsewhere. egui keeps a single
     // `press_origin` for every button, so this is what would displace the
-    // anchor if the grab read that shared slot.
+    // grab if it read that shared slot.
     frame(vec![
         egui::Event::PointerButton {
             pos: press_at + egui::vec2(-120.0, -60.0),
@@ -567,47 +635,33 @@ fn a_real_ctrl_drag_gesture_pivots_at_the_grabbed_surface_point() {
     let entry = scene.meshes().iter().find(|e| e.id() == id).expect("layer");
     let centre = entry.mesh.bbox_cached().center();
 
-    // The fixture must be an off-centre grab, or a centre pivot would look
-    // identical and the test would prove nothing.
-    assert!(
-        (drag.pivot_local - centre).length() > 5.0,
-        "the grab {:?} is too close to the centre {centre:?} to tell the two apart",
-        drag.pivot_local
-    );
     // The grab must be the surface point under the cursor, not the centre.
     assert!(
-        (drag.pivot_local - target).length() < 0.5,
+        (drag.grab_local - target).length() < 0.5,
         "the grab stored {:?} but the operator pressed on {target:?}",
-        drag.pivot_local
+        drag.grab_local
     );
 
-    // A direct comparison against the original ray hit verifies the actual
-    // grabbed surface point, not just a synthetic pivot argument.
-    let pressed_world = entry.transform.transform_point3(drag.pivot_local);
-    let pressed_before = drag.start.transform_point3(drag.pivot_local);
-    assert!(
-        (pressed_world - pressed_before).length() < 1e-2,
-        "the clicked surface point moved from {pressed_before:?} to {pressed_world:?}"
-    );
-    // The grabbed point is off-centre, so the turn changes the layer around
-    // it rather than silently turning about the bounds centre.
+    // The scan turns in place, and the pressed point is what the turn moves.
     let centre_world = entry.transform.transform_point3(centre);
     assert!(
-        (centre_world - drag.start.transform_point3(centre)).length() > 0.1,
-        "an off-centre pivot should turn the layer centre"
+        (centre_world - drag.start.transform_point3(centre)).length() < 1e-2,
+        "the layer centre moved from {:?} to {centre_world:?}",
+        drag.start.transform_point3(centre)
     );
-    assert_ne!(
-        entry.transform,
-        Affine3A::IDENTITY,
-        "the Ctrl-drag produced no pose change at all"
+    let pressed_world = entry.transform.transform_point3(drag.grab_local);
+    let pressed_before = drag.start.transform_point3(drag.grab_local);
+    assert!(
+        (pressed_world - pressed_before).length() > 0.1,
+        "the pressed surface point stayed at {pressed_before:?}"
     );
 }
 
 /// A fast gesture can be delivered entirely in one egui frame. The raw
-/// event stream must still open, move, and close one Ctrl tilt at the point
+/// event stream must still open, move, and close one Ctrl turn of the point
 /// under the press, with one history entry.
 #[test]
-fn a_coalesced_ctrl_press_move_release_pins_and_records_one_drag() {
+fn a_coalesced_ctrl_press_move_release_turns_and_records_one_drag() {
     let (mut app, id, ctx, rect, press_at, modifiers, viewport_id, target) =
         actual_drag_fixture("coalesced-ctrl-drag");
     let moved_at = press_at + egui::vec2(60.0, 20.0);
@@ -640,18 +694,22 @@ fn a_coalesced_ctrl_press_move_release_pins_and_records_one_drag() {
         .iter()
         .find(|entry| entry.id() == id)
         .expect("jaw");
-    assert_ne!(entry.transform, Affine3A::IDENTITY, "the move was applied");
     assert!(
-        (entry.transform.transform_point3(target) - target).length() < 1e-2,
-        "Ctrl rotation must keep the pressed surface point in place"
+        (entry.transform.transform_point3(target) - target).length() > 0.1,
+        "the pressed surface point must go with the cursor"
+    );
+    let centre = entry.mesh.bbox_cached().center();
+    assert!(
+        (entry.transform.transform_point3(centre) - centre).length() < 1e-2,
+        "Ctrl rotation must turn the scan in place"
     );
     assert_eq!(app.workspace.scenes[0].document.edit_mode.undo_len(), 1);
 }
 
 /// The actual pointer path has to ray-pick in a transformed instance, not
-/// just preserve a pivot a unit test placed into `AlignDrag` itself.
+/// just use a grab a unit test placed into `AlignDrag` itself.
 #[test]
-fn a_ctrl_press_ray_picks_and_pins_a_transformed_surface_anchor() {
+fn a_ctrl_press_ray_picks_and_turns_a_transformed_scan_in_place() {
     let (mut app, id, ctx, rect, _, modifiers, viewport_id, _) =
         actual_drag_fixture("transformed-ctrl-ray-pick");
     let pose = Affine3A::from_translation(Vec3::new(11.0, -7.0, 5.0))
@@ -705,12 +763,11 @@ fn a_ctrl_press_ray_picks_and_pins_a_transformed_surface_anchor() {
         .expect("the press ray opens a drag");
     assert_eq!(drag.layer, id);
     assert!(
-        (drag.pivot_local - target_local).length() < 1e-2,
+        (drag.grab_local - target_local).length() < 1e-2,
         "the press ray must recover the known local point: {:?} vs {:?}",
-        drag.pivot_local,
+        drag.grab_local,
         target_local
     );
-    let grabbed_world = pose.transform_point3(drag.pivot_local);
     let moved_at = press_at + egui::vec2(48.0, 26.0);
     assert!(drive_actual_drag_frame(
         &mut app,
@@ -733,9 +790,10 @@ fn a_ctrl_press_ray_picks_and_pins_a_transformed_surface_anchor() {
         .find(|entry| entry.id() == id)
         .expect("jaw");
     assert_ne!(moved.transform, pose, "the Ctrl gesture must turn the scan");
+    let centre = moved.mesh.bbox_cached().center();
     assert!(
-        (moved.transform.transform_point3(drag.pivot_local) - grabbed_world).length() < 1e-2,
-        "the ray-picked world point must stay fixed through Ctrl tilt"
+        (moved.transform.transform_point3(centre) - pose.transform_point3(centre)).length() < 1e-2,
+        "the scan must turn about its own centre"
     );
     assert_eq!(app.workspace.scenes[0].document.edit_mode.undo_len(), 1);
 }
@@ -835,7 +893,7 @@ fn a_surface_click_without_motion_keeps_the_landed_fit() {
 #[test]
 fn modifier_changes_keep_raw_move_order_across_frames() {
     // Plain translation, then Ctrl rotation in one batch that ends with
-    // Ctrl down. Its first move must still translate the clicked anchor.
+    // Ctrl down. Its first move must still translate the scan, centre and all.
     let (mut app, _, ctx, rect, press_at, ctrl, viewport_id, _) =
         actual_drag_fixture("translate-before-ctrl-same-batch");
     drive_actual_drag_frame(&mut app, &ctx, rect, viewport_id, vec![]);
@@ -860,7 +918,7 @@ fn modifier_changes_keep_raw_move_order_across_frames() {
     let turn_motion = egui::vec2(48.0, -18.0);
     let after_plain = press_at + plain_motion;
     let after_turn = after_plain + turn_motion;
-    let expected_anchor = drag.start.transform_point3(drag.pivot_local)
+    let expected_centre = drag.start.transform_point3(FIXTURE_CENTRE)
         + expected_free_translation(&camera, rect, plain_motion);
     assert!(drive_actual_drag_frame(
         &mut app,
@@ -882,7 +940,7 @@ fn modifier_changes_keep_raw_move_order_across_frames() {
         .meshes()[0]
         .transform;
     assert!(
-        (moved.transform_point3(drag.pivot_local) - expected_anchor).length() < 1e-2,
+        (moved.transform_point3(FIXTURE_CENTRE) - expected_centre).length() < 1e-2,
         "the first movement must translate before the later Ctrl turn"
     );
     assert_ne!(app.workspace.scenes[0].document.edit_mode.undo_len(), 0);
@@ -913,7 +971,7 @@ fn modifier_changes_keep_raw_move_order_across_frames() {
     let plain_motion = egui::vec2(-14.0, 11.0);
     let after_turn = press_at + turn_motion;
     let after_plain = after_turn + plain_motion;
-    let expected_anchor = drag.start.transform_point3(drag.pivot_local)
+    let expected_centre = drag.start.transform_point3(FIXTURE_CENTRE)
         + expected_free_translation(&camera, rect, plain_motion);
     assert!(drive_actual_drag_frame(
         &mut app,
@@ -935,8 +993,8 @@ fn modifier_changes_keep_raw_move_order_across_frames() {
         .meshes()[0]
         .transform;
     assert!(
-        (moved.transform_point3(drag.pivot_local) - expected_anchor).length() < 1e-2,
-        "the first Ctrl movement must pin the press before later translation"
+        (moved.transform_point3(FIXTURE_CENTRE) - expected_centre).length() < 1e-2,
+        "the first Ctrl movement must turn in place before later translation"
     );
     assert_eq!(app.workspace.scenes[0].document.edit_mode.undo_len(), 1);
 }

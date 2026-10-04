@@ -38,7 +38,7 @@ fn canceling_manual_alignment_restores_pose_and_clears_pointer_state() {
     scene.tools.align.drag = Some(AlignDrag {
         layer,
         start: before,
-        pivot_local: Vec3::ZERO,
+        grab_local: Vec3::ZERO,
     });
     scene.tools.align.drag_last_pointer_pos = Some(egui::pos2(10.0, 20.0));
     scene.tools.align.drag_modifiers = Some(egui::Modifiers::CTRL);

@@ -793,7 +793,7 @@ mod transition_tests {
         app.workspace.scenes[0].tools.align.drag = Some(AlignDrag {
             layer: layer_id,
             start,
-            pivot_local: Vec3::new(0.25, 0.25, 0.0),
+            grab_local: Vec3::new(0.25, 0.25, 0.0),
         });
         app.active_context()
             .expect("live test scene")

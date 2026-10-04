@@ -67,6 +67,8 @@ impl SceneContext<'_> {
             );
         }
 
+        self.paint_align_turn_ball(ui.painter(), response.rect);
+
         self.show_align_panel(ctx, response.rect);
         self.paint_align_brush_cursor(ui, response.rect, ctx);
 
