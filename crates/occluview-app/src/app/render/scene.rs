@@ -626,6 +626,35 @@ mod input_tests {
         Ok(())
     }
 
+    /// Pump frames until the mesh editor's `label` control can take a click.
+    ///
+    /// Entering from a layer row also prepares Sculpt in the background. The
+    /// editor's controls wait for that, and its window moves when the pending
+    /// notice goes, so a click is safe only once both are at rest.
+    fn rest_editor_control(
+        app: &mut OccluViewApp,
+        ctx: &egui::Context,
+        label: &str,
+    ) -> anyhow::Result<()> {
+        let waiting = Instant::now();
+        let mut at = control_point(app, ctx, label)?;
+        loop {
+            let pending = app.workspace.scenes[0].tools.sculpt.is_busy();
+            let next = control_point(app, ctx, label)?;
+            if !pending && next == at {
+                return Ok(());
+            }
+            at = next;
+            anyhow::ensure!(
+                waiting.elapsed() < std::time::Duration::from_secs(10),
+                "the editor never came to rest for {label}"
+            );
+            if pending {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        }
+    }
+
     #[test]
     fn empty_pane_right_click_opens_scene_menu_before_any_render() {
         let ctx = egui::Context::default();
@@ -957,26 +986,7 @@ mod input_tests {
                     scene.tools.editor_tab,
                     crate::mesh_editor::mesh_editor_overlay::EditorTab::EditMesh
                 );
-                // The layer route also prepares Sculpt in the background. The
-                // editor's controls wait for that, and its window moves when
-                // the pending notice goes, so click only once both are at rest.
-                let waiting = Instant::now();
-                let mut lasso = control_point(&mut app, &ctx, "Lasso")?;
-                loop {
-                    let pending = app.workspace.scenes[0].tools.sculpt.is_busy();
-                    let next = control_point(&mut app, &ctx, "Lasso")?;
-                    if !pending && next == lasso {
-                        break;
-                    }
-                    lasso = next;
-                    anyhow::ensure!(
-                        waiting.elapsed() < std::time::Duration::from_secs(10),
-                        "{previous} -> {route}: the editor never came to rest"
-                    );
-                    if pending {
-                        std::thread::sleep(std::time::Duration::from_millis(1));
-                    }
-                }
+                rest_editor_control(&mut app, &ctx, "Lasso")?;
                 click_control(&mut app, &ctx, "Lasso")?;
                 let camera = app.workspace.scenes[0]
                     .render
