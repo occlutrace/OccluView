@@ -65,12 +65,49 @@ pub(crate) fn mm_per_pixel(orthographic_height: f32, viewport_height: f32) -> f3
     orthographic_height.max(f32::EPSILON) / viewport_height.max(1.0)
 }
 
-/// Drop the components a constraint forbids.
-pub(crate) fn constrain_translation(delta: Vec3, constraint: DragConstraint) -> Vec3 {
+/// How short a constrained axis, or how flat a constrained plane, may look on
+/// screen and still be dragged along. Below it, keeping the scan under the
+/// cursor would move it more than five times the cursor's travel, most of it
+/// in depth, where the operator cannot see it.
+const MIN_CONSTRAINT_FORESHORTENING: f32 = 0.2;
+
+/// The motion inside a constraint that keeps the scan under the cursor.
+///
+/// `delta` is the cursor's travel across the view plane, in world units, and
+/// `toward_viewer` is the view plane's normal. Along the constrained axis the
+/// scan moves by whatever makes its picture travel as far along the axis as
+/// the cursor did; within the constrained plane it moves by whatever makes its
+/// picture travel exactly as the cursor did. A direction the view shows
+/// end-on or edge-on cannot be dragged, and is left out instead of being made
+/// up for in depth.
+pub(crate) fn constrain_translation(
+    delta: Vec3,
+    constraint: DragConstraint,
+    toward_viewer: Vec3,
+) -> Vec3 {
+    let normal = toward_viewer.normalize_or_zero();
     match constraint {
         DragConstraint::Free => delta,
-        DragConstraint::ZOnly => Vec3::new(0.0, 0.0, delta.z),
-        DragConstraint::XyPlane => Vec3::new(delta.x, delta.y, 0.0),
+        DragConstraint::ZOnly => {
+            // The squared length of the Z axis as the view shows it.
+            let shown = 1.0 - normal.z * normal.z;
+            if shown < MIN_CONSTRAINT_FORESHORTENING * MIN_CONSTRAINT_FORESHORTENING {
+                Vec3::ZERO
+            } else {
+                Vec3::new(0.0, 0.0, delta.z / shown)
+            }
+        }
+        DragConstraint::XyPlane => {
+            if normal.z.abs() < MIN_CONSTRAINT_FORESHORTENING {
+                // Edge-on, the plane shows as one line: the one it shares with
+                // the view plane.
+                let shared = Vec3::Z.cross(normal).normalize_or_zero();
+                shared * delta.dot(shared)
+            } else {
+                let in_plane = delta - normal * (delta.z / normal.z);
+                Vec3::new(in_plane.x, in_plane.y, 0.0)
+            }
+        }
     }
 }
 
@@ -259,27 +296,82 @@ mod tests {
         );
     }
 
+    /// The default view: tilted over the occlusal plane, so neither the Z axis
+    /// nor the XY plane is seen square on.
+    fn tilted_view() -> (Vec3, Vec3, Vec3) {
+        let (sin, cos) = 0.6_f32.sin_cos();
+        (Vec3::X, Vec3::new(0.0, cos, -sin), Vec3::new(0.0, sin, cos))
+    }
+
+    /// What the view shows of a world motion: its part in the view plane.
+    fn shown(motion: Vec3, toward_viewer: Vec3) -> Vec3 {
+        motion - toward_viewer * motion.dot(toward_viewer)
+    }
+
     #[test]
     fn free_movement_passes_the_delta_through() {
         let delta = Vec3::new(1.0, -2.0, 3.0);
-        assert_eq!(constrain_translation(delta, DragConstraint::Free), delta);
-    }
-
-    #[test]
-    fn z_only_keeps_the_vertical_component() {
-        let delta = Vec3::new(1.0, -2.0, 3.0);
         assert_eq!(
-            constrain_translation(delta, DragConstraint::ZOnly),
-            Vec3::new(0.0, 0.0, 3.0)
+            constrain_translation(delta, DragConstraint::Free, Vec3::Z),
+            delta
         );
     }
 
+    /// Within the XY plane the scan stays under the cursor, in a view that
+    /// shows the plane at a slant as much as in one that shows it square on.
     #[test]
-    fn the_xy_plane_drops_the_vertical_component() {
-        let delta = Vec3::new(1.0, -2.0, 3.0);
+    fn a_plane_constrained_drag_keeps_the_scan_under_the_cursor() {
+        let (right, up, toward) = tilted_view();
+        for (across, along) in [(1.0, 0.0), (0.0, 1.0), (-0.7, 0.4)] {
+            let delta = right * across + up * along;
+            let moved = constrain_translation(delta, DragConstraint::XyPlane, toward);
+            assert!(moved.z.abs() < 1e-6, "{moved:?} left the plane");
+            assert!(
+                (shown(moved, toward) - delta).length() < 1e-5,
+                "the cursor went {delta:?} and the scan was seen to go {:?}",
+                shown(moved, toward)
+            );
+        }
+        let square_on =
+            constrain_translation(Vec3::new(1.0, -2.0, 0.0), DragConstraint::XyPlane, Vec3::Z);
+        assert_eq!(square_on, Vec3::new(1.0, -2.0, 0.0));
+    }
+
+    /// Along the Z axis the scan travels as far on screen, along the axis as
+    /// the view shows it, as the cursor did.
+    #[test]
+    fn an_axis_constrained_drag_keeps_pace_with_the_cursor() {
+        let (right, up, toward) = tilted_view();
+        let axis_on_screen = shown(Vec3::Z, toward).normalize();
+        for (across, along) in [(0.0, 1.0), (0.0, -0.3), (0.8, 0.5)] {
+            let delta = right * across + up * along;
+            let moved = constrain_translation(delta, DragConstraint::ZOnly, toward);
+            assert_eq!((moved.x, moved.y), (0.0, 0.0), "{moved:?} left the axis");
+            assert!(
+                (shown(moved, toward).dot(axis_on_screen) - delta.dot(axis_on_screen)).abs() < 1e-5,
+                "the cursor went {delta:?} and the scan moved {moved:?}"
+            );
+        }
+        // Seen from the front the axis is square on and the drag is one to one.
+        let front =
+            constrain_translation(Vec3::new(1.0, 0.0, 3.0), DragConstraint::ZOnly, -Vec3::Y);
+        assert_eq!(front, Vec3::new(0.0, 0.0, 3.0));
+    }
+
+    /// A direction the view cannot show is not dragged at all: making up for
+    /// it would move the scan in depth by many times the cursor's travel.
+    #[test]
+    fn a_constraint_seen_end_on_does_not_move_the_scan_in_depth() {
+        // The Z axis pointing at the viewer.
         assert_eq!(
-            constrain_translation(delta, DragConstraint::XyPlane),
-            Vec3::new(1.0, -2.0, 0.0)
+            constrain_translation(Vec3::new(2.0, 3.0, 0.0), DragConstraint::ZOnly, Vec3::Z),
+            Vec3::ZERO
+        );
+        // The XY plane seen edge-on keeps only the line it shares with the
+        // view plane.
+        assert_eq!(
+            constrain_translation(Vec3::new(1.0, 0.0, 3.0), DragConstraint::XyPlane, -Vec3::Y),
+            Vec3::new(1.0, 0.0, 0.0)
         );
     }
 
