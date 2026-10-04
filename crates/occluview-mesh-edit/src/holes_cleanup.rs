@@ -10,7 +10,8 @@
 //! This pass is what keeps hole-closing from stalling on a mess of skipped
 //! rims: it heals the cut line first — removing dangling needle/lone
 //! triangles to a fixpoint and welding near-coincident boundary vertices — so
-//! the surviving rims are simple loops that a cap can complete. It is opt-in
+//! the surviving rims are simple loops that a cap can complete. Around a mark
+//! it also takes out what the cut left hanging in the hole. It is opt-in
 //! (`MeshEditOptions::heal_boundary_rims`,
 //! set by the Close Holes path); the repair pipeline leaves it off and stays
 //! byte-for-byte unchanged.
@@ -23,6 +24,7 @@ use std::collections::HashMap;
 
 use glam::Vec3;
 
+use super::holes_region::MarkedFaces;
 use super::{FaceSelection, MeshEditBuffers};
 
 /// A triangle with `>= 2` boundary edges is removed as a needle when its
@@ -127,6 +129,90 @@ pub(crate) fn heal_boundary_rims(
         keep,
         healed,
     })
+}
+
+/// What a cut left hanging in a hole, in a region around a mark.
+#[derive(Default)]
+pub(crate) struct Leftovers {
+    /// The faces of the leftover pieces, ascending.
+    pub(crate) faces: Vec<usize>,
+    /// How many pieces they are.
+    pub(crate) pieces: usize,
+}
+
+/// The pieces of unmarked surface that hang in one of `holes`, the boxes of
+/// the rims the mark holds: joined to the marked faces by fewer edges than
+/// they have open, and to nothing else.
+///
+/// A surface lasso takes the faces that look at the camera. Where it cut a
+/// wall seen edge-on, some faces of the wall went and some stayed, and what
+/// stayed is a rag of faces on a thread: it borders the hole all round and
+/// the scan by an edge or two. The operator neither sees it nor can mark it,
+/// and a rim that runs round it has no cap that keeps clear of it. A piece
+/// that reaches the region's edge is the scan going on, a piece with more of
+/// its outline on the marked surface than on the hole is part of that
+/// surface, and a piece that reaches out of every held rim's box is not in a
+/// hole that is being closed; all of those stay.
+///
+/// Pieces are taken edge to edge, so the mesh has to be welded. Deterministic:
+/// faces are visited in order.
+pub(crate) fn hanging_leftovers(
+    mesh: &MeshEditBuffers,
+    mark: &MarkedFaces,
+    holes: &[(Vec3, Vec3)],
+) -> Leftovers {
+    let mut leftovers = Leftovers::default();
+    if holes.is_empty() {
+        return leftovers;
+    }
+    let triangles = mesh.indices.as_chunks::<3>().0;
+    let mut owner: HashMap<(u32, u32), usize> = HashMap::with_capacity(mesh.indices.len());
+    for (face, triangle) in triangles.iter().enumerate() {
+        for side in 0..3 {
+            owner.insert((triangle[side], triangle[(side + 1) % 3]), face);
+        }
+    }
+
+    let mut seen = vec![false; triangles.len()];
+    for start in 0..triangles.len() {
+        if seen[start] || mark.is_marked(start) {
+            continue;
+        }
+        seen[start] = true;
+        let mut piece = vec![start];
+        // The piece's outline: edges with nothing across, and edges with a
+        // marked face across.
+        let (mut open, mut joined, mut goes_on) = (0_usize, 0_usize, false);
+        let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+        let mut next = 0;
+        while let Some(&face) = piece.get(next) {
+            next += 1;
+            goes_on |= mark.is_at_edge(face);
+            let triangle = triangles[face];
+            for side in 0..3 {
+                let corner = Vec3::from_array(mesh.vertices[triangle[side] as usize].position);
+                (lo, hi) = (lo.min(corner), hi.max(corner));
+                match owner.get(&(triangle[(side + 1) % 3], triangle[side])) {
+                    None => open += 1,
+                    Some(&across) if mark.is_marked(across) => joined += 1,
+                    Some(&across) => {
+                        if !std::mem::replace(&mut seen[across], true) {
+                            piece.push(across);
+                        }
+                    }
+                }
+            }
+        }
+        let in_a_hole = holes
+            .iter()
+            .any(|&(hole_lo, hole_hi)| lo.cmpge(hole_lo).all() && hi.cmple(hole_hi).all());
+        if !goes_on && joined > 0 && open >= joined && in_a_hole {
+            leftovers.faces.extend(piece);
+            leftovers.pieces += 1;
+        }
+    }
+    leftovers.faces.sort_unstable();
+    leftovers
 }
 
 /// Directed-edge multiset over the alive triangles: an edge with no opposing

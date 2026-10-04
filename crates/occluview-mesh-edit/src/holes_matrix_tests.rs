@@ -418,7 +418,7 @@ fn unwelded_duplicate_position_seam_closes_watertight() {
     let result = fill_holes(&mesh, None, guard_off()).expect("soup fill");
     // The rim walks as one valid 6-loop through the apex (the seam re-routes
     // it), its planar projection self-overlaps, and the projection-free
-    // minimum-area fallback closes it watertight.
+    // minimum-weight fallback closes it watertight.
     assert_eq!(result.report.filled_holes, 1, "seam slit closes");
     assert_eq!(result.report.skipped_damaged_rims, 0);
     assert_eq!(boundary_edge_count(&result.mesh.indices), 0);

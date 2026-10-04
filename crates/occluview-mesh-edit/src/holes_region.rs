@@ -1,12 +1,12 @@
 //! The part of a mesh a mark puts in front of the hole filler.
 //!
 //! A mark is local, and so is everything Close Holes does with it: the rims it
-//! may close run through marked faces, a cap reads the scan triangles at its
-//! rim, and the piercing guard looks two rings further. This module
-//! cuts that neighbourhood out as a mesh of its own, so welding, healing, the
-//! boundary walk and the caps cost what the marked area costs, and puts the
-//! result back into the scan. What remains proportional to the scan is a few
-//! plain passes over its buffers.
+//! may close run among the marked faces, a cap reads the scan triangles at its
+//! rim, and the piercing guard looks two rings further. This module cuts the
+//! scan inside the box of the marked faces out as a mesh of its own, so
+//! welding, healing, the boundary walk and the caps cost what the marked area
+//! costs, and puts the result back into the scan. What remains proportional to
+//! the scan is a few plain passes over its buffers.
 //!
 //! Faces are neighbours when they share a corner position: a scan read from an
 //! STL has one vertex per corner, and that is the only adjacency it carries.
@@ -16,82 +16,100 @@ use glam::Vec3;
 use super::topology::canonical_position_key;
 use super::{EditVertex, FaceSelection, MeshEditBuffers};
 
-/// Rings of faces around the mark in which a marked rim may still run. A rim
-/// that strays further has left the marked area and stays open.
+/// How far past the box of the marked faces a rim may run and still be the
+/// mark's, in mean edge lengths of the marked faces: the faces a lasso drawn
+/// a little short misses at its far edge.
 ///
-/// The reach is what separates the faces a mark misses from the faces it was
-/// not meant for. Measured on real arches with lasso marks: where a surface
-/// lasso encloses a hole, the rim faces it leaves unmarked, the ones looking
-/// away from the camera, lie three to five rings from a marked face; where a
-/// lasso covers a little more than half of a hole, the far side of the rim
-/// lies twenty-five rings away and more.
-pub(super) const MARK_REACH_RINGS: u8 = 8;
+/// The reach is measured in space, not along the surface. A surface lasso
+/// marks only the faces that look at the camera, and on the rim it encloses
+/// it leaves the ones that look away: the walls of the cut. Those lie under
+/// the lasso, inside the box, however far along the surface the nearest
+/// marked face is; on a real arch that was ten rings of faces and more.
+const MARK_REACH_EDGES: f32 = 8.0;
 
-/// Rings of faces a region keeps around the mark. A rim face may lie
-/// [`MARK_REACH_RINGS`] out; the faces around its rim vertices lie one ring
-/// further, and the faces the piercing guard reads, around the vertices two
-/// rings from the rim, three.
-const REGION_RINGS: u8 = MARK_REACH_RINGS + 3;
+/// Rings of faces at the region's edge that are there to be read. A rim face
+/// has to lie further in: the faces around its rim vertices lie one ring out,
+/// and the faces the piercing guard reads, around the vertices two rings from
+/// the rim, three.
+const EDGE_RINGS: u8 = 3;
 
-/// Ring of a face that is not part of the region.
-const OUTSIDE: u8 = u8::MAX;
+/// What a mark says about every face of the region cut out around it.
+pub(super) struct MarkedFaces {
+    /// Whether the operator marked the face.
+    marked: Vec<bool>,
+    /// Rings of faces between the face and the region's edge, where the scan
+    /// goes on unseen; zero for a face that reaches out of the box, and
+    /// [`EDGE_RINGS`] for every face at least that far in.
+    from_edge: Vec<u8>,
+}
 
-/// How far every face of a region lies from the mark, in rings of faces; a
-/// marked face is at zero.
-pub(super) struct MarkRings(Vec<u8>);
-
-impl MarkRings {
+impl MarkedFaces {
     /// The marked faces as a selection.
     pub(super) fn marked(&self) -> FaceSelection {
-        FaceSelection::new(self.0.iter().map(|&ring| ring == 0).collect())
+        FaceSelection::new(self.marked.clone())
     }
 
     /// Whether the operator marked this face.
     pub(super) fn is_marked(&self, triangle: usize) -> bool {
-        self.0.get(triangle) == Some(&0)
+        self.marked.get(triangle) == Some(&true)
     }
 
-    /// Whether this face is marked or within reach of the mark.
-    pub(super) fn is_near(&self, triangle: usize) -> bool {
-        self.0
+    /// Whether everything a cap on this face reads of the scan is in the
+    /// region.
+    pub(super) fn is_inside(&self, triangle: usize) -> bool {
+        self.from_edge
             .get(triangle)
-            .is_some_and(|&ring| ring <= MARK_REACH_RINGS)
+            .is_some_and(|&ring| ring >= EDGE_RINGS)
+    }
+
+    /// Whether this face reaches out of the region.
+    pub(super) fn is_at_edge(&self, triangle: usize) -> bool {
+        self.from_edge.get(triangle) == Some(&0)
     }
 
     /// Drop the faces a healing pass removed.
     pub(super) fn retain(&mut self, keep: &[bool]) {
         let mut kept = keep.iter();
-        self.0.retain(|_| kept.next().copied().unwrap_or(true));
+        self.marked.retain(|_| kept.next().copied().unwrap_or(true));
+        let mut kept = keep.iter();
+        self.from_edge
+            .retain(|_| kept.next().copied().unwrap_or(true));
     }
 
     /// Per vertex of `mesh`, whether it is a corner of a marked face.
     pub(super) fn marked_corners(&self, mesh: &MeshEditBuffers) -> Vec<bool> {
-        self.corners_of(mesh, 0)
+        corners_of(mesh, self.marked.iter().copied())
     }
 
-    /// Per vertex of `mesh`, whether it is a corner of a face of the outermost
-    /// ring. The surface goes on past those faces, so around such a vertex
+    /// Per vertex of `mesh`, whether it is a corner of a face at the region's
+    /// edge. The surface goes on past those faces, so around such a vertex
     /// faces may be missing and what looks like a boundary there says nothing.
-    pub(super) fn outermost_corners(&self, mesh: &MeshEditBuffers) -> Vec<bool> {
-        self.corners_of(mesh, REGION_RINGS)
-    }
-
-    fn corners_of(&self, mesh: &MeshEditBuffers, wanted: u8) -> Vec<bool> {
-        let mut corners = vec![false; mesh.vertices.len()];
-        for (triangle, &ring) in mesh.indices.as_chunks::<3>().0.iter().zip(&self.0) {
-            if ring == wanted {
-                for &vertex in triangle {
-                    if let Some(flag) = corners.get_mut(vertex as usize) {
-                        *flag = true;
-                    }
-                }
-            }
-        }
-        corners
+    pub(super) fn edge_corners(&self, mesh: &MeshEditBuffers) -> Vec<bool> {
+        corners_of(mesh, self.from_edge.iter().map(|&ring| ring == 0))
     }
 }
 
-/// The faces a mark reaches, as a mesh of their own, with the way back.
+/// Per vertex of `mesh`, whether it is a corner of one of the `wanted` faces.
+fn corners_of(mesh: &MeshEditBuffers, wanted: impl Iterator<Item = bool>) -> Vec<bool> {
+    let mut corners = vec![false; mesh.vertices.len()];
+    for (triangle, _) in mesh
+        .indices
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(wanted)
+        .filter(|&(_, wanted)| wanted)
+    {
+        for &vertex in triangle {
+            if let Some(flag) = corners.get_mut(vertex as usize) {
+                *flag = true;
+            }
+        }
+    }
+    corners
+}
+
+/// The scan inside the box of a mark, as a mesh of its own, with the way back.
 pub(super) struct MarkedRegion {
     /// The region's faces and vertices, in the order the scan has them.
     pub(super) mesh: MeshEditBuffers,
@@ -99,7 +117,7 @@ pub(super) struct MarkedRegion {
     triangles: Vec<usize>,
     /// Scan vertex of every region vertex, ascending.
     vertices: Vec<u32>,
-    /// Per region triangle, whether it is of the outermost ring. Those faces
+    /// Per region triangle, whether it reaches out of the box. Those faces
     /// are there to be read: the scan keeps them exactly as they were.
     context: Vec<bool>,
 }
@@ -114,10 +132,10 @@ pub(super) struct CappedSurface {
 }
 
 impl MarkedRegion {
-    /// Cut the region around the marked faces of `mesh`, and say how far each
-    /// of its faces lies from the mark. The selection has one entry per
-    /// triangle and marks at least one.
-    pub(super) fn around(mesh: &MeshEditBuffers, selection: &FaceSelection) -> (Self, MarkRings) {
+    /// Cut the region around the marked faces of `mesh`, and say what the mark
+    /// has of each of its faces. The selection has one entry per triangle and
+    /// marks at least one.
+    pub(super) fn around(mesh: &MeshEditBuffers, selection: &FaceSelection) -> (Self, MarkedFaces) {
         let corners = mesh.indices.as_chunks::<3>().0;
         let marked = selection.as_slice();
         let position = |vertex: u32| {
@@ -126,9 +144,7 @@ impl MarkedRegion {
                 .map_or(Vec3::NAN, |vertex| Vec3::from_array(vertex.position))
         };
 
-        // The mark's box and the mean length of its edges. The rings are
-        // looked for among the faces that reach into the box grown by a
-        // margin, and the first margin is a guess at how far the rings go.
+        // The mark's box and the mean length of its edges.
         let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
         let (mut edge_sum, mut edge_count) = (0.0_f64, 0.0_f64);
         for (triangle, _) in corners.iter().zip(marked).filter(|(_, &marked)| marked) {
@@ -146,51 +162,30 @@ impl MarkedRegion {
         // f64 -> f32: a mean of finite f32 lengths.
         #[allow(clippy::cast_possible_truncation)]
         let mean_edge = (edge_sum / edge_count.max(1.0)) as f32;
-        let mut margin = mean_edge * f32::from(REGION_RINGS) * 2.0;
+        // The box grows by the reach, and by the rings a rim at the end of
+        // the reach still needs around it.
+        let mut margin = mean_edge * (MARK_REACH_EDGES + f32::from(EDGE_RINGS));
         if !(margin.is_finite() && margin > 0.0) {
+            // No lengths to measure by: every face, where nothing is cut off.
             margin = f32::INFINITY;
         }
+        let (box_lo, box_hi) = (lo - margin, hi + margin);
+        let inside = |point: Vec3| point.cmpge(box_lo).all() && point.cmple(box_hi).all();
 
-        let mut widenings = 0;
-        let (triangles, rings) = loop {
-            let (box_lo, box_hi) = (lo - margin, hi + margin);
-            let inside = |point: Vec3| point.cmpge(box_lo).all() && point.cmple(box_hi).all();
-            let candidates: Vec<usize> = (0..corners.len())
-                .filter(|&index| {
-                    marked.get(index).copied().unwrap_or(false)
-                        || corners[index]
-                            .iter()
-                            .any(|&vertex| inside(position(vertex)))
-                })
-                .collect();
-            let rings = rings_from_mark(mesh, &candidates, marked);
-            // A face outside the candidates has no corner in the box, so it
-            // can only neighbour a face that has a corner outside it too. The
-            // rings found are the true ones once no face short of the last
-            // ring is such a face.
-            let settled = candidates.iter().zip(&rings).all(|(&index, &ring)| {
-                ring >= REGION_RINGS
-                    || corners[index]
-                        .iter()
-                        .all(|&vertex| inside(position(vertex)))
-            });
-            if settled || margin.is_infinite() {
-                break candidates
-                    .into_iter()
-                    .zip(rings)
-                    .filter(|&(_, ring)| ring != OUTSIDE)
-                    .unzip::<usize, u8, Vec<usize>, Vec<u8>>();
+        // The region is every face with a corner in the box. A face with all
+        // its corners in it has all its neighbours in the region; one that
+        // reaches out of the box is where the region ends.
+        let (mut triangles, mut region_marked, mut at_edge) = (Vec::new(), Vec::new(), Vec::new());
+        for (index, triangle) in corners.iter().enumerate() {
+            let is_marked = marked.get(index).copied().unwrap_or(false);
+            let within = triangle.map(|vertex| inside(position(vertex)));
+            if is_marked || within.contains(&true) {
+                triangles.push(index);
+                region_marked.push(is_marked);
+                at_edge.push(within.contains(&false));
             }
-            // A mesh whose edges grow away from the mark: widen and look
-            // again, and after a few rounds take every face, where the rings
-            // are exact whatever the coordinates.
-            widenings += 1;
-            margin = if widenings < 4 {
-                margin * 4.0
-            } else {
-                f32::INFINITY
-            };
-        };
+        }
+        let from_edge = rings_from_edge(mesh, &triangles, &at_edge);
 
         let mut in_region = vec![false; mesh.vertices.len()];
         for &index in &triangles {
@@ -224,10 +219,13 @@ impl MarkedRegion {
             },
             triangles,
             vertices,
-            context: rings.iter().map(|&ring| ring == REGION_RINGS).collect(),
+            context: at_edge,
         };
-        let rings = MarkRings(rings);
-        (region, rings)
+        let faces = MarkedFaces {
+            marked: region_marked,
+            from_edge,
+        };
+        (region, faces)
     }
 
     /// Put a capped region back into the scan it was cut from. Scan triangles
@@ -288,14 +286,25 @@ impl MarkedRegion {
     }
 }
 
-/// Rings of faces from the mark for every candidate: zero for a marked face,
-/// one more for each step across a shared corner position, [`OUTSIDE`] past
-/// [`REGION_RINGS`].
-fn rings_from_mark(mesh: &MeshEditBuffers, candidates: &[usize], marked: &[bool]) -> Vec<u8> {
+/// Rings of faces between every face of a region and the region's edge: zero
+/// for a face `at_edge`, one more for each step across a shared corner
+/// position, and [`EDGE_RINGS`] for every face at least that far in.
+fn rings_from_edge(mesh: &MeshEditBuffers, triangles: &[usize], at_edge: &[bool]) -> Vec<u8> {
+    let mut rings: Vec<u8> = at_edge
+        .iter()
+        .map(|&at_edge| if at_edge { 0 } else { EDGE_RINGS })
+        .collect();
+    let mut frontier: Vec<usize> = (0..triangles.len())
+        .filter(|&slot| rings[slot] == 0)
+        .collect();
+    if frontier.is_empty() {
+        return rings;
+    }
+
     let corners = mesh.indices.as_chunks::<3>().0;
-    // Every candidate corner with its position, sorted so the corners at one
-    // position are a run; each corner then knows its run.
-    let mut by_position: Vec<([u32; 3], usize)> = candidates
+    // Every corner of the region with its position, sorted so the corners at
+    // one position are a run; each corner then knows its run.
+    let mut by_position: Vec<([u32; 3], usize)> = triangles
         .iter()
         .enumerate()
         .flat_map(|(slot, &index)| {
@@ -324,23 +333,10 @@ fn rings_from_mark(mesh: &MeshEditBuffers, candidates: &[usize], marked: &[bool]
     }
     run_starts.push(by_position.len());
 
-    let mut rings: Vec<u8> = candidates
-        .iter()
-        .map(|&index| {
-            if marked.get(index).copied().unwrap_or(false) {
-                0
-            } else {
-                OUTSIDE
-            }
-        })
-        .collect();
-    let mut frontier: Vec<usize> = (0..candidates.len())
-        .filter(|&slot| rings[slot] == 0)
-        .collect();
     // A position hands out its faces once: whoever reaches it first is one
-    // ring closer than they are.
+    // ring closer to the edge than they are.
     let mut spent = vec![false; run_starts.len()];
-    for depth in 1..=REGION_RINGS {
+    for depth in 1..EDGE_RINGS {
         let mut grown: Vec<usize> = Vec::new();
         for &slot in &frontier {
             for &run in &run_of[slot * 3..slot * 3 + 3] {
@@ -349,7 +345,7 @@ fn rings_from_mark(mesh: &MeshEditBuffers, candidates: &[usize], marked: &[bool]
                 }
                 for &(_, neighbour) in &by_position[run_starts[run]..run_starts[run + 1]] {
                     let neighbour = neighbour / 3;
-                    if rings[neighbour] == OUTSIDE {
+                    if rings[neighbour] > depth {
                         rings[neighbour] = depth;
                         grown.push(neighbour);
                     }

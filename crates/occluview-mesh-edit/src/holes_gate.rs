@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 use glam::Vec3;
 
-use super::holes_region::MarkRings;
+use super::holes_region::MarkedFaces;
 use super::holes_walk::{
     split_loop_at_coincident_positions, vertex_position, walk_boundary_loop, BoundaryNextMap,
     BoundaryOwners, BoundaryWalk,
@@ -36,9 +36,9 @@ const SOLE_RIM_BBOX_FRACTION: f64 = 1.0;
 pub(super) struct MarkedVertices {
     /// Corners of marked faces: damage is reported where the operator pointed.
     pub(super) marked_corners: Vec<bool>,
-    /// Corners of the region's outermost faces. The surface goes on past
+    /// Corners of the faces at the region's edge. The surface goes on past
     /// them, so a chain of boundary edges cannot be followed any further there.
-    pub(super) outermost_corners: Vec<bool>,
+    pub(super) edge_corners: Vec<bool>,
 }
 
 /// Walk every boundary chain into loops (skipping already-visited starts),
@@ -80,7 +80,7 @@ pub(super) fn collect_boundary_loops(
             BoundaryWalk::Rim(boundary_loop) => boundary_loop,
             BoundaryWalk::Open { path, stopped_at } => {
                 let at_edge =
-                    marked.is_some_and(|marked| flagged(&marked.outermost_corners, stopped_at));
+                    marked.is_some_and(|marked| flagged(&marked.edge_corners, stopped_at));
                 let rim = match leaving.get(&stopped_at) {
                     Some(&rim) => Some(rim),
                     None if at_edge => {
@@ -211,18 +211,18 @@ pub(super) enum RimHold {
 }
 
 /// Whether the operator's mark holds a rim: at least half of the rim's faces
-/// are marked, and none of them lies beyond reach of the mark.
+/// are marked, and the rim lies inside the region the mark's box cuts out.
 ///
-/// Half of the rim being explicitly marked is unambiguous intent, and with the
-/// reach it leaves room for the faces a lasso misses on a rim it encloses: the
-/// ones that look away from the camera in surface mode. A rim that runs out of
-/// the marked area is not held however much of it is marked: the hole is then
-/// only partly inside the mark, and closing it would close what the operator
-/// did not select.
+/// Half of the rim being explicitly marked is unambiguous intent, and it
+/// leaves room for the faces a lasso misses on a rim it encloses: the ones
+/// that look away from the camera in surface mode, wherever on the rim they
+/// are. A rim that runs out of the mark's box is not held however much of it
+/// is marked: the hole is then only partly inside the mark, and closing it
+/// would close what the operator did not select.
 pub(super) fn rim_hold(
     boundary_loop: &[usize],
     owner_by_edge: &BoundaryOwners,
-    rings: &MarkRings,
+    mark: &MarkedFaces,
 ) -> RimHold {
     let loop_len = boundary_loop.len();
     let (mut marked, mut out_of_reach) = (0_usize, false);
@@ -234,8 +234,8 @@ pub(super) fn rim_hold(
         let Some(owner) = owner_by_edge.owner(a, b) else {
             continue;
         };
-        marked += usize::from(rings.is_marked(owner));
-        out_of_reach |= !rings.is_near(owner);
+        marked += usize::from(mark.is_marked(owner));
+        out_of_reach |= !mark.is_inside(owner);
     }
     if marked == 0 {
         RimHold::Untouched

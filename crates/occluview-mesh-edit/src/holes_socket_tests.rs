@@ -3,7 +3,7 @@
 // Grid/geometry fixtures use conventional short axis names (i, j, u, v, x, y).
 #![allow(clippy::many_single_char_names)]
 
-use crate::cap_minweight::{min_area_triangulation_any, rim_is_simple_3d, TakenTriangles};
+use crate::cap_minweight::{min_weight_triangulation_any, rim_is_simple_3d, TakenTriangles};
 use crate::delete_crop::delete_selected_faces;
 use crate::holes::fill_holes;
 use crate::holes_cleanup::heal_boundary_rims;
@@ -222,14 +222,13 @@ fn tooth_socket_close_heals_nicks_and_closes_the_socket() {
     );
 }
 
-/// The socket rim is several hundred edges — past the 256-edge min-area DP leaf.
-/// The hierarchical membrane must cap it, and the result must be a complete,
-/// internally manifold fan.
+/// The rim is past the DP leaf. The hierarchical membrane must cap it, and the
+/// result must be a complete, internally manifold fan.
 #[test]
 fn hierarchical_membrane_caps_a_large_rim_watertight() {
-    // A wavy 3D ring of 400 points (out of plane, so the planar ear-clip would
-    // struggle) — well past the 256 leaf size.
-    let n = 400;
+    // A wavy 3D ring of 600 points (out of plane, so the planar ear-clip would
+    // struggle), past the 512 leaf size.
+    let n = 600;
     let points: Vec<Vec3> = (0..n)
         .map(|k| {
             let a = k as f32 / n as f32 * std::f32::consts::TAU;
@@ -238,7 +237,7 @@ fn hierarchical_membrane_caps_a_large_rim_watertight() {
         })
         .collect();
 
-    let tris = min_area_triangulation_any(&points, &TakenTriangles::new())
+    let tris = min_weight_triangulation_any(&points, &[], &TakenTriangles::new())
         .expect("large rim must triangulate");
     assert_eq!(tris.len(), n - 2, "a full fan has n - 2 triangles");
 
@@ -269,15 +268,15 @@ fn hierarchical_membrane_caps_a_large_rim_watertight() {
 /// The hierarchical split is deterministic: the same rim gives the same cap.
 #[test]
 fn hierarchical_membrane_is_deterministic() {
-    let n = 512;
+    let n = 640;
     let points: Vec<Vec3> = (0..n)
         .map(|k| {
             let a = k as f32 / n as f32 * std::f32::consts::TAU;
             Vec3::new(10.0 * a.cos(), 10.0 * a.sin(), (a * 6.0).sin())
         })
         .collect();
-    let a = min_area_triangulation_any(&points, &TakenTriangles::new()).expect("cap a");
-    let b = min_area_triangulation_any(&points, &TakenTriangles::new()).expect("cap b");
+    let a = min_weight_triangulation_any(&points, &[], &TakenTriangles::new()).expect("cap a");
+    let b = min_weight_triangulation_any(&points, &[], &TakenTriangles::new()).expect("cap b");
     assert_eq!(a, b, "the membrane triangulation must be deterministic");
 }
 
@@ -415,7 +414,7 @@ fn rim_simplicity_passes_simple_wiggles_and_catches_crossings() {
 }
 
 /// A rim of more than 200 edges gets the refined interpolated cap, not the raw
-/// min-area membrane, whose near-folded creases show as sharp spike-like
+/// membrane, whose near-folded creases show as sharp spike-like
 /// artifacts at the cap↔mesh transition after a lasso cut.
 /// Quality is asserted the way the artifact shows: via dihedral angles across
 /// the cap and its seam.
