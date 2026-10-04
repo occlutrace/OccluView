@@ -7,7 +7,7 @@
 //! representative is the lowest-original-index member and survivors adopt its
 //! exact bits (no averaging, no vertex ever moves).
 
-use glam::Vec3;
+use glam::DVec3;
 
 use super::RepairReport;
 use crate::{EditVertex, MeshEditBuffers, MeshEditError};
@@ -93,23 +93,23 @@ pub(super) fn weld_duplicate_vertices(
 
 /// `weld_epsilon` capped at `1e-3` of the bounding-box diagonal, so a huge
 /// caller epsilon cannot merge distinct anatomy on a small mesh.
-fn effective_epsilon(vertices: &[EditVertex], weld_epsilon: f32) -> f32 {
-    let mut min = Vec3::splat(f32::INFINITY);
-    let mut max = Vec3::splat(f32::NEG_INFINITY);
+fn effective_epsilon(vertices: &[EditVertex], weld_epsilon: f32) -> f64 {
+    let mut min = DVec3::splat(f64::INFINITY);
+    let mut max = DVec3::splat(f64::NEG_INFINITY);
     for vertex in vertices {
-        let position = Vec3::from_array(vertex.position);
+        let position = DVec3::from_array(vertex.position.map(f64::from));
         min = min.min(position);
         max = max.max(position);
     }
     let scaled = (max - min).length() * 1e-3;
     if scaled.is_finite() && scaled > 0.0 {
-        weld_epsilon.min(scaled)
+        f64::from(weld_epsilon).min(scaled)
     } else {
-        weld_epsilon
+        f64::from(weld_epsilon)
     }
 }
 
-fn weld_key(vertex: &EditVertex, epsilon: f32, exact_only: bool) -> WeldKey {
+fn weld_key(vertex: &EditVertex, epsilon: f64, exact_only: bool) -> WeldKey {
     let payload = (
         vertex.color,
         [vertex.uv[0].to_bits(), vertex.uv[1].to_bits()],
@@ -141,11 +141,41 @@ fn exact_position_key(value: f32) -> u32 {
 }
 
 /// Bits of a rounded grid coordinate, without saturating distant positions.
-fn lane_key(value: f32, epsilon: f32) -> u64 {
+fn lane_key(value: f32, epsilon: f64) -> u64 {
     if !value.is_finite() {
         return 0;
     }
-    let scaled = (f64::from(value) / f64::from(epsilon)).round();
+    let scaled = (f64::from(value) / epsilon).round();
     // Adding positive zero canonicalizes a rounded negative zero as well.
     (scaled + 0.0).to_bits()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{repair_mesh, MeshTopology, RepairOptions};
+
+    #[test]
+    fn repair_weld_preserves_healthy_tetrahedra_at_tiny_scales() {
+        for scale in [1.0e-30_f32, 1.0e-20, 1.0e-10, 1.0] {
+            let source = MeshEditBuffers {
+                vertices: [
+                    [0.0, 0.0, 0.0],
+                    [scale, 0.0, 0.0],
+                    [0.0, scale, 0.0],
+                    [0.0, 0.0, scale],
+                ]
+                .map(EditVertex::at)
+                .to_vec(),
+                indices: vec![0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3],
+                topology: MeshTopology::TriangleMesh,
+            };
+            let result = repair_mesh(&source, RepairOptions::default()).unwrap();
+            assert_eq!(
+                result.mesh, source,
+                "healthy tetrahedron must survive repair at scale {scale}"
+            );
+            assert!(!result.report.changed_content());
+        }
+    }
 }

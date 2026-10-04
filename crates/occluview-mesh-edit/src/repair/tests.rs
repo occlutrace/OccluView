@@ -47,6 +47,156 @@ fn soup(source: &MeshEditBuffers) -> MeshEditBuffers {
     mesh(vertices, indices)
 }
 
+#[test]
+fn translated_closed_components_keep_outward_winding() {
+    let mut seed = 0x9e37_79b9_u32;
+    for _ in 0..64 {
+        let mut translation = [0.0; 3];
+        for lane in &mut translation {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            *lane = f32::from((seed >> 16) as u16) * 65_536.0;
+        }
+        let size = 512.0;
+        let mut tetra = mesh(
+            vec![
+                v(translation),
+                v([translation[0] + size, translation[1], translation[2]]),
+                v([translation[0], translation[1] + size, translation[2]]),
+                v([translation[0], translation[1], translation[2] + size]),
+            ],
+            vec![0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3],
+        );
+        for inward in [false, true] {
+            if inward {
+                for triangle in tetra.indices.as_chunks_mut::<3>().0 {
+                    triangle.swap(1, 2);
+                }
+            }
+            let result = repair_mesh(&tetra, RepairOptions::default()).unwrap();
+            let origin = DVec3::from_array(translation.map(f64::from));
+            let volume: f64 = result
+                .mesh
+                .indices
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .map(|tri| {
+                    let a = dvec3_position(&result.mesh, tri[0]) - origin;
+                    let b = dvec3_position(&result.mesh, tri[1]) - origin;
+                    let c = dvec3_position(&result.mesh, tri[2]) - origin;
+                    a.dot(b.cross(c))
+                })
+                .sum();
+            assert!(
+                volume > 0.0,
+                "repair must face outward at {translation:?}, inward={inward}"
+            );
+        }
+    }
+}
+
+#[test]
+fn debris_extent_threshold_is_scale_independent() {
+    for diameter_fraction in [0.001, 0.1] {
+        for scale in [1.0e-25_f32, 1.0, 1.0e20] {
+            let mut input = grid(10);
+            let base = input.vertices.len() as u32;
+            input.vertices.extend([
+                v([10.0, 0.0, 0.0]),
+                v([10.1, 0.0, 0.0]),
+                v([10.0, 0.1, 0.0]),
+            ]);
+            input.indices.extend([base, base + 1, base + 2]);
+            for vertex in &mut input.vertices {
+                vertex.position = vertex.position.map(|coordinate| coordinate * scale);
+            }
+            let result = repair_mesh(
+                &input,
+                RepairOptions {
+                    exact_weld_only: true,
+                    debris_diameter_fraction: diameter_fraction,
+                    ..RepairOptions::default()
+                },
+            )
+            .unwrap();
+            let should_remove = diameter_fraction > 0.01;
+            assert_eq!(
+                result.report.removed_debris_components,
+                usize::from(should_remove),
+                "debris extent must stay relative at scale {scale}, fraction {diameter_fraction}"
+            );
+            assert_eq!(
+                result.mesh.triangle_count(),
+                input.triangle_count() - usize::from(should_remove)
+            );
+        }
+    }
+}
+
+#[test]
+fn seeded_nonmanifold_repairs_preserve_positions_and_valid_topology() {
+    let mut seed = 0x7fa3_914d_u32;
+    let mut next = || {
+        seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        seed >> 16
+    };
+    for scale in [1.0e-25_f32, 1.0, 1.0e20] {
+        for _ in 0..16 {
+            let vertices = (0..32)
+                .map(|_| v(std::array::from_fn(|_| f32::from(next() as u16) * scale)))
+                .collect::<Vec<_>>();
+            let indices = (0..96)
+                .flat_map(|_| [next() % 32, next() % 32, next() % 32])
+                .collect();
+            let source = mesh(vertices, indices);
+            let result = repair_mesh(
+                &source,
+                RepairOptions {
+                    exact_weld_only: true,
+                    tiny_hole_max_edges: 1,
+                    debris_face_fraction: 0.0,
+                    ..RepairOptions::default()
+                },
+            )
+            .unwrap();
+            let mut edges = std::collections::BTreeMap::new();
+            let mut faces = std::collections::BTreeSet::new();
+            for face in result.mesh.indices.as_chunks::<3>().0 {
+                let mut key = *face;
+                key.sort_unstable();
+                assert!(key[0] < key[1] && key[1] < key[2]);
+                assert!(faces.insert(key), "duplicate output face");
+                for [a, b] in [[face[0], face[1]], [face[1], face[2]], [face[2], face[0]]] {
+                    *edges.entry((a.min(b), a.max(b))).or_insert(0) += 1;
+                }
+            }
+            assert!(edges.values().all(|&count| count <= 2));
+            for vertex in &result.mesh.vertices {
+                assert!(vertex.position.iter().all(|value| value.is_finite()));
+                assert!(vertex.normal.iter().all(|value| value.is_finite()));
+                assert!(source
+                    .vertices
+                    .iter()
+                    .any(|original| original.position == vertex.position));
+            }
+            assert_eq!(
+                result,
+                repair_mesh(
+                    &source,
+                    RepairOptions {
+                        exact_weld_only: true,
+                        tiny_hole_max_edges: 1,
+                        debris_face_fraction: 0.0,
+                        ..RepairOptions::default()
+                    }
+                )
+                .unwrap(),
+                "repair must be deterministic"
+            );
+        }
+    }
+}
+
 /// Flat n×n-vertex grid in z=0, wound +z.
 fn grid(n: usize) -> MeshEditBuffers {
     let mut vertices = Vec::with_capacity(n * n);
