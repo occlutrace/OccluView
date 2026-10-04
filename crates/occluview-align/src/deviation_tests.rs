@@ -6,7 +6,7 @@ use super::{
     DeviationSettings, DeviationStats, DeviationSummary, RampMode, RampSettings, Unmeasured,
     Validity, MAGNITUDE_RAMP, MIN_MEASURED, NO_DATA_COLOR,
 };
-use crate::icp::Orientation;
+use crate::Orientation;
 use crate::{CancelFlag, Rigid, Soup, SurfaceIndex};
 
 /// Two triangles forming a 10 x 10 sheet on z = 0, outward normal +Z.

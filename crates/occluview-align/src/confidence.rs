@@ -36,6 +36,39 @@ fn reason(candidate: &mut AlignmentCandidate, reason: EvidenceReason) {
     }
 }
 
+/// Size and tightness of the common region.
+pub(crate) struct Support {
+    overlap: f64,
+    area: f64,
+    cells: u32,
+    residual: ResidualSummary,
+}
+
+impl Support {
+    /// Absent while any of its measurements is missing.
+    pub(crate) fn of(e: &crate::CandidateEvidence) -> Option<Self> {
+        let Metric::Measured(cells) = e.effective_cells else {
+            return None;
+        };
+        Some(Self {
+            overlap: number(e.overlap_smaller).filter(|v| *v <= 1.)?,
+            area: number(e.common_area_mm2)?,
+            cells,
+            residual: residual(e.euclidean_mm)?,
+        })
+    }
+
+    /// Enough tight common surface for the pose to be more than Weak.
+    pub(crate) fn sufficient(&self) -> bool {
+        self.overlap >= 0.20
+            && self.area >= 25.
+            && self.cells >= 64
+            && self.residual.median <= 0.15
+            && self.residual.rms <= 0.25
+            && self.residual.p95 <= 0.50
+    }
+}
+
 /// Classify independent evidence with Weak taking precedence over unsupported
 /// symmetry claims. Acceptance and optimization termination are irrelevant.
 /// Interrupted verification is Weak; incomplete global work is never Verified.
@@ -50,33 +83,31 @@ pub(crate) fn classify_candidate(
     profile: SearchProfile,
 ) {
     candidate.confidence = Confidence::Weak;
-    let e = &candidate.evidence;
-    if input != InputCheck::Complete
-        || !e.holdout_complete
-        || candidate
-            .reasons
-            .contains(&EvidenceReason::SuspectedUnitsOrDeformation)
+    if input != InputCheck::Complete {
+        reason(candidate, EvidenceReason::UnvalidatedInput);
+        return;
+    }
+    if candidate
+        .reasons
+        .contains(&EvidenceReason::SuspectedUnitsOrDeformation)
         || candidate.reasons.contains(&EvidenceReason::PolicyConflict)
     {
         return;
     }
-    let Some(overlap) = number(e.overlap_smaller).filter(|v| *v <= 1.) else {
-        return;
-    };
-    let Some(area) = number(e.common_area_mm2) else {
-        return;
-    };
-    let Metric::Measured(cells) = e.effective_cells else {
-        return;
-    };
-    let Some(r) = residual(e.euclidean_mm) else {
-        return;
-    };
-    if overlap < 0.20 || area < 25. || cells < 64 || r.median > 0.15 || r.rms > 0.25 || r.p95 > 0.50
-    {
+    let e = &candidate.evidence;
+    let Some(support) = Support::of(e).filter(Support::sufficient) else {
         reason(candidate, EvidenceReason::InsufficientSupport);
         return;
+    };
+    if !e.holdout_complete {
+        return;
     }
+    let Support {
+        overlap,
+        area,
+        cells,
+        residual: r,
+    } = support;
     let lambda = match e.info_eigenvalues {
         Metric::Measured(values)
             if values.into_iter().all(|v| v.is_finite() && v >= 0.)
@@ -84,7 +115,7 @@ pub(crate) fn classify_candidate(
         {
             Some(values[0])
         }
-        Metric::Missing(MissingReason::Degenerate | MissingReason::TooFewSamples) => None,
+        Metric::Missing(MissingReason::Degenerate) => None,
         _ => return,
     };
     if lambda.is_none_or(|v| v < 0.0001) {
@@ -93,7 +124,7 @@ pub(crate) fn classify_candidate(
         return;
     }
     let gap = number(e.rival_gap).filter(|v| *v <= 1.);
-    if gap.is_some_and(|v| v < 0.05) {
+    if gap.is_some_and(|v| v < 0.15) {
         candidate.confidence = Confidence::Ambiguous;
         reason(candidate, EvidenceReason::CloseRival);
         return;
@@ -120,24 +151,20 @@ pub(crate) fn classify_candidate(
     let Some(holdout) = number(e.holdout_ratio) else {
         return;
     };
-    if inlier < 0.70
-        || orientation < 0.75
-        || reciprocal < 0.70
-        || holdout > 1.75
-        || !e.jackknife_complete
-    {
+    // A scan whose own triangles face both ways says nothing about how the
+    // two surfaces face each other.
+    let facing_known = !candidate.reasons.contains(&EvidenceReason::MissingNormals);
+    if orientation < 0.75 && facing_known {
+        reason(candidate, EvidenceReason::PolicyConflict);
         return;
     }
-    if orientation < 0.75 {
-        reason(candidate, EvidenceReason::PolicyConflict);
+    if inlier < 0.70 || reciprocal < 0.70 || holdout > 1.75 || !e.jackknife_complete {
         return;
     }
     let verified = completion == Completion::Complete
         && profile != SearchProfile::Local
         && e.verification_complete
         && e.rival_probes_complete
-        && e.population_coverage_complete
-        && e.original_surface_exact == [true; 2]
         && overlap >= 0.60
         && area >= 100.
         && cells >= 128
@@ -157,11 +184,7 @@ pub(crate) fn classify_candidate(
     } else {
         Confidence::Probable
     };
-    if !verified
-        && (gap.is_none_or(|v| v < 0.15)
-            || !e.rival_probes_complete
-            || profile == SearchProfile::Local)
-    {
+    if !verified && (gap.is_none() || !e.rival_probes_complete || profile == SearchProfile::Local) {
         reason(candidate, EvidenceReason::UniquenessNotEstablished);
     }
     if completion != Completion::Complete {
@@ -174,8 +197,8 @@ mod tests {
     use super::*;
     use crate::{CandidateEvidence, CandidateId, RefinementTermination, Rigid, SeedOrigin};
 
-    // Clause-isolation fixture only; geometry proof is exercised by the
-    // independent verifier and the synthetic registration integration tests.
+    // Clause-isolation fixture only; the geometry behind the evidence is
+    // exercised by the synthetic registration integration tests.
     fn clause_fixture() -> AlignmentCandidate {
         AlignmentCandidate {
             id: CandidateId {
@@ -186,7 +209,7 @@ mod tests {
             confidence: Confidence::Weak,
             reasons: vec![],
             seeds: vec![SeedOrigin::Start],
-            refinement: RefinementTermination::Stationary,
+            refinement: RefinementTermination::StepSmall,
             evidence: CandidateEvidence {
                 overlap_smaller: Metric::Measured(0.8),
                 common_area_mm2: Metric::Measured(200.),
@@ -207,7 +230,6 @@ mod tests {
                 holdout_complete: true,
                 jackknife_complete: true,
                 rival_probes_complete: true,
-                population_coverage_complete: true,
                 original_surface_exact: [true; 2],
                 ..CandidateEvidence::default()
             },
@@ -254,7 +276,7 @@ mod tests {
         }
         for change in [
             |e: &mut CandidateEvidence| e.info_eigenvalues = Metric::Measured([0.; 6]),
-            |e: &mut CandidateEvidence| e.rival_gap = Metric::Measured(0.049),
+            |e: &mut CandidateEvidence| e.rival_gap = Metric::Measured(0.149),
             |e: &mut CandidateEvidence| e.jackknife_mm_deg = Metric::Measured([0.31, 0.]),
         ] {
             let mut c = base.clone();
@@ -271,7 +293,6 @@ mod tests {
     fn confidence_missing_and_incomplete_evidence_never_certifies() {
         for completion in [
             Completion::Deadline,
-            Completion::WorkLimit,
             Completion::Cancelled,
             Completion::ResourceLimit,
         ] {
@@ -292,13 +313,13 @@ mod tests {
             SearchProfile::Local,
         );
         assert_eq!(c.confidence, Confidence::Probable);
-        c.evidence.population_coverage_complete = false;
+        c.evidence.rival_probes_complete = false;
         classify(&mut c);
         assert_eq!(c.confidence, Confidence::Probable);
         c.evidence.rival_gap = Metric::Missing(MissingReason::NoSupport);
         classify(&mut c);
         assert_eq!(c.confidence, Confidence::Probable);
-        c.evidence.info_eigenvalues = Metric::Missing(MissingReason::Interrupted);
+        c.evidence.info_eigenvalues = Metric::Missing(MissingReason::NotEvaluated);
         classify(&mut c);
         assert_eq!(c.confidence, Confidence::Weak);
         c = clause_fixture();

@@ -8,9 +8,21 @@
 use glam::DVec3;
 use rayon::prelude::*;
 
-use crate::icp::Orientation;
 use crate::sample::vertex_at;
 use crate::{CancelFlag, Rigid, Soup, SurfaceHit, SurfaceIndex};
+
+/// Which way the two surfaces face each other.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Orientation {
+    /// Accept a correspondence only where the surfaces face the same way.
+    #[default]
+    Match,
+    /// Accept only where they face opposite ways — the escape hatch for a
+    /// fixed mesh whose winding is inverted.
+    Inverted,
+    /// Accept either.
+    Ignored,
+}
 
 /// Colour for a vertex whose deviation could not be measured.
 pub const NO_DATA_COLOR: [u8; 4] = [128, 128, 128, 255];

@@ -5,35 +5,15 @@ remain in the Git history.
 
 ## Unreleased
 
-- Scan matching batches control checks in bounded sampling and scoring loops.
+- Best fit aligns scans that are only partly alike: a part of a jaw against the whole jaw, a scan before and after preparation, a scan with scan bodies, a bite scan, or the fitting side of a prosthesis against the tissue it sits on.
 
-- Scan matching skips polygon reconstructions for cell boundaries that contain every vertex.
+- Best fit always returns the best placement it finds with a confidence class and never refuses a pair of scans; competing placements are offered for review and the scan changes only after Accept alignment.
 
-- Scan matching shares one distance order between overlap refresh and refinement pairing.
+- Best fit finishes in a few seconds on scans of more than a million triangles.
 
-- Scan matching reuses immutable facet bounds and avoids testing a temporal hint twice.
+- Best fit reports scans that differ in size, as scans in other units do, and scans whose triangles do not face one way.
 
-- Scan matching reuses identical descriptor queries and stops matching when its retained correspondence list is full.
-
-- Scan matching skips refinement queries that cannot enter the selected common surface region.
-
-- Scan matching resumes interrupted refinement after completed verification and reuses unchanged exact evidence.
-
-- Scan matching shares coarse refinement work between overlap alternatives while retaining both placements.
-
-- Scan matching reuses validated facet bounds between refinement iterations without changing exact surface distances.
-
-- Scan matching reduces repeated search work with conservative shortlist bounds and reusable query scratch.
-
-- Scan matching merges converged placements only when their measured common regions agree, preserving distinct alternatives.
-
-- Scan matching refines retained placements with robust area weights and preserves completed poses after interruption.
-
-- Scan matching keeps a bounded representation of large scans and reports approximate surface evidence.
-
-- Scan matching retains later precise four-point proposals when earlier approximate matches fill their output reserve.
-
-- Best-fit alignment searches multiple surface placements and retains finite candidates with explicit incomplete evidence.
+- The matching parts setting is removed from Best fit; how much of the two scans is shared is found automatically.
 
 - Preserve HPS loading when optional properties use self-closing XML tags.
 

@@ -1,16 +1,9 @@
-//! Deterministic sampling and vertex normals shared by the refine and
-//! deviation stages.
+//! Deterministic vertex sampling and bounds shared by the search, the
+//! deviation map and the observability estimate.
 
 use glam::DVec3;
 
 use crate::Soup;
-
-mod population;
-mod prepared;
-mod proxy;
-#[cfg(feature = "search-probe")]
-pub use population::{probe_cell_clipping, CellClipProbe};
-pub use prepared::*;
 
 /// Read one vertex position, or `None` when it is out of range or not finite.
 pub(crate) fn vertex_at(positions: &[f32], vertex: usize) -> Option<DVec3> {
@@ -68,71 +61,6 @@ pub(crate) fn sample_vertices(soup: Soup<'_>, budget: usize) -> Vec<u32> {
     out
 }
 
-/// Area-weighted vertex normals computed from triangle winding.
-///
-/// This is deliberately not `occluview_geometry::accumulate_smooth_normals`,
-/// and the two differences are the reason the implementations are separate
-/// rather than duplicated:
-///
-/// - It accumulates in `DVec3`. The result becomes the deviation normal, which
-///   the fit consumes in the same precision as the positions behind it; the
-///   shared helper is `f32` because its consumer is the renderer.
-/// - Every finite facet contributes, with no `DEGENERATE_AREA_SIN` floor. A
-///   sliver the shared helper drops still carries a direction here, so a vertex
-///   that only ever touches slivers keeps that direction instead of the zero
-///   normal the shared rule leaves for the caller's fallback.
-///
-/// Merging either way would change the deviated result, so a merge is a
-/// numerical decision and not a clean-up. The soup's exclusion mask and index
-/// range are checked here as well; the shared helper takes a `position` closure
-/// and has no mask.
-#[must_use]
-pub(crate) fn vertex_normals(soup: Soup<'_>) -> Vec<DVec3> {
-    let count = soup.vertex_count();
-    let mut normals = vec![DVec3::ZERO; count];
-    for slice in soup.indices.as_chunks::<3>().0 {
-        let mut corners = [DVec3::ZERO; 3];
-        let mut vertices = [0usize; 3];
-        let mut usable = true;
-        for (slot, &raw) in slice.iter().enumerate() {
-            let Ok(vertex) = usize::try_from(raw) else {
-                usable = false;
-                break;
-            };
-            let Some(point) = vertex_at(soup.positions, vertex) else {
-                usable = false;
-                break;
-            };
-            if vertex >= count {
-                usable = false;
-                break;
-            }
-            if soup.is_excluded(vertex) {
-                usable = false;
-                break;
-            }
-            corners[slot] = point;
-            vertices[slot] = vertex;
-        }
-        if !usable {
-            continue;
-        }
-        let face = (corners[1] - corners[0]).cross(corners[2] - corners[0]);
-        if !face.is_finite() {
-            continue;
-        }
-        for vertex in vertices {
-            if !soup.is_excluded(vertex) {
-                normals[vertex] += face;
-            }
-        }
-    }
-    for normal in &mut normals {
-        *normal = normal.normalize_or_zero();
-    }
-    normals
-}
-
 /// Bounding-box centre and diagonal of the soup, in millimetres, in the
 /// soup's own frame.
 ///
@@ -158,7 +86,7 @@ pub fn bounds_of(soup: Soup<'_>) -> Option<(DVec3, f64)> {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::panic)]
-    use super::{bounds_of, sample_vertices, vertex_normals};
+    use super::{bounds_of, sample_vertices};
     use crate::Soup;
     use glam::DVec3;
 
@@ -228,19 +156,6 @@ mod tests {
     }
 
     #[test]
-    fn vertex_normals_face_the_winding_not_the_file() {
-        let (positions, indices) = quad();
-        let soup = Soup {
-            positions: &positions,
-            indices: &indices,
-            mask: None,
-        };
-        for normal in vertex_normals(soup) {
-            assert!((normal.dot(DVec3::Z) - 1.0).abs() < 1e-9, "{normal:?}");
-        }
-    }
-
-    #[test]
     fn the_bounds_diagonal_spans_the_soup() {
         let (positions, indices) = quad();
         let soup = Soup {
@@ -266,7 +181,7 @@ mod tests {
     }
 
     #[test]
-    fn masked_geometry_does_not_influence_normals_or_bounds() {
+    fn masked_geometry_does_not_influence_bounds() {
         let (positions, indices) = quad();
         let mask = [1, 1, 0, 0];
         let soup = Soup {
@@ -274,19 +189,6 @@ mod tests {
             indices: &indices,
             mask: Some(&mask),
         };
-        let normals = vertex_normals(soup);
-        assert_eq!(normals[0], DVec3::ZERO);
-        assert_eq!(normals[1], DVec3::ZERO);
-        assert_eq!(
-            normals[2],
-            DVec3::ZERO,
-            "a face touching an excluded vertex is not usable geometry"
-        );
-        assert_eq!(
-            normals[3],
-            DVec3::ZERO,
-            "a face touching an excluded vertex is not usable geometry"
-        );
         let Some((center, diagonal)) = bounds_of(soup) else {
             panic!("the included vertices still have bounds");
         };

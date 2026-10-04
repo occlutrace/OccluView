@@ -14,11 +14,10 @@ publish.workspace = true
 workspace = true
 
 [features]
-# Aggregate synthetic phase measurements; never participates in ranking.
+# Print the time each stage of a search took; never takes part in a result.
 search-probe = []
 
 [dependencies]
 glam = { workspace = true }
 rayon = { workspace = true }
 occluview-geometry = { workspace = true }
-kdtree = "0.8.1"
