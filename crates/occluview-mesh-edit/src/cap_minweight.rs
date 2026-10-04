@@ -1,25 +1,40 @@
-//! Minimum-area cap triangulation (Barequet & Sharir 1995; Liepa 2003).
+//! Minimum-weight cap triangulation (Barequet & Sharir 1995; Liepa 2003).
 //!
 //! The dynamic program triangulates a cyclic rim directly in 3D, avoiding
 //! projection for strongly curved loops, using:
 //!
-//! `W[i][j] = min over k in (i, j) of W[i][k] + W[k][j] + area(i, k, j)`
+//! `W[i][j] = best over k in (i, j) of W[i][k] + W[k][j] + weight(i, k, j)`
+//!
+//! The weight is Liepa's: how sharply the cover folds at its worst edge, then
+//! its area. A fold is measured between two triangles of the cover and, at a
+//! rim edge, between the cover and the scan triangle across it. Area alone
+//! has no inside and outside. Where a corner of the scan sticks into the
+//! hole, the smallest triangle is the one laid back over that corner, with
+//! the rest of the cover running on underneath, and a cut line has such a
+//! corner every few edges.
 //!
 //! Cost is O(n^3) time / O(n^2) memory. Ties use the lowest `k`; the caller
 //! rejects self-piercing results.
 
-use glam::{DVec3, Vec3};
+use super::cap_fair::RimSupport;
+use glam::{DVec3, Vec3, Vec4};
 use std::collections::HashSet;
 
-/// Leaf size for the min-area dynamic program: 256^3 is milliseconds. Rims
-/// longer than this are triangulated by [`min_area_triangulation_any`], which
-/// recursively splits them into sub-rims at or below this size before running
-/// the O(n^3) DP on each leaf.
-pub(super) const MIN_WEIGHT_MAX_RIM: usize = 256;
+/// Leaf size for the minimum-weight dynamic program. Rims longer than this
+/// are triangulated by [`min_weight_triangulation_any`], which recursively
+/// splits them into sub-rims at or below this size before running the O(n^3)
+/// DP on each leaf.
+///
+/// A rim split at a chord is covered in two halves that know nothing of each
+/// other, and on a rim that is far from flat the halves cross: the leaf has
+/// to hold the rims the tool is for in one piece. On real arches a lasso
+/// round one molar leaves a rim of 340 to 510 edges, which a leaf of 256
+/// always split; the DP on 510 points takes a quarter of a second.
+pub(super) const MIN_WEIGHT_MAX_RIM: usize = 512;
 
-/// Absolute ceiling for the hierarchical min-area path: a socket rim of a few
-/// thousand edges closes comfortably, but a pathological rim past this stays
-/// refused rather than allocate unboundedly. Matches the selection-scoped
+/// Absolute ceiling for the hierarchical minimum-weight path: a socket rim of
+/// a few thousand edges closes comfortably, but a pathological rim past this
+/// stays refused rather than allocate unboundedly. Matches the selection-scoped
 /// boundary-loop ceiling, so no loop the walk admits is refused for size here.
 pub(super) const MIN_WEIGHT_HIER_MAX_RIM: usize = 20_000;
 
@@ -32,7 +47,7 @@ const RIM_PROXIMITY_FRACTION: f64 = 1e-3;
 /// The test is O(n²) and the ceiling this crate admits is `MIN_WEIGHT_HIER_MAX_RIM`
 /// = 20 000 edges, i.e. ~2·10^8 pairs, each running a full f64 closest-point
 /// form. Like the other expensive passes here (the large ear clipper spends at
-/// most `LARGE_EARCLIP_WORK_BUDGET` reflex checks, the min-area DP spends
+/// most `LARGE_EARCLIP_WORK_BUDGET` reflex checks, the minimum-weight DP spends
 /// `MIN_WEIGHT_HIER_MAX_RIM`), this one is budgeted. A rim that exhausts the
 /// budget is refused: the test exists to reject unverifiable rims, and
 /// refusing keeps the outcome deterministic instead of stretching to minutes
@@ -40,7 +55,7 @@ const RIM_PROXIMITY_FRACTION: f64 = 1e-3;
 const RIM_SIMPLICITY_PAIR_BUDGET: u64 = 20_000_000;
 
 /// Whether the 3D rim polyline is simple. Curved but simple rims use the
-/// minimum-area fallback; self-crossing rims remain rejected. O(n²) in pair
+/// minimum-weight fallback; self-crossing rims remain rejected. O(n²) in pair
 /// count, bounded by [`RIM_SIMPLICITY_PAIR_BUDGET`].
 pub(super) fn rim_is_simple_3d(points: &[Vec3]) -> bool {
     let n = points.len();
@@ -133,58 +148,188 @@ fn segment_distance(a0: DVec3, a1: DVec3, b0: DVec3, b1: DVec3) -> f64 {
 /// on one of them is its reverse twin.
 pub(super) type TakenTriangles = HashSet<[usize; 3]>;
 
-/// Triangulate a cyclic rim (positions in ring order) by minimum total area,
-/// using none of the `taken` triangles; `rim_index` gives the rim-local index
-/// of each point. Returns local-index triangles in the caller's watertight
-/// winding convention (`[i, j, k]` with `i < k < j`, matching the ear-clip's
-/// reversed-rim-edge emit order), or `None` when the rim is too long, too
-/// short, numerically degenerate, or has no triangulation free of taken
-/// triangles.
-fn min_area_triangulation(
+/// What a cover of part of a rim weighs (Liepa 2003).
+#[derive(Copy, Clone)]
+struct Cover {
+    /// Cosine of the sharpest fold in the cover, between two of its triangles
+    /// or between one and the scan triangle across its rim edge: one where
+    /// everything goes straight on, minus one where a triangle lies back on
+    /// its neighbour.
+    straightness: f32,
+    /// Infinite for a cover that does not exist.
+    area: f64,
+}
+
+impl Cover {
+    const IMPOSSIBLE: Self = Self {
+        straightness: f32::NEG_INFINITY,
+        area: f64::INFINITY,
+    };
+
+    /// Whether this cover is the better one: the one that folds less, and of
+    /// two that fold alike the smaller. A cover that is not a number is never
+    /// the better one.
+    fn beats(self, other: Self) -> bool {
+        // Exactly alike is the common case: the sharpest fold of a cover is
+        // one number, carried up unchanged through every part that holds it.
+        #[allow(clippy::float_cmp)]
+        let alike = self.straightness == other.straightness;
+        self.straightness > other.straightness || (alike && self.area < other.area)
+    }
+}
+
+/// The triangle across an edge, as a fold is taken against it: its unit
+/// normal with a zero behind it, or all zeros and a one where there is no
+/// triangle. The dot product with a triangle's doubled area vector and its
+/// length behind it is then that length times the cosine of the fold, and
+/// that length times one where nothing folds.
+fn across(normal: Vec3) -> Vec4 {
+    if normal == Vec3::ZERO {
+        Vec4::W
+    } else {
+        normal.extend(0.0)
+    }
+}
+
+/// The best covers of every part of a rim, `W[i][j]` at `i * n + j`, and the
+/// triangle each puts on the edge between its two end points.
+#[derive(Clone)]
+struct Covers {
+    straightness: Vec<f32>,
+    area: Vec<f64>,
+    across: Vec<Vec4>,
+}
+
+impl Covers {
+    /// Every part covered by nothing, with nothing across: the state of a
+    /// single edge.
+    fn edges(cells: usize) -> Self {
+        Self {
+            straightness: vec![1.0; cells],
+            area: vec![0.0; cells],
+            across: vec![Vec4::W; cells],
+        }
+    }
+
+    fn set(&mut self, cell: usize, cover: Cover, across: Vec4) {
+        self.straightness[cell] = cover.straightness;
+        self.area[cell] = cover.area;
+        self.across[cell] = across;
+    }
+}
+
+/// Triangulate a cyclic rim (positions in ring order) by minimum weight, using
+/// none of the `taken` triangles. `rim_index` gives the rim-local index of
+/// each point and `scan[i]` the unit normal of the scan triangle across the
+/// rim edge from rim vertex `i` to the next, zero where there is none.
+/// Returns local-index triangles in the caller's watertight winding convention
+/// (`[i, j, k]` with `i < k < j`, matching the ear-clip's reversed-rim-edge
+/// emit order), or `None` when the rim is too long, too short, numerically
+/// degenerate, or has no triangulation free of taken triangles.
+fn min_weight_triangulation(
     points: &[Vec3],
     rim_index: &[usize],
     taken: &TakenTriangles,
+    scan: &[Vec3],
 ) -> Option<Vec<[usize; 3]>> {
     let n = points.len();
     if !(3..=MIN_WEIGHT_MAX_RIM).contains(&n) {
         return None;
     }
-    let points: Vec<DVec3> = points.iter().map(|point| point.as_dvec3()).collect();
-    let area = |i: usize, k: usize, j: usize| -> f64 {
-        if !taken.is_empty() {
-            let mut triple = [rim_index[i], rim_index[k], rim_index[j]];
-            triple.sort_unstable();
-            if taken.contains(&triple) {
-                return f64::INFINITY;
-            }
+    // The scan's normal across the edge between two points that follow each
+    // other on the rim. A chord of a split rim has the other part's cover
+    // across it, which is not known here.
+    let scan_across = |from: usize, to: usize| -> Vec4 {
+        let (from, to) = (rim_index[from], rim_index[to]);
+        match scan.get(from) {
+            Some(&normal) if (from + 1) % scan.len() == to => across(normal),
+            _ => Vec4::W,
         }
-        let ab = points[k] - points[i];
-        let ac = points[j] - points[i];
-        ab.cross(ac).length() * 0.5
+    };
+    // The points of taken triangles: only a triangle on three of them needs
+    // looking up.
+    let in_taken: Vec<bool> = {
+        let corners: HashSet<usize> = taken.iter().flatten().copied().collect();
+        rim_index
+            .iter()
+            .map(|index| corners.contains(index))
+            .collect()
     };
 
-    // W[i][j] over the flattened upper triangle, j > i, gap = j - i >= 2.
-    let mut weight = vec![0.0_f64; n * n];
+    // W[i][j], j > i, kept twice, by row and by column, so the inner loop
+    // reads both of its operands in step: `W[i][k]` along row `i` and
+    // `W[k][j]` along column `j`.
+    let mut by_row = Covers::edges(n * n);
+    for i in 0..(n - 1) {
+        by_row.across[i * n + i + 1] = scan_across(i, i + 1);
+    }
+    let mut by_column = by_row.clone();
+    for i in 0..(n - 1) {
+        by_column.across[(i + 1) * n + i] = by_row.across[i * n + i + 1];
+    }
     let mut split = vec![0_usize; n * n];
+    // The last point and the first close the polygon: the triangle on that
+    // edge folds against whatever lies across it.
+    let closing = scan_across(n - 1, 0);
     for gap in 2..n {
         for i in 0..(n - gap) {
             let j = i + gap;
-            let mut best = f64::INFINITY;
+            let chord = points[j] - points[i];
+            let on_taken = in_taken[i] && in_taken[j];
+            let (row, column) = (i * n, j * n);
+            let mut best = Cover::IMPOSSIBLE;
+            // The winner's doubled area vector, in the winding it is emitted
+            // with, `[i, j, k]`.
+            let mut best_doubled = Vec3::ZERO;
             let mut best_k = 0;
             for k in (i + 1)..j {
-                let candidate = weight[i * n + k] + weight[k * n + j] + area(i, k, j);
-                if candidate < best {
+                let (left, right) = (by_row.area[row + k], by_column.area[column + k]);
+                if !(left.is_finite() && right.is_finite()) {
+                    continue;
+                }
+                if on_taken && in_taken[k] {
+                    let mut triple = [rim_index[i], rim_index[k], rim_index[j]];
+                    triple.sort_unstable();
+                    if taken.contains(&triple) {
+                        continue;
+                    }
+                }
+                let doubled = chord.cross(points[k] - points[i]);
+                let length = doubled.length();
+                // The triangle's own folds, each times `length`; a triangle
+                // with no area folds nowhere.
+                let facing = doubled.extend(length);
+                let mut fold = facing
+                    .dot(by_row.across[row + k])
+                    .min(facing.dot(by_column.across[column + k]));
+                if gap == n - 1 {
+                    fold = fold.min(facing.dot(closing));
+                }
+                let below = by_row.straightness[row + k].min(by_column.straightness[column + k]);
+                let candidate = Cover {
+                    straightness: if fold >= below * length {
+                        below
+                    } else {
+                        fold / length
+                    },
+                    area: left + right + f64::from(length) * 0.5,
+                };
+                if candidate.beats(best) {
                     best = candidate;
+                    best_doubled = doubled;
                     best_k = k;
                 }
             }
-            weight[i * n + j] = best;
-            split[i * n + j] = best_k;
+            let across = across(best_doubled.normalize_or_zero());
+            by_row.set(row + j, best, across);
+            by_column.set(column + i, best, across);
+            split[row + j] = best_k;
         }
     }
     // A complete cover must have positive area, even when an indexed seam
     // requires individual zero-area connector faces.
-    if !weight[n - 1].is_finite() || weight[n - 1] <= 0.0 {
+    let whole = by_row.area[n - 1];
+    if !whole.is_finite() || whole <= 0.0 {
         return None;
     }
 
@@ -210,28 +355,44 @@ fn min_area_triangulation(
 }
 
 /// Triangulate a cyclic rim of any size (up to [`MIN_WEIGHT_HIER_MAX_RIM`]) by
-/// divide-and-conquer minimum-area capping. Small rims run the DP directly;
+/// divide-and-conquer minimum-weight capping. Small rims run the DP directly;
 /// large ones are split at a near-balanced, most-distant vertex pair into two
 /// sub-arcs joined by a shared chord (an interior edge, watertight by
 /// construction), recursively until each leaf fits [`MIN_WEIGHT_MAX_RIM`].
 ///
+/// `support[i]` is what the scan adds at the rim edge from point `i` to the
+/// next; an edge it says nothing about folds against nothing.
+///
 /// Returns local-index triangles into the original `points` ordering, in the
-/// same watertight winding convention as [`min_area_triangulation`], or `None`
-/// when the rim is out of range, numerically degenerate, or cannot be covered
-/// without a `taken` triangle. Geometric self-piercing is left to the caller's
-/// cap guard, as for the direct DP. Deterministic: the split pair is chosen by
-/// a fixed rule and ties break on the lowest index.
-pub(super) fn min_area_triangulation_any(
+/// same watertight winding convention as [`min_weight_triangulation`], or
+/// `None` when the rim is out of range, numerically degenerate, or cannot be
+/// covered without a `taken` triangle. Geometric self-piercing is left to the
+/// caller's cap guard, as for the direct DP. Deterministic: the split pair is
+/// chosen by a fixed rule and ties break on the lowest index.
+pub(super) fn min_weight_triangulation_any(
     points: &[Vec3],
+    support: &[RimSupport],
     taken: &TakenTriangles,
 ) -> Option<Vec<[usize; 3]>> {
     let n = points.len();
     if !(3..=MIN_WEIGHT_HIER_MAX_RIM).contains(&n) {
         return None;
     }
+    // The scan triangle across a rim edge lies in the plane of the edge and
+    // its conormal.
+    let across: Vec<Vec3> = (0..n)
+        .map(|index| {
+            let conormal = support
+                .get(index)
+                .map_or(Vec3::ZERO, |support| support.conormal);
+            (points[(index + 1) % n] - points[index])
+                .cross(conormal)
+                .normalize_or_zero()
+        })
+        .collect();
     if n <= MIN_WEIGHT_MAX_RIM {
         let whole: Vec<usize> = (0..n).collect();
-        return min_area_triangulation(points, &whole, taken);
+        return min_weight_triangulation(points, &whole, taken, &across);
     }
     let dpoints: Vec<DVec3> = points.iter().map(|point| point.as_dvec3()).collect();
 
@@ -259,7 +420,7 @@ pub(super) fn min_area_triangulation_any(
         }
         if m <= MIN_WEIGHT_MAX_RIM {
             let sub_points: Vec<Vec3> = arc.iter().map(|&idx| points[idx]).collect();
-            let leaf = min_area_triangulation(&sub_points, &arc, taken)?;
+            let leaf = min_weight_triangulation(&sub_points, &arc, taken, &across)?;
             for [a, b, c] in leaf {
                 triangles.push([arc[a], arc[b], arc[c]]);
             }
@@ -328,48 +489,96 @@ mod tests {
     }
 
     #[test]
-    fn minimum_area_cap_refuses_a_zero_area_rim() {
+    fn minimum_weight_cap_refuses_a_zero_area_rim() {
         let points = [Vec3::ZERO, Vec3::X, Vec3::X * 2.0, Vec3::X * 3.0];
-        assert!(min_area_triangulation_any(&points, &TakenTriangles::new()).is_none());
+        assert!(min_weight_triangulation_any(&points, &[], &TakenTriangles::new()).is_none());
     }
 
-    /// A tooth of the cut line: three rim vertices in a row that the scan
-    /// already joins. The cheapest cover of the rim lays a triangle on it; the
-    /// membrane has to go round.
-    #[test]
-    fn minimum_area_cap_goes_round_a_triangle_the_surface_already_has() {
-        // A long hole with a tooth standing up out of its plane at vertex 1.
-        // Covering the tooth with itself and running the cap under it is
-        // smaller than lifting the cap to the tip.
-        let points = [
-            Vec3::new(0.0, 0.0, 0.0),
-            Vec3::new(1.0, 0.0, 1.0),
-            Vec3::new(2.0, 0.0, 0.0),
-            Vec3::new(2.0, 10.0, 0.0),
-            Vec3::new(0.0, 10.0, 0.0),
-        ];
-        let on_tooth = |triangles: &[[usize; 3]]| {
-            triangles.iter().any(|triangle| {
-                let mut triple = *triangle;
-                triple.sort_unstable();
-                triple == [0, 1, 2]
-            })
-        };
-        let free = min_area_triangulation_any(&points, &TakenTriangles::new()).expect("cover");
-        assert!(
-            on_tooth(&free),
-            "the smallest cover clips the tooth: {free:?}"
-        );
+    fn uses(triangles: &[[usize; 3]], wanted: [usize; 3]) -> bool {
+        triangles.iter().any(|triangle| {
+            let mut triple = *triangle;
+            triple.sort_unstable();
+            triple == wanted
+        })
+    }
 
-        let taken = TakenTriangles::from([[0, 1, 2]]);
-        let round = min_area_triangulation_any(&points, &taken).expect("a cover exists");
-        assert_eq!(round.len(), points.len() - 2);
+    /// A long hole in the plane `z = 0`, in the order the scan around it has
+    /// its rim, with a corner of the scan standing up into it at vertex 1.
+    const SPIKED_RIM: [Vec3; 5] = [
+        Vec3::new(0.0, 0.0, 0.0),
+        Vec3::new(1.0, 0.2, 1.0),
+        Vec3::new(2.0, 0.0, 0.0),
+        Vec3::new(2.0, 10.0, 0.0),
+        Vec3::new(0.0, 10.0, 0.0),
+    ];
+
+    /// The scan around [`SPIKED_RIM`]: the two faces of the spike, which meet
+    /// behind its tip, and the sheet beyond the other edges.
+    fn spiked_rim_support() -> Vec<RimSupport> {
+        let rim = SPIKED_RIM;
+        let behind = Vec3::new(1.0, -1.0, 0.0);
+        vec![
+            RimSupport::across(rim[0], rim[1], behind),
+            RimSupport::across(rim[1], rim[2], behind),
+            RimSupport::across(rim[2], rim[3], Vec3::new(3.0, 5.0, 0.0)),
+            RimSupport::across(rim[3], rim[4], Vec3::new(1.0, 11.0, 0.0)),
+            RimSupport::across(rim[4], rim[0], Vec3::new(-1.0, 5.0, 0.0)),
+        ]
+    }
+
+    /// The smallest cover of a rim with a spike in it lays a triangle back
+    /// over the spike and runs on underneath: the scan twice in one place.
+    /// The cover has to go round the tip instead.
+    #[test]
+    fn the_cover_does_not_lie_back_over_a_spike_of_the_scan() {
+        let area = |triangles: &[[usize; 3]]| -> f32 {
+            triangles
+                .iter()
+                .map(|&[a, b, c]| {
+                    (SPIKED_RIM[b] - SPIKED_RIM[a])
+                        .cross(SPIKED_RIM[c] - SPIKED_RIM[a])
+                        .length()
+                        * 0.5
+                })
+                .sum()
+        };
+        let cover = min_weight_triangulation_any(
+            &SPIKED_RIM,
+            &spiked_rim_support(),
+            &TakenTriangles::new(),
+        )
+        .expect("a cover exists");
+        assert_eq!(cover.len(), SPIKED_RIM.len() - 2);
         assert!(
-            !on_tooth(&round),
+            !uses(&cover, [0, 1, 2]),
+            "the cover lies on the spike: {cover:?}"
+        );
+        let over_the_spike = [[0, 2, 1], [0, 3, 2], [0, 4, 3]];
+        assert!(
+            area(&over_the_spike) < area(&cover),
+            "the fixture is one where lying on the spike is the smaller cover"
+        );
+    }
+
+    /// Three rim vertices in a row that the scan already joins: the cover
+    /// leaves that triangle alone whatever it weighs.
+    #[test]
+    fn the_cover_goes_round_a_triangle_the_surface_already_has() {
+        let free =
+            min_weight_triangulation_any(&SPIKED_RIM, &[], &TakenTriangles::new()).expect("cover");
+        let mut wanted = free[0];
+        wanted.sort_unstable();
+
+        let taken = TakenTriangles::from([wanted]);
+        let round = min_weight_triangulation_any(&SPIKED_RIM, &[], &taken).expect("a cover exists");
+        assert_eq!(round.len(), SPIKED_RIM.len() - 2);
+        assert!(
+            !uses(&round, wanted),
             "the cover reuses a taken triangle: {round:?}"
         );
 
         // A rim that is nothing but a taken triangle has no cover at all.
-        assert!(min_area_triangulation_any(&points[..3], &taken).is_none());
+        let taken = TakenTriangles::from([[0, 1, 2]]);
+        assert!(min_weight_triangulation_any(&SPIKED_RIM[..3], &[], &taken).is_none());
     }
 }

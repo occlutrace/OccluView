@@ -87,7 +87,7 @@ impl RefinedCap {
 
 /// Refine a rim-only cap over `rim` (ring order). `initial` holds the cap's
 /// triangles in local rim indices with the final winding already applied by the
-/// caller: an ear clip for [`CapDomain::Plane`], a minimum-area membrane for
+/// caller: an ear clip for [`CapDomain::Plane`], a minimum-weight membrane for
 /// [`CapDomain::Space`]. No flip produces a `taken` triangle.
 pub(super) fn refine_cap(
     rim: &[EditVertex],

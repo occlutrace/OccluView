@@ -1,19 +1,19 @@
 use super::adjacency::vertex_index;
-use super::cap_fair::{shape_cap, Continuity};
+use super::cap_fair::{shape_cap, Continuity, RimSupport};
 use super::cap_guard::{
     candidate_pierces, cap_doubles_surface, CapCandidate, VertexTriangleIncidence,
 };
-use super::cap_minweight::{min_area_triangulation_any, rim_is_simple_3d, TakenTriangles};
+use super::cap_minweight::{min_weight_triangulation_any, rim_is_simple_3d, TakenTriangles};
 use super::cap_refine::{refine_cap, CapDomain};
 use super::cap_support::{
     build_vertex_adjacency, rim_neighbourhood, rim_outside_support, rim_taken_triangles,
 };
-use super::holes_cleanup::RimHealOutcome;
+use super::holes_cleanup::{hanging_leftovers, RimHealOutcome};
 use super::holes_gate::{
     border_perimeter_threshold, collect_boundary_loops, refuse_unweldable_soup,
     rim_exceeds_size_cap, rim_hold, MarkedVertices, RimHold,
 };
-use super::holes_region::{CappedSurface, MarkRings, MarkedRegion};
+use super::holes_region::{CappedSurface, MarkedFaces, MarkedRegion};
 use super::holes_walk::{
     build_boundary_maps, ear_clip_cap, push_cap_index, vertex_position, BoundaryOwners,
 };
@@ -32,7 +32,7 @@ use std::collections::HashSet;
 const MIN_SHAPED_LOOP: usize = 8;
 
 /// Rims longer than this are not refined in their own plane and go straight to
-/// the minimum-area membrane as the base of their cap. Real lasso cuts
+/// the membrane as the base of their cap. Real lasso cuts
 /// routinely produce 200–1000-edge rims, and the raw membrane on such a rim is
 /// full of near-folded creases (sharp spike-like artifacts), so a shaped cap
 /// must cover them. Cost is held by `cap_refine`'s interior-vertex budget (the
@@ -96,13 +96,17 @@ pub(crate) struct FillLoopStats {
 /// and, when set, the optional `options.max_rim_perimeter_mm` restraint.
 ///
 /// When `selection` is present, a rim is capped when the mark holds it: the
-/// operator has marked at least half of its owning faces, and the rest of the
-/// rim stays within reach of the marked faces (explicit intent). The selection
-/// loop ceiling is lifted and the border guard is bypassed; an explicitly
-/// enabled mm perimeter restraint still applies. A rim the mark touches
-/// without holding stays open and is counted in `skipped_partial_rims`. The
-/// work is done on the faces the mark reaches: the rest of the mesh comes back
-/// as it went in.
+/// operator has marked at least half of its owning faces, and the rim lies
+/// inside the box of the marked faces, give or take the faces a lasso misses
+/// at its far edge (explicit intent). The selection loop ceiling is lifted and
+/// the border guard is bypassed; an explicitly enabled mm perimeter restraint
+/// still applies. A rim the mark touches without holding stays open and is
+/// counted in `skipped_partial_rims`. The work is done on the faces in that
+/// box: the rest of the mesh comes back as it went in.
+///
+/// What the cut left in a hole that closes goes with the cap: the teeth of its
+/// rim, the rags of unmarked surface hanging in it by a thread (counted with
+/// the healed defects), and the loose flakes floating in it.
 ///
 /// Two rims that meet at a single vertex are pre-split during pinch handling so
 /// both become independent simple loops that fill; an unsplit shared junction
@@ -116,7 +120,7 @@ pub(crate) struct FillLoopStats {
 /// its walls. The faces that hang on such a rim by one edge, the teeth of a cut
 /// line, are removed with it. Tiny holes keep a plain planar cap on rim
 /// vertices only. Strongly curved rims whose planar projection self-overlaps
-/// are capped from a projection-free minimum-area triangulation. Every
+/// are capped from a projection-free minimum-weight triangulation. Every
 /// candidate cap is refused (never emitted) if it would pierce itself or the
 /// surface around its rim, or lie on a triangle the surface already has.
 ///
@@ -195,13 +199,13 @@ pub(crate) fn fill_holes_with_outcome(
         return Ok((unchanged_fill_result(mesh, counts, stats), stats));
     }
 
-    // A mark is local, so the filler works on the faces the mark reaches and
+    // A mark is local, so the filler works on the faces in the mark's box and
     // the result goes back into the scan. Without a mark the whole mesh is the
     // subject.
     let filled = match selection {
         Some(selection) => {
-            let (region, rings) = MarkedRegion::around(mesh, selection);
-            let mut filled = cap_rims(&region.mesh, Some(rings), options)?;
+            let (region, mark) = MarkedRegion::around(mesh, selection);
+            let mut filled = cap_rims(&region.mesh, Some(mark), options)?;
             // A mark that closed nothing and healed nothing leaves the scan as
             // it came, and the report says what kept its rims open.
             if filled.stats.filled == 0 && filled.healed_rims == 0 && filled.surface.kept.is_none()
@@ -254,12 +258,12 @@ struct FilledRims {
 
 /// Heal the cut line of `mesh`, walk its rims and cap the ones that qualify.
 ///
-/// With `rings` the mesh is the region around an operator's mark and a rim
+/// With `mark` the mesh is the region around an operator's mark and a rim
 /// qualifies when the mark holds it; without, the mesh is the whole subject and
 /// every rim but the scan border qualifies.
 fn cap_rims(
     mesh: &MeshEditBuffers,
-    mut rings: Option<MarkRings>,
+    mut mark: Option<MarkedFaces>,
     options: MeshEditOptions,
 ) -> Result<FilledRims, MeshEditError> {
     let triangles = mesh.triangle_count();
@@ -281,7 +285,7 @@ fn cap_rims(
     // that cap — instead of dozens of "damaged" nick loops around the one socket
     // the operator wanted closed. Off by default (repair path), so the buffers
     // below stay byte-for-byte unchanged there.
-    let marked = rings.as_ref().map(MarkRings::marked);
+    let marked = mark.as_ref().map(MarkedFaces::marked);
     let healing = if options.heal_boundary_rims {
         accept_rim_healing(
             mesh,
@@ -298,82 +302,48 @@ fn cap_rims(
         None => (None, 0, None),
     };
     let mesh: &MeshEditBuffers = healed.as_ref().unwrap_or(mesh);
-    if let (Some(rings), Some(kept)) = (rings.as_mut(), kept.as_ref()) {
-        rings.retain(kept);
+    if let (Some(mark), Some(kept)) = (mark.as_mut(), kept.as_ref()) {
+        mark.retain(kept);
     }
+    let (mut kept, mut healed_rims) = (kept, healed_rims);
 
-    // Two rims that meet at a single vertex both dead-end the boundary walk (the
-    // junction has no unique successor), so neither would close and the
-    // operator would see "random" holes left open next to closed ones. Duplicate each
-    // boundary-junction vertex per incident fan so every rim becomes a simple
-    // loop that fills. A clean mesh (and repair's already bowtie-split input)
-    // has no junctions, so this returns `None` and the path below runs on the
-    // original buffers, byte-for-byte unchanged. Triangle count is preserved, so
-    // the ring of every face still holds. Corners of a region's outermost ring
-    // are left alone: what looks like a junction there is where the region was
-    // cut out.
-    let outermost = rings.as_ref().map(|rings| rings.outermost_corners(mesh));
-    let pinch_split = super::pinch::split_boundary_pinch_vertices(mesh, outermost.as_deref())?;
-    let mesh = pinch_split.as_ref().map_or(mesh, |(split, _)| split);
-
-    let (next_boundary_vertex, owner_by_edge, boundary_starts) = build_boundary_maps(mesh)?;
+    let mut walked = walk_rims(mesh, mark.as_ref(), options)?;
+    // What a surface lasso left hanging in the holes that are about to close
+    // is part of the cut line too, and the rims run round it: it goes, each
+    // piece one healed defect, and the rims are walked again without it.
+    let cleaned = match mark.as_mut() {
+        Some(mark) if options.heal_boundary_rims => {
+            let walked_on = walked.split.as_ref().unwrap_or(mesh);
+            let holes: Vec<(Vec3, Vec3)> = walked
+                .admitted
+                .iter()
+                .map(|&rim| rim_box(walked_on, &walked.loops[rim].0))
+                .collect();
+            let leftovers = hanging_leftovers(walked_on, mark, &holes);
+            (!leftovers.faces.is_empty()).then(|| {
+                drop_triangles(&mut kept, triangles, &leftovers.faces);
+                healed_rims += leftovers.pieces;
+                without_faces(walked_on, mark, &leftovers.faces)
+            })
+        }
+        _ => None,
+    };
+    if let Some(cleaned) = cleaned.as_ref() {
+        walked = walk_rims(cleaned, mark.as_ref(), options)?;
+    }
+    let mesh = walked.split.as_ref().or(cleaned.as_ref()).unwrap_or(mesh);
 
     let mut surface = CappedSurface {
         vertices: mesh.vertices.clone(),
         indices: mesh.indices.clone(),
         kept,
     };
-    let mut stats = FillLoopStats::default();
-
-    // Phase 1: walk every loop first. Border protection needs all rim
-    // perimeters before any fill decision can be made.
-    let marked_vertices = rings.as_ref().map(|rings| MarkedVertices {
-        marked_corners: rings.marked_corners(mesh),
-        outermost_corners: rings.outermost_corners(mesh),
-    });
-    let loops = collect_boundary_loops(
-        mesh,
-        &next_boundary_vertex,
-        &boundary_starts,
-        marked_vertices.as_ref(),
-        &mut stats,
-    )?;
-
-    // The scan-border guard applies only without a mark: an explicit mark is
-    // operator intent and may close anything it holds.
-    let border_guard = options.protect_scan_border && rings.is_none();
-    let border_threshold = if border_guard {
-        border_perimeter_threshold(mesh, &loops)
-    } else {
-        f64::INFINITY
-    };
-
-    // Phase 2: gate. A rim the mark does not hold staying open is requested
-    // behavior, not degeneracy — no warning.
-    let mut admitted: Vec<&[usize]> = Vec::new();
-    for (boundary_loop, perimeter) in &loops {
-        if let Some(rings) = rings.as_ref() {
-            match rim_hold(boundary_loop, &owner_by_edge, rings) {
-                RimHold::Held => {}
-                RimHold::Partial => {
-                    stats.skipped_partial += 1;
-                    continue;
-                }
-                RimHold::Untouched => continue,
-            }
-        }
-
-        if border_guard && *perimeter >= border_threshold {
-            stats.skipped_border += 1;
-            continue;
-        }
-
-        if rim_exceeds_size_cap(boundary_loop, *perimeter, rings.is_some(), options) {
-            stats.skipped_oversize += 1;
-            continue;
-        }
-        admitted.push(boundary_loop);
-    }
+    let mut stats = walked.stats;
+    let admitted: Vec<&[usize]> = walked
+        .admitted
+        .iter()
+        .map(|&rim| walked.loops[rim].0.as_slice())
+        .collect();
     if admitted.is_empty() {
         return Ok(FilledRims {
             surface,
@@ -385,7 +355,7 @@ fn cap_rims(
     // Phase 3: fill. A cut line is a saw: every other face on it hangs by one
     // edge and sticks into the hole. The rims that are about to close are
     // capped without those teeth.
-    let trimmed = trim_rim_teeth(mesh, &admitted, &owner_by_edge, rings.as_ref());
+    let trimmed = trim_rim_teeth(mesh, &admitted, &walked.owner_by_edge, mark.as_ref());
     let (caps, pulled) = cap_trimmed_rims(&trimmed, options, &mut stats)?;
     // A rim that closed lost its teeth to the cap; one left open keeps them.
     if !pulled.is_empty() {
@@ -409,6 +379,143 @@ fn cap_rims(
         stats,
         healed_rims,
     })
+}
+
+/// `mesh` without the `gone` faces (ascending), and `mark` brought in line
+/// with it.
+fn without_faces(
+    mesh: &MeshEditBuffers,
+    mark: &mut MarkedFaces,
+    gone: &[usize],
+) -> MeshEditBuffers {
+    let mut gone = gone.iter().copied().peekable();
+    let keep: Vec<bool> = (0..mesh.triangle_count())
+        .map(|face| gone.next_if_eq(&face).is_none())
+        .collect();
+    mark.retain(&keep);
+    MeshEditBuffers {
+        vertices: mesh.vertices.clone(),
+        indices: mesh
+            .indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .zip(&keep)
+            .filter(|&(_, &keep)| keep)
+            .flat_map(|(triangle, _)| *triangle)
+            .collect(),
+        topology: mesh.topology,
+    }
+}
+
+/// The rims of a mesh, and which of them are to be capped.
+struct WalkedRims {
+    /// The mesh the rims were walked on, where it is not the one given: the
+    /// same faces with the boundary junctions split.
+    split: Option<MeshEditBuffers>,
+    owner_by_edge: BoundaryOwners,
+    /// Every rim with its perimeter in mm.
+    loops: Vec<(Vec<usize>, f64)>,
+    /// The rims to cap, as places in `loops`.
+    admitted: Vec<usize>,
+    /// What the walk and the gate counted.
+    stats: FillLoopStats,
+}
+
+/// Walk the rims of `mesh` and gate them: with `mark` a rim is admitted when
+/// the mark holds it, without when it is not the scan border.
+fn walk_rims(
+    mesh: &MeshEditBuffers,
+    mark: Option<&MarkedFaces>,
+    options: MeshEditOptions,
+) -> Result<WalkedRims, MeshEditError> {
+    // Two rims that meet at a single vertex both dead-end the boundary walk (the
+    // junction has no unique successor), so neither would close and the
+    // operator would see "random" holes left open next to closed ones. Duplicate each
+    // boundary-junction vertex per incident fan so every rim becomes a simple
+    // loop that fills. A clean mesh (and repair's already bowtie-split input)
+    // has no junctions, so this returns `None` and the path below runs on the
+    // original buffers, byte-for-byte unchanged. Triangle count is preserved, so
+    // what the mark says of every face still holds. Corners of the faces at a
+    // region's edge are left alone: what looks like a junction there is where
+    // the region was cut out.
+    let at_edge = mark.map(|mark| mark.edge_corners(mesh));
+    let split = super::pinch::split_boundary_pinch_vertices(mesh, at_edge.as_deref())?
+        .map(|(split, _)| split);
+    let mesh = split.as_ref().unwrap_or(mesh);
+
+    let (next_boundary_vertex, owner_by_edge, boundary_starts) = build_boundary_maps(mesh)?;
+    let mut stats = FillLoopStats::default();
+
+    // Phase 1: walk every loop first. Border protection needs all rim
+    // perimeters before any fill decision can be made.
+    let marked_vertices = mark.map(|mark| MarkedVertices {
+        marked_corners: mark.marked_corners(mesh),
+        edge_corners: mark.edge_corners(mesh),
+    });
+    let loops = collect_boundary_loops(
+        mesh,
+        &next_boundary_vertex,
+        &boundary_starts,
+        marked_vertices.as_ref(),
+        &mut stats,
+    )?;
+
+    // The scan-border guard applies only without a mark: an explicit mark is
+    // operator intent and may close anything it holds.
+    let border_guard = options.protect_scan_border && mark.is_none();
+    let border_threshold = if border_guard {
+        border_perimeter_threshold(mesh, &loops)
+    } else {
+        f64::INFINITY
+    };
+
+    // Phase 2: gate. A rim the mark does not hold staying open is requested
+    // behavior, not degeneracy — no warning.
+    let mut admitted: Vec<usize> = Vec::new();
+    for (slot, (boundary_loop, perimeter)) in loops.iter().enumerate() {
+        if let Some(mark) = mark {
+            match rim_hold(boundary_loop, &owner_by_edge, mark) {
+                RimHold::Held => {}
+                RimHold::Partial => {
+                    stats.skipped_partial += 1;
+                    continue;
+                }
+                RimHold::Untouched => continue,
+            }
+        }
+
+        if border_guard && *perimeter >= border_threshold {
+            stats.skipped_border += 1;
+            continue;
+        }
+
+        if rim_exceeds_size_cap(boundary_loop, *perimeter, mark.is_some(), options) {
+            stats.skipped_oversize += 1;
+            continue;
+        }
+        admitted.push(slot);
+    }
+    Ok(WalkedRims {
+        split,
+        owner_by_edge,
+        loops,
+        admitted,
+        stats,
+    })
+}
+
+/// The box of a rim's vertices.
+fn rim_box(mesh: &MeshEditBuffers, rim: &[usize]) -> (Vec3, Vec3) {
+    let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+    for &vertex in rim {
+        let point = mesh
+            .vertices
+            .get(vertex)
+            .map_or(Vec3::NAN, |vertex| Vec3::from_array(vertex.position));
+        (lo, hi) = (lo.min(point), hi.max(point));
+    }
+    (lo, hi)
 }
 
 /// Weld an STL-style triangle soup back to shared topology on the Close Holes
@@ -478,22 +585,24 @@ fn cap_trimmed_rims(
     Ok((caps, pulled))
 }
 
-/// One rim about to be capped, with its teeth off.
+/// One rim about to be capped, with what goes with its cap taken off.
 struct TrimmedRim {
     /// The rim's vertices in ring order, tooth tips left out.
     vertices: Vec<usize>,
-    /// The rim's teeth, as triangles of the mesh they were taken from.
+    /// The rim's teeth, and the loose pieces in its hole, as triangles of the
+    /// mesh they were taken from.
     teeth: Vec<usize>,
 }
 
 /// The rims about to be capped with their teeth off, and the mesh without
-/// those teeth.
+/// those teeth and without the loose pieces in the rims' holes.
 struct TrimmedRims {
     mesh: MeshEditBuffers,
     rims: Vec<TrimmedRim>,
 }
 
-/// Take the teeth off the rims that are about to be capped.
+/// Take the teeth off the rims that are about to be capped, and the loose
+/// pieces out of their holes.
 ///
 /// A tooth is a face that owns two rim edges in a row: it hangs on the surface
 /// by its third edge and sticks into the hole by its own height. A lasso cut
@@ -503,17 +612,25 @@ struct TrimmedRims {
 /// than its own triangles, where it runs into itself or into the faces next to
 /// it. Without the teeth the rim runs along their roots.
 ///
-/// One round: the faces behind the teeth are surface. Around a mark only
-/// marked faces go, as in the healing pass.
+/// One round: the faces behind the teeth are surface. The teeth of a rim the
+/// mark holds go whether they are marked or not: a surface lasso does not
+/// mark the ones that look away from the camera.
+///
+/// With `mark` the mesh is the region around a mark, and a rim on a loose
+/// piece that lies in another rim's hole is not capped at all: see
+/// [`loose_pieces_in_holes`].
 fn trim_rim_teeth(
     mesh: &MeshEditBuffers,
     rims: &[&[usize]],
     owner_by_edge: &BoundaryOwners,
-    rings: Option<&MarkRings>,
+    mark: Option<&MarkedFaces>,
 ) -> TrimmedRims {
-    let rims: Vec<TrimmedRim> = rims
+    let debris = mark.map(|mark| loose_pieces_in_holes(mesh, rims, mark));
+    let mut rims: Vec<TrimmedRim> = rims
         .iter()
-        .map(|rim| {
+        .enumerate()
+        .filter(|&(slot, _)| debris.as_ref().is_none_or(|debris| debris[slot].is_some()))
+        .map(|(slot, rim)| {
             let rim_len = rim.len();
             let owner = |index: usize| owner_by_edge.owner(rim[index], rim[(index + 1) % rim_len]);
             // The vertex after edge `index` is a tooth's tip when one face
@@ -523,26 +640,32 @@ fn trim_rim_teeth(
                     let face =
                         owner(index).filter(|&face| owner((index + 1) % rim_len) == Some(face))?;
                     let (root_from, root_to) = (rim[index], rim[(index + 2) % rim_len]);
-                    (rings.is_none_or(|rings| rings.is_marked(face))
-                        && owner_by_edge.owner(root_from, root_to).is_some())
-                    .then_some(face)
+                    owner_by_edge
+                        .owner(root_from, root_to)
+                        .is_some()
+                        .then_some(face)
                 })
                 .collect();
             let tips = tip_of.iter().flatten().count();
+            let mut pieces = debris
+                .as_ref()
+                .and_then(|debris| debris[slot].clone())
+                .unwrap_or_default();
             // A rim needs three vertices left, and a face that owns the whole
             // rim is not a tooth of it.
             if rim_len - tips < 3 {
                 return TrimmedRim {
                     vertices: rim.to_vec(),
-                    teeth: Vec::new(),
+                    teeth: pieces,
                 };
             }
+            pieces.extend(tip_of.iter().flatten());
             TrimmedRim {
                 vertices: (0..rim_len)
                     .filter(|&index| tip_of[(index + rim_len - 1) % rim_len].is_none())
                     .map(|index| rim[index])
                     .collect(),
-                teeth: tip_of.into_iter().flatten().collect(),
+                teeth: pieces,
             }
         })
         .collect();
@@ -552,6 +675,9 @@ fn trim_rim_teeth(
         .collect();
     teeth.sort_unstable();
     teeth.dedup();
+    for rim in &mut rims {
+        rim.teeth.sort_unstable();
+    }
 
     let mut next_tooth = teeth.into_iter().peekable();
     let indices = mesh
@@ -571,6 +697,94 @@ fn trim_rim_teeth(
         },
         rims,
     }
+}
+
+/// For each rim about to be capped, the faces of the loose pieces in its
+/// hole; `None` for a rim that is itself on such a piece.
+///
+/// A piece is loose when it is joined to nothing else and all of it is in the
+/// region: a flake the cut left floating. One that lies inside the box of a
+/// rim of another piece floats in that rim's hole, where the cap is about to
+/// go: left alone it would stick out of the cap, and capped along its own
+/// outline it would become a blister. It goes with the cap of that hole, and
+/// stays if the hole stays open.
+fn loose_pieces_in_holes(
+    mesh: &MeshEditBuffers,
+    rims: &[&[usize]],
+    mark: &MarkedFaces,
+) -> Vec<Option<Vec<usize>>> {
+    let triangles = mesh.indices.as_chunks::<3>().0;
+    // The piece of every vertex: the lowest vertex it is joined to.
+    let mut piece_of: Vec<usize> = (0..mesh.vertices.len()).collect();
+    let root = |piece_of: &mut [usize], mut vertex: usize| {
+        while piece_of[vertex] != vertex {
+            piece_of[vertex] = piece_of[piece_of[vertex]];
+            vertex = piece_of[vertex];
+        }
+        vertex
+    };
+    for triangle in triangles {
+        let [a, b, c] = triangle.map(|vertex| root(&mut piece_of, vertex as usize));
+        let lowest = a.min(b).min(c);
+        for joined in [a, b, c] {
+            piece_of[joined] = lowest;
+        }
+    }
+    // Per piece, its box, and whether it is loose: it has faces, and the scan
+    // does not go on past any of them.
+    let mut boxes = vec![(Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)); mesh.vertices.len()];
+    let mut loose = vec![false; mesh.vertices.len()];
+    let mut goes_on = vec![false; mesh.vertices.len()];
+    for (face, triangle) in triangles.iter().enumerate() {
+        let piece = root(&mut piece_of, triangle[0] as usize);
+        goes_on[piece] |= mark.is_at_edge(face);
+        loose[piece] = !goes_on[piece];
+        for &vertex in triangle {
+            let point = mesh
+                .vertices
+                .get(vertex as usize)
+                .map_or(Vec3::NAN, |vertex| Vec3::from_array(vertex.position));
+            boxes[piece] = (boxes[piece].0.min(point), boxes[piece].1.max(point));
+        }
+    }
+
+    // The rim whose hole each loose piece lies in: the first that has it.
+    let mut hole_of: Vec<Option<usize>> = vec![None; mesh.vertices.len()];
+    for (slot, rim) in rims.iter().enumerate() {
+        let Some(&first) = rim.first() else {
+            continue;
+        };
+        let own = root(&mut piece_of, first);
+        let (lo, hi) = rim_box(mesh, rim);
+        for piece in 0..mesh.vertices.len() {
+            let (piece_lo, piece_hi) = boxes[piece];
+            if piece != own
+                && loose[piece]
+                && hole_of[piece].is_none()
+                && piece_lo.cmpge(lo).all()
+                && piece_hi.cmple(hi).all()
+            {
+                hole_of[piece] = Some(slot);
+            }
+        }
+    }
+
+    let mut debris: Vec<Option<Vec<usize>>> = rims
+        .iter()
+        .map(|rim| {
+            let on_debris = rim
+                .first()
+                .is_some_and(|&first| hole_of[root(&mut piece_of, first)].is_some());
+            (!on_debris).then(Vec::new)
+        })
+        .collect();
+    for (face, triangle) in triangles.iter().enumerate() {
+        let piece = root(&mut piece_of, triangle[0] as usize);
+        if let Some(faces) = hole_of[piece].and_then(|slot| debris[slot].as_mut()) {
+            faces.push(face);
+        }
+    }
+    debris
 }
 
 /// Record that `dropped` (ascending) of the surviving triangles are gone:
@@ -733,6 +947,9 @@ struct Rim<'a> {
     vertices: &'a [usize],
     positions: Vec<Vec3>,
     neighbourhood: HashSet<usize>,
+    /// What the scan adds at each rim edge, from the vertex of the same index
+    /// to the next.
+    support: Vec<RimSupport>,
     /// The triangles the surface already has on the rim's vertices.
     taken: TakenTriangles,
 }
@@ -746,10 +963,10 @@ struct Rim<'a> {
 /// 1. Tiny holes (`< MIN_SHAPED_LOOP`): the plain planar ear-clip fan.
 /// 2. Larger holes: a shaped cap, refined to the rim's density and laid on the
 ///    surface that continues the scan across the seam. Its base is the planar
-///    ear clip where the rim's projection does not fold, the minimum-area
+///    ear clip where the rim's projection does not fold, the minimum-weight
 ///    membrane otherwise.
 /// 3. Fallbacks for a refused/failed cap, each self-intersection guarded, first
-///    non-piercing wins: the compact minimum-area membrane (uncapped in size
+///    non-piercing wins: the compact minimum-weight membrane (uncapped in size
 ///    via hierarchical splitting — good for deep sockets and strongly wrapped
 ///    rims) then the flat ear-clip lid (good where the membrane grazes a wall).
 ///    Only for rims simple in 3D, so an hourglass crossing is never baked in.
@@ -778,6 +995,7 @@ fn triangulate_loop(
             .map(|&vertex_index| vertex_position(mesh, vertex_index))
             .collect::<Result<_, _>>()?,
         neighbourhood: rim_neighbourhood(boundary_loop, context.adjacency),
+        support: rim_outside_support(mesh, boundary_loop, context.incidence),
         taken: rim_taken_triangles(mesh, boundary_loop, context.incidence),
     };
     let ear = ear_clip_cap(mesh, boundary_loop)?;
@@ -806,11 +1024,10 @@ fn triangulate_loop(
         return Ok(true);
     }
 
-    // The hierarchical minimum-area membrane splits rims past the 256-edge DP
-    // leaf, so deep tooth sockets (hundreds to thousands of rim edges) get a
-    // full watertight cover.
+    // The hierarchical membrane splits rims past the DP leaf, so the largest
+    // rims (thousands of edges) still get a full watertight cover.
     let membrane = if rim_is_simple_3d(&rim.positions) {
-        min_area_triangulation_any(&rim.positions, &rim.taken)
+        min_weight_triangulation_any(&rim.positions, &rim.support, &rim.taken)
     } else {
         None
     };
@@ -945,7 +1162,6 @@ fn emit_shaped_cap(
         return Ok(false);
     }
 
-    let rim_support = rim_outside_support(mesh, rim.vertices, context.incidence);
     let generated_base = mesh.vertices.len() + caps.vertices.len();
     // Whether the cap doubles a scan triangle is settled by its triangles, so
     // a base that does is dropped before any shape is computed for it.
@@ -955,7 +1171,7 @@ fn emit_shaped_cap(
     let accepted = [Continuity::Tangent, Continuity::Position]
         .into_iter()
         .find_map(|continuity| {
-            let interior = shape_cap(&rim.positions, &cap, &rim_support, continuity);
+            let interior = shape_cap(&rim.positions, &cap, &rim.support, continuity);
             let candidate = CapCandidate {
                 rim: rim.vertices,
                 rim_positions: &rim.positions,

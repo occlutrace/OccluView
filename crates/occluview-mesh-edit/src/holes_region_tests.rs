@@ -1,5 +1,6 @@
-//! A marked fill works on what the mark reaches: which rims it closes, what
-//! it leaves alone, and what the cap looks like where the scan was cut.
+//! A marked fill works on what lies in the mark's box: which rims it closes,
+//! what it leaves alone, what it takes out of a hole it closes, and what the
+//! cap looks like where the scan was cut.
 
 use crate::{
     fill_selected_holes, EditVertex, FaceSelection, MeshEditBuffers, MeshEditOptions, MeshTopology,
@@ -356,4 +357,190 @@ fn the_teeth_of_a_cut_line_go_with_the_cap() {
         triple.sort_unstable();
         assert!(seen.insert(triple), "a triangle doubled: {triple:?}");
     }
+}
+
+/// A surface lasso marks the faces that look at the camera and leaves the
+/// walls of the hole it encloses, wherever on the rim they are and however
+/// far along the surface the nearest marked face is. Here the mark has the
+/// two ends of a long hole and none of its middle, twenty faces wide: the rim
+/// lies inside the mark's box and more than half of it is marked, so the hole
+/// is the mark's and closes.
+#[test]
+fn a_hole_whose_unmarked_rim_lies_inside_the_marks_box_closes() {
+    let (mesh, quads) = sheet(64, 24, |i, j| {
+        (12..52).contains(&i) && (10..14).contains(&j)
+    });
+    let mark: Vec<bool> = quads
+        .iter()
+        .map(|&(i, j)| ((4..22).contains(&i) || (42..60).contains(&i)) && (4..20).contains(&j))
+        .collect();
+    let before = open_edges(&mesh);
+    let result =
+        fill_selected_holes(&mesh, &FaceSelection::new(mark), close_holes_options()).expect("fill");
+    assert_eq!(result.report.filled_holes, 1);
+    assert_eq!(result.report.skipped_partial_rims, 0);
+    assert_eq!(before - open_edges(&result.mesh), 2 * (40 + 4));
+}
+
+/// A square hole in a sheet, the faces `extra` added to it, and a mark on the
+/// sheet around the hole that leaves the added faces out unless `marked`.
+/// Returns the mesh, the mark, and how many triangles the sheet has.
+fn hole_with(extra: &[[u32; 3]], marked: bool) -> (MeshEditBuffers, FaceSelection, usize) {
+    let (mut mesh, _) = sheet(30, 30, |i, j| {
+        (10..20).contains(&i) && (10..20).contains(&j)
+    });
+    let surface = mesh.triangle_count();
+    for triangle in extra {
+        mesh.indices.extend_from_slice(triangle);
+    }
+    let mark = mesh
+        .indices
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .enumerate()
+        .map(|(index, triangle)| {
+            (marked || index < surface)
+                && triangle.iter().all(|&vertex| {
+                    let [x, y, _] = mesh.vertices[vertex as usize].position;
+                    (6.0..=24.0).contains(&x) && (6.0..=24.0).contains(&y)
+                })
+        })
+        .collect();
+    (mesh, FaceSelection::new(mark), surface)
+}
+
+/// Vertex of the 30 by 30 sheet at column `i`, row `j`.
+fn at(i: usize, j: usize) -> u32 {
+    (j * 31 + i) as u32
+}
+
+/// The two triangles of the sheet's quad at column `i`, row `j`.
+fn quad(i: usize, j: usize) -> [[u32; 3]; 2] {
+    [
+        [at(i, j), at(i + 1, j), at(i + 1, j + 1)],
+        [at(i, j), at(i + 1, j + 1), at(i, j + 1)],
+    ]
+}
+
+/// Where a surface lasso cut a wall seen edge-on, a rag of faces is left
+/// hanging in the hole by one edge. The operator cannot mark it. It is part
+/// of the cut line: it goes, counted as one healed defect, and the hole closes
+/// along the rim it hung on.
+#[test]
+fn a_rag_the_cut_left_hanging_in_the_hole_goes() {
+    // Two quads in a row, joined to the hole's left rim by one edge.
+    let rag = [quad(10, 14), quad(11, 14)].concat();
+    let (mesh, mark, surface) = hole_with(&rag, false);
+    let result = fill_selected_holes(
+        &mesh,
+        &mark,
+        MeshEditOptions {
+            compact_vertices: false,
+            ..close_holes_options()
+        },
+    )
+    .expect("fill");
+    assert_eq!(result.report.filled_holes, 1);
+    assert_eq!(result.report.skipped_damaged_rims, 0);
+    assert_eq!(result.report.healed_rims, 1, "the rag is one defect");
+    assert_eq!(result.report.removed_triangles, rag.len());
+    assert_eq!(
+        result.mesh.indices[..surface * 3],
+        mesh.indices[..surface * 3],
+        "the sheet the rag hung on stays"
+    );
+    assert_eq!(
+        open_edges(&result.mesh),
+        4 * 30,
+        "only the sheet's border is open"
+    );
+}
+
+/// Unmarked surface that the mark's hole does not hold is not a rag, however
+/// much of its outline is open: the rest of a tube below a marked band has
+/// as many open edges as it has edges on the band, and stays.
+#[test]
+fn unmarked_surface_outside_the_hole_is_not_a_rag() {
+    let (sectors, rings) = (48, 10);
+    let mesh = tube(sectors, rings, 4.0, 0.5);
+    let mark: Vec<bool> = (0..mesh.triangle_count())
+        .map(|triangle| triangle / (2 * sectors) >= rings - 3)
+        .collect();
+    let result =
+        fill_selected_holes(&mesh, &FaceSelection::new(mark), close_holes_options()).expect("fill");
+    assert_eq!(result.report.filled_holes, 1, "the marked end closes");
+    assert_eq!(result.report.healed_rims, 0);
+    assert_eq!(result.report.removed_triangles, 0);
+    assert_eq!(
+        open_edges(&result.mesh),
+        sectors,
+        "the other end stays open"
+    );
+}
+
+/// A cut can leave a flake floating in the hole, joined to nothing. Capped
+/// along its own outline it would be a blister, and left alone it would stick
+/// out of the cap that closes the hole: it goes with that cap, marked or not.
+#[test]
+fn a_flake_floating_in_the_hole_goes_with_the_cap() {
+    for marked in [true, false] {
+        let flake = quad(14, 14);
+        let (mesh, mark, surface) = hole_with(&flake, marked);
+        let result = fill_selected_holes(
+            &mesh,
+            &mark,
+            MeshEditOptions {
+                compact_vertices: false,
+                ..close_holes_options()
+            },
+        )
+        .expect("fill");
+        assert_eq!(result.report.filled_holes, 1, "the hole, not the flake");
+        assert_eq!(result.report.skipped_damaged_rims, 0);
+        assert_eq!(result.report.removed_triangles, flake.len());
+        assert_eq!(
+            result.mesh.indices[..surface * 3],
+            mesh.indices[..surface * 3],
+            "the sheet stays"
+        );
+        assert_eq!(
+            open_edges(&result.mesh),
+            4 * 30,
+            "only the sheet's border is open"
+        );
+    }
+}
+
+/// The teeth of a rim the mark holds go with its cap whether they are marked
+/// or not: a surface lasso does not mark the ones that look away, nor the
+/// wall they hang on.
+#[test]
+fn teeth_the_mark_missed_go_with_the_cap() {
+    let teeth: Vec<[u32; 3]> = (10..20)
+        .step_by(2)
+        .map(|j| [at(10, j), at(11, j + 1), at(10, j + 1)])
+        .collect();
+    let (mesh, mark, _) = hole_with(&teeth, false);
+    // The column of the sheet the teeth hang on is not marked either.
+    let mark: Vec<bool> = mesh
+        .indices
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(mark.as_slice())
+        .map(|(triangle, &marked)| {
+            marked
+                && !triangle.iter().all(|&vertex| {
+                    let [x, y, _] = mesh.vertices[vertex as usize].position;
+                    (9.0..=10.0).contains(&x) && (10.0..=20.0).contains(&y)
+                })
+        })
+        .collect();
+    let result =
+        fill_selected_holes(&mesh, &FaceSelection::new(mark), close_holes_options()).expect("fill");
+    assert_eq!(result.report.filled_holes, 1);
+    assert_eq!(result.report.removed_triangles, teeth.len());
+    assert_eq!(result.report.healed_rims, 0, "a tooth is not a defect");
+    assert_eq!(open_edges(&result.mesh), 4 * 30);
 }
