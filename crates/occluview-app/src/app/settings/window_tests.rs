@@ -501,7 +501,7 @@ fn camera_after_saved_scroll(settings: &Settings) -> (bool, occluview_core::Came
     let mut camera = occluview_core::Camera::default();
     let mut changed = false;
     ctx.run_ui(input, |ui| {
-        changed = super::super::app_viewport::update_camera_from_scroll(
+        changed = crate::app::app_viewport::update_camera_from_scroll(
             &mut camera,
             ui.ctx(),
             viewport,
