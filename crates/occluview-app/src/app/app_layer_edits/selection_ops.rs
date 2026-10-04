@@ -23,14 +23,22 @@ use occluview_mesh_edit::{
 };
 use std::sync::Arc;
 
+pub(crate) struct SelectionActionOptions {
+    pub(crate) action: LayerContextAction,
+    pub(crate) close_holes_limit_mm: Option<f32>,
+}
+
 pub(crate) fn selection_batch_status(
     outcome: &SelectionBatchOutcome,
     scene: &Scene,
     paths: &[PathBuf],
-    action: LayerContextAction,
-    limit: Option<f32>,
+    options: SelectionActionOptions,
     locale: &crate::i18n::LocaleManager,
 ) -> String {
+    let SelectionActionOptions {
+        action,
+        close_holes_limit_mm: limit,
+    } = options;
     let label = |id| {
         scene
             .meshes()
@@ -260,8 +268,10 @@ pub(super) fn apply_visible_selection_action_with_status(
                 &outcome,
                 scene,
                 paths,
-                action,
-                None,
+                SelectionActionOptions {
+                    action,
+                    close_holes_limit_mm: None,
+                },
                 &app.ui.locale,
             ));
             apply
@@ -271,8 +281,10 @@ pub(super) fn apply_visible_selection_action_with_status(
                 &outcome,
                 scene,
                 paths,
-                action,
-                None,
+                SelectionActionOptions {
+                    action,
+                    close_holes_limit_mm: None,
+                },
                 &app.ui.locale,
             ));
             LayerContextApply::default()
