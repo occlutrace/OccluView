@@ -1,7 +1,8 @@
 use super::adjacency::vertex_index;
 use super::cap_fair::{shape_cap, Continuity, RimSupport};
 use super::cap_guard::{
-    candidate_pierces, cap_doubles_surface, CapCandidate, VertexTriangleIncidence,
+    candidate_pierces, cap_doubles_surface, piercing_cap_triangles, CapCandidate,
+    VertexTriangleIncidence,
 };
 use super::cap_minweight::{min_weight_triangulation_any, rim_is_simple_3d, TakenTriangles};
 use super::cap_refine::{refine_cap, CapDomain};
@@ -23,6 +24,7 @@ use super::{
     validate_selection_against_triangle_count, EditVertex, FaceSelection, MeshEditBuffers,
     MeshEditError, MeshEditOptions, MeshEditReport, MeshEditResult, MeshEditWarning, MeshTopology,
 };
+use crate::numeric::count_as_f32;
 use glam::Vec3;
 use std::collections::HashSet;
 
@@ -117,7 +119,8 @@ pub(crate) struct FillLoopStats {
 /// generated interior vertices (density matched to the rim, attributes per
 /// `options.attribute_policy`) and laid on the surface that leaves the rim the
 /// way the mesh arrives at it, so a cut tooth closes with a dome that follows
-/// its walls. The faces that hang on such a rim by one edge, the teeth of a cut
+/// its walls. Where such a cap would run into the surface, in a notch of the
+/// rim, it gives way to the membrane there and keeps its shape elsewhere. The faces that hang on such a rim by one edge, the teeth of a cut
 /// line, are removed with it. Tiny holes keep a plain planar cap on rim
 /// vertices only. Strongly curved rims whose planar projection self-overlaps
 /// are capped from a projection-free minimum-weight triangulation. Every
@@ -1112,6 +1115,146 @@ fn emit_plain_cap(
     Ok(())
 }
 
+/// Rings of cap vertices that give way with the vertices of a triangle that
+/// runs into something, for every round the place has been at it: the place
+/// itself, and room to come back from it.
+const GIVE_WAY_RINGS: usize = 2;
+
+/// Times a cap may give way before it is refused. Every round widens the
+/// places that gave way by the vertices that still run into something; a cap
+/// that needs more rounds than this is tangled all over, and no cap at all.
+const GIVE_WAY_ROUNDS: usize = 8;
+
+/// Sweeps a place that gave way is relaxed for (safety valve; the tolerance
+/// exits earlier).
+const GIVE_WAY_SWEEPS: usize = 400;
+
+/// Make a shaped cap keep clear of itself and of the surface around its rim,
+/// by letting it give way where it does not: there the cap becomes the
+/// membrane, every vertex midway between its neighbours, held by the rim and
+/// by the shaped cap around.
+///
+/// The plate that carries the scan across a hole has no reason to stay
+/// inside the rim. In a notch of the rim narrower than its own triangles, at
+/// a corner where a cut ran down a wall, the plate leaves both sides of the
+/// notch the way the wall arrives and the two collide. That is a place a
+/// millimetre across on a cap of a hundred square millimetres, and refusing
+/// the whole cap for it leaves the hole to a flat cover from rim to rim. A
+/// membrane stays between what holds it, so it has no such place.
+///
+/// `shaped` holds the positions of the cap's generated vertices. Returns the
+/// positions to use, or `None` when the cap runs into something where no
+/// vertex of its own can give way, or is tangled all over.
+fn settle_cap(
+    context: &LoopFillContext<'_>,
+    rim: &Rim<'_>,
+    triangles: &[[usize; 3]],
+    generated_base: usize,
+    mut interior: Vec<Vec3>,
+) -> Option<Vec<Vec3>> {
+    let rim_len = rim.vertices.len();
+    let mut gave_way = vec![false; interior.len()];
+    // Built when the cap first runs into something: most never do.
+    let mut neighbours: Vec<Vec<usize>> = Vec::new();
+    for round in 0..=GIVE_WAY_ROUNDS {
+        let piercing = piercing_cap_triangles(
+            context.mesh,
+            context.incidence,
+            &rim.neighbourhood,
+            &CapCandidate {
+                rim: rim.vertices,
+                rim_positions: &rim.positions,
+                generated: &interior,
+                generated_base,
+                triangles,
+            },
+        );
+        if piercing.is_empty() {
+            return Some(interior);
+        }
+        if round == GIVE_WAY_ROUNDS {
+            break;
+        }
+        if neighbours.is_empty() {
+            neighbours = vec![Vec::new(); interior.len()];
+            for triangle in triangles {
+                for side in 0..3 {
+                    let (from, to) = (triangle[side], triangle[(side + 1) % 3]);
+                    for (vertex, other) in [(from, to), (to, from)] {
+                        if let Some(list) = vertex
+                            .checked_sub(rim_len)
+                            .and_then(|at| neighbours.get_mut(at))
+                        {
+                            if !list.contains(&other) {
+                                list.push(other);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // The vertices of the triangles that run into something give way,
+        // with the rings around them. A triangle on rim vertices alone has
+        // none to give.
+        let mut front: Vec<usize> = piercing
+            .iter()
+            .flat_map(|&triangle| triangles[triangle])
+            .filter_map(|local| local.checked_sub(rim_len))
+            .collect();
+        // A place that gave way and still runs into something gets more room
+        // every round.
+        let rings = GIVE_WAY_RINGS * (round + 1);
+        let mut widened = false;
+        for ring in 0..=rings {
+            let mut next = Vec::new();
+            for at in front {
+                if !std::mem::replace(&mut gave_way[at], true) {
+                    widened = true;
+                }
+                if ring < rings {
+                    next.extend(
+                        neighbours[at]
+                            .iter()
+                            .filter_map(|&local| local.checked_sub(rim_len))
+                            .filter(|&other| !gave_way[other]),
+                    );
+                }
+            }
+            front = next;
+        }
+        if !widened {
+            break;
+        }
+
+        // Every vertex that gave way goes midway between its neighbours, in
+        // a fixed order, until none moves any more.
+        let loose: Vec<usize> = (0..interior.len()).filter(|&at| gave_way[at]).collect();
+        let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+        for &point in &rim.positions {
+            (lo, hi) = (lo.min(point), hi.max(point));
+        }
+        let tolerance = (hi - lo).max_element() * 1.0e-5;
+        for _ in 0..GIVE_WAY_SWEEPS {
+            let mut moved = 0.0_f32;
+            for &at in &loose {
+                let mut sum = Vec3::ZERO;
+                for &local in &neighbours[at] {
+                    sum += local
+                        .checked_sub(rim_len)
+                        .map_or_else(|| rim.positions[local], |other| interior[other]);
+                }
+                let midway = sum / count_as_f32(neighbours[at].len().max(1));
+                moved = moved.max(midway.distance(interior[at]));
+                interior[at] = midway;
+            }
+            if moved <= tolerance {
+                break;
+            }
+        }
+    }
+    None
+}
+
 /// The full vertex payloads of a rim, in ring order.
 fn rim_edit_vertices(
     mesh: &MeshEditBuffers,
@@ -1134,11 +1277,12 @@ fn rim_edit_vertices(
         .collect::<Result<_, _>>()
 }
 
-/// Refine a rim-only cap, give it a shape, guard it against running into the
-/// surface, and emit it. The shape is the thin plate that leaves the rim the
-/// way the scan arrives; where that runs into the surface around the rim, the
-/// soap film across the rim; where that does too, nothing, and the loop is
-/// left to the plain fallbacks.
+/// Refine a rim-only cap, give it a shape, make it keep clear of the surface,
+/// and emit it. The shape is the thin plate that leaves the rim the way the
+/// scan arrives; where that runs into the surface around the rim or into
+/// itself, the cap gives way there, see [`settle_cap`]. A cap that cannot be
+/// settled is tried again as the soap film across the rim, and where that
+/// cannot be settled either the loop is left to the plain fallbacks.
 ///
 /// A membrane that needs no interior vertices is left to the plain guarded
 /// path as well.
@@ -1171,17 +1315,8 @@ fn emit_shaped_cap(
     let accepted = [Continuity::Tangent, Continuity::Position]
         .into_iter()
         .find_map(|continuity| {
-            let interior = shape_cap(&rim.positions, &cap, &rim.support, continuity);
-            let candidate = CapCandidate {
-                rim: rim.vertices,
-                rim_positions: &rim.positions,
-                generated: &interior,
-                generated_base,
-                triangles: cap.triangles(),
-            };
-            let refused =
-                candidate_pierces(mesh, context.incidence, &rim.neighbourhood, &candidate);
-            (!refused).then_some(interior)
+            let shaped = shape_cap(&rim.positions, &cap, &rim.support, continuity);
+            settle_cap(context, rim, cap.triangles(), generated_base, shaped)
         });
     let Some(interior) = accepted else {
         return Ok(false);
