@@ -957,6 +957,26 @@ mod input_tests {
                     scene.tools.editor_tab,
                     crate::mesh_editor::mesh_editor_overlay::EditorTab::EditMesh
                 );
+                // The layer route also prepares Sculpt in the background. The
+                // editor's controls wait for that, and its window moves when
+                // the pending notice goes, so click only once both are at rest.
+                let waiting = Instant::now();
+                let mut lasso = control_point(&mut app, &ctx, "Lasso")?;
+                loop {
+                    let pending = app.workspace.scenes[0].tools.sculpt.is_busy();
+                    let next = control_point(&mut app, &ctx, "Lasso")?;
+                    if !pending && next == lasso {
+                        break;
+                    }
+                    lasso = next;
+                    anyhow::ensure!(
+                        waiting.elapsed() < std::time::Duration::from_secs(10),
+                        "{previous} -> {route}: the editor never came to rest"
+                    );
+                    if pending {
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                    }
+                }
                 click_control(&mut app, &ctx, "Lasso")?;
                 let camera = app.workspace.scenes[0]
                     .render
