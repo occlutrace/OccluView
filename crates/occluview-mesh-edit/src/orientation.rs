@@ -45,6 +45,7 @@ pub fn invert_orientation(
         skipped_border_rims: 0,
         skipped_oversize_rims: 0,
         skipped_damaged_rims: 0,
+        skipped_partial_rims: 0,
         healed_rims: 0,
         warnings: Vec::new(),
     };

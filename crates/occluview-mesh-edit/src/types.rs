@@ -236,13 +236,18 @@ pub struct MeshEditReport {
     /// Hole filling: rims refused as damaged — non-simple, numerically
     /// stalled, or a cap that would pierce itself or nearby surface.
     pub skipped_damaged_rims: usize,
+    /// Hole filling: rims a face selection touches but does not hold — fewer
+    /// than half of their faces are selected, or part of them runs out of the
+    /// selected area. They stay open as requested, without a warning; the
+    /// count lets a caller say why. Zero without a selection.
+    pub skipped_partial_rims: usize,
     /// Hole filling: cut-line defects healed by the pre-cleaning pass before
     /// capping — dangling needle/lone triangles dropped plus near-coincident
     /// boundary vertices welded. Zero unless `heal_boundary_rims` is enabled.
     pub healed_rims: usize,
-    /// Non-fatal warnings. For hole filling this stays one entry per skipped
-    /// loop of any kind; the three `skipped_*` counters above break the same
-    /// total down by reason.
+    /// Non-fatal warnings. For hole filling this stays one entry per loop
+    /// skipped as border, oversize or damaged; those three `skipped_*`
+    /// counters break the same total down by reason.
     pub warnings: Vec<MeshEditWarning>,
 }
 

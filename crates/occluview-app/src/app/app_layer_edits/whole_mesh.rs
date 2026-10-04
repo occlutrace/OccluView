@@ -285,15 +285,17 @@ pub(super) fn close_holes_status(
     changed: bool,
     locale: &crate::i18n::LocaleManager,
 ) -> String {
-    let (filled, border, oversize, damaged, healed) = report.map_or((0, 0, 0, 0, 0), |report| {
-        (
-            report.filled_holes,
-            report.skipped_border_rims,
-            report.skipped_oversize_rims,
-            report.skipped_damaged_rims,
-            report.healed_rims,
-        )
-    });
+    let (filled, border, oversize, damaged, partial, healed) =
+        report.map_or((0, 0, 0, 0, 0, 0), |report| {
+            (
+                report.filled_holes,
+                report.skipped_border_rims,
+                report.skipped_oversize_rims,
+                report.skipped_damaged_rims,
+                report.skipped_partial_rims,
+                report.healed_rims,
+            )
+        });
     let mut segments: Vec<String> = Vec::new();
     if healed > 0 {
         // Pre-cleaning healed the jagged cut line (dropped needle/lone
@@ -332,6 +334,16 @@ pub(super) fn close_holes_status(
             crate::i18n::message_id!("holes-seg-damaged"),
             &[],
             &[("n", damaged)],
+        ));
+    }
+    if partial > 0 {
+        // A hole whose rim runs out of the marked faces stays open, and the
+        // operator has to hear why: nothing else on screen tells a hole the
+        // mark missed from a hole the tool could not close.
+        segments.push(locale.tr_plural(
+            crate::i18n::message_id!("holes-seg-partial"),
+            &[],
+            &[("n", partial)],
         ));
     }
 

@@ -3,7 +3,7 @@
 // Grid/geometry fixtures use conventional short axis names (i, j, u, v, x, y).
 #![allow(clippy::many_single_char_names)]
 
-use crate::cap_minweight::{min_area_triangulation_any, rim_is_simple_3d};
+use crate::cap_minweight::{min_area_triangulation_any, rim_is_simple_3d, TakenTriangles};
 use crate::delete_crop::delete_selected_faces;
 use crate::holes::fill_holes;
 use crate::holes_cleanup::heal_boundary_rims;
@@ -129,7 +129,8 @@ fn lasso_delete_mask(mesh: &MeshEditBuffers) -> Vec<bool> {
         .collect()
 }
 
-/// Faces incident to any boundary vertex — the operator lassoing the socket.
+/// Faces incident to a boundary vertex of the socket — the operator lassoing
+/// it. The sheet's own border is further out and stays unmarked.
 fn rim_selection_mask(mesh: &MeshEditBuffers) -> Vec<bool> {
     let mut directed: HashSet<(u32, u32)> = HashSet::new();
     for tri in mesh.indices.as_chunks::<3>().0 {
@@ -137,9 +138,15 @@ fn rim_selection_mask(mesh: &MeshEditBuffers) -> Vec<bool> {
             directed.insert(e);
         }
     }
+    // The tooth of `dome_with_tooth` stands at (3, 0) and the lasso around it
+    // stays within 3.7 mm; the sheet's border is at least 7 mm away.
+    let near_socket = |vertex: u32| {
+        let [x, y, _] = mesh.vertices[vertex as usize].position;
+        (x - 3.0).hypot(y) < 5.0
+    };
     let mut boundary_vertex = vec![false; mesh.vertices.len()];
     for &(a, b) in &directed {
-        if !directed.contains(&(b, a)) {
+        if !directed.contains(&(b, a)) && near_socket(a) && near_socket(b) {
             boundary_vertex[a as usize] = true;
             boundary_vertex[b as usize] = true;
         }
@@ -210,8 +217,8 @@ fn tooth_socket_close_heals_nicks_and_closes_the_socket() {
     assert!(closed.report.filled_holes >= 1, "the socket must close");
     assert_eq!(
         open_edge_count(&closed.mesh),
-        0,
-        "the closed socket must be watertight"
+        open_edge_count(&mesh),
+        "the socket must close watertight, and only the sheet's border stay open"
     );
 }
 
@@ -231,7 +238,8 @@ fn hierarchical_membrane_caps_a_large_rim_watertight() {
         })
         .collect();
 
-    let tris = min_area_triangulation_any(&points).expect("large rim must triangulate");
+    let tris = min_area_triangulation_any(&points, &TakenTriangles::new())
+        .expect("large rim must triangulate");
     assert_eq!(tris.len(), n - 2, "a full fan has n - 2 triangles");
 
     // Internally manifold: interior edges in exactly two triangles, and exactly
@@ -268,8 +276,8 @@ fn hierarchical_membrane_is_deterministic() {
             Vec3::new(10.0 * a.cos(), 10.0 * a.sin(), (a * 6.0).sin())
         })
         .collect();
-    let a = min_area_triangulation_any(&points).expect("cap a");
-    let b = min_area_triangulation_any(&points).expect("cap b");
+    let a = min_area_triangulation_any(&points, &TakenTriangles::new()).expect("cap a");
+    let b = min_area_triangulation_any(&points, &TakenTriangles::new()).expect("cap b");
     assert_eq!(a, b, "the membrane triangulation must be deterministic");
 }
 

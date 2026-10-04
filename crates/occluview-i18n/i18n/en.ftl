@@ -639,6 +639,10 @@ holes-seg-damaged = { $n ->
     [one] { $n } damaged rim skipped
    *[other] { $n } damaged rims skipped
 }
+holes-seg-partial = { $n ->
+    [one] { $n } hole only partly selected
+   *[other] { $n } holes only partly selected
+}
 batchedit-delete = Deleted selection
 batchedit-crop = Cropped selection
 batchedit-cut = Cut selection to new layer

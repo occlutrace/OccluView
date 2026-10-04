@@ -633,6 +633,10 @@ holes-seg-damaged = { $n ->
     [one] { $n } bord abîmé ignoré
    *[other] { $n } bords abîmés ignorés
 }
+holes-seg-partial = { $n ->
+    [one] { $n } trou en partie seulement dans la sélection
+   *[other] { $n } trous en partie seulement dans la sélection
+}
 batchedit-invert = Normales inversées
 batchedit-delete = Sélection supprimée
 batchedit-crop = Rogné à la sélection

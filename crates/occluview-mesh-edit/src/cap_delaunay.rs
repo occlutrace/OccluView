@@ -1,9 +1,6 @@
-//! Planar Delaunay predicates and validity-guarded relaxation for hole caps.
+//! Planar Delaunay predicates for hole caps.
 
 use glam::Vec2;
-
-/// In-plane smoothing iterations that even out the interior sampling.
-const RELAX_ITERATIONS: usize = 32;
 
 /// The vertex of `triangle` that is not on edge `(u, v)`.
 pub(super) fn apex_of(triangle: [usize; 3], u: usize, v: usize) -> Option<usize> {
@@ -77,63 +74,4 @@ pub(super) fn circumcircle_verdict(
     } else {
         CircleVerdict::Tie
     }
-}
-
-/// Even out the interior sampling: each generated vertex moves toward the mean
-/// of its neighbors in the plane while the rim stays pinned. Uniform in-plane
-/// distribution lifts to an evenly sampled cap.
-///
-/// Apply a move only when every incident triangle remains on its original
-/// nonzero side, preventing inverted or self-intersecting caps.
-pub(super) fn relax_uv(uv: &mut [Vec2], rim_len: usize, triangles: &[[usize; 3]]) {
-    if uv.len() <= rim_len {
-        return;
-    }
-    let mut neighbors: Vec<Vec<usize>> = vec![Vec::new(); uv.len()];
-    let mut incident: Vec<Vec<usize>> = vec![Vec::new(); uv.len()];
-    for (triangle_index, &[a, b, c]) in triangles.iter().enumerate() {
-        for (u, v) in [(a, b), (b, c), (c, a)] {
-            if !neighbors[u].contains(&v) {
-                neighbors[u].push(v);
-            }
-            if !neighbors[v].contains(&u) {
-                neighbors[v].push(u);
-            }
-        }
-        for &vertex in &[a, b, c] {
-            incident[vertex].push(triangle_index);
-        }
-    }
-
-    for _ in 0..RELAX_ITERATIONS {
-        for index in rim_len..uv.len() {
-            let ring = &neighbors[index];
-            if ring.is_empty() {
-                continue;
-            }
-            let mut sum = Vec2::ZERO;
-            for &neighbor in ring {
-                sum += uv[neighbor];
-            }
-            let degree = f32::from(u16::try_from(ring.len()).unwrap_or(u16::MAX));
-            let target = sum / degree;
-            // Damp toward the neighbor centroid; accept only if no incident
-            // triangle collapses or flips sign.
-            let proposed = uv[index].lerp(target, 0.5);
-            if incident[index].iter().all(|&triangle_index| {
-                let tri = triangles[triangle_index];
-                let before = signed_area(uv, tri);
-                let after = signed_area_with(uv, tri, index, proposed);
-                before * after > f32::EPSILON
-            }) {
-                uv[index] = proposed;
-            }
-        }
-    }
-}
-
-/// Signed area (2x) of `triangle` with vertex `moved` relocated to `position`.
-fn signed_area_with(uv: &[Vec2], triangle: [usize; 3], moved: usize, position: Vec2) -> f32 {
-    let p = triangle.map(|index| if index == moved { position } else { uv[index] });
-    (p[1] - p[0]).perp_dot(p[2] - p[0])
 }

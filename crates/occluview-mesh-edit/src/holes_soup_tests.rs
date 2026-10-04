@@ -319,7 +319,12 @@ fn soup_strongly_curved_inner_wall_socket_closes_with_selection() {
         "the strongly curved socket must close (got {})",
         closed.report.filled_holes
     );
-    assert_eq!(open_edge_count(&closed.mesh), 0, "watertight after close");
+    // A mark welds the faces it reaches and leaves the rest of the soup as it
+    // was read, so the surface is judged in its welded form.
+    let welded = weld_soup_topology(&closed.mesh)
+        .expect("weld")
+        .unwrap_or(closed.mesh);
+    assert_eq!(open_edge_count(&welded), 0, "watertight after close");
 }
 
 /// A color seam (coincident positions, different vertex colors — flat-shaded

@@ -633,6 +633,10 @@ holes-seg-damaged = { $n ->
     [one] { $n } beschädigter Rand übersprungen
    *[other] { $n } beschädigte Ränder übersprungen
 }
+holes-seg-partial = { $n ->
+    [one] { $n } Loch nur teilweise in der Auswahl
+   *[other] { $n } Löcher nur teilweise in der Auswahl
+}
 batchedit-delete = Auswahl gelöscht
 batchedit-crop = Auf Auswahl zugeschnitten
 batchedit-cut = Auswahl in neue Ebene geschnitten

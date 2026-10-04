@@ -280,7 +280,7 @@ fn three_fans_meeting_at_one_vertex_all_close() {
     }
     let mesh = tri_mesh(vertices, indices);
 
-    let split = crate::pinch::split_boundary_pinch_vertices(&mesh).expect("pinch split");
+    let split = crate::pinch::split_boundary_pinch_vertices(&mesh, None).expect("pinch split");
     let (_, split_count) = split.expect("the shared vertex splits");
     assert_eq!(split_count, 1, "one junction vertex, split into three fans");
 

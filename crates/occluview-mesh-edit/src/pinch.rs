@@ -65,6 +65,10 @@ pub(crate) fn split_vertex_fans(
 /// junction is a vertex whose boundary in- or out-degree exceeds one (two rims,
 /// or a pinch, pass through it).
 ///
+/// `frozen` names vertices to leave alone whatever their boundary looks like:
+/// where a mesh is a region cut out of a larger one, the faces missing around
+/// the cut are not a boundary of the surface.
+///
 /// Returns the rewritten mesh plus the number of vertices split, or `None` when
 /// nothing pinches: a clean/closed mesh — and any input already bowtie-split by
 /// the repair pipeline — passes through untouched, so the caller's downstream
@@ -74,8 +78,12 @@ pub(crate) fn split_vertex_fans(
 /// Returns [`MeshEditError`] only on index overflow while duplicating a vertex.
 pub(crate) fn split_boundary_pinch_vertices(
     mesh: &MeshEditBuffers,
+    frozen: Option<&[bool]>,
 ) -> Result<Option<(MeshEditBuffers, usize)>, MeshEditError> {
-    let junctions = boundary_junction_vertices(mesh);
+    let mut junctions = boundary_junction_vertices(mesh);
+    if let Some(frozen) = frozen {
+        junctions.retain(|&vertex| !frozen.get(vertex as usize).copied().unwrap_or(false));
+    }
     if junctions.is_empty() {
         return Ok(None);
     }

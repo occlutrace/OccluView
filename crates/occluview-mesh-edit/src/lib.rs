@@ -27,7 +27,6 @@ mod attributes;
 mod bridge_split;
 mod cap_delaunay;
 mod cap_fair;
-mod cap_fit;
 mod cap_guard;
 mod cap_lawson;
 mod cap_minweight;
@@ -41,6 +40,7 @@ mod error;
 mod holes;
 mod holes_cleanup;
 mod holes_gate;
+mod holes_region;
 mod holes_walk;
 mod normals;
 mod numeric;
@@ -66,6 +66,9 @@ mod tests;
 
 #[cfg(test)]
 mod holes_matrix_tests;
+
+#[cfg(test)]
+mod holes_region_tests;
 
 #[cfg(test)]
 mod holes_socket_tests;

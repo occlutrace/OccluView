@@ -5,6 +5,12 @@ remain in the Git history.
 
 ## Unreleased
 
+- Close Holes works on the marked area instead of the whole scan, so a click costs what the marked area costs: about a fifth of the former time on a 326,000-triangle arch.
+
+- Close Holes lays its cap on the surface that leaves the rim the way the scan arrives at it, so a cut closes with a patch that continues its surroundings instead of a flat lid, and the single-edge teeth of a lasso cut go with the cap.
+
+- Close Holes closes a hole only when the mark holds its rim: at least half of the rim marked and the rest within reach of the mark. A hole that runs out of the marked area stays open, and the status says how many holes were only partly selected.
+
 - Adjust pose: with Move in z-direction or Move in xy-plane the scan keeps pace with the cursor in a tilted view instead of trailing it.
 
 - Delete removes an object that is a whole layer, as one undoable step, instead of refusing and asking for the layer to be removed by hand.

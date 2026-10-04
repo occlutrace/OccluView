@@ -80,33 +80,54 @@ impl BoundaryOwners {
     }
 }
 
+/// Where a walk along boundary half-edges ended.
+pub(crate) enum BoundaryWalk {
+    /// The chain closed back on its start: a simple rim, in ring order.
+    Rim(Vec<usize>),
+    /// The chain did not close. `path` is what it covered and `stopped_at`
+    /// the vertex it could not get past: one without a successor, or one an
+    /// earlier walk had already taken.
+    Open { path: Vec<usize>, stopped_at: usize },
+}
+
 /// Follow the boundary half-edge chain from `start` until it closes back on
-/// itself. Non-simple / broken chains return None; every touched vertex is
-/// recorded in `visited` either way so later starts skip it.
+/// itself. Every touched vertex is recorded in `visited` whether it closes or
+/// not, so later starts skip it.
 pub(crate) fn walk_boundary_loop(
     start: usize,
     next_boundary_vertex: &BoundaryNextMap,
     vertex_count: usize,
     visited: &mut HashSet<usize>,
-) -> Option<Vec<usize>> {
-    let mut boundary_loop = Vec::new();
+) -> BoundaryWalk {
+    let mut path = Vec::new();
     let mut current = start;
     loop {
         if visited.contains(&current) {
-            if boundary_loop.first() == Some(&current) {
-                return Some(boundary_loop);
+            if path.first() == Some(&current) {
+                return BoundaryWalk::Rim(path);
             }
-            return None;
+            return BoundaryWalk::Open {
+                path,
+                stopped_at: current,
+            };
         }
         visited.insert(current);
-        boundary_loop.push(current);
-        let &next = next_boundary_vertex.get(&current)?;
+        path.push(current);
+        let Some(&next) = next_boundary_vertex.get(&current) else {
+            return BoundaryWalk::Open {
+                path,
+                stopped_at: current,
+            };
+        };
         if next == start {
-            return Some(boundary_loop);
+            return BoundaryWalk::Rim(path);
         }
         current = next;
-        if boundary_loop.len() > vertex_count + 1 {
-            return None;
+        if path.len() > vertex_count + 1 {
+            return BoundaryWalk::Open {
+                path,
+                stopped_at: current,
+            };
         }
     }
 }

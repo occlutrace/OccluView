@@ -37,7 +37,7 @@ const NEEDLE_ALTITUDE_FRACTION: f32 = 0.02;
 const RIM_WELD_FRACTION: f32 = 0.05;
 
 /// Outcome of [`heal_boundary_rims`]: the healed buffers plus the per-original
-/// triangle keep-mask (so a face selection can be remapped onto the survivors)
+/// triangle keep-mask (so what is known per face can follow the survivors)
 /// and the count of healed defects for the report.
 pub(crate) struct RimHealOutcome {
     /// Healed mesh (fewer triangles, possibly fewer distinct vertex ids).
@@ -46,22 +46,6 @@ pub(crate) struct RimHealOutcome {
     pub(crate) keep: Vec<bool>,
     /// Dangling needle/lone triangles removed, plus boundary vertices welded.
     pub(crate) healed: usize,
-}
-
-impl RimHealOutcome {
-    /// Project a face selection keyed by original triangle index onto the
-    /// healed triangle order (dropped triangles' entries fall away).
-    pub(crate) fn remap_selection(&self, selection: &FaceSelection) -> FaceSelection {
-        let mask = selection.as_slice();
-        let remapped: Vec<bool> = self
-            .keep
-            .iter()
-            .enumerate()
-            .filter(|(_, &kept)| kept)
-            .map(|(triangle, _)| mask.get(triangle).copied().unwrap_or(false))
-            .collect();
-        FaceSelection::new(remapped)
-    }
 }
 
 /// Heal dangling needle/lone triangles and near-duplicate boundary vertices.

@@ -633,6 +633,10 @@ holes-seg-damaged = { $n ->
     [one] Omitido { $n } borde dañado
    *[other] Omitidos { $n } bordes dañados
 }
+holes-seg-partial = { $n ->
+    [one] { $n } agujero solo en parte dentro de la selección
+   *[other] { $n } agujeros solo en parte dentro de la selección
+}
 batchedit-invert = Normales invertidas
 batchedit-delete = Selección eliminada
 batchedit-crop = Recorte a la selección
