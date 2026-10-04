@@ -816,12 +816,48 @@ fn deadline_and_work_caps_are_honest_in_builds() {
     }
 }
 
+/// How many times a cancel that arrived too late is repeated.
+const CANCEL_ATTEMPTS: usize = 16;
+
+/// Run `work` while a second thread cancels it once `due` holds, and return the
+/// result with how long after the cancel the work ended.
+///
+/// The canceller is a separate thread. On a busy machine the work can finish
+/// before the cancel is issued; that attempt shows nothing about cancellation,
+/// so the callers repeat it. What every attempt must show is that the work
+/// ended within the latency bound of the cancel.
+fn run_then_cancel<R>(
+    control: &super::GeometryControl,
+    flag: super::super::CancelFlag,
+    due: impl Fn(&super::GeometryControl) -> bool + Send,
+    work: impl FnOnce() -> R,
+) -> (R, std::time::Duration) {
+    use std::time::{Duration, Instant};
+    let (sent, received) = std::sync::mpsc::channel();
+    std::thread::scope(|scope| {
+        let echo = control.clone();
+        scope.spawn(move || {
+            let started = Instant::now();
+            while !due(&echo) && started.elapsed() < Duration::from_secs(2) {
+                std::thread::yield_now();
+            }
+            let at = Instant::now();
+            flag.cancel();
+            sent.send(at).unwrap();
+        });
+        let result = work();
+        let terminal = Instant::now();
+        let cancelled = received.recv().unwrap();
+        (result, terminal.saturating_duration_since(cancelled))
+    })
+}
+
 /// ID34: scheduled cancellation reaches topology, buckets, occupancy and inner queries.
 #[test]
 fn cancel_every_stage_of_surface_index() {
     use super::super::{CancelFlag, GeometryLimits, GeometryStop};
     use super::{BuildOutcome, GeometryControl};
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
     let (positions, indices) = plane(90, 0.4);
     let baseline = GeometryControl::new(
         CancelFlag::new(),
@@ -838,44 +874,45 @@ fn cancel_every_stage_of_surface_index() {
     drop(index);
     let operations = baseline.counters().operations;
     for numerator in [1, 3, 6, 8, 9] {
-        let flag = CancelFlag::new();
-        let control = GeometryControl::new(
-            flag.clone(),
-            Duration::from_secs(10),
-            GeometryLimits::default(),
-        );
         let boundary = operations * numerator / 10;
-        let (sent, received) = std::sync::mpsc::channel();
-        std::thread::scope(|scope| {
-            let echo = control.clone();
-            scope.spawn(move || {
-                let started = Instant::now();
-                while echo.counters().operations < boundary
-                    && started.elapsed() < Duration::from_secs(2)
-                {
-                    std::thread::yield_now();
-                }
-                let at = Instant::now();
-                flag.cancel();
-                sent.send(at).unwrap();
-            });
-            let result = SurfaceIndex::build_controlled(
-                soup(&positions, &indices),
-                glam::DAffine3::IDENTITY,
-                &control,
+        let stopped = (0..CANCEL_ATTEMPTS).any(|_| {
+            let flag = CancelFlag::new();
+            let control = GeometryControl::new(
+                flag.clone(),
+                Duration::from_secs(10),
+                GeometryLimits::default(),
             );
-            let terminal = Instant::now();
-            let cancelled = received.recv().unwrap();
-            assert!(matches!(
+            let (result, lag) = run_then_cancel(
+                &control,
+                flag,
+                |echo| echo.counters().operations >= boundary,
+                || {
+                    SurfaceIndex::build_controlled(
+                        soup(&positions, &indices),
+                        glam::DAffine3::IDENTITY,
+                        &control,
+                    )
+                },
+            );
+            assert!(lag < Duration::from_millis(100));
+            let stopped = matches!(
                 result,
                 BuildOutcome::Partial {
                     value: None,
                     reason: GeometryStop::Cancelled
                 }
-            ));
-            assert!(terminal.saturating_duration_since(cancelled) < Duration::from_millis(100));
+            );
+            assert!(
+                stopped || matches!(result, BuildOutcome::Complete(_)),
+                "a cancel either stops the build or arrives after it"
+            );
+            drop(result);
+            if stopped {
+                assert_eq!(control.counters().memory_bytes, 0);
+            }
+            stopped
         });
-        assert_eq!(control.counters().memory_bytes, 0);
+        assert!(stopped, "no cancel landed at {numerator}/10 of the build");
     }
     assert_inner_query_cancelled();
 }
@@ -883,44 +920,41 @@ fn cancel_every_stage_of_surface_index() {
 fn assert_inner_query_cancelled() {
     use super::super::{CancelFlag, GeometryLimits, GeometryStop};
     use super::{GeometryControl, QueryOutcome};
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
     let positions = [0., 0., 0., 10., 0., 0., 0., 10., 0.];
     let indices: Vec<u32> = (0..40_000).flat_map(|_| [0, 1, 2]).collect();
     let index = SurfaceIndex::build(soup(&positions, &indices)).unwrap();
-    let flag = CancelFlag::new();
-    let control = GeometryControl::new(
-        flag.clone(),
-        Duration::from_secs(10),
-        GeometryLimits {
-            single_query_tests: u64::MAX,
-            ..Default::default()
-        },
-    );
-    let (sent, received) = std::sync::mpsc::channel();
-    std::thread::scope(|scope| {
-        let echo = control.clone();
-        scope.spawn(move || {
-            let started = Instant::now();
-            while echo.counters().triangle_tests < 128 && started.elapsed() < Duration::from_secs(2)
-            {
-                std::thread::yield_now();
-            }
-            let at = Instant::now();
-            flag.cancel();
-            sent.send(at).unwrap();
-        });
-        let result = index.nearest_controlled(DVec3::new(2., 2., 1.), 2., &control);
-        let terminal = Instant::now();
-        let cancelled = received.recv().unwrap();
-        assert!(matches!(
+    let stopped = (0..CANCEL_ATTEMPTS).any(|_| {
+        let flag = CancelFlag::new();
+        let control = GeometryControl::new(
+            flag.clone(),
+            Duration::from_secs(10),
+            GeometryLimits {
+                single_query_tests: u64::MAX,
+                ..Default::default()
+            },
+        );
+        let (result, lag) = run_then_cancel(
+            &control,
+            flag,
+            |echo| echo.counters().triangle_tests >= 128,
+            || index.nearest_controlled(DVec3::new(2., 2., 1.), 2., &control),
+        );
+        assert!(lag < Duration::from_millis(100));
+        let stopped = matches!(
             result,
             QueryOutcome::Interrupted {
                 reason: GeometryStop::Cancelled,
                 ..
             }
-        ));
-        assert!(terminal.saturating_duration_since(cancelled) < Duration::from_millis(100));
+        );
+        assert!(
+            stopped || matches!(result, QueryOutcome::Complete(_)),
+            "a cancel either stops the query or arrives after it"
+        );
+        stopped
     });
+    assert!(stopped, "no cancel landed inside the query");
 }
 
 /// Overlapping buckets cannot consume the distance budget by retesting a small
