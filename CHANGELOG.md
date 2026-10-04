@@ -20,7 +20,7 @@ remain in the Git history.
 
 - Close Holes works on the marked area instead of the whole scan: about a fifth of the former time on a 326,000-triangle arch.
 - Close Holes closes a hole only when the mark holds its rim. A hole that runs out of the marked area stays open, and the status says how many holes were only partly selected.
-- The cap continues the surface around the hole instead of a flat lid, and a cap that would pierce the scan is refused.
+- The cap continues the surface around the hole instead of a flat lid, on long rims as on short ones, and a cap that would pierce the scan is refused.
 - Delete removes an object that is a whole layer, as one undoable step.
 - The Mesh Editing window opens clear of the status row, and a refused selection action says why it was refused.
 - Undo and redo keep every restored mesh, including cut parts, in the next save.

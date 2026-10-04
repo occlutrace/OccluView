@@ -13,21 +13,22 @@
 //! the rest of the cover running on underneath, and a cut line has such a
 //! corner every few edges.
 //!
-//! Cost is O(n^3) time / O(n^2) memory. Ties use the lowest `k`; the caller
-//! rejects self-piercing results.
+//! Cost is O(n^3) time / O(n^2) memory, so the program covers rims up to
+//! [`MIN_WEIGHT_MAX_RIM`] points; a longer rim has ears clipped off it first,
+//! until what is left is one the program can cover whole. Ties use the lowest
+//! `k`; the caller rejects self-piercing results.
 
 use super::cap_fair::RimSupport;
 use glam::{DVec3, Vec3, Vec4};
 use std::collections::HashSet;
 
-/// Leaf size for the minimum-weight dynamic program. Rims longer than this
-/// are triangulated by [`min_weight_triangulation_any`], which recursively
-/// splits them into sub-rims at or below this size before running the O(n^3)
-/// DP on each leaf.
+/// The longest rim the minimum-weight dynamic program covers. A longer one is
+/// brought down to this size by [`clip_ears`] first; one that cannot be, for
+/// want of ears, is split into sub-rims at or below this size.
 ///
 /// A rim split at a chord is covered in two halves that know nothing of each
-/// other, and on a rim that is far from flat the halves cross: the leaf has
-/// to hold the rims the tool is for in one piece. On real arches a lasso
+/// other, and on a rim that is far from flat the halves cross: the program
+/// has to hold the rims the tool is for in one piece. On real arches a lasso
 /// round one molar leaves a rim of 340 to 510 edges, which a leaf of 256
 /// always split; the DP on 510 points takes a quarter of a second.
 pub(super) const MIN_WEIGHT_MAX_RIM: usize = 512;
@@ -220,32 +221,25 @@ impl Covers {
 
 /// Triangulate a cyclic rim (positions in ring order) by minimum weight, using
 /// none of the `taken` triangles. `rim_index` gives the rim-local index of
-/// each point and `scan[i]` the unit normal of the scan triangle across the
-/// rim edge from rim vertex `i` to the next, zero where there is none.
-/// Returns local-index triangles in the caller's watertight winding convention
-/// (`[i, j, k]` with `i < k < j`, matching the ear-clip's reversed-rim-edge
-/// emit order), or `None` when the rim is too long, too short, numerically
-/// degenerate, or has no triangulation free of taken triangles.
+/// each point and `edges[i]` the unit normal of the triangle across the edge
+/// from point `i` to the next, the last to the first: a scan triangle, or a
+/// triangle the cover already has there; zero where there is none, or none is
+/// known. Returns local-index triangles in the caller's watertight winding
+/// convention (`[i, j, k]` with `i < k < j`, matching the ear-clip's
+/// reversed-rim-edge emit order), or `None` when the rim is too long, too
+/// short, numerically degenerate, or has no triangulation free of taken
+/// triangles.
 fn min_weight_triangulation(
     points: &[Vec3],
     rim_index: &[usize],
     taken: &TakenTriangles,
-    scan: &[Vec3],
+    edges: &[Vec3],
 ) -> Option<Vec<[usize; 3]>> {
     let n = points.len();
     if !(3..=MIN_WEIGHT_MAX_RIM).contains(&n) {
         return None;
     }
-    // The scan's normal across the edge between two points that follow each
-    // other on the rim. A chord of a split rim has the other part's cover
-    // across it, which is not known here.
-    let scan_across = |from: usize, to: usize| -> Vec4 {
-        let (from, to) = (rim_index[from], rim_index[to]);
-        match scan.get(from) {
-            Some(&normal) if (from + 1) % scan.len() == to => across(normal),
-            _ => Vec4::W,
-        }
-    };
+    let edge = |from: usize| -> Vec4 { edges.get(from).map_or(Vec4::W, |&edge| across(edge)) };
     // The points of taken triangles: only a triangle on three of them needs
     // looking up.
     let in_taken: Vec<bool> = {
@@ -261,7 +255,7 @@ fn min_weight_triangulation(
     // `W[k][j]` along column `j`.
     let mut by_row = Covers::edges(n * n);
     for i in 0..(n - 1) {
-        by_row.across[i * n + i + 1] = scan_across(i, i + 1);
+        by_row.across[i * n + i + 1] = edge(i);
     }
     let mut by_column = by_row.clone();
     for i in 0..(n - 1) {
@@ -270,7 +264,7 @@ fn min_weight_triangulation(
     let mut split = vec![0_usize; n * n];
     // The last point and the first close the polygon: the triangle on that
     // edge folds against whatever lies across it.
-    let closing = scan_across(n - 1, 0);
+    let closing = edge(n - 1);
     for gap in 2..n {
         for i in 0..(n - gap) {
             let j = i + gap;
@@ -354,11 +348,159 @@ fn min_weight_triangulation(
     Some(triangles)
 }
 
+/// An ear is a needle, with no side to it that a fold could be taken against,
+/// when its shortest altitude is under this fraction of its longest edge: the
+/// measure the cut-line healing uses for a face too thin to carry surface.
+const EAR_NEEDLE_FRACTION: f32 = 0.02;
+
+/// A rim being clipped: the points still on it, as a ring, and what lies
+/// across the edge from each to the next.
+struct Ring {
+    prev: Vec<usize>,
+    next: Vec<usize>,
+    /// Unit normal of the triangle across the edge from a point to the next:
+    /// the scan's, or an ear's once one was clipped there. Zero for none.
+    across: Vec<Vec3>,
+    alive: Vec<bool>,
+    len: usize,
+}
+
+impl Ring {
+    fn new(across: Vec<Vec3>) -> Self {
+        let n = across.len();
+        Self {
+            prev: (0..n).map(|point| (point + n - 1) % n).collect(),
+            next: (0..n).map(|point| (point + 1) % n).collect(),
+            across,
+            alive: vec![true; n],
+            len: n,
+        }
+    }
+
+    /// The ear at `point`, in the winding it is emitted with, its doubled
+    /// area vector, and how well it goes on from the triangles across its two
+    /// rim edges: the cosine of the sharper of the two folds. `None` for a
+    /// needle.
+    fn ear(&self, points: &[Vec3], point: usize) -> Option<([usize; 3], Vec3, f32)> {
+        let (before, after) = (self.prev[point], self.next[point]);
+        let chord = points[after] - points[before];
+        let (to_point, from_point) = (
+            points[point] - points[before],
+            points[after] - points[point],
+        );
+        let doubled = chord.cross(to_point);
+        let longest = chord
+            .length_squared()
+            .max(to_point.length_squared())
+            .max(from_point.length_squared());
+        let length = doubled.length();
+        // `altitude / longest edge`, with the altitude on the longest edge; a
+        // length that is not a number is no ear either.
+        let has_a_side = length > EAR_NEEDLE_FRACTION * longest;
+        if !has_a_side {
+            return None;
+        }
+        let unit = doubled / length;
+        let fold = |across: Vec3| {
+            if across == Vec3::ZERO {
+                1.0
+            } else {
+                unit.dot(across)
+            }
+        };
+        let straightness = fold(self.across[before]).min(fold(self.across[point]));
+        Some(([before, after, point], doubled, straightness))
+    }
+
+    /// Clip the ear at `point`: the edge it leaves has the ear across it.
+    fn clip(&mut self, point: usize, doubled: Vec3) {
+        let (before, after) = (self.prev[point], self.next[point]);
+        self.next[before] = after;
+        self.prev[after] = before;
+        self.across[before] = doubled.normalize_or_zero();
+        self.alive[point] = false;
+        self.len -= 1;
+    }
+}
+
+/// Clip ears off `ring` until `target` points are left on it, or no point has
+/// an ear worth clipping, and add them to `triangles`.
+///
+/// The dynamic program covers a rim whole, and its cost grows with the cube
+/// of the rim. A rim it cannot hold used to be split at a chord and covered
+/// in two halves that knew nothing of each other; on a rim that is far from
+/// flat the halves crossed, or met in a crease from end to end. Ears take a
+/// long rim down to the size the program can cover whole instead, and they
+/// take off what is small: the saw of a cut line, a layer at a time.
+///
+/// An ear is clipped only where it goes on from what lies across both of its
+/// rim edges without turning back over it, the scan or an ear clipped before.
+/// A corner of the scan that sticks into the hole has no such ear, so it is
+/// left for the program. A round clips the straightest ears first, no two
+/// next to each other, so the rim shrinks evenly all round.
+fn clip_ears(
+    points: &[Vec3],
+    ring: &mut Ring,
+    taken: &TakenTriangles,
+    target: usize,
+    triangles: &mut Vec<[usize; 3]>,
+) {
+    let target = target.max(3);
+    let mut touched = vec![usize::MAX; points.len()];
+    let mut round = 0_usize;
+    while ring.len > target {
+        // Every ear on the ring, the straightest and then the smallest first.
+        let mut ears: Vec<(f32, f32, usize)> = (0..points.len())
+            .filter(|&point| ring.alive[point])
+            .filter_map(|point| {
+                let (ear, doubled, straightness) = ring.ear(points, point)?;
+                let mut triple = ear;
+                triple.sort_unstable();
+                (straightness >= 0.0 && !taken.contains(&triple))
+                    .then(|| (straightness, doubled.length_squared(), point))
+            })
+            .collect();
+        ears.sort_unstable_by(|left, right| {
+            right
+                .0
+                .total_cmp(&left.0)
+                .then(left.1.total_cmp(&right.1))
+                .then(left.2.cmp(&right.2))
+        });
+        let before = ring.len;
+        for (_, _, point) in ears {
+            if ring.len <= target {
+                break;
+            }
+            let (prev, next) = (ring.prev[point], ring.next[point]);
+            if [prev, point, next]
+                .iter()
+                .any(|&near| touched[near] == round)
+            {
+                continue;
+            }
+            let Some((ear, doubled, _)) = ring.ear(points, point) else {
+                continue;
+            };
+            triangles.push(ear);
+            ring.clip(point, doubled);
+            touched[prev] = round;
+            touched[next] = round;
+        }
+        if ring.len == before {
+            break;
+        }
+        round += 1;
+    }
+}
+
 /// Triangulate a cyclic rim of any size (up to [`MIN_WEIGHT_HIER_MAX_RIM`]) by
-/// divide-and-conquer minimum-weight capping. Small rims run the DP directly;
-/// large ones are split at a near-balanced, most-distant vertex pair into two
-/// sub-arcs joined by a shared chord (an interior edge, watertight by
-/// construction), recursively until each leaf fits [`MIN_WEIGHT_MAX_RIM`].
+/// minimum weight. A rim the dynamic program can hold is covered by it whole;
+/// a longer one has ears clipped off it until it can, see [`clip_ears`]. Only
+/// a rim that still cannot be held, because too few of its points have an ear,
+/// is split at a near-balanced, most-distant vertex pair into two sub-arcs
+/// joined by a shared chord (an interior edge, watertight by construction),
+/// recursively until each leaf fits [`MIN_WEIGHT_MAX_RIM`].
 ///
 /// `support[i]` is what the scan adds at the rim edge from point `i` to the
 /// next; an edge it says nothing about folds against nothing.
@@ -367,8 +509,8 @@ fn min_weight_triangulation(
 /// same watertight winding convention as [`min_weight_triangulation`], or
 /// `None` when the rim is out of range, numerically degenerate, or cannot be
 /// covered without a `taken` triangle. Geometric self-piercing is left to the
-/// caller's cap guard, as for the direct DP. Deterministic: the split pair is
-/// chosen by a fixed rule and ties break on the lowest index.
+/// caller's cap guard, as for the direct DP. Deterministic: ears and the split
+/// pair are chosen by fixed rules and ties break on the lowest index.
 pub(super) fn min_weight_triangulation_any(
     points: &[Vec3],
     support: &[RimSupport],
@@ -380,7 +522,7 @@ pub(super) fn min_weight_triangulation_any(
     }
     // The scan triangle across a rim edge lies in the plane of the edge and
     // its conormal.
-    let across: Vec<Vec3> = (0..n)
+    let scan: Vec<Vec3> = (0..n)
         .map(|index| {
             let conormal = support
                 .get(index)
@@ -390,39 +532,56 @@ pub(super) fn min_weight_triangulation_any(
                 .normalize_or_zero()
         })
         .collect();
-    if n <= MIN_WEIGHT_MAX_RIM {
-        let whole: Vec<usize> = (0..n).collect();
-        return min_weight_triangulation(points, &whole, taken, &across);
-    }
-    let dpoints: Vec<DVec3> = points.iter().map(|point| point.as_dvec3()).collect();
-
-    // Work items are arcs of the cyclic rim: contiguous runs of original
-    // indices in ring order. The arc's two endpoints are joined by an implicit
-    // chord, so each arc is the closed polygon (arc + chord) to triangulate.
     let mut triangles: Vec<[usize; 3]> = Vec::with_capacity(n - 2);
-    let mut stack: Vec<Vec<usize>> = vec![(0..n).collect()];
+    let mut ring = Ring::new(scan);
+    clip_ears(points, &mut ring, taken, MIN_WEIGHT_MAX_RIM, &mut triangles);
+
+    // What is left of the rim, in ring order, and what lies across each of
+    // its edges.
+    let core: Vec<usize> = (0..n).filter(|&point| ring.alive[point]).collect();
+    let m = core.len();
+    let dpoints: Vec<DVec3> = core.iter().map(|&point| points[point].as_dvec3()).collect();
+
+    // Work items are arcs of the core: contiguous runs of its points in ring
+    // order. The arc's two endpoints are joined by an implicit chord, so each
+    // arc is the closed polygon (arc + chord) to triangulate; the first is
+    // the whole core, whose chord is one of its own edges.
+    let mut stack: Vec<Vec<usize>> = vec![(0..m).collect()];
     // Every split reduces the largest arc, and both children keep >= 2 edges,
-    // so the arc count is bounded by n; the guard only trips on a NaN-position
+    // so the arc count is bounded by m; the guard only trips on a NaN-position
     // pathology that keeps splitting without shrinking.
     let mut rounds = 0_usize;
-    let round_budget = 8 * n;
+    let round_budget = 8 * m;
     while let Some(arc) = stack.pop() {
         rounds += 1;
         if rounds > round_budget {
             return None;
         }
-        let m = arc.len();
-        if m < 3 {
+        let len = arc.len();
+        if len < 3 {
             // A 2-point arc is just the chord; it contributes no triangle and
             // its edge cancels against the sibling. Anything shorter cannot
             // occur (splits keep >= 2 edges).
             continue;
         }
-        if m <= MIN_WEIGHT_MAX_RIM {
-            let sub_points: Vec<Vec3> = arc.iter().map(|&idx| points[idx]).collect();
-            let leaf = min_weight_triangulation(&sub_points, &arc, taken, &across)?;
+        if len <= MIN_WEIGHT_MAX_RIM {
+            let sub_points: Vec<Vec3> = arc.iter().map(|&slot| points[core[slot]]).collect();
+            let sub_index: Vec<usize> = arc.iter().map(|&slot| core[slot]).collect();
+            // A chord of a split core has the other part's cover across it,
+            // which is not known here.
+            let sub_edges: Vec<Vec3> = (0..len)
+                .map(|at| {
+                    let (from, to) = (arc[at], arc[(at + 1) % len]);
+                    if (from + 1) % m == to {
+                        ring.across[core[from]]
+                    } else {
+                        Vec3::ZERO
+                    }
+                })
+                .collect();
+            let leaf = min_weight_triangulation(&sub_points, &sub_index, taken, &sub_edges)?;
             for [a, b, c] in leaf {
-                triangles.push([arc[a], arc[b], arc[c]]);
+                triangles.push([sub_index[a], sub_index[b], sub_index[c]]);
             }
             continue;
         }

@@ -98,6 +98,41 @@ pub(super) fn candidate_pierces(
     ring_set: &HashSet<usize>,
     candidate: &CapCandidate<'_>,
 ) -> bool {
+    let (cap, surround) = guard_triangles(mesh, incidence, ring_set, candidate);
+    cap_pierces(&cap, &surround)
+}
+
+/// The triangles of the candidate cap that pierce the cap or the surface
+/// within two rings of its rim, as places in its triangle list, ascending.
+/// None for a cap [`candidate_pierces`] passes.
+pub(super) fn piercing_cap_triangles(
+    mesh: &MeshEditBuffers,
+    incidence: &VertexTriangleIncidence,
+    ring_set: &HashSet<usize>,
+    candidate: &CapCandidate<'_>,
+) -> Vec<usize> {
+    let (cap, surround) = guard_triangles(mesh, incidence, ring_set, candidate);
+    let mut piercing: Vec<usize> = Vec::new();
+    piercing_pairs(&cap, &surround, |first, second| {
+        piercing.extend(
+            [first, second]
+                .into_iter()
+                .filter(|&index| index < cap.len()),
+        );
+        false
+    });
+    piercing.sort_unstable();
+    piercing.dedup();
+    piercing
+}
+
+/// The candidate cap and the surface around its rim as the guard reads them.
+fn guard_triangles(
+    mesh: &MeshEditBuffers,
+    incidence: &VertexTriangleIncidence,
+    ring_set: &HashSet<usize>,
+    candidate: &CapCandidate<'_>,
+) -> (Vec<GuardTriangle>, Vec<GuardTriangle>) {
     let local = |index: usize| -> (usize, Vec3) {
         if index < candidate.rim.len() {
             (candidate.rim[index], candidate.rim_positions[index])
@@ -152,8 +187,7 @@ pub(super) fn candidate_pierces(
             }
         })
         .collect();
-
-    cap_pierces(&cap, &surround)
+    (cap, surround)
 }
 
 /// Whether the cap lays a triangle onto one the surface already has: a
@@ -183,6 +217,22 @@ pub(super) struct GuardTriangle {
 /// Whether any cap triangle pierces another cap triangle or a surrounding
 /// surface triangle. Pairs sharing any vertex id are skipped.
 pub(super) fn cap_pierces(cap: &[GuardTriangle], surround: &[GuardTriangle]) -> bool {
+    let mut pierces = false;
+    piercing_pairs(cap, surround, |_, _| {
+        pierces = true;
+        true
+    });
+    pierces
+}
+
+/// Visit every pair of triangles that pierce each other with a cap triangle
+/// in it, until `visit` says to stop. The two are places in `cap` followed by
+/// `surround`. Pairs sharing any vertex id are skipped.
+fn piercing_pairs(
+    cap: &[GuardTriangle],
+    surround: &[GuardTriangle],
+    mut visit: impl FnMut(usize, usize) -> bool,
+) {
     // One combined array; entries below `cap.len()` are cap triangles. Only
     // pairs with at least one cap member are tested.
     let cap_count = cap.len();
@@ -250,12 +300,11 @@ pub(super) fn cap_pierces(cap: &[GuardTriangle], surround: &[GuardTriangle]) -> 
             if shares_vertex(t1, t2) {
                 continue;
             }
-            if triangles_pierce(t1, t2) {
-                return true;
+            if triangles_pierce(t1, t2) && visit(first, second) {
+                return;
             }
         }
     }
-    false
 }
 
 fn shares_vertex(t1: &GuardTriangle, t2: &GuardTriangle) -> bool {

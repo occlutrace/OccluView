@@ -544,3 +544,94 @@ fn teeth_the_mark_missed_go_with_the_cap() {
     assert_eq!(result.report.healed_rims, 0, "a tooth is not a defect");
     assert_eq!(open_edges(&result.mesh), 4 * 30);
 }
+
+/// Largest turn, in degrees, between two neighbouring triangles of the faces
+/// a fill added to `before`, and how many vertices it added.
+fn cap_crease(before: &MeshEditBuffers, after: &MeshEditBuffers) -> (f32, usize) {
+    let had: HashSet<[u32; 3]> = before.indices.as_chunks::<3>().0.iter().copied().collect();
+    let normal = |triangle: &[u32; 3]| {
+        let [a, b, c] =
+            triangle.map(|index| Vec3::from_array(after.vertices[index as usize].position));
+        (b - a).cross(c - a).normalize_or_zero()
+    };
+    let mut sides: HashMap<(u32, u32), Vec<Vec3>> = HashMap::new();
+    for triangle in after.indices.as_chunks::<3>().0 {
+        if had.contains(triangle) {
+            continue;
+        }
+        for side in 0..3 {
+            let (from, to) = (triangle[side], triangle[(side + 1) % 3]);
+            sides
+                .entry((from.min(to), from.max(to)))
+                .or_default()
+                .push(normal(triangle));
+        }
+    }
+    let worst = sides
+        .values()
+        .filter(|normals| normals.len() == 2 && normals.iter().all(|&normal| normal != Vec3::ZERO))
+        .map(|normals| {
+            normals[0]
+                .dot(normals[1])
+                .clamp(-1.0, 1.0)
+                .acos()
+                .to_degrees()
+        })
+        .fold(0.0_f32, f32::max);
+    (worst, after.vertices.len() - before.vertices.len())
+}
+
+/// A slit cut more than half way round a tube: a rim of more than five
+/// hundred edges that no plane sees whole. A rim that long used to be split
+/// at a chord from end to end, straight through the tube, and covered in two
+/// halves that met in a crease along it. It is covered in one piece now,
+/// refined and shaped like a short one, and the cap goes on round the tube.
+#[test]
+fn a_rim_past_the_limit_of_the_cover_closes_without_a_crease() {
+    let (sectors, rings, radius, row_height) = (480, 24, 5.0_f32, 0.065_f32);
+    let mut mesh = tube(sectors, rings, radius, row_height);
+    // The slit: 198 degrees of the tube, four rows high, 536 edges round.
+    let slit = |triangle: usize| {
+        let (row, sector) = (triangle / (2 * sectors), (triangle / 2) % sectors);
+        (10..14).contains(&row) && sector < 264
+    };
+    let kept: Vec<u32> = mesh
+        .indices
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .enumerate()
+        .filter(|&(triangle, _)| !slit(triangle))
+        .flat_map(|(_, corners)| *corners)
+        .collect();
+    mesh.indices = kept;
+    // The mark: the tube round the slit, clear of its two open ends.
+    let mark: Vec<bool> = mesh
+        .indices
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|triangle| {
+            triangle.iter().all(|&index| {
+                let z = mesh.vertices[index as usize].position[2];
+                (0.3..=1.25).contains(&z)
+            })
+        })
+        .collect();
+    let result = fill_selected_holes(
+        &mesh,
+        &FaceSelection::new(mark),
+        MeshEditOptions {
+            compact_vertices: false,
+            ..close_holes_options()
+        },
+    )
+    .expect("fill");
+    assert_eq!(result.report.filled_holes, 1, "the slit closes");
+    let (crease, added) = cap_crease(&mesh, &result.mesh);
+    assert!(added > 500, "a cap at the tube's density: {added} vertices");
+    // On a tube of radius 5 mm, two triangles 0.09 mm across turn by about a
+    // degree where the cap goes on round it. The bound is the one the seam of
+    // a cut tooth is held to above.
+    assert!(crease < 15.0, "a {crease:.0} degree crease in the cap");
+}
