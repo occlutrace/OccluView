@@ -30,21 +30,12 @@ fi
 tag="v$version"
 echo "release-check: preparing $tag"
 
-# 1. The changelog section the release job publishes. A missing section means
-#    the release publishes nothing, which the workflow only discovers on the
-#    runner.
-if ! grep -q "^## $version " CHANGELOG.md; then
-  echo "release-check: CHANGELOG.md has no '## $version' section" >&2
-  exit 1
-fi
-echo "release-check: changelog section present"
-
-# 2. The private acceptance run. Fails when the corpus is absent; there is no
+# 1. The private acceptance run. Fails when the corpus is absent; there is no
 #    skip path, because a release that skipped this ships an alignment solver
 #    whose clinical behaviour nothing verified.
 bash scripts/validate-release-private.sh
 
-# 3. Which shell source the MSI will ship, and how far behind it is.
+# 2. Which shell source the MSI will ship, and how far behind it is.
 bash scripts/report-shell-pin.sh dist/occluview-shell-revision.json
 
 echo

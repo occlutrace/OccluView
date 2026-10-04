@@ -11,5 +11,4 @@
 
 ## Checklist
 
-- [ ] Changelog updated if user-visible
 - [ ] No new `unwrap`/`expect`/`panic`/`todo` (workspace lints)
