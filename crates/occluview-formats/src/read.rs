@@ -234,18 +234,24 @@ pub fn read_file_loaded_shaded(
     shading: crate::MeshShading,
 ) -> Result<LoadedMesh, FormatError> {
     let bytes = read_file_bytes(path)?;
+    // The picture beside the file is found before the mesh is read, because a
+    // PLY keeps its per-corner texture coordinates only when one exists.
+    let mut atlas = None;
     let mut loaded = dispatch_by_extension_loaded_with_companion_budget(
         bytes.extension(),
         bytes.as_slice(),
         key_provider,
         shading,
+        &mut |kind| {
+            atlas = crate::companions::find(
+                path,
+                crate::companions::LocateKind::for_kind(kind),
+                bytes.as_slice(),
+            )?;
+            Ok(atlas.is_some())
+        },
     )?;
-    crate::companions::attach(
-        &mut loaded.mesh,
-        path,
-        crate::companions::LocateKind::for_kind(loaded.kind),
-        bytes.as_slice(),
-    )?;
+    crate::companions::attach(&mut loaded.mesh, atlas);
     Ok(loaded)
 }
 
@@ -436,21 +442,21 @@ fn parse_batch(
     admitted
         .into_par_iter()
         .map(|input| {
-            let loaded = dispatch_by_kind_loaded_admitted(
-                input.kind,
-                input.bytes.as_slice(),
-                key_provider,
-                crate::MeshShading::Reconstructed,
-            )
-            .map_err(|error| (input.path.clone(), error))?;
-            let mut loaded = loaded;
-            crate::companions::attach(
-                &mut loaded.mesh,
+            let atlas = crate::companions::find(
                 &input.path,
                 crate::companions::LocateKind::for_kind(input.kind),
                 input.bytes.as_slice(),
             )
             .map_err(|error| (input.path.clone(), error))?;
+            let mut loaded = dispatch_by_kind_loaded_admitted(
+                input.kind,
+                input.bytes.as_slice(),
+                key_provider,
+                crate::MeshShading::Reconstructed,
+                atlas.is_some(),
+            )
+            .map_err(|error| (input.path.clone(), error))?;
+            crate::companions::attach(&mut loaded.mesh, atlas);
             Ok(loaded)
         })
         .collect()

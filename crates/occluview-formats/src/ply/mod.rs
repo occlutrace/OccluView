@@ -45,28 +45,39 @@ use occluview_core::{Mesh, MeshBuilder, MeshTexture};
 /// Texture coordinates gathered from a face element's `texcoord` list.
 ///
 /// PLY's working texture convention stores `u,v` per face corner (`CloudCompare`,
-/// Agisoft and `MeshLab` all write it), and a corner's coordinates belong to the
-/// vertex it indexes. The list cannot be turned into per-vertex data while the
-/// vertices are being read — it arrives with the faces, after them — so it is
-/// gathered here and applied to the builder before the mesh is finalized.
+/// Agisoft, `MeshLab` and the intraoral scanners all write it). The list arrives
+/// with the faces, after the vertices, so it is gathered here in the order the
+/// reader pushes triangles and applied to the builder before the mesh is
+/// finalized.
 ///
-/// Conflicting corners are refused: a vertex has one UV slot, and changing
-/// topology to represent a seam would alter the source geometry.
+/// A vertex whose corners carry different coordinates sits on a texture seam.
+/// The builder copies such a vertex once per coordinate, which is how every
+/// OBJ and glTF importer carries a seam: the surface keeps its exact shape and
+/// only the vertex table grows. A scanner's atlas is cut into many charts, so
+/// that growth is large (an intraoral arch grows by half), and it only pays
+/// when there is a picture to draw. The coordinates are therefore kept only
+/// when one exists; without it the file reads as the vertex-coloured scan it
+/// also is.
 #[derive(Default)]
 pub(crate) struct FaceUvs {
-    per_vertex: Vec<Option<[f32; 2]>>,
-    conflicting: bool,
-    /// Corners seen before the vertex element was read.
-    ///
-    /// A header may declare `face` before `vertex`, and the table is sized from
-    /// real vertices rather than from anything the file says, so corners that
-    /// arrive first wait here. Like the table, this is bounded by the rows
-    /// actually consumed and never by a count in the file.
-    pending: Vec<(u32, [f32; 2])>,
+    /// Whether a picture exists for the coordinates to address.
+    keep: bool,
+    /// One coordinate per triangle corner, in the order triangles were pushed.
+    corners: Vec<[f32; 2]>,
 }
 
 impl FaceUvs {
-    /// Record a complete coordinate pair for each polygon corner.
+    pub(crate) fn new(keep: bool) -> Self {
+        Self {
+            keep,
+            corners: Vec::new(),
+        }
+    }
+
+    /// Record the coordinates of one polygon's corners.
+    ///
+    /// The polygon is fanned from its first corner, exactly as the readers
+    /// triangulate it, so the list stays in step with the builder's indices.
     pub(crate) fn face(&mut self, corners: &[u32], coords: &[f32]) -> Result<(), FormatError> {
         if corners.len().checked_mul(2) != Some(coords.len()) {
             return Err(FormatError::Malformed {
@@ -76,70 +87,30 @@ impl FaceUvs {
                     .to_string(),
             });
         }
-        for (corner, uv) in corners.iter().zip(coords.as_chunks::<2>().0) {
-            self.set(*corner, *uv);
+        if !self.keep || corners.len() < 3 {
+            return Ok(());
         }
-        Ok(())
-    }
-
-    /// Size the table for the vertices actually read.
-    ///
-    /// Called once the vertex element has been consumed, because a corner index
-    /// in the face element is arbitrary input: sizing the table from the
-    /// largest index in the file would let a 232-byte file ask for 51 GB, and the
-    /// allocation failure that follows aborts a process uncatchably — in the
-    /// Explorer thumbnail host that takes every other thumbnail with it. The
-    /// declared vertex count is no better a bound, since a header can declare
-    /// four billion vertices and carry none.
-    pub(crate) fn reserve(&mut self, vertices: usize) {
-        self.per_vertex.resize(vertices, None);
-        for (vertex, uv) in std::mem::take(&mut self.pending) {
-            self.set(vertex, uv);
-        }
-    }
-
-    /// Record the coordinates of one face corner.
-    ///
-    /// A corner naming a vertex the builder never produced is dropped: the mesh
-    /// cannot reference it either, and `Mesh::new` refuses the index later.
-    pub(crate) fn set(&mut self, vertex: u32, uv: [f32; 2]) {
-        if self.per_vertex.is_empty() {
-            self.pending.push((vertex, uv));
-            return;
-        }
-        let Ok(index) = usize::try_from(vertex) else {
-            return;
-        };
-        if let Some(slot) = self.per_vertex.get_mut(index) {
-            if let Some(existing) = *slot {
-                self.conflicting |= existing.partial_cmp(&uv) != Some(std::cmp::Ordering::Equal);
-            } else {
-                *slot = Some(uv);
-            }
-        }
-    }
-
-    /// Move the gathered coordinates onto the vertices they belong to.
-    pub(crate) fn apply(self, builder: &mut MeshBuilder) -> Result<(), FormatError> {
-        if self.conflicting {
-            return Err(FormatError::Malformed {
-                format: "PLY",
-                offset: 0,
-                reason: "per-corner texture seams cannot be represented without changing the source topology".to_string(),
-            });
-        }
-        for (index, uv) in self.per_vertex.into_iter().enumerate() {
-            if let (Some(uv), Ok(index)) = (uv, u32::try_from(index)) {
-                builder.set_vertex_uv(index, uv);
+        if let Some((first, rest)) = coords.as_chunks::<2>().0.split_first() {
+            for pair in rest.windows(2) {
+                self.corners.extend_from_slice(&[*first, pair[0], pair[1]]);
             }
         }
         Ok(())
+    }
+
+    /// Hand the gathered coordinates to the builder.
+    pub(crate) fn apply(self, builder: &mut MeshBuilder) {
+        if self.keep {
+            builder.set_corner_uvs(&self.corners);
+        }
     }
 }
 
 /// Read a PLY from raw bytes.
 ///
 /// Dispatches to ASCII or binary (LE/BE) based on the header's `format` line.
+/// A picture the file carries in its own header keeps the face coordinates; for
+/// one that sits beside the file, read it through [`crate::read_file`].
 ///
 /// # Errors
 /// See [`FormatError`]. Parsers never panic.
@@ -157,17 +128,27 @@ pub fn read_shaded(bytes: &[u8], shading: crate::MeshShading) -> Result<Mesh, Fo
         bytes,
         0,
     )?)?;
-    read_admitted(bytes, shading)
+    read_admitted(bytes, shading, false)
 }
 
+/// Read a PLY whose memory has been admitted.
+///
+/// `atlas_beside` says the caller found the picture the header names, so the
+/// per-corner coordinates are worth keeping even though the file itself holds
+/// no image.
 pub(crate) fn read_admitted(
     bytes: &[u8],
     shading: crate::MeshShading,
+    atlas_beside: bool,
 ) -> Result<Mesh, FormatError> {
     // A UTF-8 BOM in front of `ply` is metadata a Windows tool added; without
     // this the signature check fails on an otherwise valid file.
     let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
-    let parsed = header::parse(bytes)?;
+    let mut parsed = header::parse(bytes)?;
+    // Whether the coordinates have a picture to address decides whether they
+    // are read at all, so the header's own image is decoded first.
+    let embedded = embedded_texture(&parsed.texture);
+    parsed.keep_corner_uvs = atlas_beside || embedded.is_some();
     let mut mesh = match parsed.format {
         header::Format::Ascii => ascii::read_shaded(&parsed, shading)?,
         header::Format::BinaryLittleEndian => binary::read_le_shaded(&parsed, shading)?,
@@ -176,7 +157,7 @@ pub(crate) fn read_admitted(
     // Only a mesh with coordinates can apply an image; attaching one to a mesh
     // without them paints a single flat texel over the whole layer.
     if mesh.has_uvs() {
-        if let Some(texture) = embedded_texture(&parsed.texture) {
+        if let Some(texture) = embedded {
             mesh.set_texture(texture);
         }
     }
@@ -231,7 +212,24 @@ fn declared_memory_bytes(parsed: &header::ParsedHeader<'_>) -> u64 {
             "vertex" => {
                 size_of::<occluview_core::Vertex>().saturating_add(size_of::<Option<[f32; 2]>>())
             }
-            "face" => size_of::<u32>().saturating_mul(3),
+            "face" => {
+                let indices = size_of::<u32>().saturating_mul(3);
+                // A face that carries coordinates keeps one per corner until the
+                // mesh is built, and a seam copies its vertex. One copy per face
+                // is well above what a scanner's texture charts produce.
+                if element.properties.iter().any(|property| {
+                    matches!(
+                        property,
+                        header::Property::List { name, .. } if name == "texcoord"
+                    )
+                }) {
+                    indices
+                        .saturating_add(size_of::<[f32; 2]>().saturating_mul(3))
+                        .saturating_add(size_of::<occluview_core::Vertex>())
+                } else {
+                    indices
+                }
+            }
             _ => 0,
         };
         total
@@ -419,28 +417,88 @@ mod tests {
         bytes
     }
 
+    /// Read as the loader does once it has found the picture beside the file.
+    fn with_atlas(bytes: &[u8]) -> Result<Mesh, FormatError> {
+        read_admitted(bytes, crate::MeshShading::Reconstructed, true)
+    }
+
     #[test]
-    fn face_uv_seams_are_refused_without_changing_topology() {
+    fn without_a_picture_the_seams_are_not_paid_for() {
+        for format in ["ascii", "binary_little_endian", "binary_big_endian"] {
+            let faces = [
+                ([0, 1, 2], vec![0.0, 0.0, 1.0, 0.0, 0.0, 1.0]),
+                ([0, 2, 3], vec![0.5, 0.5, 0.0, 1.0, 1.0, 1.0]),
+            ];
+            let mesh = read(&face_uv_file(format, &faces, false)).expect("a seamed file opens");
+            assert_eq!(mesh.vertices().len(), 4, "{format}: no vertex was copied");
+            assert_eq!(mesh.triangle_count(), 2, "{format}");
+            assert!(
+                !mesh.has_uvs(),
+                "{format}: coordinates nothing draws are dropped"
+            );
+        }
+    }
+
+    #[test]
+    fn face_uv_seams_copy_the_vertex_and_keep_the_surface() {
         for format in ["ascii", "binary_little_endian", "binary_big_endian"] {
             for faces_first in [false, true] {
+                // Vertex 0 meets two different coordinates; vertex 2 meets the
+                // same one twice. Only vertex 0 sits on a seam.
                 let faces = [
                     ([0, 1, 2], vec![0.0, 0.0, 1.0, 0.0, 0.0, 1.0]),
                     ([0, 2, 3], vec![0.5, 0.5, 0.0, 1.0, 1.0, 1.0]),
                 ];
-                assert!(
-                    read(&face_uv_file(format, &faces, faces_first)).is_err(),
-                    "{format}, faces_first={faces_first}"
+                let mesh = with_atlas(&face_uv_file(format, &faces, faces_first))
+                    .unwrap_or_else(|error| panic!("{format}, {faces_first}: {error}"));
+                assert_eq!(mesh.triangle_count(), 2, "{format}, {faces_first}");
+                assert_eq!(mesh.vertices().len(), 5, "{format}, {faces_first}");
+                let corner_uv = |triangle: usize, corner: usize| {
+                    let index = mesh.indices()[triangle * 3 + corner] as usize;
+                    (mesh.vertices()[index].position, mesh.vertices()[index].uv)
+                };
+                assert_eq!(corner_uv(0, 0), ([0.0, 0.0, 0.0], [0.0, 0.0]));
+                assert_eq!(corner_uv(1, 0), ([0.0, 0.0, 0.0], [0.5, 0.5]));
+                assert_eq!(corner_uv(0, 2), ([0.0, 1.0, 0.0], [0.0, 1.0]));
+                assert_eq!(corner_uv(1, 1), ([0.0, 1.0, 0.0], [0.0, 1.0]));
+                assert_eq!(corner_uv(1, 2), ([1.0, 1.0, 0.0], [1.0, 1.0]));
+                assert_eq!(
+                    mesh.indices()[2],
+                    mesh.indices()[4],
+                    "vertex 2 agrees on its coordinate and is shared"
                 );
                 let matching = [
                     faces[0].clone(),
                     ([0, 2, 3], vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0]),
                 ];
-                let mesh =
-                    read(&face_uv_file(format, &matching, faces_first)).expect("consistent UVs");
-                assert_eq!(mesh.vertices().len(), 4);
+                let mesh = with_atlas(&face_uv_file(format, &matching, faces_first))
+                    .expect("consistent coordinates");
+                assert_eq!(mesh.vertices().len(), 4, "no seam, no copy");
                 assert_eq!(mesh.triangle_count(), 2);
             }
         }
+    }
+
+    #[test]
+    fn a_polygon_fans_its_corner_coordinates_with_its_triangles() {
+        let mut uvs = FaceUvs::new(true);
+        uvs.face(&[0, 1, 2, 3], &[0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0])
+            .expect("quad");
+        assert_eq!(
+            uvs.corners,
+            [
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [1.0, 1.0],
+                [0.0, 0.0],
+                [1.0, 1.0],
+                [0.0, 1.0]
+            ]
+        );
+        let mut uvs = FaceUvs::new(true);
+        uvs.face(&[0, 1], &[0.0; 4])
+            .expect("a line makes no triangle");
+        assert!(uvs.corners.is_empty());
     }
 
     #[test]

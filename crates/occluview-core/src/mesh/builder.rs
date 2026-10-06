@@ -105,29 +105,67 @@ impl MeshBuilder {
         idx
     }
 
-    /// How many vertices the builder holds so far.
+    /// Give every face corner its own texture coordinate.
     ///
-    /// A reader that learns per-face data for vertices it has already pushed
-    /// needs the count to size its own table against: the file's declared
-    /// count is not a safe bound, because a header can declare four billion
-    /// vertices in a two-hundred-byte file.
-    #[inline]
-    #[must_use]
-    pub fn vertex_count(&self) -> usize {
-        self.vertices.len()
-    }
+    /// `uvs` holds one coordinate per index pushed so far, in index order. A
+    /// vertex whose corners agree keeps its slot. One whose corners disagree
+    /// (a texture seam) is copied once per distinct coordinate, so the
+    /// surface keeps its exact shape and only the vertex table grows. A list of
+    /// the wrong length is ignored: the builder only ends up out of step with
+    /// its reader after it has refused a triangle, and `build` reports that.
+    pub fn set_corner_uvs(&mut self, uvs: &[[f32; 2]]) {
+        use std::collections::hash_map::Entry;
+        use std::collections::HashMap;
 
-    /// Set the texture coordinate of one vertex.
-    ///
-    /// PLY stores texture coordinates per face corner, so a reader learns them
-    /// only after the vertex rows are already pushed. An index the builder
-    /// never produced is ignored: under memory pressure it drops vertices
-    /// rather than aborting, and a dropped vertex has no coordinate to set.
-    #[inline]
-    pub fn set_vertex_uv(&mut self, index: u32, uv: [f32; 2]) {
-        if let Ok(index) = usize::try_from(index) {
-            if let Some(vertex) = self.vertices.get_mut(index) {
-                vertex.uv = uv;
+        // `-0.0` and `0.0` are one coordinate; every other value compares by bits.
+        let key = |uv: [f32; 2]| uv.map(|value| if value == 0.0 { 0 } else { value.to_bits() });
+        if uvs.len() != self.indices.len() {
+            return;
+        }
+        let mut first: Vec<Option<[u32; 2]>> = vec![None; self.vertices.len()];
+        let mut copies: HashMap<(u32, [u32; 2]), u32> = HashMap::new();
+        for (corner, uv) in uvs.iter().enumerate() {
+            let Some(&vertex) = self.indices.get(corner) else {
+                break;
+            };
+            let Some(slot) = usize::try_from(vertex)
+                .ok()
+                .and_then(|at| first.get_mut(at))
+            else {
+                // An index the builder never produced: `Mesh::new` refuses it.
+                continue;
+            };
+            let wanted = key(*uv);
+            match *slot {
+                None => {
+                    *slot = Some(wanted);
+                    if let Some(own) = usize::try_from(vertex)
+                        .ok()
+                        .and_then(|at| self.vertices.get_mut(at))
+                    {
+                        own.uv = *uv;
+                    }
+                }
+                Some(held) if held == wanted => {}
+                Some(_) => {
+                    let copy = match copies.entry((vertex, wanted)) {
+                        Entry::Occupied(known) => *known.get(),
+                        Entry::Vacant(room) => {
+                            let source = usize::try_from(vertex)
+                                .ok()
+                                .and_then(|at| self.vertices.get(at))
+                                .copied();
+                            let Some(mut duplicate) = source else {
+                                continue;
+                            };
+                            duplicate.uv = *uv;
+                            *room.insert(self.push_vertex(duplicate))
+                        }
+                    };
+                    if let Some(index) = self.indices.get_mut(corner) {
+                        *index = copy;
+                    }
+                }
             }
         }
     }
@@ -240,5 +278,87 @@ mod tests {
         }
         let mesh = builder.build().expect("no source, no ceiling");
         assert_eq!(mesh.vertices().len(), 10_000);
+    }
+
+    fn corner_mesh() -> MeshBuilder {
+        let mut builder = MeshBuilder::new();
+        for position in [Vec3::ZERO, Vec3::X, Vec3::Y, Vec3::ONE] {
+            builder.push_vertex(Vertex::at(position));
+        }
+        builder.push_triangle(0, 1, 2);
+        builder.push_triangle(0, 2, 3);
+        builder
+    }
+
+    #[test]
+    fn a_vertex_on_a_texture_seam_is_copied_once_per_coordinate() {
+        let mut builder = corner_mesh();
+        builder.set_corner_uvs(&[
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [0.0, 1.0],
+            [0.5, 0.5],
+            [0.0, 1.0],
+            [1.0, 1.0],
+        ]);
+        let mesh = builder.build().expect("valid mesh");
+        assert_eq!(mesh.triangle_count(), 2);
+        assert_eq!(mesh.vertices().len(), 5);
+        let at = |corner: usize| mesh.vertices()[mesh.indices()[corner] as usize];
+        assert_eq!((at(0).position, at(0).uv), ([0.0; 3], [0.0, 0.0]));
+        assert_eq!((at(3).position, at(3).uv), ([0.0; 3], [0.5, 0.5]));
+        assert_eq!(
+            mesh.indices()[2],
+            mesh.indices()[4],
+            "agreeing corners share"
+        );
+    }
+
+    #[test]
+    fn two_corners_with_the_same_seam_coordinate_share_the_copy() {
+        let mut builder = MeshBuilder::new();
+        for position in [Vec3::ZERO, Vec3::X, Vec3::Y, Vec3::ONE] {
+            builder.push_vertex(Vertex::at(position));
+        }
+        builder.push_triangle(0, 1, 2);
+        builder.push_triangle(0, 2, 3);
+        builder.push_triangle(0, 3, 1);
+        builder.set_corner_uvs(&[
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [0.0, 1.0],
+            [0.5, 0.5],
+            [0.0, 1.0],
+            [1.0, 1.0],
+            [0.5, 0.5],
+            [1.0, 1.0],
+            [1.0, 0.0],
+        ]);
+        let mesh = builder.build().expect("valid mesh");
+        assert_eq!(mesh.vertices().len(), 5, "one copy of vertex 0, not two");
+        assert_eq!(mesh.indices()[3], mesh.indices()[6]);
+    }
+
+    #[test]
+    fn signed_zero_is_not_a_seam() {
+        let mut builder = corner_mesh();
+        builder.set_corner_uvs(&[
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [0.0, 1.0],
+            [-0.0, -0.0],
+            [0.0, 1.0],
+            [1.0, 1.0],
+        ]);
+        assert_eq!(builder.build().expect("valid mesh").vertices().len(), 4);
+    }
+
+    #[test]
+    fn a_list_out_of_step_with_the_indices_changes_nothing() {
+        let mut builder = corner_mesh();
+        builder.set_corner_uvs(&[[0.25, 0.25]; 5]);
+        let mesh = builder.build().expect("valid mesh");
+        assert_eq!(mesh.vertices().len(), 4);
+        assert!(mesh.vertices().iter().all(|vertex| vertex.uv == [0.0, 0.0]));
     }
 }

@@ -157,6 +157,11 @@ pub struct ParsedHeader<'a> {
     pub texture: TextureComments,
     /// The raw bytes after `end_header\n` — the data section.
     pub data: &'a [u8],
+    /// Whether per-corner texture coordinates are read from the faces.
+    ///
+    /// On by default. A caller that knows no picture exists for them turns it
+    /// off, since a seam costs a copy of its vertex and nothing would draw it.
+    pub keep_corner_uvs: bool,
 }
 
 /// Parse the PLY header from `bytes`. Returns the typed header and a slice of
@@ -286,6 +291,7 @@ pub fn parse(bytes: &[u8]) -> Result<ParsedHeader<'_>, FormatError> {
         elements,
         texture,
         data,
+        keep_corner_uvs: true,
     })
 }
 

@@ -14,7 +14,7 @@
 
 use crate::error::FormatError;
 use crate::texture_decode::decode_embedded_raster;
-use occluview_core::Mesh;
+use occluview_core::{Mesh, MeshTexture};
 use std::path::{Path, PathBuf};
 
 /// Largest material library read.
@@ -36,39 +36,39 @@ pub(crate) const MAX_COMPANION_IMAGE_BYTES: u64 = 64 << 20;
 /// as `scan.jpg` and both name the same picture.
 const SAME_STEM_EXTENSIONS: [&str; 3] = ["png", "jpg", "jpeg"];
 
-/// Attach the texture this mesh file points at beside itself.
+/// Find and decode the texture this mesh file points at beside itself.
 ///
-/// A mesh that already carries a texture keeps it: a GLB or HPS holds its own
-/// image, and nothing beside the file overrides it.
-pub(crate) fn attach(
-    mesh: &mut Mesh,
+/// Done before the mesh is read, because for a PLY whether a picture exists
+/// decides whether its per-corner coordinates are read at all. A missing or
+/// undecodable image leaves the geometry available: the answer is `None`.
+pub(crate) fn find(
     path: &Path,
     kind: LocateKind,
     bytes: &[u8],
-) -> Result<(), FormatError> {
-    if mesh.texture().is_some() {
-        return Ok(());
-    }
-    let image = locate(path, kind, bytes)?;
-    // Without UVs an atlas would paint the whole layer with a single texel.
-    if !mesh.has_uvs() {
-        return Ok(());
-    }
-    let Some(image) = image else {
-        return Ok(());
+) -> Result<Option<MeshTexture>, FormatError> {
+    let Some(image) = locate(path, kind, bytes)? else {
+        return Ok(None);
     };
-    // A missing or undecodable image leaves the geometry available.
     let Ok(image_bytes) =
         crate::dispatch::read_file_bytes_with_limit(&image, MAX_COMPANION_IMAGE_BYTES)
     else {
-        return Ok(());
+        return Ok(None);
     };
-    let Ok(texture) = decode_embedded_raster(image_bytes.as_slice(), "texture beside the mesh")
-    else {
-        return Ok(());
-    };
-    mesh.set_texture(texture);
-    Ok(())
+    Ok(decode_embedded_raster(image_bytes.as_slice(), "texture beside the mesh").ok())
+}
+
+/// Attach the texture [`find`] returned.
+///
+/// A mesh that already carries a texture keeps it: a GLB or HPS holds its own
+/// image, and nothing beside the file overrides it. Without UVs an atlas would
+/// paint the whole layer with a single texel.
+pub(crate) fn attach(mesh: &mut Mesh, atlas: Option<MeshTexture>) {
+    if mesh.texture().is_some() || !mesh.has_uvs() {
+        return;
+    }
+    if let Some(texture) = atlas {
+        mesh.set_texture(texture);
+    }
 }
 
 /// The image a mesh file names, or the one that shares its name.
@@ -388,6 +388,17 @@ fn same_stem_image(path: &Path, directory: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What the loader does around a read: find the picture, then attach it.
+    fn attach_beside(
+        mesh: &mut Mesh,
+        path: &Path,
+        kind: LocateKind,
+        bytes: &[u8],
+    ) -> Result<(), FormatError> {
+        attach(mesh, find(path, kind, bytes)?);
+        Ok(())
+    }
     use occluview_core::{MeshTexture, Vertex};
 
     #[test]
@@ -602,7 +613,7 @@ mod tests {
         std::fs::write(&path, obj).expect("the obj");
 
         let mut mesh = triangle();
-        attach(&mut mesh, &path, LocateKind::Obj, obj).expect("companion attachment");
+        attach_beside(&mut mesh, &path, LocateKind::Obj, obj).expect("companion attachment");
 
         let texture = mesh.texture().expect("the texture was found");
         assert_eq!((texture.width, texture.height), (2, 1));
@@ -619,7 +630,7 @@ mod tests {
         std::fs::write(&path, obj).expect("the obj");
 
         let mut mesh = triangle();
-        attach(&mut mesh, &path, LocateKind::Obj, obj).expect("companion attachment");
+        attach_beside(&mut mesh, &path, LocateKind::Obj, obj).expect("companion attachment");
 
         assert!(
             mesh.texture().is_none(),
@@ -627,10 +638,65 @@ mod tests {
         );
 
         std::fs::write(directory.join("scan.jpg"), textured_png()).expect("the image");
-        attach(&mut mesh, &path, LocateKind::Obj, obj).expect("companion attachment");
+        attach_beside(&mut mesh, &path, LocateKind::Obj, obj).expect("companion attachment");
         assert!(
             mesh.texture().is_some(),
             "the image beside the mesh is used"
+        );
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    /// A PLY the way an intraoral scanner writes it: vertex colours, a texture
+    /// named in a comment, and per-corner coordinates with one seam (vertex 0
+    /// meets two different coordinates).
+    fn seamed_ply(texture: &str) -> Vec<u8> {
+        format!(
+            "ply\nformat ascii 1.0\ncomment TextureFile {texture}\n\
+             element vertex 4\nproperty float x\nproperty float y\nproperty float z\n\
+             property uchar red\nproperty uchar green\nproperty uchar blue\n\
+             element face 2\nproperty list uchar int vertex_indices\n\
+             property list uchar float texcoord\nend_header\n\
+             0 0 0 10 20 30\n1 0 0 10 20 30\n0 1 0 10 20 30\n1 1 0 10 20 30\n\
+             3 0 1 2 6 0 0 1 0 0 1\n3 0 2 3 6 0.5 0.5 0 1 1 1\n"
+        )
+        .into_bytes()
+    }
+
+    #[test]
+    fn a_seamed_ply_is_split_only_when_its_picture_is_beside_it() {
+        let directory = directory("ply-seams");
+        let path = directory.join("scan.ply");
+        std::fs::write(&path, seamed_ply("atlas.png")).expect("the ply");
+
+        let bare = crate::read::read_file_loaded_shaded(
+            &path,
+            &crate::hps::NoHpsKeyProvider,
+            crate::MeshShading::Reconstructed,
+        )
+        .expect("a scan without its picture still opens")
+        .mesh;
+        assert_eq!(bare.vertices().len(), 4, "no picture, no copies");
+        assert_eq!(bare.triangle_count(), 2);
+        assert!(bare.texture().is_none());
+        assert_eq!(bare.vertices()[0].color, [10, 20, 30, 255], "colour stays");
+
+        std::fs::write(directory.join("atlas.png"), textured_png()).expect("the image");
+        let textured = crate::read::read_file_loaded_shaded(
+            &path,
+            &crate::hps::NoHpsKeyProvider,
+            crate::MeshShading::Reconstructed,
+        )
+        .expect("a scan with its picture opens")
+        .mesh;
+        assert_eq!(textured.vertices().len(), 5, "the seam copied one vertex");
+        assert_eq!(textured.triangle_count(), 2);
+        assert!(textured.texture().is_some());
+        assert!(
+            textured
+                .vertices()
+                .iter()
+                .all(|vertex| vertex.color == [10, 20, 30, 255]),
+            "a copy carries the colour of its source"
         );
         let _ = std::fs::remove_dir_all(&directory);
     }
@@ -647,13 +713,14 @@ mod tests {
         std::fs::write(&path, &header).expect("the ply");
 
         let mut mesh = triangle();
-        attach(&mut mesh, &path, LocateKind::Ply, header.as_bytes()).expect("companion attachment");
+        attach_beside(&mut mesh, &path, LocateKind::Ply, header.as_bytes())
+            .expect("companion attachment");
         assert!(mesh.texture().is_some(), "the named image is used");
 
         // A header with no name at all leaves the mesh alone.
         header = header.replace("comment TextureFile atlas.png\n", "");
         let mut untextured = triangle();
-        attach(&mut untextured, &path, LocateKind::Ply, header.as_bytes())
+        attach_beside(&mut untextured, &path, LocateKind::Ply, header.as_bytes())
             .expect("companion attachment");
         assert!(untextured.texture().is_none());
         let _ = std::fs::remove_dir_all(&directory);
@@ -681,7 +748,7 @@ mod tests {
         .expect("a triangle without coordinates");
         assert!(!mesh.has_uvs());
 
-        attach(&mut mesh, &path, LocateKind::Obj, obj).expect("companion attachment");
+        attach_beside(&mut mesh, &path, LocateKind::Obj, obj).expect("companion attachment");
 
         assert!(
             mesh.texture().is_none(),
@@ -708,7 +775,7 @@ mod tests {
         std::fs::write(&path, obj).expect("the obj");
 
         let mut mesh = triangle();
-        attach(&mut mesh, &path, LocateKind::Obj, obj).expect("companion attachment");
+        attach_beside(&mut mesh, &path, LocateKind::Obj, obj).expect("companion attachment");
 
         assert!(
             mesh.texture().is_some(),
@@ -733,7 +800,7 @@ mod tests {
         std::fs::write(&path, obj).expect("the obj");
 
         let mut mesh = triangle();
-        attach(&mut mesh, &path, LocateKind::Obj, obj).expect("companion attachment");
+        attach_beside(&mut mesh, &path, LocateKind::Obj, obj).expect("companion attachment");
 
         assert!(
             mesh.texture().is_none(),
@@ -752,12 +819,12 @@ mod tests {
         std::fs::write(&path, obj).expect("the obj");
 
         let mut mesh = triangle();
-        attach(&mut mesh, &path, LocateKind::Obj, obj).expect("companion attachment");
+        attach_beside(&mut mesh, &path, LocateKind::Obj, obj).expect("companion attachment");
         assert!(mesh.texture().is_none());
 
         // A file that is not an image at all is refused by the decoder.
         std::fs::write(directory.join("gone.png"), b"not an image").expect("the file");
-        attach(&mut mesh, &path, LocateKind::Obj, obj).expect("companion attachment");
+        attach_beside(&mut mesh, &path, LocateKind::Obj, obj).expect("companion attachment");
         assert!(mesh.texture().is_none());
         let _ = std::fs::remove_dir_all(&directory);
     }

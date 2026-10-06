@@ -85,18 +85,21 @@ pub fn dispatch_by_kind_loaded(
     shading: crate::MeshShading,
 ) -> Result<LoadedMesh, FormatError> {
     check_estimate(estimate_file_peak_bytes(kind, bytes, 0)?)?;
-    dispatch_by_kind_loaded_admitted(kind, bytes, key_provider, shading)
+    dispatch_by_kind_loaded_admitted(kind, bytes, key_provider, shading, false)
 }
 
+/// `atlas_beside` says the caller found the picture a PLY names beside its
+/// file; it changes nothing for the other formats.
 pub(crate) fn dispatch_by_kind_loaded_admitted(
     kind: FormatKind,
     bytes: &[u8],
     key_provider: &dyn HpsKeyProvider,
     shading: crate::MeshShading,
+    atlas_beside: bool,
 ) -> Result<LoadedMesh, FormatError> {
     let mesh = match kind {
         FormatKind::Stl => crate::stl::read_admitted(bytes, shading),
-        FormatKind::Ply => crate::ply::read_admitted(bytes, shading),
+        FormatKind::Ply => crate::ply::read_admitted(bytes, shading, atlas_beside),
         FormatKind::Obj => crate::obj::read_admitted(bytes, shading),
         // `.gltf` is JSON, and `probe` maps both extensions to this kind, but
         // the GLB reader only accepts the binary container and would answer
@@ -185,16 +188,21 @@ pub fn dispatch_by_extension_loaded(
     key_provider: &dyn HpsKeyProvider,
     shading: crate::MeshShading,
 ) -> Result<LoadedMesh, FormatError> {
-    dispatch_by_extension_loaded_inner(extension, bytes, key_provider, shading, false)
+    dispatch_by_extension_loaded_inner(extension, bytes, key_provider, shading, None)
 }
 
+/// Read a file that has a path, so its companion picture may exist.
+///
+/// `find_atlas` receives the probed kind and answers whether the picture was
+/// found; the memory admitted for the file includes the picture's share.
 pub(crate) fn dispatch_by_extension_loaded_with_companion_budget(
     extension: &str,
     bytes: &[u8],
     key_provider: &dyn HpsKeyProvider,
     shading: crate::MeshShading,
+    find_atlas: &mut dyn FnMut(FormatKind) -> Result<bool, FormatError>,
 ) -> Result<LoadedMesh, FormatError> {
-    dispatch_by_extension_loaded_inner(extension, bytes, key_provider, shading, true)
+    dispatch_by_extension_loaded_inner(extension, bytes, key_provider, shading, Some(find_atlas))
 }
 
 fn dispatch_by_extension_loaded_inner(
@@ -202,7 +210,7 @@ fn dispatch_by_extension_loaded_inner(
     bytes: &[u8],
     key_provider: &dyn HpsKeyProvider,
     shading: crate::MeshShading,
-    includes_companions: bool,
+    find_atlas: Option<&mut dyn FnMut(FormatKind) -> Result<bool, FormatError>>,
 ) -> Result<LoadedMesh, FormatError> {
     // The BOM is stripped by `probe` (for signature matching) and by each text
     // reader (PLY, ASCII STL), not here. Stripping it in front of the whole
@@ -215,13 +223,17 @@ fn dispatch_by_extension_loaded_inner(
     // binary STL with a zero header), so this is safe.
     let kind = probe_kind(extension, bytes)?;
     let file_estimate = estimate_file_peak_bytes(kind, bytes, 0)?;
-    let companion_estimate = if includes_companions {
+    let companion_estimate = if find_atlas.is_some() {
         crate::memory::estimate_companion_peak_bytes(kind, bytes)
     } else {
         0
     };
     check_estimate(file_estimate.saturating_add(companion_estimate))?;
-    dispatch_by_kind_loaded_admitted(kind, bytes, key_provider, shading)
+    let atlas_beside = match find_atlas {
+        Some(find) => find(kind)?,
+        None => false,
+    };
+    dispatch_by_kind_loaded_admitted(kind, bytes, key_provider, shading, atlas_beside)
 }
 
 pub(crate) fn probe_kind(extension: &str, bytes: &[u8]) -> Result<FormatKind, FormatError> {
