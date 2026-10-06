@@ -6,7 +6,7 @@ use super::{
 /// Split the selected triangles into connected components.
 ///
 /// Connectivity is derived from shared undirected edges. STL and other soup
-/// formats are welded first (exact position/color/UV bits; see
+/// formats are welded first (exact position/color bits; see
 /// `weld_soup_topology`). Triangles touching only at one vertex remain
 /// separate components. Components are returned in deterministic order by their
 /// lowest triangle index in the source mesh, and each component's member list is
@@ -205,6 +205,34 @@ mod tests {
 
     fn mask(len: usize, predicate: impl Fn(usize) -> bool) -> FaceSelection {
         FaceSelection::new((0..len).map(predicate).collect())
+    }
+
+    #[test]
+    fn a_texture_seam_does_not_split_an_object() {
+        // A 2x1 grid as a textured scan stores it: the shared edge is two
+        // vertices, each copied once because its triangles meet two different
+        // texture coordinates.
+        let mut mesh = grid(2, 1);
+        let copies: Vec<u32> = [1_u32, 4]
+            .iter()
+            .map(|&source| {
+                let mut copy = mesh.vertices[source as usize];
+                copy.uv = [0.75, 0.25];
+                mesh.vertices.push(copy);
+                u32::try_from(mesh.vertices.len() - 1).expect("small mesh")
+            })
+            .collect();
+        // Triangles 2..4 (the second cell) read the copies of vertices 1 and 4.
+        for index in &mut mesh.indices[6..] {
+            if *index == 1 {
+                *index = copies[0];
+            } else if *index == 4 {
+                *index = copies[1];
+            }
+        }
+        let everything = mask(mesh.triangle_count(), |_| true);
+        let components = selected_connected_components(&mesh, &everything).expect("components");
+        assert_eq!(components.len(), 1, "one surface, not one piece per chart");
     }
 
     #[test]
