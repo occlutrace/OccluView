@@ -141,26 +141,10 @@ pub fn read_shaded(
     // element provides triangle indices.
     // Faces carry the texture coordinates, so they are gathered as the face
     // element is read and applied once every element has been consumed.
-    let mut uvs = FaceUvs::default();
-    // Gathering coordinates costs a slot per vertex, so it is only done for a
-    // file that declares them on its faces.
-    let face_carries_uvs = parsed.elements.iter().any(|element| {
-        element.name == "face"
-            && element.properties.iter().any(
-                |property| matches!(property, Property::List { name, .. } if name == "texcoord"),
-            )
-    });
+    let mut uvs = FaceUvs::new(parsed.keep_corner_uvs);
     for element in &parsed.elements {
         match element.name.as_str() {
-            "vertex" => {
-                read_vertices(&mut tokens, element, &mut builder)?;
-                // The corner indices in the face element are arbitrary input,
-                // so the coordinate table is sized from the vertices actually
-                // read, never from an index in the file.
-                if face_carries_uvs {
-                    uvs.reserve(builder.vertex_count());
-                }
-            }
+            "vertex" => read_vertices(&mut tokens, element, &mut builder)?,
             "face" => read_faces(&mut tokens, element, &mut builder, &mut uvs)?,
             // Unknown element types (edge, etc.) — skip their tokens.
             other => skip_element(&mut tokens, element, other)?,
@@ -173,7 +157,7 @@ pub fn read_shaded(
             reason: "data remains after the declared elements".to_string(),
         });
     }
-    uvs.apply(&mut builder)?;
+    uvs.apply(&mut builder);
 
     shading.build(builder).map_err(FormatError::Core)
 }
