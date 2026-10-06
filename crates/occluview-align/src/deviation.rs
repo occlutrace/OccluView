@@ -233,34 +233,31 @@ impl Default for RampSettings {
     }
 }
 
-/// Signed stops from `-1` to `+1`. Blue is undersize, green is nominal, red is
-/// oversize — the convention every metrology package shares.
+/// The false-colour ramp, from `0` (surfaces agree) to `1` (the display scale):
+/// cool where they agree, hot where they do not. This is the bar a lab operator
+/// reads without having to work out which side of the surface a colour means.
 ///
-/// The stops keep a little headroom off the pure channel extremes so shading
-/// has something to modulate — a blue whose red channel is exactly zero cannot
-/// vary with the light at all, and the surface comes out as a flat coloured
-/// silhouette with no readable form.
-const SIGNED_RAMP: [(f64, [u8; 3]); 5] = [
-    (-1.0, [20, 50, 235]),
-    (-0.5, [20, 170, 235]),
-    (0.0, [40, 200, 70]),
-    (0.5, [250, 205, 20]),
-    (1.0, [252, 30, 18]),
-];
-
-/// Magnitude stops from `0` to `1`: cool where the surfaces agree, hot where
-/// they do not. This is the false-colour bar a lab operator reads without
-/// having to work out which side of the surface a colour means.
+/// The signed mode reads the same table over `-1..=1`: blue is undersize, green
+/// is nominal, red is oversize, so the two modes cannot disagree about what
+/// "0.2 mm out" looks like.
 ///
-/// Same stops as the signed ramp, folded onto one side — two ramps that
-/// disagreed about what "0.2 mm out" looks like would make the mode switch
-/// change the reading rather than the question.
-const MAGNITUDE_RAMP: [(f64, [u8; 3]); 5] = [
-    (0.0, [20, 50, 235]),
-    (0.25, [20, 170, 235]),
-    (0.5, [40, 200, 70]),
-    (0.75, [250, 205, 20]),
-    (1.0, [252, 30, 18]),
+/// The stops are saturated and bright, with enough of them that no hue change
+/// has to cross a long dull stretch: a ramp of five stops goes through a muddy
+/// blue-green and a flat yellow-orange, and every stop it turns at shows as a
+/// band across a smooth surface. Red only rises and blue only falls from the
+/// first stop to the last. The stops still keep a little headroom off the pure
+/// channel extremes so shading has something to modulate — a blue whose red
+/// channel is exactly zero cannot vary with the light at all.
+const MAGNITUDE_RAMP: [(f64, [u8; 3]); 9] = [
+    (0.0, [20, 110, 255]),
+    (0.12, [20, 165, 255]),
+    (0.25, [20, 215, 255]),
+    (0.37, [40, 232, 175]),
+    (0.5, [70, 238, 75]),
+    (0.62, [185, 238, 45]),
+    (0.75, [255, 208, 28]),
+    (0.87, [255, 132, 22]),
+    (1.0, [255, 45, 20]),
 ];
 
 /// Measure every moving vertex against the fixed surface under `pose`.
@@ -503,19 +500,20 @@ pub fn ramp_color(value_mm: f64, ramp: &RampSettings) -> [u8; 4] {
         let quantum = f64::from(bands);
         position = ((position * quantum).floor() / quantum).clamp(0.0, 1.0);
     }
-    let (ramp_stops, position) = match ramp.mode {
-        RampMode::Magnitude => (&MAGNITUDE_RAMP, position),
-        RampMode::Signed => (&SIGNED_RAMP, position.copysign(value_mm)),
+    let position = match ramp.mode {
+        RampMode::Magnitude => position,
+        // Signed deviation spans the table with zero at its green centre.
+        RampMode::Signed => f64::midpoint(position.copysign(value_mm), 1.0),
     };
-    let [red, green, blue] = sample_ramp(ramp_stops, position);
+    let [red, green, blue] = sample_ramp(&MAGNITUDE_RAMP, position);
     [red, green, blue, 255]
 }
 
 /// Linear interpolation through a stop table.
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-fn sample_ramp(stops: &[(f64, [u8; 3]); 5], position: f64) -> [u8; 3] {
+fn sample_ramp(stops: &[(f64, [u8; 3])], position: f64) -> [u8; 3] {
     let mut low = stops[0];
-    for stop in *stops {
+    for stop in stops.iter().copied() {
         if position >= stop.0 {
             low = stop;
         }

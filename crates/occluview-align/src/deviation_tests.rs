@@ -9,6 +9,18 @@ use super::{
 use crate::Orientation;
 use crate::{CancelFlag, Rigid, Soup, SurfaceIndex};
 
+/// The ramp's first stop: nothing measured out.
+fn cold_stop() -> [u8; 4] {
+    let [red, green, blue] = MAGNITUDE_RAMP[0].1;
+    [red, green, blue, 255]
+}
+
+/// The ramp's last stop: at or beyond the display scale.
+fn hot_stop() -> [u8; 4] {
+    let [red, green, blue] = MAGNITUDE_RAMP[MAGNITUDE_RAMP.len() - 1].1;
+    [red, green, blue, 255]
+}
+
 /// Two triangles forming a 10 x 10 sheet on z = 0, outward normal +Z.
 fn sheet() -> (Vec<f32>, Vec<u32>) {
     (
@@ -331,7 +343,7 @@ fn the_working_ramp_is_continuous_from_zero_to_tenth_and_clamps_above_it() {
         ..RampSettings::default()
     };
     let zero = ramp_color(0.0, &ramp);
-    assert_eq!(zero, [20, 50, 235, 255]);
+    assert_eq!(zero, cold_stop());
     assert_ne!(
         ramp_color(0.005, &ramp),
         zero,
@@ -339,7 +351,7 @@ fn the_working_ramp_is_continuous_from_zero_to_tenth_and_clamps_above_it() {
     );
     assert_eq!(
         ramp_color(0.10, &ramp),
-        [252, 30, 18, 255],
+        hot_stop(),
         "0.10 mm is the hot endpoint"
     );
     assert_eq!(
@@ -358,7 +370,7 @@ fn a_display_minimum_keeps_subthreshold_differences_cool_and_the_ceiling_hot() {
     };
     assert_eq!(ramp_color(0.0, &ramp), ramp_color(0.02, &ramp));
     assert_ne!(ramp_color(0.06, &ramp), ramp_color(0.02, &ramp));
-    assert_eq!(ramp_color(0.10, &ramp), [252, 30, 18, 255]);
+    assert_eq!(ramp_color(0.10, &ramp), hot_stop());
     assert_eq!(ramp_color(-0.10, &ramp), ramp_color(0.10, &ramp));
 }
 
@@ -370,9 +382,9 @@ fn an_absolute_zero_range_keeps_zero_blue_and_marks_any_error_red() {
         mode: RampMode::Magnitude,
         ..RampSettings::default()
     };
-    assert_eq!(ramp_color(0.0, &ramp), [20, 50, 235, 255]);
-    assert_eq!(ramp_color(0.000_001, &ramp), [252, 30, 18, 255]);
-    assert_eq!(ramp_color(-0.000_001, &ramp), [252, 30, 18, 255]);
+    assert_eq!(ramp_color(0.0, &ramp), cold_stop());
+    assert_eq!(ramp_color(0.000_001, &ramp), hot_stop());
+    assert_eq!(ramp_color(-0.000_001, &ramp), hot_stop());
 }
 
 #[test]
