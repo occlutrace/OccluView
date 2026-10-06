@@ -144,8 +144,8 @@ fn render_measured_dome(mesh: &Mesh) -> Vec<u8> {
 }
 
 /// Deviation ramp endpoints as defined by `occluview-align`.
-const COLD_END: [u8; 4] = [20, 110, 255, 255];
-const HOT_END: [u8; 4] = [255, 45, 20, 255];
+const COLD_END: [u8; 4] = [20, 105, 240, 255];
+const HOT_END: [u8; 4] = [240, 45, 20, 255];
 
 /// The colours that reach the screen are the colours that were uploaded.
 ///
@@ -171,8 +171,12 @@ fn a_measured_map_reaches_the_screen_in_the_colour_it_was_uploaded_in() {
                 .max_by_key(|(_, value)| *value)
                 .expect("a brightest channel");
             let shade = f64::from(px[slot]) / f64::from(brightest);
+            // The shader keeps the factor within 0.96..=1.05; the channel is
+            // stored in eight bits, so the ratio read back is off by up to one
+            // step of the brightest channel either way.
+            let step = 1.0 / f64::from(brightest);
             assert!(
-                (0.96..=1.06).contains(&shade),
+                (0.96 - step..=1.06 + step).contains(&shade),
                 "pixel {px:?} is not {uploaded:?} under any legal shading (factor {shade:.3})"
             );
             for channel in 0..3 {
@@ -194,9 +198,9 @@ fn a_swept_deviation_arrives_on_screen_as_a_transition() {
     let _gpu = gpu_test_lock();
     let stops = [
         COLD_END,
-        [20, 215, 255, 255],
-        [70, 238, 75, 255],
-        [255, 208, 28, 255],
+        [20, 208, 240, 255],
+        [70, 232, 75, 255],
+        [240, 204, 28, 255],
         HOT_END,
     ];
     let pixels = render_measured_dome(&ramped_dome_mesh(&stops));
