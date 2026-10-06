@@ -440,16 +440,24 @@ fn macos_settings_offer_a_selectable_smooth_scroll_action() -> anyhow::Result<()
     ])?;
     let popup = popup_rect(&ctx, settings_popup_id())?;
     let scroll_position = popup.center();
-    let _ = run(vec![
-        egui::Event::PointerMoved(scroll_position),
-        egui::Event::MouseWheel {
-            unit: egui::MouseWheelUnit::Point,
-            delta: egui::vec2(0.0, -1_000.0),
-            phase: egui::TouchPhase::Move,
-            modifiers: egui::Modifiers::NONE,
-        },
-    ])?;
-    let visible = run(Vec::new())?;
+    // The popup scrolls; walk down it a notch at a time until the row shows,
+    // so the test does not depend on how tall the rows above it are.
+    let mut visible = run(Vec::new())?;
+    for _ in 0..40 {
+        if direct_control_center(&visible.output, "Scroll").is_ok() {
+            break;
+        }
+        let _ = run(vec![
+            egui::Event::PointerMoved(scroll_position),
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, -60.0),
+                phase: egui::TouchPhase::Move,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ])?;
+        visible = run(Vec::new())?;
+    }
     let rendered_text = visible
         .output
         .shapes
@@ -522,21 +530,29 @@ fn selected_scroll_action_persists_and_drives_viewport_zoom() -> anyhow::Result<
     click_app_settings(&ctx, screen, &mut app, trigger.center())?;
 
     let popup = popup_rect(&ctx, settings_popup_id())?;
-    let _ = run_app_settings_frame(
-        &ctx,
-        vec![
-            egui::Event::PointerMoved(popup.center()),
-            egui::Event::MouseWheel {
-                unit: egui::MouseWheelUnit::Point,
-                delta: egui::vec2(0.0, -1_000.0),
-                phase: egui::TouchPhase::Move,
-                modifiers: egui::Modifiers::NONE,
-            },
-        ],
-        screen,
-        &mut app,
-    )?;
-    let (_, visible) = run_app_settings_frame(&ctx, Vec::new(), screen, &mut app)?;
+    // Walk down the popup a notch at a time until the row shows, so the test
+    // does not depend on how tall the rows above it are.
+    let (_, mut visible) = run_app_settings_frame(&ctx, Vec::new(), screen, &mut app)?;
+    for _ in 0..40 {
+        if direct_control_center(&visible, "Zoom").is_ok() {
+            break;
+        }
+        let _ = run_app_settings_frame(
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(popup.center()),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(0.0, -60.0),
+                    phase: egui::TouchPhase::Move,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+            screen,
+            &mut app,
+        )?;
+        (_, visible) = run_app_settings_frame(&ctx, Vec::new(), screen, &mut app)?;
+    }
     let zoom = direct_control_center(&visible, "Zoom")?;
     click_app_settings(&ctx, screen, &mut app, zoom)?;
 
