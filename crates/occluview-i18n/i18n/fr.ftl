@@ -13,7 +13,7 @@ settings-language-catalog-fallback = { $tag } n’est pas disponible ; l’angl
 settings-language-save-error = Langue non enregistrée. Nouvel essai…
 
 about-title = À propos d’OccluView
-about-tagline = Réparation de maillages · Édition pour la CFAO dentaire
+about-tagline = Visualisation, alignement et édition de maillages pour scans dentaires
 about-version = Version { $version }
 
 update-available-title = Mise à jour disponible
@@ -592,6 +592,9 @@ about-website = Site web
 about-source = Sources
 about-licenses = Licences tierces
 about-license-kind = Licence Apache 2.0
+about-graphics = Graphisme : { $adapter }
+about-copy-details = Copier les détails système
+about-details-copied = Copié
 
 ## Mesh-edit operations, undo/redo, sculpt, measure, cut ruler, scene menu — DRAFT.
 

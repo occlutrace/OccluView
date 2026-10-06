@@ -13,7 +13,7 @@ settings-language-catalog-fallback = { $tag } non è disponibile; viene usato l�
 settings-language-save-error = Lingua non salvata. Riprovo…
 
 about-title = Su OccluView
-about-tagline = Riparazione mesh · Editing per il CAD dentale
+about-tagline = Visualizzazione, allineamento e modifica mesh per scansioni dentali
 about-version = Versione { $version }
 
 update-available-title = Aggiornamento disponibile
@@ -592,6 +592,9 @@ about-website = Sito web
 about-source = Sorgenti
 about-licenses = Licenze di terze parti
 about-license-kind = Licenza Apache 2.0
+about-graphics = Grafica: { $adapter }
+about-copy-details = Copia i dettagli di sistema
+about-details-copied = Copiato
 
 ## Mesh-edit operations, undo/redo, sculpt, measure, cut ruler, scene menu — DRAFT.
 

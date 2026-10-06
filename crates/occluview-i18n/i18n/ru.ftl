@@ -13,7 +13,7 @@ settings-language-catalog-fallback = { $tag } недоступен; исполь
 settings-language-save-error = Не удалось сохранить язык. Повторная попытка…
 
 about-title = Об OccluView
-about-tagline = Исправление сеток · Редактирование для dental CAD
+about-tagline = Просмотр, совмещение и правка стоматологических сканов
 about-version = Версия { $version }
 
 update-available-title = Доступно обновление
@@ -668,6 +668,9 @@ about-website = Сайт
 about-source = Исходники
 about-licenses = Сторонние лицензии
 about-license-kind = Apache License 2.0
+about-graphics = Графика: { $adapter }
+about-copy-details = Скопировать сведения о системе
+about-details-copied = Скопировано
 
 ## Mesh-edit operations, undo/redo, sculpt, measure, cut ruler, scene menu — DRAFT.
 

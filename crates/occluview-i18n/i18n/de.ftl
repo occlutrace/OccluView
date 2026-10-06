@@ -13,7 +13,7 @@ settings-language-catalog-fallback = { $tag } ist nicht verfügbar; Englisch wir
 settings-language-save-error = Spracheinstellung konnte nicht gespeichert werden. Neuer Versuch…
 
 about-title = Über OccluView
-about-tagline = Netzreparatur · Mesh-Bearbeitung für Dental-CAD
+about-tagline = Betrachter, Ausrichtung und Netzbearbeitung für Dentalscans
 about-version = Version { $version }
 
 update-available-title = Update verfügbar
@@ -592,6 +592,9 @@ about-website = Website
 about-source = Quellcode
 about-licenses = Drittlizenzen
 about-license-kind = Apache License 2.0
+about-graphics = Grafik: { $adapter }
+about-copy-details = Systemdetails kopieren
+about-details-copied = Kopiert
 
 ## Mesh-edit operations, undo/redo, sculpt, measure, cut ruler, scene menu — DRAFT.
 
