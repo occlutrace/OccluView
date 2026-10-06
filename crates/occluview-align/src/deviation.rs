@@ -245,19 +245,22 @@ impl Default for RampSettings {
 /// has to cross a long dull stretch: a ramp of five stops goes through a muddy
 /// blue-green and a flat yellow-orange, and every stop it turns at shows as a
 /// band across a smooth surface. Red only rises and blue only falls from the
-/// first stop to the last. The stops still keep a little headroom off the pure
-/// channel extremes so shading has something to modulate — a blue whose red
-/// channel is exactly zero cannot vary with the light at all.
+/// first stop to the last.
+///
+/// No channel passes 240. The shader scales all three channels together by up
+/// to 1.05, and a channel already at 255 would clip there while the other two
+/// kept rising, which turns the hue the legend is read against. A channel at
+/// zero cannot vary with the light at all, so the low ones stay above it too.
 const MAGNITUDE_RAMP: [(f64, [u8; 3]); 9] = [
-    (0.0, [20, 110, 255]),
-    (0.12, [20, 165, 255]),
-    (0.25, [20, 215, 255]),
-    (0.37, [40, 232, 175]),
-    (0.5, [70, 238, 75]),
-    (0.62, [185, 238, 45]),
-    (0.75, [255, 208, 28]),
-    (0.87, [255, 132, 22]),
-    (1.0, [255, 45, 20]),
+    (0.0, [20, 105, 240]),
+    (0.12, [20, 160, 240]),
+    (0.25, [20, 208, 240]),
+    (0.37, [40, 226, 172]),
+    (0.5, [70, 232, 75]),
+    (0.62, [182, 232, 45]),
+    (0.75, [240, 204, 28]),
+    (0.87, [240, 130, 22]),
+    (1.0, [240, 45, 20]),
 ];
 
 /// Measure every moving vertex against the fixed surface under `pose`.
