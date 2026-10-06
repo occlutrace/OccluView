@@ -43,6 +43,7 @@
 
 mod confidence;
 mod deviation;
+mod deviation_display;
 mod mask;
 mod observability;
 #[cfg(test)]
@@ -62,6 +63,7 @@ pub use deviation::{
     DeviationSettings, DeviationStats, DeviationSummary, Orientation, RampMode, RampSettings,
     Unmeasured, Validity, MIN_MEASURED, NO_DATA_COLOR,
 };
+pub use deviation_display::{display_map, DISPLAY_PASSES};
 pub use mask::{apply_brush, eligible_region, invert, set_all, MaskEdit, EXCLUDED, INCLUDED};
 pub use observability::{observability, Observability};
 pub use occluview_geometry::surface::{CancelFlag, Soup, SurfaceHit, SurfaceIndex};

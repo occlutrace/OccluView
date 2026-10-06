@@ -16,9 +16,9 @@ use eframe::egui;
 use glam::DVec3;
 use occluview_align::suggested_scale_mm;
 use occluview_align::{
-    deviation, deviation_stats, fit_pairs, observability, ramp_color, CancelFlag, DeviationMap,
-    DeviationSettings, DeviationStats, FitBounds, FitRejection, Observability, Orientation,
-    RampMode, RampSettings, Rigid, Soup, SurfaceIndex, Validity, NO_DATA_COLOR,
+    deviation, deviation_stats, display_map, fit_pairs, observability, ramp_color, CancelFlag,
+    DeviationMap, DeviationSettings, DeviationStats, FitBounds, FitRejection, Observability,
+    Orientation, RampMode, RampSettings, Rigid, Soup, SurfaceIndex, Validity, NO_DATA_COLOR,
 };
 use rayon::prelude::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
@@ -714,6 +714,9 @@ struct WorkerCache {
     surface: Option<(SurfaceKey, SurfaceIndex)>,
     /// The last deviation map, and the measurement it belongs to.
     measured: Option<(MeasureKey, DeviationMap)>,
+    /// That map as it is painted: calmed of single-vertex noise. Made once per
+    /// measurement, so dragging the display range does not redo it.
+    shown: Option<(MeasureKey, DeviationMap)>,
     /// The last summary, and the measurement and tolerance it was taken at.
     summary: Option<(MeasureKey, u64, DeviationStats)>,
     /// What that measurement was capable of seeing. Independent of the ramp and
@@ -754,6 +757,7 @@ fn execute(job: &AlignJob, cancel: &CancelFlag, cached: &mut WorkerCache) -> Ali
     // Do not cache a cancelled map or expose it to later re-colouring.
     let seen = observability(moving, index, job.pose, &job.settings.deviation(), cancel);
     if !cancel.is_cancelled() {
+        cached.shown = Some((job.measure_key, display_map(&map, moving)));
         cached.measured = Some((job.measure_key, map));
         cached.summary = None;
         cached.seen = Some((job.measure_key, seen));
@@ -784,7 +788,13 @@ fn recolor(job: &AlignJob, cached: &mut WorkerCache) -> AlignOutcome {
         .seen
         .and_then(|(key, seen)| (key == job.measure_key).then_some(seen))
         .flatten();
-    paint(map, job, stats, seen)
+    // The colours come from the calmed copy; the numbers stay on the raw map.
+    let shown = cached
+        .shown
+        .as_ref()
+        .filter(|(key, _)| *key == job.measure_key)
+        .map_or(map, |(_, shown)| shown);
+    paint(shown, job, stats, seen)
 }
 
 /// How far past the nominal band an automatic range must reach.
