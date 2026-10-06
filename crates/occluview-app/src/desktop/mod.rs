@@ -13,4 +13,5 @@ pub(crate) mod recent_files;
 #[cfg(windows)]
 pub(crate) mod shell_refresh;
 pub(crate) mod single_instance;
+pub(crate) mod system_info;
 pub(crate) mod update_notice;

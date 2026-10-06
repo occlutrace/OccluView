@@ -3,6 +3,7 @@
 use super::super::information_dialog::InformationDialog;
 use super::super::SceneContext;
 use super::panel::{settings_popup_id, show_settings_popup, SettingsAction};
+use crate::desktop::system_info;
 use crate::i18n::message_id;
 use crate::ui::icons::AppIcon;
 use crate::ui::ui_theme;
@@ -128,42 +129,20 @@ impl SceneContext<'_> {
         let mut open_third_party = false;
         let mut open_url = None;
         let logo = self.app_logo_texture(ctx).cloned();
+        let graphics = system_info::graphics();
+        let copied = ctx.data(|data| data.get_temp::<f64>(copy_feedback_id()));
+        let now = ctx.input(|input| input.time);
+        let just_copied = copied.is_some_and(|at| now - at < COPY_FEEDBACK_SECONDS);
+        let mut copy_details = false;
 
         let modal_response = show_information_modal(
             ctx,
             egui::Id::new("occluview-about-dialog-v2"),
-            egui::vec2(320.0, 240.0),
+            egui::vec2(320.0, 282.0),
             &self.ui.locale.tr(message_id!("help-close")),
             |ui| {
                 ui.set_width(304.0_f32.min(ui.available_width()));
-                ui.vertical_centered(|ui| {
-                    if let Some(logo) = &logo {
-                        ui.add(egui::Image::new((logo.id(), egui::vec2(48.0, 48.0))));
-                    }
-                    ui.label(
-                        egui::RichText::new(self.ui.locale.text(message_id!("about-title")))
-                            .size(19.0)
-                            .strong()
-                            .color(ui_theme::text()),
-                    );
-                    ui.label(
-                        egui::RichText::new(self.ui.locale.text(message_id!("about-tagline")))
-                            .size(12.0)
-                            .color(ui_theme::text_weak()),
-                    );
-                    ui.add_space(4.0);
-                    ui.label(
-                        egui::RichText::new(self.ui.locale.text_with(
-                            message_id!("about-version"),
-                            Some(&crate::i18n::catalog::args(&[(
-                                "version",
-                                env!("CARGO_PKG_VERSION"),
-                            )])),
-                        ))
-                        .size(11.0)
-                        .color(ui_theme::text_muted()),
-                    );
-                });
+                about_header(ui, &self.ui.locale, logo.as_ref(), graphics);
 
                 ui.add_space(6.0);
                 ui.separator();
@@ -199,6 +178,8 @@ impl SceneContext<'_> {
                     }
                 });
                 ui.add_space(2.0);
+                copy_details |= copy_details_row(ui, &self.ui.locale, just_copied);
+                ui.add_space(2.0);
                 centered_about_row(ui, ABOUT_FOOTER_WIDTH, |ui| {
                     ui.label(
                         egui::RichText::new(self.ui.locale.tr(message_id!("about-license-kind")))
@@ -216,6 +197,14 @@ impl SceneContext<'_> {
             },
         );
 
+        if copy_details {
+            ctx.copy_text(system_info::details(env!("CARGO_PKG_VERSION"), graphics));
+            ctx.data_mut(|data| data.insert_temp(copy_feedback_id(), now));
+        }
+        if just_copied || copy_details {
+            // Take the confirmation back down once its time is up.
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(COPY_FEEDBACK_SECONDS));
+        }
         if let Some(url) = open_url {
             ctx.open_url(egui::OpenUrl::new_tab(url));
         }
@@ -225,6 +214,83 @@ impl SceneContext<'_> {
             self.ui.information_dialog = InformationDialog::None;
         }
     }
+}
+
+/// The logo, the name, what the program is for, and what it runs on.
+fn about_header(
+    ui: &mut egui::Ui,
+    locale: &crate::i18n::LocaleManager,
+    logo: Option<&egui::TextureHandle>,
+    graphics: Option<&str>,
+) {
+    ui.vertical_centered(|ui| {
+        if let Some(logo) = logo {
+            ui.add(egui::Image::new((logo.id(), egui::vec2(48.0, 48.0))));
+        }
+        ui.label(
+            egui::RichText::new(locale.text(message_id!("about-title")))
+                .size(19.0)
+                .strong()
+                .color(ui_theme::text()),
+        );
+        ui.label(
+            egui::RichText::new(locale.text(message_id!("about-tagline")))
+                .size(12.0)
+                .color(ui_theme::text_weak()),
+        );
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(locale.text_with(
+                message_id!("about-version"),
+                Some(&crate::i18n::catalog::args(&[(
+                    "version",
+                    env!("CARGO_PKG_VERSION"),
+                )])),
+            ))
+            .size(11.0)
+            .color(ui_theme::text_muted()),
+        );
+        if let Some(adapter) = graphics {
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(locale.text_with(
+                        message_id!("about-graphics"),
+                        Some(&crate::i18n::catalog::args(&[("adapter", adapter)])),
+                    ))
+                    .size(10.5)
+                    .color(ui_theme::text_muted()),
+                )
+                .truncate(),
+            );
+        }
+    });
+}
+
+/// The row that copies the system details; `true` on the frame it is clicked.
+fn copy_details_row(
+    ui: &mut egui::Ui,
+    locale: &crate::i18n::LocaleManager,
+    just_copied: bool,
+) -> bool {
+    let width = ABOUT_ACTION_WIDTH * 2.0 + ABOUT_ACTION_GAP;
+    let mut clicked = false;
+    centered_about_row(ui, width, |ui| {
+        let (key, icon) = if just_copied {
+            (message_id!("about-details-copied"), AppIcon::Check)
+        } else {
+            (message_id!("about-copy-details"), AppIcon::Export)
+        };
+        clicked = about_link(ui, width, icon, &locale.tr(key));
+    });
+    ui.add_space(2.0);
+    clicked
+}
+
+/// How long the copy button says it has copied.
+const COPY_FEEDBACK_SECONDS: f64 = 2.0;
+
+fn copy_feedback_id() -> egui::Id {
+    egui::Id::new("occluview-about-copy-feedback")
 }
 
 const ABOUT_ACTION_WIDTH: f32 = 132.0;

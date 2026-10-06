@@ -188,6 +188,9 @@ fn real_main() -> Result<()> {
             // here. It runs the same overlay body as the live path (see
             // `show_viewport_overlays`), so it stays current with the live
             // viewport.
+            if let Some(state) = cc.wgpu_render_state.as_ref() {
+                crate::desktop::system_info::note_graphics(&state.adapter.get_info());
+            }
             let live_viewport = cc.wgpu_render_state.as_ref().and_then(|state| {
                 match live_viewport::LiveViewport::from_render_state(state, live_sample_count) {
                     Ok(viewport) => Some(viewport),
