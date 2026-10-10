@@ -395,8 +395,8 @@ fn the_shared_ramp_defaults_to_absolute_deviation() {
 /// A ramp that never leaves its first stop looks like a correct one at the
 /// origin, so checking the ends is not enough: this walks the whole scale and
 /// requires the hue to actually pass through cyan, green and yellow on its
-/// way to red, and requires the two hot/cold channels to move
-/// monotonically so no stop is skipped or visited twice.
+/// way to red, and requires each 1 % step to move every channel only a little,
+/// so no stop is skipped and no band shows as a hard edge.
 #[test]
 fn the_magnitude_ramp_walks_blue_cyan_green_yellow_red_across_the_scale() {
     let ramp = RampSettings {
@@ -417,16 +417,20 @@ fn the_magnitude_ramp_walks_blue_cyan_green_yellow_red_across_the_scale() {
     );
     for step in 1..=100 {
         let color = at(f64::from(step) / 100.0);
-        // Red only ever rises and blue only ever falls across a magnitude
-        // ramp; a stop table walked in the wrong order would break this
-        // long before the ends looked wrong.
+        // The stops are softened on purpose, so red and blue are not monotonic
+        // across the whole scale. A sudden jump in any channel is what a
+        // skipped or mis-ordered stop would look like on screen.
+        let largest_jump = (0..3)
+            .map(|channel| i16::from(color[channel]).abs_diff(i16::from(previous[channel])))
+            .max()
+            .unwrap_or(0);
         assert!(
-            color[0] >= previous[0] && color[2] <= previous[2],
-            "the ramp doubled back at step {step}: {previous:?} then {color:?}"
+            largest_jump <= 8,
+            "the ramp jumps {largest_jump} levels at step {step}: {previous:?} then {color:?}"
         );
         cyan |= color[0] < 90 && color[1] > 160 && color[2] > 160;
         green |= color[1] > 180 && color[0] < 120 && color[2] < 120;
-        yellow |= color[0] > 200 && color[1] > 150 && color[2] < 80;
+        yellow |= color[0] > 200 && color[1] > 150 && color[2] < 100;
         red |= color[0] > 200 && color[1] < 90 && color[2] < 60;
         previous = color;
     }

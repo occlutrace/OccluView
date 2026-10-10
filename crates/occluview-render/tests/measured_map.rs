@@ -144,8 +144,8 @@ fn render_measured_dome(mesh: &Mesh) -> Vec<u8> {
 }
 
 /// Deviation ramp endpoints as defined by `occluview-align`.
-const COLD_END: [u8; 4] = [20, 105, 240, 255];
-const HOT_END: [u8; 4] = [240, 45, 20, 255];
+const COLD_END: [u8; 4] = [49, 111, 216, 255];
+const HOT_END: [u8; 4] = [222, 77, 57, 255];
 
 /// The colours that reach the screen are the colours that were uploaded.
 ///
@@ -198,9 +198,9 @@ fn a_swept_deviation_arrives_on_screen_as_a_transition() {
     let _gpu = gpu_test_lock();
     let stops = [
         COLD_END,
-        [20, 208, 240, 255],
-        [70, 232, 75, 255],
-        [240, 204, 28, 255],
+        [88, 204, 229, 255],
+        [109, 226, 108, 255],
+        [233, 205, 91, 255],
         HOT_END,
     ];
     let pixels = render_measured_dome(&ramped_dome_mesh(&stops));

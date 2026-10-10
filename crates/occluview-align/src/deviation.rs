@@ -241,26 +241,28 @@ impl Default for RampSettings {
 /// is nominal, red is oversize, so the two modes cannot disagree about what
 /// "0.2 mm out" looks like.
 ///
-/// The stops are saturated and bright, with enough of them that no hue change
-/// has to cross a long dull stretch: a ramp of five stops goes through a muddy
-/// blue-green and a flat yellow-orange, and every stop it turns at shows as a
-/// band across a smooth surface. Red only rises and blue only falls from the
-/// first stop to the last.
+/// The stops keep the lightness of the earlier ramp and about four fifths of
+/// its chroma, measured in Oklab. The full-chroma stops read as neon on a
+/// glossy enamel surface and every channel jumps between neighbours; the softer
+/// ones still separate cold, nominal and hot at a glance. Enough stops remain
+/// that no hue change has to cross a long dull stretch. Blue lifts slightly
+/// before it falls, and red dips a little at the hot end, so the ramp is
+/// smooth from stop to stop rather than strictly monotonic in each channel.
 ///
 /// No channel passes 240. The shader scales all three channels together by up
 /// to 1.05, and a channel already at 255 would clip there while the other two
 /// kept rising, which turns the hue the legend is read against. A channel at
 /// zero cannot vary with the light at all, so the low ones stay above it too.
 const MAGNITUDE_RAMP: [(f64, [u8; 3]); 9] = [
-    (0.0, [20, 105, 240]),
-    (0.12, [20, 160, 240]),
-    (0.25, [20, 208, 240]),
-    (0.37, [40, 226, 172]),
-    (0.5, [70, 232, 75]),
-    (0.62, [182, 232, 45]),
-    (0.75, [240, 204, 28]),
-    (0.87, [240, 130, 22]),
-    (1.0, [240, 45, 20]),
+    (0.0, [49, 111, 216]),
+    (0.12, [70, 159, 223]),
+    (0.25, [88, 204, 229]),
+    (0.37, [97, 220, 177]),
+    (0.5, [109, 226, 108]),
+    (0.62, [188, 229, 99]),
+    (0.75, [233, 205, 91]),
+    (0.87, [226, 139, 70]),
+    (1.0, [222, 77, 57]),
 ];
 
 /// Measure every moving vertex against the fixed surface under `pose`.
