@@ -1150,6 +1150,101 @@ fn smooth_reduces_the_curvature_of_a_synthetic_spike() {
     );
 }
 
+/// A square post with vertical walls on a flat sheet, the shape of a scan
+/// marker. The sheet has no vertices under the post, so its walls are real
+/// vertical faces rather than a steep step in a heightfield. Returns the
+/// session with the vertex id of the post's top rim and of its top centre.
+fn post_session(half: isize, post: isize, spacing: f64, height: f64) -> (SculptSession, u32, u32) {
+    use std::collections::HashMap;
+    fn vertex(
+        ids: &mut HashMap<(isize, isize, bool), u32>,
+        verts: &mut Vec<f32>,
+        key: (isize, isize, bool),
+        spacing: f64,
+        height: f64,
+    ) -> u32 {
+        *ids.entry(key).or_insert_with(|| {
+            let (i, j, top) = key;
+            let z = if top { height } else { 0.0 };
+            let id = (verts.len() / 3) as u32;
+            verts.extend_from_slice(&[
+                (i as f64 * spacing) as f32,
+                (j as f64 * spacing) as f32,
+                z as f32,
+            ]);
+            id
+        })
+    }
+    let inside = |i: isize, j: isize| (-post..post).contains(&i) && (-post..post).contains(&j);
+    let mut ids = HashMap::new();
+    let mut verts = Vec::new();
+    let mut tris = Vec::new();
+    for j in -half..half {
+        for i in -half..half {
+            let top = inside(i, j);
+            let a = vertex(&mut ids, &mut verts, (i, j, top), spacing, height);
+            let b = vertex(&mut ids, &mut verts, (i + 1, j, top), spacing, height);
+            let c = vertex(&mut ids, &mut verts, (i, j + 1, top), spacing, height);
+            let d = vertex(&mut ids, &mut verts, (i + 1, j + 1, top), spacing, height);
+            tris.extend_from_slice(&[a, b, d, a, d, c]);
+        }
+    }
+    // Each footprint edge joins the sheet below to the cap above. The winding
+    // is chosen so every wall faces out of the post.
+    let mut walls = Vec::new();
+    for k in -post..post {
+        walls.push(((k, -post), (k + 1, -post), (0.0, -1.0)));
+        walls.push(((k + 1, post), (k, post), (0.0, 1.0)));
+        walls.push(((-post, k + 1), (-post, k), (-1.0, 0.0)));
+        walls.push(((post, k), (post, k + 1), (1.0, 0.0)));
+    }
+    for (p, q, outward) in walls {
+        let bp = vertex(&mut ids, &mut verts, (p.0, p.1, false), spacing, height);
+        let bq = vertex(&mut ids, &mut verts, (q.0, q.1, false), spacing, height);
+        let tp = vertex(&mut ids, &mut verts, (p.0, p.1, true), spacing, height);
+        let tq = vertex(&mut ids, &mut verts, (q.0, q.1, true), spacing, height);
+        // The normal of this quad is the edge direction turned by 90 degrees.
+        let (dx, dy) = ((q.0 - p.0) as f64, (q.1 - p.1) as f64);
+        let facing = dy * outward.0 - dx * outward.1;
+        if facing >= 0.0 {
+            tris.extend_from_slice(&[bp, bq, tq, bp, tq, tp]);
+        } else {
+            tris.extend_from_slice(&[bp, tq, bq, bp, tp, tq]);
+        }
+    }
+    let rim = ids[&(post, 0, true)];
+    let centre = ids[&(0, 0, true)];
+    let session = SculptSession::new(verts, tris).expect("valid post fixture");
+    (session, rim, centre)
+}
+
+#[test]
+fn smooth_brings_a_post_wall_down_instead_of_leaving_a_well() {
+    let (mut session, rim, centre) = post_session(12, 3, 0.25, 2.0);
+    let height =
+        |session: &SculptSession, vertex: u32| session.group_v(session.topology.group_of(vertex)).z;
+    let (rim_before, centre_before) = (height(&session, rim), height(&session, centre));
+    // The operator presses on the post's top, so the brush sits there.
+    let dab = Dab {
+        center: DVec3::new(0.0, 0.0, 2.0),
+        ..centered_dab(2.0, BrushMode::Smooth, 1.0)
+    };
+    for _ in 0..18 {
+        assert!(!session.dab(&dab).is_empty());
+    }
+    let (rim_after, centre_after) = (height(&session, rim), height(&session, centre));
+    assert!(
+        rim_after < rim_before - 0.5,
+        "the post's top rim stayed at {rim_after} (was {rim_before}); the walls did not come down"
+    );
+    // A well is the centre sinking under a rim that stays up.
+    assert!(
+        centre_after > rim_after - 0.5,
+        "a well: the centre fell to {centre_after} under a rim at {rim_after}"
+    );
+    assert!(centre_before > centre_after);
+}
+
 #[test]
 fn knife_displacement_follows_its_stroke_axis() {
     let mut session = grid_session(10, 0.5, 0.0);
