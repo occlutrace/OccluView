@@ -18,10 +18,11 @@ use crate::{DeviationMap, Soup, Validity};
 
 /// Neighbour-averaging passes applied to the displayed map.
 ///
-/// An intraoral scan has a vertex every tenth of a millimetre or so, so three
-/// passes reach about a third of a millimetre: it removes single-vertex noise
-/// and leaves any deviation a clinician would act on, which spans millimetres.
-pub const DISPLAY_PASSES: usize = 3;
+/// An intraoral scan has a vertex every tenth of a millimetre or so, so six
+/// passes reach about two thirds of a millimetre: they take out the single-vertex
+/// and triangle-sized variation that reads as a mosaic, and leave any deviation a
+/// clinician would act on, which spans millimetres.
+pub const DISPLAY_PASSES: usize = 6;
 
 /// A copy of `map` with each measured value averaged with its measured
 /// neighbours [`DISPLAY_PASSES`] times.
