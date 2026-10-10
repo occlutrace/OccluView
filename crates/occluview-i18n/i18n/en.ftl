@@ -123,6 +123,7 @@ toolbar-add-hint = Add more files to the current scene
 toolbar-cut-label = Cut View
 toolbar-cut-hint = Slice the model along a plane ({ $shortcut })
 toolbar-cut-unavailable = Cut View needs a visible layer
+cut-blocked-by-edit = Finish Mesh Editing before opening Cut View
 toolbar-ruler-label = Ruler
 toolbar-ruler-hint = Measure a distance: click two points on the model ({ $shortcut })
 toolbar-thickness-label = Thickness

@@ -121,6 +121,7 @@ toolbar-add-hint = Adicionar arquivos à cena
 toolbar-cut-label = Vista de corte
 toolbar-cut-hint = Cortar o modelo por um plano ({ $shortcut })
 toolbar-cut-unavailable = O corte precisa de uma camada visível
+cut-blocked-by-edit = Conclua a edição da malha antes de abrir o corte
 toolbar-ruler-label = Régua
 toolbar-ruler-hint = Medir distância: dois pontos no modelo ({ $shortcut })
 toolbar-thickness-label = Espessura

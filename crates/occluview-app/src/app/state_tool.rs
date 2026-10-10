@@ -37,6 +37,14 @@ pub(super) enum ViewportTool {
 }
 
 impl SceneContext<'_> {
+    /// Whether an open editing session, sculpt tool or alignment must stay as
+    /// it is, which rules out Cut View until they are finished or cancelled.
+    fn editing_blocks_cut_view(&self) -> bool {
+        self.document.edit_mode.has_active_session()
+            || self.tools.sculpt.armed.is_some()
+            || self.align_active()
+    }
+
     /// Release the previous viewport owner before a new tool is armed.
     pub(super) fn prepare_viewport_tool_entry(
         &mut self,
@@ -48,6 +56,18 @@ impl SceneContext<'_> {
                 self.ui
                     .locale
                     .tr(crate::i18n::message_id!("repair-edit-busy")),
+            );
+            ctx.request_repaint();
+            return false;
+        }
+        // Cut View cannot share the viewport with an open editing session, and
+        // entering it must not end that session or drop its sculpt state behind
+        // the operator's back. Refuse, say why, and leave the session as it was.
+        if next == ViewportTool::Cut && self.editing_blocks_cut_view() {
+            self.scene_ui.status_message = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("cut-blocked-by-edit")),
             );
             ctx.request_repaint();
             return false;

@@ -120,6 +120,7 @@ toolbar-add-hint = Weitere Dateien zur Szene hinzufügen
 toolbar-cut-label = Schnittansicht
 toolbar-cut-hint = Modell entlang einer Ebene schneiden ({ $shortcut })
 toolbar-cut-unavailable = Schnittansicht braucht eine sichtbare Ebene
+cut-blocked-by-edit = Netzbearbeitung zuerst abschließen, dann Schnittansicht öffnen
 toolbar-ruler-label = Lineal
 toolbar-ruler-hint = Abstand messen: zwei Punkte auf dem Modell ({ $shortcut })
 toolbar-thickness-label = Dicke

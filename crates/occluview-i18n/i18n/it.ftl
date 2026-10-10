@@ -120,6 +120,7 @@ toolbar-add-hint = Aggiungi file alla scena
 toolbar-cut-label = Vista in sezione
 toolbar-cut-hint = Seziona il modello su un piano ({ $shortcut })
 toolbar-cut-unavailable = La sezione vuole un livello visibile
+cut-blocked-by-edit = Termina la modifica della mesh prima di aprire la sezione
 toolbar-ruler-label = Righello
 toolbar-ruler-hint = Misura una distanza: due punti sul modello ({ $shortcut })
 toolbar-thickness-label = Spessore

@@ -120,6 +120,7 @@ toolbar-add-hint = Добавить файлы в текущую сцену
 toolbar-cut-label = Сечение
 toolbar-cut-hint = Рассечь модель плоскостью ({ $shortcut })
 toolbar-cut-unavailable = Для сечения нужен видимый слой
+cut-blocked-by-edit = Сначала завершите редактирование сетки, потом откройте сечение
 toolbar-ruler-label = Линейка
 toolbar-ruler-hint = Измерить расстояние: две точки на модели ({ $shortcut })
 toolbar-thickness-label = Толщина

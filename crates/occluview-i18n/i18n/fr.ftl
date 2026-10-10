@@ -120,6 +120,7 @@ toolbar-add-hint = Ajouter des fichiers à la scène
 toolbar-cut-label = Vue en coupe
 toolbar-cut-hint = Couper le modèle par un plan ({ $shortcut })
 toolbar-cut-unavailable = La coupe exige un calque visible
+cut-blocked-by-edit = Terminez l'édition du maillage avant d'ouvrir la coupe
 toolbar-ruler-label = Règle
 toolbar-ruler-hint = Mesurer une distance : deux points sur le modèle ({ $shortcut })
 toolbar-thickness-label = Épaisseur
