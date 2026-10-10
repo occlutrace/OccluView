@@ -1041,7 +1041,7 @@ mod input_tests {
     }
 
     #[test]
-    fn entering_a_viewport_tool_finishes_edit_selection() -> anyhow::Result<()> {
+    fn entering_a_viewport_tool_finishes_edit_selection_except_cut_view() -> anyhow::Result<()> {
         for ((tool, shortcut), route) in [
             ("align", egui::Key::A),
             ("cut", egui::Key::C),
@@ -1074,6 +1074,19 @@ mod input_tests {
                 )?,
             }
             let scene = &app.workspace.scenes[0];
+            if tool == "cut" {
+                // Cut View is refused while an edit is open. The session stays
+                // in place, so the pending selection is neither applied nor lost.
+                assert!(
+                    scene.document.edit_mode.has_active_session(),
+                    "Edit -> cut: the refused Cut View must leave the session open"
+                );
+                assert!(
+                    !scene.tools.cut_view.is_active(),
+                    "Edit -> cut: Cut View must not enter over an open session"
+                );
+                continue;
+            }
             assert!(
                 !scene.document.edit_mode.has_active_session(),
                 "Edit -> {tool}: checkpoint remains open"
@@ -1087,7 +1100,6 @@ mod input_tests {
             assert!(
                 match tool {
                     "align" => scene.tools.align.tool.is_armed(),
-                    "cut" => scene.tools.cut_view.is_active(),
                     _ => scene.tools.measure.is_active(),
                 },
                 "Edit -> {tool}: requested tool never entered"

@@ -831,7 +831,7 @@ mod tests {
     }
 
     #[test]
-    fn toolbar_shortcuts_finish_idle_editing_and_preserve_busy_editing() -> anyhow::Result<()> {
+    fn toolbar_shortcuts_finish_idle_editing_except_for_cut_view() -> anyhow::Result<()> {
         for (key, busy) in [egui::Key::M, egui::Key::T, egui::Key::A, egui::Key::C]
             .into_iter()
             .flat_map(|key| [(key, false), (key, true)])
@@ -881,11 +881,13 @@ mod tests {
                 !busy && matches!(key, egui::Key::M | egui::Key::T)
             );
             assert_eq!(scene.align_active(), !busy && key == egui::Key::A);
+            // Cut View is refused while any editing session is open, and the
+            // refusal must leave that session in place rather than apply it.
+            assert!(!scene.tools.cut_view.is_active());
             assert_eq!(
-                scene.tools.cut_view.is_active(),
-                !busy && key == egui::Key::C
+                scene.document.edit_mode.has_active_session(),
+                busy || key == egui::Key::C
             );
-            assert_eq!(scene.document.edit_mode.has_active_session(), busy);
             assert_eq!(scene.document.edit_mode.is_busy(), busy);
         }
         Ok(())
