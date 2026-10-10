@@ -14,7 +14,7 @@ settings-language-catalog-fallback = { $tag } não está disponível; o inglês 
 settings-language-save-error = Não deu para salvar o idioma. Tentando de novo…
 
 about-title = Sobre o OccluView
-about-tagline = Reparo de malhas · Edição para CAD odontológico
+about-tagline = Visualização, alinhamento e edição de malhas para escaneamentos odontológicos
 about-version = Versão { $version }
 
 update-available-title = Atualização disponível
@@ -121,6 +121,7 @@ toolbar-add-hint = Adicionar arquivos à cena
 toolbar-cut-label = Vista de corte
 toolbar-cut-hint = Cortar o modelo por um plano ({ $shortcut })
 toolbar-cut-unavailable = O corte precisa de uma camada visível
+cut-blocked-by-edit = Conclua a edição da malha antes de abrir o corte
 toolbar-ruler-label = Régua
 toolbar-ruler-hint = Medir distância: dois pontos no modelo ({ $shortcut })
 toolbar-thickness-label = Espessura
@@ -594,6 +595,9 @@ about-website = Site
 about-source = Código
 about-licenses = Licenças de terceiros
 about-license-kind = Licença Apache 2.0
+about-graphics = Gráficos: { $adapter }
+about-copy-details = Copiar detalhes do sistema
+about-details-copied = Copiado
 
 ## Mesh-edit operations, undo/redo, sculpt, measure, cut ruler, scene menu — DRAFT.
 

@@ -233,34 +233,36 @@ impl Default for RampSettings {
     }
 }
 
-/// Signed stops from `-1` to `+1`. Blue is undersize, green is nominal, red is
-/// oversize — the convention every metrology package shares.
+/// The false-colour ramp, from `0` (surfaces agree) to `1` (the display scale):
+/// cool where they agree, hot where they do not. This is the bar a lab operator
+/// reads without having to work out which side of the surface a colour means.
 ///
-/// The stops keep a little headroom off the pure channel extremes so shading
-/// has something to modulate — a blue whose red channel is exactly zero cannot
-/// vary with the light at all, and the surface comes out as a flat coloured
-/// silhouette with no readable form.
-const SIGNED_RAMP: [(f64, [u8; 3]); 5] = [
-    (-1.0, [20, 50, 235]),
-    (-0.5, [20, 170, 235]),
-    (0.0, [40, 200, 70]),
-    (0.5, [250, 205, 20]),
-    (1.0, [252, 30, 18]),
-];
-
-/// Magnitude stops from `0` to `1`: cool where the surfaces agree, hot where
-/// they do not. This is the false-colour bar a lab operator reads without
-/// having to work out which side of the surface a colour means.
+/// The signed mode reads the same table over `-1..=1`: blue is undersize, green
+/// is nominal, red is oversize, so the two modes cannot disagree about what
+/// "0.2 mm out" looks like.
 ///
-/// Same stops as the signed ramp, folded onto one side — two ramps that
-/// disagreed about what "0.2 mm out" looks like would make the mode switch
-/// change the reading rather than the question.
-const MAGNITUDE_RAMP: [(f64, [u8; 3]); 5] = [
-    (0.0, [20, 50, 235]),
-    (0.25, [20, 170, 235]),
-    (0.5, [40, 200, 70]),
-    (0.75, [250, 205, 20]),
-    (1.0, [252, 30, 18]),
+/// The stops keep the lightness of the earlier ramp and about four fifths of
+/// its chroma, measured in Oklab. The full-chroma stops read as neon on a
+/// glossy enamel surface and every channel jumps between neighbours; the softer
+/// ones still separate cold, nominal and hot at a glance. Enough stops remain
+/// that no hue change has to cross a long dull stretch. Blue lifts slightly
+/// before it falls, and red dips a little at the hot end, so the ramp is
+/// smooth from stop to stop rather than strictly monotonic in each channel.
+///
+/// No channel passes 240. The shader scales all three channels together by up
+/// to 1.05, and a channel already at 255 would clip there while the other two
+/// kept rising, which turns the hue the legend is read against. A channel at
+/// zero cannot vary with the light at all, so the low ones stay above it too.
+const MAGNITUDE_RAMP: [(f64, [u8; 3]); 9] = [
+    (0.0, [49, 111, 216]),
+    (0.12, [70, 159, 223]),
+    (0.25, [88, 204, 229]),
+    (0.37, [97, 220, 177]),
+    (0.5, [109, 226, 108]),
+    (0.62, [188, 229, 99]),
+    (0.75, [233, 205, 91]),
+    (0.87, [226, 139, 70]),
+    (1.0, [222, 77, 57]),
 ];
 
 /// Measure every moving vertex against the fixed surface under `pose`.
@@ -503,19 +505,20 @@ pub fn ramp_color(value_mm: f64, ramp: &RampSettings) -> [u8; 4] {
         let quantum = f64::from(bands);
         position = ((position * quantum).floor() / quantum).clamp(0.0, 1.0);
     }
-    let (ramp_stops, position) = match ramp.mode {
-        RampMode::Magnitude => (&MAGNITUDE_RAMP, position),
-        RampMode::Signed => (&SIGNED_RAMP, position.copysign(value_mm)),
+    let position = match ramp.mode {
+        RampMode::Magnitude => position,
+        // Signed deviation spans the table with zero at its green centre.
+        RampMode::Signed => f64::midpoint(position.copysign(value_mm), 1.0),
     };
-    let [red, green, blue] = sample_ramp(ramp_stops, position);
+    let [red, green, blue] = sample_ramp(&MAGNITUDE_RAMP, position);
     [red, green, blue, 255]
 }
 
 /// Linear interpolation through a stop table.
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-fn sample_ramp(stops: &[(f64, [u8; 3]); 5], position: f64) -> [u8; 3] {
+fn sample_ramp(stops: &[(f64, [u8; 3])], position: f64) -> [u8; 3] {
     let mut low = stops[0];
-    for stop in *stops {
+    for stop in stops.iter().copied() {
         if position >= stop.0 {
             low = stop;
         }

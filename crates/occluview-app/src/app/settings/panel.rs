@@ -448,15 +448,12 @@ fn section_break(ui: &mut egui::Ui) {
     ui.add_space(1.0);
 }
 
-const NUMERIC_LABEL_WIDTH: f32 = 96.0;
+/// Width kept for a slider's readout, at the right end of its label line.
 const NUMERIC_VALUE_WIDTH: f32 = 48.0;
-const NUMERIC_SLIDER_MIN_WIDTH: f32 = 72.0;
-
-/// Labels and readouts stay aligned while the slider takes remaining width.
-fn numeric_slider_width(available_width: f32, item_spacing: f32) -> f32 {
-    (available_width - NUMERIC_LABEL_WIDTH - NUMERIC_VALUE_WIDTH - item_spacing * 2.0)
-        .max(NUMERIC_SLIDER_MIN_WIDTH)
-}
+/// Room left at the two ends of a slider for its thumb.
+const SLIDER_END_ROOM: f32 = 10.0;
+/// Height of the label line above a slider.
+const NUMERIC_LABEL_HEIGHT: f32 = 16.0;
 
 /// Numeric slider row with immediate preview.
 #[allow(clippy::too_many_arguments)]
@@ -520,47 +517,72 @@ fn slider_f32_row_inner(
     make: impl Fn(f32, bool) -> SettingsAction,
 ) {
     let row_width = ui.available_width();
-    ui.allocate_ui_with_layout(
-        egui::vec2(row_width, ROW_HEIGHT),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            let spacing = ui.spacing().item_spacing.x;
-            let label_response = ui.add_sized(
-                [NUMERIC_LABEL_WIDTH, 20.0],
-                egui::Label::new(egui::RichText::new(label).size(11.5)).truncate(),
-            );
-            label_response.on_hover_text(tooltip);
-
-            let mut edit = value;
-            let slider_response = ui.add_sized(
-                [numeric_slider_width(row_width, spacing), 20.0],
+    // The label has a line to itself and the slider the full width beneath it:
+    // a word in any language fits, where a column of fixed width cut the longer
+    // ones short.
+    let (label_line, _) = ui.allocate_exact_size(
+        egui::vec2(row_width, NUMERIC_LABEL_HEIGHT),
+        egui::Sense::hover(),
+    );
+    let mut edit = value;
+    // A slider takes its length from the style, not from the room it is given.
+    let slider_response = ui
+        .scope(|ui| {
+            ui.spacing_mut().slider_width = row_width - SLIDER_END_ROOM;
+            ui.add_sized(
+                [row_width, 20.0],
                 egui::Slider::new(&mut edit, range)
                     .show_value(false)
                     .step_by(0.05)
                     .trailing_fill(true),
-            );
-            crate::ui::accessibility::slider(&slider_response, label, true, f64::from(edit));
-            let changed = slider_response.changed();
-            let pointer_down = slider_response.is_pointer_button_down_on();
-            let drag_stopped = slider_response.drag_stopped();
-            slider_response.on_hover_text(tooltip);
-            if changed || (defer_pointer_commit && drag_stopped) {
-                let commit = !defer_pointer_commit || !pointer_down || drag_stopped;
-                *action = Some(make(edit, commit));
-            }
+            )
+        })
+        .inner;
+    crate::ui::accessibility::slider(&slider_response, label, true, f64::from(edit));
+    let changed = slider_response.changed();
+    let pointer_down = slider_response.is_pointer_button_down_on();
+    let drag_stopped = slider_response.drag_stopped();
+    slider_response.on_hover_text(tooltip);
+    if changed || (defer_pointer_commit && drag_stopped) {
+        let commit = !defer_pointer_commit || !pointer_down || drag_stopped;
+        *action = Some(make(edit, commit));
+    }
 
-            ui.add_sized(
-                [NUMERIC_VALUE_WIDTH, 20.0],
-                egui::Label::new(
-                    egui::RichText::new(format!("{edit:.2}{suffix}"))
-                        .size(11.0)
-                        .color(ui_theme::text_muted()),
-                )
-                .halign(egui::Align::RIGHT)
-                .truncate(),
-            );
-        },
+    // Drawn after the slider so the readout follows the thumb in the same frame.
+    let readout = egui::Rect::from_min_max(
+        egui::pos2(label_line.max.x - NUMERIC_VALUE_WIDTH, label_line.min.y),
+        label_line.max,
     );
+    let caption = egui::Rect::from_min_max(
+        label_line.min,
+        egui::pos2(
+            readout.min.x - ui.spacing().item_spacing.x,
+            label_line.max.y,
+        ),
+    );
+    // Children, not scopes: a scope would move the layout cursor back up to the
+    // label line the slider already sits below.
+    ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(caption)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    )
+    .add(egui::Label::new(egui::RichText::new(label).size(11.5)).truncate())
+    .on_hover_text(tooltip);
+    ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(readout)
+            .layout(egui::Layout::right_to_left(egui::Align::Center)),
+    )
+    .add(
+        egui::Label::new(
+            egui::RichText::new(format!("{edit:.2}{suffix}"))
+                .size(11.0)
+                .color(ui_theme::text_muted()),
+        )
+        .truncate(),
+    );
+    ui.add_space(2.0);
 }
 
 fn background_key(option: ViewportBackground) -> crate::i18n::MessageId {

@@ -13,7 +13,7 @@ settings-language-catalog-fallback = { $tag } non è disponibile; viene usato l�
 settings-language-save-error = Lingua non salvata. Riprovo…
 
 about-title = Su OccluView
-about-tagline = Riparazione mesh · Editing per il CAD dentale
+about-tagline = Visualizzazione, allineamento e modifica mesh per scansioni dentali
 about-version = Versione { $version }
 
 update-available-title = Aggiornamento disponibile
@@ -120,6 +120,7 @@ toolbar-add-hint = Aggiungi file alla scena
 toolbar-cut-label = Vista in sezione
 toolbar-cut-hint = Seziona il modello su un piano ({ $shortcut })
 toolbar-cut-unavailable = La sezione vuole un livello visibile
+cut-blocked-by-edit = Termina la modifica della mesh prima di aprire la sezione
 toolbar-ruler-label = Righello
 toolbar-ruler-hint = Misura una distanza: due punti sul modello ({ $shortcut })
 toolbar-thickness-label = Spessore
@@ -592,6 +593,9 @@ about-website = Sito web
 about-source = Sorgenti
 about-licenses = Licenze di terze parti
 about-license-kind = Licenza Apache 2.0
+about-graphics = Grafica: { $adapter }
+about-copy-details = Copia i dettagli di sistema
+about-details-copied = Copiato
 
 ## Mesh-edit operations, undo/redo, sculpt, measure, cut ruler, scene menu — DRAFT.
 

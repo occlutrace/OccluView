@@ -1,18 +1,20 @@
 //! Recover shared topology from STL-style triangle soups.
 //!
-//! Exact payload welding (position bits, color, and UV) restores exporter-authored
+//! Exact payload welding (position bits and color) restores exporter-authored
 //! shared corners without merging distinct points. Position-only welding serves
 //! the callers that compare geometry without attributes.
 
 use super::{EditVertex, MeshEditBuffers, MeshEditError};
 
-/// Full-payload weld key for soup recovery: exact position bits + color + uv
-/// bits. STL and other soup formats write byte-identical coordinates for a
-/// shared corner, so an exact key merges exactly the true duplicates and can
-/// never fuse two genuinely distinct points. Normals are excluded: a shared
-/// corner carries a different per-face normal in each incident triangle,
-/// yet is the same topological vertex.
-type SoupWeldKey = ([u32; 3], [u8; 4], [u32; 2]);
+/// Full-payload weld key for soup recovery: exact position bits + color. STL
+/// and other soup formats write byte-identical coordinates for a shared
+/// corner, so an exact key merges exactly the true duplicates and can never
+/// fuse two genuinely distinct points. Normals are excluded: a shared corner
+/// carries a different per-face normal in each incident triangle, yet is the
+/// same topological vertex. Texture coordinates are excluded for the same
+/// reason: a texture seam copies a vertex once per coordinate, and the copies
+/// are one point of one surface.
+type SoupWeldKey = ([u32; 3], [u8; 4]);
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum TopologyWeldPolicy {
@@ -51,11 +53,7 @@ pub(crate) fn indexed_topology(mesh: &MeshEditBuffers) -> CanonicalTopology {
 }
 
 fn soup_weld_key(vertex: &EditVertex) -> SoupWeldKey {
-    (
-        canonical_position_key(vertex.position),
-        vertex.color,
-        [vertex.uv[0].to_bits(), vertex.uv[1].to_bits()],
-    )
+    (canonical_position_key(vertex.position), vertex.color)
 }
 
 pub(crate) fn canonical_position_key(position: [f32; 3]) -> [u32; 3] {

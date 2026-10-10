@@ -463,7 +463,10 @@ fn fs_main(
     // but no light at all leaves a flat silhouette with no readable form — and
     // a heat map you cannot read the shape of tells you nothing about a scan.
     if (mesh_uniform.measured_map != 0u) {
-        let gloss = 0.75 * tight_specular + 0.25 * broad_specular;
+        // One soft, wide sheen. A tight lobe turns every facet of a noisy scan
+        // normal into its own glint, which is what made the map read as a field
+        // of triangles; a wide lobe reads as the glaze of a glossy surface.
+        let gloss = pow(half_dot, 12.0);
         let map_form = clamp(
             lit + MEASURED_MAP_FORM * fresnel + MEASURED_MAP_GLOSS * gloss,
             0.78,

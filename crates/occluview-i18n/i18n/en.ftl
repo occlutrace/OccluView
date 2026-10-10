@@ -15,7 +15,7 @@ settings-language-catalog-fallback = { $tag } is not available; using English.
 settings-language-save-error = Language preference could not be saved. Retrying…
 
 about-title = About OccluView
-about-tagline = Mesh Repair · Mesh Editing for dental CAD
+about-tagline = Dental scan viewer, alignment and mesh editing
 about-version = Version { $version }
 
 update-available-title = Update available
@@ -123,6 +123,7 @@ toolbar-add-hint = Add more files to the current scene
 toolbar-cut-label = Cut View
 toolbar-cut-hint = Slice the model along a plane ({ $shortcut })
 toolbar-cut-unavailable = Cut View needs a visible layer
+cut-blocked-by-edit = Finish Mesh Editing before opening Cut View
 toolbar-ruler-label = Ruler
 toolbar-ruler-hint = Measure a distance: click two points on the model ({ $shortcut })
 toolbar-thickness-label = Thickness
@@ -598,6 +599,9 @@ about-website = Website
 about-source = Source
 about-licenses = Third-party licenses
 about-license-kind = Apache License 2.0
+about-graphics = Graphics: { $adapter }
+about-copy-details = Copy system details
+about-details-copied = Copied
 
 ## Mesh-edit operations, undo/redo, sculpt, measure, cut ruler, scene menu.
 

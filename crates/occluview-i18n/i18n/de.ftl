@@ -13,7 +13,7 @@ settings-language-catalog-fallback = { $tag } ist nicht verfügbar; Englisch wir
 settings-language-save-error = Spracheinstellung konnte nicht gespeichert werden. Neuer Versuch…
 
 about-title = Über OccluView
-about-tagline = Netzreparatur · Mesh-Bearbeitung für Dental-CAD
+about-tagline = Betrachter, Ausrichtung und Netzbearbeitung für Dentalscans
 about-version = Version { $version }
 
 update-available-title = Update verfügbar
@@ -120,6 +120,7 @@ toolbar-add-hint = Weitere Dateien zur Szene hinzufügen
 toolbar-cut-label = Schnittansicht
 toolbar-cut-hint = Modell entlang einer Ebene schneiden ({ $shortcut })
 toolbar-cut-unavailable = Schnittansicht braucht eine sichtbare Ebene
+cut-blocked-by-edit = Netzbearbeitung zuerst abschließen, dann Schnittansicht öffnen
 toolbar-ruler-label = Lineal
 toolbar-ruler-hint = Abstand messen: zwei Punkte auf dem Modell ({ $shortcut })
 toolbar-thickness-label = Dicke
@@ -592,6 +593,9 @@ about-website = Website
 about-source = Quellcode
 about-licenses = Drittlizenzen
 about-license-kind = Apache License 2.0
+about-graphics = Grafik: { $adapter }
+about-copy-details = Systemdetails kopieren
+about-details-copied = Kopiert
 
 ## Mesh-edit operations, undo/redo, sculpt, measure, cut ruler, scene menu — DRAFT.
 

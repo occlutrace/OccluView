@@ -490,10 +490,17 @@ mod tests {
             first, last,
             "a mirrored bar has the same colour at both ends"
         );
+        // The stops are softened, so red and blue are not strictly monotonic
+        // along the bar. Adjacent swatches must still step smoothly: a
+        // mirrored or mis-ordered bar shows up as a hard jump between them.
         for pair in bar.windows(2) {
+            let largest_jump = (0..3)
+                .map(|channel| i16::from(pair[1][channel]).abs_diff(i16::from(pair[0][channel])))
+                .max()
+                .unwrap_or(0);
             assert!(
-                pair[1][0] >= pair[0][0] && pair[1][2] <= pair[0][2],
-                "the bar doubled back: {:?} then {:?}",
+                largest_jump <= 12,
+                "the bar jumps {largest_jump} levels: {:?} then {:?}",
                 pair[0],
                 pair[1]
             );

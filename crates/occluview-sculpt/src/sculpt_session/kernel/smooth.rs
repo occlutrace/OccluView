@@ -2,6 +2,11 @@
 
 use super::*;
 
+/// How far, as a fraction of its own length, a neighbour may sit off the tangent
+/// plane before the surface there counts as a crease. A flat or gently curved
+/// patch stays well under this; a 90-degree edge sits at one.
+const CREASE_OFFSET_RATIO: f64 = 0.25;
+
 /// Borrowed view of the live welded surface for the uniform operator: one
 /// vertex per welded group, neighbours borrowed from the topology.
 struct GroupSurface<'a> {
@@ -101,12 +106,17 @@ impl SculptSession {
 
         // Smooth changes shape. Tangential motion belongs to live remesh;
         // the native common layer guard decides which field is safe to write.
+        // A crease is shape, so its full motion is kept (see `is_crease`).
         let mut proposals = std::mem::take(&mut self.proposals);
         proposals.clear();
         for &(group, target) in &targets {
             let here = self.group_v(group);
             let normal = self.group_n(group).normalize_or_zero();
-            let target = here + normal * (target - here).dot(normal);
+            let target = if self.is_crease(group, here, normal) {
+                target
+            } else {
+                here + normal * (target - here).dot(normal)
+            };
             if (target - here).length() > 1e-15 {
                 proposals.push((group, target));
             }
@@ -114,5 +124,20 @@ impl SculptSession {
         self.commit_even_layer(&proposals, BrushMode::Smooth);
         self.proposals = proposals;
         self.weights = weighted;
+    }
+
+    /// Whether the surface bends sharply at `group`.
+    ///
+    /// On a smooth patch the uniform Laplacian's in-plane part is sliding: the
+    /// normal projection drops it, and that keeps a flat patch from drifting.
+    /// At a crease the same projection drops the descent of a rim, so a
+    /// scan-marker post keeps its top while its walls stand, and the surface
+    /// sinks into a well. A crease is shape, so it moves in full.
+    fn is_crease(&self, group: u32, here: DVec3, normal: DVec3) -> bool {
+        self.topology.neighbors(group).iter().any(|&neighbor| {
+            let offset = self.group_v(neighbor) - here;
+            let distance = offset.length();
+            distance > 0.0 && offset.dot(normal).abs() > CREASE_OFFSET_RATIO * distance
+        })
     }
 }
