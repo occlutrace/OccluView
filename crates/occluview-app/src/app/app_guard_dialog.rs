@@ -53,7 +53,11 @@ pub(super) fn show_guard_dialog(
                     AppIcon::Warn,
                     ui_theme::warning(),
                 );
-                ui.label(egui::RichText::new(spec.headline).strong());
+                ui.label(
+                    egui::RichText::new(spec.headline)
+                        .strong()
+                        .color(ui_theme::text()),
+                );
             });
             if let Some(note) = spec.note {
                 ui.label(note);
