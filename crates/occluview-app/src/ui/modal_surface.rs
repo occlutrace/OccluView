@@ -88,6 +88,11 @@ pub(crate) fn show_information_modal<T>(
             |ui| {
                 frame
                     .show(ui, |ui| {
+                        // Dialog content sits on our explicit window surface,
+                        // so plain labels must use the matching chrome ink
+                        // even when the active button ink is tuned for an
+                        // accent fill.
+                        ui.visuals_mut().override_text_color = Some(ui_theme::text());
                         ui.set_width((preferred_size.x - 40.0).max(0.0));
                         ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
                         ui.style_mut().interaction.selectable_labels = false;

@@ -699,8 +699,13 @@ impl SceneContext<'_> {
             |ui| {
                 ui_theme::dialog_header(ui, &error.title, AppIcon::Error);
                 ui.add(
-                    egui::Label::new(egui::RichText::new(&error.summary).strong().size(13.5))
-                        .wrap(),
+                    egui::Label::new(
+                        egui::RichText::new(&error.summary)
+                            .strong()
+                            .size(13.5)
+                            .color(ui_theme::text()),
+                    )
+                    .wrap(),
                 );
                 ui.add_space(8.0);
                 egui::ScrollArea::vertical()

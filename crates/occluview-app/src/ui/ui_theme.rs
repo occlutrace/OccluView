@@ -243,7 +243,15 @@ pub(crate) fn dialog_header(ui: &mut egui::Ui, title: &str, icon: crate::ui::ico
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::hover());
         crate::ui::icons::paint(ui.painter(), rect, icon, text());
-        ui.add(egui::Label::new(egui::RichText::new(title).strong().size(18.0)).wrap());
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(title)
+                    .strong()
+                    .size(18.0)
+                    .color(text()),
+            )
+            .wrap(),
+        );
     });
     ui.add_space(10.0);
     ui.separator();
