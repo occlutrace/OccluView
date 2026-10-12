@@ -84,7 +84,7 @@ where
     } else {
         0.0
     };
-    Ok([u, v])
+    Ok(crate::texture_coordinates::flip_vertical([u, v]))
 }
 
 /// Parsed-so-far mesh data, passed into `face_line` to resolve indices.
@@ -159,6 +159,7 @@ where
             v = v.with_color(color);
         }
         if let Some(uv) = uv {
+            builder.mark_texture_coordinates();
             v = v.with_uv(uv);
         }
         let h = builder.push_vertex(v);
@@ -313,7 +314,7 @@ mod tests {
             );
         }
         let mesh = read_obj("v 0 0 0\nv 1 0 0\nv 0 1 0\nvt 0.25\nf 1/1 2/1 3/1\n");
-        assert_eq!(mesh.vertices()[0].uv, [0.25, 0.0]);
+        assert_eq!(mesh.vertices()[0].uv, [0.25, 1.0]);
     }
 
     #[test]
@@ -379,9 +380,9 @@ mod tests {
         assert_eq!(vs[1].normal, [0.0, 0.0, 1.0]);
         assert_eq!(vs[2].normal, [0.0, 0.0, 1.0]);
         // UVs resolved: vt 0=(0,0), vt 1=(1,0), vt 2=(0,1).
-        assert_eq!(vs[0].uv, [0.0, 0.0]);
-        assert_eq!(vs[1].uv, [1.0, 0.0]);
-        assert_eq!(vs[2].uv, [0.0, 1.0]);
+        assert_eq!(vs[0].uv, [0.0, 1.0]);
+        assert_eq!(vs[1].uv, [1.0, 1.0]);
+        assert_eq!(vs[2].uv, [0.0, 0.0]);
     }
 
     #[test]
@@ -392,9 +393,9 @@ mod tests {
         );
         assert!(m.has_uvs());
         let vs = m.vertices();
-        assert_eq!(vs[0].uv, [0.25, 0.75]);
+        assert_eq!(vs[0].uv, [0.25, 0.25]);
         assert_eq!(vs[1].uv, [0.5, 0.5]);
-        assert_eq!(vs[2].uv, [0.75, 0.25]);
+        assert_eq!(vs[2].uv, [0.75, 0.75]);
     }
 
     #[test]

@@ -149,16 +149,14 @@ impl SculptSession {
         // writes.
         let survivor_pinned = self.group_is_boundary(survivor);
         let survivor_material = (!survivor_pinned).then(|| {
-            let own = self.reference_group_v(survivor);
-            let middle = (self.reference_group_v(a) + self.reference_group_v(b)) * 0.5;
-            own + (middle - own)
+            (self.reference_group_v(a) + self.reference_group_v(b)) * 0.5
         });
         // A point of the edge lies on the surface already: the merge lands
         // there exactly, with no projection.
         let survivor_target = if survivor_pinned {
             self.group_v(survivor)
         } else {
-            stored_position(self.group_v(survivor) + (mid - self.group_v(survivor)))
+            stored_position(mid)
         };
         {
             // Bound edges from the survivor's actual landing point. A pinned
@@ -294,8 +292,6 @@ impl SculptSession {
                 return None;
             }
         }
-        // Midpoint on the frozen edge, f32-rounded like split midpoints.
-        // Already computed for the post-collapse length guard above.
         // Every surviving incident face keeps finite area, its orientation,
         // and the session baseline-safety law after the substitution.
         let mut rewires: Vec<(u32, [u32; 3], [u32; 3])> = Vec::new();

@@ -81,7 +81,9 @@ pub(super) fn register_progid(ext: &str, app_path: &HSTRING) -> windows::core::R
     let progid = HSTRING::from(&progid_string);
     // Top-level: friendly name.
     let hk = create_key(&progid)?;
-    set_string(hk.raw(), None, &HSTRING::from(format_file_type_name(ext)))?;
+    let type_name = HSTRING::from(format_file_type_name(ext));
+    set_string(hk.raw(), None, &type_name)?;
+    set_string(hk.raw(), Some(h!("FriendlyTypeName")), &type_name)?;
     set_dword(hk.raw(), h!("ThumbnailCutoff"), 1)?;
     set_string(hk.raw(), Some(h!("TypeOverlay")), &HSTRING::new())?;
 
@@ -199,24 +201,9 @@ pub(super) fn unregister_open_with(ext: &str) -> windows::core::Result<()> {
     delete_value(&key_path, Some(&legacy))
 }
 
-/// The ProgID for an owned extension.
-///
-/// `.dcm` is the legacy extension of the same HPS container, and every other
-/// registration surface says so: the MSI's `OpenWithProgids`, `Capabilities`
-/// and the `.reg` all write `MeshFile.HPS` for it, and the in-crate contract
-/// test canonicalises `dcm` to `hps` before comparing anything. Spelling it
-/// `MeshFile.DCM` here would create a second ProgID with its own friendly name,
-/// icon and handlers, so `regsvr32` on an MSI-installed machine would list
-/// OccluView twice in "Open with" under two type names — one of which calls a
-/// DICOM extension an OccluView file type — and this path would unregister a
-/// different ProgID than the MSI does.
+/// Separate ProgIDs keep each extension's visible type name independent.
 fn format_progid(ext: &str) -> String {
-    let canonical = if ext.eq_ignore_ascii_case("dcm") {
-        "hps"
-    } else {
-        ext
-    };
-    format!("MeshFile.{}", canonical.to_ascii_uppercase())
+    format!("MeshFile.{}", ext.to_ascii_uppercase())
 }
 
 fn format_legacy_progid(ext: &str) -> String {
@@ -229,21 +216,8 @@ fn system_file_association_shell_ex_key(ext: &str, category: &str) -> HSTRING {
     ))
 }
 
-/// The friendly name of the type behind an extension.
-///
-/// Taken from the canonical extension, not the one that arrived. `.dcm` shares
-/// the HPS ProgID (`format_progid`), and `register_progid` is called once per
-/// supported extension in `SUPPORTED_EXTENSIONS` order — `hps` before `dcm` —
-/// so naming this from the raw extension would let the `dcm` pass overwrite
-/// `HKCR\MeshFile.HPS @` from "HPS File" to "DCM File" after the `hps` pass
-/// wrote it. The MSI, the `.reg` and the lifecycle smoke all pin "HPS File".
 fn format_file_type_name(ext: &str) -> String {
-    let canonical = if ext.eq_ignore_ascii_case("dcm") {
-        "hps"
-    } else {
-        ext
-    };
-    format!("{} File", canonical.to_ascii_uppercase())
+    format!("{} File", ext.to_ascii_uppercase())
 }
 
 fn format_icon_value(app_path: &HSTRING) -> HSTRING {

@@ -111,7 +111,10 @@ pub(crate) fn section_panel_rect(viewport_rect: egui::Rect) -> Option<egui::Rect
     // painted.
     let top_reserve = viewport_rect.top()
         + crate::viewer::axis_gizmo::AXIS_GIZMO_LIFT_RESERVE_PX.max(CHROME_GAP_PX);
-    let side_by_height = viewport_rect.height() - PANEL_BOTTOM_GAP_PX - chrome_h - top_reserve;
+    // `top_reserve` already carries the viewport's top offset, so the budget
+    // must start at the viewport's bottom edge; using its height here would
+    // subtract the top offset a second time.
+    let side_by_height = viewport_rect.bottom() - PANEL_BOTTOM_GAP_PX - chrome_h - top_reserve;
     // Horizontal budget: never cover the bottom-left status pill (transient
     // messages must stay readable while cutting).
     let pill_right = crate::ui::app_chrome::status_overlay_rect(viewport_rect).right();

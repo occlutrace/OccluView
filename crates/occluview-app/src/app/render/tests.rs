@@ -44,10 +44,13 @@ fn a_deviation_overlay_forces_unlit_vertex_colors() {
     let painted = super::scene_mesh_uniform(&paint);
     assert_eq!(painted.measured_map, 0, "paint must stay lit");
     assert_eq!(painted.overlay_paint, 1);
-    assert_eq!(painted.show_vertex_colors, 1);
     assert_eq!(
-        painted.show_texture, 1,
-        "paint must not hide the scan's texture"
+        painted.show_vertex_colors, 0,
+        "paint respects the scan-colour control"
+    );
+    assert_eq!(
+        painted.show_texture, 0,
+        "paint must not reactivate a hidden scan texture"
     );
     assert_eq!(
         painted.tint, plain.tint,

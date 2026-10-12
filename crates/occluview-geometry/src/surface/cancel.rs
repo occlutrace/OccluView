@@ -296,7 +296,11 @@ impl GeometryControl {
     }
     pub(super) fn triangle_test(&self, local: &mut u64) -> Result<(), GeometryStop> {
         if *local >= self.0.limits.single_query_tests {
-            return Err(self.stop(GeometryStop::WorkLimit));
+            // A per-call ceiling bounds one nearest query; it is not a verdict
+            // on the shared control. Reporting it through the sticky `stop`
+            // would mark the whole control stopped, so every later query on
+            // the same surface would fail as if the work limit were reached.
+            return Err(GeometryStop::WorkLimit);
         }
         self.charge(&self.0.triangles, self.0.limits.triangle_tests, 1)?;
         *local += 1;

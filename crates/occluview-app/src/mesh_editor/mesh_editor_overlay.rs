@@ -12,7 +12,6 @@
 use eframe::egui;
 
 use crate::app::workspace::id::SceneKey;
-use crate::ui::icons::AppIcon;
 
 use crate::sculpt::sculpt_tool::{SculptTip, SculptToolKind};
 
@@ -287,18 +286,22 @@ pub(crate) fn show(
 ) -> Option<MeshEditorAction> {
     let width = window_width(viewport_rect);
     let mut action = None;
-    egui::Window::new(locale.text(crate::i18n::message_id!("meshedit-window-title")))
-        .id(scoped_id("occluview_mesh_editor_window", scene_key))
-        .default_pos(default_pos(viewport_rect))
-        .constrain_to(window_bounds(viewport_rect))
-        .resizable(false)
-        .collapsible(false)
-        .title_bar(false)
-        .show(ctx, |ui| {
-            ui.set_min_width(width - 24.0);
-            ui.set_width(width - 24.0);
-            action = window_action(ui, scene_key, state, locale);
+    crate::ui::ui_theme::window(
+        locale.text(crate::i18n::message_id!("meshedit-window-title")),
+        width,
+    )
+    .id(scoped_id("occluview_mesh_editor_window", scene_key))
+    .default_pos(default_pos(viewport_rect))
+    .constrain_to(window_bounds(viewport_rect))
+    .resizable(false)
+    .collapsible(false)
+    .show(ctx, |ui| {
+        ui.set_min_width(width - 24.0);
+        ui.set_width(width - 24.0);
+        action = crate::ui::ui_theme::window_contents(ui, viewport_rect.height(), |ui| {
+            window_action(ui, scene_key, state, locale)
         });
+    });
     action
 }
 
@@ -319,11 +322,6 @@ fn window_action(
     // Done/Cancel can still resolve or abort the pending sculpt.
     let ops_enabled = !state.busy && !state.sculpt_pending;
 
-    groups::header(
-        ui,
-        &locale.tr(crate::i18n::message_id!("meshedit-header-edit")),
-        AppIcon::EditMesh,
-    );
     let mut action = groups::tab_strip(ui, &state, locale);
     ui.add_space(4.0);
     match state.active_tab {

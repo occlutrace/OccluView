@@ -12,9 +12,10 @@
 use glam::DVec3;
 use rayon::prelude::*;
 
-use crate::deviation::{measured_hit, DeviationSettings};
-use crate::sample::{sample_vertices, vertex_at};
+use crate::deviation::{measured_hit_with_scratch, DeviationSettings};
+use crate::sample::{sample_vertices, surface_query_control, vertex_at};
 use crate::{CancelFlag, Rigid, Soup, SurfaceIndex};
+use occluview_geometry::surface::SurfaceQueryScratch;
 
 /// Vertices sampled for the estimate. Six parameters do not need more, and the
 /// stride spreads them over the whole surface.
@@ -140,18 +141,32 @@ pub fn observability(
         return None;
     }
 
+    let query_control = surface_query_control(cancel);
     let hits: Vec<Option<(DVec3, DVec3)>> = samples
         .par_iter()
-        .map(|&raw| {
-            if cancel.is_cancelled() {
-                return None;
-            }
-            let local = vertex_at(moving.positions, raw as usize)?;
-            let point = pose.apply(local);
-            let hit = measured_hit(fixed, point, settings.influence_radius_mm).ok()?;
-            Some((point, hit.normal.normalize()))
-        })
+        .map_init(
+            || SurfaceQueryScratch::new(&query_control).ok(),
+            |scratch, &raw| {
+                if cancel.is_cancelled() {
+                    return None;
+                }
+                let local = vertex_at(moving.positions, raw as usize)?;
+                let point = pose.apply(local);
+                let hit = measured_hit_with_scratch(
+                    fixed,
+                    point,
+                    settings.influence_radius_mm,
+                    scratch.as_mut(),
+                )
+                .ok()?;
+                Some((point, hit.normal.normalize()))
+            },
+        )
         .collect();
+
+    if cancel.is_cancelled() {
+        return None;
+    }
 
     let mut pivot = DVec3::ZERO;
     let mut count = 0usize;

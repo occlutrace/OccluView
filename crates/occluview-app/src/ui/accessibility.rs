@@ -21,14 +21,6 @@ pub(crate) fn spin_button(response: &Response, label: &str, enabled: bool) {
     response.widget_info(|| WidgetInfo::labeled(WidgetType::DragValue, enabled, label));
 }
 
-pub(crate) fn read_only_text(response: &Response, label: &str, value: &str) {
-    response.widget_info(|| {
-        let mut info = WidgetInfo::text_edit(false, value, value, "");
-        info.label = Some(label.to_owned());
-        info
-    });
-}
-
 pub(crate) fn panel(response: &Response, label: &str) {
     response.widget_info(|| WidgetInfo::labeled(WidgetType::Panel, true, label));
 }

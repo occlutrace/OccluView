@@ -10,8 +10,8 @@
 )]
 
 use super::{
-    color_map, matching_inputs_changed, AlignSettings, MeasureKey, SurfaceKey, WORKING_MAX_MM,
-    WORKING_MIN_MM, WORKING_SCALE_MIN_MM,
+    color_map, matching_inputs_changed, AlignSettings, MeasureKey, SurfaceKey, AUTO_SCALE_MAX_MM,
+    WORKING_MAX_MM, WORKING_MIN_MM, WORKING_SCALE_MIN_MM,
 };
 use eframe::egui;
 use occluview_align::{
@@ -150,19 +150,13 @@ fn only_the_settings_that_change_the_distances_change_the_key() {
     assert_ne!(base, facing, "facing changes the sign of every distance");
 }
 
-/// The window opens on the working range, and it opens there every time.
+/// The window opens with a measured range so rough-fit distances do not all
+/// saturate the narrow manual 0.1 mm range. Manual mode remains available.
 ///
-/// Dentistry works to a tenth of a millimetre, so the map is 0 to 100 um: a
-/// 10 um gap already reads as a real mismatch instead of sitting in the cool
-/// half of a 50-200 um band. A range that follows the measurement leaves the
-/// working one as soon as two meshes are only roughly placed, painting the arch
-/// as a red and blue mosaic.
-///
-/// The magnitude ramp is continuous across the whole working range. Tolerance
-/// is a measurement/statistics setting, not a hidden colour plateau, so small
-/// but real differences remain visible to the operator.
+/// The magnitude ramp is continuous, and tolerance remains a statistics
+/// setting rather than a hidden colour plateau.
 #[test]
-fn the_window_opens_on_the_working_range() {
+fn the_window_opens_with_auto_range_and_keeps_manual_precision_available() {
     let settings = AlignSettings::default();
     assert!(
         (settings.scale_mm - WORKING_MAX_MM).abs() < f64::EPSILON,
@@ -176,23 +170,23 @@ fn the_window_opens_on_the_working_range() {
         settings.tolerance_mm
     );
     assert!(
-        !settings.auto_scale,
-        "a range that follows the measurement leaves the working one behind"
+        settings.auto_scale,
+        "the default should reveal the measured distance distribution"
     );
     assert_eq!(settings.ramp_mode, RampMode::Magnitude);
     assert!(
-        settings.scale_mm <= WORKING_MAX_MM,
-        "the range must stay inside the working display maximum"
+        settings.scale_mm <= AUTO_SCALE_MAX_MM,
+        "the initial range must stay inside the automatic display maximum"
     );
 }
 
 #[test]
 fn a_persisted_wide_range_is_clamped_before_colouring() {
     let settings = AlignSettings {
-        scale_mm: 1.0,
+        scale_mm: 100.0,
         ..AlignSettings::default()
     };
-    assert_eq!(settings.ramp().scale_mm, WORKING_MAX_MM);
+    assert_eq!(settings.ramp().scale_mm, AUTO_SCALE_MAX_MM);
 }
 
 #[test]
@@ -211,21 +205,23 @@ fn nonfinite_heatmap_limits_cannot_panic_or_reach_the_colour_ramp() {
         let ramp = settings.ramp();
         assert!(ramp.scale_mm.is_finite());
         assert!(ramp.min_mm.is_finite());
-        assert!((WORKING_SCALE_MIN_MM..=WORKING_MAX_MM).contains(&ramp.scale_mm));
+        assert!((WORKING_SCALE_MIN_MM..=AUTO_SCALE_MAX_MM).contains(&ramp.scale_mm));
         assert!((WORKING_SCALE_MIN_MM..=ramp.scale_mm).contains(&ramp.min_mm));
     }
 }
 
 #[test]
-fn the_display_range_is_absolute_zero_to_one_tenth() {
+fn the_manual_display_range_is_absolute_zero_to_one_tenth() {
     let zero = AlignSettings {
         scale_mm: -1.0,
+        auto_scale: false,
         ..AlignSettings::default()
     };
     assert_eq!(zero.ramp().scale_mm, WORKING_SCALE_MIN_MM);
 
     let above = AlignSettings {
         scale_mm: 1.0,
+        auto_scale: false,
         ..AlignSettings::default()
     };
     assert_eq!(above.ramp().scale_mm, WORKING_MAX_MM);
@@ -472,6 +468,7 @@ fn numeric_range_edits_recolour_the_cached_map() {
         .as_ptr();
 
     // Change only the display range: the measurement key is untouched.
+    job.settings.auto_scale = !job.settings.auto_scale;
     job.settings.scale_mm *= 0.5;
     job.settings.min_display_mm = job.settings.scale_mm * 0.1;
 

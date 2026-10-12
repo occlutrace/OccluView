@@ -19,6 +19,7 @@ impl SculptSession {
         self.selection_stamp.push(0);
         self.pre_pos.push([0.0; 3]);
         self.step_budget.push(0.0);
+        self.smooth_stroke_travel.push(0.0);
         self.region_distance.push(f64::INFINITY);
         self.region_normal.push([0.0; 3]);
         self.rollback_marks.push(0);

@@ -30,8 +30,8 @@ pub(crate) use state::{EditModeCommand, EditModeState, EditSessionToken, SelectG
 pub(crate) use state::{BusyFinish, LayerKey};
 pub(crate) use undo_snapshot::StructuralHistoryStep;
 
-const DEFAULT_UNDO_COUNT: usize = 16;
-const DEFAULT_UNDO_BYTES: usize = 512 * 1024 * 1024;
+const DEFAULT_UNDO_COUNT: usize = crate::app::workspace::history::DEFAULT_HISTORY_COUNT;
+const DEFAULT_UNDO_BYTES: usize = crate::app::workspace::history::DEFAULT_HISTORY_BYTES;
 
 /// Why a valid layer could not be opened in an Edit session.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -68,9 +68,8 @@ pub(crate) struct EditModeController {
     /// session panel open between ops. Cleared on Done/Cancel; a missing layer
     /// suspends the target while preserving the session baseline for Cancel.
     session_layer_id: Option<SceneMeshId>,
-    /// Whether the last `begin_*_edit` actually stored its undo snapshot (an
-    /// oversized snapshot is skipped): guards the no-op discard from popping an
-    /// unrelated older snapshot.
+    /// Whether the last edit stored its snapshot; a no-op must never discard
+    /// an unrelated earlier command when history is explicitly disabled.
     last_undo_push_stored: bool,
     pending_history_command: Option<HistoryCommandId>,
     session_start_failure: Option<EditSessionStartFailure>,

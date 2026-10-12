@@ -117,6 +117,12 @@ impl IdAllocator {
         Self::take_next(&mut self.scene).map(SceneId)
     }
 
+    /// The scene identity `allocate_scene` would hand out next, without
+    /// consuming it. A drag preview names the scene a drop is about to create.
+    pub(crate) fn peek_scene_id(&self) -> Option<SceneId> {
+        self.scene.map(SceneId)
+    }
+
     pub(crate) fn allocate_pane_id(&mut self) -> Result<PaneId, IdExhausted> {
         Self::take_next(&mut self.pane).map(PaneId)
     }

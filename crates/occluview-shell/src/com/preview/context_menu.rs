@@ -2,8 +2,7 @@
 //!
 //! A stationary right-click inside the live 3D preview pops a native Win32 menu
 //! (built from the platform-agnostic model in [`crate::preview_menu`]) with:
-//! Open / Edit in OccluView, the Front / Top / Side / Isometric view presets and
-//! Fit view, a checkable Wireframe toggle, and Copy image. Each item carries a
+//! Open in the app (only for filesystem sources), Fit view and Wireframe. Each item carries a
 //! runtime-rasterised 16 px icon tinted to the system menu-text colour.
 //!
 //! A right-*drag* still orbits the camera (see `window.rs`): the menu only
@@ -11,13 +10,11 @@
 //! capability without changing the existing mouse semantics.
 //!
 //! This whole module is `cfg(windows)` (it lives under `com`); the reusable
-//! logic — the menu inventory, the icon raster, and the clipboard DIB packing —
+//! logic — the menu inventory, the icon raster, and the menu dispatch —
 //! is factored into `crate::preview_menu`, which is unit tested on any host.
 
-use super::super::{e_fail, MAX_OFFSCREEN_EDGE};
 use super::window::window_owns_handler;
 use super::PreviewHandler;
-use crate::preview_menu::dib::pack_clipboard_dib;
 use crate::preview_menu::icons::PreviewMenuIcon;
 use crate::preview_menu::{PreviewMenuCommand, PreviewMenuEntry, PREVIEW_MENU_LAYOUT};
 use crate::preview_scene::PreviewSceneState;
@@ -25,19 +22,16 @@ use occluview_i18n::LocalizedCatalog;
 use std::mem::size_of;
 use std::path::PathBuf;
 use windows::core::{w, HSTRING, PCWSTR, PWSTR};
-use windows::Win32::Foundation::{GlobalFree, HANDLE, HMODULE, HWND, POINT};
+use windows::Win32::Foundation::{HMODULE, HWND, POINT};
 use windows::Win32::Graphics::Gdi::{
     ClientToScreen, DeleteObject, GetSysColor, COLOR_MENUTEXT, HBITMAP, HGDIOBJ,
 };
-use windows::Win32::System::DataExchange::{
-    CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
-};
+
 use windows::Win32::System::LibraryLoader::{
     GetModuleFileNameW, GetModuleHandleExW, GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
     GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
 };
-use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
-use windows::Win32::System::Ole::CF_DIB;
+
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -60,6 +54,11 @@ impl PreviewHandler {
             .borrow()
             .as_ref()
             .is_some_and(PreviewSceneState::is_wireframe);
+        let has_scene = self.preview_scene.borrow().is_some();
+        let can_open = self.source.borrow().path().is_some();
+        if !has_scene && !can_open {
+            return;
+        }
         let icon_px = menu_icon_size_px(hwnd);
         let locale = LocalizedCatalog::for_system();
 
@@ -75,6 +74,9 @@ impl PreviewHandler {
         for entry in PREVIEW_MENU_LAYOUT {
             match entry {
                 PreviewMenuEntry::Separator => {
+                    if default_id.is_none() || !has_scene {
+                        continue;
+                    }
                     let info = MENUITEMINFOW {
                         cbSize: size_of::<MENUITEMINFOW>() as u32,
                         fMask: MIIM_FTYPE,
@@ -86,6 +88,13 @@ impl PreviewHandler {
                 }
                 PreviewMenuEntry::Command(command) => {
                     let command = *command;
+                    // An attachment may be supplied as IStream, with no path
+                    // that the desktop application could open.
+                    if (command == PreviewMenuCommand::Open && !can_open)
+                        || (command != PreviewMenuCommand::Open && !has_scene)
+                    {
+                        continue;
+                    }
                     if command.is_default() {
                         default_id = Some(command.id());
                     }
@@ -186,7 +195,6 @@ impl PreviewHandler {
                 self.launch_in_app(hwnd);
                 Ok(())
             }
-            PreviewMenuCommand::CopyImage => self.copy_preview_to_clipboard(hwnd),
             PreviewMenuCommand::FitView => {
                 self.mutate_scene_and_repaint(PreviewSceneState::fit_view)
             }
@@ -194,13 +202,6 @@ impl PreviewHandler {
                 let enabled = !scene.is_wireframe();
                 scene.set_wireframe(enabled)
             }),
-            other => {
-                if let Some(preset) = other.view_preset() {
-                    self.mutate_scene_and_repaint(move |scene| scene.apply_view_preset(preset))
-                } else {
-                    Ok(())
-                }
-            }
         }
     }
 
@@ -251,31 +252,6 @@ impl PreviewHandler {
             );
         }
     }
-
-    fn copy_preview_to_clipboard(&self, hwnd: HWND) -> windows::core::Result<()> {
-        self.ensure_preview_scene_loaded()
-            .map_err(super::shell_error_to_hresult)?;
-        // Every other preview render caps an edge at MAX_OFFSCREEN_EDGE, which
-        // is the renderer's texture ceiling (`using_resolution(adapter.limits())`
-        // hands the device the adapter's limit, and the code's own floor case is
-        // 2048). Asking the shared renderer for a full-pane texture on a wide
-        // pane is a wgpu validation error: the fault latches, the shared
-        // renderer is retired, and the operator gets no image and no message.
-        // The clamp also bounds the oversize-placeholder branch, which
-        // allocates width*height*4 from a rect otherwise clamped only at 65535.
-        let size = self.preview_size_u16();
-        let render_width = u32::from(size[0]).min(MAX_OFFSCREEN_EDGE);
-        let render_height = u32::from(size[1]).min(MAX_OFFSCREEN_EDGE);
-        let theme = super::theme::preview_theme();
-        let pixels = self
-            .render_preview_pixels(
-                [render_width as u16, render_height as u16],
-                theme.background_linear(),
-                theme.canvas_rgba(),
-            )
-            .map_err(super::shell_error_to_hresult)?;
-        copy_rgba_to_clipboard(hwnd, &pixels, render_width, render_height)
-    }
 }
 
 /// Icon edge in pixels for the given window's DPI.
@@ -321,63 +297,6 @@ fn create_premultiplied_dib(
     bgra: &[u8],
 ) -> windows::core::Result<HBITMAP> {
     super::super::create_top_down_bgra_dib(width, height, bgra)
-}
-
-/// Copy a top-down RGBA frame to the clipboard as a `CF_DIB` bitmap.
-fn copy_rgba_to_clipboard(
-    hwnd: HWND,
-    rgba: &[u8],
-    width: u32,
-    height: u32,
-) -> windows::core::Result<()> {
-    let Some(dib) = pack_clipboard_dib(rgba, width, height) else {
-        return Err(e_fail());
-    };
-    // Open the clipboard before the block exists. Opening it last and
-    // returning with `?` would leak the block whenever another process holds
-    // the clipboard open: the error path runs before either `GlobalFree` below,
-    // and the leak lands in prevhost.exe, which serves every later preview in
-    // the session.
-    // SAFETY: take ownership of the clipboard tied to our window.
-    let opened = unsafe { OpenClipboard(Some(hwnd)) };
-    if opened.is_err() {
-        return Err(e_fail());
-    }
-    // SAFETY: allocates a moveable global block of the exact DIB size.
-    let Ok(hglobal) = (unsafe { GlobalAlloc(GMEM_MOVEABLE, dib.len()) }) else {
-        // SAFETY: always release the clipboard we opened.
-        let _ = unsafe { CloseClipboard() };
-        return Err(e_fail());
-    };
-    // SAFETY: `hglobal` was just allocated.
-    let ptr = unsafe { GlobalLock(hglobal) };
-    if ptr.is_null() {
-        // SAFETY: releasing the block we failed to lock, then the clipboard.
-        let _ = unsafe { GlobalFree(Some(hglobal)) };
-        // SAFETY: the clipboard was opened above and is still ours.
-        let _ = unsafe { CloseClipboard() };
-        return Err(e_fail());
-    }
-    // SAFETY: `ptr` addresses at least `dib.len()` writable bytes.
-    unsafe { std::ptr::copy_nonoverlapping(dib.as_ptr(), ptr.cast::<u8>(), dib.len()) };
-    // SAFETY: matching unlock; a 0 return (fully unlocked) is expected, not an error.
-    let _ = unsafe { GlobalUnlock(hglobal) };
-
-    // SAFETY: the clipboard is already open and ours; empty it before
-    // publishing our format.
-    let outcome = unsafe { EmptyClipboard() }.and_then(|()| {
-        // SAFETY: on success the system takes ownership of `hglobal`.
-        unsafe { SetClipboardData(u32::from(CF_DIB.0), Some(HANDLE(hglobal.0))) }.map(|_| ())
-    });
-    // SAFETY: always release the clipboard we opened.
-    let _ = unsafe { CloseClipboard() };
-
-    if outcome.is_err() {
-        // The system never took ownership; reclaim the block.
-        // SAFETY: `hglobal` is still ours on the failure path.
-        let _ = unsafe { GlobalFree(Some(hglobal)) };
-    }
-    outcome
 }
 
 /// Resolve `occluview.exe` sitting next to this shell DLL.

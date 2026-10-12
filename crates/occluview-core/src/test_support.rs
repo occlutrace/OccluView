@@ -113,28 +113,6 @@ pub fn render_triangle_mesh() -> Result<Mesh, CoreError> {
     builder.build()
 }
 
-/// Builds the UV-mapped triangle used by renderer texture tests.
-pub fn textured_render_triangle_mesh() -> Result<Mesh, CoreError> {
-    let mut builder = MeshBuilder::new();
-    let a = builder.push_vertex(
-        Vertex::at(Vec3::new(-0.5, -0.5, 0.0))
-            .with_normal(Vec3::Z)
-            .with_uv([0.0, 0.0]),
-    );
-    let b = builder.push_vertex(
-        Vertex::at(Vec3::new(0.5, -0.5, 0.0))
-            .with_normal(Vec3::Z)
-            .with_uv([1.0, 0.0]),
-    );
-    let c = builder.push_vertex(
-        Vertex::at(Vec3::new(0.0, 0.5, 0.0))
-            .with_normal(Vec3::Z)
-            .with_uv([0.5, 1.0]),
-    );
-    builder.push_triangle(a, b, c);
-    builder.build()
-}
-
 /// Reports a GPU-test skip, or fails when the test lane requires GPU coverage.
 #[allow(clippy::panic, clippy::print_stderr)]
 pub fn report_gpu_test_skip(test_name: &str, reason: &str) {

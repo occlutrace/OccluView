@@ -86,8 +86,9 @@ pub(super) mod diag {
 /// dab" from "the display did not show what the kernel moved". These fields
 /// answer that from one pasted line: which refusal fired and how often.
 ///
-/// Three slots are RESERVED: no code writes them, they are always zero, and
-/// they exist only so the published wire order stays stable.
+/// Three slots are RESERVED: no code writes them. Two stay zero and
+/// `gain_min_permille` keeps its 1000 permille default; they exist only so the
+/// published wire order stays stable.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DabDiagnostics {
     /// No seed triangle for the dab (stale pick, ray left the surface).
@@ -179,10 +180,11 @@ pub enum BrushMode {
     Smooth = 2,
     /// Level toward the selection plane.
     ///
-    /// The reference kernel leaves 3 unassigned; the viewer assigns it to
-    /// Flatten because its own UI offers the mode. A payload never crosses
-    /// between the two kernels, so the discriminant is only read by this
-    /// crate's own encoder and decoder, which both name the same thing.
+    /// The reference kernel leaves 3 unassigned; this kernel implements it and
+    /// keeps the decoder, but the current viewer UI does not expose the mode.
+    /// A payload never crosses between the two kernels, so the discriminant is
+    /// only read by this crate's own encoder and decoder, which both name the
+    /// same thing.
     Flatten = 3,
     /// Gently even small surface detail while preserving the broad form.
     Relax = 4,
@@ -426,9 +428,16 @@ pub struct SculptSession {
     dab_groups: Vec<u32>,
     pre_pos: Vec<[f32; 3]>,
     snapshot_generation: u32,
-    /// Anti-inversion step budget per group: shortest incident welded edge,
-    /// capped at 1 mm, refreshed for the touched region after each dab.
+    /// Anti-inversion step budget per group: the smallest altitude from the
+    /// group to the opposite edge over its incident triangles (1 mm when it
+    /// has none), refreshed for the touched region after each dab.
     step_budget: Vec<f32>,
+    /// Total distance Smooth has moved each group since the current stroke
+    /// began, in mm. A held brush stops once a group has travelled its
+    /// falloff-scaled share of the local smoothing scale, so the fairing
+    /// cannot converge the whole footprint to a plateau and leave the held
+    /// one-ring standing as a hard scarp.
+    smooth_stroke_travel: Vec<f32>,
     /// Current stroke's undo record, stamp-deduped per vertex: parallel
     /// index/position arrays in first-touched order.
     stroke_mark: Vec<u32>,

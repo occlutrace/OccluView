@@ -3,70 +3,81 @@
 use super::super::{egui, SceneContext};
 use super::stroke::{local_clip_plane, local_ray_hit_is_visible};
 use crate::sculpt::sculpt_tool::uniform_scene_scale;
+use crate::sculpt::sculpt_worker::SculptSurfaceQueryError;
 use crate::viewer::viewport_ray;
 use glam::{Quat, Vec3};
 use occluview_core::{SceneMeshId, ScenePickHit};
 
 impl SceneContext<'_> {
-    pub(super) fn sculpt_surface_hit(
+    /// A busy live publication must not be mistaken for leaving the surface.
+    pub(super) fn sculpt_surface_query(
         &self,
         viewport_rect: egui::Rect,
         pointer: egui::Pos2,
-    ) -> Option<ScenePickHit> {
-        let mut camera = self.render.camera?;
-        let scene = self.document.scene.as_ref()?;
-        let bounds = self.effective_scene_bbox(scene);
-        camera.fit_clip_planes_to_bbox(bounds);
-        let layer_id = self.sculpt_target_layer_id(scene)?;
-        let entry = scene.meshes().iter().find(|entry| entry.id() == layer_id)?;
-        let (ray_origin, direction) = viewport_ray(&camera, viewport_rect, pointer)?;
-        let direction = direction.normalize_or_zero();
-        if direction.length_squared() <= f32::EPSILON {
-            return None;
-        }
-        let origin = ray_origin + direction * camera.near;
-        let inverse = entry.transform.inverse();
-        let local_origin = inverse.transform_point3(origin);
-        let local_direction = inverse.transform_vector3(direction).normalize_or_zero();
-        let worker = self.tools.sculpt.worker.as_ref().filter(|worker| {
-            worker.layer_id == layer_id && worker.topology_id == entry.mesh.topology_id()
-        });
-        let local_per_world = worker.map_or_else(
-            || Some(1.0 / uniform_scene_scale(&entry.transform)?),
-            |w| Some(w.local_per_world),
-        )?;
-        let far_mm = (camera.far - camera.near) * local_per_world;
-        let clip_plane = local_clip_plane(inverse, self.active_viewport_clip_plane(bounds));
-        let keep = |point| {
-            local_ray_hit_is_visible(point, local_origin, local_direction, far_mm, clip_plane)
+    ) -> Result<Option<(ScenePickHit, Option<Vec3>)>, SculptSurfaceQueryError> {
+        let query = || -> Option<Result<(ScenePickHit, Option<Vec3>), SculptSurfaceQueryError>> {
+            let mut camera = self.render.camera?;
+            let scene = self.document.scene.as_ref()?;
+            let bounds = self.effective_scene_bbox(scene);
+            camera.fit_clip_planes_to_bbox(bounds);
+            let layer_id = self.sculpt_target_layer_id(scene)?;
+            let entry = scene.meshes().iter().find(|entry| entry.id() == layer_id)?;
+            let (ray_origin, direction) = viewport_ray(&camera, viewport_rect, pointer)?;
+            let direction = direction.normalize_or_zero();
+            if direction.length_squared() <= f32::EPSILON {
+                return None;
+            }
+            let origin = ray_origin + direction * camera.near;
+            let inverse = entry.transform.inverse();
+            let local_origin = inverse.transform_point3(origin);
+            let local_direction = inverse.transform_vector3(direction).normalize_or_zero();
+            let worker = self.tools.sculpt.worker.as_ref().filter(|worker| {
+                worker.layer_id == layer_id && worker.topology_id == entry.mesh.topology_id()
+            });
+            let local_per_world = worker.map_or_else(
+                || Some(1.0 / uniform_scene_scale(&entry.transform)?),
+                |w| Some(w.local_per_world),
+            )?;
+            let far_mm = (camera.far - camera.near) * local_per_world;
+            let clip_plane = local_clip_plane(inverse, self.active_viewport_clip_plane(bounds));
+            let keep = |point| {
+                local_ray_hit_is_visible(point, local_origin, local_direction, far_mm, clip_plane)
+            };
+            // Preparation warms the shared tree off the UI thread.
+            if worker.is_none() && !entry.mesh.bvh_is_ready() {
+                return None;
+            }
+            let (triangle_index, local_point, normal) = if let Some(worker) = worker {
+                match worker.pick_local_surface(local_origin, local_direction, keep) {
+                    Ok(Some((triangle, point, normal))) => (triangle, point, Some(normal)),
+                    Ok(None) => return None,
+                    Err(error) => return Some(Err(error)),
+                }
+            } else {
+                let (triangle, point) =
+                    entry
+                        .mesh
+                        .pick_ray_local(local_origin, local_direction, keep)?;
+                (triangle, point, None)
+            };
+            let point = entry.transform.transform_point3(local_point);
+            let distance = (point - origin).dot(direction);
+            (distance.is_finite() && distance >= 0.0 && distance <= camera.far - camera.near)
+                .then_some(Ok((
+                    ScenePickHit {
+                        layer_index: scene
+                            .meshes()
+                            .iter()
+                            .position(|candidate| candidate.id() == layer_id)?,
+                        layer_id,
+                        triangle_index,
+                        point,
+                        distance,
+                    },
+                    normal,
+                )))
         };
-        // Preparation warms the shared tree off the UI thread.
-        if worker.is_none() && !entry.mesh.bvh_is_ready() {
-            return None;
-        }
-        // When the live tree is contended, defer this cursor frame instead of
-        // showing a footprint on committed geometry under the live surface.
-        let (triangle_index, local_point) = if let Some(worker) = worker {
-            worker.pick_local_ray(local_origin, local_direction, keep)?
-        } else {
-            entry
-                .mesh
-                .pick_ray_local(local_origin, local_direction, keep)?
-        };
-        let point = entry.transform.transform_point3(local_point);
-        let distance = (point - origin).dot(direction);
-        (distance.is_finite() && distance >= 0.0 && distance <= camera.far - camera.near).then_some(
-            ScenePickHit {
-                layer_index: scene
-                    .meshes()
-                    .iter()
-                    .position(|candidate| candidate.id() == layer_id)?,
-                layer_id,
-                triangle_index,
-                point,
-                distance,
-            },
-        )
+        query().transpose()
     }
 
     pub(super) fn sculpt_target_layer_id(

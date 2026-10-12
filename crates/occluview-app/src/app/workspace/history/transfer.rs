@@ -93,7 +93,7 @@ impl WorkspaceHistory {
                 .undo
                 .push_back(id);
         }
-        self.trim_to_budget();
+        self.trim_to_budget_keep(Some(id));
         if self.entries.contains_key(&id) {
             Ok(())
         } else {

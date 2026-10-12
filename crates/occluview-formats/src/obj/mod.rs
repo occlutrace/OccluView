@@ -224,6 +224,7 @@ pub(crate) fn read_admitted(
                 }
             }
             if let Some(uv) = texcoords.get(index).copied() {
+                builder.mark_texture_coordinates();
                 if uv != [0.0, 0.0] {
                     vertex = vertex.with_uv(uv);
                 }

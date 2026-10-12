@@ -15,9 +15,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, RwLock};
 use std::thread;
 
-/// Shift Smooth in the donor doubles strength only; brush footprint stays fixed.
-/// How much Shift amplifies the selected Smooth strength.
-const SHIFT_STRENGTH_GAIN: f32 = 2.0;
+/// Shift boosts the selected Smooth strength with a capped curve, keeping low
+/// settings light and reserving the full-strength range for already-strong
+/// settings.
+const SHIFT_STRENGTH_CURVE_POWER: i32 = 3;
 const RADIUS_DETENT_RATIO: f64 = 1.2;
 const STRENGTH_DETENT_RATIO: f64 = 1.3;
 pub(crate) const HOLD_DAB_INTERVAL_SEC: f32 = 0.03;
@@ -30,7 +31,7 @@ pub(crate) enum SculptToolKind {
     /// Shape material, or carve it away with Shift held.
     #[default]
     AddRemove,
-    /// Relaxer: flatten/even the surface; Shift doubles the selected strength.
+    /// Relaxer: flatten/even the surface; Shift boosts the selected strength.
     Smooth,
 }
 
@@ -88,13 +89,13 @@ impl SculptToolKind {
     /// Return the kernel strength for one dab.
     ///
     /// Shift strengthens a Smooth brush rather than replacing the slider with a
-    /// maximum pass. The reference tool's Shift amplifies the setting the
-    /// operator chose; a jump to the top of the range flattened whole cusps
-    /// from the bottom of the slider and left the surface rippled.
+    /// maximum pass. The capped curve gives low settings a stronger but still
+    /// low dose, then eases high settings toward full strength without making
+    /// every setting above the midpoint an identical maximum pass.
     pub(crate) fn dab_strength(self, intensity01: f32, shift: bool) -> f32 {
         let strength = intensity01.clamp(0.0, 1.0);
         match self {
-            Self::Smooth if shift => (strength * SHIFT_STRENGTH_GAIN).clamp(0.0, 1.0),
+            Self::Smooth if shift => 1.0 - (1.0 - strength).powi(SHIFT_STRENGTH_CURVE_POWER),
             _ => strength,
         }
     }
@@ -261,12 +262,6 @@ pub(crate) struct SculptTool {
     /// Undo/redo waits for an asynchronous sculpt completion before swapping
     /// an older scene over the worker's current shadow.
     pub(crate) pending_history: Option<bool>,
-    /// The last surface hit acquired by the viewport input pass. The cursor
-    /// painter runs after that pass and reuses it for held drags, avoiding a
-    /// second BVH traversal on every repaint.
-    pub(crate) cursor_hit: Option<occluview_core::ScenePickHit>,
-    /// Pointer coordinates belonging to [`Self::cursor_hit`].
-    pub(crate) cursor_pointer: Option<[f32; 2]>,
     /// Last completed raw modifier state, used to replay same-frame pointer
     /// movements around a `ModifiersChanged` event in the correct order.
     pub(crate) pointer_modifiers: egui::Modifiers,
@@ -308,7 +303,6 @@ impl SculptTool {
     pub(crate) fn toggle(&mut self, kind: SculptToolKind) {
         self.stroke = None;
         self.pending_presses.clear();
-        self.clear_cursor_hit();
         self.armed = if self.armed == Some(kind) {
             None
         } else {
@@ -320,7 +314,6 @@ impl SculptTool {
         self.armed = None;
         self.stroke = None;
         self.pending_presses.clear();
-        self.clear_cursor_hit();
         self.finish_requested = false;
         self.finish_retry = false;
         self.pending_history = None;
@@ -333,7 +326,6 @@ impl SculptTool {
     pub(crate) fn invalidate_session(&mut self) {
         self.stroke = None;
         self.pending_presses.clear();
-        self.clear_cursor_hit();
         self.worker = None;
         self.finish_requested = false;
         self.finish_retry = false;
@@ -347,20 +339,6 @@ impl SculptTool {
         self.worker
             .as_ref()
             .is_some_and(|worker| worker.layer_id == layer_id && worker.topology_id == topology_id)
-    }
-
-    pub(crate) fn clear_cursor_hit(&mut self) {
-        self.cursor_hit = None;
-        self.cursor_pointer = None;
-    }
-
-    pub(crate) fn set_cursor_hit(&mut self, pointer: [f32; 2], hit: occluview_core::ScenePickHit) {
-        self.cursor_pointer = Some(pointer);
-        self.cursor_hit = Some(hit);
-    }
-
-    pub(crate) fn cursor_hit_for(&self, pointer: [f32; 2]) -> Option<occluview_core::ScenePickHit> {
-        (self.cursor_pointer == Some(pointer)).then_some(self.cursor_hit?)
     }
 
     pub(crate) fn pending_matches(&self, layer_id: SceneMeshId, topology_id: u64) -> bool {

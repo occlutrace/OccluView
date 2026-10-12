@@ -17,10 +17,11 @@
 //! | Brush size | the painting radius |
 //! | Brush inverse (or hold Shift) | a stroke clears instead of marks |
 
-/// Smallest usable brush, in millimetres.
-const MIN_RADIUS_MM: f32 = 0.1;
+/// Smallest usable brush, in millimetres. The Brush panel's sliders use it too,
+/// so the UI range cannot drift from the clamp.
+pub(crate) const MIN_RADIUS_MM: f32 = 0.1;
 /// Largest usable brush, in millimetres.
-const MAX_RADIUS_MM: f32 = 20.0;
+pub(crate) const MAX_RADIUS_MM: f32 = 20.0;
 /// Starting brush size — about a cusp.
 const DEFAULT_RADIUS_MM: f32 = 1.5;
 /// Starting radius for automatic marking, about a landmark's worth of surface.

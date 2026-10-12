@@ -296,6 +296,15 @@ impl SculptSession {
         current + (candidate - current) * fraction
     }
 
+    /// The shared winding law: a face has folded once its normal reverses past
+    /// a -0.5 cosine (120 degrees) against the reference. Both the per-operation
+    /// check and the session-baseline check read this one predicate, so the
+    /// threshold and its epsilon cannot drift apart.
+    fn winding_reversed(baseline: TriangleMeasure, candidate: TriangleMeasure) -> bool {
+        baseline.area > 1e-12
+            && candidate.cross.dot(baseline.cross) < -0.5 * candidate.area * baseline.area
+    }
+
     fn triangle_flipped(pre: TriangleMeasure, now: TriangleMeasure) -> bool {
         let pre_area_squared = pre.cross.dot(pre.cross);
         let collapsed = pre_area_squared > 1e-24
@@ -303,10 +312,7 @@ impl SculptSession {
         // A coherent move can rotate a small triangle without tearing it. A
         // reversal below the -0.5 cosine threshold identifies a fold beyond
         // 120 degrees.
-        let reversed = pre_area_squared > 1e-24
-            && now.cross.dot(pre.cross)
-                < -0.5 * pre_area_squared.sqrt() * now.cross.dot(now.cross).sqrt();
-        collapsed || reversed
+        collapsed || Self::winding_reversed(pre, now)
     }
 
     /// The geometric acceptance contract: may this face be published?
@@ -330,9 +336,7 @@ impl SculptSession {
         if !Self::triangle_shape_is_safe_measured(baseline, candidate) {
             return false;
         }
-        if baseline.area > 1e-12
-            && candidate.cross.dot(baseline.cross) < -0.5 * candidate.area * baseline.area
-        {
+        if Self::winding_reversed(baseline, candidate) {
             // The same -0.5 cosine threshold rejects a winding reversal beyond
             // 120 degrees while permitting gradual cumulative surface changes.
             // Unnormalized dots avoid unstable directions from near-degenerate

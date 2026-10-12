@@ -60,9 +60,10 @@ pub(crate) fn viewer_visuals(theme: ThemePreference) -> egui::Visuals {
         visuals.widgets.inactive.weak_bg_fill = egui::Color32::from_rgb(236, 239, 243);
         visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(236, 239, 243);
     }
-    visuals.window_corner_radius = egui::CornerRadius::same(7);
-    visuals.menu_corner_radius = egui::CornerRadius::same(7);
-    visuals.window_stroke = egui::Stroke::new(1.0_f32, hairline());
+    visuals.window_corner_radius = egui::CornerRadius::same(10);
+    visuals.menu_corner_radius = egui::CornerRadius::same(8);
+    visuals.window_stroke = egui::Stroke::new(1.0_f32, crate::ui::ui_theme::panel_stroke());
+    visuals.window_shadow = crate::ui::ui_theme::panel_shadow();
     visuals.popup_shadow = egui::epaint::Shadow {
         offset: [0, 3],
         blur: 12,
@@ -131,8 +132,8 @@ mod tests {
     fn viewer_visuals_keep_the_established_corner_and_shadow_geometry() {
         let visuals = viewer_visuals(ThemePreference::Light);
 
-        assert_eq!(visuals.window_corner_radius, egui::CornerRadius::same(7));
-        assert_eq!(visuals.menu_corner_radius, egui::CornerRadius::same(7));
+        assert_eq!(visuals.window_corner_radius, egui::CornerRadius::same(10));
+        assert_eq!(visuals.menu_corner_radius, egui::CornerRadius::same(8));
         assert_eq!(visuals.popup_shadow.offset, [0, 3]);
         assert_eq!(visuals.popup_shadow.blur, 12);
         assert_eq!(visuals.popup_shadow.spread, 0);
@@ -149,7 +150,7 @@ mod tests {
     fn dark_theme_keeps_the_same_geometry_with_dark_surfaces() {
         let visuals = viewer_visuals(ThemePreference::Dark);
 
-        assert_eq!(visuals.window_corner_radius, egui::CornerRadius::same(7));
+        assert_eq!(visuals.window_corner_radius, egui::CornerRadius::same(10));
         assert_eq!(visuals.popup_shadow.blur, 12);
         assert_ne!(
             visuals.widgets.inactive.weak_bg_fill,

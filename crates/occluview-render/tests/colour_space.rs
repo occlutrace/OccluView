@@ -124,8 +124,9 @@ fn render_uniform_textured(texture: &MeshTexture) -> Vec<u8> {
 }
 
 /// The render path preserves channel order for warm-white and blue textures.
-/// Upload uses `Rgba8UnormSrgb`, sampling uses `tex.rgb`, and readback only
-/// flips vertically.
+/// Upload uses `Rgba8Unorm` (deliberately not the sRGB-typed format, which would
+/// decode the stored bytes a second time), sampling uses `tex.rgb`, and readback
+/// only flips vertically.
 #[test]
 fn textured_render_preserves_channel_order() {
     // Warm white, the canonical dental enamel color (R >= G > B).

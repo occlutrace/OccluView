@@ -13,6 +13,7 @@ impl SculptSession {
         self.dab_axis = None;
         self.stroke_indices.clear();
         self.stroke_positions.clear();
+        self.smooth_stroke_travel.fill(0.0);
         self.topo_journal.clear_for_stroke(
             self.verts.len() / 3,
             self.tris.len() / 3,
@@ -41,13 +42,6 @@ impl SculptSession {
     /// releasing the button cannot change the geometry. All this does is
     /// capture both sides of the stroke in one sorted vertex order for undo.
     pub fn end_stroke(&mut self) -> StrokeRecord {
-        self.finish_stroke_record()
-    }
-
-    /// Abort the stroke and hand back the record the caller reverts.
-    ///
-    /// Return the stroke record for the caller to apply or revert.
-    pub fn abandon_stroke(&mut self) -> StrokeRecord {
         self.finish_stroke_record()
     }
 

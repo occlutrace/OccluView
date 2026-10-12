@@ -159,14 +159,12 @@ impl SceneContext<'_> {
         sample: SculptRaySample,
         release_after_refusal: bool,
     ) -> bool {
-        let Some((layer_id, input_pointer, path_break_pending)) =
-            self.tools.sculpt.stroke.as_ref().map(|stroke| {
-                (
-                    stroke.layer_id,
-                    stroke.input_pointer,
-                    stroke.path_break_pending,
-                )
-            })
+        let Some((input_pointer, path_break_pending)) = self
+            .tools
+            .sculpt
+            .stroke
+            .as_ref()
+            .map(|stroke| (stroke.input_pointer, stroke.path_break_pending))
         else {
             return false;
         };
@@ -177,11 +175,6 @@ impl SceneContext<'_> {
         }
         if !path_break_pending && !pointer_changed(input_pointer, point) {
             return false;
-        }
-        if let Some(hit) = self.sculpt_surface_hit(sample.viewport_rect, sample.pointer) {
-            if hit.layer_id == layer_id {
-                self.tools.sculpt.set_cursor_hit(point, hit);
-            }
         }
         let Some(step) = self.sculpt_pointer_ray_step(ctx, sample) else {
             return false;

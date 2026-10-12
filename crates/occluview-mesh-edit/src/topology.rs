@@ -141,8 +141,9 @@ pub(crate) fn canonical_topology(
 
 /// Weld an STL-style triangle soup back to shared topology.
 ///
-/// Exact position bits, colors, and UVs form the weld key. Attributes remain in
-/// the key so distinct color-scan corners are not merged.
+/// Exact position bits and colors form the weld key. Attributes remain in the
+/// key so distinct color-scan corners are not merged; texture coordinates are
+/// deliberately excluded.
 ///
 /// Triangle order and count are preserved — only vertex ids are remapped — so a
 /// face selection keyed by triangle index stays valid on the returned buffers.

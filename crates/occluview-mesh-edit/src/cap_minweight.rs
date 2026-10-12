@@ -29,15 +29,16 @@ use std::collections::HashSet;
 /// A rim split at a chord is covered in two halves that know nothing of each
 /// other, and on a rim that is far from flat the halves cross: the program
 /// has to hold the rims the tool is for in one piece. On real arches a lasso
-/// round one molar leaves a rim of 340 to 510 edges, which a leaf of 256
+/// round one molar leaves a rim of 340 to 510 edges, which a leaf of 512
 /// always split; the DP on 510 points takes a quarter of a second.
 pub(super) const MIN_WEIGHT_MAX_RIM: usize = 512;
 
 /// Absolute ceiling for the hierarchical minimum-weight path: a socket rim of
 /// a few thousand edges closes comfortably, but a pathological rim past this
-/// stays refused rather than allocate unboundedly. Matches the selection-scoped
-/// boundary-loop ceiling, so no loop the walk admits is refused for size here.
-pub(super) const MIN_WEIGHT_HIER_MAX_RIM: usize = 20_000;
+/// stays refused rather than allocate unboundedly. It is the selection-scoped
+/// boundary-loop ceiling itself, so no loop the walk admits is refused for
+/// size here.
+pub(super) const MIN_WEIGHT_HIER_MAX_RIM: usize = crate::holes::CLOSE_HOLES_EDGE_CEILING;
 
 /// Relative proximity threshold for non-adjacent rim segments. Scaling by the
 /// local pair avoids rejecting short seam edges near long segments.

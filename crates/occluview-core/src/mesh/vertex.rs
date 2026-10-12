@@ -18,7 +18,8 @@ pub struct Vertex {
     pub normal: [f32; 3],
     /// sRGBA color, packed 0..=255. `(255, 255, 255, 255)` when color is absent.
     pub color: [u8; 4],
-    /// Texture coordinates (UV). `[0.0, 0.0]` when the vertex has no UV
+    /// Texture coordinates (UV), with image origin at the top left.
+    /// `[0.0, 0.0]` is also the default when the vertex has no UV
     /// (plain STL, untextured PLY, etc.). Loaders set this from `TEXCOORD_0`
     /// (glTF), `vt` (OBJ), or `texcoord`/`s`/`t` (PLY).
     pub uv: [f32; 2],
@@ -54,7 +55,8 @@ impl Vertex {
         self
     }
 
-    /// Construct a vertex with texture coordinates.
+    /// Construct a vertex with top-left texture coordinates matching decoded
+    /// image rows. Format readers convert bottom-left file coordinates here.
     #[inline]
     #[must_use]
     pub fn with_uv(mut self, uv: [f32; 2]) -> Self {

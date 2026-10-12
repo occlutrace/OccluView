@@ -513,12 +513,14 @@ fn live_picker_follows_a_triangle_that_left_the_original_bvh_bounds() {
     }
     worker.state.record_touched(vec![0, 1, 2, 3], vec![0, 1]);
 
-    let (triangle, point) = worker
-        .pick_local_ray(Vec3::new(10.25, 0.25, 10.0), -Vec3::Z, |_| true)
+    let (triangle, point, normal) = worker
+        .pick_local_surface(Vec3::new(10.25, 0.25, 10.0), -Vec3::Z, |_| true)
+        .expect("live publication available")
         .expect("the dirty live triangles must remain pickable");
     assert!(triangle < 2);
     assert!((point.x - 10.25).abs() < 1e-5);
     assert!((point.z).abs() < 1e-5);
+    assert!(normal.is_finite() && normal.length_squared() > 0.0);
 }
 
 #[test]
@@ -787,7 +789,8 @@ fn a_densified_layer_is_still_pickable_so_the_next_stroke_can_land() {
     assert!(!delta.dirty_triangles.is_empty());
     assert!(
         worker
-            .pick_local_ray(Vec3::new(0.0, 0.0, 20.0), -Vec3::Z, |_| true)
+            .pick_local_surface(Vec3::new(0.0, 0.0, 20.0), -Vec3::Z, |_| true)
+            .expect("live publication available")
             .is_some(),
         "the live remeshed sheet stays pickable"
     );

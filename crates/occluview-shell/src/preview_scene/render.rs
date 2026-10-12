@@ -74,8 +74,6 @@ impl PreviewSceneState {
             crate::offscreen_factory::discard_shared_shell_offscreen(&self.offscreen);
         })?;
         // `render_rgba` already hands back app-convention (top-down) rows.
-        let _ = width;
-        let _ = height;
         Ok(rgba)
     }
 }
@@ -127,7 +125,6 @@ fn camera_studio_light_dir(camera: &Camera) -> Vec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::preview_scene::interaction::PreviewViewPreset;
     use crate::preview_scene::test_support::{
         binary_stl_marker_above_blob, binary_stl_preview_smoke_mesh, binary_stl_triangle,
         lit_centroid_row_in_half,
@@ -139,12 +136,8 @@ mod tests {
     /// The presented preview buffer uses the same top-down convention as the app.
     #[test]
     fn preview_presented_buffer_is_app_convention_right_side_up() {
-        let mut state = PreviewSceneState::from_bytes(Some("stl"), &binary_stl_marker_above_blob())
+        let state = PreviewSceneState::from_bytes(Some("stl"), &binary_stl_marker_above_blob())
             .expect("preview state should load the marker-above-blob fixture");
-        assert!(
-            state.apply_view_preset(PreviewViewPreset::Front),
-            "front preset should frame the fixture (look -Z, up +Y)"
-        );
 
         let w = usize::from(PARITY_SIZE[0]);
         let h = usize::from(PARITY_SIZE[1]);
@@ -181,7 +174,6 @@ mod tests {
     fn preview_downward_drag_moves_top_feature_down_on_screen() {
         let mut state = PreviewSceneState::from_bytes(Some("stl"), &binary_stl_marker_above_blob())
             .expect("preview state should load the marker-above-blob fixture");
-        assert!(state.apply_view_preset(PreviewViewPreset::Front));
 
         let w = usize::from(PARITY_SIZE[0]);
         let h = usize::from(PARITY_SIZE[1]);

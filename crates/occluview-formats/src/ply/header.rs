@@ -124,6 +124,9 @@ pub struct Element {
 /// Current exports write neither.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TextureComments {
+    /// Explicit coordinate origin, or the origin of an older native export.
+    /// External PLY atlases use bottom-left coordinates by default.
+    pub uv_top_left: Option<bool>,
     /// The image file the header names, if it names one.
     pub file: Option<String>,
     /// What the encoded payload is, as the writer declared it.
@@ -149,6 +152,8 @@ pub struct TextureComments {
 /// A fully parsed PLY header plus a view onto the data that follows.
 #[derive(Clone, Debug)]
 pub struct ParsedHeader<'a> {
+    /// Convert file UVs to the renderer's top-left image convention.
+    pub flip_uv_v: bool,
     /// Declared format.
     pub format: Format,
     /// Elements in declaration order (typically `vertex` then `face`).
@@ -286,7 +291,11 @@ pub fn parse(bytes: &[u8]) -> Result<ParsedHeader<'_>, FormatError> {
         });
     }
 
+    // Earlier native exports used top-left coordinates, including their
+    // embedded image payloads. Standard external PLY files use bottom-left.
+    let flip_uv_v = !texture.uv_top_left.unwrap_or(texture.encoded.is_some());
     Ok(ParsedHeader {
+        flip_uv_v,
         format,
         elements,
         texture,
@@ -314,7 +323,18 @@ fn read_comment(line: &str, texture: &mut TextureComments, encoded_ceiling: usiz
         .map(|(_, rest)| rest.trim_start())
         .and_then(|rest| rest.split_once(char::is_whitespace).map(|(_, tail)| tail))
         .unwrap_or_default();
-    if keyword.eq_ignore_ascii_case("texturefile") {
+    if keyword.eq_ignore_ascii_case("texturecoordinateorigin") {
+        match rest.trim().to_ascii_lowercase().as_str() {
+            "top-left" => texture.uv_top_left = Some(true),
+            "bottom-left" => texture.uv_top_left = Some(false),
+            _ => {}
+        }
+    } else if keyword.eq_ignore_ascii_case("generated")
+        && rest.trim().eq_ignore_ascii_case("by OccluView")
+        && texture.uv_top_left.is_none()
+    {
+        texture.uv_top_left = Some(true);
+    } else if keyword.eq_ignore_ascii_case("texturefile") {
         // A quoted name is the name: `comment TextureFile "atlas file.png"`.
         let name = rest.trim().trim_matches('"').trim();
         if !name.is_empty() {

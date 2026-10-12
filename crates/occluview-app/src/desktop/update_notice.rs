@@ -201,10 +201,15 @@ impl UpdateNotice {
     }
 
     /// Draw the current notice state without consuming worker events.
-    pub(crate) fn show(&mut self, ctx: &egui::Context, locale: &crate::i18n::LocaleManager) {
+    pub(crate) fn show(
+        &mut self,
+        ctx: &egui::Context,
+        locale: &crate::i18n::LocaleManager,
+        can_install: bool,
+    ) {
         match &self.phase {
             Phase::Idle | Phase::Dismissed => {}
-            _ => self.draw_window(ctx, locale),
+            _ => self.draw_window(ctx, locale, can_install),
         }
     }
 
@@ -241,32 +246,59 @@ impl UpdateNotice {
         }
     }
 
-    fn draw_window(&mut self, ctx: &egui::Context, locale: &crate::i18n::LocaleManager) {
+    fn draw_window(
+        &mut self,
+        ctx: &egui::Context,
+        locale: &crate::i18n::LocaleManager,
+        can_install: bool,
+    ) {
         let mut next_phase: Option<Phase> = None;
         let mut start_download: Option<AvailableUpdate> = None;
-        egui::Window::new("occluview-update-notice")
-            .title_bar(false)
-            .resizable(false)
-            .collapsible(false)
-            .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-16.0, -16.0))
-            .show(ctx, |ui| {
-                ui.set_max_width(300.0);
-                match &self.phase {
-                    Phase::Available(update) => {
-                        draw_available(ui, locale, update, &mut start_download, &mut next_phase);
-                    }
-                    Phase::Downloading {
-                        update,
-                        received,
-                        total,
-                    } => draw_downloading(ui, locale, update, *received, *total),
-                    Phase::Ready { update, installer } => {
-                        draw_ready(ui, ctx, locale, update, installer, &mut next_phase);
-                    }
-                    Phase::Failed(message) => draw_failed(ui, locale, message, &mut next_phase),
-                    Phase::Idle | Phase::Dismissed => {}
+        let mut open = true;
+        let mut window = crate::ui::ui_theme::window(
+            locale.tr(crate::i18n::message_id!("update-window-title")),
+            (ctx.content_rect().width() - 32.0).clamp(80.0, 416.0),
+        )
+        .id(egui::Id::new("occluview-update-notice"))
+        .constrain_to(ctx.content_rect().shrink(12.0))
+        .resizable(false)
+        .collapsible(false)
+        .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-16.0, -16.0));
+        if !matches!(self.phase, Phase::Downloading { .. }) {
+            window = window.open(&mut open);
+        }
+        window.show(ctx, |ui| {
+            ui.set_width(392.0_f32.min((ctx.content_rect().width() - 56.0).max(0.0)));
+            ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
+            crate::ui::ui_theme::window_contents(ui, ctx.content_rect().height(), |ui| match &self
+                .phase
+            {
+                Phase::Available(update) => {
+                    draw_available(ui, locale, update, &mut start_download, &mut next_phase);
                 }
+                Phase::Downloading {
+                    update,
+                    received,
+                    total,
+                } => draw_downloading(ui, locale, update, *received, *total),
+                Phase::Ready { update, installer } => {
+                    draw_ready(
+                        ui,
+                        ctx,
+                        locale,
+                        update,
+                        installer,
+                        can_install,
+                        &mut next_phase,
+                    );
+                }
+                Phase::Failed(message) => draw_failed(ui, locale, message, &mut next_phase),
+                Phase::Idle | Phase::Dismissed => {}
             });
+        });
+        if !open {
+            next_phase = Some(Phase::Dismissed);
+        }
         if let Some(update) = start_download {
             self.phase = self.start_download(update);
             if self.download_rx.is_some() {
@@ -391,41 +423,49 @@ fn draw_available(
             crate::i18n::message_id!("update-current-version"),
             Some(&args(&[("version", env!("CARGO_PKG_VERSION"))])),
         ))
-        .weak()
-        .size(11.0),
+        .color(crate::ui::ui_theme::text_weak())
+        .size(12.0),
     );
     if let Some(notes) = update.notes.as_deref() {
         if !notes.trim().is_empty() {
             ui.add_space(4.0);
-            ui.label(egui::RichText::new(notes.trim()).size(11.0));
+            egui::ScrollArea::vertical()
+                .id_salt("update-release-notes")
+                .max_height(144.0)
+                .show(ui, |ui| {
+                    ui.add(egui::Label::new(egui::RichText::new(notes.trim()).size(12.0)).wrap());
+                });
         }
     }
     ui.add_space(6.0);
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        if update.downloadable() {
-            if ui
-                .button(locale.text(crate::i18n::message_id!("update-download")))
-                .clicked()
-            {
-                *start_download = Some(update.clone());
-            }
-        } else {
-            // The release exists but publishes no installer for this
-            // platform: point at the release page instead of a download.
-            ui.hyperlink_to(
-                locale.text(crate::i18n::message_id!("update-open-release")),
-                "https://github.com/occlutrace/OccluView/releases/latest",
-            );
-        }
+    ui.separator();
+    if update.downloadable() {
+        let label = locale.tr(crate::i18n::message_id!("update-download"));
         if ui
-            .button(locale.text(crate::i18n::message_id!("update-later")))
+            .add_sized(
+                egui::vec2(ui.available_width(), 34.0),
+                crate::ui::ui_theme::primary_button(&label),
+            )
+            .clicked()
+        {
+            *start_download = Some(update.clone());
+        }
+    } else {
+        ui.hyperlink_to(
+            locale.tr(crate::i18n::message_id!("update-open-release")),
+            "https://github.com/occlutrace/OccluView/releases/latest",
+        );
+    }
+    ui.horizontal_wrapped(|ui| {
+        if ui
+            .button(locale.tr(crate::i18n::message_id!("update-later")))
             .clicked()
         {
             *next_phase = Some(Phase::Dismissed);
         }
         if ui
-            .button(locale.text(crate::i18n::message_id!("update-skip")))
-            .on_hover_text(locale.text(crate::i18n::message_id!("update-skip-tooltip")))
+            .button(locale.tr(crate::i18n::message_id!("update-skip")))
+            .on_hover_text(locale.tr(crate::i18n::message_id!("update-skip-tooltip")))
             .clicked()
         {
             store_skipped_version(&update.version.to_string());
@@ -448,11 +488,15 @@ fn draw_downloading(
         ))
         .strong(),
     );
-    ui.add(
-        egui::ProgressBar::new(progress_fraction(received, total))
-            .desired_width(280.0)
-            .show_percentage(),
-    );
+    if total.is_some_and(|total| total > 0) {
+        ui.add(
+            egui::ProgressBar::new(progress_fraction(received, total))
+                .desired_width(ui.available_width())
+                .show_percentage(),
+        );
+    } else {
+        ui.spinner();
+    }
 }
 
 // Six inherent inputs (ui/ctx + data + locale); a struct grouping them would
@@ -464,6 +508,7 @@ fn draw_ready(
     locale: &crate::i18n::LocaleManager,
     update: &AvailableUpdate,
     installer: &std::path::Path,
+    can_install: bool,
     next_phase: &mut Option<Phase>,
 ) {
     ui.label(
@@ -480,11 +525,26 @@ fn draw_ready(
     } else {
         locale.tr(crate::i18n::message_id!("update-ready-hint-other"))
     };
-    ui.label(egui::RichText::new(handoff_hint).weak().size(11.0));
+    ui.label(
+        egui::RichText::new(handoff_hint)
+            .color(crate::ui::ui_theme::text_weak())
+            .size(12.0),
+    );
+    if !can_install {
+        ui.label(
+            egui::RichText::new(locale.tr(crate::i18n::message_id!("update-save-first")))
+                .color(crate::ui::ui_theme::warning()),
+        );
+    }
     ui.add_space(6.0);
-    ui.horizontal(|ui| {
+    ui.vertical(|ui| {
+        let install_label = locale.tr(crate::i18n::message_id!("update-install-close"));
         if ui
-            .button(locale.tr(crate::i18n::message_id!("update-install-close")))
+            .add_enabled(
+                can_install,
+                crate::ui::ui_theme::primary_button(&install_label)
+                    .min_size(egui::vec2(ui.available_width(), 34.0)),
+            )
             .clicked()
         {
             // Verified again here, not only at download time: what was
@@ -516,7 +576,11 @@ fn draw_failed(
     // Verbatim by design: the message is raw OS/IO error text (and
     // upstream release notes render the same way). Routing either
     // through the catalogs would corrupt diagnostics.
-    ui.label(egui::RichText::new(message).weak().size(11.0));
+    ui.label(
+        egui::RichText::new(message)
+            .color(crate::ui::ui_theme::text_weak())
+            .size(12.0),
+    );
     ui.add_space(6.0);
     if ui
         .button(locale.tr(crate::i18n::message_id!("update-dismiss")))
@@ -607,7 +671,7 @@ mod settings_status_tests {
         let locale = crate::i18n::LocaleManager::for_tests();
 
         ctx.run_ui(egui::RawInput::default(), |ui| {
-            notice.show(ui.ctx(), &locale);
+            notice.show(ui.ctx(), &locale, true);
         })
         .drop_without_applying_deltas();
 

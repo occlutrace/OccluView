@@ -58,15 +58,19 @@ pub(crate) fn show_panel(
     let default_pos = viewport_rect.right_top() + egui::vec2(-PANEL_WIDTH - 16.0, 16.0);
     let mut action = None;
     let mut open = true;
-    egui::Window::new(locale.tr(crate::i18n::message_id!("bridge-panel-title")))
-        .id(egui::Id::new(("occluview_bridge_split", scene_key)))
-        .default_pos(default_pos)
-        .constrain_to(viewport_rect)
-        .resizable(false)
-        .collapsible(false)
-        .open(&mut open)
-        .show(ctx, |ui| {
-            ui.set_width(PANEL_WIDTH - 22.0);
+    ui_theme::window(
+        locale.tr(crate::i18n::message_id!("bridge-panel-title")),
+        PANEL_WIDTH,
+    )
+    .id(egui::Id::new(("occluview_bridge_split", scene_key)))
+    .default_pos(default_pos)
+    .constrain_to(viewport_rect)
+    .resizable(false)
+    .collapsible(false)
+    .open(&mut open)
+    .show(ctx, |ui| {
+        ui.set_width(PANEL_WIDTH - 22.0);
+        ui_theme::window_contents(ui, viewport_rect.height(), |ui| {
             ui.style_mut().animation_time = 0.05;
             ui.label(
                 egui::RichText::new(status_label(state.mode, locale))
@@ -130,6 +134,7 @@ pub(crate) fn show_panel(
                 }
             });
         });
+    });
     if !open {
         action = Some(BridgeSplitPanelAction::Cancel);
     }

@@ -648,7 +648,7 @@ fn usage_text() -> &'static str {
          thumbnail <file> [-o out.png] [--size N]   Render a thumbnail (same path as the Explorer extension)\n    \
          convert   <file> -o output.{{stl|ply|obj}}   Convert a mesh into STL / PLY / OBJ\n    \
          close-holes <file> -o out.stl [--limit-mm N] Close holes (whole-mesh) and write the result\n    \
-         info      <file>                          Print format / counts / bbox\n    \
+         info      <file> [file...]                 Print format / counts / bbox\n    \
          help                                       Show this message\n    \
          --version | -V                             Print the version and exit\n\
          \n\

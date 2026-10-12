@@ -8,9 +8,14 @@ use crate::app::workspace::commands::{
 };
 use crate::app::{egui, OccluViewApp};
 
-const EDGE_DROP_ZONE_WIDTH: f32 = 56.0;
+/// Fraction of the workspace width, from each outer edge, that creates a new
+/// scene on release. The middle fifth stays a cancellation, so almost the
+/// whole viewport is a usable create target while a layer can still be dropped
+/// back onto its own view.
+const EDGE_DROP_ZONE_FRACTION: f32 = 0.4;
 /// A resolved edge target survives this far past its band, so a hand that
-/// drifts a few pixels back inward does not make the highlight flash off.
+/// drifts a few pixels back toward the middle does not make the highlight
+/// flash off.
 const EDGE_DROP_ZONE_RELEASE_MARGIN: f32 = 40.0;
 
 impl OccluViewApp {
@@ -69,22 +74,7 @@ impl OccluViewApp {
         if self.workspace.scenes.len() >= 2 || !frame.workspace_rect.contains(pointer) {
             return None;
         }
-        let band = |side: SplitSide| match side {
-            SplitSide::Left => Rect::from_min_max(
-                frame.workspace_rect.min,
-                pos2(
-                    frame.workspace_rect.left() + EDGE_DROP_ZONE_WIDTH,
-                    frame.workspace_rect.bottom(),
-                ),
-            ),
-            SplitSide::Right => Rect::from_min_max(
-                pos2(
-                    frame.workspace_rect.right() - EDGE_DROP_ZONE_WIDTH,
-                    frame.workspace_rect.top(),
-                ),
-                frame.workspace_rect.max,
-            ),
-        };
+        let band = |side: SplitSide| edge_drop_band(frame.workspace_rect, side);
         for side in [SplitSide::Left, SplitSide::Right] {
             let rect = band(side);
             if rect.contains(pointer) {
@@ -246,7 +236,7 @@ impl OccluViewApp {
             return;
         };
         if let Some(target) = target {
-            self.paint_layer_drop_label(ui.painter(), target.rect(), pointer, frame.workspace_rect);
+            self.paint_layer_drop_label(ui.painter(), target, frame.workspace_rect);
         }
         ctx.set_cursor_icon(if target.is_some() {
             egui::CursorIcon::Grabbing
@@ -255,59 +245,79 @@ impl OccluViewApp {
         });
         Self::paint_layer_drag_ghost(ui.painter(), pointer, &payload, target.is_some());
     }
-    /// Translucent chip under the pointer for the layer being dragged. It dims
-    /// when the pointer is not over a drop target, so the outcome of the
-    /// release is visible before the button comes up.
+    /// A translucent chip under the pointer: a tinted file badge with the
+    /// layer's mesh glyph and the layer name beside it. It dims when the
+    /// pointer is not over a drop target, so the outcome of the release is
+    /// visible before the button comes up.
     fn paint_layer_drag_ghost(
         painter: &egui::Painter,
         at: egui::Pos2,
         payload: &LayerDragPayload,
         accepted: bool,
     ) {
+        const PAD: f32 = 8.0;
+        const BADGE: f32 = 34.0;
+        let tint = crate::layers_overlay::color32_from_tint(payload.tint);
         let galley = painter.layout_no_wrap(
             payload.label.clone(),
-            egui::FontId::proportional(12.0),
+            egui::FontId::proportional(13.0),
             crate::ui::ui_theme::text(),
         );
-        let rect = Rect::from_min_size(at + vec2(12.0, 14.0), galley.size() + vec2(22.0, 12.0));
-        let tint = crate::layers_overlay::color32_from_tint(payload.tint);
-        let (fill, stroke) = if accepted {
-            (tint.gamma_multiply(0.85), crate::ui::ui_theme::accent())
+        let chip = Rect::from_min_size(
+            at + vec2(16.0, 18.0),
+            vec2(
+                PAD + BADGE + 10.0 + galley.size().x + PAD,
+                BADGE + PAD * 2.0,
+            ),
+        );
+        let stroke = if accepted {
+            crate::ui::ui_theme::accent()
         } else {
-            (tint.gamma_multiply(0.35), crate::ui::ui_theme::hairline())
+            crate::ui::ui_theme::hairline()
         };
-        painter.rect_filled(rect, 6.0, fill);
+        painter.rect_filled(chip, 8.0, crate::ui::ui_theme::panel_fill());
         painter.rect_stroke(
-            rect,
-            6.0,
+            chip,
+            8.0,
             egui::Stroke::new(1.0, stroke),
             egui::StrokeKind::Inside,
         );
+        let badge = Rect::from_min_size(chip.min + vec2(PAD, PAD), egui::Vec2::splat(BADGE));
+        painter.rect_filled(
+            badge,
+            7.0,
+            tint.gamma_multiply(if accepted { 0.9 } else { 0.35 }),
+        );
+        crate::ui::icons::paint(
+            painter,
+            badge.shrink(7.0),
+            crate::ui::icons::AppIcon::SurfaceMode,
+            ghost_icon_ink(tint),
+        );
         painter.galley(
-            rect.min + vec2(11.0, 6.0),
+            pos2(
+                badge.right() + 10.0,
+                chip.center().y - galley.size().y * 0.5,
+            ),
             galley,
             crate::ui::ui_theme::text(),
         );
     }
+    /// The destination's own name under the highlight, so a drop reads as
+    /// "this layer lands in Scene 1 / a new Scene 2" instead of a generic verb.
     fn paint_layer_drop_label(
         &self,
         painter: &egui::Painter,
-        target: Rect,
-        drop_position: egui::Pos2,
+        target: LayerDropTarget,
         workspace_rect: Rect,
     ) {
-        if target.height() <= 60.0 {
+        let rect = target.rect();
+        if rect.height() <= 60.0 {
             return;
         }
-        let label = self.ui.locale.tr(if self.workspace.scenes.len() < 2 {
-            if drop_position.x < workspace_rect.center().x {
-                crate::i18n::message_id!("workspace-new-left")
-            } else {
-                crate::i18n::message_id!("workspace-new-right")
-            }
-        } else {
-            crate::i18n::message_id!("workspace-move-layer")
-        });
+        let Some(label) = self.layer_drop_label(target) else {
+            return;
+        };
         let galley = painter.layout_no_wrap(
             label,
             egui::FontId::proportional(14.0),
@@ -316,7 +326,7 @@ impl OccluViewApp {
         // A drop band is narrower than this pill, so centring the pill on the
         // band would hang it off the workspace, where the panel clips it. Shift
         // it back inside before painting.
-        let wanted = Rect::from_center_size(target.center(), galley.size() + vec2(24.0, 16.0));
+        let wanted = Rect::from_center_size(rect.center(), galley.size() + vec2(24.0, 16.0));
         let shift = vec2(
             (workspace_rect.left() - wanted.left()).max(0.0)
                 - (wanted.right() - workspace_rect.right()).max(0.0),
@@ -329,6 +339,80 @@ impl OccluViewApp {
             label_rect.min + vec2(12.0, 8.0),
             galley,
             crate::ui::ui_theme::text(),
+        );
+    }
+    /// The name of the scene a drop would land in: an existing scene's own
+    /// name, or the identity the new scene will be created with.
+    fn layer_drop_label(&self, target: LayerDropTarget) -> Option<String> {
+        match target {
+            LayerDropTarget::SceneTab { key, .. } | LayerDropTarget::Pane { key, .. } => self
+                .workspace
+                .scenes
+                .iter()
+                .find(|scene| scene.key == key)
+                .map(|scene| scene.name.clone()),
+            LayerDropTarget::NewScene { .. } | LayerDropTarget::Edge { .. } => {
+                let number = self.workspace.ids.peek_scene_id()?.get().to_string();
+                Some(self.ui.locale.tr_with(
+                    crate::i18n::message_id!("workspace-scene-name"),
+                    &[("number", &number)],
+                ))
+            }
+        }
+    }
+}
+
+/// The band along one outer edge of the workspace that creates a scene on
+/// release. It spans `EDGE_DROP_ZONE_FRACTION` of the workspace width, so the
+/// middle stays a cancellation and a layer can still be dropped back.
+fn edge_drop_band(workspace_rect: Rect, side: SplitSide) -> Rect {
+    let width = workspace_rect.width() * EDGE_DROP_ZONE_FRACTION;
+    match side {
+        SplitSide::Left => Rect::from_min_max(
+            workspace_rect.min,
+            pos2(workspace_rect.left() + width, workspace_rect.bottom()),
+        ),
+        SplitSide::Right => Rect::from_min_max(
+            pos2(workspace_rect.right() - width, workspace_rect.top()),
+            workspace_rect.max,
+        ),
+    }
+}
+
+/// Ink for the badge glyph: near-black on a light tint, white on a dark one.
+fn ghost_icon_ink(tint: egui::Color32) -> egui::Color32 {
+    let luma =
+        0.299 * f32::from(tint.r()) + 0.587 * f32::from(tint.g()) + 0.114 * f32::from(tint.b());
+    if luma > 140.0 {
+        egui::Color32::from_rgb(20, 24, 30)
+    } else {
+        egui::Color32::WHITE
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The requested interaction: the outer two fifths of the workspace create
+    /// a scene, and only the middle fifth is a cancellation.
+    #[test]
+    fn the_create_bands_cover_the_outer_two_fifths_and_leave_the_middle() {
+        let workspace = Rect::from_min_size(pos2(0.0, 100.0), vec2(1000.0, 600.0));
+        let left = edge_drop_band(workspace, SplitSide::Left);
+        let right = edge_drop_band(workspace, SplitSide::Right);
+
+        assert!(left.contains(pos2(399.0, 400.0)), "inside the left band");
+        assert!(!left.contains(pos2(401.0, 400.0)), "past the left band");
+        assert!(right.contains(pos2(601.0, 400.0)), "inside the right band");
+        assert!(!right.contains(pos2(599.0, 400.0)), "past the right band");
+        assert!(
+            left.right() < right.left(),
+            "the middle must stay a cancellation"
+        );
+        assert!(
+            left.width() >= workspace.width() * 0.35,
+            "the create target must be far wider than a sliver: {left:?}"
         );
     }
 }

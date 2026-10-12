@@ -86,9 +86,8 @@ fn edit_faces(
         (mesh.vertices.clone(), kept_triangle_indices)
     };
 
-    if matches!(mesh.topology, super::MeshTopology::TriangleMesh) {
-        recompute_all_normals(&mut vertices, &indices)?;
-    }
+    // `validate_face_edit_buffers` above already refused every point cloud.
+    recompute_all_normals(&mut vertices, &indices)?;
 
     let output_triangles = indices.len() / 3;
     let report = MeshEditReport {

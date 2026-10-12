@@ -9,7 +9,7 @@
 
 use eframe::egui;
 
-use crate::align::align_brush::{AlignBrush, BrushTarget};
+use crate::align::align_brush::{AlignBrush, BrushTarget, MAX_RADIUS_MM, MIN_RADIUS_MM};
 use crate::align::align_markings::{AlignSide, MaskCommand};
 use crate::align::align_panel::chip;
 use crate::align::align_panel_roles::AlignRoles;
@@ -49,23 +49,30 @@ pub(crate) fn show(
     // land on top of each other the first time the checkbox is ticked.
     let default_pos = view.viewport_rect.right_top() + egui::vec2(-WINDOW_WIDTH - 300.0, 16.0);
     let mut action = None;
-    egui::Window::new(
+    let mut open = true;
+    ui_theme::window(
         view.locale
             .tr(crate::i18n::message_id!("align-brush-title")),
+        WINDOW_WIDTH,
     )
     .id(scope.with("occluview_align_brush_window"))
+    .open(&mut open)
     .default_pos(default_pos)
     .constrain_to(view.viewport_rect)
     .resizable(false)
     .collapsible(false)
-    .title_bar(false)
     .show(ctx, |ui| {
         ui.set_min_width(WINDOW_WIDTH - 24.0);
         ui.set_width(WINDOW_WIDTH - 24.0);
         ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
         ui.style_mut().animation_time = 0.05;
-        action = body(ui, view.brush, view.roles, view.enabled, view.locale);
+        action = ui_theme::window_contents(ui, view.viewport_rect.height(), |ui| {
+            body(ui, view.brush, view.roles, view.enabled, view.locale)
+        });
     });
+    if !open {
+        action = Some(BrushPanelAction::Close);
+    }
     action
 }
 
@@ -77,7 +84,7 @@ fn body(
     enabled: bool,
     locale: &crate::i18n::LocaleManager,
 ) -> Option<BrushPanelAction> {
-    let mut action = header(ui, locale);
+    let mut action = None;
     ui.add_space(2.0);
     if let Some(roles) = roles {
         mesh_selection(ui, brush, roles, enabled, locale);
@@ -109,11 +116,20 @@ fn mesh_selection(
     enabled: bool,
     locale: &crate::i18n::LocaleManager,
 ) {
-    ui.label(
-        egui::RichText::new(locale.tr(crate::i18n::message_id!("align-brush-mesh-selection")))
-            .size(11.0)
-            .color(ui_theme::text_muted()),
-    );
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
+        crate::ui::icons::paint(
+            ui.painter(),
+            rect,
+            AppIcon::MaskBrush,
+            ui_theme::text_weak(),
+        );
+        ui.label(
+            egui::RichText::new(locale.tr(crate::i18n::message_id!("align-brush-mesh-selection")))
+                .size(11.0)
+                .color(ui_theme::text_muted()),
+        );
+    });
     for target in BrushTarget::ALL {
         let label = match target {
             BrushTarget::Both => locale.tr(crate::i18n::message_id!("align-brush-both")),
@@ -150,58 +166,6 @@ fn mesh_selection(
             brush.set_target(target);
         }
     }
-}
-
-/// The title strip, with the only way out of the window that is not the
-/// checkbox that opened it.
-fn header(ui: &mut egui::Ui, locale: &crate::i18n::LocaleManager) -> Option<BrushPanelAction> {
-    let mut action = None;
-    ui.horizontal(|ui| {
-        let glyph = ui
-            .allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover())
-            .0;
-        crate::ui::icons::paint(ui.painter(), glyph, AppIcon::MaskBrush, ui_theme::accent());
-        ui.label(
-            egui::RichText::new(locale.tr(crate::i18n::message_id!("align-brush-title")))
-                .size(13.0)
-                .color(ui_theme::text()),
-        );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let (close_rect, close_response) =
-                ui.allocate_exact_size(egui::vec2(22.0, 20.0), egui::Sense::click());
-            crate::ui::icons::paint(
-                ui.painter(),
-                close_rect,
-                AppIcon::Close,
-                if close_response.hovered() {
-                    ui_theme::text()
-                } else {
-                    ui_theme::text_weak()
-                },
-            );
-            if close_response.has_focus() {
-                ui.painter().rect_stroke(
-                    close_rect,
-                    4.0,
-                    egui::Stroke::new(1.2_f32, ui_theme::accent()),
-                    egui::StrokeKind::Inside,
-                );
-            }
-            crate::ui::accessibility::button(
-                &close_response,
-                &locale.tr(crate::i18n::message_id!("align-brush-close-hint")),
-                true,
-                None,
-            );
-            if close_response
-                .on_hover_text(locale.tr(crate::i18n::message_id!("align-brush-close-hint")))
-                .clicked()
-            {
-                action = Some(BrushPanelAction::Close);
-            }
-        });
-    });
-    action
 }
 
 /// The same whole-mesh commands dental CAD software offers,
@@ -250,7 +214,7 @@ fn size(
     if ui
         .add_enabled(
             enabled,
-            egui::Slider::new(&mut radius, 0.1..=20.0)
+            egui::Slider::new(&mut radius, MIN_RADIUS_MM..=MAX_RADIUS_MM)
                 .suffix(" mm")
                 .text(
                     locale
@@ -292,7 +256,7 @@ fn automatic(
     if ui
         .add_enabled(
             enabled,
-            egui::Slider::new(&mut radius, 0.1..=20.0)
+            egui::Slider::new(&mut radius, MIN_RADIUS_MM..=MAX_RADIUS_MM)
                 .suffix(" mm")
                 .text(
                     locale

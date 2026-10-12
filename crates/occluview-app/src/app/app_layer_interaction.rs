@@ -233,6 +233,16 @@ impl SceneContext<'_> {
                                 }));
                         }
                     }
+                    layers_overlay::LayerOverlaySceneAction::Close(scene_id) => {
+                        if let Some(summary) = self
+                            .scene_summaries
+                            .iter()
+                            .find(|summary| summary.key.id.get() == scene_id)
+                        {
+                            self.commands
+                                .push_back(WorkspaceCommand::CloseScene { scene: summary.key });
+                        }
+                    }
                     layers_overlay::LayerOverlaySceneAction::Create => {
                         self.queue_new_scene(SplitSide::Right);
                     }

@@ -13,8 +13,8 @@
 //! vertices from counting as damage. Coplanar overlap without piercing is out
 //! of scope (it is not resolvable at f32 scan precision anyway).
 //!
-//! Broad phase: sort by AABB min-x, sweep, and reject by full AABB overlap —
-//! deterministic and allocation-light.
+//! Broad phase: sweep along the widest AABB axis, and reject by full AABB
+//! overlap — deterministic and allocation-light.
 
 use std::collections::HashSet;
 
@@ -380,7 +380,7 @@ mod tests {
             }];
             assert!(
                 cap_pierces(&cap, &surround),
-                "cap must not pierce surface at scale {scale}"
+                "cap piercing must be detected at scale {scale}"
             );
             assert!(
                 cap_pierces(&surround, &cap),

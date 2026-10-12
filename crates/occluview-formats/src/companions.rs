@@ -91,11 +91,10 @@ fn locate(path: &Path, kind: LocateKind, bytes: &[u8]) -> Result<Option<PathBuf>
             let Ok(header) = crate::ply::header::parse(bytes) else {
                 return Ok(None);
             };
-            header
-                .texture
-                .file
-                .as_deref()
-                .and_then(|name| inside(directory, directory, name))
+            match header.texture.file.as_deref() {
+                Some(name) => inside(directory, directory, name),
+                None => same_stem_image(path, directory),
+            }
         }
         LocateKind::None => None,
     })
@@ -187,10 +186,7 @@ fn unsupported_material(property: &str) -> FormatError {
 /// Validate the selected section before attaching an atlas from that section.
 fn validate_material_properties(lines: &[&str]) -> Result<(), FormatError> {
     for line in lines {
-        let tokens: Vec<_> = line
-            .split('#')
-            .next()
-            .unwrap_or("")
+        let tokens: Vec<_> = without_inline_comment(line)
             .split_ascii_whitespace()
             .collect();
         match tokens.first().copied() {
@@ -287,7 +283,7 @@ fn directives(bytes: &[u8], keyword: &str) -> Vec<String> {
         if !rest.starts_with(char::is_whitespace) {
             continue;
         }
-        let rest = rest.split('#').next().unwrap_or(rest).trim();
+        let rest = without_inline_comment(rest).trim();
         let mut tokens: Vec<&str> = rest.split_ascii_whitespace().collect();
         strip_options(&mut tokens);
         let value = tokens.join(" ").trim_matches('"').trim().to_string();
@@ -348,10 +344,56 @@ fn strip_options(tokens: &mut Vec<&str>) {
 fn inside(root: &Path, directory: &Path, name: &str) -> Option<PathBuf> {
     // Windows separators in a file written on Windows.
     let name = name.replace('\\', "/");
-    let candidate = directory.join(name);
-    let directory = root.canonicalize().ok()?;
-    let resolved = candidate.canonicalize().ok()?;
-    resolved.starts_with(&directory).then_some(resolved)
+    let root = root.canonicalize().ok()?;
+    let directory = directory.canonicalize().ok()?;
+    if !directory.starts_with(&root) {
+        return None;
+    }
+    let candidate = directory.join(&name);
+    if let Ok(resolved) = candidate.canonicalize() {
+        return resolved.starts_with(&root).then_some(resolved);
+    }
+    // A Windows export may change only the spelling of a directory or file.
+    // Resolve each component against this mesh folder, never a global search.
+    let mut relative = directory.strip_prefix(&root).ok()?.to_path_buf();
+    for component in Path::new(&name).components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if !relative.pop() {
+                    return None;
+                }
+            }
+            std::path::Component::Normal(part) => relative.push(part),
+            _ => return None,
+        }
+    }
+    let mut resolved = root.clone();
+    for component in relative.components() {
+        let part = component.as_os_str();
+        let exact = resolved.join(part);
+        if exact.exists() {
+            resolved = exact;
+            continue;
+        }
+        let name = part.to_str()?;
+        let mut matches = std::fs::read_dir(&resolved)
+            .ok()?
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|value| value.to_lowercase() == name.to_lowercase())
+            });
+        let found = matches.next()?.path();
+        if matches.next().is_some() {
+            return None;
+        }
+        resolved = found;
+    }
+    let resolved = resolved.canonicalize().ok()?;
+    resolved.starts_with(&root).then_some(resolved)
 }
 
 /// An image that shares the mesh's name, which is how many dental exports ship
@@ -373,21 +415,52 @@ fn same_stem_image(path: &Path, directory: &Path) -> Option<PathBuf> {
             let Some((candidate_stem, candidate_extension)) = lower.rsplit_once('.') else {
                 return false;
             };
-            candidate_stem == stem
+            (candidate_stem == stem || candidate_stem == format!("{stem}_texture"))
                 && SAME_STEM_EXTENSIONS.contains(&candidate_extension)
                 && candidate.is_file()
         })
         .collect();
-    // Deterministic when several spellings exist side by side.
-    found.sort();
-    found
-        .into_iter()
-        .find_map(|candidate| inside(directory, directory, candidate.file_name()?.to_str()?))
+    // A folder can hold several scans/atlases. Never pick an arbitrary image
+    // when the mesh has not identified which of two matching files it uses.
+    if found.len() != 1 {
+        return None;
+    }
+    let candidate = found.pop()?;
+    inside(directory, directory, candidate.file_name()?.to_str()?)
+}
+
+/// A hash inside a filename (case numbers often use it) is not a comment.
+/// Only an unquoted hash beginning a whitespace-separated token starts one.
+fn without_inline_comment(line: &str) -> &str {
+    let mut quoted = false;
+    let mut previous_space = true;
+    for (index, ch) in line.char_indices() {
+        if ch == '"' {
+            quoted = !quoted;
+        }
+        if ch == '#' && !quoted && previous_space {
+            return &line[..index];
+        }
+        previous_space = ch.is_whitespace();
+    }
+    line
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn case_number_in_a_texture_filename_is_preserved() {
+        assert_eq!(
+            directives(b"map_Kd jaw#123_texture.jpg # note", "map_Kd"),
+            ["jaw#123_texture.jpg"]
+        );
+        assert_eq!(
+            directives(b"mtllib \"jaw #123.mtl\" # note", "mtllib"),
+            ["jaw #123.mtl"]
+        );
+    }
 
     /// What the loader does around a read: find the picture, then attach it.
     fn attach_beside(

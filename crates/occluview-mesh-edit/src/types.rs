@@ -100,7 +100,9 @@ pub struct MeshEditOptions {
     /// Whole-mesh (unselected) fill only: protect the scan's natural outer
     /// boundary. A rim is treated as scan border when its perimeter is both
     /// at least half of the largest rim's perimeter and at least half of the
-    /// mesh bounding-box diagonal; border rims stay open (reported per
+    /// referenced-vertex bounding-box diagonal; when the mesh has a single rim
+    /// the diagonal anchor alone decides and it requires the full diagonal.
+    /// Border rims stay open (reported per
     /// [`MeshEditReport::skipped_border_rims`]) while every other rim closes
     /// regardless of size. Repair-style callers that only ever cap pinholes
     /// switch this off.

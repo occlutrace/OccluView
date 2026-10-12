@@ -38,9 +38,9 @@ pub fn cut_view_camera(plane: &ClipPlane, bbox: Aabb) -> GpuCamera {
     let center = bbox.center();
     let normal = Vec3::from_array(plane.normal);
 
-    // Project all 8 bbox corners onto the plane to find the cross-section
-    // extent. We compute the max distance from center in the plane's tangent
-    // space.
+    // Budget the cut view from the bbox's half-diagonal: it bounds the
+    // cross-section extent without projecting all eight corners onto the plane,
+    // which keeps the framing independent of the plane's orientation.
     let half_diag = bbox.half_diagonal().max(1.0);
 
     // Look into the cut from the discarded half, as the focused camera does.

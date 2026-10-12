@@ -26,6 +26,12 @@ pub(crate) use scene_menu::{show_scene_context_menu, SceneContextAction};
 
 const LAYER_LIST_COLLAPSING_ID: &str = "workspace-layers-list-collapse";
 
+/// Fixed width shared by the layer and scene context menus, so the two read as
+/// one family. The elided file-name title and operator labels need this much
+/// room, and pinning it keeps egui from wrapping a label into a letters-tall
+/// column when the menu opens near a screen edge.
+pub(super) const CONTEXT_MENU_WIDTH: f32 = 244.0;
+
 /// Geometry currently used by the one shared Layers panel, including its
 /// saved collapsed state. Input hit testing must follow the same state as the
 /// painted panel so a collapsed header does not reserve invisible row space.
@@ -78,6 +84,7 @@ pub(crate) struct LayerSceneTabs<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LayerOverlaySceneAction {
     Activate(u64),
+    Close(u64),
     Create,
     TransferToNew {
         layer_id: SceneMeshId,
@@ -304,7 +311,14 @@ fn show_scene_footer(
             .truncate();
             let response = ui.add_sized([tab_width, LAYER_SCENE_FOOTER_BUTTON_HEIGHT_PX], button);
             crate::ui::accessibility::button(&response, tab.name, true, Some(selected));
-            let response = response.on_hover_text(tab.name);
+            let response = response.on_hover_text(format!(
+                "{}\n{}",
+                tab.name,
+                locale.tr(crate::i18n::message_id!("workspace-middle-close-hint"))
+            ));
+            if response.clicked_by(egui::PointerButton::Middle) {
+                changes.action = Some(LayerOverlaySceneAction::Close(tab.id));
+            }
             if response.clicked() {
                 changes.action = Some(LayerOverlaySceneAction::Activate(tab.id));
             }

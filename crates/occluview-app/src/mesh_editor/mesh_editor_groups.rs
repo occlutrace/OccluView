@@ -642,21 +642,6 @@ fn close_holes_limit_control(
     ui.ctx().data_mut(|data| data.insert_temp(id, limit));
 }
 
-/// Draw a tool-panel header.
-pub(super) fn header(ui: &mut egui::Ui, title: &str, icon: AppIcon) {
-    ui.horizontal(|ui| {
-        let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
-        crate::ui::icons::paint(ui.painter(), rect, icon, ui_theme::accent());
-        ui.label(
-            egui::RichText::new(title)
-                .strong()
-                .size(14.0)
-                .color(ui_theme::text()),
-        );
-    });
-    ui.add_space(2.0);
-}
-
 fn section(
     ui: &mut egui::Ui,
     locale: &crate::i18n::LocaleManager,

@@ -6,7 +6,10 @@ use occluview_mesh_edit::{BridgeSplitError, BridgeSplitRequest, CoreBridgeSplitE
 pub(crate) const DEFAULT_BRIDGE_SPLIT_KERF_MM: f32 = 0.05;
 pub(crate) const MIN_BRIDGE_SPLIT_KERF_MM: f32 = 0.01;
 pub(crate) const MAX_BRIDGE_SPLIT_KERF_MM: f32 = 1.0;
-pub(crate) const MAX_BRIDGE_SPLIT_DISC_RADIUS_MM: f32 = 60.0;
+/// Bridge Split drives the same disc manipulator as Cut, so the radius bound is
+/// that manipulator's own constant rather than a second copy that could drift.
+pub(crate) const MAX_BRIDGE_SPLIT_DISC_RADIUS_MM: f32 =
+    crate::cut::cut_manipulator::MAX_DISC_RADIUS_MM;
 
 pub(crate) fn clamp_bridge_split_kerf_mm(value: f32) -> f32 {
     if !value.is_finite() {

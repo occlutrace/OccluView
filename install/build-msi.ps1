@@ -71,10 +71,12 @@ function Set-ReferenceShellPackageVersion {
     $toml = [IO.File]::ReadAllText($referenceCargoToml)
     $workspaceVersionPattern = '(?ms)(\[workspace\.package\][^\[]*?^version\s*=\s*")[^"]+(")'
     $updatedToml = [regex]::Replace($toml, $workspaceVersionPattern, "`${1}$PackageVersion`${2}", 1)
-    if ($updatedToml -eq $toml) {
-        throw "Could not set the reference shell package version in $referenceCargoToml"
+    if (-not [regex]::IsMatch($toml, $workspaceVersionPattern)) {
+        throw "Could not read the reference shell package version in $referenceCargoToml"
     }
-    [IO.File]::WriteAllText($referenceCargoToml, $updatedToml, [Text.UTF8Encoding]::new($false))
+    if ($updatedToml -ne $toml) {
+        [IO.File]::WriteAllText($referenceCargoToml, $updatedToml, [Text.UTF8Encoding]::new($false))
+    }
 
     $lock = [IO.File]::ReadAllText($referenceCargoLock)
     # The names below belong to the PINNED tree's Cargo.lock and must not follow a workspace rename.

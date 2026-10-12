@@ -122,9 +122,8 @@ pub(crate) fn build_cut_loops(
     let mut visited = BTreeSet::new();
     let mut loops = Vec::new();
     for &start in outgoing.keys() {
-        let Some(&first_next) = outgoing.get(&start) else {
-            return Err(damaged("cut rim is missing an outgoing segment"));
-        };
+        // `start` came from these keys and `outgoing` is never mutated below.
+        let first_next = outgoing[&start];
         if visited.contains(&(start, first_next)) {
             continue;
         }

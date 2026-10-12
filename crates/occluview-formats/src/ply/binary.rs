@@ -236,10 +236,10 @@ fn read_with(
 
     // Faces carry the texture coordinates, so they are gathered as the face
     // element is read and applied once every element has been consumed.
-    let mut uvs = FaceUvs::new(parsed.keep_corner_uvs);
+    let mut uvs = FaceUvs::new(parsed.keep_corner_uvs, parsed.flip_uv_v);
     for element in &parsed.elements {
         match element.name.as_str() {
-            "vertex" => read_vertices(&mut cursor, element, &mut builder)?,
+            "vertex" => read_vertices(&mut cursor, element, &mut builder, parsed.flip_uv_v)?,
             "face" => read_faces(&mut cursor, element, &mut builder, &mut uvs)?,
             other => {
                 return Err(FormatError::Malformed {
@@ -267,8 +267,12 @@ fn read_vertices(
     cursor: &mut Cursor<'_>,
     element: &Element,
     builder: &mut MeshBuilder,
+    flip_v: bool,
 ) -> Result<(), FormatError> {
     let plan = FieldPlan::plan_for_vertices(element, "PLY (binary)")?;
+    let has_uvs = plan
+        .iter()
+        .any(|(field, _)| matches!(field, FieldPlan::Uv(_)));
     for _ in 0..element.count {
         let mut position = [0.0_f32; 3];
         let mut normal = [0.0_f32; 3];
@@ -292,7 +296,13 @@ fn read_vertices(
         if color != [255, 255, 255, 255] {
             vert = vert.with_color(color);
         }
-        if uv != [0.0, 0.0] {
+        if has_uvs {
+            builder.mark_texture_coordinates();
+            let uv = if flip_v {
+                crate::texture_coordinates::flip_vertical(uv)
+            } else {
+                uv
+            };
             vert = vert.with_uv(uv);
         }
         builder.push_vertex(vert);

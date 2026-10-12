@@ -103,10 +103,9 @@ pub fn probe(extension: Option<&str>, magic: &[u8]) -> Result<FormatKind, Format
     }
     // (The binary size formula was already evaluated above, on the raw bytes —
     // see why the BOM is decided per signature.)
-    // glTF .gltf (JSON) — probe for leading `{` or whitespace then `"asset"`.
-    if magic.iter().take_while(|b| b.is_ascii_whitespace()).count() < magic.len()
-        && magic.first() == Some(&b'{')
-    {
+    // glTF .gltf (JSON) is a JSON object at the top level: skip leading
+    // whitespace and look for the opening brace.
+    if magic.get(skip_ascii_ws(magic, 0)) == Some(&b'{') {
         return Ok(FormatKind::Gltf);
     }
 
@@ -169,13 +168,6 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
-/// Heuristic: does `bytes` look like a binary STL with an arbitrary header?
-///
-/// Binary STL is `84 + 50 * triangle_count` bytes long, where `triangle_count`
-/// is a little-endian `u32` at offset 80. If that identity holds exactly and
-/// the count is plausible, this is almost certainly a binary STL (a PLY/OBJ/
-/// glTF accidentally matching the size formula is astronomically unlikely).
-/// This is the same heuristic three.js's `STLLoader` uses to disambiguate.
 #[cfg(test)]
 mod tests {
     use super::*;

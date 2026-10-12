@@ -120,38 +120,24 @@ fn begin_face_selection_captures_baseline_scene_once_per_session() {
 }
 
 #[test]
-fn begin_face_selection_refuses_when_history_cannot_retain_baseline() {
-    let Some(mesh) = simple_triangle_mesh(Some("budget-limited")) else {
-        panic!("required test setup or expected result was missing");
-    };
+fn cancel_baseline_is_retained_even_above_the_history_target() {
     let mut scene = Scene::new();
-    let layer_index = scene.add(SceneMesh::new(mesh));
-    let before_layer = scene.meshes()[layer_index].clone();
-    let before_mesh = before_layer.mesh.clone();
-    let scene_key = SceneKey::from_raw_for_test(1, 1).expect("nonzero test scene key");
-    let history = WorkspaceHistory::shared(4, 0);
-    let mut controller =
-        EditModeController::new_for_scene(history.clone(), scene_key, 4, DEFAULT_UNDO_BYTES);
-    let history_bytes_before = history.borrow().used_bytes();
-
-    assert!(!controller.begin_face_selection(&before_layer, &scene));
-
-    assert_eq!(
-        controller.take_session_start_failure(),
-        Some(EditSessionStartFailure::HistoryCapacityUnavailable)
-    );
-    assert_eq!(history.borrow().used_bytes(), history_bytes_before);
-    assert!(!history.borrow().has_active_edit_checkpoint(scene_key));
-    assert_eq!(controller.undo_len(), 0);
-    assert!(!controller.has_active_session());
-    assert_eq!(controller.selected_layer_id(), None);
-    assert_eq!(scene.meshes().len(), 1);
-    assert_eq!(scene.meshes()[0].id(), before_layer.id());
-    assert_eq!(
-        scene.meshes()[0].mesh.triangle_count(),
-        before_mesh.triangle_count()
-    );
-    assert_eq!(scene.meshes()[0].mesh.vertices(), before_mesh.vertices());
+    let index = scene.add(SceneMesh::new(
+        simple_triangle_mesh(Some("baseline")).expect("valid mesh"),
+    ));
+    let layer = scene.meshes()[index].clone();
+    let mut controller = EditModeController::new(4, 0);
+    assert!(controller.begin_face_selection(&layer, &scene));
+    assert!(controller.take_session_start_failure().is_none());
+    let restored = controller
+        .cancel_edit_session()
+        .expect("Cancel retains the baseline");
+    assert_eq!(restored.meshes()[0].id(), layer.id());
+    assert!(std::sync::Arc::ptr_eq(
+        &restored.meshes()[0].mesh,
+        &layer.mesh
+    ));
+    assert_eq!(controller.history.borrow().used_bytes(), 0);
 }
 
 #[test]
@@ -479,38 +465,29 @@ fn mixed_structural_and_layer_history_unwinds_in_order_and_cancel_reverts_all() 
 }
 
 #[test]
-fn oversized_snapshot_applies_edit_without_phantom_undo() {
-    let Some(mesh) = two_triangle_mesh(Some("huge")) else {
-        panic!("required test setup or expected result was missing");
-    };
-    let mut scene = Scene::new();
-    let layer_index = scene.add(SceneMesh::new(mesh));
-    let layer = scene.meshes()[layer_index].clone();
-    // A standalone whole-layer command may run without an Edit checkpoint;
-    // a cap below its snapshot reports it as not undoable.
+fn oversized_snapshot_keeps_undo_redo_and_noop_does_not_displace_it() {
+    let layer = SceneMesh::new(two_triangle_mesh(Some("large")).expect("valid mesh"));
     let mut controller = EditModeController::new(8, 1);
-
-    let Some(token) = controller.begin_layer_edit(&layer, EditModeCommand::InvertNormals) else {
-        panic!("required test setup or expected result was missing");
-    };
+    let token = controller
+        .begin_layer_edit(&layer, EditModeCommand::InvertNormals)
+        .expect("edit starts");
     assert_eq!(
         controller.finish_layer_edit_success(token),
         BusyFinish::Applied
     );
-    // The edit applied (dirty) but is not undoable, and the undo state says so.
-    assert!(controller.is_dirty());
-    assert_eq!(controller.undo_layer_id(), None);
-
-    // A no-op finish with a skipped snapshot must not discard unrelated
-    // history either (there is none here; it must simply not panic/underflow).
-    let Some(token) = controller.begin_layer_edit(&layer, EditModeCommand::CloseHoles) else {
-        panic!("required test setup or expected result was missing");
-    };
+    assert_eq!(controller.undo_layer_id(), Some(layer.id()));
+    let token = controller
+        .begin_layer_edit(&layer, EditModeCommand::CloseHoles)
+        .expect("edit starts");
     assert_eq!(
         controller.finish_layer_edit_noop(token),
         BusyFinish::Applied
     );
-    assert_eq!(controller.undo_layer_id(), None);
+    assert_eq!(controller.undo_layer_id(), Some(layer.id()));
+    let restored = controller
+        .undo_last_layer_edit(&layer)
+        .expect("large step can undo");
+    assert!(controller.redo_last_layer_edit(&restored).is_some());
 }
 
 #[test]

@@ -36,8 +36,8 @@ impl SceneSession {
         document.edit_mode = crate::edit_mode::EditModeController::new_for_scene(
             history.clone(),
             key,
-            16,
-            512 * 1024 * 1024,
+            super::history::DEFAULT_HISTORY_COUNT,
+            super::history::DEFAULT_HISTORY_BYTES,
         );
         Self {
             key,
@@ -83,8 +83,6 @@ pub(in crate::app) struct WorkspaceState {
     pub(in crate::app) scene_tab_rects: Vec<(SceneKey, egui::Rect)>,
     pub(in crate::app) scene_create_rect: Option<egui::Rect>,
     pub(in crate::app) pending_drop: Option<Vec<std::path::PathBuf>>,
-    pub(in crate::app) rename: Option<(SceneKey, String)>,
-    pub(in crate::app) rename_focus_pending: bool,
     pub(in crate::app) close_request: Option<CloseRequest>,
     pub(in crate::app) save_before_close_pending: bool,
 }
@@ -98,7 +96,10 @@ pub(in crate::app) enum CloseRequest {
 impl WorkspaceState {
     pub(in crate::app) fn new(viewport: Option<SharedLiveViewport>, name: String) -> Self {
         let (ids, key, pane) = IdAllocator::new_with_initial_scene();
-        let history = WorkspaceHistory::shared(16, 512 * 1024 * 1024);
+        let history = WorkspaceHistory::shared(
+            super::history::DEFAULT_HISTORY_COUNT,
+            super::history::DEFAULT_HISTORY_BYTES,
+        );
         Self {
             scenes: vec![SceneSession::new(key, pane, name, viewport, &history)],
             history,
@@ -113,8 +114,6 @@ impl WorkspaceState {
             scene_tab_rects: Vec::new(),
             scene_create_rect: None,
             pending_drop: None,
-            rename: None,
-            rename_focus_pending: false,
             close_request: None,
             save_before_close_pending: false,
         }
@@ -122,6 +121,13 @@ impl WorkspaceState {
 
     pub(in crate::app) fn active_id(&self) -> SceneId {
         self.input.active().scene.id
+    }
+
+    /// Whether a native file drop still needs the operator to choose a scene.
+    /// With one scene the drop lands there directly; with two it opens the
+    /// choose-a-scene dialog, which is what makes the workspace modal.
+    pub(in crate::app) fn pending_drop_dialog(&self) -> bool {
+        self.pending_drop.is_some() && self.scenes.len() > 1
     }
 
     pub(in crate::app) fn scene(&self, id: SceneId) -> Option<&SceneSession> {

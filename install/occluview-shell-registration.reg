@@ -197,7 +197,7 @@ Windows Registry Editor Version 5.00
 ;
 ; OccluView still reaches .dcm through OpenWithProgids, OpenWithList,
 ; SupportedTypes and Capabilities\FileAssociations further down; a user who picks
-; it gets icon, thumbnail, preview and open verb from the MeshFile.HPS ProgId.
+; it gets icon, thumbnail, preview and open verb from the MeshFile.DCM ProgId.
 
 [HKEY_CLASSES_ROOT\.hps]
 @="MeshFile.HPS"
@@ -223,6 +223,7 @@ Windows Registry Editor Version 5.00
 
 [HKEY_CLASSES_ROOT\MeshFile.STL]
 @="STL File"
+"FriendlyTypeName"="STL File"
 "ThumbnailCutoff"=dword:00000001
 "TypeOverlay"=""
 
@@ -244,6 +245,7 @@ Windows Registry Editor Version 5.00
 
 [HKEY_CLASSES_ROOT\MeshFile.PLY]
 @="PLY File"
+"FriendlyTypeName"="PLY File"
 "ThumbnailCutoff"=dword:00000001
 "TypeOverlay"=""
 
@@ -265,6 +267,7 @@ Windows Registry Editor Version 5.00
 
 [HKEY_CLASSES_ROOT\MeshFile.OBJ]
 @="OBJ File"
+"FriendlyTypeName"="OBJ File"
 "ThumbnailCutoff"=dword:00000001
 "TypeOverlay"=""
 
@@ -286,6 +289,7 @@ Windows Registry Editor Version 5.00
 
 [HKEY_CLASSES_ROOT\MeshFile.OFF]
 @="OFF File"
+"FriendlyTypeName"="OFF File"
 "ThumbnailCutoff"=dword:00000001
 "TypeOverlay"=""
 
@@ -307,6 +311,7 @@ Windows Registry Editor Version 5.00
 
 [HKEY_CLASSES_ROOT\MeshFile.GLB]
 @="GLB File"
+"FriendlyTypeName"="GLB File"
 "ThumbnailCutoff"=dword:00000001
 "TypeOverlay"=""
 
@@ -328,6 +333,7 @@ Windows Registry Editor Version 5.00
 
 [HKEY_CLASSES_ROOT\MeshFile.HPS]
 @="HPS File"
+"FriendlyTypeName"="HPS File"
 "ThumbnailCutoff"=dword:00000001
 "TypeOverlay"=""
 
@@ -345,6 +351,28 @@ Windows Registry Editor Version 5.00
 [HKEY_CLASSES_ROOT\MeshFile.HPS\shell\open]
 
 [HKEY_CLASSES_ROOT\MeshFile.HPS\shell\open\command]
+@="\"<APP_EXE_PATH>\" \"%1\""
+
+[HKEY_CLASSES_ROOT\MeshFile.DCM]
+@="DCM File"
+"FriendlyTypeName"="DCM File"
+"ThumbnailCutoff"=dword:00000001
+"TypeOverlay"=""
+
+[HKEY_CLASSES_ROOT\MeshFile.DCM\ShellEx\{E357FCCD-A995-4576-B01F-234630154E96}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}"
+
+[HKEY_CLASSES_ROOT\MeshFile.DCM\ShellEx\{8895B1C6-B41F-4C1C-A562-0D564250836F}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}"
+
+[HKEY_CLASSES_ROOT\MeshFile.DCM\DefaultIcon]
+@="<APP_DIR>\\occluview-3d.ico"
+
+[HKEY_CLASSES_ROOT\MeshFile.DCM\shell]
+
+[HKEY_CLASSES_ROOT\MeshFile.DCM\shell\open]
+
+[HKEY_CLASSES_ROOT\MeshFile.DCM\shell\open\command]
 @="\"<APP_EXE_PATH>\" \"%1\""
 
 [HKEY_CLASSES_ROOT\Applications\occluview.exe]
@@ -383,7 +411,7 @@ Windows Registry Editor Version 5.00
 "MeshFile.OFF"=""
 
 [HKEY_CLASSES_ROOT\.dcm\OpenWithProgids]
-"MeshFile.HPS"=""
+"MeshFile.DCM"=""
 
 [HKEY_CLASSES_ROOT\.hps\OpenWithProgids]
 "MeshFile.HPS"=""
@@ -425,5 +453,5 @@ Windows Registry Editor Version 5.00
 ".obj"="MeshFile.OBJ"
 ".glb"="MeshFile.GLB"
 ".off"="MeshFile.OFF"
-".dcm"="MeshFile.HPS"
+".dcm"="MeshFile.DCM"
 ".hps"="MeshFile.HPS"

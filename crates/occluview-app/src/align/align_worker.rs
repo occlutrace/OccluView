@@ -16,16 +16,20 @@ use eframe::egui;
 use glam::DVec3;
 use occluview_align::suggested_scale_mm;
 use occluview_align::{
-    deviation, deviation_stats, display_map, fit_pairs, observability, ramp_color, CancelFlag,
-    DeviationMap, DeviationSettings, DeviationStats, FitBounds, FitRejection, Observability,
-    Orientation, RampMode, RampSettings, Rigid, Soup, SurfaceIndex, Validity, NO_DATA_COLOR,
+    deviation, deviation_stats, display_map_cancellable, fit_pairs, observability, ramp_color,
+    CancelFlag, DeviationMap, DeviationSettings, DeviationStats, FitBounds, FitRejection,
+    Observability, Orientation, RampMode, RampSettings, Rigid, Soup, SurfaceIndex, Validity,
+    NO_DATA_COLOR,
 };
 use rayon::prelude::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
-/// Initial display maximum, in millimetres: the hot end of the clinical
-/// deviation bar is 100 um, so a 10 um gap already reads as a real mismatch
-/// rather than the low end of a wide band.
+/// Manual display maximum, in millimetres. This preserves a precise 0.1 mm
+/// range when the operator turns automatic scaling off.
 pub(crate) const WORKING_MAX_MM: f64 = 0.10;
+/// Upper bound for the automatic range. The selected search radius may lower
+/// this further, so distant unmatched surfaces do not flatten the measured
+/// region into one end colour.
+pub(crate) const AUTO_SCALE_MAX_MM: f64 = 10.0;
 /// Initial cool end of the displayed heatmap range. Zero, so the map starts at
 /// "no measurable gap" instead of hiding everything below 50 um.
 pub(crate) const WORKING_MIN_DISPLAY_MM: f64 = 0.0;
@@ -63,7 +67,7 @@ impl Default for AlignSettings {
             // Allow a roughly placed mesh to find the other surface.
             influence_radius_mm: 2.0,
             orientation: Orientation::Match,
-            // Start at the clinical range: zero to 100 um.
+            // Before the first measurement, show a useful fallback range.
             scale_mm: WORKING_MAX_MM,
             min_display_mm: WORKING_MIN_DISPLAY_MM,
             tolerance_mm: WORKING_MIN_MM,
@@ -71,8 +75,9 @@ impl Default for AlignSettings {
             // Magnitude is the default display mode; signed values are an
             // optional diagnostic.
             ramp_mode: RampMode::Magnitude,
-            // Keep the clinical display range fixed unless requested.
-            auto_scale: false,
+            // Show the measured structure first; a manual clinical range is
+            // still available from the heatmap controls.
+            auto_scale: true,
             show_deviation: true,
         }
     }
@@ -98,14 +103,19 @@ impl AlignSettings {
         }
     }
 
-    /// Finite cool and hot display endpoints within the working range.
+    /// Finite cool and hot display endpoints within the selected mode's range.
     pub(crate) fn display_limits(self) -> (f64, f64) {
+        let maximum = if self.auto_scale {
+            AUTO_SCALE_MAX_MM
+        } else {
+            WORKING_MAX_MM
+        };
         let scale_mm = if self.scale_mm.is_nan() {
             WORKING_MAX_MM
         } else {
             self.scale_mm
         }
-        .clamp(WORKING_SCALE_MIN_MM, WORKING_MAX_MM);
+        .clamp(WORKING_SCALE_MIN_MM, maximum);
         let min_mm = if self.min_display_mm.is_nan() {
             WORKING_MIN_DISPLAY_MM
         } else {
@@ -754,17 +764,33 @@ fn execute(job: &AlignJob, cancel: &CancelFlag, cached: &mut WorkerCache) -> Ali
     };
 
     let map = deviation(moving, index, job.pose, &job.settings.deviation(), cancel);
+    if cancel.is_cancelled() {
+        return AlignOutcome::Failed {
+            rejection: AlignFailure::MeasurementDropped,
+        };
+    }
     // Do not cache a cancelled map or expose it to later re-colouring.
     let seen = observability(moving, index, job.pose, &job.settings.deviation(), cancel);
-    if !cancel.is_cancelled() {
-        cached.shown = Some((job.measure_key, display_map(&map, moving)));
-        cached.measured = Some((job.measure_key, map));
-        cached.summary = None;
-        cached.seen = Some((job.measure_key, seen));
-        return recolor(job, cached);
+    if cancel.is_cancelled() {
+        return AlignOutcome::Failed {
+            rejection: AlignFailure::MeasurementDropped,
+        };
     }
-    let stats = deviation_stats(&map, job.settings.tolerance_mm);
-    paint(&map, job, stats, seen)
+    let Some(shown) = display_map_cancellable(&map, moving, cancel) else {
+        return AlignOutcome::Failed {
+            rejection: AlignFailure::MeasurementDropped,
+        };
+    };
+    if cancel.is_cancelled() {
+        return AlignOutcome::Failed {
+            rejection: AlignFailure::MeasurementDropped,
+        };
+    }
+    cached.shown = Some((job.measure_key, shown));
+    cached.measured = Some((job.measure_key, map));
+    cached.summary = None;
+    cached.seen = Some((job.measure_key, seen));
+    recolor(job, cached)
 }
 
 /// Colour the map already in hand, taking the summary from the cache when the
@@ -828,10 +854,21 @@ fn paint(
     // working range bounded; tolerance remains a statistics threshold only.
     let mut ramp = job.settings.ramp();
     if job.settings.auto_scale {
-        // Leave room above the nominal band for a readable gradient.
+        // Leave room above the nominal band, but keep the range within both
+        // the supported display scale and the distance this measurement could
+        // actually observe. This keeps the legend and the measured data in the
+        // same units without stretching to a few distant outliers.
+        let reach_mm = if job.settings.influence_radius_mm.is_finite() {
+            job.settings
+                .influence_radius_mm
+                .clamp(WORKING_SCALE_MIN_MM, AUTO_SCALE_MAX_MM)
+        } else {
+            AUTO_SCALE_MAX_MM
+        };
+        ramp.min_mm = WORKING_SCALE_MIN_MM;
         ramp.scale_mm = suggested_scale_mm(&stats)
             .max(job.settings.tolerance_mm * BAND_HEADROOM)
-            .clamp(WORKING_SCALE_MIN_MM, WORKING_MAX_MM);
+            .clamp(WORKING_SCALE_MIN_MM, reach_mm);
     }
     AlignOutcome::Measured {
         colors: color_map(map, &ramp),
@@ -850,7 +887,9 @@ fn color_map(map: &DeviationMap, ramp: &RampSettings) -> Vec<[u8; 4]> {
         .par_iter()
         .zip(map.validity.par_iter())
         .map(|(value, state)| {
-            if *state == Validity::Measured {
+            // Match `deviation_colors` and `deviation_stats`: a non-finite
+            // reading is not data and must grey out, not reach the hot ramp.
+            if *state == Validity::Measured && value.is_finite() {
                 ramp_color(f64::from(*value), ramp)
             } else {
                 NO_DATA_COLOR

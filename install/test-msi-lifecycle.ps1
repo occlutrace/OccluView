@@ -24,7 +24,7 @@ $formatProgIds = @{
     ply = "MeshFile.PLY"
     obj = "MeshFile.OBJ"
     glb = "MeshFile.GLB"
-    dcm = "MeshFile.HPS"
+    dcm = "MeshFile.DCM"
     hps = "MeshFile.HPS"
     off = "MeshFile.OFF"
 }
@@ -34,6 +34,7 @@ $formatFriendlyNames = @{
     "MeshFile.OBJ" = "OBJ File"
     "MeshFile.GLB" = "GLB File"
     "MeshFile.HPS" = "HPS File"
+    "MeshFile.DCM" = "DCM File"
     "MeshFile.OFF" = "OFF File"
 }
 $legacyFormatProgIds = @{

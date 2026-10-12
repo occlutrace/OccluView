@@ -165,6 +165,13 @@ mod embedded {
 
 #[cfg(feature = "private-hps-key")]
 fn embedded_key() -> Result<Option<HpsSecretKey>, HpsError> {
+    // Opaque references keep LTO from evaluating the masks at compile time
+    // and replacing the generated layout with a plaintext key byte string.
+    let order = std::hint::black_box(embedded::EMBEDDED_HPS_KEY_ORDER);
+    let payload = std::hint::black_box(embedded::EMBEDDED_HPS_KEY_PAYLOAD);
+    let mask_a = std::hint::black_box(embedded::EMBEDDED_HPS_KEY_MASK_A);
+    let mask_b = std::hint::black_box(embedded::EMBEDDED_HPS_KEY_MASK_B);
+    let salt_bytes = std::hint::black_box(&embedded::EMBEDDED_HPS_KEY_SALT);
     let len = embedded::EMBEDDED_HPS_KEY_PAYLOAD.len();
     if len == 0 {
         return Ok(None);
@@ -179,21 +186,17 @@ fn embedded_key() -> Result<Option<HpsSecretKey>, HpsError> {
     }
     let mut bytes = vec![0_u8; len];
     for slot in 0..len {
-        let original_idx = usize::from(embedded::EMBEDDED_HPS_KEY_ORDER[slot]);
+        let original_idx = usize::from(order[slot]);
         if original_idx >= len {
             return Err(super::malformed(
                 "embedded CE encryption key order is inconsistent",
             ));
         }
         let slot_low = slot.to_le_bytes()[0];
-        let salt = embedded::EMBEDDED_HPS_KEY_SALT[slot % embedded::EMBEDDED_HPS_KEY_SALT.len()];
+        let salt = salt_bytes[slot % salt_bytes.len()];
         let salt_mask = salt.rotate_left(u32::from(slot_low & 7));
         let slot_mask = slot_low.wrapping_mul(31).rotate_right(1);
-        bytes[original_idx] = embedded::EMBEDDED_HPS_KEY_PAYLOAD[slot]
-            ^ embedded::EMBEDDED_HPS_KEY_MASK_A[slot]
-            ^ embedded::EMBEDDED_HPS_KEY_MASK_B[slot]
-            ^ salt_mask
-            ^ slot_mask;
+        bytes[original_idx] = payload[slot] ^ mask_a[slot] ^ mask_b[slot] ^ salt_mask ^ slot_mask;
     }
     HpsSecretKey::from_bytes(bytes).map(Some)
 }

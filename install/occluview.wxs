@@ -7,6 +7,11 @@
 <?define ShellClsid = "{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}" ?>
 <?define PreviewClsid = "{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}" ?>
 <?define PrevhostAppId = "{6D2B5079-2F0B-48DD-AB7F-97CEC514D30B}" ?>
+<!-- Two private installers were numbered ahead of the unreleased 1.2.1.
+     Recognize only their exact ProductCodes, never future public versions. -->
+<?define PrivateCandidate22 = "{B72A1528-296D-48B1-86C5-CC53C4092BC9}" ?>
+<?define PrivateCandidate23 = "{35DAB6DB-DB83-4A9B-9B43-E3C77FB7A804}" ?>
+<?define IsPrivateCandidate = '(WIX_DOWNGRADE_DETECTED = "$(var.PrivateCandidate22)" OR WIX_DOWNGRADE_DETECTED = "$(var.PrivateCandidate23)")' ?>
 <?ifndef ProductVersion?>
 <?define ProductVersion = "1.2.1" ?>
 <?endif?>
@@ -33,9 +38,20 @@
       Product/@Id is "*" so every package gets a fresh ProductCode while the
       fixed UpgradeCode below drives a monotonic MajorUpgrade.
     -->
-    <MajorUpgrade
-      Schedule="afterInstallInitialize"
-      DowngradeErrorMessage="A newer version of OccluView is already installed." />
+    <Upgrade Id="$(var.UpgradeCode)">
+      <UpgradeVersion Maximum="$(var.ProductVersion)" IncludeMaximum="yes" MigrateFeatures="yes" Property="WIX_UPGRADE_DETECTED" />
+      <UpgradeVersion Minimum="$(var.ProductVersion)" IncludeMinimum="no" OnlyDetect="yes" Property="WIX_DOWNGRADE_DETECTED" />
+    </Upgrade>
+    <Condition Message="A newer version of OccluView is already installed.">NOT WIX_DOWNGRADE_DETECTED OR $(var.IsPrivateCandidate)</Condition>
+    <Property Id="OCCLUVIEW_PRIVATE_CANDIDATE_ACCEPTED" Secure="yes" />
+    <CustomAction Id="AppendPrivateVersionCandidate" Property="WIX_UPGRADE_DETECTED" Value="[WIX_UPGRADE_DETECTED];[WIX_DOWNGRADE_DETECTED]" />
+    <CustomAction Id="AcceptPrivateVersionCandidate" Property="WIX_UPGRADE_DETECTED" Value="[WIX_DOWNGRADE_DETECTED]" />
+    <CustomAction Id="MarkPrivateVersionCandidate" Property="OCCLUVIEW_PRIVATE_CANDIDATE_ACCEPTED" Value="1" />
+    <InstallUISequence>
+      <Custom Action="AppendPrivateVersionCandidate" After="FindRelatedProducts">$(var.IsPrivateCandidate) AND WIX_UPGRADE_DETECTED AND NOT OCCLUVIEW_PRIVATE_CANDIDATE_ACCEPTED</Custom>
+      <Custom Action="AcceptPrivateVersionCandidate" After="AppendPrivateVersionCandidate">$(var.IsPrivateCandidate) AND NOT WIX_UPGRADE_DETECTED AND NOT OCCLUVIEW_PRIVATE_CANDIDATE_ACCEPTED</Custom>
+      <Custom Action="MarkPrivateVersionCandidate" After="AcceptPrivateVersionCandidate">$(var.IsPrivateCandidate)</Custom>
+    </InstallUISequence>
     <MediaTemplate EmbedCab="yes" />
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
     <!--
@@ -81,6 +97,10 @@
       Impersonate="yes"
       TerminalServerAware="yes" />
     <InstallExecuteSequence>
+      <RemoveExistingProducts After="InstallInitialize" />
+      <Custom Action="AppendPrivateVersionCandidate" After="FindRelatedProducts">$(var.IsPrivateCandidate) AND WIX_UPGRADE_DETECTED AND NOT OCCLUVIEW_PRIVATE_CANDIDATE_ACCEPTED</Custom>
+      <Custom Action="AcceptPrivateVersionCandidate" After="AppendPrivateVersionCandidate">$(var.IsPrivateCandidate) AND NOT WIX_UPGRADE_DETECTED AND NOT OCCLUVIEW_PRIVATE_CANDIDATE_ACCEPTED</Custom>
+      <Custom Action="MarkPrivateVersionCandidate" After="AcceptPrivateVersionCandidate">$(var.IsPrivateCandidate)</Custom>
       <Custom Action="RefreshShellAssociationsInstall" After="WriteRegistryValues">NOT REMOVE</Custom>
       <Custom Action="RefreshShellAssociationsUninstall" After="RemoveRegistryValues">REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE</Custom>
     </InstallExecuteSequence>
@@ -189,6 +209,7 @@
             </RegistryKey>
             <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.STL">
               <RegistryValue Type="string" Value="STL File" />
+              <RegistryValue Name="FriendlyTypeName" Type="string" Value="STL File" />
               <RegistryValue Name="ThumbnailCutoff" Type="integer" Value="1" />
               <RegistryValue Name="TypeOverlay" Type="string" Value="" />
             </RegistryKey>
@@ -219,6 +240,7 @@
             </RegistryKey>
             <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.PLY">
               <RegistryValue Type="string" Value="PLY File" />
+              <RegistryValue Name="FriendlyTypeName" Type="string" Value="PLY File" />
               <RegistryValue Name="ThumbnailCutoff" Type="integer" Value="1" />
               <RegistryValue Name="TypeOverlay" Type="string" Value="" />
             </RegistryKey>
@@ -249,6 +271,7 @@
             </RegistryKey>
             <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.OBJ">
               <RegistryValue Type="string" Value="OBJ File" />
+              <RegistryValue Name="FriendlyTypeName" Type="string" Value="OBJ File" />
               <RegistryValue Name="ThumbnailCutoff" Type="integer" Value="1" />
               <RegistryValue Name="TypeOverlay" Type="string" Value="" />
             </RegistryKey>
@@ -279,6 +302,7 @@
             </RegistryKey>
             <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.OFF">
               <RegistryValue Type="string" Value="OFF File" />
+              <RegistryValue Name="FriendlyTypeName" Type="string" Value="OFF File" />
               <RegistryValue Name="ThumbnailCutoff" Type="integer" Value="1" />
               <RegistryValue Name="TypeOverlay" Type="string" Value="" />
             </RegistryKey>
@@ -309,6 +333,7 @@
             </RegistryKey>
             <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.GLB">
               <RegistryValue Type="string" Value="GLB File" />
+              <RegistryValue Name="FriendlyTypeName" Type="string" Value="GLB File" />
               <RegistryValue Name="ThumbnailCutoff" Type="integer" Value="1" />
               <RegistryValue Name="TypeOverlay" Type="string" Value="" />
             </RegistryKey>
@@ -339,6 +364,7 @@
             </RegistryKey>
             <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.HPS">
               <RegistryValue Type="string" Value="HPS File" />
+              <RegistryValue Name="FriendlyTypeName" Type="string" Value="HPS File" />
               <RegistryValue Name="ThumbnailCutoff" Type="integer" Value="1" />
               <RegistryValue Name="TypeOverlay" Type="string" Value="" />
             </RegistryKey>
@@ -352,6 +378,24 @@
               <RegistryValue Type="string" Value="[INSTALLFOLDER]occluview-3d.ico" />
             </RegistryKey>
             <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.HPS\shell\open\command">
+              <RegistryValue Type="string" Value="&quot;[INSTALLFOLDER]occluview.exe&quot; &quot;%1&quot;" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.DCM">
+              <RegistryValue Type="string" Value="DCM File" />
+              <RegistryValue Name="FriendlyTypeName" Type="string" Value="DCM File" />
+              <RegistryValue Name="ThumbnailCutoff" Type="integer" Value="1" />
+              <RegistryValue Name="TypeOverlay" Type="string" Value="" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.DCM\ShellEx\$(var.ThumbnailProviderCategory)">
+              <RegistryValue Type="string" Value="$(var.ShellClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.DCM\ShellEx\$(var.PreviewHandlerCategory)">
+              <RegistryValue Type="string" Value="$(var.PreviewClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.DCM\DefaultIcon">
+              <RegistryValue Type="string" Value="[INSTALLFOLDER]occluview-3d.ico" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.DCM\shell\open\command">
               <RegistryValue Type="string" Value="&quot;[INSTALLFOLDER]occluview.exe&quot; &quot;%1&quot;" />
             </RegistryKey>
             <!-- No ShellEx handlers under SystemFileAssociations\.dcm: that key is
@@ -484,7 +528,7 @@
                  Capabilities\FileAssociations entries below: it shows up in "Open
                  with" and in Default Apps, and a user who deliberately picks it
                  gets the icon, thumbnail, preview and open verb from the
-                 MeshFile.HPS ProgId, which carries all four already. -->
+                 MeshFile.DCM ProgId, which carries all four already. -->
             <RegistryKey Root="HKLM" Key="Software\Classes\.hps">
               <RegistryValue Type="string" Value="MeshFile.HPS" />
               <RegistryValue Name="ThumbnailCutoff" Type="integer" Value="1" />
@@ -515,7 +559,7 @@
               <RegistryValue Name="MeshFile.OFF" Type="string" Value="" />
             </RegistryKey>
             <RegistryKey Root="HKLM" Key="Software\Classes\.dcm\OpenWithProgids">
-              <RegistryValue Name="MeshFile.HPS" Type="string" Value="" />
+              <RegistryValue Name="MeshFile.DCM" Type="string" Value="" />
             </RegistryKey>
             <RegistryKey Root="HKLM" Key="Software\Classes\.hps\OpenWithProgids">
               <RegistryValue Name="MeshFile.HPS" Type="string" Value="" />
@@ -555,7 +599,7 @@
               <RegistryValue Name=".obj" Type="string" Value="MeshFile.OBJ" />
               <RegistryValue Name=".glb" Type="string" Value="MeshFile.GLB" />
               <RegistryValue Name=".off" Type="string" Value="MeshFile.OFF" />
-              <RegistryValue Name=".dcm" Type="string" Value="MeshFile.HPS" />
+              <RegistryValue Name=".dcm" Type="string" Value="MeshFile.DCM" />
               <RegistryValue Name=".hps" Type="string" Value="MeshFile.HPS" />
             </RegistryKey>
           </Component>

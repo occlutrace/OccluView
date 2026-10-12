@@ -22,7 +22,6 @@ impl SceneContext<'_> {
         response: &egui::Response,
         pan_drag_active: bool,
     ) -> bool {
-        self.tools.sculpt.clear_cursor_hit();
         self.poll_sculpt_preparation(ctx);
         if !self.document.edit_mode.has_active_session() {
             if self.tools.sculpt.armed.is_some() || self.tools.sculpt.stroke.is_some() {
@@ -95,7 +94,7 @@ impl SceneContext<'_> {
         if frame.pressed && self.tools.sculpt.stroke.is_some() && !self.commit_sculpt_stroke(ctx) {
             return true;
         }
-        if self.process_next_pending_sculpt_press(ctx, response) {
+        if self.process_next_pending_sculpt_press(ctx) {
             return true;
         }
         self.finish_sculpt_frame(ctx, response, frame)
@@ -164,24 +163,15 @@ impl SceneContext<'_> {
         }
     }
 
-    fn process_next_pending_sculpt_press(
-        &mut self,
-        ctx: &egui::Context,
-        response: &egui::Response,
-    ) -> bool {
+    fn process_next_pending_sculpt_press(&mut self, ctx: &egui::Context) -> bool {
         let Some(pending) = self.tools.sculpt.pending_presses.pop_front() else {
             return false;
         };
-        self.start_pending_sculpt_press(ctx, response, pending);
+        self.start_pending_sculpt_press(ctx, pending);
         true
     }
 
-    fn start_pending_sculpt_press(
-        &mut self,
-        ctx: &egui::Context,
-        response: &egui::Response,
-        pending: PendingSculptPress,
-    ) {
+    fn start_pending_sculpt_press(&mut self, ctx: &egui::Context, pending: PendingSculptPress) {
         let Some(scene) = self.document.scene.as_ref() else {
             self.tools.sculpt.pending_presses.clear();
             return;
@@ -244,25 +234,10 @@ impl SceneContext<'_> {
             return;
         }
 
-        self.submit_pending_sculpt_start(ctx, response, pending);
+        self.submit_pending_sculpt_start(ctx, pending);
     }
 
-    fn submit_pending_sculpt_start(
-        &mut self,
-        ctx: &egui::Context,
-        response: &egui::Response,
-        pending: PendingSculptPress,
-    ) {
-        if let Some(hit) = self.sculpt_surface_hit(
-            response.rect,
-            egui::pos2(pending.latest_pointer[0], pending.latest_pointer[1]),
-        ) {
-            if hit.layer_id == pending.layer_id {
-                self.tools
-                    .sculpt
-                    .set_cursor_hit(pending.latest_pointer, hit);
-            }
-        }
+    fn submit_pending_sculpt_start(&mut self, ctx: &egui::Context, pending: PendingSculptPress) {
         let start_step = pending.start_step.clone();
         let accepted = self
             .tools
@@ -345,13 +320,6 @@ impl SceneContext<'_> {
         if target_layer != Some(stroke_layer) {
             self.abort_sculpt_stroke();
             return true;
-        }
-        if let Some(hit) = self.sculpt_surface_hit(response.rect, pointer) {
-            if hit.layer_id == stroke_layer {
-                self.tools
-                    .sculpt
-                    .set_cursor_hit([pointer.x, pointer.y], hit);
-            }
         }
         if !self.flush_retained_sculpt_samples() {
             ctx.request_repaint();

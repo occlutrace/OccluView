@@ -81,11 +81,7 @@ fn registry_string_value(registry: &str, key: &str, name: &str) -> Option<String
 }
 
 fn progid_extension(extension: &str) -> String {
-    if extension == "dcm" {
-        "HPS".to_owned()
-    } else {
-        extension.to_ascii_uppercase()
-    }
+    extension.to_ascii_uppercase()
 }
 
 fn assert_supported_registry_entry(wix: &Document<'_>, extension: &str) {
@@ -176,18 +172,22 @@ fn explorer_open_with_and_icon_entries_match_the_reader_set() {
         assert!(wix_element_has_id(&wix, "File", file));
         assert!(wix_element_has_id(&wix, "ComponentRef", component));
     }
-    let major_upgrade = wix
+    let removal = wix
         .descendants()
-        .find(|node| node.is_element() && node.tag_name().name() == "MajorUpgrade")
-        .expect("the MSI declares its upgrade policy");
-    assert_eq!(
-        major_upgrade.attribute("Schedule"),
-        Some("afterInstallInitialize")
-    );
-    assert_ne!(
-        major_upgrade.attribute("AllowSameVersionUpgrades"),
-        Some("yes")
-    );
+        .find(|node| node.is_element() && node.tag_name().name() == "RemoveExistingProducts")
+        .expect("upgrade removal is scheduled");
+    assert_eq!(removal.attribute("After"), Some("InstallInitialize"));
+    let versions: Vec<_> = wix
+        .descendants()
+        .filter(|node| node.is_element() && node.tag_name().name() == "UpgradeVersion")
+        .collect();
+    assert!(versions.iter().any(
+        |node| node.attribute("Property") == Some("WIX_UPGRADE_DETECTED")
+            && node.attribute("IncludeMaximum") == Some("yes")
+    ));
+    assert!(versions.iter().any(|node| node.attribute("Property")
+        == Some("WIX_DOWNGRADE_DETECTED")
+        && node.attribute("OnlyDetect") == Some("yes")));
 
     for extension in SUPPORTED_EXTENSIONS {
         assert_supported_registry_entry(&wix, extension);
@@ -281,7 +281,7 @@ fn assert_manual_registry_contract(wix: &Document<'_>) {
         registry_string_value(
             &manual,
             "HKEY_CLASSES_ROOT\\.dcm\\OpenWithProgids",
-            "MeshFile.HPS"
+            "MeshFile.DCM"
         ),
         Some(String::new()),
         ".dcm remains available through the explicit Open With menu"

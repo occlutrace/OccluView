@@ -52,6 +52,7 @@ pub mod ply;
 pub mod probe;
 mod read;
 pub mod stl;
+mod texture_coordinates;
 mod texture_decode;
 pub mod units;
 pub mod write;

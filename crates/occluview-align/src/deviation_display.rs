@@ -14,15 +14,14 @@
 use occluview_geometry::coincident_position_key;
 use rayon::prelude::*;
 
-use crate::{DeviationMap, Soup, Validity};
+use crate::{CancelFlag, DeviationMap, Soup, Validity};
 
 /// Neighbour-averaging passes applied to the displayed map.
 ///
-/// An intraoral scan has a vertex every tenth of a millimetre or so, so six
-/// passes reach about two thirds of a millimetre: they take out the single-vertex
-/// and triangle-sized variation that reads as a mosaic, and leave any deviation a
-/// clinician would act on, which spans millimetres.
-pub const DISPLAY_PASSES: usize = 6;
+/// An intraoral scan has a vertex every tenth of a millimetre or so, so three
+/// passes reach about a third of a millimetre: enough to calm single-vertex
+/// noise while keeping narrow transitions in the measurement visible.
+pub const DISPLAY_PASSES: usize = 3;
 
 /// A copy of `map` with each measured value averaged with its measured
 /// neighbours [`DISPLAY_PASSES`] times.
@@ -36,16 +35,31 @@ pub const DISPLAY_PASSES: usize = 6;
 /// A map that does not match the geometry is returned as it is.
 #[must_use]
 pub fn display_map(map: &DeviationMap, moving: Soup<'_>) -> DeviationMap {
+    display_map_cancellable(map, moving, &CancelFlag::new()).unwrap_or_else(|| map.clone())
+}
+
+/// Build the softened display copy, stopping between expensive topology and
+/// smoothing stages when the owning measurement is no longer current.
+#[must_use]
+pub fn display_map_cancellable(
+    map: &DeviationMap,
+    moving: Soup<'_>,
+    cancel: &CancelFlag,
+) -> Option<DeviationMap> {
+    if cancel.is_cancelled() {
+        return None;
+    }
     let count = moving.vertex_count();
     if map.signed_mm.len() != count || map.validity.len() != count || count == 0 {
-        return map.clone();
+        let copy = map.clone();
+        return (!cancel.is_cancelled()).then_some(copy);
     }
-    let sites = Sites::weld(moving, map);
+    let sites = Sites::weld(moving, map, cancel)?;
     let mut shown = sites.values.clone();
     let mut next = shown.clone();
     for _ in 0..DISPLAY_PASSES {
         next.par_iter_mut().enumerate().for_each(|(site, out)| {
-            if !sites.live[site] {
+            if cancel.is_cancelled() || !sites.live[site] {
                 return;
             }
             let mut sum = f64::from(shown[site]);
@@ -62,9 +76,12 @@ pub fn display_map(map: &DeviationMap, moving: Soup<'_>) -> DeviationMap {
                 *out = (sum / members) as f32;
             }
         });
+        if cancel.is_cancelled() {
+            return None;
+        }
         std::mem::swap(&mut shown, &mut next);
     }
-    DeviationMap {
+    let displayed = DeviationMap {
         signed_mm: map
             .signed_mm
             .iter()
@@ -79,7 +96,8 @@ pub fn display_map(map: &DeviationMap, moving: Soup<'_>) -> DeviationMap {
             })
             .collect(),
         validity: map.validity.clone(),
-    }
+    };
+    (!cancel.is_cancelled()).then_some(displayed)
 }
 
 /// The distinct positions of a mesh and the edges between them.
@@ -96,7 +114,7 @@ struct Sites {
 }
 
 impl Sites {
-    fn weld(moving: Soup<'_>, map: &DeviationMap) -> Self {
+    fn weld(moving: Soup<'_>, map: &DeviationMap, cancel: &CancelFlag) -> Option<Self> {
         let count = moving.vertex_count();
         let position = |vertex: usize| {
             let at = vertex * 3;
@@ -109,19 +127,34 @@ impl Sites {
         let mut order: Vec<([i32; 3], u32)> = (0..count)
             .into_par_iter()
             .map(|vertex| {
+                if cancel.is_cancelled() {
+                    return ([i32::MIN; 3], u32::MAX);
+                }
                 (
                     coincident_position_key(position(vertex)),
                     u32::try_from(vertex).unwrap_or(u32::MAX),
                 )
             })
             .collect();
+        if cancel.is_cancelled() {
+            return None;
+        }
         order.par_sort_unstable();
+        if cancel.is_cancelled() {
+            return None;
+        }
 
+        if cancel.is_cancelled() {
+            return None;
+        }
         let mut site_of = vec![0_u32; count];
         let mut values: Vec<f32> = Vec::new();
         let mut live: Vec<bool> = Vec::new();
         let mut previous: Option<[i32; 3]> = None;
-        for (key, vertex) in &order {
+        for (ordinal, (key, vertex)) in order.iter().enumerate() {
+            if ordinal.is_multiple_of(1024) && cancel.is_cancelled() {
+                return None;
+            }
             if previous != Some(*key) {
                 values.push(0.0);
                 live.push(false);
@@ -144,6 +177,9 @@ impl Sites {
             .0
             .iter()
             .flat_map(|triangle| {
+                if cancel.is_cancelled() {
+                    return [(None, None), (None, None), (None, None)];
+                }
                 let corner = |slot: usize| {
                     usize::try_from(triangle[slot])
                         .ok()
@@ -157,34 +193,52 @@ impl Sites {
                 (from != to).then(|| (u64::from(from.min(to)) << 32) | u64::from(from.max(to)))
             })
             .collect();
+        if cancel.is_cancelled() {
+            return None;
+        }
         pairs.par_sort_unstable();
+        if cancel.is_cancelled() {
+            return None;
+        }
         pairs.dedup();
 
         let mut degree = vec![0_usize; sites + 1];
-        for pair in &pairs {
+        for (ordinal, pair) in pairs.iter().enumerate() {
+            if ordinal.is_multiple_of(1024) && cancel.is_cancelled() {
+                return None;
+            }
             degree[(pair >> 32) as usize] += 1;
             degree[(pair & 0xFFFF_FFFF) as usize] += 1;
         }
         let mut offsets = vec![0_usize; sites + 1];
         for site in 0..sites {
+            if site.is_multiple_of(1024) && cancel.is_cancelled() {
+                return None;
+            }
             offsets[site + 1] = offsets[site] + degree[site];
+        }
+        if cancel.is_cancelled() {
+            return None;
         }
         let mut cursor = offsets.clone();
         let mut edges = vec![0_u32; offsets[sites]];
-        for pair in &pairs {
+        for (ordinal, pair) in pairs.iter().enumerate() {
+            if ordinal.is_multiple_of(1024) && cancel.is_cancelled() {
+                return None;
+            }
             let (low, high) = ((pair >> 32) as usize, (pair & 0xFFFF_FFFF) as usize);
             edges[cursor[low]] = u32::try_from(high).unwrap_or(u32::MAX);
             cursor[low] += 1;
             edges[cursor[high]] = u32::try_from(low).unwrap_or(u32::MAX);
             cursor[high] += 1;
         }
-        Self {
+        Some(Self {
             site_of,
             values,
             live,
             offsets,
             edges,
-        }
+        })
     }
 
     fn neighbours(&self, site: usize) -> &[u32] {

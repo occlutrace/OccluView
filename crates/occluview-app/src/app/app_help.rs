@@ -16,8 +16,8 @@ use eframe::egui;
 
 use crate::i18n::LocaleManager;
 
-const HELP_ROW_HEIGHT: f32 = 25.0;
-const HELP_GESTURE_WIDTH: f32 = 196.0;
+const HELP_ROW_HEIGHT: f32 = 22.0;
+const HELP_GESTURE_WIDTH: f32 = 172.0;
 
 impl SceneContext<'_> {
     pub(super) fn show_help_dialog(&mut self, ctx: &egui::Context) {
@@ -30,49 +30,32 @@ impl SceneContext<'_> {
         let modal_response = show_information_modal(
             ctx,
             egui::Id::new("occluview-keyboard-mouse-dialog-v1"),
-            egui::vec2(700.0, 570.0),
+            egui::vec2(620.0, 370.0),
             &close_label,
             |ui| {
-                ui.set_width(668.0_f32.min(ui.available_width()));
-                ui.label(
-                    egui::RichText::new(
-                        self.ui.locale.text(crate::i18n::message_id!("help-title")),
-                    )
-                    .size(18.0)
-                    .strong()
-                    .color(ui_theme::text()),
-                );
-                ui.add_space(2.0);
-                ui.label(
-                    egui::RichText::new(
-                        self.ui
-                            .locale
-                            .text(crate::i18n::message_id!("help-subtitle")),
-                    )
-                    .size(11.5)
-                    .color(ui_theme::text_weak()),
-                );
-                ui.add_space(8.0);
-
-                draw_help_sections(
+                ui.spacing_mut().item_spacing.y = 3.0;
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(
+                            self.ui.locale.tr(crate::i18n::message_id!("help-title")),
+                        )
+                        .strong()
+                        .size(18.0)
+                        .color(ui_theme::text()),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button(&close_label).clicked() {
+                            close = true;
+                        }
+                    });
+                });
+                ui.add_space(6.0);
+                ui.separator();
+                ui.add_space(6.0);
+                draw_help_basics(
                     ui,
                     &self.ui.locale,
                     self.persistence.settings.scroll_behavior,
-                );
-
-                ui.add_space(8.0);
-                ui.separator();
-                ui.allocate_ui_with_layout(
-                    egui::vec2(ui.available_width(), 30.0),
-                    egui::Layout::right_to_left(egui::Align::Center),
-                    |ui| {
-                        if ui
-                            .button(self.ui.locale.text(crate::i18n::message_id!("help-close")))
-                            .clicked()
-                        {
-                            close = true;
-                        }
-                    },
                 );
             },
         );
@@ -104,59 +87,80 @@ impl SceneContext<'_> {
     }
 }
 
-fn draw_help_sections(
+/// The quick reference uses the same gesture catalogue as the tool hints.
+fn draw_help_basics(
     ui: &mut egui::Ui,
     locale: &LocaleManager,
     scroll_behavior: crate::app_settings::ScrollBehavior,
 ) {
-    egui::ScrollArea::vertical()
-        .id_salt("occluview-keyboard-mouse-sections")
-        .max_height(438.0)
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            for section in ALL_SECTIONS {
-                ui.add_space(6.0);
-                ui.label(
-                    egui::RichText::new(locale.text(section.key))
-                        .size(12.5)
-                        .strong()
-                        .color(ui_theme::text()),
+    let catalogue = |gesture: &str| {
+        ALL_SECTIONS
+            .iter()
+            .flat_map(|section| section.rows)
+            .find(|row| row.gesture == gesture)
+            .map(|row| locale.text(row.action_key(scroll_behavior)))
+    };
+    let rows = [
+        ("Ctrl+O", catalogue("Ctrl+O").unwrap_or_default()),
+        ("RMB drag", catalogue("RMB drag").unwrap_or_default()),
+        ("MMB drag", catalogue("MMB drag").unwrap_or_default()),
+        ("Wheel / pinch", catalogue("Wheel").unwrap_or_default()),
+        ("MMB click", catalogue("MMB click").unwrap_or_default()),
+        (
+            "E / A / C",
+            locale.tr(crate::i18n::message_id!("help-basic-tools")),
+        ),
+        ("Ctrl+Z", catalogue("Ctrl+Z").unwrap_or_default()),
+        (
+            "Ctrl+Y / Ctrl+Shift+Z",
+            catalogue("Ctrl+Y / Ctrl+Shift+Z").unwrap_or_default(),
+        ),
+        (
+            "Delete",
+            catalogue("Delete / Backspace").unwrap_or_default(),
+        ),
+        (
+            "1 / 2",
+            locale.tr(crate::i18n::message_id!("help-basic-sculpt")),
+        ),
+        (
+            "F6 / Shift+F6",
+            catalogue("F6 / Shift+F6").unwrap_or_default(),
+        ),
+        (
+            "MMB: scene tab",
+            locale.tr(crate::i18n::message_id!("help-basic-close-scene")),
+        ),
+    ];
+    let row_height = ((ui.ctx().content_rect().height() - 110.0) / rows.len() as f32 - 3.0)
+        .clamp(18.0, HELP_ROW_HEIGHT);
+    for (gesture, action) in rows {
+        ui.allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), row_height),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.add_sized(
+                    egui::vec2(HELP_GESTURE_WIDTH, row_height),
+                    egui::Label::new(
+                        egui::RichText::new(crate::i18n::platform_shortcut_text(gesture))
+                            .strong()
+                            .size(11.5)
+                            .color(ui_theme::text()),
+                    )
+                    .truncate(),
                 );
-                ui.separator();
-                for row in section.rows {
-                    let row_width = ui.available_width();
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(row_width, HELP_ROW_HEIGHT),
-                        egui::Layout::left_to_right(egui::Align::Center),
-                        |ui| {
-                            let gesture_width = HELP_GESTURE_WIDTH.min(row_width.max(0.0));
-                            ui.add_sized(
-                                egui::vec2(gesture_width, HELP_ROW_HEIGHT),
-                                egui::Label::new(
-                                    egui::RichText::new(crate::i18n::platform_shortcut_text(
-                                        row.gesture,
-                                    ))
-                                    .strong()
-                                    .color(ui_theme::text()),
-                                )
-                                .truncate(),
-                            );
-                            ui.add_space(12.0);
-                            ui.add(
-                                egui::Label::new(
-                                    egui::RichText::new(
-                                        locale.text(row.action_key(scroll_behavior)),
-                                    )
-                                    .color(ui_theme::text_weak()),
-                                )
-                                .truncate(),
-                            );
-                        },
-                    );
-                }
-            }
-        });
+                ui.add_space(10.0);
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(action)
+                            .size(12.0)
+                            .color(ui_theme::text_weak()),
+                    )
+                    .wrap(),
+                );
+            },
+        );
+    }
 }
 
 pub(super) fn render_contextual_hint(

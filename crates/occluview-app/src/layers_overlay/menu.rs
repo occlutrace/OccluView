@@ -5,11 +5,7 @@ use crate::ui::ui_theme;
 use eframe::egui;
 use occluview_core::SceneMeshId;
 
-use super::{LayerOverlaySceneAction, LayerSceneTabs};
-
-/// Fixed context-menu width. It gives the elided file-name title and operator
-/// labels room to breathe without turning the menu into a second panel.
-const MENU_WIDTH: f32 = 244.0;
+use super::{LayerOverlaySceneAction, LayerSceneTabs, CONTEXT_MENU_WIDTH};
 
 /// Everything the layer context menu needs about one layer. Shared by the
 /// layers-overlay rows and the viewport right-click menu so both surface the
@@ -114,7 +110,7 @@ pub(crate) fn show_layer_context_menu(
     // Pin the menu width: without this, egui lays the menu out inside
     // whatever sliver of screen is left of the click point, wrapping every
     // label into a letters-tall column at the viewport edge.
-    ui.set_min_width(MENU_WIDTH);
+    ui.set_min_width(CONTEXT_MENU_WIDTH);
     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
     ui.spacing_mut().item_spacing.y = 2.0;
     // Which piece did the click land on? The file name, middle-elided so a long
