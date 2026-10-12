@@ -276,7 +276,7 @@ impl WorkspaceHistory {
 
     pub(super) fn eviction_timelines(
         &self,
-    ) -> std::collections::HashMap<Option<super::SceneKey>, super::journal::SceneTimeline> {
+    ) -> HashMap<Option<super::SceneKey>, super::journal::SceneTimeline> {
         let mut timelines = self.timelines.clone();
         for checkpoint in self
             .checkpoints
