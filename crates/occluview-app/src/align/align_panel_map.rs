@@ -11,9 +11,9 @@
 use eframe::egui;
 
 use crate::align::align_panel::AlignPanelAction;
-use crate::align::align_worker::{
-    AlignSettings, AUTO_SCALE_MAX_MM, WORKING_MAX_MM, WORKING_SCALE_MIN_MM,
-};
+use crate::align::align_worker::{AlignSettings, WORKING_MAX_MM, WORKING_SCALE_MIN_MM};
+#[cfg(test)]
+use crate::align::align_worker::AUTO_SCALE_MAX_MM;
 use crate::ui::icons::AppIcon;
 use crate::{align::align_overlay, ui::ui_theme};
 
