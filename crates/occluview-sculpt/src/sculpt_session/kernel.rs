@@ -434,6 +434,13 @@ impl SculptSession {
     /// Weight shared by every brush: tip falloff times the selected sheet's
     /// camera-independent support.
     pub(super) fn weight(&self, point: SurfacePoint, dab: &Dab) -> f64 {
+        self.stamp_weight_at(point, dab) * self.sheet_share(point.group)
+    }
+
+    /// Tip support on the already-connected footprint. Shape smoothing has
+    /// no push direction: an averaged normal at a fin or a crease must not
+    /// erase an otherwise selected vertex's dose.
+    pub(super) fn stamp_weight_at(&self, point: SurfacePoint, dab: &Dab) -> f64 {
         let position = self.group_v(point.group);
         let f = if self.path_active() {
             self.path_mean_stamp(position, dab.radius)
@@ -449,7 +456,7 @@ impl SculptSession {
         if f <= 0.0 {
             return 0.0;
         }
-        f * self.sheet_share(point.group)
+        f
     }
 
     /// Move every soup member of a group, recording pre-stroke positions.

@@ -227,14 +227,20 @@ fn toggle_show_vertex_colors(scene: &mut Scene, index: usize) -> LayerContextApp
 }
 
 fn toggle_show_texture(scene: &mut Scene, index: usize) -> LayerContextApply {
-    let entry = &mut scene.meshes_mut()[index];
+    let Some(entry) = scene.meshes_mut().get_mut(index) else {
+        return LayerContextApply::default();
+    };
     if entry.mesh.texture().is_none() {
         return LayerContextApply::default();
     }
-    entry.show_texture = !entry.show_texture;
-    if entry.show_texture {
-        entry.show_vertex_colors = true;
-    }
+    // The label reflects what is actually displayed. A tint may have hidden
+    // the scan while leaving its texture preference set, so toggling the raw
+    // texture bit would do the opposite of the visible command.
+    let show = !(entry.show_texture && entry.show_vertex_colors);
+    entry.show_texture = show;
+    // Turning the scan texture off shows neutral material, rather than an
+    // almost identical vertex-colour copy of the same scan.
+    entry.show_vertex_colors = show;
     LayerContextApply {
         scene_changed: true,
         ..LayerContextApply::default()
@@ -314,6 +320,23 @@ pub(crate) fn tint_matches(lhs: [f32; 4], rhs: [f32; 4]) -> bool {
 mod tests {
     use super::*;
     use occluview_core::{Mesh, SceneMesh};
+
+    #[test]
+    fn texture_command_hides_scan_colour_and_restores_a_tint_hidden_texture() {
+        let mut mesh = coloured_mesh();
+        mesh.set_texture(occluview_core::MeshTexture::white_1x1());
+        let mut scene = Scene::new();
+        scene.add(SceneMesh::new(mesh));
+        let off = request(&scene, 0, LayerContextAction::ToggleShowTexture);
+        assert!(apply_layer_context_action(&mut scene, off).scene_changed);
+        assert!(!scene.meshes()[0].show_texture);
+        assert!(!scene.meshes()[0].show_vertex_colors);
+        scene.meshes_mut()[0].show_texture = true;
+        let on = request(&scene, 0, LayerContextAction::ToggleShowTexture);
+        assert!(apply_layer_context_action(&mut scene, on).scene_changed);
+        assert!(scene.meshes()[0].show_texture);
+        assert!(scene.meshes()[0].show_vertex_colors);
+    }
 
     fn request(scene: &Scene, index: usize, action: LayerContextAction) -> LayerContextRequest {
         LayerContextRequest {

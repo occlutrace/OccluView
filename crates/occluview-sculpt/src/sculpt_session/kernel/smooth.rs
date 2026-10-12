@@ -7,6 +7,14 @@ use super::*;
 /// patch stays well under this; a 90-degree edge sits at one.
 const CREASE_OFFSET_RATIO: f64 = 0.25;
 
+/// How far, as a multiple of the local smoothing scale and the group's brush
+/// falloff, one Smooth stroke may move a group from where the stroke began.
+/// Without it a held brush keeps converging the whole footprint to the local
+/// mean while the held one-ring stays put, so the correction ends in a hard
+/// cliff at the brush rim. The falloff-scaled cap makes that correction taper
+/// to nothing at the rim instead.
+const SMOOTH_STROKE_TRAVEL_SHARE: f64 = 2.0;
+
 /// Borrowed view of the live welded surface for the uniform operator: one
 /// vertex per welded group, neighbours borrowed from the topology.
 struct GroupSurface<'a> {
@@ -38,7 +46,9 @@ impl crate::FairingSurface for GroupSurface<'_> {
 impl SculptSession {
     pub(super) fn dab_smooth(&mut self, dab: &Dab, region: &[SurfacePoint]) {
         let mut weighted = std::mem::take(&mut self.weights);
-        Self::weigh_region_into(region, &mut weighted, |point| self.weight(point, dab));
+        Self::weigh_region_into(region, &mut weighted, |point| {
+            self.stamp_weight_at(point, dab)
+        });
         let hit_n = self
             .hit_triangle
             .and_then(|triangle| self.triangle_normal(triangle))
@@ -107,21 +117,55 @@ impl SculptSession {
         // Smooth changes shape. Tangential motion belongs to live remesh;
         // the native common layer guard decides which field is safe to write.
         // A crease is shape, so its full motion is kept (see `is_crease`).
+        let travel_scale = SMOOTH_STROKE_TRAVEL_SHARE * feature_size_mm;
+        let mut falloff: crate::hash::FxHashMap<u32, f64> = crate::hash::FxHashMap::default();
+        for &(group, weight) in &weighted {
+            falloff.entry(group).or_insert(weight.clamp(0.0, 1.0));
+        }
         let mut proposals = std::mem::take(&mut self.proposals);
         proposals.clear();
         for &(group, target) in &targets {
             let here = self.group_v(group);
             let normal = self.group_n(group).normalize_or_zero();
-            let target = if self.is_crease(group, here, normal) {
+            let target = if normal.length_squared() <= 1e-24 || self.is_crease(group, here, normal)
+            {
                 target
             } else {
                 here + normal * (target - here).dot(normal)
             };
-            if (target - here).length() > 1e-15 {
-                proposals.push((group, target));
+            // Bound the whole stroke's travel per group. Near the footprint
+            // rim the falloff shrinks the bound, so the correction feathers to
+            // nothing there instead of converging to a cliff against the held
+            // one-ring. Past the bound the group is inert for this stroke.
+            let weight = falloff.get(&group).copied().unwrap_or(1.0);
+            let travelled = self
+                .smooth_stroke_travel
+                .get(group as usize)
+                .copied()
+                .unwrap_or(0.0) as f64;
+            let remaining = (travel_scale * weight - travelled).max(0.0);
+            if remaining <= 0.0 {
+                continue;
+            }
+            let mut step = target - here;
+            let length = step.length();
+            if length > remaining {
+                step *= remaining / length;
+            }
+            if step.length() > 1e-15 {
+                proposals.push((group, here + step));
             }
         }
         self.commit_even_layer(&proposals, BrushMode::Smooth);
+        // The per-dab snapshot is still current here. Charge only committed
+        // motion: charging rejected proposals exhausted the stroke budget at
+        // constrained vertices and left immobile dots/strips among moving ones.
+        for &(group, _) in &proposals {
+            let moved = (self.group_v(group) - self.pre_group(group)).length();
+            if let Some(slot) = self.smooth_stroke_travel.get_mut(group as usize) {
+                *slot += moved as f32;
+            }
+        }
         self.proposals = proposals;
         self.weights = weighted;
     }

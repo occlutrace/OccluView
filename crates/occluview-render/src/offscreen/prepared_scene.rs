@@ -456,6 +456,19 @@ impl PreparedScene {
         true
     }
 
+    /// Whether a display helper still belongs to the visible uploaded mesh.
+    /// Checking ownership does not require repainting that mesh a second time.
+    #[must_use]
+    pub fn has_visible_sculpt_target(
+        &self,
+        target_index: usize,
+        topology: &PreparedSceneTopology,
+    ) -> bool {
+        self.entries.get(target_index).is_some_and(|entry| {
+            entry.visible && entry.kind == MeshKind::TriangleMesh && entry.topology == *topology
+        })
+    }
+
     /// Draw the cut-away side of every visible triangle mesh as a translucent
     /// ghost (cut-view invariant: a cross-section fades geometry, never
     /// deletes it). Call this *after* [`Self::draw_with_clip`], which draws the

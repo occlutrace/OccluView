@@ -50,16 +50,16 @@ impl SceneContext<'_> {
             .iter()
             .map(|(key, active)| toolbar_toggle_width(ui, &self.ui.locale.tr(*key), *active))
             .sum();
-        let scenes = ui.painter().layout_no_wrap(
-            self.ui
-                .locale
-                .tr(crate::i18n::message_id!("workspace-scenes")),
-            egui::TextStyle::Button.resolve(ui.style()),
-            ui_theme::text(),
-        );
         // Recent-files chevron, group dividers, and spacing between controls.
         let chrome_width = 18.0 + 4.0 + 3.0 * 13.0 + 14.0 * ui.spacing().item_spacing.x;
-        let scenes_width = scenes.size().x + 2.0 * ui.spacing().button_padding.x;
+        let scenes_width = toolbar_toggle_width(
+            ui,
+            &self
+                .ui
+                .locale
+                .tr(crate::i18n::message_id!("workspace-scenes")),
+            false,
+        );
         controls_width + scenes_width + chrome_width > ui.available_width()
     }
 
@@ -235,7 +235,7 @@ impl SceneContext<'_> {
 
                     toolbar_divider(ui);
 
-                    self.show_scenes_menu(ui);
+                    self.show_scenes_menu(ui, compact);
                     toolbar_divider(ui);
 
                     let cut_shortcut_text = ui.ctx().format_shortcut(&cut_shortcut);
@@ -688,62 +688,42 @@ impl SceneContext<'_> {
         let Some(error) = self.ui.app_error.clone() else {
             return;
         };
-        let mut open = true;
         let mut close_clicked = false;
         let mut retry = false;
-        // The details field scrolls internally, so the dialog needs no resize handles.
-        egui::Window::new(error.title.as_str())
-            .open(&mut open)
-            .resizable(false)
-            .collapsible(false)
-            .default_size([460.0, 260.0])
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    let (icon_rect, _) =
-                        ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::hover());
-                    crate::ui::icons::paint(
-                        ui.painter(),
-                        icon_rect,
-                        AppIcon::Error,
-                        ui_theme::danger(),
-                    );
-                    ui.label(
-                        egui::RichText::new(error.summary.as_str())
-                            .strong()
-                            .size(13.5),
-                    );
-                });
+        let close_label = self.ui.locale.tr(crate::i18n::message_id!("error-close"));
+        let modal = crate::ui::modal_surface::show_information_modal(
+            ctx,
+            egui::Id::new("occluview-error-dialog"),
+            egui::vec2(540.0, 340.0),
+            &close_label,
+            |ui| {
+                ui_theme::dialog_header(ui, &error.title, AppIcon::Error);
+                ui.add(
+                    egui::Label::new(egui::RichText::new(&error.summary).strong().size(13.5))
+                        .wrap(),
+                );
                 ui.add_space(8.0);
-                let mut details = error.details.clone();
-                let details_response = ui.add(
-                    egui::TextEdit::multiline(&mut details)
-                        .desired_rows(8)
-                        .desired_width(f32::INFINITY)
-                        .interactive(false),
-                );
-                crate::ui::accessibility::read_only_text(
-                    &details_response,
-                    &self.ui.locale.tr(crate::i18n::message_id!("error-details")),
-                    &details,
-                );
+                egui::ScrollArea::vertical()
+                    .id_salt("error-details")
+                    .max_height((ctx.content_rect().height() - 240.0).clamp(48.0, 240.0))
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(&error.details)
+                                    .size(12.0)
+                                    .color(ui_theme::text_weak()),
+                            )
+                            .wrap()
+                            .selectable(false),
+                        );
+                    });
+                ui.add_space(8.0);
+                ui.separator();
                 ui.add_space(4.0);
                 let mut retry_clicked = false;
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .button(self.ui.locale.tr(crate::i18n::message_id!("error-close")))
-                        .clicked()
-                    {
+                    if ui.add(ui_theme::primary_button(&close_label)).clicked() {
                         close_clicked = true;
-                    }
-                    if ui
-                        .button(
-                            self.ui
-                                .locale
-                                .tr(crate::i18n::message_id!("error-copy-details")),
-                        )
-                        .clicked()
-                    {
-                        ui.ctx().copy_text(error.details.clone());
                     }
                     if error.action == AppErrorAction::RetryGraphics
                         && ui
@@ -760,8 +740,9 @@ impl SceneContext<'_> {
                 if retry_clicked {
                     retry = true;
                 }
-            });
-        if !open || close_clicked || retry {
+            },
+        );
+        if modal.should_close() || close_clicked || retry {
             self.ui.app_error = None;
         }
         if retry {

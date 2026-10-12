@@ -34,27 +34,19 @@ impl SceneContext<'_> {
             egui::vec2(560.0, 420.0),
             &close_label,
             |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new(
-                            self.ui
-                                .locale
-                                .tr(crate::i18n::message_id!("about-licenses")),
-                        )
-                        .strong()
-                        .color(ui_theme::text()),
-                    );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .button(self.ui.locale.tr(crate::i18n::message_id!("help-close")))
-                            .clicked()
-                        {
-                            close = true;
-                        }
-                    });
+                ui_theme::dialog_header(
+                    ui,
+                    &self
+                        .ui
+                        .locale
+                        .tr(crate::i18n::message_id!("about-licenses")),
+                    crate::ui::icons::AppIcon::Licenses,
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button(&close_label).clicked() {
+                        close = true;
+                    }
                 });
-                ui.add_space(4.0);
-                ui.separator();
                 let lines = notice_lines();
                 // Measured from the same 11 pt font the rows paint with; the
                 // Monospace style's default height is taller, and show_rows
@@ -64,6 +56,7 @@ impl SceneContext<'_> {
                 let row_height =
                     ui.fonts_mut(|fonts| fonts.row_height(&egui::FontId::monospace(11.0)));
                 egui::ScrollArea::both()
+                    .max_height((ui.ctx().content_rect().height() - 180.0).clamp(48.0, 320.0))
                     .auto_shrink([false, false])
                     .show_rows(ui, row_height, lines.len(), |ui, rows| {
                         // License texts are preformatted; wrapping them would

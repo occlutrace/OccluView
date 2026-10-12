@@ -66,6 +66,7 @@ impl SearchControl {
             GeometryLimits {
                 query_calls: u64::MAX,
                 triangle_tests: u64::MAX,
+                single_query_tests: u64::MAX,
                 operations: u64::MAX,
                 point_pair_tests: u64::MAX,
                 memory_bytes: SURFACE_MEMORY_BYTES,

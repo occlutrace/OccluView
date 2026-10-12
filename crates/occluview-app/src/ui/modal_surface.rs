@@ -10,7 +10,7 @@
 use crate::ui::ui_theme;
 use eframe::egui;
 
-const BACKDROP_ALPHA: u8 = 48;
+const BACKDROP_ALPHA: u8 = 88;
 
 pub(crate) fn show_information_modal<T>(
     ctx: &egui::Context,
@@ -19,8 +19,9 @@ pub(crate) fn show_information_modal<T>(
     close_label: &str,
     add_contents: impl FnOnce(&mut egui::Ui) -> T,
 ) -> egui::ModalResponse<T> {
-    let bounds = ctx.content_rect().shrink(16.0);
-    let frame = ui_theme::overlay_frame();
+    let viewport = ctx.content_rect();
+    let bounds = viewport.shrink(16.0);
+    let frame = ui_theme::window_frame().inner_margin(egui::Margin::same(20));
     let preferred_size = default_size.min(bounds.size());
     let modal_layer = egui::LayerId::new(egui::Order::Foreground, id);
     let is_top_modal = ctx.memory_mut(|memory| {
@@ -35,9 +36,9 @@ pub(crate) fn show_information_modal<T>(
     let backdrop_id = id.with("backdrop");
     let backdrop_response = egui::Area::new(backdrop_id)
         .order(egui::Order::Foreground)
-        .fixed_pos(bounds.min)
-        .default_size(bounds.size())
-        .constrain_to(bounds)
+        .fixed_pos(viewport.min)
+        .default_size(viewport.size())
+        .constrain_to(viewport)
         .movable(false)
         .interactable(true)
         .sense(egui::Sense::hover())
@@ -45,33 +46,27 @@ pub(crate) fn show_information_modal<T>(
             let mut backdrop = ui.new_child(
                 egui::UiBuilder::new()
                     .sense(egui::Sense::click_and_drag())
-                    .max_rect(bounds),
+                    .max_rect(viewport),
             );
-            backdrop.set_min_size(bounds.size());
-            ui.painter()
-                .rect_filled(bounds, 0.0, egui::Color32::from_black_alpha(BACKDROP_ALPHA));
+            backdrop.set_min_size(viewport.size());
+            ui.painter().rect_filled(
+                viewport,
+                0.0,
+                egui::Color32::from_black_alpha(BACKDROP_ALPHA),
+            );
             backdrop.response()
         })
         .inner;
     crate::ui::accessibility::button(&backdrop_response, close_label, true, None);
 
-    // Only force a sizing pass when the available content rectangle changed
-    // and the remembered card does not fit it. Repeating this every frame
-    // would recreate the resize feedback loop described above.
-    let bounds_key = id.with("information-modal-bounds");
-    let bounds_changed = ctx.data(|data| {
-        data.get_temp::<egui::Rect>(bounds_key)
-            .is_none_or(|previous| previous != bounds)
+    // Retire an expanded cached card after a layout change. Its width follows
+    // the dialog, never a scroll viewport or one of the two scene panes.
+    // A naturally tall card must not force an invisible sizing pass forever.
+    let needs_sizing_pass = ctx.memory(|memory| {
+        memory
+            .area_rect(id)
+            .is_some_and(|rect| rect.width() > preferred_size.x + 4.0)
     });
-    ctx.data_mut(|data| data.insert_temp(bounds_key, bounds));
-    let needs_sizing_pass = bounds_changed
-        && ctx.memory(|memory| {
-            memory.area_rect(id).is_some_and(|rect| {
-                !bounds.contains_rect(rect)
-                    || rect.width() > preferred_size.x * 1.25
-                    || rect.height() > preferred_size.y * 1.25
-            })
-        });
 
     let mut area = egui::Area::new(id)
         .kind(egui::UiKind::Modal)
@@ -90,7 +85,17 @@ pub(crate) fn show_information_modal<T>(
     let card = area.show(ctx, |ui| {
         ui.scope_builder(
             egui::UiBuilder::new().sense(egui::Sense::click_and_drag()),
-            |ui| frame.show(ui, add_contents).inner,
+            |ui| {
+                frame
+                    .show(ui, |ui| {
+                        ui.set_width((preferred_size.x - 40.0).max(0.0));
+                        ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
+                        ui.style_mut().interaction.selectable_labels = false;
+                        ui.style_mut().interaction.multi_widget_text_select = false;
+                        add_contents(ui)
+                    })
+                    .inner
+            },
         )
         .inner
     });

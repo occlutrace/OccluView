@@ -443,17 +443,16 @@ pub(in crate::app) fn scene_mesh_uniform(entry: &SceneMesh) -> GpuMeshUniform {
     // region turns blue.
     let measured = entry.overlay_kind() == Some(occluview_core::OverlayKind::Measured);
     let paint = entry.overlay_kind() == Some(occluview_core::OverlayKind::Paint);
-    let overlay = measured || paint;
     GpuMeshUniform {
         model: Mat4::from(entry.transform).to_cols_array(),
         tint: entry.tint,
         opacity: entry.opacity,
         has_texture: u32::from(entry.mesh.texture().is_some()),
         show_orientation: u32::from(entry.show_orientation),
-        show_vertex_colors: u32::from(entry.show_vertex_colors || overlay),
+        show_vertex_colors: u32::from(entry.show_vertex_colors || measured),
         // A measured map is drawn instead of the texture; paint is drawn over
         // it, so the texture (the scan's real colour) stays.
-        show_texture: u32::from(entry.show_texture && !measured),
+        show_texture: u32::from(entry.show_texture && entry.show_vertex_colors && !measured),
         measured_map: u32::from(measured),
         overlay_paint: u32::from(paint),
         ..GpuMeshUniform::identity()

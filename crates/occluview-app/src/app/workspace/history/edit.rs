@@ -45,6 +45,7 @@ impl WorkspaceHistory {
             return false;
         };
         update(payload);
+        self.recount_bytes();
         true
     }
     pub(crate) fn commit_pending_edit(&mut self, id: HistoryCommandId) -> bool {
@@ -71,14 +72,14 @@ impl WorkspaceHistory {
         });
         let timeline = self.timelines.entry(scope).or_default();
         timeline.undo.push_back(id);
-        self.trim_to_budget();
+        self.trim_to_budget_keep(Some(id));
         self.entries.contains_key(&id)
     }
     pub(crate) fn discard_pending(&mut self, id: HistoryCommandId) -> bool {
-        let Some(pending) = self.pending.remove(&id) else {
+        let Some(_pending) = self.pending.remove(&id) else {
             return false;
         };
-        self.used_bytes = self.used_bytes.saturating_sub(pending.bytes);
+        self.recount_bytes();
         true
     }
     pub(crate) fn top_step(
@@ -125,55 +126,41 @@ impl WorkspaceHistory {
         {
             return None;
         }
-        let old_bytes = self.entries.get(&id)?.bytes;
-        let current_fits = current.bytes <= self.max_bytes
-            && self.make_room(current.bytes.saturating_sub(old_bytes), 0, Some(id));
         let snapshot = {
-            let entry = self.entries.get_mut(&id)?;
-            std::mem::replace(&mut entry.payload, Box::new(current.value))
-        };
-        let restored = *snapshot.downcast::<T>().ok()?;
-        if current_fits {
-            self.used_bytes = self
-                .used_bytes
-                .saturating_sub(old_bytes)
-                .saturating_add(current.bytes);
             let entry = self.entries.get_mut(&id)?;
             entry.bytes = current.bytes;
             entry.applied = direction == HistoryDirection::Redo;
-            let timeline = self.timelines.get_mut(&scope)?;
-            match direction {
-                HistoryDirection::Undo => {
-                    if timeline.undo.pop_back() != Some(id) {
-                        return None;
-                    }
-                    timeline.redo.push_back(id);
-                }
-                HistoryDirection::Redo => {
-                    if timeline.redo.pop_back() != Some(id) {
-                        return None;
-                    }
-                    timeline.undo.push_back(id);
-                }
+            std::mem::replace(&mut entry.payload, Box::new(current.value))
+        };
+        let restored = *snapshot.downcast::<T>().ok()?;
+        let timeline = self.timelines.get_mut(&scope)?;
+        match direction {
+            HistoryDirection::Undo => {
+                timeline.undo.pop_back();
+                timeline.redo.push_back(id);
             }
-        } else {
-            self.remove_single_command(id);
+            HistoryDirection::Redo => {
+                timeline.redo.pop_back();
+                timeline.undo.push_back(id);
+            }
         }
+        self.trim_to_budget_keep(Some(id));
         Some(restored)
     }
     pub(crate) fn clear_scope(&mut self, scope: Option<SceneKey>) {
         let ids = self
-            .timelines
-            .get(&scope)
-            .map(|timeline| {
-                timeline
-                    .undo
-                    .iter()
-                    .chain(timeline.redo.iter())
-                    .copied()
-                    .collect::<HashSet<_>>()
+            .entries
+            .iter()
+            .filter_map(|(id, entry)| {
+                let belongs = match (scope, entry.owner) {
+                    (None, EntryOwner::Standalone) => true,
+                    (Some(key), EntryOwner::Scene(scene)) => key == scene,
+                    (Some(key), EntryOwner::Transfer) => entry.participants.contains(&key),
+                    _ => false,
+                };
+                belongs.then_some(*id)
             })
-            .unwrap_or_default();
+            .collect::<HashSet<_>>();
         self.remove_commands_with_linked_prefixes(ids);
         self.timelines.remove(&scope);
         let pending_ids = self
@@ -197,7 +184,6 @@ impl WorkspaceHistory {
     /// Retire a scene lifetime. Unlike `clear_scope`, this also releases an
     /// active edit baseline because the caller is removing the scene itself.
     pub(crate) fn close_scope(&mut self, scope: Option<SceneKey>) {
-        self.clear_scope(scope);
         let checkpoint_ids = self
             .checkpoints
             .iter()
@@ -205,9 +191,9 @@ impl WorkspaceHistory {
             .collect::<Vec<_>>();
         for id in checkpoint_ids {
             if let Some(checkpoint) = self.checkpoints.remove(&id) {
-                self.used_bytes = self.used_bytes.saturating_sub(checkpoint.baseline_bytes);
+                drop(checkpoint);
             }
         }
-        self.trim_to_budget();
+        self.clear_scope(scope);
     }
 }

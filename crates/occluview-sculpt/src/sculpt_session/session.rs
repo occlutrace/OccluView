@@ -79,6 +79,7 @@ impl SculptSession {
             snapshot_generation: 0,
             snapshot_stamp: vec![0; group_count],
             step_budget: Vec::new(),
+            smooth_stroke_travel: vec![0.0; group_count],
             stroke_mark: vec![0; nv],
             material_mark: vec![0; nv],
             stroke_epoch: 0,
@@ -212,6 +213,7 @@ impl SculptSession {
         self.selection_stamp.reserve(groups);
         self.pre_pos.reserve(groups);
         self.step_budget.reserve(groups);
+        self.smooth_stroke_travel.reserve(groups);
         self.region_distance.reserve(groups);
         self.region_normal.reserve(groups);
         self.rollback_marks.reserve(groups);

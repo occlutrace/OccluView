@@ -19,15 +19,12 @@ impl WorkspaceHistory {
         baseline: Scene,
         baseline_bytes: usize,
     ) -> Option<EditCheckpointId> {
-        // The baseline is required to make Cancel truthful. Refuse the Edit
-        // session before changing either history or its memory accounting if
-        // the shared byte budget cannot retain it.
-        if baseline_bytes > self.max_bytes
-            || self.used_bytes.saturating_add(baseline_bytes) > self.max_bytes
-            || self
-                .checkpoints
-                .values()
-                .any(|checkpoint| checkpoint.scope == scope)
+        // Cancel must retain the entry scene even when the retention target
+        // is already full. Its meshes are shared with history/live geometry.
+        if self
+            .checkpoints
+            .values()
+            .any(|checkpoint| checkpoint.scope == scope)
         {
             return None;
         }
@@ -37,7 +34,6 @@ impl WorkspaceHistory {
             let timeline = self.timelines.entry(scope).or_default();
             (timeline.undo.clone(), timeline.redo.clone())
         };
-        self.used_bytes = self.used_bytes.saturating_add(baseline_bytes);
         self.checkpoints.insert(
             id,
             EditCheckpoint {
@@ -50,6 +46,7 @@ impl WorkspaceHistory {
                 redo_displaced: false,
             },
         );
+        self.recount_bytes();
         Some(id)
     }
     /// Done drops the protected baseline while leaving the journal commands
@@ -63,12 +60,12 @@ impl WorkspaceHistory {
                 checkpoint.redo_at_start.iter().copied().collect(),
             );
         }
-        self.used_bytes = self.used_bytes.saturating_sub(checkpoint.baseline_bytes);
         self.trim_to_budget();
         true
     }
     /// Cancel restores the exact scene captured on entry and restores the
-    /// scene's old undo/redo heads. Other scene timelines are never touched.
+    /// surviving pre-session undo/redo heads. Geometry remains available even
+    /// when older commands expired under the memory target.
     pub(crate) fn cancel_edit_checkpoint(
         &mut self,
         checkpoint_id: EditCheckpointId,
@@ -97,7 +94,6 @@ impl WorkspaceHistory {
             timeline.undo.retain(|id| self.entries.contains_key(id));
             timeline.redo.retain(|id| self.entries.contains_key(id));
         }
-        self.used_bytes = self.used_bytes.saturating_sub(checkpoint.baseline_bytes);
         self.trim_to_budget();
         Some(checkpoint.baseline)
     }

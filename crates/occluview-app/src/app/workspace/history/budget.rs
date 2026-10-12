@@ -1,8 +1,181 @@
-//! History budgeting: how many commands and bytes survive.
+//! Soft history retention: shared meshes count once and old steps expire after commit.
 
-use std::collections::HashSet;
+use std::any::Any;
+use std::collections::{HashMap, HashSet};
+use std::mem::size_of;
+use std::sync::Arc;
 
+use occluview_core::{Mesh, Scene, SceneMesh, SceneMeshId};
+
+use super::journal::EditCheckpoint;
 use super::{HistoryCommandId, WorkspaceHistory};
+use crate::edit_mode::undo_snapshot::MeshEditUndoSnapshot;
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+enum SharedAllocation {
+    Mesh(usize),
+    Overlay(usize),
+}
+
+#[derive(Default)]
+struct CommandMemory {
+    exclusive_bytes: usize,
+    shared_allocations: Vec<(SharedAllocation, usize)>,
+}
+
+#[derive(Clone, Copy)]
+struct AllocationUse {
+    bytes: usize,
+    references: usize,
+}
+
+#[derive(Default)]
+struct MemoryLedger {
+    used_bytes: usize,
+    allocations: HashMap<SharedAllocation, AllocationUse>,
+    commands: HashMap<HistoryCommandId, CommandMemory>,
+}
+
+impl MemoryLedger {
+    fn for_history(history: &WorkspaceHistory, retain_commands: bool) -> Self {
+        let mut ledger = Self::default();
+        for checkpoint in history.checkpoints.values() {
+            ledger.add_checkpoint(checkpoint);
+        }
+        for entry in history.entries.values() {
+            let memory = payload_memory(entry.payload.as_ref(), entry.bytes);
+            if retain_commands {
+                ledger.add_command(entry.id, memory);
+            } else {
+                ledger.add_memory(None, memory);
+            }
+        }
+        for entry in history.pending.values() {
+            let memory = payload_memory(entry.payload.as_ref(), entry.bytes);
+            if retain_commands {
+                ledger.add_command(entry.id, memory);
+            } else {
+                ledger.add_memory(None, memory);
+            }
+        }
+        ledger
+    }
+
+    fn add_checkpoint(&mut self, checkpoint: &EditCheckpoint) {
+        let mut memory = CommandMemory {
+            exclusive_bytes: checkpoint
+                .baseline_bytes
+                .saturating_add(
+                    checkpoint
+                        .undo_at_start
+                        .capacity()
+                        .saturating_mul(size_of::<HistoryCommandId>()),
+                )
+                .saturating_add(
+                    checkpoint
+                        .redo_at_start
+                        .capacity()
+                        .saturating_mul(size_of::<HistoryCommandId>()),
+                ),
+            ..CommandMemory::default()
+        };
+        scene_allocations(&checkpoint.baseline, &mut memory);
+        self.add_memory(None, memory);
+    }
+
+    fn add_command(&mut self, id: HistoryCommandId, memory: CommandMemory) {
+        self.add_memory(Some(id), memory);
+    }
+
+    fn add_memory(&mut self, id: Option<HistoryCommandId>, memory: CommandMemory) {
+        self.used_bytes = self.used_bytes.saturating_add(memory.exclusive_bytes);
+        for (allocation, bytes) in &memory.shared_allocations {
+            let usage = self.allocations.entry(*allocation).or_insert(AllocationUse {
+                bytes: *bytes,
+                references: 0,
+            });
+            debug_assert_eq!(usage.bytes, *bytes);
+            if usage.references == 0 {
+                self.used_bytes = self.used_bytes.saturating_add(usage.bytes);
+            }
+            usage.references = usage.references.saturating_add(1);
+        }
+        if let Some(id) = id {
+            self.commands.insert(id, memory);
+        }
+    }
+
+    fn remove_command(&mut self, id: HistoryCommandId) -> bool {
+        let Some(memory) = self.commands.remove(&id) else {
+            return false;
+        };
+        self.used_bytes = self.used_bytes.saturating_sub(memory.exclusive_bytes);
+        for (allocation, _) in memory.shared_allocations {
+            let released_bytes = self.allocations.get_mut(&allocation).and_then(|usage| {
+                usage.references = usage.references.saturating_sub(1);
+                (usage.references == 0).then_some(usage.bytes)
+            });
+            if let Some(bytes) = released_bytes {
+                self.used_bytes = self.used_bytes.saturating_sub(bytes);
+                self.allocations.remove(&allocation);
+            }
+        }
+        true
+    }
+}
+
+fn mesh_allocation(layer: &SceneMesh) -> (SharedAllocation, usize) {
+    let mesh_bytes = usize::try_from(layer.mesh.estimated_memory_bytes()).unwrap_or(usize::MAX);
+    let arc_overhead = size_of::<Mesh>()
+        .saturating_add(size_of::<usize>().saturating_mul(2));
+    (
+        SharedAllocation::Mesh(Arc::as_ptr(&layer.mesh) as usize),
+        mesh_bytes.saturating_add(arc_overhead),
+    )
+}
+
+fn scene_mesh_allocations(layer: &SceneMesh, memory: &mut CommandMemory) {
+    memory.shared_allocations.push(mesh_allocation(layer));
+    if let Some(colors) = layer.overlay_colors() {
+        let color_bytes = colors
+            .capacity()
+            .saturating_mul(size_of::<[u8; 4]>())
+            .saturating_add(size_of::<Vec<[u8; 4]>>())
+            .saturating_add(size_of::<usize>().saturating_mul(2));
+        memory.shared_allocations.push((
+            SharedAllocation::Overlay(Arc::as_ptr(colors) as usize),
+            color_bytes,
+        ));
+    }
+}
+
+fn scene_allocations(scene: &Scene, memory: &mut CommandMemory) {
+    for layer in scene.meshes() {
+        scene_mesh_allocations(layer, memory);
+    }
+}
+
+fn payload_memory(payload: &dyn Any, fallback: usize) -> CommandMemory {
+    let mut memory = CommandMemory::default();
+    match payload.downcast_ref::<MeshEditUndoSnapshot>() {
+        Some(MeshEditUndoSnapshot::Layer(layer)) => {
+            memory.exclusive_bytes = size_of::<SceneMesh>();
+            scene_mesh_allocations(layer, &mut memory);
+        }
+        Some(MeshEditUndoSnapshot::Scene { scene, guard_ids }) => {
+            memory.exclusive_bytes = size_of::<Scene>()
+                .saturating_add(scene.meshes().len().saturating_mul(size_of::<SceneMesh>()))
+                .saturating_add(
+                    guard_ids
+                        .capacity()
+                        .saturating_mul(size_of::<SceneMeshId>()),
+                );
+            scene_allocations(scene, &mut memory);
+        }
+        None => memory.exclusive_bytes = fallback,
+    }
+    memory
+}
 
 impl WorkspaceHistory {
     pub(crate) fn constrain_limits(&mut self, max_count: usize, max_bytes: usize) {
@@ -10,83 +183,137 @@ impl WorkspaceHistory {
         self.max_bytes = self.max_bytes.min(max_bytes);
         self.trim_to_budget();
     }
-    fn is_protected(&self, id: HistoryCommandId) -> bool {
-        self.checkpoints.values().any(|checkpoint| {
-            checkpoint.undo_at_start.contains(&id) || checkpoint.redo_at_start.contains(&id)
-        })
+
+    pub(super) fn recount_bytes(&mut self) {
+        self.used_bytes = MemoryLedger::for_history(self, false).used_bytes;
     }
-    pub(super) fn make_room(
-        &mut self,
-        add_bytes: usize,
-        add_count: usize,
-        exclude: Option<HistoryCommandId>,
-    ) -> bool {
-        let Some(plan) = self.plan_room(add_bytes, add_count, exclude) else {
-            return false;
-        };
-        self.remove_commands_with_linked_prefixes(plan.into_iter().collect());
-        true
-    }
-    /// Compute which oldest commands must be evicted to make room without
-    /// changing history. Transfer admission stores this plan on its pending
-    /// entry and only applies it after the document transaction succeeds.
+
+    /// Plan eviction in one memory-ledger pass. Shared mesh and overlay buffers
+    /// are released only when the final retained snapshot stops referencing them.
+    /// Pending edits and Cancel baselines remain owned until their transaction resolves.
     pub(super) fn plan_room(
         &self,
         add_bytes: usize,
         add_count: usize,
         exclude: Option<HistoryCommandId>,
     ) -> Option<Vec<HistoryCommandId>> {
-        let mut remaining_count = self
+        self.plan_room_with_bytes(add_bytes, add_count, exclude)
+            .map(|(plan, _)| plan)
+    }
+
+    fn plan_room_with_bytes(
+        &self,
+        add_bytes: usize,
+        add_count: usize,
+        exclude: Option<HistoryCommandId>,
+    ) -> Option<(Vec<HistoryCommandId>, usize)> {
+        if self.max_count == 0 {
+            return None;
+        }
+        let count = self
             .entries
             .len()
             .saturating_add(self.pending.len())
             .saturating_add(add_count);
-        let mut remaining_bytes = self.used_bytes.saturating_add(add_bytes);
-        let mut candidate_order = self.entry_order.clone();
-        let mut projected_timelines = self.timelines.clone();
-        let mut planned = HashSet::new();
-        let mut plan = Vec::new();
+        let mut memory = MemoryLedger::for_history(self, true);
+        if count <= self.max_count
+            && memory.used_bytes.saturating_add(add_bytes) <= self.max_bytes
+        {
+            return Some((Vec::new(), memory.used_bytes));
+        }
 
+        let mut projected = self.eviction_timelines();
+        let mut planned = HashSet::new();
+        let mut blocked = HashSet::new();
+        let mut candidates = self.entry_order.iter().copied();
         loop {
-            let count = remaining_count;
-            let bytes = remaining_bytes;
-            if count <= self.max_count && bytes <= self.max_bytes {
-                return Some(plan);
+            let remaining_count = count.saturating_sub(planned.len());
+            if remaining_count <= self.max_count
+                && memory.used_bytes.saturating_add(add_bytes) <= self.max_bytes
+            {
+                return Some((ordered_plan(planned), memory.used_bytes));
             }
-            let candidate = candidate_order.iter().copied().find(|id| {
-                Some(*id) != exclude && !planned.contains(id) && !self.is_protected(*id)
-            })?;
-            if !self.entries.contains_key(&candidate) {
-                candidate_order.retain(|id| *id != candidate);
+            let Some(candidate) = candidates.find(|id| {
+                Some(*id) != exclude
+                    && !planned.contains(id)
+                    && !blocked.contains(id)
+                    && self.entries.contains_key(id)
+            }) else {
+                // One large current step or live Cancel baseline may exceed
+                // the soft target; keeping it must never block an edit.
+                return Some((ordered_plan(planned), memory.used_bytes));
+            };
+
+            let entry = self.entries.get(&candidate)?;
+            let ids = if entry.participants.len() < 2 {
+                // Ordinary edit entries do not alter timeline linkage. Avoid
+                // cloning every scene timeline once per old snapshot.
+                HashSet::from([candidate])
+            } else {
+                let mut candidate_timelines = projected.clone();
+                let ids = Self::collect_linked_prefixes(
+                    &self.entries,
+                    &mut candidate_timelines,
+                    HashSet::from([candidate]),
+                );
+                if !exclude.is_some_and(|id| ids.contains(&id)) {
+                    projected = candidate_timelines;
+                }
+                ids
+            };
+
+            if exclude.is_some_and(|id| ids.contains(&id)) {
+                blocked.insert(candidate);
                 continue;
             }
-
-            let ids = Self::collect_linked_prefixes(
-                &self.entries,
-                &mut projected_timelines,
-                HashSet::from([candidate]),
-            );
-            if ids.iter().any(|id| self.is_protected(*id)) {
-                return None;
-            }
-            candidate_order.retain(|id| !ids.contains(id));
             for id in ids {
-                if !planned.insert(id) {
-                    continue;
+                if self.entries.contains_key(&id) && planned.insert(id) {
+                    memory.remove_command(id);
                 }
-                let Some(entry) = self.entries.get(&id) else {
-                    continue;
-                };
-                remaining_count = remaining_count.saturating_sub(1);
-                remaining_bytes = remaining_bytes.saturating_sub(entry.bytes);
-                plan.push(id);
             }
         }
     }
-    pub(super) fn trim_to_budget(&mut self) {
-        let _ = self.make_room(0, 0, None);
-        // Protected checkpoints may temporarily keep the workspace above its
-        // soft history cap. New records are refused until Done/Cancel releases
-        // the baseline; existing snapshots are not dropped under the operator.
+
+    pub(super) fn eviction_timelines(
+        &self,
+    ) -> std::collections::HashMap<Option<super::SceneKey>, super::journal::SceneTimeline> {
+        let mut timelines = self.timelines.clone();
+        for checkpoint in self
+            .checkpoints
+            .values()
+            .filter(|checkpoint| checkpoint.redo_displaced)
+        {
+            let timeline = timelines.entry(checkpoint.scope).or_default();
+            let mut redo = checkpoint.redo_at_start.clone();
+            redo.extend(
+                timeline
+                    .redo
+                    .iter()
+                    .copied()
+                    .filter(|id| !checkpoint.redo_at_start.contains(id)),
+            );
+            timeline.redo = redo;
+        }
+        timelines
     }
+
+    pub(super) fn trim_to_budget_keep(&mut self, keep: Option<HistoryCommandId>) {
+        if let Some((plan, retained_bytes)) = self.plan_room_with_bytes(0, 0, keep) {
+            if !plan.is_empty() {
+                self.remove_commands_with_linked_prefixes(plan.into_iter().collect());
+            } else {
+                self.used_bytes = retained_bytes;
+            }
+        }
+    }
+
+    pub(super) fn trim_to_budget(&mut self) {
+        self.trim_to_budget_keep(self.entry_order.back().copied());
+    }
+}
+
+fn ordered_plan(planned: HashSet<HistoryCommandId>) -> Vec<HistoryCommandId> {
+    let mut ordered = planned.into_iter().collect::<Vec<_>>();
+    ordered.sort_unstable();
+    ordered
 }

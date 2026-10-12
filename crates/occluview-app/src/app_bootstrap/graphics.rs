@@ -28,6 +28,9 @@ pub(super) const LIVE_SURFACE_FORMATS: [wgpu::TextureFormat; 4] = [
 pub(super) struct GraphicsPreflight {
     pub(super) adapters: Vec<AdapterIdentity>,
     pub(super) live_sample_count: u16,
+    /// Reuse the proved device for one native GPU, including its distinct
+    /// backend representations. Hybrid GPUs retain surface-aware selection.
+    pub(super) shared_setup: Option<eframe::egui_wgpu::WgpuSetup>,
 }
 
 impl Default for GraphicsPreflight {
@@ -35,12 +38,16 @@ impl Default for GraphicsPreflight {
         Self {
             adapters: Vec::new(),
             live_sample_count: LIVE_SAFE_SAMPLE_COUNT,
+            shared_setup: None,
         }
     }
 }
 
 pub(super) fn native_options(preflight: &GraphicsPreflight) -> eframe::NativeOptions {
-    let mut wgpu_setup = eframe::egui_wgpu::WgpuSetup::without_display_handle();
+    let mut wgpu_setup = preflight
+        .shared_setup
+        .clone()
+        .unwrap_or_else(eframe::egui_wgpu::WgpuSetup::without_display_handle);
     if let eframe::egui_wgpu::WgpuSetup::CreateNew(create_new) = &mut wgpu_setup {
         // eframe creates the adapter/device before it calls our app creator.
         // Give it a descriptor derived from the selected adapter so a legacy
@@ -388,10 +395,13 @@ pub(super) fn preflight_graphics_devices() -> Result<GraphicsPreflight> {
     let (hardware, software): (Vec<_>, Vec<_>) = adapters
         .into_iter()
         .partition(|adapter| adapter.get_info().device_type != wgpu::DeviceType::Cpu);
-    let (working_adapters, failures) = probe_preflight_candidates(hardware, software, |adapter| {
+    let (native, gl): (Vec<_>, Vec<_>) = hardware
+        .into_iter()
+        .partition(|adapter| adapter.get_info().backend != wgpu::Backend::Gl);
+    let mut probe = |adapter: wgpu::Adapter| {
         let info = adapter.get_info();
         match pollster::block_on(adapter.request_device(&device_descriptor_for_adapter(&adapter))) {
-            Ok((_device, _queue)) => {
+            Ok((device, queue)) => {
                 tracing::info!(
                     adapter = %info.name,
                     backend = ?info.backend,
@@ -399,11 +409,25 @@ pub(super) fn preflight_graphics_devices() -> Result<GraphicsPreflight> {
                     power_preference = ?power_preference,
                     "graphics device preflight passed"
                 );
-                Ok(AdapterIdentity::from_adapter(&adapter))
+                Ok((
+                    AdapterIdentity::from_adapter(&adapter),
+                    adapter,
+                    device,
+                    queue,
+                ))
             }
             Err(error) => Err(format!("{} ({:?}): {error}", info.name, info.backend)),
         }
-    });
+    };
+    // Native hardware first, OpenGL hardware second, software last. Loading
+    // an unused GL device adds driver state and threads even when it is later
+    // discarded. Neither fallback is needed while a native candidate works.
+    let (mut working_adapters, mut failures) = probe_preflight_candidates(native, gl, &mut probe);
+    if working_adapters.is_empty() {
+        let (working, failed) = probe_preflight_candidates(Vec::new(), software, &mut probe);
+        working_adapters = working;
+        failures.extend(failed);
+    }
     if !working_adapters.is_empty() {
         if !failures.is_empty() {
             tracing::warn!(
@@ -411,8 +435,12 @@ pub(super) fn preflight_graphics_devices() -> Result<GraphicsPreflight> {
                 "some graphics adapters failed preflight; restricting surface selection to working adapters"
             );
         }
+        let identities: Vec<_> = working_adapters
+            .iter()
+            .map(|candidate| candidate.0.clone())
+            .collect();
         let live_sample_count = live_sample_count_for(
-            &working_adapters,
+            &identities,
             power_preference,
             live_msaa_override(std::env::var(LIVE_MSAA_ENV).ok().as_deref()),
         );
@@ -421,15 +449,61 @@ pub(super) fn preflight_graphics_devices() -> Result<GraphicsPreflight> {
             override_env = %LIVE_MSAA_ENV,
             "live viewport sample count selected"
         );
+        // The old surface selector could only choose this same native GPU. Keep
+        // its already-created native device rather than loading the driver and
+        // requesting another device in a second instance. GL still needs the
+        // display handle eframe supplies; hybrid candidates retain selection.
+        let shared_setup = if can_reuse_preflight_devices(&identities) {
+            let (_, adapter, device, queue) = &working_adapters[0];
+            let info = adapter.get_info();
+            (matches!(
+                info.device_type,
+                wgpu::DeviceType::DiscreteGpu | wgpu::DeviceType::IntegratedGpu
+            ) && info.backend != wgpu::Backend::Gl
+                && adapter_supports_live_sample_count(adapter, None, live_sample_count))
+            .then(|| {
+                eframe::egui_wgpu::WgpuSetup::Existing(eframe::egui_wgpu::WgpuSetupExisting {
+                    instance: instance.clone(),
+                    adapter: adapter.clone(),
+                    device: device.clone(),
+                    queue: queue.clone(),
+                })
+            })
+        } else {
+            None
+        };
         return Ok(GraphicsPreflight {
-            adapters: working_adapters,
+            adapters: identities,
             live_sample_count,
+            shared_setup,
         });
     }
     Err(anyhow::anyhow!(
         "no graphics adapter could create a device; run `occluview --diagnostics`; attempts: {}",
         failures.join("; ")
     ))
+}
+
+/// One reported PCI device exposed once per backend can share its preferred
+/// device. Missing PCI identity, a second card, or duplicate backend entries
+/// retain eframe's surface-aware selection and its hybrid fallback.
+pub(super) fn can_reuse_preflight_devices(adapters: &[AdapterIdentity]) -> bool {
+    let Some(first) = adapters.first() else {
+        return false;
+    };
+    if adapters.len() == 1 {
+        return true;
+    }
+    !first.device_pci_bus_id.is_empty()
+        && adapters.iter().enumerate().all(|(index, candidate)| {
+            candidate.vendor == first.vendor
+                && candidate.device == first.device
+                && candidate.device_type == first.device_type
+                && candidate.device_pci_bus_id == first.device_pci_bus_id
+                && adapters[..index]
+                    .iter()
+                    .all(|previous| previous.backend != candidate.backend)
+        })
 }
 
 pub(super) fn probe_preflight_candidates<T, U>(

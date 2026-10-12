@@ -203,7 +203,8 @@ fn real_main() -> Result<()> {
                     }
                 }
             });
-            Ok(Box::new(app::OccluViewApp::new(
+            append_startup_stage("renderer-ready");
+            let app = app::OccluViewApp::new(
                 cc.egui_ctx.clone(),
                 args.files.clone(),
                 live_viewport,
@@ -212,7 +213,9 @@ fn real_main() -> Result<()> {
                     raise_target,
                     activation_token: startup_activation_token,
                 },
-            )))
+            );
+            append_startup_stage("app-ready");
+            Ok(Box::new(app))
         }),
     )
     .map_err(|e| anyhow::anyhow!("eframe: {e:?}"))?;

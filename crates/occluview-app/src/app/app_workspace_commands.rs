@@ -89,12 +89,11 @@ impl OccluViewApp {
                     Ok(())
                 }
                 WorkspaceCommand::Activate(target) => {
-                    if !self.ui.command_dialog_open()
-                        && self
-                            .workspace
-                            .scenes
-                            .iter()
-                            .any(|scene| scene.target() == target)
+                    if self
+                        .workspace
+                        .scenes
+                        .iter()
+                        .any(|scene| scene.target() == target)
                     {
                         self.workspace.input.request_activation(target);
                         if matches!(self.workspace.layout, WorkspaceLayout::Single { .. }) {
@@ -137,34 +136,6 @@ impl OccluViewApp {
                         self.workspace.layout = layout;
                         for scene in &mut self.workspace.scenes {
                             scene.preserve_on_transfer_undo = true;
-                        }
-                    }
-                    Ok(())
-                }
-                WorkspaceCommand::RequestRenameScene { scene } => {
-                    if let Some(target) = self
-                        .workspace
-                        .scenes
-                        .iter()
-                        .find(|target| target.key == scene)
-                    {
-                        self.workspace.rename = Some((scene, target.name.clone()));
-                        self.ui.workspace_modal_open = true;
-                        self.workspace.rename_focus_pending = true;
-                    }
-                    Ok(())
-                }
-                WorkspaceCommand::RenameScene { scene, name } => {
-                    let name: String = name.trim().chars().take(128).collect();
-                    if !name.is_empty() {
-                        if let Some(target) = self
-                            .workspace
-                            .scenes
-                            .iter_mut()
-                            .find(|target| target.key == scene)
-                        {
-                            target.name = name;
-                            target.preserve_on_transfer_undo = true;
                         }
                     }
                     Ok(())
@@ -502,154 +473,89 @@ impl SceneContext<'_> {
         });
     }
 
-    #[allow(clippy::too_many_lines)]
-    pub(super) fn show_scenes_menu(&mut self, ui: &mut egui::Ui) {
+    /// The Scenes toolbar control: one icon-led toggle and a two-item menu.
+    ///
+    /// The pane headers already carry the single/split view toggles and the
+    /// layer rows and their context menu carry every move, so the menu keeps
+    /// only the two actions that have no other home.
+    pub(super) fn show_scenes_menu(&mut self, ui: &mut egui::Ui, compact: bool) {
         let label = self
             .ui
             .locale
             .tr(crate::i18n::message_id!("workspace-scenes"));
-        ui.menu_button(label, |ui| {
-            for (side, key) in [
-                (
-                    SplitSide::Left,
-                    crate::i18n::message_id!("workspace-new-left"),
-                ),
-                (
-                    SplitSide::Right,
-                    crate::i18n::message_id!("workspace-new-right"),
-                ),
-            ] {
+        let trigger = crate::measure::measure_overlay::toolbar_toggle(
+            ui,
+            crate::measure::measure_overlay::ToolbarToggle::new(
+                crate::ui::icons::AppIcon::SplitView,
+                &label,
+                true,
+                egui::Popup::is_id_open(ui.ctx(), scenes_popup_id()),
+                &label,
+            )
+            .compact(compact),
+        );
+
+        let new_scene = self
+            .ui
+            .locale
+            .tr(crate::i18n::message_id!("workspace-scene-new"));
+        let close_scene = self
+            .ui
+            .locale
+            .tr(crate::i18n::message_id!("workspace-close"));
+        let can_create = self.scene_summaries.len() < 2;
+        let can_close = self.scene_summaries.len() > 1;
+        let mut create = false;
+        let mut close = false;
+        egui::Popup::from_toggle_button_response(&trigger)
+            .id(scenes_popup_id())
+            .align(egui::RectAlign::BOTTOM_START)
+            .align_alternatives(&[])
+            .gap(4.0)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
+            .frame(
+                egui::Frame::new()
+                    .fill(crate::ui::ui_theme::panel_fill())
+                    .stroke(egui::Stroke::new(1.0, crate::ui::ui_theme::panel_stroke()))
+                    .corner_radius(6)
+                    .shadow(crate::ui::ui_theme::panel_shadow())
+                    .inner_margin(egui::Margin::same(6)),
+            )
+            .show(|ui| {
+                ui.set_width(184.0);
+                ui.spacing_mut().item_spacing.y = 2.0;
                 if ui
-                    .add_enabled(
-                        self.scene_summaries.len() < 2,
-                        egui::Button::new(self.ui.locale.tr(key)),
-                    )
+                    .add_enabled(can_create, scene_menu_item(&new_scene))
                     .clicked()
                 {
-                    self.queue_new_scene(side);
-                    ui.close();
+                    create = true;
                 }
-            }
-            ui.separator();
-            if ui
-                .button(
-                    self.ui
-                        .locale
-                        .tr(crate::i18n::message_id!("workspace-one-view")),
-                )
-                .clicked()
-            {
-                self.commands
-                    .push_back(WorkspaceCommand::SetLayout(WorkspaceLayout::single(
-                        self.pane_id,
-                    )));
-                ui.close();
-            }
-            if self.scene_summaries.len() == 2
-                && ui
-                    .button(
-                        self.ui
-                            .locale
-                            .tr(crate::i18n::message_id!("workspace-two-views")),
-                    )
+                if ui
+                    .add_enabled(can_close, scene_menu_item(&close_scene))
                     .clicked()
-            {
-                let left = self.scene_summaries[0].pane;
-                let right = self.scene_summaries[1].pane;
-                self.commands
-                    .push_back(WorkspaceCommand::SetLayout(self.saved_split.unwrap_or(
-                        WorkspaceLayout::SideBySide {
-                            left,
-                            right,
-                            ratio: 0.5,
-                        },
-                    )));
-                ui.close();
-            }
-            if ui
-                .add_enabled(
-                    self.document.focused_layer_id.is_some(),
-                    egui::Button::new(
-                        self.ui
-                            .locale
-                            .tr(crate::i18n::message_id!("workspace-move-layer")),
-                    ),
-                )
-                .clicked()
-            {
-                if let Some(layer) = self.document.focused_layer_id {
-                    let other = self
-                        .scene_summaries
-                        .iter()
-                        .find(|scene| scene.key != self.scene_key)
-                        .map(|scene| scene.key);
-                    self.queue_transfer(layer, other);
+                {
+                    close = true;
                 }
-                ui.close();
-            }
-            ui.separator();
-            let all_layers = self
-                .document
-                .scene
-                .as_deref()
-                .map(|scene| {
-                    scene
-                        .meshes()
-                        .iter()
-                        .map(occluview_core::SceneMesh::id)
-                        .collect()
-                })
-                .and_then(|layers| LayerIds::new(layers).ok());
-            if ui
-                .add_enabled(
-                    all_layers.is_some(),
-                    egui::Button::new(
-                        self.ui
-                            .locale
-                            .tr(crate::i18n::message_id!("workspace-move-all")),
-                    ),
-                )
-                .clicked()
-            {
-                if let Some(layers) = all_layers {
-                    let other = self
-                        .scene_summaries
-                        .iter()
-                        .find(|scene| scene.key != self.scene_key)
-                        .map(|scene| scene.key);
-                    self.queue_layers_transfer(layers, other);
-                }
-                ui.close();
-            }
-            if ui
-                .button(
-                    self.ui
-                        .locale
-                        .tr(crate::i18n::message_id!("workspace-rename")),
-                )
-                .clicked()
-            {
-                self.commands
-                    .push_back(WorkspaceCommand::RequestRenameScene {
-                        scene: self.scene_key,
-                    });
-                ui.close();
-            }
-            if ui
-                .button(
-                    self.ui
-                        .locale
-                        .tr(crate::i18n::message_id!("workspace-close")),
-                )
-                .clicked()
-            {
-                self.commands.push_back(WorkspaceCommand::CloseScene {
-                    scene: self.scene_key,
-                });
-                ui.close();
-            }
-        });
+            });
+        if create {
+            self.queue_new_scene(SplitSide::Right);
+        }
+        if close {
+            self.commands.push_back(WorkspaceCommand::CloseScene {
+                scene: self.scene_key,
+            });
+        }
     }
+}
+
+/// Identity of the Scenes toolbar popup, shared by its toggle and its body.
+fn scenes_popup_id() -> egui::Id {
+    egui::Id::new("workspace-scenes-popup")
+}
+
+/// One full-width row inside the Scenes menu.
+fn scene_menu_item(label: &str) -> egui::Button<'_> {
+    egui::Button::new(label).min_size(egui::vec2(172.0, 26.0))
 }
 
 #[cfg(test)]

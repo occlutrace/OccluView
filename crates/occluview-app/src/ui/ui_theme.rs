@@ -137,11 +137,11 @@ pub(crate) const RADIUS_PANEL: f32 = 10.0;
 // `from_rgba_premultiplied` (the only const constructor) cannot represent, so
 // they are small runtime helpers built from straight (unmultiplied) alpha.
 
-/// Frosted fill for floating viewport panels.
+/// Solid fill for floating viewport panels.
 pub(crate) fn panel_fill() -> egui::Color32 {
     pick(
-        egui::Color32::from_rgba_unmultiplied(248, 250, 252, 234),
-        egui::Color32::from_rgba_unmultiplied(30, 33, 39, 238),
+        egui::Color32::from_rgba_unmultiplied(248, 250, 252, 255),
+        egui::Color32::from_rgba_unmultiplied(30, 33, 39, 255),
     )
 }
 /// Hairline border for floating viewport panels.
@@ -191,6 +191,70 @@ pub(crate) fn overlay_frame() -> egui::Frame {
         .shadow(panel_shadow())
         .corner_radius(RADIUS_PANEL)
         .inner_margin(egui::Margin::symmetric(10, 8))
+}
+
+/// Opaque surface for dialogs and tool windows; scene colours must not tint text.
+pub(crate) fn window_frame() -> egui::Frame {
+    egui::Frame::NONE
+        .fill(pick(
+            egui::Color32::WHITE,
+            egui::Color32::from_rgb(30, 33, 39),
+        ))
+        .stroke(egui::Stroke::new(1.0, panel_stroke()))
+        .shadow(panel_shadow())
+        .corner_radius(RADIUS_PANEL)
+        .inner_margin(egui::Margin::same(12))
+}
+
+/// Native egui title bar retains its drag, focus and close-button behaviour.
+pub(crate) fn window<'a>(title: impl egui::IntoAtoms<'a>, width: f32) -> egui::Window<'a> {
+    egui::Window::new(title)
+        .auto_sized()
+        .default_width(width)
+        .min_width(width)
+        .max_width(width)
+        .frame(window_frame())
+        .title_frame(
+            egui::Frame::NONE
+                .fill(toolbar_fill())
+                .corner_radius(RADIUS_PANEL)
+                .inner_margin(egui::Margin::symmetric(12, 9)),
+        )
+        .collapsible(false)
+        .resizable(false)
+}
+
+/// Scroll only when the tool body exceeds the available viewport height.
+pub(crate) fn window_contents<T>(
+    ui: &mut egui::Ui,
+    viewport_height: f32,
+    contents: impl FnOnce(&mut egui::Ui) -> T,
+) -> T {
+    egui::ScrollArea::vertical()
+        .id_salt("window-body")
+        .max_height((viewport_height - 80.0).max(40.0))
+        .auto_shrink([false, true])
+        .show(ui, contents)
+        .inner
+}
+
+/// Title row for content-sized modal cards.
+pub(crate) fn dialog_header(ui: &mut egui::Ui, title: &str, icon: crate::ui::icons::AppIcon) {
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::hover());
+        crate::ui::icons::paint(ui.painter(), rect, icon, text());
+        ui.add(egui::Label::new(egui::RichText::new(title).strong().size(18.0)).wrap());
+    });
+    ui.add_space(10.0);
+    ui.separator();
+    ui.add_space(8.0);
+}
+
+pub(crate) fn primary_button(label: &str) -> egui::Button<'_> {
+    egui::Button::new(egui::RichText::new(label).strong().color(on_accent()))
+        .fill(accent())
+        .corner_radius(RADIUS_CONTROL)
+        .min_size(egui::vec2(80.0, 32.0))
 }
 
 /// A hairline between two groups of toolbar-weight controls.

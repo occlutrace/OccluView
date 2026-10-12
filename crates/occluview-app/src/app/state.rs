@@ -8,7 +8,7 @@ use super::state_render::RenderState;
 use super::state_tool::ToolState;
 use super::state_ui::{SceneUiState, UiState};
 use super::workspace::commands::WorkspaceCommand;
-use super::workspace::id::{IdAllocator, PaneId, SceneEpoch, SceneKey};
+use super::workspace::id::{IdAllocator, SceneEpoch, SceneKey};
 use super::workspace::loading::LoadCoordinator;
 use super::workspace::state::{SceneSummary, WorkspaceState};
 use super::{egui, home_camera_for_scene, CutTool, PathBuf};
@@ -74,7 +74,6 @@ pub(crate) struct OccluViewApp {
 pub(crate) struct SceneContext<'a> {
     pub(super) scene_key: SceneKey,
     pub(super) lifetime_epoch: &'a mut SceneEpoch,
-    pub(super) pane_id: PaneId,
     pub(super) preserve_on_transfer_undo: &'a mut bool,
     pub(super) document: &'a mut DocumentState,
     pub(super) render: &'a mut RenderState,
@@ -90,7 +89,6 @@ pub(crate) struct SceneContext<'a> {
     pub(super) scene_tab_rects: &'a mut Vec<(SceneKey, egui::Rect)>,
     pub(super) scene_create_rect: &'a mut Option<egui::Rect>,
     pub(super) workspace_rect: Option<egui::Rect>,
-    pub(super) saved_split: Option<super::workspace::layout::WorkspaceLayout>,
     pub(super) scene_summaries: Vec<SceneSummary>,
     pub(super) retained_scene_bytes: usize,
     pub(super) append_blocked_scene_keys: Vec<SceneKey>,
@@ -193,7 +191,6 @@ impl OccluViewApp {
         Some(SceneContext {
             scene_key: scene.key,
             lifetime_epoch: &mut scene.key.epoch,
-            pane_id: scene.pane,
             preserve_on_transfer_undo: &mut scene.preserve_on_transfer_undo,
             document: &mut scene.document,
             render: &mut scene.render,
@@ -209,7 +206,6 @@ impl OccluViewApp {
             scene_tab_rects: &mut self.workspace.scene_tab_rects,
             scene_create_rect: &mut self.workspace.scene_create_rect,
             workspace_rect: None,
-            saved_split: self.workspace.saved_split,
             scene_summaries: summaries,
             retained_scene_bytes,
             append_blocked_scene_keys,
@@ -352,6 +348,12 @@ impl eframe::App for OccluViewApp {
         let ctx = ui.ctx().clone();
         crate::ui::ui_theme::set_active(self.persistence.settings.theme);
         ctx.set_visuals(super::viewer_visuals(self.persistence.settings.theme));
+        ctx.all_styles_mut(|style| {
+            style.interaction.selectable_labels = false;
+            style.interaction.multi_widget_text_select = false;
+        });
+        ui.style_mut().interaction.selectable_labels = false;
+        ui.style_mut().interaction.multi_widget_text_select = false;
         let target_ui_scale = self.persistence.settings.ui_scale();
         if ui_scale_zoom_is_allowed(&ctx) && (ctx.zoom_factor() - target_ui_scale).abs() > 1e-3 {
             ctx.set_zoom_factor(target_ui_scale);
@@ -394,7 +396,18 @@ impl eframe::App for OccluViewApp {
         for scene in &mut self.workspace.scenes {
             scene.presentation.repair_report.ui(&ctx, &self.ui.locale);
         }
-        self.persistence.update_notice.show(&ctx, &self.ui.locale);
+        let mut can_install = true;
+        for key in self.workspace.keys() {
+            if let Some(scene) = self.scene_context(key) {
+                can_install &= !scene.document.has_unsaved_mesh_edits()
+                    && !scene.document.edit_mode.is_dirty()
+                    && !scene.document.edit_mode.is_busy()
+                    && !scene.sculpt_has_live_work();
+            }
+        }
+        self.persistence
+            .update_notice
+            .show(&ctx, &self.ui.locale, can_install);
         self.show_workspace_close_guard(&ctx);
         if let Some(key) = self
             .ui

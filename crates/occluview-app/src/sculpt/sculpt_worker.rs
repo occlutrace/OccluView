@@ -38,6 +38,22 @@ const MAX_PENDING_TOUCHES: usize = 250_000;
 /// fresh dynamic pick mesh and starts a new bounded dirty window.
 const MAX_DYNAMIC_PICK_TRIANGLES: usize = 100_000;
 
+/// Whether a non-blocking surface read should retain or clear display state.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum SculptSurfaceQueryError {
+    Busy,
+    Unavailable,
+}
+
+impl<T> From<TryLockError<T>> for SculptSurfaceQueryError {
+    fn from(error: TryLockError<T>) -> Self {
+        match error {
+            TryLockError::WouldBlock => Self::Busy,
+            TryLockError::Poisoned(_) => Self::Unavailable,
+        }
+    }
+}
+
 // Queue coalescing must preserve exact captured brush settings; an epsilon
 // could change the operation or its user-selected strength.
 #[allow(clippy::float_cmp)]
@@ -1076,29 +1092,64 @@ impl SculptWorker {
         (before == after).then_some((vertices, indices))
     }
 
-    /// Pick the current live Sculpt surface in mesh-local coordinates. A
-    /// contended read means the worker is publishing a dab; returning `None`
-    /// for that frame keeps the UI non-blocking and retries on repaint.
-    pub(crate) fn pick_local_ray(
+    /// Read the hit and its interpolated normal from one live publication.
+    /// Contention is distinct from a miss: the display can retain its last
+    /// pose briefly while a dab is published, without falling back to the
+    /// committed mesh or blocking the UI thread.
+    pub(crate) fn pick_local_surface(
         &self,
         origin: Vec3,
         direction: Vec3,
         keep: impl Fn(Vec3) -> bool,
-    ) -> Option<(usize, Vec3)> {
-        let pick = self.state.pick.try_read().ok()?;
-        let shadow = pick.shadow.try_read().ok()?;
-        pick.mesh.pick_ray_local_with_vertices(
+    ) -> Result<Option<(usize, Vec3, Vec3)>, SculptSurfaceQueryError> {
+        let pick = self
+            .state
+            .pick
+            .try_read()
+            .map_err(SculptSurfaceQueryError::from)?;
+        let shadow = pick
+            .shadow
+            .try_read()
+            .map_err(SculptSurfaceQueryError::from)?;
+        let Some((triangle, point)) = pick.mesh.pick_ray_local_with_vertices(
             occluview_core::LiveRayPick::new(&shadow, &pick.dirty_triangles, origin, direction)
                 .with_indices(&pick.indices),
             keep,
-        )
-    }
-
-    pub(crate) fn local_triangle_normal(&self, triangle: usize) -> Option<Vec3> {
-        let pick = self.state.pick.try_read().ok()?;
-        let shadow = pick.shadow.try_read().ok()?;
-        pick.mesh
-            .triangle_normal_local_with_geometry(&shadow, &pick.indices, triangle)
+        ) else {
+            return Ok(None);
+        };
+        let Some(corners) = pick
+            .indices
+            .get(triangle.saturating_mul(3)..triangle.saturating_mul(3).saturating_add(3))
+        else {
+            return Ok(None);
+        };
+        let (Some(a), Some(b), Some(c)) = (
+            shadow.get(corners[0] as usize),
+            shadow.get(corners[1] as usize),
+            shadow.get(corners[2] as usize),
+        ) else {
+            return Ok(None);
+        };
+        let pa = Vec3::from_array(a.position);
+        let ab = Vec3::from_array(b.position) - pa;
+        let ac = Vec3::from_array(c.position) - pa;
+        let offset = point - pa;
+        let denominator = ab.cross(ac).length_squared();
+        let mut normal = ab.cross(ac).normalize_or_zero();
+        if denominator.is_finite() && denominator > 0.0 {
+            let v =
+                (ac.length_squared() * offset.dot(ab) - ab.dot(ac) * offset.dot(ac)) / denominator;
+            let w =
+                (ab.length_squared() * offset.dot(ac) - ab.dot(ac) * offset.dot(ab)) / denominator;
+            let smooth = Vec3::from_array(a.normal) * (1.0 - v - w)
+                + Vec3::from_array(b.normal) * v
+                + Vec3::from_array(c.normal) * w;
+            if smooth.is_finite() && smooth.length_squared() > f32::EPSILON {
+                normal = smooth.normalize();
+            }
+        }
+        Ok(Some((triangle, point, normal)))
     }
 
     /// Test-only: whether a sparse vertex update is queued and still undrained.

@@ -141,10 +141,10 @@ pub fn read_shaded(
     // element provides triangle indices.
     // Faces carry the texture coordinates, so they are gathered as the face
     // element is read and applied once every element has been consumed.
-    let mut uvs = FaceUvs::new(parsed.keep_corner_uvs);
+    let mut uvs = FaceUvs::new(parsed.keep_corner_uvs, parsed.flip_uv_v);
     for element in &parsed.elements {
         match element.name.as_str() {
-            "vertex" => read_vertices(&mut tokens, element, &mut builder)?,
+            "vertex" => read_vertices(&mut tokens, element, &mut builder, parsed.flip_uv_v)?,
             "face" => read_faces(&mut tokens, element, &mut builder, &mut uvs)?,
             // Unknown element types (edge, etc.) — skip their tokens.
             other => skip_element(&mut tokens, element, other)?,
@@ -166,11 +166,15 @@ fn read_vertices<'a, I>(
     tokens: &mut I,
     element: &Element,
     builder: &mut MeshBuilder,
+    flip_v: bool,
 ) -> Result<(), FormatError>
 where
     I: Iterator<Item = &'a str>,
 {
     let plan = FieldPlan::plan_for_vertices(element, "PLY (ascii)")?;
+    let has_uvs = plan
+        .iter()
+        .any(|(field, _)| matches!(field, FieldPlan::Uv(_)));
     for _ in 0..element.count {
         let mut fields = VertexFields::default();
         for (route, ty) in &plan {
@@ -200,8 +204,14 @@ where
         if fields.color != [255, 255, 255, 255] {
             v = v.with_color(fields.color);
         }
-        if fields.uv != [0.0, 0.0] {
-            v = v.with_uv(fields.uv);
+        if has_uvs {
+            builder.mark_texture_coordinates();
+            let uv = if flip_v {
+                crate::texture_coordinates::flip_vertical(fields.uv)
+            } else {
+                fields.uv
+            };
+            v = v.with_uv(uv);
         }
         builder.push_vertex(v);
     }
@@ -527,8 +537,8 @@ end_header
         .expect("read");
 
         assert!(mesh.has_uvs(), "the corners' coordinates were dropped");
-        assert_eq!(mesh.vertices()[0].uv, [0.0, 1.0]);
-        assert_eq!(mesh.vertices()[2].uv, [0.0, 0.0]);
+        assert_eq!(mesh.vertices()[0].uv, [0.0, 0.0]);
+        assert_eq!(mesh.vertices()[2].uv, [0.0, 1.0]);
     }
 
     #[test]
@@ -695,9 +705,9 @@ end_header
         let mesh = crate::ply::read(ply).expect("PLY should parse");
         assert!(mesh.has_uvs());
         let vs = mesh.vertices();
-        assert_eq!(vs[0].uv, [0.0, 0.0]);
-        assert_eq!(vs[1].uv, [1.0, 0.0]);
-        assert_eq!(vs[2].uv, [0.0, 1.0]);
+        assert_eq!(vs[0].uv, [0.0, 1.0]);
+        assert_eq!(vs[1].uv, [1.0, 1.0]);
+        assert_eq!(vs[2].uv, [0.0, 0.0]);
     }
 
     /// 68 bytes that, without the guard, ask for 660 GB of vertices.

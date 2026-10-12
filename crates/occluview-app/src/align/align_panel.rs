@@ -123,13 +123,15 @@ pub(crate) fn show(
     let mut action = None;
     let id = scope.with("occluview_align_window");
     let previous_rect = ctx.memory(|memory| memory.area_rect(id));
-    let mut window = egui::Window::new(locale.text(crate::i18n::message_id!("align-panel-title")))
-        .id(id)
-        .default_pos(default_pos)
-        .constrain_to(viewport_rect)
-        .resizable(false)
-        .collapsible(false)
-        .title_bar(false);
+    let mut window = ui_theme::window(
+        locale.text(crate::i18n::message_id!("align-panel-title")),
+        WINDOW_WIDTH,
+    )
+    .id(id)
+    .default_pos(default_pos)
+    .constrain_to(viewport_rect)
+    .resizable(false)
+    .collapsible(false);
     if panel_needs_reanchor(previous_rect, viewport_rect, view.layer_count) {
         window = window.current_pos(default_pos);
     }
@@ -138,7 +140,7 @@ pub(crate) fn show(
         ui.set_width(WINDOW_WIDTH - 24.0);
         ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
         ui.style_mut().animation_time = 0.05;
-        action = body(ui, view, locale);
+        action = ui_theme::window_contents(ui, viewport_rect.height(), |ui| body(ui, view, locale));
     });
     action
 }
@@ -179,18 +181,6 @@ fn body(
     locale: &crate::i18n::LocaleManager,
 ) -> Option<AlignPanelAction> {
     let enabled = !view.busy && !view.worker_failed;
-    ui.horizontal(|ui| {
-        let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
-        crate::ui::icons::paint(ui.painter(), rect, AppIcon::Align, ui_theme::accent());
-        ui.label(
-            egui::RichText::new(locale.tr(crate::i18n::message_id!("align-title")))
-                .strong()
-                .size(15.0)
-                .color(ui_theme::text()),
-        );
-    });
-    ui.add_space(4.0);
-    ui.separator();
     tab_strip(ui, view.tab, locale);
     // The brush is available only on the automatic tab.
     if *view.tab != AlignTab::Automatically {

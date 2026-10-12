@@ -605,6 +605,7 @@ impl SculptSession {
         self.selection_stamp.truncate(base_groups);
         self.pre_pos.truncate(base_groups);
         self.step_budget.truncate(base_groups);
+        self.smooth_stroke_travel.truncate(base_groups);
         self.region_distance.truncate(base_groups);
         self.region_normal.truncate(base_groups);
         self.rollback_marks.truncate(base_groups);

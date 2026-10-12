@@ -16,7 +16,11 @@ fn normal_is_usable(normal: [f32; 3]) -> bool {
     n.is_finite() && n.length_squared() > f32::EPSILON
 }
 
-/// Give every vertex a normal, without reconstructing the ones already there.
+/// Give normals to a mesh that arrived without any.
+///
+/// It returns as soon as one vertex already carries a usable normal, so a file
+/// that authored only part of its normals keeps the rest at zero; use
+/// [`repair_missing_normals`] for that case.
 ///
 /// The accumulate-and-normalise pass alone: one add per triangle corner and
 /// one normalise per vertex, no welding sort and no comparison against what

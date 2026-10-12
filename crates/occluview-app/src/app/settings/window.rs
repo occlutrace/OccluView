@@ -130,10 +130,6 @@ impl SceneContext<'_> {
         let mut open_url = None;
         let logo = self.app_logo_texture(ctx).cloned();
         let graphics = system_info::graphics();
-        let copied = ctx.data(|data| data.get_temp::<f64>(copy_feedback_id()));
-        let now = ctx.input(|input| input.time);
-        let just_copied = copied.is_some_and(|at| now - at < COPY_FEEDBACK_SECONDS);
-        let mut copy_details = false;
 
         let modal_response = show_information_modal(
             ctx,
@@ -178,7 +174,6 @@ impl SceneContext<'_> {
                     }
                 });
                 ui.add_space(2.0);
-                copy_details |= copy_details_row(ui, &self.ui.locale, just_copied);
                 ui.add_space(2.0);
                 centered_about_row(ui, ABOUT_FOOTER_WIDTH, |ui| {
                     ui.label(
@@ -197,14 +192,6 @@ impl SceneContext<'_> {
             },
         );
 
-        if copy_details {
-            ctx.copy_text(system_info::details(env!("CARGO_PKG_VERSION"), graphics));
-            ctx.data_mut(|data| data.insert_temp(copy_feedback_id(), now));
-        }
-        if just_copied || copy_details {
-            // Take the confirmation back down once its time is up.
-            ctx.request_repaint_after(std::time::Duration::from_secs_f64(COPY_FEEDBACK_SECONDS));
-        }
         if let Some(url) = open_url {
             ctx.open_url(egui::OpenUrl::new_tab(url));
         }
@@ -264,33 +251,6 @@ fn about_header(
             );
         }
     });
-}
-
-/// The row that copies the system details; `true` on the frame it is clicked.
-fn copy_details_row(
-    ui: &mut egui::Ui,
-    locale: &crate::i18n::LocaleManager,
-    just_copied: bool,
-) -> bool {
-    let width = ABOUT_ACTION_WIDTH * 2.0 + ABOUT_ACTION_GAP;
-    let mut clicked = false;
-    centered_about_row(ui, width, |ui| {
-        let (key, icon) = if just_copied {
-            (message_id!("about-details-copied"), AppIcon::Check)
-        } else {
-            (message_id!("about-copy-details"), AppIcon::Export)
-        };
-        clicked = about_link(ui, width, icon, &locale.tr(key));
-    });
-    ui.add_space(2.0);
-    clicked
-}
-
-/// How long the copy button says it has copied.
-const COPY_FEEDBACK_SECONDS: f64 = 2.0;
-
-fn copy_feedback_id() -> egui::Id {
-    egui::Id::new("occluview-about-copy-feedback")
 }
 
 const ABOUT_ACTION_WIDTH: f32 = 132.0;

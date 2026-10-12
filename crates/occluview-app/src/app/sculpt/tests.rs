@@ -46,7 +46,10 @@ fn sculpt_rays_include_visible_geometry_behind_the_orbital_eye() -> anyhow::Resu
     let context = app
         .active_context()
         .ok_or_else(|| anyhow::anyhow!("active scene"))?;
-    let hit = context.sculpt_surface_hit(rect, rect.center());
+    let hit = context
+        .sculpt_surface_query(rect, rect.center())
+        .ok()
+        .flatten();
     assert!(
         hit.is_some(),
         "a surface visible to picking and rendering must accept a sculpt press"

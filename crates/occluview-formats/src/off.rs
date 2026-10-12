@@ -56,11 +56,7 @@ pub(crate) fn read_admitted(bytes: &[u8]) -> Result<Mesh, FormatError> {
     // Detect ASCII vs binary by the first line.
     if bytes.starts_with(b"OFF BINARY") {
         read_binary(bytes)
-    } else if bytes.starts_with(b"OFF")
-        || bytes.starts_with(b"OFF\n")
-        || bytes.starts_with(b"OFF\r")
-        || bytes.starts_with(b"OFFST")
-    {
+    } else if bytes.starts_with(b"OFF") {
         // "OFF", "OFF\n", "OFF\r\n", or "OFF ST" (with normals) — ASCII.
         read_ascii(bytes)
     } else {

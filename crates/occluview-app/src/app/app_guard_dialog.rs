@@ -35,18 +35,15 @@ pub(super) fn show_guard_dialog(
     locale: &crate::i18n::LocaleManager,
     spec: GuardDialogSpec<'_>,
 ) -> GuardDialogResponse {
-    const CONTENT_WIDTH: f32 = 416.0;
-    let mut open = true;
     let mut action = None;
-    egui::Window::new(spec.title)
-        .id(egui::Id::new(spec.id))
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .constrain_to(ctx.content_rect().shrink(8.0))
-        .collapsible(false)
-        .resizable(false)
-        .open(&mut open)
-        .show(ctx, |ui| {
-            ui.set_width(CONTENT_WIDTH);
+    let cancel = locale.tr(crate::i18n::message_id!("guard-cancel"));
+    let modal = crate::ui::modal_surface::show_information_modal(
+        ctx,
+        egui::Id::new(spec.id),
+        egui::vec2(480.0, 240.0),
+        &cancel,
+        |ui| {
+            ui_theme::dialog_header(ui, spec.title, AppIcon::Warn);
             ui.horizontal(|ui| {
                 let (icon_rect, _) =
                     ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
@@ -61,14 +58,18 @@ pub(super) fn show_guard_dialog(
             if let Some(note) = spec.note {
                 ui.label(note);
             }
-            ui.label(egui::RichText::new(spec.detail).weak().size(11.0));
+            ui.label(
+                egui::RichText::new(spec.detail)
+                    .color(ui_theme::text_weak())
+                    .size(12.0),
+            );
             ui.add_space(10.0);
             ui.allocate_ui_with_layout(
                 egui::vec2(ui.available_width(), 30.0),
-                egui::Layout::right_to_left(egui::Align::Center),
+                egui::Layout::right_to_left(egui::Align::Center).with_main_wrap(true),
                 |ui| {
                     if ui
-                        .add(dialog_primary_button(
+                        .add(ui_theme::primary_button(
                             &locale.tr(crate::i18n::message_id!("guard-save")),
                         ))
                         .clicked()
@@ -78,28 +79,15 @@ pub(super) fn show_guard_dialog(
                     if ui.button(spec.destructive_label).clicked() {
                         action = Some(GuardDialogAction::Destructive);
                     }
-                    if ui
-                        .button(locale.tr(crate::i18n::message_id!("guard-cancel")))
-                        .clicked()
-                    {
+                    if ui.button(&cancel).clicked() {
                         action = Some(GuardDialogAction::Cancel);
                     }
                 },
             );
-        });
-    if !open && action.is_none() {
+        },
+    );
+    if modal.should_close() && action.is_none() {
         action = Some(GuardDialogAction::Cancel);
     }
     GuardDialogResponse { action }
-}
-
-/// Primary dialog action.
-fn dialog_primary_button(label: &str) -> egui::Button<'_> {
-    egui::Button::new(
-        egui::RichText::new(label)
-            .strong()
-            .color(ui_theme::on_accent()),
-    )
-    .fill(ui_theme::accent())
-    .corner_radius(ui_theme::RADIUS_CONTROL)
 }

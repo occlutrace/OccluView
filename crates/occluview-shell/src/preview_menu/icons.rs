@@ -2,10 +2,9 @@
 //!
 //! Win32 popup menus take an `HBITMAP` per item (`MENUITEMINFOW::hbmpItem`), not
 //! a font glyph, so we draw our own 16 px icons. There are no asset files: each
-//! glyph is composed from a handful of anti-aliased primitives (thick segments,
-//! discs, convex fills) sampled on a tiny coverage buffer. That keeps the icons
-//! deterministic, DPI-scalable (the caller passes the pixel size), and unit
-//! testable on any host — no GPU, no Windows.
+//! glyph is composed from anti-aliased strokes sampled on a tiny coverage
+//! buffer. That keeps the icons deterministic, DPI-scalable (the caller passes
+//! the pixel size), and unit testable on any host — no GPU, no Windows.
 //!
 //! The output is **straight** RGBA where the glyph is white (`255,255,255`) and
 //! alpha carries the coverage mask. The Windows layer tints that mask with the
@@ -31,20 +30,10 @@ use glam::Vec2;
 pub(crate) enum PreviewMenuIcon {
     /// Open externally: a tray/box with an arrow leaving it.
     Open,
-    /// Front face of an isometric cube highlighted.
-    CubeFront,
-    /// Top face of an isometric cube highlighted.
-    CubeTop,
-    /// Right (side) face of an isometric cube highlighted.
-    CubeSide,
-    /// Isometric cube outline, no face highlighted.
-    CubeIsometric,
     /// Four inward corner brackets: fit to frame.
     FitFrame,
     /// A subdivided triangle: wireframe mesh.
     Wireframe,
-    /// Two overlapping frames with a picture mark: copy image.
-    CopyImage,
 }
 
 impl PreviewMenuIcon {
@@ -61,13 +50,8 @@ impl PreviewMenuIcon {
         let hw = 0.045;
         match self {
             Self::Open => paint_open(r, hw),
-            Self::CubeFront => paint_cube(r, hw, Some(CubeFace::Front)),
-            Self::CubeTop => paint_cube(r, hw, Some(CubeFace::Top)),
-            Self::CubeSide => paint_cube(r, hw, Some(CubeFace::Side)),
-            Self::CubeIsometric => paint_cube(r, hw, None),
             Self::FitFrame => paint_fit(r, hw),
             Self::Wireframe => paint_wireframe(r, hw),
-            Self::CopyImage => paint_copy(r, hw),
         }
     }
 }
@@ -85,41 +69,6 @@ fn paint_open(r: &mut Raster, hw: f32) {
     // Arrowhead barbs.
     r.stroke((0.86, 0.16), (0.62, 0.18), hw);
     r.stroke((0.86, 0.16), (0.84, 0.42), hw);
-}
-
-#[derive(Clone, Copy)]
-enum CubeFace {
-    Top,
-    Front,
-    Side,
-}
-
-fn paint_cube(r: &mut Raster, hw: f32, highlight: Option<CubeFace>) {
-    // Isometric cube: a hexagon outline plus a "Y" of internal edges meeting at
-    // the centre. Highlighting one rhombic face names a view direction.
-    let m: P = (0.50, 0.50);
-    let p0: P = (0.50, 0.10); // top
-    let p1: P = (0.15, 0.30); // upper-left
-    let p2: P = (0.15, 0.70); // lower-left
-    let p3: P = (0.50, 0.90); // bottom
-    let p4: P = (0.85, 0.70); // lower-right
-    let p5: P = (0.85, 0.30); // upper-right
-
-    if let Some(face) = highlight {
-        let quad: [P; 4] = match face {
-            CubeFace::Top => [p0, p1, m, p5],
-            CubeFace::Front => [p1, p2, p3, m],
-            CubeFace::Side => [p5, m, p3, p4],
-        };
-        r.fill_poly(&quad);
-    }
-
-    // Hexagon outline.
-    r.polyline(&[p0, p1, p2, p3, p4, p5, p0], hw);
-    // Internal "Y" edges.
-    r.stroke(m, p0, hw);
-    r.stroke(m, p2, hw);
-    r.stroke(m, p4, hw);
 }
 
 fn paint_fit(r: &mut Raster, hw: f32) {
@@ -150,15 +99,6 @@ fn paint_wireframe(r: &mut Raster, hw: f32) {
     let ca: P = midpoint(c, a);
     r.polyline(&[a, b, c, a], hw);
     r.polyline(&[ab, bc, ca, ab], hw);
-}
-
-fn paint_copy(r: &mut Raster, hw: f32) {
-    // Two overlapping frames; the front one carries a small picture mark.
-    r.rect((0.14, 0.14), (0.60, 0.60), hw); // back frame
-    r.rect((0.38, 0.38), (0.86, 0.86), hw); // front frame
-                                            // Picture mark inside the front frame: a sun disc and a mountain.
-    r.disc((0.50, 0.52), 0.045);
-    r.fill_poly(&[(0.44, 0.80), (0.60, 0.56), (0.78, 0.80)]);
 }
 
 #[expect(
@@ -222,66 +162,6 @@ impl Raster {
         }
     }
 
-    /// A hollow rectangle outline from two opposite corners.
-    fn rect(&mut self, min: P, max: P, hw_norm: f32) {
-        let tl = (min.0, min.1);
-        let tr = (max.0, min.1);
-        let br = (max.0, max.1);
-        let bl = (min.0, max.1);
-        self.polyline(&[tl, tr, br, bl, tl], hw_norm);
-    }
-
-    /// A filled disc.
-    fn disc(&mut self, center: P, radius_norm: f32) {
-        let s = self.size as f32;
-        let (cx, cy) = (center.0 * s, center.1 * s);
-        let radius = radius_norm * s;
-        let (min_x, min_y, max_x, max_y) =
-            self.bounds(cx - radius, cy - radius, cx + radius, cy + radius);
-        for y in min_y..=max_y {
-            for x in min_x..=max_x {
-                let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
-                let d = (px - cx).hypot(py - cy);
-                let c = (radius + 0.5 - d).clamp(0.0, 1.0);
-                self.blend(x, y, c);
-            }
-        }
-    }
-
-    /// A filled convex polygon (winding-agnostic: interior is the centroid side
-    /// of every edge).
-    fn fill_poly(&mut self, pts: &[P]) {
-        if pts.len() < 3 {
-            return;
-        }
-        let s = self.size as f32;
-        let px: Vec<P> = pts.iter().map(|&(x, y)| (x * s, y * s)).collect();
-        let cx = px.iter().map(|p| p.0).sum::<f32>() / px.len() as f32;
-        let cy = px.iter().map(|p| p.1).sum::<f32>() / px.len() as f32;
-        let (mut lo_x, mut lo_y, mut hi_x, mut hi_y) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
-        for &(x, y) in &px {
-            lo_x = lo_x.min(x);
-            lo_y = lo_y.min(y);
-            hi_x = hi_x.max(x);
-            hi_y = hi_y.max(y);
-        }
-        let (min_x, min_y, max_x, max_y) =
-            self.bounds(lo_x - 1.0, lo_y - 1.0, hi_x + 1.0, hi_y + 1.0);
-        for y in min_y..=max_y {
-            for x in min_x..=max_x {
-                let (sx, sy) = (x as f32 + 0.5, y as f32 + 0.5);
-                let mut inside = f32::MAX;
-                for i in 0..px.len() {
-                    let a = px[i];
-                    let b = px[(i + 1) % px.len()];
-                    inside = inside.min(signed_edge_distance(sx, sy, a, b, cx, cy));
-                }
-                let c = (inside + 0.5).clamp(0.0, 1.0);
-                self.blend(x, y, c);
-            }
-        }
-    }
-
     /// Clamp a float bounding box to valid pixel index ranges.
     fn bounds(
         &self,
@@ -314,38 +194,14 @@ fn dist_point_segment(px: f32, py: f32, ax: f32, ay: f32, bx: f32, by: f32) -> f
     dist_sq.sqrt()
 }
 
-/// Signed distance from `(px, py)` to the edge `a..b`, positive on the side
-/// where the polygon centroid `(cx, cy)` lies.
-fn signed_edge_distance(px: f32, py: f32, a: P, b: P, cx: f32, cy: f32) -> f32 {
-    let (ex, ey) = (b.0 - a.0, b.1 - a.1);
-    let len = ex.hypot(ey);
-    if len <= f32::EPSILON {
-        return 0.0;
-    }
-    // Left-hand normal of the edge.
-    let (nx, ny) = (-ey / len, ex / len);
-    let side = (px - a.0) * nx + (py - a.1) * ny;
-    let centroid_side = (cx - a.0) * nx + (cy - a.1) * ny;
-    if centroid_side < 0.0 {
-        -side
-    } else {
-        side
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const ALL_ICONS: [PreviewMenuIcon; 8] = [
+    const ALL_ICONS: [PreviewMenuIcon; 3] = [
         PreviewMenuIcon::Open,
-        PreviewMenuIcon::CubeFront,
-        PreviewMenuIcon::CubeTop,
-        PreviewMenuIcon::CubeSide,
-        PreviewMenuIcon::CubeIsometric,
         PreviewMenuIcon::FitFrame,
         PreviewMenuIcon::Wireframe,
-        PreviewMenuIcon::CopyImage,
     ];
 
     fn alpha_at(pixels: &[u8], size: usize, x: usize, y: usize) -> u8 {
@@ -405,19 +261,5 @@ mod tests {
                 }
             }
         }
-    }
-
-    #[test]
-    fn cube_face_highlights_are_distinct() {
-        // The three face highlights must differ from each other and from the
-        // plain isometric outline, so the view presets are visually separable.
-        let plain = PreviewMenuIcon::CubeIsometric.rasterize(16);
-        let top = PreviewMenuIcon::CubeTop.rasterize(16);
-        let front = PreviewMenuIcon::CubeFront.rasterize(16);
-        let side = PreviewMenuIcon::CubeSide.rasterize(16);
-        assert_ne!(plain, top);
-        assert_ne!(top, front);
-        assert_ne!(front, side);
-        assert_ne!(top, side);
     }
 }

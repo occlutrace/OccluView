@@ -2,59 +2,9 @@ use super::PreviewSceneState;
 use glam::{Vec2, Vec3};
 // Zoom shares the CAD-tuned core mapping with the app viewport so the preview
 // pane and the main window feel identical: no braked camera.
-use occluview_core::{
-    orbit_delta_from_pointer_motion, zoom_factor_from_scroll, Aabb, Camera, CameraPreset,
-};
+use occluview_core::{orbit_delta_from_pointer_motion, zoom_factor_from_scroll, Camera};
 
 use occluview_core::{BBOX_FRAME_FILL, MIN_ORTHOGRAPHIC_HEIGHT_MM};
-
-/// Classic isometric elevation, `atan(1/sqrt(2))` ≈ 35.264°: the pitch that puts
-/// three cube faces at equal foreshortening.
-const ISOMETRIC_PITCH_RAD: f32 = 0.615_479_7;
-
-/// Named camera reorientations offered by the Explorer preview context menu.
-///
-/// Preview files are arbitrary meshes (not canonicalised to a dental frame), so
-/// these use neutral CAD labels rather than occlusal/buccal terminology. They
-/// still reuse the shared `occluview_core` framing math so a preset frames a
-/// mesh exactly like the desktop viewport would.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PreviewViewPreset {
-    /// Look along -Z from the front (+Z).
-    Front,
-    /// Look straight down -Y from above (+Y).
-    Top,
-    /// Look along -X from the right (+X).
-    Side,
-    /// Three-quarter view from the +X/+Y/+Z octant.
-    Isometric,
-}
-
-impl PreviewViewPreset {
-    /// Build a camera framing `bbox` from this preset at the given vertical FOV.
-    fn frame(self, bbox: Aabb, fovy: f32) -> Camera {
-        match self {
-            Self::Front => CameraPreset::Buccal.frame_bbox(bbox, fovy),
-            Self::Side => CameraPreset::Mesial.frame_bbox(bbox, fovy),
-            // Top and Isometric are derived by orbiting the framed front view in
-            // the camera's own view axes: from the front (right=+X, up=+Y,
-            // forward=-Z) a +90° pitch looks straight down, and a +45° yaw with
-            // an isometric pitch swings the eye into the +X/+Y/+Z octant.
-            Self::Top => {
-                let mut camera = CameraPreset::Buccal.frame_bbox(bbox, fovy);
-                camera.orbit_view_by(0.0, core::f32::consts::FRAC_PI_2);
-                camera.fit_clip_planes_to_bbox(bbox);
-                camera
-            }
-            Self::Isometric => {
-                let mut camera = CameraPreset::Buccal.frame_bbox(bbox, fovy);
-                camera.orbit_view_by(core::f32::consts::FRAC_PI_4, ISOMETRIC_PITCH_RAD);
-                camera.fit_clip_planes_to_bbox(bbox);
-                camera
-            }
-        }
-    }
-}
 
 impl PreviewSceneState {
     pub(crate) fn orbit_drag_delta(&mut self, drag_delta_px: Vec2, viewport_px: [u16; 2]) -> bool {
@@ -81,17 +31,6 @@ impl PreviewSceneState {
             return false;
         }
         self.camera.zoom_by(scale);
-        true
-    }
-
-    /// Reorient the camera to a named preset, reframing to the scene bounds.
-    /// Returns `false` for an empty scene where framing is undefined.
-    pub(crate) fn apply_view_preset(&mut self, preset: PreviewViewPreset) -> bool {
-        let bbox = self.scene.bbox();
-        if bbox.is_empty() {
-            return false;
-        }
-        self.camera = preset.frame(bbox, self.camera.fovy);
         true
     }
 
@@ -275,19 +214,16 @@ mod tests {
         let viewport = [320u16, 180u16];
         let viewport_vec = Vec2::new(f32::from(viewport[0]), f32::from(viewport[1]));
 
-        // Deterministic base: Front (look -Z, up +Y, right +X, pitch/yaw 0) so a
-        // view yaw stays a clean horizontal rotation (eye.y fixed) and a view
-        // pitch is a clean vertical one.
-        let fresh_front = || {
-            let mut s = PreviewSceneState::from_bytes(Some("stl"), &binary_stl_triangle())
-                .expect("preview state should load a simple STL");
-            assert!(s.apply_view_preset(PreviewViewPreset::Front));
-            s
+        // Each gesture starts from the same live preview default camera.
+        let fresh_preview = || {
+            PreviewSceneState::from_bytes(Some("stl"), &binary_stl_triangle())
+                .expect("preview state should load a simple STL")
         };
 
         // ---- downward drag (+dy in Win32 client space) matches the app ----
-        let mut state = fresh_front();
+        let mut state = fresh_preview();
         let base = state.camera;
+        let base_up = base.view_up();
         let down = Vec2::new(0.0, 64.0);
         assert!(
             state.orbit_drag_delta(down, viewport),
@@ -300,87 +236,37 @@ mod tests {
             state.camera.eye(),
             app_down.eye()
         );
-        // It must be a real pitch change (not a no-op): from a +Y-up front view a
-        // downward drag lifts the eye in +Y (we tip to look down at the top).
+        // A downward drag must move the eye upward along the view's screen axis.
         assert!(
-            state.camera.eye().y - base.eye().y > 1e-3,
-            "downward drag must pitch the camera up-and-over (eye.y should rise): base={} now={}",
+            (state.camera.eye() - base.eye()).dot(base_up) > 1e-3,
+            "downward drag must move the eye upward in view space: base={} now={}",
             base.eye(),
             state.camera.eye()
         );
 
-        // ---- left/right symmetry: +dx and -dx are mirror yaws with no vertical leak ----
-        let mut right_state = fresh_front();
-        let mut left_state = fresh_front();
+        // ---- left/right symmetry: opposite drags stay level in view space ----
+        let mut right_state = fresh_preview();
+        let mut left_state = fresh_preview();
+        let base = right_state.camera;
+        let base_eye = base.eye();
+        let base_up = base.view_up();
+        let base_forward = base.view_direction();
+        let base_right = base_forward.cross(base_up).normalize_or_zero();
         assert!(right_state.orbit_drag_delta(Vec2::new(64.0, 0.0), viewport));
         assert!(left_state.orbit_drag_delta(Vec2::new(-64.0, 0.0), viewport));
-        // Horizontal drags must not move the eye vertically (the pitch mapping
-        // must not leak into yaw)...
+        // The eye's view-up coordinate is invariant under a horizontal orbit...
         assert!(
-            (right_state.camera.eye().y - base.eye().y).abs() < 1e-4
-                && (left_state.camera.eye().y - base.eye().y).abs() < 1e-4,
-            "horizontal drag must not move the eye vertically"
+            ((right_state.camera.eye() - base_eye).dot(base_up)).abs() < 1e-4
+                && ((left_state.camera.eye() - base_eye).dot(base_up)).abs() < 1e-4,
+            "horizontal drags must not move the eye along screen-up"
         );
-        // ...and the two directions must be mirror images in X.
-        let right_dx = right_state.camera.eye().x - base.eye().x;
-        let left_dx = left_state.camera.eye().x - base.eye().x;
+        // ...and the two directions must mirror along screen-right.
+        let right_dx = (right_state.camera.eye() - base_eye).dot(base_right);
+        let left_dx = (left_state.camera.eye() - base_eye).dot(base_right);
         assert!(
             right_dx.abs() > 1e-3 && (right_dx + left_dx).abs() < 1e-3,
             "left/right drags must be mirror-symmetric in yaw: right_dx={right_dx} left_dx={left_dx}"
         );
-    }
-
-    fn eye_offset_for_preset(preset: PreviewViewPreset) -> Vec3 {
-        let state = PreviewSceneState::from_bytes(Some("stl"), &binary_stl_preview_smoke_mesh())
-            .expect("preview state should load an asymmetric STL");
-        let mut state = state;
-        assert!(
-            state.apply_view_preset(preset),
-            "preset should reframe a non-empty scene"
-        );
-        state.camera.eye() - state.camera.target
-    }
-
-    #[test]
-    fn preview_view_presets_look_from_the_expected_hemispheres() {
-        let front = eye_offset_for_preset(PreviewViewPreset::Front);
-        assert!(
-            front.z > 0.0 && front.z.abs() > front.x.abs() && front.z.abs() > front.y.abs(),
-            "front view should look along -Z from +Z: {front}"
-        );
-
-        let top = eye_offset_for_preset(PreviewViewPreset::Top);
-        assert!(
-            top.y > 0.0 && top.y.abs() > top.x.abs() && top.y.abs() > top.z.abs(),
-            "top view should look straight down from +Y: {top}"
-        );
-
-        let side = eye_offset_for_preset(PreviewViewPreset::Side);
-        assert!(
-            side.x > 0.0 && side.x.abs() > side.y.abs() && side.x.abs() > side.z.abs(),
-            "side view should look along -X from +X: {side}"
-        );
-
-        let iso = eye_offset_for_preset(PreviewViewPreset::Isometric);
-        assert!(
-            iso.x > 0.0 && iso.y > 0.0 && iso.z > 0.0,
-            "isometric view should sit in the +X/+Y/+Z octant: {iso}"
-        );
-    }
-
-    #[test]
-    fn preview_view_presets_are_deterministic() {
-        for preset in [
-            PreviewViewPreset::Front,
-            PreviewViewPreset::Top,
-            PreviewViewPreset::Side,
-            PreviewViewPreset::Isometric,
-        ] {
-            assert!(
-                (eye_offset_for_preset(preset) - eye_offset_for_preset(preset)).length() < 1e-6,
-                "preset framing must be deterministic for {preset:?}"
-            );
-        }
     }
 
     #[test]

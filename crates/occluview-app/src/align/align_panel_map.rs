@@ -11,7 +11,9 @@
 use eframe::egui;
 
 use crate::align::align_panel::AlignPanelAction;
-use crate::align::align_worker::{AlignSettings, WORKING_MAX_MM, WORKING_SCALE_MIN_MM};
+use crate::align::align_worker::{
+    AlignSettings, AUTO_SCALE_MAX_MM, WORKING_MAX_MM, WORKING_SCALE_MIN_MM,
+};
 use crate::ui::icons::AppIcon;
 use crate::{align::align_overlay, ui::ui_theme};
 
@@ -100,46 +102,71 @@ fn range(
     enabled: bool,
     locale: &crate::i18n::LocaleManager,
 ) -> Option<AlignPanelAction> {
-    let (min_mm, scale_mm) = settings.display_limits();
-    settings.scale_mm = scale_mm.max(0.001);
-    settings.auto_scale = false;
-    settings.min_display_mm = min_mm.min(settings.scale_mm - 0.001);
     let mut changed = false;
     ui.horizontal(|ui| {
-        ui.label(locale.tr(crate::i18n::message_id!("align-map-min")));
-        let minimum = ui.add_enabled(
+        let auto = ui.add_enabled(
             enabled,
-            egui::DragValue::new(&mut settings.min_display_mm)
-                .range(WORKING_SCALE_MIN_MM..=settings.scale_mm - 0.001)
-                .speed(0.005)
-                .fixed_decimals(3)
-                .suffix(" mm"),
+            egui::Checkbox::new(
+                &mut settings.auto_scale,
+                locale
+                    .tr(crate::i18n::message_id!("align-map-auto"))
+                    .as_str(),
+            ),
         );
-        crate::ui::accessibility::spin_button(
-            &minimum,
-            &locale.tr(crate::i18n::message_id!("align-map-min")),
-            enabled,
-        );
-        changed |= minimum.changed();
+        if auto.changed() {
+            if !settings.auto_scale {
+                // Manual mode is deliberately the tight, operator-selected
+                // 0.1 mm working range. Auto's wider measurement range must
+                // not leak into the precision controls.
+                settings.scale_mm = WORKING_MAX_MM;
+                settings.min_display_mm = WORKING_SCALE_MIN_MM;
+            }
+            changed = true;
+        }
     });
+    if settings.auto_scale {
+        settings.min_display_mm = WORKING_SCALE_MIN_MM;
+        settings.scale_mm = settings.display_limits().1.max(WORKING_SCALE_MIN_MM);
+    } else {
+        let (min_mm, scale_mm) = settings.display_limits();
+        settings.scale_mm = scale_mm.max(0.001);
+        settings.min_display_mm = min_mm.min(settings.scale_mm - 0.001);
+        ui.horizontal(|ui| {
+            ui.label(locale.tr(crate::i18n::message_id!("align-map-min")));
+            let minimum = ui.add_enabled(
+                enabled,
+                egui::DragValue::new(&mut settings.min_display_mm)
+                    .range(WORKING_SCALE_MIN_MM..=settings.scale_mm - 0.001)
+                    .speed(0.005)
+                    .fixed_decimals(3)
+                    .suffix(" mm"),
+            );
+            crate::ui::accessibility::spin_button(
+                &minimum,
+                &locale.tr(crate::i18n::message_id!("align-map-min")),
+                enabled,
+            );
+            changed |= minimum.changed();
+        });
+        ui.horizontal(|ui| {
+            ui.label(locale.tr(crate::i18n::message_id!("align-map-max")));
+            let maximum = ui.add_enabled(
+                enabled,
+                egui::DragValue::new(&mut settings.scale_mm)
+                    .range(settings.min_display_mm + 0.001..=WORKING_MAX_MM)
+                    .speed(0.005)
+                    .fixed_decimals(3)
+                    .suffix(" mm"),
+            );
+            crate::ui::accessibility::spin_button(
+                &maximum,
+                &locale.tr(crate::i18n::message_id!("align-map-max")),
+                enabled,
+            );
+            changed |= maximum.changed();
+        });
+    }
     align_overlay::paint_legend(ui, *settings, locale);
-    ui.horizontal(|ui| {
-        ui.label(locale.tr(crate::i18n::message_id!("align-map-max")));
-        let maximum = ui.add_enabled(
-            enabled,
-            egui::DragValue::new(&mut settings.scale_mm)
-                .range(settings.min_display_mm + 0.001..=WORKING_MAX_MM)
-                .speed(0.005)
-                .fixed_decimals(3)
-                .suffix(" mm"),
-        );
-        crate::ui::accessibility::spin_button(
-            &maximum,
-            &locale.tr(crate::i18n::message_id!("align-map-max")),
-            enabled,
-        );
-        changed |= maximum.changed();
-    });
     changed.then_some(AlignPanelAction::Measure)
 }
 
@@ -164,7 +191,7 @@ mod tests {
             let _ = heatmap_frame(&ctx, &mut settings, true, Vec::new());
             assert!(settings.scale_mm.is_finite());
             assert!(settings.min_display_mm.is_finite());
-            assert!((0.001..=WORKING_MAX_MM).contains(&settings.scale_mm));
+            assert!((0.001..=AUTO_SCALE_MAX_MM).contains(&settings.scale_mm));
             assert!((0.0..=settings.scale_mm - 0.001).contains(&settings.min_display_mm));
         }
     }

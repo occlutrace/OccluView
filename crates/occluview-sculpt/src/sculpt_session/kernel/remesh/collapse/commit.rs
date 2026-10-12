@@ -102,8 +102,7 @@ impl SculptSession {
             ]
         };
         let mut affected: Vec<u32> = vec![retired];
-        for (face, before, after) in &rewires {
-            let _ = face;
+        for (_, before, after) in &rewires {
             for &group in group_triple(self, before)
                 .iter()
                 .chain(group_triple(self, after).iter())

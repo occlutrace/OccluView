@@ -97,14 +97,9 @@ impl WorkspaceHistory {
         &mut self,
         reservation: PendingReservation<T>,
     ) -> Option<HistoryCommandId> {
-        // A pending operation may still fail or be a no-op. Do not evict an
-        // existing branch until success is committed; otherwise the failed
-        // operation itself would destroy valid Undo/Redo. Refuse this snapshot
-        // if its temporary reservation would exceed the shared byte cap.
-        if self.max_count == 0
-            || reservation.bytes > self.max_bytes
-            || self.used_bytes.saturating_add(reservation.bytes) > self.max_bytes
-        {
+        // The snapshot shares immutable geometry. Resolve the transaction
+        // before expiring older history, so an error/no-op preserves Undo.
+        if self.max_count == 0 {
             return None;
         }
         self.insert_pending_reservation(reservation, Vec::new())
@@ -114,7 +109,7 @@ impl WorkspaceHistory {
         reservation: PendingReservation<T>,
         eviction_plan: Vec<HistoryCommandId>,
     ) -> Option<HistoryCommandId> {
-        if self.max_count == 0 || reservation.bytes > self.max_bytes {
+        if self.max_count == 0 {
             return None;
         }
         self.insert_pending_reservation(reservation, eviction_plan)
@@ -143,7 +138,7 @@ impl WorkspaceHistory {
                 eviction_plan,
             },
         );
-        self.used_bytes = self.used_bytes.saturating_add(reservation.bytes);
+        self.recount_bytes();
         Some(id)
     }
     pub(super) fn insert_committed(&mut self, entry: HistoryEntry) {
@@ -174,10 +169,12 @@ impl WorkspaceHistory {
         &mut self,
         remove: HashSet<HistoryCommandId>,
     ) {
-        let remove = Self::collect_linked_prefixes(&self.entries, &mut self.timelines, remove);
+        let mut timelines = self.eviction_timelines();
+        let remove = Self::collect_linked_prefixes(&self.entries, &mut timelines, remove);
         for id in remove {
             self.remove_single_command(id);
         }
+        self.recount_bytes();
     }
     pub(super) fn collect_linked_prefixes(
         entries: &HashMap<HistoryCommandId, HistoryEntry>,
@@ -232,8 +229,11 @@ impl WorkspaceHistory {
         remove
     }
     pub(super) fn remove_single_command(&mut self, id: HistoryCommandId) {
-        if let Some(entry) = self.entries.remove(&id) {
-            self.used_bytes = self.used_bytes.saturating_sub(entry.bytes);
+        if self.entries.remove(&id).is_some() {
+            for checkpoint in self.checkpoints.values_mut() {
+                checkpoint.undo_at_start.retain(|entry_id| *entry_id != id);
+                checkpoint.redo_at_start.retain(|entry_id| *entry_id != id);
+            }
             for timeline in self.timelines.values_mut() {
                 timeline.undo.retain(|entry_id| *entry_id != id);
                 timeline.redo.retain(|entry_id| *entry_id != id);

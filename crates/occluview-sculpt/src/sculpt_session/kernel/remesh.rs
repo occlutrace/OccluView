@@ -54,6 +54,15 @@ fn replacement_preserves_raw_boundary(before: &[[u32; 3]], after: &[[u32; 3]]) -
 /// Link edges a vertex star holds without leaving the stack.
 const LINK_INLINE: usize = 32;
 
+/// Path-halving union-find root.
+fn union_root(parent: &mut [usize], mut node: usize) -> usize {
+    while parent[node] != node {
+        parent[node] = parent[parent[node]];
+        node = parent[node];
+    }
+    node
+}
+
 /// Exact link predicate for one vertex: its undirected link edges must form a
 /// single connected 1-manifold (a cycle for an interior vertex, a path for a
 /// boundary vertex), degree at most 2, with 0 or 2 endpoints, and no duplicate
@@ -63,14 +72,6 @@ const LINK_INLINE: usize = 32;
 /// A star is a handful of edges, and this runs for every vertex of every
 /// candidate merge and flip, so it works on sorted stack arrays: no map, no
 /// set, no allocation for an ordinary star.
-fn union_root(parent: &mut [usize], mut node: usize) -> usize {
-    while parent[node] != node {
-        parent[node] = parent[parent[node]];
-        node = parent[node];
-    }
-    node
-}
-
 fn link_edges_are_one_fan(edges: &[(u32, u32)]) -> bool {
     let count = edges.len();
     if count == 0 {

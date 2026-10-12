@@ -6,9 +6,10 @@
 //! quantifies directions that nearest-surface distance cannot measure well.
 
 use glam::DVec3;
+use occluview_geometry::surface::{QueryOutcome, SurfaceQueryScratch};
 use rayon::prelude::*;
 
-use crate::sample::vertex_at;
+use crate::sample::{surface_query_control, vertex_at};
 use crate::{CancelFlag, Rigid, Soup, SurfaceHit, SurfaceIndex};
 
 /// Which way the two surfaces face each other.
@@ -164,7 +165,7 @@ pub struct DeviationSummary {
 /// Which colour scheme the map uses.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum RampMode {
-    /// Blue at zero, red at the display scale: absolute deviation, the primary
+    /// Green at zero, red at the display scale: absolute deviation, the primary
     /// Align Meshes reading.
     #[default]
     Magnitude,
@@ -233,27 +234,25 @@ impl Default for RampSettings {
     }
 }
 
-/// The false-colour ramp, from `0` (surfaces agree) to `1` (the display scale):
-/// cool where they agree, hot where they do not. This is the bar a lab operator
-/// reads without having to work out which side of the surface a colour means.
-///
-/// The signed mode reads the same table over `-1..=1`: blue is undersize, green
-/// is nominal, red is oversize, so the two modes cannot disagree about what
-/// "0.2 mm out" looks like.
-///
-/// The stops keep the lightness of the earlier ramp and about four fifths of
-/// its chroma, measured in Oklab. The full-chroma stops read as neon on a
-/// glossy enamel surface and every channel jumps between neighbours; the softer
-/// ones still separate cold, nominal and hot at a glance. Enough stops remain
-/// that no hue change has to cross a long dull stretch. Blue lifts slightly
-/// before it falls, and red dips a little at the hot end, so the ramp is
-/// smooth from stop to stop rather than strictly monotonic in each channel.
-///
-/// No channel passes 240. The shader scales all three channels together by up
-/// to 1.05, and a channel already at 255 would clip there while the other two
-/// kept rising, which turns the hue the legend is read against. A channel at
-/// zero cannot vary with the light at all, so the low ones stay above it too.
+/// Absolute error runs from subdued green at zero through yellow and orange to
+/// red. Green is a quiet "surfaces agree" baseline; warmer colours make
+/// increasing distance legible without blue-green banding. Signed mode uses a
+/// separate diverging ramp so zero remains green between blue undersize and
+/// red oversize.
 const MAGNITUDE_RAMP: [(f64, [u8; 3]); 9] = [
+    (0.0, [100, 168, 123]),
+    (0.12, [115, 190, 118]),
+    (0.25, [158, 201, 112]),
+    (0.37, [190, 210, 102]),
+    (0.5, [216, 203, 91]),
+    (0.62, [230, 180, 79]),
+    (0.75, [232, 150, 70]),
+    (0.87, [226, 116, 63]),
+    (1.0, [222, 77, 57]),
+];
+
+/// Signed error diverges around its green zero midpoint.
+const SIGNED_RAMP: [(f64, [u8; 3]); 9] = [
     (0.0, [49, 111, 216]),
     (0.12, [70, 159, 223]),
     (0.25, [88, 204, 229]),
@@ -275,18 +274,22 @@ pub fn deviation(
     cancel: &CancelFlag,
 ) -> DeviationMap {
     let count = moving.vertex_count();
+    let query_control = surface_query_control(cancel);
     let measured: Vec<(f32, Validity)> = (0..count)
         .into_par_iter()
-        .map(|vertex| {
-            // Checked per vertex, not per block: a relaxed atomic load costs a
-            // few nanoseconds against a surface query that costs hundreds, and
-            // a block stride would leave a small mesh finishing a cancelled
-            // job.
-            if cancel.is_cancelled() {
-                return (0.0, Validity::OutOfReach);
-            }
-            measure_vertex(moving, fixed, pose, settings, vertex)
-        })
+        .map_init(
+            || SurfaceQueryScratch::new(&query_control).ok(),
+            |scratch, vertex| {
+                // Checked per vertex, not per block: a relaxed atomic load costs a
+                // few nanoseconds against a surface query that costs hundreds, and
+                // a block stride would leave a small mesh finishing a cancelled
+                // job.
+                if cancel.is_cancelled() {
+                    return (0.0, Validity::OutOfReach);
+                }
+                measure_vertex(moving, fixed, pose, settings, vertex, scratch.as_mut())
+            },
+        )
         .collect();
 
     let mut signed_mm = Vec::with_capacity(count);
@@ -309,6 +312,7 @@ fn measure_vertex(
     pose: Rigid,
     settings: &DeviationSettings,
     vertex: usize,
+    scratch: Option<&mut SurfaceQueryScratch>,
 ) -> (f32, Validity) {
     if moving.is_excluded(vertex) {
         return (0.0, Validity::Excluded);
@@ -317,7 +321,7 @@ fn measure_vertex(
         return (0.0, Validity::NonFinite);
     };
     let point = pose.apply(local);
-    let hit = match measured_hit(fixed, point, settings.influence_radius_mm) {
+    let hit = match measured_hit_with_scratch(fixed, point, settings.influence_radius_mm, scratch) {
         Ok(hit) => hit,
         Err(validity) => return (0.0, validity),
     };
@@ -335,14 +339,24 @@ fn measure_vertex(
 }
 
 /// A surface correspondence usable by both the map and its sensitivity estimate.
-pub(crate) fn measured_hit(
+/// Reuses one worker's exact-query scratch and recomputed previous-facet upper
+/// bound across nearby samples when scratch is available.
+pub(crate) fn measured_hit_with_scratch(
     fixed: &SurfaceIndex,
     point: DVec3,
     radius_mm: f64,
+    scratch: Option<&mut SurfaceQueryScratch>,
 ) -> Result<SurfaceHit, Validity> {
-    let hit = fixed
-        .nearest(point, radius_mm)
-        .ok_or(Validity::OutOfReach)?;
+    let hit = match scratch {
+        Some(scratch) => match fixed.nearest_with_scratch(point, radius_mm, scratch) {
+            QueryOutcome::Complete(hit) => hit,
+            // A partial answer is never a correspondence. Map jobs are
+            // cancelled by the same control and will not publish this prefix.
+            QueryOutcome::Interrupted { .. } => None,
+        },
+        None => fixed.nearest(point, radius_mm),
+    }
+    .ok_or(Validity::OutOfReach)?;
     if hit.normal.length() < MIN_NORMAL_LENGTH {
         return Err(Validity::DegenerateNormal);
     }
@@ -469,7 +483,10 @@ pub fn deviation_colors(map: &DeviationMap, ramp: &RampSettings) -> Vec<[u8; 4]>
         .iter()
         .zip(&map.validity)
         .map(|(value, state)| {
-            if *state == Validity::Measured {
+            // A non-finite reading is not data: `deviation_stats` counts it as
+            // unusable, so the colours must grey it out too instead of letting
+            // NaN fall through `ramp_color` to the hot endpoint.
+            if *state == Validity::Measured && value.is_finite() {
                 ramp_color(f64::from(*value), ramp)
             } else {
                 NO_DATA_COLOR
@@ -494,7 +511,7 @@ pub fn ramp_color(value_mm: f64, ramp: &RampSettings) -> [u8; 4] {
         let low = ramp.min_mm.max(0.0).min(ramp.scale_mm);
         ((magnitude - low) / (ramp.scale_mm - low).max(f64::EPSILON)).clamp(0.0, 1.0)
     } else if magnitude == 0.0 {
-        // A zero display range is intentional: exact zero stays blue, while
+        // A zero display range is intentional: exact zero stays green, while
         // every non-zero deviation is beyond that range and reads hot red.
         0.0
     } else {
@@ -510,7 +527,11 @@ pub fn ramp_color(value_mm: f64, ramp: &RampSettings) -> [u8; 4] {
         // Signed deviation spans the table with zero at its green centre.
         RampMode::Signed => f64::midpoint(position.copysign(value_mm), 1.0),
     };
-    let [red, green, blue] = sample_ramp(&MAGNITUDE_RAMP, position);
+    let stops = match ramp.mode {
+        RampMode::Magnitude => &MAGNITUDE_RAMP,
+        RampMode::Signed => &SIGNED_RAMP,
+    };
+    let [red, green, blue] = sample_ramp(stops, position);
     [red, green, blue, 255]
 }
 

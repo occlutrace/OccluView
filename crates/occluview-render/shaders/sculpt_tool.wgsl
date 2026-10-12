@@ -60,19 +60,24 @@ fn vs_main(in: VertexIn) -> VertexOut {
     let rising = profile_radius * (1.0 - z);
     let pressing = profile_radius * z;
     let cone = mix(rising, pressing, invert);
-    let radius = mix(mix(cone, 1.0, cylinder), mix(profile_radius, 1.0, cylinder), flat);
+    let radius = max(0.012, mix(mix(cone, 1.0, cylinder), mix(profile_radius, 1.0, cylinder), flat));
     let cone_slope = mix(-profile_radius, profile_radius, invert);
     let slope = mix(mix(cone_slope, 0.0, cylinder), 0.0, flat);
     let radial = normalize(in.position.xy);
     let shaped = vec3<f32>(radial * radius, z);
     let width_scale = max(length(tool.model[0].xyz), 0.000001);
     let height_scale = max(length(tool.model[2].xyz), 0.000001);
-    let shaped_normal = vec3<f32>(radial, -slope * width_scale / height_scale);
+    let shaped_normal = vec3<f32>(radial, -slope);
     let world = tool.model * vec4<f32>(shaped, 1.0);
     var out: VertexOut;
     out.clip_pos = camera.projection * camera.view * world;
     out.world_pos = world.xyz;
-    out.normal = (tool.model * vec4<f32>(shaped_normal, 0.0)).xyz;
+    let transverse_scale = max(length(tool.model[1].xyz), 0.000001);
+    // Inverse-transpose for the rotated, non-uniformly scaled tool frame.
+    out.normal = (tool.model * vec4<f32>(shaped_normal / vec3<f32>(
+        width_scale * width_scale, transverse_scale * transverse_scale,
+        height_scale * height_scale,
+    ), 0.0)).xyz;
     out.axial = z;
     return out;
 }

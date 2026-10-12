@@ -360,7 +360,8 @@ impl Mesh {
         self.has_vertex_colors
     }
 
-    /// True if any vertex carries non-zero UV coordinates. Loaders set UVs
+    /// True if the mesh carries texture coordinates, including a declared
+    /// all-zero channel. Loaders set UVs
     /// from `TEXCOORD_0` (glTF), `vt` (OBJ), or `texcoord` (PLY).
     #[inline]
     #[must_use]

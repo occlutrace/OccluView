@@ -150,11 +150,8 @@ pub(crate) fn skipped_rims_line(report: &RepairReport, locale: &LocaleManager) -
 /// Every label comes from the catalog, so the payload reaches the clipboard in
 /// the operator's language rather than in English.
 #[must_use]
-pub(crate) fn copy_details(
-    layer_label: &str,
-    report: &RepairReport,
-    locale: &LocaleManager,
-) -> String {
+#[cfg(test)]
+fn copy_details(layer_label: &str, report: &RepairReport, locale: &LocaleManager) -> String {
     use std::fmt::Write as _;
 
     let number_format = locale.number_format();
@@ -371,12 +368,10 @@ impl RepairReportDialog {
         };
         let open_rims = open_rims_line(&card.report, locale);
         let skipped = skipped_rims_line(&card.report, locale);
-        let details = copy_details(&card.layer_label, &card.report, locale);
         let body_height =
             repair_body_height(changed, lines.len(), open_rims.is_some(), skipped.is_some());
 
         let mut close_clicked = false;
-        let mut copy_clicked = false;
 
         let close_label = locale.tr(crate::i18n::message_id!("help-close"));
         let modal_response = show_repair_modal(ctx, &close_label, |ui| {
@@ -387,7 +382,7 @@ impl RepairReportDialog {
                 ui.vertical(|ui| {
                     ui.label(
                         egui::RichText::new(locale.tr(crate::i18n::message_id!("repair-title")))
-                            .size(14.0)
+                            .size(18.0)
                             .strong()
                             .color(ui_theme::text()),
                     );
@@ -466,19 +461,9 @@ impl RepairReportDialog {
                 {
                     close_clicked = true;
                 }
-                if ui
-                    .button(locale.tr(crate::i18n::message_id!("repair-copy-details")))
-                    .on_hover_text(locale.tr(crate::i18n::message_id!("repair-copy-tooltip")))
-                    .clicked()
-                {
-                    copy_clicked = true;
-                }
             });
         });
 
-        if copy_clicked {
-            ctx.copy_text(details);
-        }
         if close_clicked || modal_response.should_close() {
             self.close();
         }

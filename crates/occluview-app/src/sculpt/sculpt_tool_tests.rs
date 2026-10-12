@@ -38,11 +38,11 @@ fn shift_flips_add_to_remove_and_forces_smooth() {
         SculptToolKind::Smooth.brush_mode(true, true),
         BrushMode::Smooth
     );
-    // Shift strengthens Smooth by twice the slider, clamped to the top of the
-    // range; Add/Remove follows the intensity slider with or without Shift.
-    // A forced maximum flattened whole cusps from the bottom of the slider.
-    assert!((SculptToolKind::Smooth.dab_strength(0.3, true) - 0.6).abs() < 1e-6);
-    assert_eq!(SculptToolKind::Smooth.dab_strength(0.7, true), 1.0);
+    // Shift boosts low Smooth settings while easing strong settings toward the
+    // cap; Add/Remove keeps its existing Shift direction semantics.
+    assert!((SculptToolKind::Smooth.dab_strength(0.01, true) - 0.029701).abs() < 1e-6);
+    assert!((SculptToolKind::Smooth.dab_strength(0.3, true) - 0.657).abs() < 1e-6);
+    assert!((SculptToolKind::Smooth.dab_strength(0.7, true) - 0.973).abs() < 1e-6);
     assert_eq!(SculptToolKind::Smooth.dab_strength(1.0, false), 1.0);
     assert_eq!(SculptToolKind::AddRemove.dab_strength(0.3, false), 0.3);
     assert_eq!(SculptToolKind::AddRemove.dab_strength(0.3, true), 0.3);

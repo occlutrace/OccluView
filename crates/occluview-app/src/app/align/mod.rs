@@ -641,10 +641,5 @@ fn transform_world_normal(transform: Affine3A, local: Vec3) -> Vec3 {
 }
 
 #[cfg(test)]
-mod tests {
-    #![allow(clippy::expect_used, clippy::panic)]
-}
-
-#[cfg(test)]
 #[path = "frame_tests.rs"]
 mod frame_tests;

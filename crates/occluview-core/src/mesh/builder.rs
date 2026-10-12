@@ -10,6 +10,7 @@ pub struct MeshBuilder {
     /// If true, `build()` produces a [`crate::MeshKind::PointCloud`] regardless of
     /// indices. Set by loaders that know there is no face element.
     force_point_cloud: bool,
+    uvs_declared: bool,
     /// Bytes of geometry this builder may hold, from the size of the file the
     /// reader was handed. `None` for callers that build a mesh from nothing.
     mesh_byte_budget: Option<u64>,
@@ -47,6 +48,12 @@ impl MeshBuilder {
     pub const fn as_point_cloud(mut self) -> Self {
         self.force_point_cloud = true;
         self
+    }
+
+    /// Record that the source supplies texture coordinates, including an
+    /// all-zero coordinate channel. Zero is a valid atlas location.
+    pub fn mark_texture_coordinates(&mut self) {
+        self.uvs_declared = true;
     }
 
     /// Set the optional name.
@@ -122,6 +129,7 @@ impl MeshBuilder {
         if uvs.len() != self.indices.len() {
             return;
         }
+        self.uvs_declared |= !uvs.is_empty();
         let mut first: Vec<Option<[u32; 2]>> = vec![None; self.vertices.len()];
         let mut copies: HashMap<(u32, [u32; 2]), u32> = HashMap::new();
         for (corner, uv) in uvs.iter().enumerate() {
@@ -192,10 +200,13 @@ impl MeshBuilder {
                     / Self::MAX_GEOMETRY_BYTES_PER_INPUT_BYTE,
             });
         }
-        if self.force_point_cloud {
-            return Ok(Mesh::point_cloud(self.name, self.vertices));
-        }
-        Mesh::new(self.name, self.vertices, self.indices)
+        let mut mesh = if self.force_point_cloud {
+            Mesh::point_cloud(self.name, self.vertices)
+        } else {
+            Mesh::new(self.name, self.vertices, self.indices)?
+        };
+        mesh.has_uvs |= self.uvs_declared;
+        Ok(mesh)
     }
 
     /// Finalize into a mesh meant for an image rather than for work on it.
@@ -212,10 +223,13 @@ impl MeshBuilder {
                     / Self::MAX_GEOMETRY_BYTES_PER_INPUT_BYTE,
             });
         }
-        if self.force_point_cloud {
-            return Ok(Mesh::point_cloud(self.name, self.vertices));
-        }
-        Mesh::new_for_preview(self.name, self.vertices, self.indices)
+        let mut mesh = if self.force_point_cloud {
+            Mesh::point_cloud(self.name, self.vertices)
+        } else {
+            Mesh::new_for_preview(self.name, self.vertices, self.indices)?
+        };
+        mesh.has_uvs |= self.uvs_declared;
+        Ok(mesh)
     }
 }
 

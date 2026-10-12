@@ -76,16 +76,6 @@ fn camera_presets_have_toolbar_labels() {
 }
 
 #[test]
-fn occlusal_preset_matches_default_framing() {
-    let bbox = cube_bbox();
-    let fovy = 45.0_f32.to_radians();
-    let preset = CameraPreset::Occlusal.frame_bbox(bbox, fovy);
-    let direct = Camera::default().frame_occlusal(bbox, fovy);
-
-    assert_eq!(preset, direct);
-}
-
-#[test]
 fn buccal_and_lingual_presets_view_from_opposite_z_sides() {
     let buccal = CameraPreset::Buccal.frame_bbox(cube_bbox(), 45.0_f32.to_radians());
     let lingual = CameraPreset::Lingual.frame_bbox(cube_bbox(), 45.0_f32.to_radians());

@@ -8,7 +8,7 @@ use super::EditModeController;
 use crate::app::workspace::history::{HistoryDirection, HistorySnapshot, HistoryStepKind};
 
 #[derive(Clone, Debug)]
-pub(super) enum MeshEditUndoSnapshot {
+pub(crate) enum MeshEditUndoSnapshot {
     Layer(SceneMesh),
     Scene {
         scene: Scene,
@@ -210,8 +210,7 @@ impl EditModeController {
     }
 
     /// Whether the most recent `begin_*_edit` stored its pre-op snapshot. An
-    /// oversized snapshot is skipped: the edit applies but cannot be undone,
-    /// and the caller reports that to the operator.
+    /// accepted snapshot remains available even above the soft retention target.
     pub(crate) fn last_edit_undoable(&self) -> bool {
         self.last_undo_push_stored
     }

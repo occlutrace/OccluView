@@ -3,8 +3,8 @@
 use eframe::{egui, egui_wgpu, wgpu};
 use occluview_render::{
     ClipPlane, GpuCamera, GpuTexture, PreparedScene, PreparedSceneSource, PreparedSceneTopology,
-    PreparedSceneUpdate, RenderError, Renderer, SculptBrushUniform, SculptBufferUpdateStats,
-    SculptSurfaceFeedbackRequest, SculptToolUniform, SculptTopologyDelta,
+    PreparedSceneUpdate, RenderError, Renderer, SculptBufferUpdateStats, SculptToolUniform,
+    SculptTopologyDelta,
 };
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -18,7 +18,6 @@ pub(super) type SharedLiveViewport = Arc<Mutex<LiveViewport>>;
 pub(super) struct SculptCursor {
     pub(super) target_index: usize,
     pub(super) topology: PreparedSceneTopology,
-    pub(super) brush: SculptBrushUniform,
     pub(super) tool: SculptToolUniform,
 }
 
@@ -237,9 +236,7 @@ impl LiveViewport {
             self.sculpt_cursor = None;
             return;
         }
-        let brush = cursor.map_or(SculptBrushUniform::hidden(), |cursor| cursor.brush);
         let tool = cursor.map_or(SculptToolUniform::hidden(), |cursor| cursor.tool);
-        self.renderer.set_sculpt_brush(&brush);
         self.renderer.set_sculpt_tool(&tool);
         self.sculpt_cursor = cursor;
     }
@@ -251,8 +248,6 @@ impl LiveViewport {
         if self.renderer.is_gpu_faulted() {
             return;
         }
-        self.renderer
-            .set_sculpt_brush(&SculptBrushUniform::hidden());
         self.renderer.set_sculpt_tool(&SculptToolUniform::hidden());
     }
 
@@ -298,17 +293,7 @@ impl LiveViewport {
             );
         }
         if let Some(cursor) = self.sculpt_cursor {
-            let drawn = scene.draw_sculpt_surface_feedback(
-                render_pass,
-                SculptSurfaceFeedbackRequest::new(
-                    &self.renderer,
-                    &self.camera_bind_group,
-                    &self.clip_bind_group,
-                    cursor.target_index,
-                    &cursor.topology,
-                ),
-            );
-            if drawn {
+            if scene.has_visible_sculpt_target(cursor.target_index, &cursor.topology) {
                 self.renderer.draw_sculpt_tool(
                     render_pass,
                     &self.camera_bind_group,

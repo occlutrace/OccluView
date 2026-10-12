@@ -76,7 +76,7 @@ pub(super) fn write_mesh<W: Write>(
                 writer,
                 "vt {} {}",
                 FmtF32(vertex.uv[0]),
-                FmtF32(vertex.uv[1]),
+                FmtF32(crate::texture_coordinates::flip_vertical(vertex.uv)[1]),
             )?;
         }
     }
@@ -294,7 +294,11 @@ mod tests {
                 for (actual, expected) in restored.vertices().iter().zip(mesh.vertices()) {
                     assert_eq!(actual.position, expected.position, "scale {scale}");
                     assert_eq!(actual.normal, expected.normal, "scale {scale}");
-                    assert_eq!(actual.uv, expected.uv, "scale {scale}");
+                    assert_eq!(actual.uv[0], expected.uv[0], "scale {scale}");
+                    assert!(
+                        (actual.uv[1] - expected.uv[1]).abs() <= f32::EPSILON,
+                        "scale {scale}: UV origin conversion"
+                    );
                 }
             }
         }
@@ -328,7 +332,8 @@ mod tests {
                 actual.position.map(f32::to_bits),
                 expected.position.map(f32::to_bits)
             );
-            assert_eq!(actual.uv.map(f32::to_bits), expected.uv.map(f32::to_bits));
+            assert_eq!(actual.uv[0].to_bits(), expected.uv[0].to_bits());
+            assert!((actual.uv[1] - expected.uv[1]).abs() <= f32::EPSILON);
         }
     }
 }

@@ -24,6 +24,10 @@ mod transfer;
 
 use self::journal::{EditCheckpoint, HistoryEntry, PendingEntry, SceneTimeline};
 
+/// Retention targets, allocated only as snapshots are actually recorded.
+pub(crate) const DEFAULT_HISTORY_BYTES: usize = 1024 * 1024 * 1024;
+pub(crate) const DEFAULT_HISTORY_COUNT: usize = usize::MAX;
+
 pub(crate) type WorkspaceHistoryHandle = Rc<RefCell<WorkspaceHistory>>;
 pub(crate) type HistoryCommandId = u64;
 pub(crate) type EditCheckpointId = u64;
@@ -156,6 +160,6 @@ impl WorkspaceHistory {
 
 impl Default for WorkspaceHistory {
     fn default() -> Self {
-        Self::new(16, 512 * 1024 * 1024)
+        Self::new(DEFAULT_HISTORY_COUNT, DEFAULT_HISTORY_BYTES)
     }
 }

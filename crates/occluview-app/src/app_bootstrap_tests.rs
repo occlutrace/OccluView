@@ -350,6 +350,7 @@ fn the_live_window_options_match_the_render_contract() {
     let preflight = GraphicsPreflight {
         adapters: Vec::new(),
         live_sample_count: 4,
+        shared_setup: None,
     };
     let options = native_options(&preflight);
 
@@ -361,6 +362,37 @@ fn the_live_window_options_match_the_render_contract() {
         eframe::egui_wgpu::depth_format_from_bits(options.depth_buffer, options.stencil_buffer),
         Some(LIVE_DEPTH_FORMAT),
         "the pipelines declare LIVE_DEPTH_FORMAT, so the window must ask eframe for that pass"
+    );
+}
+
+#[test]
+fn device_reuse_requires_one_unambiguous_native_gpu() {
+    let vulkan = AdapterIdentity {
+        name: "native GPU".to_string(),
+        vendor: 0x10de,
+        device: 0x1c82,
+        device_type: wgpu::DeviceType::DiscreteGpu,
+        device_pci_bus_id: "0000:29:00.0".to_string(),
+        backend: wgpu::Backend::Vulkan,
+        supports_live_msaa_4: true,
+    };
+    let mut dx12 = vulkan.clone();
+    dx12.backend = wgpu::Backend::Dx12;
+    let reusable = super::graphics::can_reuse_preflight_devices;
+    assert!(reusable(&[vulkan.clone(), dx12.clone()]));
+    dx12.device_pci_bus_id = "0000:30:00.0".to_string();
+    assert!(
+        !reusable(&[vulkan.clone(), dx12.clone()]),
+        "a second card retains surface selection"
+    );
+    dx12.device_pci_bus_id.clear();
+    assert!(
+        !reusable(&[vulkan.clone(), dx12]),
+        "missing physical identity is ambiguous"
+    );
+    assert!(
+        !reusable(&[vulkan.clone(), vulkan]),
+        "duplicate backend entries retain surface selection"
     );
 }
 

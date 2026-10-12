@@ -5,14 +5,29 @@ use super::geometry::{orient_tool_axis, sculpt_face_normal};
 use crate::app::workspace::id::SceneKey;
 use crate::sculpt::sculpt_kernel::BrushMode;
 use crate::sculpt::sculpt_tool::SculptTip;
+use crate::sculpt::sculpt_worker::SculptSurfaceQueryError;
 use glam::{DVec3, Mat4, Quat, Vec3};
 use occluview_render::{
-    sculpt_surface_light_intensity, sculpt_tool_length, PreparedSceneTopology, SculptBrushUniform,
-    SculptFeedbackStyle, SculptToolShape, SculptToolUniform,
+    sculpt_tool_length, PreparedSceneTopology, SculptToolShape, SculptToolUniform,
 };
 
+#[derive(Clone, Copy)]
+struct CursorSurface {
+    hit: occluview_core::ScenePickHit,
+    normal: Vec3,
+    topology: u64,
+}
+
+#[derive(Clone, Copy)]
+struct CursorAxis {
+    direction: Vec3,
+    layer: occluview_core::SceneMeshId,
+    at: f64,
+}
+
 impl SceneContext<'_> {
-    /// Paint the cursor using the hit cached by the viewport input pass.
+    /// Paint one atomic live-surface pose. Publication contention retains the
+    /// latest pose; a real miss or a failed surface clears it immediately.
     #[expect(clippy::too_many_lines)]
     pub(in crate::app) fn paint_sculpt_cursor_impl(
         &self,
@@ -45,19 +60,62 @@ impl SceneContext<'_> {
             self.publish_sculpt_cursor(None);
             return;
         }
-        let pointer_key = [pointer.x, pointer.y];
-        let hit = self
-            .tools
-            .sculpt
-            .cursor_hit_for(pointer_key)
-            .or_else(|| self.sculpt_surface_hit(viewport_rect, pointer));
-        let Some(hit) = hit else {
-            self.publish_sculpt_cursor(None);
-            return;
-        };
         let Some(scene) = self.document.scene.as_ref() else {
             self.publish_sculpt_cursor(None);
             return;
+        };
+        let pose_id = egui::Id::new(("sculpt-cursor-surface", self.scene_key));
+        let (hit, normal) = match self.sculpt_surface_query(viewport_rect, pointer) {
+            Ok(Some((hit, local_normal))) => {
+                let Some(normal) = sculpt_face_normal(scene, &hit, camera, local_normal) else {
+                    self.publish_sculpt_cursor(None);
+                    return;
+                };
+                let Some(entry) = scene.meshes().get(hit.layer_index) else {
+                    self.publish_sculpt_cursor(None);
+                    return;
+                };
+                ui.ctx().data_mut(|data| {
+                    data.insert_temp(
+                        pose_id,
+                        CursorSurface {
+                            hit,
+                            normal,
+                            topology: entry.mesh.topology_id(),
+                        },
+                    )
+                });
+                (hit, normal)
+            }
+            Err(SculptSurfaceQueryError::Busy) => {
+                let cached = ui
+                    .ctx()
+                    .data(|data| data.get_temp::<CursorSurface>(pose_id));
+                let cached = cached.filter(|pose| {
+                    self.sculpt_target_layer_id(scene) == Some(pose.hit.layer_id)
+                        && scene
+                            .meshes()
+                            .get(pose.hit.layer_index)
+                            .is_some_and(|entry| {
+                                entry.visible
+                                    && entry.id() == pose.hit.layer_id
+                                    && entry.mesh.topology_id() == pose.topology
+                            })
+                });
+                let Some(pose) = cached else {
+                    self.publish_sculpt_cursor(None);
+                    ui.ctx().request_repaint();
+                    return;
+                };
+                // Display only: dabs still use their captured rays and the
+                // kernel's current surface. A busy publication is not a miss.
+                ui.ctx().request_repaint();
+                (pose.hit, pose.normal)
+            }
+            Ok(None) | Err(SculptSurfaceQueryError::Unavailable) => {
+                self.publish_sculpt_cursor(None);
+                return;
+            }
         };
         let Some(entry) = scene.meshes().get(hit.layer_index) else {
             self.publish_sculpt_cursor(None);
@@ -67,19 +125,6 @@ impl SceneContext<'_> {
             self.publish_sculpt_cursor(None);
             return;
         }
-        let live_normal = self
-            .tools
-            .sculpt
-            .worker
-            .as_ref()
-            .filter(|worker| {
-                worker.layer_id == hit.layer_id && worker.topology_id == entry.mesh.topology_id()
-            })
-            .and_then(|worker| worker.local_triangle_normal(hit.triangle_index));
-        let Some(normal) = sculpt_face_normal(scene, &hit, camera, live_normal) else {
-            self.publish_sculpt_cursor(None);
-            return;
-        };
         let (shift, command) = ui.ctx().input(|input| {
             (
                 input.modifiers.shift,
@@ -120,8 +165,8 @@ impl SceneContext<'_> {
             .map(|axis| entry.transform.transform_vector3(Vec3::from_array(axis)))
             .filter(|axis| axis.is_finite() && axis.length_squared() > f32::EPSILON)
             .map(Vec3::normalize);
-        let color_rgba = sculpt_cursor_linear_rgba(color);
-        let direction = normal;
+        let color_rgba = sculpt_cursor_body_rgba(color, strength);
+        let direction = animate_sculpt_cursor_axis(ui.ctx(), self.scene_key, hit.layer_id, normal);
         let base_rotation = Quat::from_rotation_arc(Vec3::Z, direction);
         let tool_rotation = if tip == SculptTip::Knife {
             let fallback_axis = camera
@@ -147,59 +192,33 @@ impl SceneContext<'_> {
         self.publish_sculpt_cursor(Some(live_viewport::SculptCursor {
             target_index: hit.layer_index,
             topology: PreparedSceneTopology::from_mesh(&entry.mesh),
-            brush: SculptBrushUniform {
-                center: hit.point.to_array(),
-                radius: radius_world,
-                normal: normal.to_array(),
-                intensity: sculpt_surface_light_intensity(strength),
-                axis: axis_world.map_or([0.0; 3], |axis| axis.to_array()),
-                tip: tip.kernel_stamp(),
-                color: color_rgba,
-                visible: 1,
-                edge_style: if mode == BrushMode::Relax {
-                    SculptFeedbackStyle::Dashed as u32
-                } else {
-                    SculptFeedbackStyle::Solid as u32
-                },
-                ..SculptBrushUniform::hidden()
-            },
             tool: SculptToolUniform {
                 model: tool_model.to_cols_array(),
                 color: color_rgba,
-                // One fixed body opacity: the strength signal lives in the
-                // surface mark, not in how dense the tool body looks.
+                // Strength changes the body's saturation. There is no second
+                // surface pass, ring, or material tint over the scan.
                 opacity: SCULPT_TOOL_OPACITY,
                 shape: shape as u32,
                 action,
             },
         }));
-        // A CAD crosshair replaces the arrow while a sculpt tool is armed, so
-        // the contact point is readable against the surface mark.
+        // One crosshair marks the exact contact; the volume shows the reach.
         ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
-        // A cross marks the centre without hiding it; the footprint is the
-        // surface light alone.
-        let stroke = egui::Stroke::new(1.0_f32, color.gamma_multiply(0.62));
-        let canvas = ui.painter();
-        canvas.line_segment(
-            [
-                pointer + egui::vec2(-3.0, 0.0),
-                pointer + egui::vec2(3.0, 0.0),
-            ],
-            stroke,
-        );
-        canvas.line_segment(
-            [
-                pointer + egui::vec2(0.0, -3.0),
-                pointer + egui::vec2(0.0, 3.0),
-            ],
-            stroke,
-        );
     }
 
     pub(in crate::app) fn publish_sculpt_cursor(
         &self,
         cursor: Option<live_viewport::SculptCursor>,
     ) {
+        if cursor.is_none() {
+            self.ui.repaint_ctx.data_mut(|data| {
+                data.remove::<CursorSurface>(egui::Id::new((
+                    "sculpt-cursor-surface",
+                    self.scene_key,
+                )));
+                data.remove::<CursorAxis>(egui::Id::new(("sculpt-cursor-axis", self.scene_key)));
+            });
+        }
         let Some(viewport) = self.render.live_viewport.as_ref() else {
             return;
         };
@@ -213,8 +232,7 @@ impl SceneContext<'_> {
 const SCULPT_CURSOR_TRANSITION_SEC: f32 = 0.07;
 const SCULPT_IRON_HEIGHT_SHARE: f32 = 0.22;
 /// Source opacity of the translucent tool body. The fragment shader shapes it
-/// with the Fresnel rim and the axial fade; the strength signal stays on the
-/// surface mark instead.
+/// with the Fresnel rim and axial fade; strength changes the body's saturation.
 const SCULPT_TOOL_OPACITY: f32 = 0.5;
 
 pub(super) fn sculpt_cursor_color(mode: BrushMode) -> egui::Color32 {
@@ -248,10 +266,60 @@ pub(super) fn sculpt_cursor_linear_rgba(color: egui::Color32) -> [f32; 4] {
 
 pub(super) fn sculpt_cursor_height(mode: BrushMode, strength: f32, radius: f32) -> f32 {
     if matches!(mode, BrushMode::Add | BrushMode::Remove) {
-        sculpt_tool_length(strength)
+        sculpt_tool_length(strength) * radius.max(0.05)
     } else {
         (radius * SCULPT_IRON_HEIGHT_SHARE).max(0.05)
     }
+}
+
+/// Keep the operation's hue while making the strength readable in the body.
+fn sculpt_cursor_body_rgba(color: egui::Color32, strength: f32) -> [f32; 4] {
+    let low = sculpt_cursor_linear_rgba(color);
+    let high = egui::Rgba::from(color).to_array();
+    let saturation = strength.clamp(0.0, 1.0).sqrt();
+    [
+        low[0] + (high[0] - low[0]) * saturation,
+        low[1] + (high[1] - low[1]) * saturation,
+        low[2] + (high[2] - low[2]) * saturation,
+        1.0,
+    ]
+}
+
+/// Ease only the display axis, as in the shared CAD cursor. The contact point
+/// stays exact; a new layer or a turn beyond 50 degrees snaps to its surface.
+fn animate_sculpt_cursor_axis(
+    context: &egui::Context,
+    scene_key: SceneKey,
+    layer: occluview_core::SceneMeshId,
+    target: Vec3,
+) -> Vec3 {
+    let id = egui::Id::new(("sculpt-cursor-axis", scene_key));
+    let now = context.input(|input| input.time);
+    let previous = context.data(|data| data.get_temp::<CursorAxis>(id));
+    let direction = previous
+        .filter(|pose| {
+            pose.layer == layer && pose.direction.dot(target) >= 50.0_f32.to_radians().cos()
+        })
+        .map_or(target, |pose| {
+            let dt = (now - pose.at).clamp(0.0, 0.064) as f32;
+            pose.direction
+                .lerp(target, 1.0 - (-dt / 0.04).exp())
+                .normalize_or_zero()
+        });
+    if direction.dot(target) < 0.99995 {
+        context.request_repaint_after(std::time::Duration::from_millis(16));
+    }
+    context.data_mut(|data| {
+        data.insert_temp(
+            id,
+            CursorAxis {
+                direction,
+                layer,
+                at: now,
+            },
+        )
+    });
+    direction
 }
 
 fn animate_sculpt_cursor_height(context: &egui::Context, scene_key: SceneKey, target: f32) -> f32 {

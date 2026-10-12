@@ -2,8 +2,30 @@
 //! deviation map and the observability estimate.
 
 use glam::DVec3;
+use occluview_geometry::surface::{GeometryControl, GeometryLimits};
+use std::time::Duration;
 
-use crate::Soup;
+use crate::{CancelFlag, Soup};
+
+/// A query lifetime that preserves the exact-search ceilings of an ordinary
+/// `SurfaceIndex::nearest` call while letting long maps stop inside a query.
+/// One instance is shared by the Rayon workers; each worker owns its scratch.
+pub(crate) fn surface_query_control(cancel: &CancelFlag) -> GeometryControl {
+    GeometryControl::new(
+        cancel.clone(),
+        Duration::MAX,
+        GeometryLimits {
+            query_calls: u64::MAX,
+            triangle_tests: u64::MAX,
+            single_query_tests: u64::MAX,
+            point_pair_tests: u64::MAX,
+            operations: u64::MAX,
+            memory_bytes: usize::MAX,
+            input_triangles: usize::MAX,
+            input_vertices: usize::MAX,
+        },
+    )
+}
 
 /// Read one vertex position, or `None` when it is out of range or not finite.
 pub(crate) fn vertex_at(positions: &[f32], vertex: usize) -> Option<DVec3> {

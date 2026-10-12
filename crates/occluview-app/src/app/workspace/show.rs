@@ -40,8 +40,7 @@ impl OccluViewApp {
     #[allow(clippy::too_many_lines)]
     pub(in crate::app) fn show_workspace(&mut self, root_ui: &mut egui::Ui) {
         let ctx = root_ui.ctx().clone();
-        self.ui.workspace_modal_open = self.workspace.rename.is_some()
-            || (self.workspace.pending_drop.is_some() && self.workspace.scenes.len() > 1);
+        self.ui.workspace_modal_open = self.workspace.pending_drop_dialog();
         if self.ui.modal_dialog_open() {
             let dropped_file = ctx.input(|input| {
                 native_drop_paths(&input.raw.dropped_files)
@@ -59,8 +58,7 @@ impl OccluViewApp {
         } else {
             self.collect_native_drops(&ctx);
         }
-        self.ui.workspace_modal_open = self.workspace.rename.is_some()
-            || (self.workspace.pending_drop.is_some() && self.workspace.scenes.len() > 1);
+        self.ui.workspace_modal_open = self.workspace.pending_drop_dialog();
         self.workspace.scene_tab_rects.clear();
         self.workspace.scene_create_rect = None;
 

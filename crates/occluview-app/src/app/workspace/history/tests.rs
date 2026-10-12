@@ -365,38 +365,82 @@ fn discarding_a_prepared_transfer_does_not_apply_its_eviction_plan() {
 }
 
 #[test]
-fn refused_checkpoint_and_transfer_leave_history_heads_and_accounting_unchanged() {
-    let source = scene_key(10, 1);
-    let destination = scene_key(11, 1);
+fn full_history_admits_new_edit_and_expires_old_steps_only_after_success() {
+    let scope = scene_key(10, 1);
     let mut history = WorkspaceHistory::new(1, 4);
-    let existing = layer_edit(&mut history, source, "a");
-    let used_bytes = history.used_bytes();
-
-    assert!(history
-        .begin_edit_checkpoint(Some(source), Scene::new(), 4)
-        .is_none());
-    assert_eq!(history.used_bytes(), used_bytes);
+    let existing = layer_edit(&mut history, scope, "old");
+    let kind = HistoryStepKind::LayerEdit {
+        layer_id: SceneMesh::new(Mesh::empty()).id(),
+    };
+    let failed = history
+        .push_pending_edit(Some(scope), kind, String::from("large"), 5)
+        .expect("admitted");
+    assert!(history.payload::<String>(existing).is_some());
+    assert!(history.discard_pending(failed));
+    assert_eq!(history.used_bytes(), 3);
+    let newest = history
+        .push_pending_edit(Some(scope), kind, String::from("large"), 5)
+        .expect("admitted");
+    assert!(history.commit_pending_edit(newest));
+    assert!(history.payload::<String>(existing).is_none());
+    assert_eq!(
+        history.payload::<String>(newest).map(String::as_str),
+        Some("large")
+    );
+    let restored = history
+        .navigate_edit(
+            Some(scope),
+            HistoryDirection::Undo,
+            newest,
+            HistorySnapshot {
+                value: String::from("reverse is larger"),
+                bytes: 17,
+            },
+        )
+        .expect("oversized Undo remains reversible");
+    assert_eq!(restored, "large");
     assert_eq!(
         history
-            .top_step(Some(source), HistoryDirection::Undo)
+            .top_step(Some(scope), HistoryDirection::Redo)
             .map(|step| step.command_id),
-        Some(existing)
+        Some(newest)
     );
+}
 
-    assert_eq!(
-        history.prepare_transfer(transfer_record(source, destination, false), 5),
-        Err(super::HistoryError::BudgetExceeded)
+#[test]
+fn scene_snapshots_count_shared_mesh_allocations_once() {
+    use crate::edit_mode::undo_snapshot::MeshEditUndoSnapshot;
+    let scope = scene_key(10, 1);
+    let layer = SceneMesh::new(
+        occluview_core::test_support::simple_triangle_mesh(None).expect("valid mesh"),
     );
-    assert_eq!(history.used_bytes(), used_bytes);
+    let mut history = WorkspaceHistory::new(usize::MAX, usize::MAX);
+    let kind = HistoryStepKind::LayerEdit {
+        layer_id: layer.id(),
+    };
+    let a = history
+        .push_pending_edit(
+            Some(scope),
+            kind,
+            MeshEditUndoSnapshot::Layer(layer.clone()),
+            usize::MAX,
+        )
+        .expect("admitted");
+    assert!(history.commit_pending_edit(a));
+    let bytes = history.used_bytes();
+    let b = history
+        .push_pending_edit(
+            Some(scope),
+            kind,
+            MeshEditUndoSnapshot::Layer(layer),
+            usize::MAX,
+        )
+        .expect("admitted");
+    assert!(history.commit_pending_edit(b));
     assert_eq!(
-        history
-            .top_step(Some(source), HistoryDirection::Undo)
-            .map(|step| step.command_id),
-        Some(existing)
+        history.used_bytes() - bytes,
+        std::mem::size_of::<SceneMesh>()
     );
-    assert!(history
-        .top_step(Some(destination), HistoryDirection::Undo)
-        .is_none());
 }
 
 #[test]

@@ -10,9 +10,7 @@ use crate::ui::ui_theme;
 use eframe::egui;
 
 use super::menu::menu_item;
-
-/// Fixed menu width, matching the layer menu so the two read as one family.
-const MENU_WIDTH: f32 = 244.0;
+use super::CONTEXT_MENU_WIDTH;
 
 /// What a right-click on empty space can ask for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -35,7 +33,7 @@ pub(crate) fn show_scene_context_menu(
     request: &mut Option<SceneContextAction>,
     locale: &crate::i18n::LocaleManager,
 ) {
-    ui.set_min_width(MENU_WIDTH);
+    ui.set_min_width(CONTEXT_MENU_WIDTH);
     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
     ui.spacing_mut().item_spacing.y = 2.0;
 
@@ -85,9 +83,4 @@ pub(crate) fn show_scene_context_menu(
             ui.close();
         }
     }
-}
-
-#[cfg(test)]
-mod tests {
-    #![allow(clippy::expect_used)]
 }

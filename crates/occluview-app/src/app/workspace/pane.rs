@@ -24,7 +24,7 @@ impl OccluViewApp {
         let is_active = self.workspace.input.active().scene == pane.key;
         let split = matches!(layout, EffectiveLayout::SideBySide { .. });
         ui.painter()
-            .rect_filled(rect, 0.0, crate::ui::ui_theme::panel_fill());
+            .rect_filled(rect, 0.0, crate::ui::ui_theme::toolbar_fill());
         let separator_y = rect.bottom() - if is_active && split { 1.0 } else { 0.5 };
         ui.painter().line_segment(
             [
@@ -41,18 +41,58 @@ impl OccluViewApp {
         ui.scope_builder(
             egui::UiBuilder::new()
                 .id_salt(("pane-header", pane.pane))
-                .max_rect(rect.shrink2(vec2(8.0, 2.0))),
+                .max_rect(rect.shrink2(vec2(10.0, 2.0))),
             |ui| {
                 ui.horizontal_centered(|ui| {
-                    let available_title_width = (ui.available_width() - 40.0).max(48.0);
-                    let title = ui
-                        .add_sized(
-                            vec2(available_title_width, 25.0),
-                            egui::Button::selectable(is_active, &pane.name)
-                                .frame(false)
-                                .truncate(),
-                        )
-                        .on_hover_text(&pane.name);
+                    let has_action = split || self.workspace.scenes.len() > 1;
+                    let available_title_width =
+                        (ui.available_width() - if has_action { 40.0 } else { 0.0 }).max(0.0);
+                    let (title_rect, title) = ui.allocate_exact_size(
+                        vec2(available_title_width, 26.0),
+                        egui::Sense::click(),
+                    );
+                    if !modal_open && title.hovered() {
+                        ui.painter().rect_filled(
+                            title_rect,
+                            4.0,
+                            crate::ui::ui_theme::row_hover_fill(),
+                        );
+                    }
+                    let icon_rect = Rect::from_center_size(
+                        pos2(title_rect.left() + 12.0, title_rect.center().y),
+                        vec2(16.0, 16.0),
+                    );
+                    let ink = if is_active {
+                        crate::ui::ui_theme::text()
+                    } else {
+                        crate::ui::ui_theme::text_weak()
+                    };
+                    crate::ui::icons::paint(ui.painter(), icon_rect, AppIcon::Object, ink);
+                    let text = egui::RichText::new(&pane.name)
+                        .strong()
+                        .size(13.0)
+                        .color(ink);
+                    let galley = egui::WidgetText::from(text).into_galley(
+                        ui,
+                        Some(egui::TextWrapMode::Truncate),
+                        (available_title_width - 32.0).max(0.0),
+                        egui::TextStyle::Button,
+                    );
+                    ui.painter().with_clip_rect(title_rect).galley(
+                        pos2(
+                            title_rect.left() + 26.0,
+                            title_rect.center().y - galley.size().y * 0.5,
+                        ),
+                        galley,
+                        ink,
+                    );
+                    let title = title.on_hover_text(format!(
+                        "{}\n{}",
+                        pane.name,
+                        self.ui
+                            .locale
+                            .tr(crate::i18n::message_id!("workspace-middle-close-hint"))
+                    ));
                     crate::ui::accessibility::button(
                         &title,
                         &pane.name,
@@ -66,6 +106,11 @@ impl OccluViewApp {
                             egui::Stroke::new(1.0, crate::ui::ui_theme::accent()),
                             egui::StrokeKind::Inside,
                         );
+                    }
+                    if title.clicked_by(egui::PointerButton::Middle) && !modal_open {
+                        self.workspace
+                            .commands
+                            .push_back(WorkspaceCommand::CloseScene { scene: pane.key });
                     }
                     if title.clicked() && !modal_open && !is_active {
                         self.workspace
@@ -82,7 +127,7 @@ impl OccluViewApp {
                             .locale
                             .tr(crate::i18n::message_id!("workspace-fullscreen"));
                         let (_, response) =
-                            ui.allocate_exact_size(vec2(26.0, 24.0), egui::Sense::click());
+                            ui.allocate_exact_size(vec2(28.0, 26.0), egui::Sense::click());
                         paint_pane_action(
                             ui,
                             &response,
@@ -115,7 +160,7 @@ impl OccluViewApp {
                             .locale
                             .tr(crate::i18n::message_id!("workspace-two-views"));
                         let (_, response) =
-                            ui.allocate_exact_size(vec2(26.0, 24.0), egui::Sense::click());
+                            ui.allocate_exact_size(vec2(28.0, 26.0), egui::Sense::click());
                         paint_pane_action(
                             ui,
                             &response,

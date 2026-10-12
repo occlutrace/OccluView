@@ -244,12 +244,11 @@ impl SculptSession {
         }
 
         diag::bump(|diag| diag.rollback_resets += 1);
-        // Freeze every moving control of a rejecting face. A corner outside
-        // the snapshot is already fixed, so zeroing all selected corners makes
-        // a boundary face exact identity instead of leaving a kink against the
-        // fixed corner. The one-eighth envelope carries that constraint into
-        // the moving footprint while keeping rejection work bounded
-        // independently of brush vertex count.
+        // Shape flow searches for a safe fraction of its simultaneous field.
+        // Immediately freezing every corner of one rejecting face left pinned
+        // islands and strips even when a smaller smoothing step was legal.
+        // Clay retains its material constraint. The bounded taper and final
+        // identity rollback still enforce the same triangle acceptance law.
         for _ in 0..MAX_ROLLBACK_ITERS {
             if unsafe_triangles.is_empty() {
                 break;
@@ -259,7 +258,12 @@ impl SculptSession {
                 self.collect_layer_controls(triangle, &mut controls);
                 for &group in &controls {
                     if self.rollback_factor[group as usize] > 0.0 {
-                        self.rollback_factor[group as usize] = 0.0;
+                        self.rollback_factor[group as usize] =
+                            if matches!(mode, BrushMode::Smooth | BrushMode::Relax) {
+                                self.rollback_factor[group as usize] * 0.5
+                            } else {
+                                0.0
+                            };
                         affected.push(group);
                     }
                 }
