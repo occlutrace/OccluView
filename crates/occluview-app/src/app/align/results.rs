@@ -260,9 +260,7 @@ impl SceneContext<'_> {
             return;
         }
         // Keep the legend in sync with the scale used for colouring.
-        if self.tools.align.settings.auto_scale {
-            self.tools.align.settings.scale_mm = scale_mm;
-        }
+        self.tools.align.settings.scale_mm = scale_mm;
         // Do not paint a map when no valid summary exists.
         let Some(_summary) = stats.summary else {
             self.tools.align.settings.show_deviation = false;

@@ -12,7 +12,7 @@ use crate::{CancelFlag, Rigid, Soup, SurfaceIndex};
 /// The magnitude ramp's zero colour, written out rather than read back from
 /// `MAGNITUDE_RAMP`: a test that reads the table it checks cannot catch a
 /// table that changed.
-const ZERO_RGBA: [u8; 4] = [100, 168, 123, 255];
+const ZERO_RGBA: [u8; 4] = [49, 111, 216, 255];
 /// At or beyond the display scale.
 const HOT_RGBA: [u8; 4] = [222, 77, 57, 255];
 
@@ -309,7 +309,7 @@ fn signed_bands_use_the_same_distance_intervals_on_both_sides_of_zero() {
 }
 
 #[test]
-fn the_magnitude_ramp_is_green_at_nothing_and_hot_at_the_scale() {
+fn the_magnitude_ramp_is_blue_at_nothing_and_hot_at_the_scale() {
     let map = DeviationMap {
         signed_mm: vec![0.0, 0.5, -0.5],
         validity: vec![Validity::Measured; 3],
@@ -322,8 +322,8 @@ fn the_magnitude_ramp_is_green_at_nothing_and_hot_at_the_scale() {
         },
     );
     assert!(
-        colors[0][1] > colors[0][0] && colors[0][1] > colors[0][2],
-        "no deviation must read green"
+        colors[0][2] > colors[0][0] && colors[0][2] > colors[0][1],
+        "no deviation must read blue"
     );
     assert!(colors[1][0] > colors[1][2], "full scale must read hot");
     assert_eq!(
@@ -373,7 +373,7 @@ fn a_display_minimum_keeps_subthreshold_differences_cool_and_the_ceiling_hot() {
 }
 
 #[test]
-fn an_absolute_zero_range_keeps_zero_green_and_marks_any_error_red() {
+fn an_absolute_zero_range_keeps_zero_blue_and_marks_any_error_red() {
     let ramp = RampSettings {
         scale_mm: 0.0,
         tolerance_mm: 0.01,
@@ -392,11 +392,11 @@ fn the_shared_ramp_defaults_to_absolute_deviation() {
 
 /// A ramp that never leaves its first stop looks like a correct one at the
 /// origin, so checking the ends is not enough: this walks the whole scale and
-/// requires the hue to actually pass through green, yellow and orange on its
+/// requires the hue to actually pass through cyan, green and yellow on its
 /// way to red, and requires each 1 % step to move every channel only a little,
 /// so no stop is skipped and no band shows as a hard edge.
 #[test]
-fn the_magnitude_ramp_walks_green_yellow_orange_red_across_the_scale() {
+fn the_magnitude_ramp_walks_blue_cyan_green_yellow_red_across_the_scale() {
     let ramp = RampSettings {
         mode: RampMode::Magnitude,
         ..RampSettings::default()
@@ -407,11 +407,11 @@ fn the_magnitude_ramp_walks_green_yellow_orange_red_across_the_scale() {
     // pure extremes: a ramp built from 0 and 255 loses its shading as soon as
     // the shader multiplies it by any light. This checks the walk, not a
     // particular blue.
-    let (mut green, mut yellow, mut orange, mut red) = (false, false, false, false);
+    let (mut cyan, mut green, mut yellow, mut red) = (false, false, false, false);
     let mut previous = at(0.0);
     assert!(
-        previous[1] > previous[0] && previous[1] > previous[2],
-        "nothing measured must read green, got {previous:?}"
+        previous[2] > 180 && previous[0] < 90,
+        "nothing measured must read blue, got {previous:?}"
     );
     for step in 1..=100 {
         let color = at(f64::from(step) / 100.0);
@@ -426,19 +426,20 @@ fn the_magnitude_ramp_walks_green_yellow_orange_red_across_the_scale() {
             largest_jump <= 8,
             "the ramp jumps {largest_jump} levels at step {step}: {previous:?} then {color:?}"
         );
+        cyan |= color[0] < 90 && color[1] > 160 && color[2] > 160;
         green |= color[1] > 180 && color[0] < 120 && color[2] < 120;
         yellow |= color[0] > 200 && color[1] > 150 && color[2] < 100;
-        orange |= color[0] > 210 && color[1] > 100 && color[1] < 180 && color[2] < 90;
         red |= color[0] > 200 && color[1] < 90 && color[2] < 60;
         previous = color;
     }
+    assert!(cyan, "the ramp never passed through cyan");
     assert!(green, "the ramp never passed through green");
     assert!(yellow, "the ramp never passed through yellow");
-    assert!(orange, "the ramp never passed through orange");
     assert!(red, "the ramp never reached red");
+    let [hot_r, hot_g, hot_b] = MAGNITUDE_RAMP[MAGNITUDE_RAMP.len() - 1].1;
     assert_eq!(
         at(1.0),
-        HOT_RGBA,
+        [hot_r, hot_g, hot_b, 255],
         "the display scale must land on the hot stop exactly"
     );
 }
