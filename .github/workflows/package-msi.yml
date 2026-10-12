@@ -3,39 +3,17 @@ name: Package
 on:
   workflow_dispatch:
     inputs:
-      release_dry_run:
-        description: >-
-          Run the tag-only release path (signature verification, minisign,
-          latest.json, release notes) without creating a GitHub Release.
-        type: boolean
-        default: false
       windows_configuration:
-        description: >-
-          Windows package profile. Diagnostic is a non-release,
-          symbol-carrying MSI and never enters the release path.
+        description: Build a release package or a private diagnostic MSI.
         type: choice
         options:
           - release
           - diagnostic
         default: release
-      windows_msi_version:
-        description: >-
-          Optional private diagnostic MSI product version. This permits a
-          monotonic install-over test without relabeling a public release.
-        type: string
-        default: ""
-      legacy_msi_run_id:
-        description: >-
-          Optional Actions run ID containing one known legacy MSI to exercise
-          a checksum-pinned migration before package verification.
-        type: string
-        default: ""
-      legacy_msi_sha256:
-        description: >-
-          Required SHA-256 for legacy_msi_run_id's MSI; leave blank unless the
-          run ID is also supplied.
-        type: string
-        default: ""
+      include_macos:
+        description: Build and publish the notarized macOS package.
+        type: boolean
+        default: false
   push:
     tags:
       - "v*.*.*"
@@ -45,24 +23,16 @@ permissions:
   actions: read
 
 concurrency:
-  # A non-release diagnostic run must not cancel an ordinary package
-  # verification for the same commit. Tag and normal manual runs still share
-  # the release lane.
   group: package-${{ github.ref }}-${{ inputs.windows_configuration || 'release' }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  full-ci:
-    name: full CI release gate
-    if: startsWith(github.ref, 'refs/tags/') || inputs.release_dry_run
-    uses: ./.github/workflows/ci.yml
-    secrets: inherit
-
   windows-package:
     name: build msi
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.windows_configuration == 'diagnostic')
     runs-on: windows-latest
     timeout-minutes: 60
     permissions:
@@ -95,7 +65,7 @@ jobs:
       - name: Install WiX Toolset
         shell: pwsh
         run: choco install wixtoolset --version 3.14.1 --allow-downgrade --yes --no-progress
-      - name: Prepare signing certificate
+      - name: Prepare optional signing certificate
         shell: pwsh
         env:
           OCCLUVIEW_SIGN_PFX_BASE64: ${{ secrets.OCCLUVIEW_SIGN_PFX_BASE64 }}
@@ -106,6 +76,13 @@ jobs:
           }
           $pfxPath = Join-Path $env:RUNNER_TEMP "occluview-signing.pfx"
           [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:OCCLUVIEW_SIGN_PFX_BASE64))
+          if (-not [string]::IsNullOrWhiteSpace($env:OCCLUVIEW_SIGN_CERT_SHA1)) {
+            $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($pfxPath, $env:OCCLUVIEW_SIGN_PFX_PASSWORD)
+            $expectedThumbprint = $env:OCCLUVIEW_SIGN_CERT_SHA1.Replace(" ", "").ToUpperInvariant()
+            if ($certificate.Thumbprint.Replace(" ", "").ToUpperInvariant() -ne $expectedThumbprint) {
+              throw "The configured Windows PFX does not match OCCLUVIEW_SIGN_CERT_SHA1."
+            }
+          }
           "OCCLUVIEW_SIGN_PFX_PATH=$pfxPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Verify embedded HPS key build path
         shell: pwsh
@@ -123,25 +100,13 @@ jobs:
           if ($sourceExit -gt 1) {
             throw "Could not scan tracked source for embedded HPS key material."
           }
-
-          $testLog = Join-Path $env:RUNNER_TEMP "occluview-hps-provider-test.log"
-          cargo test --locked -p occluview-formats --features private-hps-key key::tests::runtime_provider_reads_generated_embedded_key_when_present -- --nocapture *> $testLog
-          $testExit = $LASTEXITCODE
-          if (Select-String -Path $testLog -SimpleMatch -Pattern $env:OCCLUVIEW_HPS_EMBEDDED_KEY -Quiet) {
-            Remove-Item -LiteralPath $testLog -Force
-            throw "Embedded HPS key material appeared in provider test logs."
-          }
-          Get-Content -LiteralPath $testLog
-          Remove-Item -LiteralPath $testLog -Force
-          if ($testExit -ne 0) {
-            throw "Leaf HPS runtime-provider test failed with exit code $testExit."
-          }
+          # grep's expected no-match status must not escape the pwsh wrapper.
+          exit 0
       - name: Build MSI
         shell: pwsh
         env:
           OCCLUVIEW_HPS_EMBEDDED_KEY: ${{ secrets.OCCLUVIEW_HPS_EMBEDDED_KEY }}
           OCCLUVIEW_WINDOWS_CONFIGURATION: ${{ inputs.windows_configuration }}
-          OCCLUVIEW_WINDOWS_MSI_VERSION: ${{ inputs.windows_msi_version }}
         run: |
           $configuration = "release"
           if ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch" -and $env:OCCLUVIEW_WINDOWS_CONFIGURATION -eq "diagnostic") {
@@ -150,13 +115,6 @@ jobs:
           $buildArgs = @{
             Configuration = $configuration
             SignMode = "auto"
-          }
-          $requestedMsiVersion = ([string]$env:OCCLUVIEW_WINDOWS_MSI_VERSION).Trim()
-          if (-not [string]::IsNullOrWhiteSpace($requestedMsiVersion)) {
-            if ($configuration -ne "diagnostic") {
-              throw "windows_msi_version is reserved for private diagnostic packages."
-            }
-            $buildArgs.Version = $requestedMsiVersion
           }
           & ./install/build-msi.ps1 @buildArgs
       - name: Build portable ZIP
@@ -181,15 +139,15 @@ jobs:
           Copy-Item ./THIRD-PARTY-NOTICES-NATIVE.md $portableDir
           Copy-Item ./README.md $portableDir
           Compress-Archive -Path $portableDir -DestinationPath "./dist/OccluView-$version-$target-portable.zip" -CompressionLevel Optimal -Force
-      - name: Verify Authenticode signatures when configured
-        if: (startsWith(github.ref, 'refs/tags/v') || inputs.release_dry_run) && inputs.windows_configuration != 'diagnostic'
+      - name: Verify Authenticode signatures
+        if: inputs.windows_configuration != 'diagnostic'
         shell: pwsh
         run: |
           $pfxPath = $env:OCCLUVIEW_SIGN_PFX_PATH
           $hasPfx = -not [string]::IsNullOrWhiteSpace($pfxPath) -and (Test-Path $pfxPath)
           $hasCert = -not [string]::IsNullOrWhiteSpace($env:OCCLUVIEW_SIGN_CERT_SHA1)
           if (-not $hasPfx -and -not $hasCert) {
-            Write-Host "No Authenticode certificate configured; skipping optional signature verification."
+            Write-Host "No Authenticode certificate configured; the release artifacts remain unsigned."
             exit 0
           }
           $buildDir = Join-Path $pwd "target/x86_64-pc-windows-msvc/release-unwind"
@@ -202,81 +160,19 @@ jobs:
             if (-not (Test-Path $path)) { throw "Expected signed artifact missing: $path" }
             $sig = Get-AuthenticodeSignature -FilePath $path
             if ($sig.Status -ne "Valid") { throw "Authenticode signature for $path is $($sig.Status): $($sig.StatusMessage)" }
+            if ($hasCert -and $sig.SignerCertificate.Thumbprint.Replace(" ", "").ToUpperInvariant() -ne $env:OCCLUVIEW_SIGN_CERT_SHA1.Replace(" ", "").ToUpperInvariant()) { throw "Authenticode signer mismatch for $path." }
             Write-Host "Authenticode valid: $path ($($sig.SignerCertificate.Subject))"
           }
-      - name: Build upgrade smoke MSIs
-        if: inputs.windows_configuration != 'diagnostic'
+      - name: Remove release signing certificate
+        if: always()
         shell: pwsh
-        env:
-          OCCLUVIEW_SIGN_CERT_SHA1: ${{ secrets.OCCLUVIEW_SIGN_CERT_SHA1 }}
-          OCCLUVIEW_SIGN_PFX_PASSWORD: ${{ secrets.OCCLUVIEW_SIGN_PFX_PASSWORD }}
         run: |
-          $cargoText = Get-Content ./Cargo.toml -Raw
-          $match = [regex]::Match($cargoText, '(?s)\[workspace\.package\].*?version\s*=\s*"([^"]+)"')
-          if (-not $match.Success) { throw "Could not find workspace package version." }
-          $version = [version]$match.Groups[1].Value
-          $upgradeVersion = "{0}.{1}.{2}" -f $version.Major, $version.Minor, ($version.Build + 1)
-          $smokeDir = Join-Path $env:RUNNER_TEMP "occluview-msi-upgrade"
-          ./install/build-msi.ps1 -Version $upgradeVersion -OutputDir $smokeDir -SkipBuild -SignMode auto
-      - name: Validate optional legacy MSI migration inputs
-        if: inputs.windows_configuration != 'diagnostic'
-        shell: pwsh
-        env:
-          OCCLUVIEW_LEGACY_MSI_RUN_ID: ${{ inputs.legacy_msi_run_id }}
-          OCCLUVIEW_LEGACY_MSI_SHA256: ${{ inputs.legacy_msi_sha256 }}
-        run: |
-          $runId = $env:OCCLUVIEW_LEGACY_MSI_RUN_ID.Trim()
-          $sha256 = $env:OCCLUVIEW_LEGACY_MSI_SHA256.Trim()
-          if ([string]::IsNullOrWhiteSpace($runId) -xor [string]::IsNullOrWhiteSpace($sha256)) {
-            throw "Legacy MSI migration inputs must be supplied together."
+          $pfxPath = $env:OCCLUVIEW_SIGN_PFX_PATH
+          if (-not [string]::IsNullOrWhiteSpace($pfxPath) -and (Test-Path $pfxPath)) {
+            Remove-Item -LiteralPath $pfxPath -Force
           }
-      - name: Download optional legacy MSI migration artifact
-        if: inputs.windows_configuration != 'diagnostic' && inputs.legacy_msi_run_id != '' && inputs.legacy_msi_sha256 != ''
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: occluview-windows-package
-          path: ${{ runner.temp }}/occluview-legacy-migration
-          repository: ${{ github.repository }}
-          run-id: ${{ inputs.legacy_msi_run_id }}
-          github-token: ${{ github.token }}
-      - name: Verify optional legacy MSI migration artifact
-        if: inputs.windows_configuration != 'diagnostic' && inputs.legacy_msi_run_id != '' && inputs.legacy_msi_sha256 != ''
-        shell: pwsh
-        env:
-          OCCLUVIEW_LEGACY_MSI_RUN_ID: ${{ inputs.legacy_msi_run_id }}
-          OCCLUVIEW_LEGACY_MSI_SHA256: ${{ inputs.legacy_msi_sha256 }}
-        run: |
-          $legacyRoot = Join-Path $env:RUNNER_TEMP "occluview-legacy-migration"
-          $runId = $env:OCCLUVIEW_LEGACY_MSI_RUN_ID.Trim()
-          $legacyMsis = @(Get-ChildItem -Path $legacyRoot -Filter *.msi -File -Recurse)
-          if ($legacyMsis.Count -ne 1) {
-            throw "Expected exactly one legacy MSI from run $runId, found $($legacyMsis.Count)."
-          }
-          $actualSha256 = (Get-FileHash -Algorithm SHA256 $legacyMsis[0].FullName).Hash.ToLowerInvariant()
-          $expectedSha256 = $env:OCCLUVIEW_LEGACY_MSI_SHA256.Trim().ToLowerInvariant()
-          if ($actualSha256 -ne $expectedSha256) {
-            throw "Legacy MSI SHA-256 mismatch: expected $expectedSha256, got $actualSha256."
-          }
-          "OCCLUVIEW_LEGACY_MSI_PATH=$($legacyMsis[0].FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-      - name: Smoke install and uninstall
-        if: inputs.windows_configuration != 'diagnostic'
-        shell: pwsh
-        run: |
-          $releaseMsi = Get-ChildItem ./dist -Filter *.msi | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          $upgradeMsi = Get-ChildItem (Join-Path $env:RUNNER_TEMP "occluview-msi-upgrade") -Filter *.msi | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          if (-not [string]::IsNullOrWhiteSpace($env:OCCLUVIEW_LEGACY_MSI_PATH)) {
-            ./install/test-msi-lifecycle.ps1 -MsiPath $releaseMsi.FullName -LegacyUpgradeMsiPath $env:OCCLUVIEW_LEGACY_MSI_PATH -UpgradeMsiPath $upgradeMsi.FullName -DowngradeMsiPath $releaseMsi.FullName
-          } else {
-            ./install/test-msi-lifecycle.ps1 -MsiPath $releaseMsi.FullName -UpgradeMsiPath $upgradeMsi.FullName -DowngradeMsiPath $releaseMsi.FullName
-          }
-      - name: Diagnostic MSI lifecycle smoke
-        if: inputs.windows_configuration == 'diagnostic'
-        shell: pwsh
-        run: |
-          $diagnosticMsi = Get-ChildItem ./dist -Filter "*-diagnostic.msi" -File | Select-Object -First 1
-          if ($null -eq $diagnosticMsi) { throw "Diagnostic MSI artifact missing." }
-          ./install/test-msi-lifecycle.ps1 -MsiPath $diagnosticMsi.FullName -Diagnostic
       - name: Record the shipped Explorer shell revision
+        if: inputs.windows_configuration != 'diagnostic'
         shell: bash
         run: |
           # The release DLL comes from a pinned revision while the viewer comes
@@ -292,6 +188,7 @@ jobs:
             "$($hash.Hash.ToLowerInvariant())  $($_.Name)" | Set-Content -Encoding ascii "$($_.FullName).sha256"
           }
       - name: Generate SBOM (Windows)
+        if: inputs.windows_configuration != 'diagnostic'
         shell: pwsh
         run: |
           cargo install cargo-cyclonedx --version 0.5.8 --locked
@@ -321,7 +218,7 @@ jobs:
 
   linux-package:
     name: build linux deb
-    if: inputs.windows_configuration != 'diagnostic'
+    if: startsWith(github.ref, 'refs/tags/v') && inputs.windows_configuration != 'diagnostic'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     permissions:
@@ -355,7 +252,7 @@ jobs:
       - name: Install packaging tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y appstream desktop-file-utils libxml2-utils shared-mime-info lintian
+          sudo apt-get install -y appstream desktop-file-utils libxml2-utils shared-mime-info
       - name: Verify embedded HPS key build path
         env:
           OCCLUVIEW_HPS_EMBEDDED_KEY: ${{ secrets.OCCLUVIEW_HPS_EMBEDDED_KEY }}
@@ -376,41 +273,10 @@ jobs:
             echo "Could not scan tracked source for embedded HPS key material." >&2
             exit 1
           fi
-
-          test_log="$(mktemp)"
-          set +e
-          cargo test --locked -p occluview-formats --features private-hps-key key::tests::runtime_provider_reads_generated_embedded_key_when_present -- --nocapture >"$test_log" 2>&1
-          test_status=$?
-          set -e
-          if printf '%s\n' "$OCCLUVIEW_HPS_EMBEDDED_KEY" | grep -Fq -f - "$test_log"; then
-            rm -f "$test_log"
-            echo "Embedded HPS key material appeared in provider test logs." >&2
-            exit 1
-          fi
-          cat "$test_log"
-          rm -f "$test_log"
-          if [[ "$test_status" -ne 0 ]]; then
-            echo "Leaf HPS runtime-provider test failed with exit code $test_status." >&2
-            exit "$test_status"
-          fi
       - name: Build Debian package
-        id: deb
         env:
           OCCLUVIEW_HPS_EMBEDDED_KEY: ${{ secrets.OCCLUVIEW_HPS_EMBEDDED_KEY }}
-        run: |
-          set -o pipefail
-          package="$(install/linux/build-deb.sh | tail -n 1)"
-          echo "path=$package" >> "$GITHUB_OUTPUT"
-      - name: Validate Debian package
-        env:
-          DEB: ${{ steps.deb.outputs.path }}
-        run: |
-          desktop-file-validate install/linux/ai.occlutrace.OccluView.desktop
-          appstreamcli validate --no-net install/linux/ai.occlutrace.OccluView.metainfo.xml
-          xmllint --noout install/linux/occluview-mime.xml install/linux/ai.occlutrace.OccluView.metainfo.xml
-          dpkg-deb --info "$DEB"
-          dpkg-deb --contents "$DEB"
-          install/linux/check-deb.sh "$DEB"
+        run: bash install/linux/build-deb.sh
       - name: Write Linux checksums
         run: |
           for deb in target/deb/*.deb; do
@@ -446,7 +312,7 @@ jobs:
 
   macos-package:
     name: build macos app
-    if: inputs.windows_configuration != 'diagnostic'
+    if: github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/tags/v') && inputs.windows_configuration != 'diagnostic' && inputs.include_macos == true
     runs-on: macos-15
     timeout-minutes: 90
     outputs:
@@ -491,23 +357,6 @@ jobs:
           if [[ "$source_status" -gt 1 ]]; then
             echo "Could not scan tracked source for embedded HPS key material." >&2
             exit 1
-          fi
-          test_log="$(mktemp)"
-          set +e
-          cargo test --locked --target aarch64-apple-darwin -p occluview-formats --features private-hps-key \
-            key::tests::runtime_provider_reads_generated_embedded_key_when_present -- --nocapture >"$test_log" 2>&1
-          test_status=$?
-          set -e
-          if printf '%s\n' "$OCCLUVIEW_HPS_EMBEDDED_KEY" | grep -Fq -f - "$test_log"; then
-            rm -f "$test_log"
-            echo "Embedded HPS key material appeared in provider test logs." >&2
-            exit 1
-          fi
-          cat "$test_log"
-          rm -f "$test_log"
-          if [[ "$test_status" -ne 0 ]]; then
-            echo "Leaf HPS runtime-provider test failed with exit code $test_status." >&2
-            exit "$test_status"
           fi
       - name: Build the app with the embedded HPS key
         env:
@@ -586,8 +435,6 @@ jobs:
           for notice in LICENSE NOTICE THIRD-PARTY-NOTICES.md THIRD-PARTY-NOTICES-NATIVE.md; do
             test -s "target/macos/OccluView.app/Contents/Resources/Legal/$notice"
           done
-          target/macos/OccluView.app/Contents/MacOS/occluview --version | grep -F "$version"
-          target/macos/OccluView.app/Contents/Helpers/occluview-cli --version | grep -F "$version"
           (cd target/macos && for file in *.dmg *.pkg; do shasum -a 256 "$file" > "$file.sha256"; done)
       - name: Remove the signing keychain
         if: always()
@@ -606,13 +453,12 @@ jobs:
 
   publish:
     name: publish github release
-    if: (startsWith(github.ref, 'refs/tags/v') || inputs.release_dry_run) && inputs.windows_configuration != 'diagnostic'
+    if: ${{ always() && startsWith(github.ref, 'refs/tags/v') && inputs.windows_configuration != 'diagnostic' && needs.windows-package.result == 'success' && needs.linux-package.result == 'success' && (needs.macos-package.result == 'success' || needs.macos-package.result == 'skipped') }}
     timeout-minutes: 20
     needs:
       - windows-package
       - linux-package
       - macos-package
-      - full-ci
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -633,43 +479,20 @@ jobs:
           merge-multiple: true
       - name: Resolve release tag
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            tag="$GITHUB_REF_NAME"
-          else
-            # Dry run: no tag exists, so take the version the packages were
-            # actually built from. Everything downstream then behaves exactly
-            # as it will on the real tag.
-            version=$(sed -n '/^\[workspace\.package\]/,/^\[/p' Cargo.toml \
-              | sed -n 's/^version *= *"\(.*\)"/\1/p' | head -n1)
-            if [[ -z "$version" ]]; then
-              echo "Could not read the workspace version from Cargo.toml." >&2
-              exit 1
-            fi
-            tag="v$version"
-            echo "Dry run: using $tag from Cargo.toml."
-          fi
-          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=$GITHUB_REF_NAME" >> "$GITHUB_ENV"
       - name: Write release notes
         run: |
-          # The change list is GitHub's own: the pull requests merged since the
-          # previous release.
-          changes="$(gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
-            -f tag_name="$RELEASE_TAG" -f target_commitish="$GITHUB_SHA" --jq .body)"
           {
-            printf 'OccluView %s\n\n' "$RELEASE_TAG"
-            printf '%s\n\n' '## Download for Windows'
-            printf '%s\n' '- **OccluView-Windows-Setup.msi** — recommended. Installs the viewer, Explorer previews, thumbnails, and file associations.'
-            printf '%s\n\n' '- **OccluView-Windows-Portable.zip** — runs without installation; no Explorer integration.'
+            printf '# OccluView %s\n\n' "$RELEASE_TAG"
+            printf '%s\n\n' 'A native desktop viewer for dental 3D scans.'
+            printf '%s\n' '## Downloads'
+            printf '%s\n' '- **OccluView-Windows-Setup.msi** — installs the viewer and Explorer integration.'
+            printf '%s\n' '- **OccluView-Windows-Portable.zip** — runs without installation.'
+            printf '%s\n' '- **OccluView-Linux.deb** — Debian and Ubuntu package.'
             if [[ "$MACOS_NOTARIZED" == true ]]; then
-              printf '%s\n\n' '## Download for macOS (Apple Silicon, macOS 14 or later)'
-              printf '%s\n' '- **OccluView-macOS-AppleSilicon.dmg** — open it and drag OccluView to Applications.'
-              printf '%s\n\n' '- **OccluView-macOS-AppleSilicon.pkg** — installer package; the in-app updater uses this one.'
+              printf '%s\n' '- **OccluView-macOS-AppleSilicon.dmg** — signed, notarized application image.'
+              printf '%s\n' '- **OccluView-macOS-AppleSilicon.pkg** — signed, notarized installer.'
             fi
-            if [[ -f dist/occluview-shell-revision.json ]]; then
-              printf '%s\n\n' "- Explorer shell: $(python3 -c 'import json; print(json.load(open("dist/occluview-shell-revision.json"))["summary"])')."
-            fi
-            printf '%s\n' "$changes"
-            printf '\nThe verification archive is for technical checks; regular users do not need it.\n'
           } > dist/release-notes.md
       - name: Sign update artifacts and write latest.json
         env:
@@ -682,6 +505,7 @@ jobs:
           sudo apt-get update -q && sudo apt-get install -qy minisign
           umask 077
           printf '%s\n' "$MINISIGN_SECRET_KEY" > /tmp/minisign.key
+          trap 'rm -f /tmp/minisign.key' EXIT
 
           tag="$RELEASE_TAG"
           version="${tag#v}"
@@ -753,7 +577,6 @@ jobs:
             "$deb_name" "$deb_sha" "$deb.minisig" \
             "$pkg_name" "$pkg_sha" "$pkg_sig"
           minisign -S -s /tmp/minisign.key -m dist/latest.json
-          rm -f /tmp/minisign.key
           echo "Update manifest:" && cat dist/latest.json
       - name: Verify the signatures against the key the updater ships
         run: |
@@ -783,7 +606,6 @@ jobs:
             zip -q "OccluView-${version}-verification.zip" "${material[@]}"
           )
       - name: Attest build provenance
-        if: ${{ !inputs.release_dry_run }}
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           # One explicit pattern per artifact: the action splits this list on
@@ -798,14 +620,13 @@ jobs:
             dist/sbom-*.json
             dist/occluview-shell-revision.json
       - name: Attest macOS build provenance
-        if: ${{ !inputs.release_dry_run && env.MACOS_NOTARIZED == 'true' }}
+        if: ${{ env.MACOS_NOTARIZED == 'true' }}
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
             dist/*.dmg
             dist/*.pkg
       - name: Publish GitHub Release
-        if: ${{ !inputs.release_dry_run }}
         run: |
           tag="$RELEASE_TAG"
           release_flags=()

@@ -1,7 +1,7 @@
 {
-  "revision": "659725632dffcdf14d62724743f35f1689602bbc",
-  "tag": "v1.1.0",
-  "why": "Explorer loads the shell extension in its own process, so a defect there costs the operator their file browser rather than one viewer window. The release DLL therefore stays on the last revision verified in Explorer while the viewer moves on.",
+  "revision": "1600c040a2f739d738149fae78e70df55be2d957",
+  "tag": "",
+  "why": "Explorer thumbnails, interactive preview, file association and MSI uninstall were exercised on the Windows 11 VM on 2026-10-12. Keep this reviewed shell revision while application-only changes continue.",
   "shell_crates": [
     "occluview-shell",
     "occluview-thumbnail",

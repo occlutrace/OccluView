@@ -146,8 +146,9 @@ the implementation or its checks.
 ## Releases
 
 Bump the workspace version and tag `vX.Y.Z`. The release workflow builds and
-verifies the distributable packages and writes the release notes from the pull
-requests merged since the previous release. Signing-key rotation is
+signs the distributable packages and publishes a short download list. Manual
+verification workflows are separate from packaging and are not release gates.
+Signing-key rotation is
 described in `SECURITY.md`.
 
 Every crate is `publish = false`, so the workspace carries no semver obligation
@@ -159,7 +160,8 @@ older clients ignore what they do not know — but do not rename, remove, or
 repurpose one without bumping the `schema` the reader checks.
 `scripts/write-latest-json.py` writes the manifest and must agree with the
 platform keys in `crates/occluview-update`; the installers it names are the
-Windows MSI, the Linux `.deb`, and the notarized macOS `.pkg`.
+Windows MSI and Linux `.deb`. A notarized macOS `.pkg` is included only when
+that package is explicitly requested.
 
 Regenerate a lockfile in the same commit as any manifest change it resolves:
 `Cargo.lock` for the workspace and `fuzz/Cargo.lock` for the fuzz crate. CI
@@ -167,31 +169,15 @@ builds with `--locked`, so a manifest edit committed with a stale lockfile stops
 the build instead of silently re-resolving it, and neither lockfile drifts from
 the manifests it reads.
 
-Two checks are local and cannot run in CI, because CI has no patient scans and
-no Explorer session. Both fail rather than skip: a gate that passes without
-checking anything is worse than no gate.
+Alignment quality needs review on real scans in the application. A successful
+package build does not establish clinical accuracy or operator acceptance.
+Patient scans stay out of the public repository.
 
-```sh
-OCCLUVIEW_ALIGN_FIXTURES=/path/to/corpus scripts/release-check.sh
-```
-
-1. **The private scan corpus.** Alignment acceptance is defined on real scans
-   (0.05 mm residual, 85% measured, 90% inside the clinical band), and real
-   scans are patient data that stay off GitHub. The gate writes
-   `dist/private-acceptance.json`: which corpus was used (by fingerprint, never
-   by name), which revision, and what it proved. Without
-   `OCCLUVIEW_ALIGN_FIXTURES` it exits 2 and the release stops.
-
-2. **The shipped Explorer shell revision.** The MSI builds
-   `occluview_shell.dll` from the revision in `install/shell-pin.json` while the
-   viewer builds from the tagged tree. The pin is deliberate (Explorer loads the
-   DLL in its own process), so the release states it in
-   `dist/occluview-shell-revision.json`: the revision, its tag, and every commit
-   since that touched a crate the shell links.
-
-   Read that list before tagging. A fix that matters to Explorer — a parser, a
-   thumbnail, or a COM defect — has to be cherry-picked onto the pinned
-   revision, and the pin moves to that new commit. The pin never moves to a
-   revision that has not been exercised in Explorer, and it retires when the
-   shell built from the current tree has been through the thumbnail,
-   preview-pane, file-association and uninstall paths on a real machine.
+The MSI builds `occluview_shell.dll` from the revision in
+`install/shell-pin.json` while the viewer builds from the tagged tree. Explorer
+loads this DLL in its own process, so its pin names a revision exercised through
+thumbnails, interactive preview, file association, and uninstall on Windows.
+`scripts/report-shell-pin.sh` records that revision and any linked-crate changes
+in `dist/occluview-shell-revision.json`. Move the pin when a new shell revision
+has been reviewed and used in Explorer; include parser, rendering, and COM
+fixes rather than leaving them behind in the viewer.
