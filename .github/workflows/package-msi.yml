@@ -10,6 +10,10 @@ on:
           - release
           - diagnostic
         default: release
+      release_tag:
+        description: Existing release tag to rebuild after packaging-only changes.
+        type: string
+        default: ""
       include_macos:
         description: Build and publish the notarized macOS package.
         type: boolean
@@ -30,9 +34,55 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  resolve-release:
+    name: resolve release tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: release
+        name: Resolve package version
+        env:
+          REQUESTED_TAG: ${{ inputs.release_tag }}
+          CONFIGURATION: ${{ inputs.windows_configuration }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$CONFIGURATION" == diagnostic ]]; then
+            exit 0
+          fi
+          tag="$GITHUB_REF_NAME"
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            tag="$REQUESTED_TAG"
+          fi
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo 'Select an existing vX.Y.Z release tag.' >&2
+            exit 1
+          fi
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
+          if [[ "$tag" != "v$version" ]]; then
+            echo 'The release tag does not match the workspace version.' >&2
+            exit 1
+          fi
+          git rev-parse --verify "refs/tags/$tag^{commit}" >/dev/null
+          git merge-base --is-ancestor "refs/tags/$tag^{commit}" HEAD
+          # An existing tag is immutable. A rebuild can repair packaging while
+          # retaining exactly the native source originally tagged for release.
+          while IFS= read -r path; do
+            case "$path" in
+              install/build-msi.ps1|.github/workflows/package-msi.yml) ;;
+              *) echo "Native release source differs from $tag: $path" >&2; exit 1 ;;
+            esac
+          done < <(git diff --name-only "refs/tags/$tag^{commit}" HEAD)
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
   windows-package:
     name: build msi
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.windows_configuration == 'diagnostic')
+    needs: resolve-release
+    if: needs.resolve-release.outputs.tag != '' || (github.event_name == 'workflow_dispatch' && inputs.windows_configuration == 'diagnostic')
     runs-on: windows-latest
     timeout-minutes: 60
     permissions:
@@ -51,17 +101,6 @@ jobs:
         with:
           toolchain: "1.98.0"
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-      - name: Check release tag
-        if: startsWith(github.ref, 'refs/tags/')
-        shell: pwsh
-        run: |
-          $cargoText = Get-Content ./Cargo.toml -Raw
-          $match = [regex]::Match($cargoText, '(?s)\[workspace\.package\].*?version\s*=\s*"([^"]+)"')
-          if (-not $match.Success) { throw "Could not find workspace package version." }
-          $expectedTag = "v$($match.Groups[1].Value)"
-          if ($env:GITHUB_REF_NAME -ne $expectedTag) {
-            throw "Release tag '$env:GITHUB_REF_NAME' does not match Cargo version '$expectedTag'."
-          }
       - name: Install WiX Toolset
         shell: pwsh
         run: choco install wixtoolset --version 3.14.1 --allow-downgrade --yes --no-progress
@@ -218,7 +257,8 @@ jobs:
 
   linux-package:
     name: build linux deb
-    if: startsWith(github.ref, 'refs/tags/v') && inputs.windows_configuration != 'diagnostic'
+    needs: resolve-release
+    if: needs.resolve-release.outputs.tag != '' && inputs.windows_configuration != 'diagnostic'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     permissions:
@@ -231,24 +271,6 @@ jobs:
         with:
           toolchain: "1.98.0"
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-      - name: Check release tag
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          version="$(awk '
-            $0 == "[workspace.package]" { in_section = 1; next }
-            /^\[/ && in_section { exit }
-            in_section && $1 == "version" {
-              gsub(/"/, "", $3)
-              print $3
-              exit
-            }
-          ' Cargo.toml)"
-          test -n "$version"
-          expected_tag="v$version"
-          if [[ "$GITHUB_REF_NAME" != "$expected_tag" ]]; then
-            echo "Release tag '$GITHUB_REF_NAME' does not match Cargo version '$expected_tag'." >&2
-            exit 1
-          fi
       - name: Install packaging tools
         run: |
           sudo apt-get update
@@ -312,7 +334,8 @@ jobs:
 
   macos-package:
     name: build macos app
-    if: github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/tags/v') && inputs.windows_configuration != 'diagnostic' && inputs.include_macos == true
+    needs: resolve-release
+    if: github.event_name == 'workflow_dispatch' && needs.resolve-release.outputs.tag != '' && inputs.windows_configuration != 'diagnostic' && inputs.include_macos == true
     runs-on: macos-15
     timeout-minutes: 90
     outputs:
@@ -328,16 +351,6 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: Require a native Apple Silicon runner
         run: test "$(uname -m)" = "arm64"
-      - name: Check release tag
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          version="$(sed -n '/^\[workspace\.package\]/,/^\[/p' Cargo.toml \
-            | sed -n 's/^version *= *"\(.*\)"/\1/p' | head -n1)"
-          test -n "$version"
-          if [[ "$GITHUB_REF_NAME" != "v$version" ]]; then
-            echo "Release tag '$GITHUB_REF_NAME' does not match Cargo version 'v$version'." >&2
-            exit 1
-          fi
       - name: Verify embedded HPS key build path
         env:
           OCCLUVIEW_HPS_EMBEDDED_KEY: ${{ secrets.OCCLUVIEW_HPS_EMBEDDED_KEY }}
@@ -453,9 +466,10 @@ jobs:
 
   publish:
     name: publish github release
-    if: ${{ always() && startsWith(github.ref, 'refs/tags/v') && inputs.windows_configuration != 'diagnostic' && needs.windows-package.result == 'success' && needs.linux-package.result == 'success' && (needs.macos-package.result == 'success' || needs.macos-package.result == 'skipped') }}
+    if: ${{ always() && needs.resolve-release.result == 'success' && needs.resolve-release.outputs.tag != '' && inputs.windows_configuration != 'diagnostic' && needs.windows-package.result == 'success' && needs.linux-package.result == 'success' && (needs.macos-package.result == 'success' || needs.macos-package.result == 'skipped') }}
     timeout-minutes: 20
     needs:
+      - resolve-release
       - windows-package
       - linux-package
       - macos-package
@@ -465,6 +479,7 @@ jobs:
       id-token: write
       attestations: write
     env:
+      RELEASE_TAG: ${{ needs.resolve-release.outputs.tag }}
       GH_TOKEN: ${{ github.token }}
       # Only a signed, notarized macOS build is published or offered to the
       # updater; an unsigned one is a workflow artifact for testing.
@@ -477,9 +492,6 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - name: Resolve release tag
-        run: |
-          echo "RELEASE_TAG=$GITHUB_REF_NAME" >> "$GITHUB_ENV"
       - name: Write release notes
         run: |
           {

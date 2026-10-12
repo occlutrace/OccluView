@@ -69,38 +69,39 @@ function Set-ReferenceShellPackageVersion {
     $referenceCargoToml = Join-Path $ReferenceRoot "Cargo.toml"
     $referenceCargoLock = Join-Path $ReferenceRoot "Cargo.lock"
     $toml = [IO.File]::ReadAllText($referenceCargoToml)
-    $workspaceVersionPattern = '(?ms)(\[workspace\.package\][^\[]*?^version\s*=\s*")[^"]+(")'
-    $updatedToml = [regex]::Replace($toml, $workspaceVersionPattern, "`${1}$PackageVersion`${2}", 1)
-    if (-not [regex]::IsMatch($toml, $workspaceVersionPattern)) {
+    $workspaceVersionPattern = '(?ms)(\[workspace\.package\][^\[]*?^version\s*=\s*")([^"]+)(")'
+    $versionMatch = [regex]::Match($toml, $workspaceVersionPattern)
+    if (-not $versionMatch.Success) {
         throw "Could not read the reference shell package version in $referenceCargoToml"
     }
-    if ($updatedToml -ne $toml) {
-        [IO.File]::WriteAllText($referenceCargoToml, $updatedToml, [Text.UTF8Encoding]::new($false))
+    $referenceVersion = $versionMatch.Groups[2].Value
+    if ($referenceVersion -eq $PackageVersion) {
+        return
     }
 
-    $lock = [IO.File]::ReadAllText($referenceCargoLock)
-    # The names below belong to the PINNED tree's Cargo.lock and must not follow a workspace rename.
-    foreach ($package in @(
-        "occlu-mesh-edit",
-        "occluview-align",
-        "occluview-app",
-        "occluview-cli",
-        "occluview-core",
-        "occluview-formats",
-        "occluview-hps",
-        "occluview-render",
-        "occluview-robust-csg",
-        "occluview-shell",
-        "occluview-thumbnail",
-        "occluview-update"
-    )) {
-        $packagePattern = "(?ms)(\[\[package\]\]\r?\nname = `"$package`"\r?\nversion = `")[^`"]+(`")"
-        $packageEntries = [regex]::Matches($lock, $packagePattern)
-        if ($packageEntries.Count -ne 1) {
-            throw "Expected exactly one Cargo.lock package entry for $package in the reference shell worktree."
-        }
-        $lock = [regex]::Replace($lock, $packagePattern, "`${1}$PackageVersion`${2}", 1)
+    # Read the pinned workspace before changing its version. Crate names and
+    # membership come from that tree, rather than an obsolete release's list.
+    $metadataText = (& cargo metadata --no-deps --format-version 1 --locked --manifest-path $referenceCargoToml) -join "`n"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not read the reference shell workspace metadata."
     }
+    $metadata = $metadataText | ConvertFrom-Json
+    $workspacePackages = @($metadata.packages | Where-Object { $metadata.workspace_members -contains $_.id })
+    $lock = [IO.File]::ReadAllText($referenceCargoLock)
+    foreach ($package in $workspacePackages) {
+        $manifest = [IO.File]::ReadAllText($package.manifest_path)
+        if (-not [regex]::IsMatch($manifest, '(?m)^version\.workspace\s*=\s*true\s*(?:#.*)?$')) {
+            continue
+        }
+        $name = [regex]::Escape($package.name)
+        $packagePattern = "(?ms)(\[\[package\]\]\r?\nname = `"$name`"\r?\nversion = `")[^`"]+(`")"
+        if ([regex]::Matches($lock, $packagePattern).Count -ne 1) {
+            throw "Expected exactly one Cargo.lock package entry for $($package.name) in the reference shell worktree."
+        }
+        $lock = [regex]::Replace($lock, $packagePattern, "`${1}$PackageVersion`${2}")
+    }
+    $updatedToml = [regex]::Replace($toml, $workspaceVersionPattern, "`${1}$PackageVersion`${3}")
+    [IO.File]::WriteAllText($referenceCargoToml, $updatedToml, [Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText($referenceCargoLock, $lock, [Text.UTF8Encoding]::new($false))
 }
 
