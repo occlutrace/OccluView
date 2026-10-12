@@ -14,7 +14,6 @@ use std::thread::{self, JoinHandle};
 
 use eframe::egui;
 use glam::DVec3;
-use occluview_align::suggested_scale_mm;
 use occluview_align::{
     deviation, deviation_stats, display_map_cancellable, fit_pairs, observability, ramp_color,
     CancelFlag, DeviationMap, DeviationSettings, DeviationStats, FitBounds, FitRejection,
@@ -23,13 +22,9 @@ use occluview_align::{
 };
 use rayon::prelude::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
-/// Manual display maximum, in millimetres. This preserves a precise 0.1 mm
-/// range when the operator turns automatic scaling off.
+/// Maximum displayed deviation is 0.1 mm (100 micrometres).
+/// Distances at or above the selected maximum saturate at red.
 pub(crate) const WORKING_MAX_MM: f64 = 0.10;
-/// Upper bound for the automatic range. The selected search radius may lower
-/// this further, so distant unmatched surfaces do not flatten the measured
-/// region into one end colour.
-pub(crate) const AUTO_SCALE_MAX_MM: f64 = 10.0;
 /// Initial cool end of the displayed heatmap range. Zero, so the map starts at
 /// "no measurable gap" instead of hiding everything below 50 um.
 pub(crate) const WORKING_MIN_DISPLAY_MM: f64 = 0.0;
@@ -55,8 +50,6 @@ pub(crate) struct AlignSettings {
     pub(crate) bands: Option<u32>,
     /// Which colour scheme the map paints with.
     pub(crate) ramp_mode: RampMode,
-    /// Whether the display scale follows the measurement.
-    pub(crate) auto_scale: bool,
     /// Whether the map is on screen.
     pub(crate) show_deviation: bool,
 }
@@ -67,7 +60,7 @@ impl Default for AlignSettings {
             // Allow a roughly placed mesh to find the other surface.
             influence_radius_mm: 2.0,
             orientation: Orientation::Match,
-            // Before the first measurement, show a useful fallback range.
+            // Use a fixed zero-to-100-micrometre range.
             scale_mm: WORKING_MAX_MM,
             min_display_mm: WORKING_MIN_DISPLAY_MM,
             tolerance_mm: WORKING_MIN_MM,
@@ -75,9 +68,6 @@ impl Default for AlignSettings {
             // Magnitude is the default display mode; signed values are an
             // optional diagnostic.
             ramp_mode: RampMode::Magnitude,
-            // Show the measured structure first; a manual clinical range is
-            // still available from the heatmap controls.
-            auto_scale: true,
             show_deviation: true,
         }
     }
@@ -103,19 +93,14 @@ impl AlignSettings {
         }
     }
 
-    /// Finite cool and hot display endpoints within the selected mode's range.
+    /// Finite display endpoints bounded by 100 micrometres.
     pub(crate) fn display_limits(self) -> (f64, f64) {
-        let maximum = if self.auto_scale {
-            AUTO_SCALE_MAX_MM
-        } else {
-            WORKING_MAX_MM
-        };
         let scale_mm = if self.scale_mm.is_nan() {
             WORKING_MAX_MM
         } else {
             self.scale_mm
         }
-        .clamp(WORKING_SCALE_MIN_MM, maximum);
+        .clamp(WORKING_SCALE_MIN_MM, WORKING_MAX_MM);
         let min_mm = if self.min_display_mm.is_nan() {
             WORKING_MIN_DISPLAY_MM
         } else {
@@ -823,9 +808,6 @@ fn recolor(job: &AlignJob, cached: &mut WorkerCache) -> AlignOutcome {
     paint(shown, job, stats, seen)
 }
 
-/// How far past the nominal band an automatic range must reach.
-const BAND_HEADROOM: f64 = 2.5;
-
 /// Turn a map and its summary into the colours the panel will show.
 fn paint(
     map: &DeviationMap,
@@ -850,26 +832,8 @@ fn paint(
             rejection: AlignFailure::MeasurementUnobservable,
         };
     }
-    // Automatic scaling exposes measured structure while keeping the selected
-    // working range bounded; tolerance remains a statistics threshold only.
-    let mut ramp = job.settings.ramp();
-    if job.settings.auto_scale {
-        // Leave room above the nominal band, but keep the range within both
-        // the supported display scale and the distance this measurement could
-        // actually observe. This keeps the legend and the measured data in the
-        // same units without stretching to a few distant outliers.
-        let reach_mm = if job.settings.influence_radius_mm.is_finite() {
-            job.settings
-                .influence_radius_mm
-                .clamp(WORKING_SCALE_MIN_MM, AUTO_SCALE_MAX_MM)
-        } else {
-            AUTO_SCALE_MAX_MM
-        };
-        ramp.min_mm = WORKING_SCALE_MIN_MM;
-        ramp.scale_mm = suggested_scale_mm(&stats)
-            .max(job.settings.tolerance_mm * BAND_HEADROOM)
-            .clamp(WORKING_SCALE_MIN_MM, reach_mm);
-    }
+    // The fit and measurement cannot change the operator's display range.
+    let ramp = job.settings.ramp();
     AlignOutcome::Measured {
         colors: color_map(map, &ramp),
         stats,

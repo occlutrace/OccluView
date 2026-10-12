@@ -494,7 +494,6 @@ align-commit-done-hint = Keep the alignment and close — export the scan to wri
 
 align-map-heatmap = Heatmap
 align-map-heatmap-hint = Colour one scan by how far it sits from the other
-align-map-auto = Auto scale
 align-map-requires-refine = Run Best fit matching first
 align-map-max = max
 align-map-min = min

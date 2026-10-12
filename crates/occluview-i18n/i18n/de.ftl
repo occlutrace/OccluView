@@ -488,7 +488,6 @@ align-commit-done-hint = Ausrichtung behalten und schließen — Scan exportiere
 
 align-map-heatmap = Heatmap
 align-map-heatmap-hint = Einen Scan nach Abstand zum anderen einfärben
-align-map-auto = Automatische Skalierung
 align-map-requires-refine = Zuerst „Best fit matching“ ausführen
 align-map-max = max
 align-map-min = min

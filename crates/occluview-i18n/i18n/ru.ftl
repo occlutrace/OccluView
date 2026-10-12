@@ -562,7 +562,6 @@ align-commit-done-hint = Сохранить сопоставление и зак
 
 align-map-heatmap = Теплокарта
 align-map-heatmap-hint = Окрасить один скан по расстоянию до другого
-align-map-auto = Автомасштаб
 align-map-requires-refine = Сначала выполните точное совмещение
 align-map-max = макс
 align-map-min = мин

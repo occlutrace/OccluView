@@ -488,7 +488,6 @@ align-commit-done-hint = Garder l’alignement et fermer — exporter pour écri
 
 align-map-heatmap = Carte de chaleur
 align-map-heatmap-hint = Colorer un scan par sa distance à l’autre
-align-map-auto = Échelle automatique
 align-map-requires-refine = Lancez d’abord Best fit matching
 align-map-max = max
 align-map-min = min

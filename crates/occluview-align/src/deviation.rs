@@ -234,25 +234,9 @@ impl Default for RampSettings {
     }
 }
 
-/// Absolute error runs from subdued green at zero through yellow and orange to
-/// red. Green is a quiet "surfaces agree" baseline; warmer colours make
-/// increasing distance legible without blue-green banding. Signed mode uses a
-/// separate diverging ramp so zero remains green between blue undersize and
-/// red oversize.
+/// Absolute deviation uses the original blue, cyan, green, yellow and red
+/// scale. Signed deviation uses the same palette around its zero midpoint.
 const MAGNITUDE_RAMP: [(f64, [u8; 3]); 9] = [
-    (0.0, [100, 168, 123]),
-    (0.12, [115, 190, 118]),
-    (0.25, [158, 201, 112]),
-    (0.37, [190, 210, 102]),
-    (0.5, [216, 203, 91]),
-    (0.62, [230, 180, 79]),
-    (0.75, [232, 150, 70]),
-    (0.87, [226, 116, 63]),
-    (1.0, [222, 77, 57]),
-];
-
-/// Signed error diverges around its green zero midpoint.
-const SIGNED_RAMP: [(f64, [u8; 3]); 9] = [
     (0.0, [49, 111, 216]),
     (0.12, [70, 159, 223]),
     (0.25, [88, 204, 229]),
@@ -511,7 +495,7 @@ pub fn ramp_color(value_mm: f64, ramp: &RampSettings) -> [u8; 4] {
         let low = ramp.min_mm.max(0.0).min(ramp.scale_mm);
         ((magnitude - low) / (ramp.scale_mm - low).max(f64::EPSILON)).clamp(0.0, 1.0)
     } else if magnitude == 0.0 {
-        // A zero display range is intentional: exact zero stays green, while
+        // A zero display range is intentional: exact zero stays blue, while
         // every non-zero deviation is beyond that range and reads hot red.
         0.0
     } else {
@@ -527,11 +511,7 @@ pub fn ramp_color(value_mm: f64, ramp: &RampSettings) -> [u8; 4] {
         // Signed deviation spans the table with zero at its green centre.
         RampMode::Signed => f64::midpoint(position.copysign(value_mm), 1.0),
     };
-    let stops = match ramp.mode {
-        RampMode::Magnitude => &MAGNITUDE_RAMP,
-        RampMode::Signed => &SIGNED_RAMP,
-    };
-    let [red, green, blue] = sample_ramp(stops, position);
+    let [red, green, blue] = sample_ramp(&MAGNITUDE_RAMP, position);
     [red, green, blue, 255]
 }
 
