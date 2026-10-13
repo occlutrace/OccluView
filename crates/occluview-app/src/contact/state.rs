@@ -381,7 +381,9 @@ impl ContactState {
             && self.failed != Some(keys)
     }
 
-    /// Store a completion if it answers the pending request.
+    /// Store a completion if it answers the pending request and the pair is not
+    /// being dragged. A held completion is retired by the caller so the settled
+    /// scene can submit a fresh measurement when the drag ends.
     pub(crate) fn store_measured(
         &mut self,
         request: ContactRequest,
@@ -389,7 +391,7 @@ impl ContactState {
         antagonist_field: ContactLayerField,
         stats: ContactStats,
     ) -> bool {
-        if self.matching_request(request.id, request.keys).is_none() {
+        if self.held || self.matching_request(request.id, request.keys).is_none() {
             return false;
         }
         self.fields.clear();
