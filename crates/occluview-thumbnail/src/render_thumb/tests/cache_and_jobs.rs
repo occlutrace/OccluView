@@ -2,6 +2,11 @@ use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 
+fn file_content_key_from_path(path: &Path) -> ThumbnailFileContentKey {
+    let bytes = fs::read(path).expect("read file fixture bytes");
+    thumbnail_file_content_key(path, &bytes)
+}
+
 #[test]
 fn missing_file_errors_do_not_include_case_paths() {
     let path = fixtures::write_temp_fixture("case-identifier.stl", b"");
@@ -118,11 +123,10 @@ fn large_file_keys_include_interior_bytes_even_when_metadata_matches() {
         .expect("file");
     let length = cache::LARGE_CONTENT_FIXTURE_BYTES + 1;
     file.set_len(length).expect("sparse file");
-    let metadata = cache::thumbnail_file_metadata(&path).expect("metadata");
-    let first = thumbnail_file_content_key(&path, &metadata).expect("key");
+    let first = file_content_key_from_path(&path);
     file.seek(SeekFrom::Start(length / 4)).expect("interior");
     file.write_all(&[1]).expect("changed geometry byte");
-    let second = thumbnail_file_content_key(&path, &metadata).expect("key with matching metadata");
+    let second = file_content_key_from_path(&path);
     assert_ne!(first, second, "different scans must not share pixels");
     drop(file);
     let _ = fs::remove_file(path);
@@ -136,14 +140,9 @@ fn file_content_cache_key_reuses_identical_copies_and_changes_for_content() {
     let changed =
         fixtures::write_temp_fixture("content-key-c.obj", b"v 0 0 0\nv 1 0 0\nv 0 2 0\nf 1 2 3\n");
 
-    let first_metadata = cache::thumbnail_file_metadata(&first).expect("first metadata");
-    let second_metadata = cache::thumbnail_file_metadata(&second).expect("second metadata");
-    let changed_metadata = cache::thumbnail_file_metadata(&changed).expect("changed metadata");
-    let first_key = thumbnail_file_content_key(&first, &first_metadata).expect("first content key");
-    let second_key =
-        thumbnail_file_content_key(&second, &second_metadata).expect("second content key");
-    let changed_key =
-        thumbnail_file_content_key(&changed, &changed_metadata).expect("changed content key");
+    let first_key = file_content_key_from_path(&first);
+    let second_key = file_content_key_from_path(&second);
+    let changed_key = file_content_key_from_path(&changed);
 
     assert_eq!(first_key, second_key);
     assert_ne!(first_key, changed_key);
@@ -151,6 +150,89 @@ fn file_content_cache_key_reuses_identical_copies_and_changes_for_content() {
     let _ = fs::remove_file(first);
     let _ = fs::remove_file(second);
     let _ = fs::remove_file(changed);
+}
+
+#[test]
+fn owned_primary_bytes_drive_both_digest_and_parse_after_path_changes() {
+    let original = fixtures::binary_stl_cube();
+    let mut replacement = original.clone();
+    let triangle_count = u32::from_le_bytes(original[80..84].try_into().expect("STL count"));
+    for triangle in 0..usize::try_from(triangle_count).expect("triangle count") {
+        let triangle_start = 84 + triangle * 50;
+        for corner in 0..3 {
+            let y = triangle_start + 12 + corner * 12 + 4;
+            let value = f32::from_le_bytes(
+                replacement[y..y + 4].try_into().expect("vertex coordinate"),
+            ) * 2.0;
+            replacement[y..y + 4].copy_from_slice(&value.to_le_bytes());
+        }
+    }
+    assert_eq!(original.len(), replacement.len());
+    assert_ne!(original, replacement);
+
+    let source_path = fixtures::write_temp_fixture("owned-source.stl", &original);
+    let replacement_path = fixtures::write_temp_fixture("owned-replacement.stl", &replacement);
+    let owned = occluview_formats::dispatch::read_opened_file_bytes_with_limit(
+        &source_path,
+        MAX_THUMBNAIL_FILE_BYTES as u64,
+    )
+    .expect("owned source bytes");
+    let source_key = thumbnail_file_content_key(&source_path, owned.file_bytes().as_slice());
+    let replacement_key = thumbnail_file_content_key(&replacement_path, &replacement);
+    assert_ne!(source_key, replacement_key);
+
+    let parsed_from_owned = load_thumbnail_mesh_from_opened_file(
+        &replacement_path,
+        &owned,
+        occluview_formats::FormatKind::Stl,
+    )
+    .expect("parse the original owned bytes despite a changed path");
+    let expected_source =
+        load_thumbnail_mesh_from_bytes_kind(occluview_formats::FormatKind::Stl, &original)
+            .expect("parse source fixture");
+    let replacement_mesh =
+        load_thumbnail_mesh_from_bytes_kind(occluview_formats::FormatKind::Stl, &replacement)
+            .expect("parse replacement fixture");
+    assert_eq!(
+        parsed_from_owned.bbox_cached().size().to_array(),
+        expected_source.bbox_cached().size().to_array(),
+        "the parser must consume the bytes that were hashed, not reopen the changed path"
+    );
+    assert_ne!(
+        parsed_from_owned.bbox_cached().size().to_array(),
+        replacement_mesh.bbox_cached().size().to_array()
+    );
+
+    drop(owned);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_file(replacement_path);
+}
+
+#[test]
+fn opened_file_size_recheck_rejects_a_stale_under_cap_preflight() {
+    let path = fixtures::write_temp_fixture("grown-thumbnail.stl", b"old");
+    let old_preflight = cache::thumbnail_file_metadata(&path).expect("old metadata");
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .expect("open for growth");
+    file.set_len(MAX_THUMBNAIL_FILE_BYTES as u64 + 1)
+        .expect("grow sparse fixture above the thumbnail cap");
+    drop(file);
+
+    assert!(old_preflight.byte_len < MAX_THUMBNAIL_FILE_BYTES as u64);
+    match occluview_formats::dispatch::read_opened_file_bytes_with_limit(
+        &path,
+        MAX_THUMBNAIL_FILE_BYTES as u64,
+    ) {
+        Err(occluview_formats::FormatError::TooLarge { bytes, limit }) => {
+            assert_eq!(bytes, MAX_THUMBNAIL_FILE_BYTES as u64 + 1);
+            assert_eq!(limit, MAX_THUMBNAIL_FILE_BYTES as u64);
+        }
+        Err(error) => panic!("unexpected source error: {error:?}"),
+        Ok(_) => panic!("fresh opened length must not be hidden by old preflight bytes"),
+    }
+    let _ = fs::remove_file(path);
 }
 
 #[test]
@@ -594,12 +676,8 @@ fn a_scan_that_differs_only_inside_gets_its_own_thumbnail() {
     };
     let first_path = fixtures::write_temp_fixture("stl", &first);
     let second_path = fixtures::write_temp_fixture("stl", &second);
-    let first_meta = cache::thumbnail_file_metadata(&first_path).expect("first metadata");
-    let second_meta = cache::thumbnail_file_metadata(&second_path).expect("second metadata");
-    let first_key =
-        thumbnail_file_content_key(&first_path, &first_meta).expect("first content key");
-    let second_key =
-        thumbnail_file_content_key(&second_path, &second_meta).expect("second content key");
+    let first_key = file_content_key_from_path(&first_path);
+    let second_key = file_content_key_from_path(&second_path);
     assert_ne!(
         first_key, second_key,
         "the two scans share a content key, so the second is served the first one's picture"
@@ -637,19 +715,15 @@ fn large_content_keys_track_geometry_across_moments_and_copies() {
         .expect("file");
     let length = cache::LARGE_CONTENT_FIXTURE_BYTES + 1;
     file.set_len(length).expect("large file");
-    let metadata = |modified_nanos| ThumbnailFileMetadata {
-        byte_len: length,
-        modified_nanos,
-    };
-    let morning = thumbnail_file_content_key(&path, &metadata(1_000)).expect("earlier scan");
+    let morning = file_content_key_from_path(&path);
     file.seek(SeekFrom::Start(length / 4)).expect("interior");
     file.write_all(&[1]).expect("new scan geometry");
-    let evening = thumbnail_file_content_key(&path, &metadata(2_000)).expect("later scan");
+    let evening = file_content_key_from_path(&path);
     assert_ne!(
         morning, evening,
         "a later scan must not share an earlier scan's pixels"
     );
-    let copied = thumbnail_file_content_key(&path, &metadata(3_000)).expect("copied scan");
+    let copied = file_content_key_from_path(&path);
     assert_eq!(
         copied, evening,
         "identical large copies must share one decode"
