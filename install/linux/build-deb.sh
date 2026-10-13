@@ -199,8 +199,8 @@ gzip -9 -n -c install/linux/occluview.1 \
 gzip -9 -n -c install/linux/occluview-cli.1 \
   > "$pkg_root/usr/share/man/man1/occluview-cli.1.gz"
 # The date in the Debian changelog is what `apt changelog` and the package
-# browser show. It is the date of the commit the package is built from, so a
-# rebuild of the same source yields the same package.
+# browser show. It is the source commit date unless SOURCE_DATE_EPOCH overrides
+# it; matching this date does not establish byte-identical package rebuilds.
 release_epoch="${SOURCE_DATE_EPOCH:-$(git log -1 --format=%ct 2>/dev/null || true)}"
 if [[ -z "$release_epoch" ]]; then
   echo "no SOURCE_DATE_EPOCH and no Git history; cannot date the package" >&2
