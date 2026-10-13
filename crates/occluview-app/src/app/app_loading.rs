@@ -7,12 +7,11 @@ use super::{
     SceneContext, SceneLoadMode, FOREGROUND_PULSE_DURATION,
 };
 use crate::desktop::single_instance;
-use crate::scene_loading::{
-    replace_result_requires_guard, DecodedSceneLoad, PendingSceneLoad, SceneLoadRequest,
-};
+use super::workspace::loading::DecoderPoll;
+use crate::scene_loading::{DecodedSceneLoad, PendingSceneLoad, SceneLoadRequest};
 use anyhow::Result;
 use occluview_formats::hps::RuntimeHpsKeyProvider;
-use std::sync::mpsc::{self, TryRecvError};
+use std::sync::mpsc;
 use std::time::Instant;
 
 #[derive(Clone, Copy)]
@@ -112,7 +111,7 @@ impl SceneContext<'_> {
         if self.ui.pending_replace_open.is_none()
             && !self.ui.close_guard_open
             && !self.ui.modal_dialog_open()
-            && self.replace_open_needs_guard()
+            && self.document.replacement_needs_guard()
         {
             self.loader.supersede_scene(self.scene_key);
             self.ui.pending_replace_open = Some(PendingReplaceOpen {
@@ -134,7 +133,7 @@ impl SceneContext<'_> {
             LoadAuthorization {
                 mode: SceneLoadMode::Replace,
                 requested_at,
-                dirty_at_request: !defer_guard && self.replace_open_needs_guard(),
+                dirty_at_request: !defer_guard && self.document.replacement_needs_guard(),
             },
         );
     }
@@ -169,7 +168,7 @@ impl SceneContext<'_> {
             LoadAuthorization {
                 mode: SceneLoadMode::Replace,
                 requested_at,
-                dirty_at_request: self.replace_open_needs_guard(),
+                dirty_at_request: self.document.replacement_needs_guard(),
             },
         );
     }
@@ -261,12 +260,6 @@ impl SceneContext<'_> {
             || self.sculpt_has_live_work()
     }
 
-    fn replace_open_needs_guard(&self) -> bool {
-        self.document.edit_mode.has_active_session()
-            || self.document.edit_mode.is_dirty()
-            || self.document.has_unsaved_mesh_edits()
-    }
-
     /// The global decoder is polled only by its target scene. Retired targets
     /// are reaped by the root coordinator; a scene switch never takes another
     /// scene's result.
@@ -275,54 +268,17 @@ impl SceneContext<'_> {
             return;
         }
 
-        if self.loader.active_for(self.scene_key) {
-            let Some(active) = self.loader.active.as_ref() else {
-                return;
-            };
-            let polled = active.receiver.try_recv();
-            match polled {
-                Err(TryRecvError::Empty) => return,
-                Ok(result) => {
-                    let Some(pending) = self.loader.take_active_for(self.scene_key) else {
-                        return;
-                    };
-                    if pending.superseded {
-                        self.start_next_queued_load();
-                        return;
-                    }
-                    let decoded = DecodedSceneLoad { pending, result };
-                    if self.must_park_decoded(&decoded) {
-                        self.park_load(decoded);
-                        return;
-                    }
+        match self.loader.poll_decoder(self.scene_key) {
+            DecoderPoll::Idle | DecoderPoll::Superseded => self.start_next_queued_load(),
+            DecoderPoll::Pending => {}
+            DecoderPoll::Decoded(decoded) => {
+                if self.must_park_decoded(&decoded) {
+                    self.park_load(decoded);
+                } else {
                     self.apply_decoded_load(decoded, ctx);
-                    return;
-                }
-                Err(TryRecvError::Disconnected) => {
-                    let Some(pending) = self.loader.take_active_for(self.scene_key) else {
-                        return;
-                    };
-                    if pending.superseded {
-                        self.start_next_queued_load();
-                        return;
-                    }
-                    let decoded = DecodedSceneLoad {
-                        pending,
-                        result: Err(anyhow::anyhow!(
-                            "scene loader stopped before returning a result"
-                        )),
-                    };
-                    if self.must_park_decoded(&decoded) {
-                        self.park_load(decoded);
-                    } else {
-                        self.apply_decoded_load(decoded, ctx);
-                    }
-                    return;
                 }
             }
         }
-
-        self.start_next_queued_load();
     }
 
     /// Returns true when a parked result belongs to this target. It either
@@ -434,14 +390,10 @@ impl SceneContext<'_> {
             return;
         };
         if request.mode == SceneLoadMode::Replace
-            && ((!request.dirty_at_request && self.document.edit_mode.has_active_session())
-                || replace_result_requires_guard(
-                    request.content_revision_at_request,
-                    self.document.content_revision,
-                    request.dirty_at_request,
-                    self.replace_open_needs_guard(),
-                    self.document.edit_mode.is_busy(),
-                ))
+            && self.document.replace_requires_guard(
+                request.content_revision_at_request,
+                request.dirty_at_request,
+            )
         {
             self.ui.pending_replace_open = Some(PendingReplaceOpen {
                 scene_key: self.scene_key,
@@ -519,14 +471,10 @@ impl SceneContext<'_> {
     /// Replace authorization is checked at acceptance and again at commit.
     fn loaded_replace_needs_guard(&self, pending: &PendingSceneLoad) -> bool {
         pending.mode == SceneLoadMode::Replace
-            && ((!pending.dirty_at_request && self.document.edit_mode.has_active_session())
-                || replace_result_requires_guard(
-                    pending.content_revision_at_request,
-                    self.document.content_revision,
-                    pending.dirty_at_request,
-                    self.replace_open_needs_guard(),
-                    self.document.edit_mode.is_busy(),
-                ))
+            && self.document.replace_requires_guard(
+                pending.content_revision_at_request,
+                pending.dirty_at_request,
+            )
     }
 
     fn park_replace_open(&mut self, pending: PendingSceneLoad) {
