@@ -1177,18 +1177,43 @@ mod input_tests {
 
     #[test]
     fn blocked_viewport_presses_log_once_until_the_gate_changes() -> anyhow::Result<()> {
-        let buffer = Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
-        let log_buffer = buffer.clone();
-        let subscriber = tracing_subscriber::fmt()
-            .without_time()
-            .with_ansi(false)
-            .with_max_level(tracing::Level::DEBUG)
-            .with_writer(move || DiagnosticWriter(log_buffer.clone()))
-            .finish();
+        use tracing_subscriber::prelude::*;
+
+        let diagnostics = DiagnosticCapture::default();
+        let subscriber = tracing_subscriber::registry().with(diagnostics.clone());
         tracing::subscriber::with_default(subscriber, || -> anyhow::Result<()> {
             let ctx = egui::Context::default();
             let mut app = input_app(&ctx);
-            let point = egui::pos2(900.0, 700.0);
+            let model = crate::app::app_test_support::named_scene("surface", 0.0);
+            app.active_context()
+                .ok_or_else(|| anyhow::anyhow!("active scene"))?
+                .set_scene(model, true);
+            let _ = secondary_menu(&mut app, &ctx, egui::pos2(900.0, 700.0));
+            let scene = &app.workspace.scenes[0];
+            let viewport = scene
+                .presentation
+                .viewport_context_menu
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("viewport response"))?
+                .0
+                .rect;
+            let camera = scene
+                .render
+                .camera
+                .ok_or_else(|| anyhow::anyhow!("camera"))?;
+            let (point, _) = crate::viewer::project_world_to_viewport(
+                &camera,
+                viewport,
+                glam::vec3(0.25, 0.25, 0.0),
+            )
+            .ok_or_else(|| anyhow::anyhow!("mesh projection"))?;
+            frame(&mut app, &ctx, vec![key(egui::Key::Escape)]);
+            frame(&mut app, &ctx, vec![]);
+            app.active_context()
+                .ok_or_else(|| anyhow::anyhow!("active scene"))?
+                .tools
+                .measure
+                .arm(crate::measure::measure_tool::MeasureMode::Ruler);
             focused_frame(&mut app, &ctx, vec![], false);
             for _ in 0..2 {
                 for pressed in [true, false] {
@@ -1200,14 +1225,26 @@ mod input_tests {
                     );
                 }
             }
-            let text = diagnostic_text(&buffer)?;
-            assert_eq!(text.matches("viewport tool input skipped").count(), 1);
-            assert!(text.contains("DEBUG") && text.contains("window_focused=false"));
-            assert!(text.contains("active_scene_id=1") && text.contains("scene_id=1"));
-            assert!(
-                text.contains("modal_dialog_open=false") && text.contains("input_route=Suppressed")
-            );
-            assert!(text.contains("capture_owner=None"));
+            let scene = &app.workspace.scenes[0];
+            assert!(scene.tools.measure.is_active());
+            assert!(scene.tools.measure.pending_anchor().is_none());
+            assert!(scene.tools.measure.ruler_segments().is_empty());
+            app.active_context()
+                .ok_or_else(|| anyhow::anyhow!("active scene"))?
+                .tools
+                .measure
+                .disarm();
+
+            let events = diagnostics.snapshot()?;
+            let skipped = skipped_input_events(&events);
+            assert_eq!(skipped.len(), 1);
+            assert_eq!(skipped[0].level, tracing::Level::DEBUG);
+            assert_eq!(skipped[0].field("window_focused"), Some("false"));
+            assert_eq!(skipped[0].field("active_scene_id"), Some("1"));
+            assert_eq!(skipped[0].field("scene_id"), Some("1"));
+            assert_eq!(skipped[0].field("modal_dialog_open"), Some("false"));
+            assert_eq!(skipped[0].field("input_route"), Some("Suppressed"));
+            assert_eq!(skipped[0].field("capture_owner"), Some("None"));
             app.ui.information_dialog = crate::app::information_dialog::InformationDialog::About;
             for pressed in [true, false] {
                 focused_frame(
@@ -1217,9 +1254,10 @@ mod input_tests {
                     false,
                 );
             }
-            let text = diagnostic_text(&buffer)?;
-            assert_eq!(text.matches("viewport tool input skipped").count(), 2);
-            assert!(text.contains("modal_dialog_open=true"));
+            let events = diagnostics.snapshot()?;
+            let skipped = skipped_input_events(&events);
+            assert_eq!(skipped.len(), 2);
+            assert_eq!(skipped[1].field("modal_dialog_open"), Some("true"));
             app.ui.information_dialog = crate::app::information_dialog::InformationDialog::None;
             focused_frame(&mut app, &ctx, vec![egui::Event::WindowFocused(true)], true);
             for pressed in [true, false] {
@@ -1230,12 +1268,7 @@ mod input_tests {
                     false,
                 );
             }
-            assert_eq!(
-                diagnostic_text(&buffer)?
-                    .matches("viewport tool input skipped")
-                    .count(),
-                3
-            );
+            assert_eq!(skipped_input_events(&diagnostics.snapshot()?).len(), 3);
             for pressed in [true, false] {
                 focused_frame(
                     &mut app,
@@ -1244,12 +1277,7 @@ mod input_tests {
                     false,
                 );
             }
-            assert_eq!(
-                diagnostic_text(&buffer)?
-                    .matches("viewport tool input skipped")
-                    .count(),
-                3
-            );
+            assert_eq!(skipped_input_events(&diagnostics.snapshot()?).len(), 3);
             focused_frame(&mut app, &ctx, vec![egui::Event::WindowFocused(true)], true);
             app.active_context()
                 .ok_or_else(|| anyhow::anyhow!("active scene"))?
@@ -1265,40 +1293,95 @@ mod input_tests {
                     true,
                 )],
             );
-            let text = diagnostic_text(&buffer)?;
+            let events = diagnostics.snapshot()?;
             assert!(
-                text.lines().any(|line| line.contains("scene_id=1")
-                    && line.contains("active_scene_id=2")
-                    && line.contains("is_active=false")
-                    && line.contains("input_route=Captured")
-                    && line.contains("capture_owner=Some")),
-                "a blocked peer press must identify the captured scene: {text}"
+                skipped_input_events(&events).iter().any(|event| {
+                    event.field("scene_id") == Some("1")
+                        && event.field("active_scene_id") == Some("2")
+                        && event.field("is_active") == Some("false")
+                        && event.field("input_route") == Some("Captured")
+                        && event
+                            .field("capture_owner")
+                            .is_some_and(|owner| owner.starts_with("Some"))
+                }),
+                "a blocked peer press must identify the captured scene in structured fields"
             );
             Ok(())
         })
     }
 
-    fn diagnostic_text(buffer: &std::sync::Mutex<Vec<u8>>) -> anyhow::Result<String> {
-        let bytes = buffer
-            .lock()
-            .map_err(|_| anyhow::anyhow!("log buffer lock"))?
-            .clone();
-        Ok(String::from_utf8(bytes)?)
+    #[derive(Clone, Debug)]
+    struct CapturedDiagnostic {
+        level: tracing::Level,
+        fields: std::collections::BTreeMap<&'static str, String>,
     }
 
-    struct DiagnosticWriter(Arc<std::sync::Mutex<Vec<u8>>>);
+    impl CapturedDiagnostic {
+        fn field(&self, name: &str) -> Option<&str> {
+            self.fields.get(name).map(String::as_str)
+        }
+    }
 
-    impl std::io::Write for DiagnosticWriter {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+    #[derive(Clone, Default)]
+    struct DiagnosticCapture(Arc<std::sync::Mutex<Vec<CapturedDiagnostic>>>);
+
+    impl DiagnosticCapture {
+        fn snapshot(&self) -> anyhow::Result<Vec<CapturedDiagnostic>> {
             self.0
                 .lock()
-                .map_err(|_| std::io::Error::other("log buffer lock"))?
-                .extend_from_slice(bytes);
-            Ok(bytes.len())
+                .map(|events| events.clone())
+                .map_err(|_| anyhow::anyhow!("diagnostic capture lock"))
+        }
+    }
+
+    fn skipped_input_events(events: &[CapturedDiagnostic]) -> Vec<&CapturedDiagnostic> {
+        events
+            .iter()
+            .filter(|event| event.field("event") == Some("viewport_tool_input_skipped"))
+            .collect()
+    }
+
+    #[derive(Default)]
+    struct DiagnosticFieldVisitor(
+        std::collections::BTreeMap<&'static str, String>,
+    );
+
+    impl tracing::field::Visit for DiagnosticFieldVisitor {
+        fn record_debug(
+            &mut self,
+            field: &tracing::field::Field,
+            value: &dyn std::fmt::Debug,
+        ) {
+            let rendered = format!("{value:?}");
+            let value = rendered
+                .strip_prefix('"')
+                .and_then(|value| value.strip_suffix('"'))
+                .unwrap_or(&rendered);
+            self.0.insert(field.name(), value.to_owned());
         }
 
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
+        fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+            self.0.insert(field.name(), value.to_owned());
+        }
+    }
+
+    impl<S> tracing_subscriber::Layer<S> for DiagnosticCapture
+    where
+        S: tracing::Subscriber,
+    {
+        fn on_event(
+            &self,
+            event: &tracing::Event<'_>,
+            _context: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            let mut visitor = DiagnosticFieldVisitor::default();
+            event.record(&mut visitor);
+            if let Ok(mut events) = self.0.lock() {
+                events.push(CapturedDiagnostic {
+                    level: *event.metadata().level(),
+                    fields: visitor.0,
+                });
+            }
         }
     }
 
