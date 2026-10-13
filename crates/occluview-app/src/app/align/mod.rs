@@ -352,6 +352,14 @@ impl SceneContext<'_> {
 
     /// Submit a fit over the clicked pairs.
     pub(super) fn run_align_fit(&mut self) {
+        if self.tools.align.tool.pairs().len() > occluview_align::MAX_PAIRS {
+            self.tools.align.status = Some(
+                self.ui
+                    .locale
+                    .tr(crate::i18n::message_id!("align-reject-toomany")),
+            );
+            return;
+        }
         let pairs: Vec<WorldPair> = self.align_world_pairs();
         if pairs.is_empty() {
             return;

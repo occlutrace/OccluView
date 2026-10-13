@@ -896,6 +896,7 @@ align-fail-no-surface-moving = La scansione mobile non ha superficie utile
 align-fail-recolor = Misura scartata prima di colorare
 align-fail-unobservable = La superficie non consente una mappa degli scostamenti affidabile
 align-reject-toofew = Aggiungi frecce o avvicina le scansioni
+align-reject-toomany = Usa al massimo 128 coppie di frecce
 align-reject-unpaired = Completa entrambi i lati di ogni freccia
 align-reject-degenerate-plain = Distribuisci i punti sulla superficie
 align-reject-unit = Le scansioni usano unità diverse

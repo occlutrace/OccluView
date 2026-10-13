@@ -898,6 +898,7 @@ align-fail-no-surface-moving = O escaneamento móvel não tem superfície útil
 align-fail-recolor = Medição descartada antes de colorir
 align-fail-unobservable = A superfície não é observável o suficiente para um mapa de desvios confiável
 align-reject-toofew = Coloque mais setas ou aproxime os escaneamentos
+align-reject-toomany = Use no máximo 128 pares de setas
 align-reject-unpaired = Complete os dois lados de cada seta
 align-reject-degenerate-plain = Distribua os pontos pela superfície
 align-reject-unit = Os escaneamentos usam unidades diferentes

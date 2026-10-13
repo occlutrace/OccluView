@@ -849,6 +849,7 @@ align-fail-no-surface-moving = У подвижного скана нет при�
 align-fail-recolor = Измерение сброшено до окраски
 align-fail-unobservable = Поверхность недостаточно наблюдаема для надёжной теплокарты
 align-reject-toofew = Поставьте больше пар стрелок или приблизьте сканы
+align-reject-toomany = Используйте не более 128 пар стрелок
 align-reject-unpaired = Завершите обе стороны каждой пары стрелок
 align-reject-degenerate-plain = Разнесите точки сопоставления по поверхности
 align-reject-unit = Сканы используют разные единицы измерения

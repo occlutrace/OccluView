@@ -896,6 +896,7 @@ align-fail-no-surface-moving = Le scan mobile n’a pas de surface utile
 align-fail-recolor = Mesure jetée avant coloriage
 align-fail-unobservable = La surface ne permet pas une carte d’écart fiable
 align-reject-toofew = Ajoutez des flèches ou rapprochez les scans
+align-reject-toomany = Utilisez au maximum 128 paires de flèches
 align-reject-unpaired = Complétez les deux côtés de chaque flèche
 align-reject-degenerate-plain = Répartissez les points sur la surface
 align-reject-unit = Les scans utilisent des unités différentes

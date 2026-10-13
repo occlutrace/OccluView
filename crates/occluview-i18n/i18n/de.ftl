@@ -755,6 +755,7 @@ align-fail-no-surface-moving = Bewegter Scan ohne brauchbare Oberfläche
 align-fail-recolor = Messung vor dem Einfärben verworfen
 align-fail-unobservable = Die Oberfläche reicht für eine verlässliche Abweichungskarte nicht aus
 align-reject-toofew = Weitere Pfeilpaare setzen oder Scans näher platzieren
+align-reject-toomany = Höchstens 128 Pfeilpaare für die Ausrichtung verwenden
 align-reject-unpaired = Beide Seiten jedes Pfeilpaares vervollständigen
 align-reject-degenerate-plain = Matching-Punkte über die Fläche verteilen
 align-reject-unit = Scans verwenden unterschiedliche Einheiten

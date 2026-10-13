@@ -18,7 +18,7 @@ use occluview_align::{
     deviation, deviation_stats, display_map_cancellable, fit_pairs, observability, ramp_color,
     CancelFlag, DeviationMap, DeviationSettings, DeviationStats, FitBounds, FitRejection,
     Observability, Orientation, RampMode, RampSettings, Rigid, Soup, SurfaceIndex, Validity,
-    NO_DATA_COLOR,
+    MAX_PAIRS, NO_DATA_COLOR,
 };
 use rayon::prelude::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
@@ -907,6 +907,14 @@ fn surface_index<'a>(
 /// the job was submitted with, so the result corrects that placement and any
 /// authored scale in it stays where it was.
 fn align_from_pairs(job: &AlignJob, moving: Soup<'_>) -> AlignOutcome {
+    if job.pairs.len() > MAX_PAIRS {
+        return AlignOutcome::Failed {
+            rejection: AlignFailure::Fit(FitRejection::TooManyPairs {
+                have: job.pairs.len(),
+                max: MAX_PAIRS,
+            }),
+        };
+    }
     let placed = job.authored_pose.as_daffine3();
     let facing = placed.matrix3.inverse().transpose();
     let moving_points: Vec<DVec3> = job

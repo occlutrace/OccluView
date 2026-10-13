@@ -473,6 +473,9 @@ fn align_failure_parts(failure: AlignFailure) -> (crate::i18n::MessageId, String
 
 fn fit_rejection_parts(rejection: FitRejection) -> (crate::i18n::MessageId, String, String) {
     let key = match rejection {
+        FitRejection::TooManyPairs { .. } => {
+            crate::i18n::message_id!("align-reject-toomany")
+        }
         FitRejection::TooFewPairs { .. } => crate::i18n::message_id!("align-reject-toofew"),
         FitRejection::Unpaired { .. } => crate::i18n::message_id!("align-reject-unpaired"),
         FitRejection::Degenerate { .. } => {
@@ -557,6 +560,13 @@ mod tests {
             assert_eq!(super::align_failure_parts(failure).0.as_str(), key);
         }
         for (reason, key) in [
+            (
+                occluview_align::FitRejection::TooManyPairs {
+                    have: 129,
+                    max: occluview_align::MAX_PAIRS,
+                },
+                "align-reject-toomany",
+            ),
             (
                 occluview_align::FitRejection::TooFewPairs { have: 2, need: 3 },
                 "align-reject-toofew",

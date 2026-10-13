@@ -67,7 +67,7 @@ pub use deviation_display::{display_map, display_map_cancellable, DISPLAY_PASSES
 pub use mask::{apply_brush, eligible_region, invert, set_all, MaskEdit, EXCLUDED, INCLUDED};
 pub use observability::{observability, Observability};
 pub use occluview_geometry::surface::{CancelFlag, Soup, SurfaceHit, SurfaceIndex};
-pub use pairs::{fit_pairs, FitBounds, FitRejection, PairFit};
+pub use pairs::{fit_pairs, FitBounds, FitRejection, PairFit, MAX_PAIRS};
 pub use rigid::Rigid;
 pub use sample::bounds_of;
 pub use search::search_alignment;

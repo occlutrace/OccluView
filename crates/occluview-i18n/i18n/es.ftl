@@ -896,6 +896,7 @@ align-fail-no-surface-moving = El escaneo móvil no tiene superficie útil
 align-fail-recolor = Medición descartada antes de colorear
 align-fail-unobservable = La superficie no permite un mapa de desviación fiable
 align-reject-toofew = Coloca más flechas o acerca los escaneos
+align-reject-toomany = Usa como máximo 128 pares de flechas
 align-reject-unpaired = Completa ambos lados de cada flecha
 align-reject-degenerate-plain = Distribuye los puntos por la superficie
 align-reject-unit = Los escaneos usan unidades distintas

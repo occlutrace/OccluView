@@ -1,6 +1,6 @@
 //! Tests for the point-pair fit.
 
-use crate::pairs::{fit_pairs, FitBounds, FitRejection, PairFit};
+use crate::pairs::{fit_pairs, FitBounds, FitRejection, PairFit, MAX_PAIRS};
 use crate::Rigid;
 use glam::{DMat3, DQuat, DVec3};
 
@@ -96,6 +96,25 @@ fn fewer_than_two_pairs_is_refused() {
     assert!(
         matches!(outcome, Err(FitRejection::TooFewPairs { have: 1, need: 2 })),
         "expected TooFewPairs, got {outcome:?}"
+    );
+}
+
+#[test]
+fn more_than_the_pair_limit_is_refused_before_point_validation() {
+    let points = vec![DVec3::splat(f64::NAN); MAX_PAIRS + 1];
+    let bounds = FitBounds {
+        moving_center: DVec3::ZERO,
+        moving_extent: 1.0,
+        fixed_center: DVec3::ZERO,
+        fixed_extent: 1.0,
+    };
+
+    assert_eq!(
+        fit_pairs(&points, &points, None, &bounds),
+        Err(FitRejection::TooManyPairs {
+            have: MAX_PAIRS + 1,
+            max: MAX_PAIRS,
+        })
     );
 }
 
