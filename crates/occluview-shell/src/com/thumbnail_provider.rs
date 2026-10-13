@@ -107,13 +107,17 @@ impl ThumbnailProvider {
     }
 
     /// Reads a stream synchronously, with the normal shell size cap but no
-    /// elapsed-time budget. Preview Pane uses this so DoPreview owns the
-    /// whole render result rather than converting unfinished I/O to success.
+    /// elapsed-time budget. Preview Pane uses this during `DoPreview`; `Stat`
+    /// and `Read` can block without a deadline. The caller's preceding `Seek`
+    /// is also synchronous and unbounded.
     pub(super) fn read_stream(stream: &IStream) -> windows::core::Result<StreamRead> {
         Self::read_stream_inner(stream, None)
     }
 
     /// Reads the stream into a byte buffer under the caller's absolute budget.
+    /// The budget is checked before `Stat` and between read chunks; it cannot
+    /// interrupt a synchronous `Stat` or `Read` already in progress. The
+    /// caller's separate `Seek` is outside this budget.
     pub(super) fn read_stream_until(
         stream: &IStream,
         deadline: Instant,

@@ -55,15 +55,10 @@ enum PreviewDragMode {
 /// after the first load. That allows resizes and pointer interaction to
 /// re-render the same file without reparsing or re-uploading the mesh payload.
 // `Agile = false` because the struct below holds `RefCell`/`Cell` state and is
-// therefore `!Sync`. The attribute defaults to `Agile = true`, which makes the
-// generated `QueryInterface` answer `IID_IAgileObject` and `IID_IMarshal` with a
-// free-threaded marshaler — i.e. a client in another apartment receives the same
-// raw pointer instead of a proxy, and two threads reach the `RefCell` borrow
-// flag and the cached buffers. The registration relies on STA
-// serialisation (`registration/clsid.rs`: "COM hosts every Apartment instance on
-// one host STA, so all extractions of this CLSID serialize"), so advertising
-// agility contradicts the premise the class is built on. Marshalling instead
-// costs nothing on the one-threaded path the shell actually uses.
+// therefore `!Sync`. The default `Agile = true` advertises a free-threaded
+// marshaler, allowing cross-apartment calls to reach the same object directly.
+// This handler's state and preview window are apartment-affine, so it does not
+// support direct free-threaded access.
 #[implement(
     IPreviewHandler,
     IOleWindow,
@@ -247,6 +242,8 @@ impl PreviewHandler {
         rendered
     }
 
+    /// Loads preview input synchronously on the handler's COM apartment.
+    /// Stream-backed input uses `IStream` calls without an elapsed-time limit.
     fn ensure_preview_scene_loaded(&self) -> Result<(), ShellError> {
         if self.preview_scene.borrow().is_some() || self.oversize_stream_len.get().is_some() {
             return Ok(());

@@ -119,10 +119,11 @@ fn wait_for_thumbnail_file_cache(timeout: Duration, mut cached: impl FnMut() -> 
 /// Immutable timing and adapter policy for one thumbnail request.
 ///
 /// Both absolute deadlines are fixed when the Shell request enters the
-/// pipeline. The response deadline bounds everything that may answer COM. A
-/// worker that outlives that response may write only to the process cache,
-/// using the separately bounded cache-warm deadline captured at the same
-/// instant.
+/// pipeline. The response deadline applies to stages that observe it, but it
+/// cannot interrupt synchronous source I/O already in progress, such as a
+/// shell stream's `Seek`, `Stat`, or `Read` call. A worker that outlives the
+/// response may write only to the process cache, using the separately bounded
+/// cache-warm deadline captured at the same instant.
 #[derive(Clone, Copy, Debug)]
 pub struct ThumbnailRenderRequest {
     response_deadline: Instant,
