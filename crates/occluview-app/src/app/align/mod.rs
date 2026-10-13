@@ -8,6 +8,7 @@ pub(super) mod brush;
 pub(crate) mod display;
 pub(crate) mod drag;
 mod fit;
+mod mutation;
 pub(super) mod panel;
 pub(super) mod results;
 pub(super) mod session;
