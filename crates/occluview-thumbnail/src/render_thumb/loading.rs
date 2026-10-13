@@ -9,7 +9,9 @@ use crate::fidelity::THUMBNAIL_FULL_FIDELITY_FILE_BYTES;
 use crate::thumbnail_format::infer_thumbnail_format;
 use glam::Vec3;
 use occluview_core::Mesh;
-use occluview_formats::dispatch::{dispatch_by_kind_loaded, read_file_loaded_shaded, LoadedMesh};
+use occluview_formats::dispatch::{
+    dispatch_by_kind_loaded, read_file_loaded_shaded_with_limit, LoadedMesh,
+};
 use occluview_formats::hps::RuntimeHpsKeyProvider;
 use occluview_formats::{FormatError, FormatKind};
 
@@ -82,7 +84,14 @@ pub(super) fn load_thumbnail_mesh_from_file(
     }
     select_thumbnail_mesh(
         metadata.byte_len <= THUMBNAIL_FULL_FIDELITY_FILE_BYTES,
-        || read_file_loaded_shaded(path, &RuntimeHpsKeyProvider, THUMBNAIL_SHADING),
+        || {
+            read_file_loaded_shaded_with_limit(
+                path,
+                &RuntimeHpsKeyProvider,
+                THUMBNAIL_SHADING,
+                MAX_THUMBNAIL_FILE_BYTES as u64,
+            )
+        },
         || try_read_fast_thumbnail_mesh_from_file_with_limit(path, MAX_THUMBNAIL_FILE_BYTES as u64),
     )
 }

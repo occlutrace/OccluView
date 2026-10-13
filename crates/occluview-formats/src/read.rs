@@ -233,7 +233,24 @@ pub fn read_file_loaded_shaded(
     key_provider: &dyn HpsKeyProvider,
     shading: crate::MeshShading,
 ) -> Result<LoadedMesh, FormatError> {
-    let bytes = read_file_bytes(path)?;
+    read_file_loaded_shaded_with_limit(path, key_provider, shading, MAX_IMPORT_BYTES)
+}
+
+/// Read shaded geometry and companion textures, bounding the primary file read.
+///
+/// The limit applies to the opened file and the bytes actually read, including
+/// growth after a caller's preflight. Companion textures retain their separate
+/// decoding and memory-admission limits.
+///
+/// # Errors
+/// See [`read_file_bytes_with_limit`] and [`read_file_shaded`].
+pub fn read_file_loaded_shaded_with_limit(
+    path: &Path,
+    key_provider: &dyn HpsKeyProvider,
+    shading: crate::MeshShading,
+    limit: u64,
+) -> Result<LoadedMesh, FormatError> {
+    let bytes = read_file_bytes_with_limit(path, limit)?;
     // The picture beside the file is found before the mesh is read, because a
     // PLY keeps its per-corner texture coordinates only when one exists.
     let mut atlas = None;

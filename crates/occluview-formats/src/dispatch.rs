@@ -11,7 +11,8 @@ use crate::probe::FormatKind;
 pub(crate) use crate::read::import_batches;
 pub use crate::read::{
     read_file, read_file_bytes, read_file_bytes_with_limit, read_file_loaded_shaded,
-    read_file_loaded_with_key_provider, read_file_shaded, read_file_with_key_provider, read_files,
+    read_file_loaded_shaded_with_limit, read_file_loaded_with_key_provider, read_file_shaded,
+    read_file_with_key_provider, read_files,
     read_files_with_key_provider, read_files_with_memory_budget, FileBytes,
     IMPORT_BATCH_BUDGET_BYTES, IMPORT_PARALLELISM, MAX_IMPORT_BYTES,
 };
