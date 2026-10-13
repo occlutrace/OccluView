@@ -770,7 +770,7 @@ mod tests {
         );
         let mut waiting = controlled_worker(
             Arc::clone(&scheduler),
-            started_tx,
+            started_tx.clone(),
             release_waiting_rx,
             Arc::clone(&active),
             Arc::clone(&maximum),
@@ -925,7 +925,7 @@ mod tests {
             Arc::clone(&active),
             Arc::clone(&maximum),
         );
-        let waiting = controlled_worker(
+        let mut waiting = controlled_worker(
             Arc::clone(&scheduler),
             started_tx.clone(),
             release_waiting_rx,
