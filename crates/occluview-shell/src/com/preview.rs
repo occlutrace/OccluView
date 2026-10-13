@@ -44,6 +44,21 @@ const fn diagnostic_adapter(result: AdapterResult) -> ShellDiagnosticAdapter {
     }
 }
 
+fn source_changed_error() -> ShellError {
+    ShellError::Win32("preview source changed while loading".to_string())
+}
+
+/// Direct caller for the deliberately unbudgeted Preview Pane stream path.
+/// The caller has already taken the owned `IStream` out of the handler and
+/// released all handler borrows, so these synchronous COM calls cannot
+/// reentrantly hit a `RefCell` borrow panic.
+fn read_preview_stream(stream: &IStream) -> Result<StreamRead, ShellError> {
+    stream::rewind(stream)
+        .map_err(|_| ShellError::Win32("rewinding preview stream failed".to_string()))?;
+    stream::read(stream)
+        .map_err(|_| ShellError::Win32("reading preview stream failed".to_string()))
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum PreviewDragMode {
     #[default]
@@ -107,11 +122,15 @@ impl PreviewHandler {
     }
 
     fn initialize_path(&self, path: PathBuf) {
-        self.source
+        let retired = self
+            .source
             .borrow_mut()
             .initialize_path(path.clone(), path_extension(&path));
         self.oversize_stream_len.set(None);
         self.preview_scene.borrow_mut().take();
+        // Drop the retired COM reference only after the source borrow is gone;
+        // its Release can reenter Initialize/Unload.
+        drop(retired);
     }
 
     fn preview_size(&self) -> (u32, u32) {
@@ -131,6 +150,11 @@ impl PreviewHandler {
     }
 
     fn preview_render_to_hbitmap(&self, width: u32, height: u32) -> windows::core::Result<HBITMAP> {
+        // Capture the activation this render belongs to before touching any
+        // loader. A reentrant Initialize/Unload inside a custom stream call
+        // advances the source token; the old render must not cache a
+        // placeholder or erase the newer activation's resident scene.
+        let activation = self.source.borrow().token();
         let width = width.clamp(1, MAX_OFFSCREEN_EDGE);
         let height = height.clamp(1, MAX_OFFSCREEN_EDGE);
         let theme = preview_theme();
@@ -139,8 +163,23 @@ impl PreviewHandler {
             theme.background_linear(),
             theme.canvas_rgba(),
         ) {
-            Ok(pixels) => pixels,
+            Ok(pixels) => {
+                if !self.source.borrow().is_current(activation) {
+                    tracing::warn!(
+                        "preview render completed after a newer activation; returning failure"
+                    );
+                    return Err(e_fail());
+                }
+                pixels
+            }
             Err(error) => {
+                if !self.source.borrow().is_current(activation) {
+                    tracing::warn!(
+                        ?error,
+                        "preview render failed after a newer activation; returning failure"
+                    );
+                    return Err(e_fail());
+                }
                 tracing::warn!(?error, "preview render failed; returning placeholder");
                 // The resident scene may reference a retired device (the
                 // renderer discards itself on render errors). Drop it so the
@@ -246,37 +285,47 @@ impl PreviewHandler {
     }
 
     /// Loads preview input synchronously on the handler's COM apartment.
-    /// Stream-backed input uses `IStream` calls without an elapsed-time limit.
+    /// Stream-backed input uses `IStream` calls without an elapsed-time limit:
+    /// the calls stay synchronous and the stream is owned by the local scope,
+    /// not borrowed through the handler, while they run.
     fn ensure_preview_scene_loaded(&self) -> Result<(), ShellError> {
         if self.preview_scene.borrow().is_some() || self.oversize_stream_len.get().is_some() {
             return Ok(());
         }
 
+        let mut activation = self.source.borrow().token();
         let source_path = self.source.borrow().path().map(PathBuf::from);
-        let state = if let Some(path) = source_path {
-            PreviewSceneState::from_file(&path)?
-        } else if let Some(stream_result) =
-            self.source
-                .borrow_mut()
-                .consume_pending_stream(|stream, extension| {
-                    stream::rewind(&stream).map_err(|_| {
-                        ShellError::Win32("rewinding preview stream failed".to_string())
-                    })?;
-                    let read = stream::read(&stream).map_err(|_| {
-                        ShellError::Win32("reading preview stream failed".to_string())
-                    })?;
-                    Ok::<_, ShellError>((read, extension.map(str::to_owned)))
-                })
-        {
-            match stream_result? {
-                (StreamRead::Complete(bytes), extension) => {
-                    PreviewSceneState::from_bytes(extension.as_deref(), &bytes)?
+        // Short take: the RefCell borrow ends at this statement. Everything
+        // below operates on owned state so a custom `IStream` can reenter
+        // Initialize/Unload without a borrow panic.
+        let pending = self.source.borrow_mut().take_pending_stream();
+        let mut scene_state = None;
+        let mut oversize = None;
+
+        if let Some(path) = source_path {
+            let state_result = PreviewSceneState::from_file(&path);
+            if !self.source.borrow().is_current(activation) {
+                return Err(source_changed_error());
+            }
+            scene_state = Some(state_result?);
+        } else if let Some((stream, extension, taken_activation)) = pending {
+            activation = taken_activation;
+            let read_result = read_preview_stream(&stream);
+            if !self.source.borrow().is_current(activation) {
+                return Err(source_changed_error());
+            }
+            match read_result? {
+                StreamRead::Complete(bytes) => {
+                    let state_result = PreviewSceneState::from_bytes(extension.as_deref(), &bytes);
+                    if !self.source.borrow().is_current(activation) {
+                        return Err(source_changed_error());
+                    }
+                    scene_state = Some(state_result?);
                 }
-                (StreamRead::OverCap { byte_len }, _extension) => {
-                    self.oversize_stream_len.set(Some(byte_len));
-                    return Ok(());
+                StreamRead::OverCap { byte_len } => {
+                    oversize = Some(byte_len);
                 }
-                (StreamRead::ReadFailed | StreamRead::TimedOut, _extension) => {
+                StreamRead::ReadFailed | StreamRead::TimedOut => {
                     return Err(ShellError::Win32(
                         "reading preview stream failed".to_string(),
                     ));
@@ -285,6 +334,22 @@ impl PreviewHandler {
         } else {
             return Err(ShellError::Win32(
                 "preview handler has no file or stream source".to_string(),
+            ));
+        }
+
+        // The owned stream (and its final COM Release) has left scope above.
+        // Fence again before installing either a late parse result or oversize
+        // state; a custom Release can reenter Initialize/Unload.
+        if !self.source.borrow().is_current(activation) {
+            return Err(source_changed_error());
+        }
+        if let Some(byte_len) = oversize {
+            self.oversize_stream_len.set(Some(byte_len));
+            return Ok(());
+        }
+        let Some(state) = scene_state else {
+            return Err(ShellError::Win32(
+                "preview handler has no loaded source".to_string(),
             ));
         };
         *self.preview_scene.borrow_mut() = Some(state);
@@ -388,11 +453,14 @@ impl PreviewHandler {
     }
 
     fn clear_loaded_content(&self) {
-        self.source.borrow_mut().clear_all();
+        let retired = self.source.borrow_mut().clear_all();
         self.oversize_stream_len.set(None);
         self.preview_scene.borrow_mut().take();
         self.drag_mode.set(PreviewDragMode::None);
         self.drag_moved.set(false);
+        // Drop the retired COM reference only after all handler state is
+        // cleared and the source borrow is gone; its Release can reenter.
+        drop(retired);
     }
 
     fn begin_drag(&self, mode: PreviewDragMode, pointer: POINT) {
@@ -703,12 +771,16 @@ impl IInitializeWithStream_Impl for PreviewHandler_Impl {
             || Err(e_fail()),
             || {
                 let stream = pstream.ok()?;
-                self.this
+                let retired = self
+                    .this
                     .source
                     .borrow_mut()
-                    .initialize_stream(stream.clone());
+                    .initialize_stream(stream);
                 self.this.preview_scene.borrow_mut().take();
                 self.this.oversize_stream_len.set(None);
+                // Drop the retired COM reference only after the source borrow
+                // is gone; its Release can reenter Initialize/Unload.
+                drop(retired);
                 Ok(())
             },
         )
