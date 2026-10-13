@@ -781,3 +781,162 @@ fn not_verified_rejects_verified_candidate_after_weak_selected_candidate() {
         "insufficient_support",
     ));
 }
+
+/// An otherwise valid pose case; each validation test breaks exactly one field
+/// so the failure it asserts comes from that field alone.
+fn valid_pose_case(id: &str) -> Case {
+    Case {
+        id: id.to_string(),
+        moving: AssetSpec {
+            file: "arch/moving.stl".into(),
+            scale_to_mm: 1.0,
+        },
+        fixed: AssetSpec {
+            file: "arch/fixed.stl".into(),
+            scale_to_mm: 1.0,
+        },
+        search: SearchSpec {
+            normal_policy: NormalPolicySpec::Match,
+            profile: ProfileSpec::Standard,
+            top_k: 3,
+            reference_regions: RegionSpec::AllEligible,
+            wall_limit_ms: 1_000,
+        },
+        expectation: Expectation::Pose {
+            truth: TruthPose {
+                rotation_xyzw: [0.0, 0.0, 0.0, 1.0],
+                translation_mm: [0.0, 0.0, 0.0],
+            },
+            transform_tolerance: TransformTolerance {
+                rotation_deg: 1.0,
+                translation_mm: 1.0,
+            },
+            control_landmarks: vec![
+                ControlLandmark {
+                    moving_mm: [0.0, 0.0, 0.0],
+                    fixed_mm: [0.0, 0.0, 0.0],
+                },
+                ControlLandmark {
+                    moving_mm: [1.0, 0.0, 0.0],
+                    fixed_mm: [1.0, 0.0, 0.0],
+                },
+                ControlLandmark {
+                    moving_mm: [0.0, 1.0, 0.0],
+                    fixed_mm: [0.0, 1.0, 0.0],
+                },
+            ],
+            maximum_control_landmark_error_mm: 1.0,
+            quality: PoseQualityBounds {
+                minimum_confidence: ConfidenceSpec::Probable,
+                minimum_overlap_smaller: 0.5,
+                maximum_rms_mm: 1.0,
+                maximum_p95_mm: 1.0,
+            },
+        },
+    }
+}
+
+fn manifest_with(cases: Vec<Case>) -> Manifest {
+    Manifest {
+        schema_version: 1,
+        cases,
+    }
+}
+
+#[test]
+fn a_valid_manifest_passes_validation() {
+    validate_manifest(&manifest_with(vec![valid_pose_case("case_0123456789ab")]));
+}
+
+#[test]
+#[should_panic(expected = "unsupported private manifest schema")]
+fn manifest_validation_fails_closed_on_an_unknown_schema() {
+    let mut manifest = manifest_with(vec![valid_pose_case("case_0123456789ab")]);
+    manifest.schema_version = 2;
+    validate_manifest(&manifest);
+}
+
+#[test]
+#[should_panic(expected = "no cases")]
+fn manifest_validation_fails_closed_on_zero_fixtures() {
+    validate_manifest(&manifest_with(Vec::new()));
+}
+
+#[test]
+#[should_panic(expected = "case ID")]
+fn manifest_validation_fails_closed_on_a_non_random_case_id() {
+    validate_manifest(&manifest_with(vec![valid_pose_case("case_0123456789AB")]));
+}
+
+#[test]
+#[should_panic(expected = "duplicate case ID")]
+fn manifest_validation_fails_closed_on_duplicate_case_ids() {
+    validate_manifest(&manifest_with(vec![
+        valid_pose_case("case_0123456789ab"),
+        valid_pose_case("case_0123456789ab"),
+    ]));
+}
+
+#[test]
+#[should_panic(expected = "traversal-free")]
+fn manifest_validation_rejects_a_traversal_asset_path() {
+    let mut case = valid_pose_case("case_0123456789ab");
+    case.moving.file = "../scan.stl".into();
+    validate_manifest(&manifest_with(vec![case]));
+}
+
+#[test]
+#[should_panic(expected = "finite and positive")]
+fn manifest_validation_rejects_a_non_positive_asset_scale() {
+    let mut case = valid_pose_case("case_0123456789ab");
+    case.fixed.scale_to_mm = 0.0;
+    validate_manifest(&manifest_with(vec![case]));
+}
+
+#[test]
+#[should_panic(expected = "3 to 128")]
+fn manifest_validation_requires_three_independent_landmarks() {
+    let mut case = valid_pose_case("case_0123456789ab");
+    if let Expectation::Pose {
+        control_landmarks, ..
+    } = &mut case.expectation
+    {
+        control_landmarks.truncate(2);
+    }
+    validate_manifest(&manifest_with(vec![case]));
+}
+
+#[test]
+#[should_panic(expected = "below verified")]
+fn manifest_validation_caps_a_not_verified_ceiling_below_verified() {
+    let mut case = valid_pose_case("case_0123456789ab");
+    case.expectation = Expectation::NotVerified {
+        maximum_confidence: ConfidenceSpec::Verified,
+        required_reason: ExpectedReason::InsufficientSupport,
+    };
+    validate_manifest(&manifest_with(vec![case]));
+}
+
+#[test]
+fn asset_paths_must_be_relative_and_traversal_free() {
+    assert!(valid_relative_file("arch/scan.stl"));
+    assert!(valid_relative_file("a/b/c/scan.stl"));
+    assert!(!valid_relative_file("/abs/scan.stl"));
+    assert!(!valid_relative_file("../scan.stl"));
+    assert!(!valid_relative_file("arch/../../scan.stl"));
+    assert!(!valid_relative_file("./scan.stl"));
+    assert!(!valid_relative_file("arch\\scan.stl"));
+    assert!(!valid_relative_file("C:/scan.stl"));
+    assert!(!valid_relative_file(""));
+}
+
+#[test]
+#[should_panic(expected = "unavailable")]
+fn a_missing_private_asset_fails_closed() {
+    let root = std::env::temp_dir();
+    let asset = AssetSpec {
+        file: format!("occluview-definitely-missing-{}.stl", std::process::id()),
+        scale_to_mm: 1.0,
+    };
+    let _ = resolve_asset(&root, &asset);
+}
