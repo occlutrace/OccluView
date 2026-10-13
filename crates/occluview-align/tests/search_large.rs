@@ -4,14 +4,18 @@
 //! The correctness case reads a few hundred thousand triangles on their exact
 //! surface and more than a million on an even triangle sample, and requires the
 //! true pose with `Verified` confidence. It runs under a finite safety
-//! allowance far above the production wall limit, so shared-runner speed cannot
-//! decide a geometry assertion; elapsed time is not part of that contract.
+//! allowance far above the production wall limit. The search checks that
+//! allowance cooperatively at its own checkpoints, so a stage that does not
+//! reach a checkpoint can still run past it; the allowance lowers the coupling
+//! between runner speed and the geometry assertion without guaranteeing a
+//! completion time. Elapsed time is not part of the correctness contract.
 //!
 //! `large_scan_search_benchmark` is the speed measurement. It is ignored by
-//! default and fails closed until the operator declares the machine and source
-//! identity the numbers are reported against, so a raw timing is never
+//! default and fails closed until the operator declares the machine, build and
+//! source identity the numbers are reported against, so a raw timing is never
 //! attributed to an undeclared baseline. It asserts no speed budget.
 #![allow(
+    clippy::expect_used,
     clippy::unwrap_used,
     clippy::cast_possible_truncation,
     clippy::print_stdout
@@ -19,8 +23,10 @@
 mod support;
 use glam::{DQuat, DVec3};
 use occluview_align::{
-    search_alignment, CancelFlag, Completion, Confidence, Rigid, SearchControl, SearchSettings,
+    search_alignment, AlignmentInput, CancelFlag, Completion, Confidence, MeshInput, Rigid,
+    SearchControl, SearchSettings,
 };
+use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -36,10 +42,11 @@ const LARGE_SCAN_CASES: [(usize, bool); 2] = [(300_000, true), (1_200_000, false
 /// and the control; the search uses the lesser of the two.
 ///
 /// This is a safety timeout, not a performance budget or a clinical tolerance.
-/// It is far above the production wall limit (10 s) so a loaded shared runner
-/// cannot fail a correct search on the clock, while a hang still ends within a
-/// known time. The correctness assertions are completion, evidence and
-/// geometry, never elapsed time.
+/// It is far above the production wall limit (10 s), so a slow shared runner is
+/// less likely to fail a correct search on the clock. The deadline is checked
+/// cooperatively, so it is not a hard bound on a stage that does not reach a
+/// checkpoint; work can exceed it before the next check. It is finite rather
+/// than infinite.
 const TEST_SEARCH_SAFETY_ALLOWANCE: Duration = Duration::from_secs(600);
 
 /// Warmup searches discarded before each corpus size is measured. The search is
@@ -47,9 +54,9 @@ const TEST_SEARCH_SAFETY_ALLOWANCE: Duration = Duration::from_secs(600);
 const BENCH_WARMUP_RUNS: usize = 1;
 /// Measured repetitions per corpus size; every repetition is printed raw.
 const BENCH_REPETITIONS: usize = 5;
-/// Machine and source identity the operator must declare before the benchmark
-/// reports a number. The run fails closed while either is absent.
-const BENCH_CONTEXT_VARS: [&str; 2] = ["OCCLUVIEW_BENCH_MACHINE", "OCCLUVIEW_BENCH_SOURCE"];
+/// The declared benchmark context; see [`large_scan_search_benchmark`] for the
+/// required JSON shape. The run fails closed while it is absent or malformed.
+const BENCH_CONTEXT_VAR: &str = "OCCLUVIEW_BENCH_CONTEXT";
 
 /// The truth displacement of the moving scan; search never receives it.
 fn truth_pose() -> Rigid {
@@ -162,14 +169,73 @@ fn large_scans_are_searched_whole() {
     }
 }
 
-/// Content identity of the solver input, independent of any file or case name.
-fn corpus_sha256(mesh: &SyntheticMesh) -> String {
-    let mut hasher = Sha256::new();
-    for position in &mesh.positions {
+/// Length-prefixed update, so adjacent fields cannot be re-segmented into the
+/// same digest.
+fn update_len(hasher: &mut Sha256, value: u64) {
+    hasher.update(value.to_be_bytes());
+}
+
+/// Tagged, length-prefixed bytes.
+fn update_bytes(hasher: &mut Sha256, bytes: &[u8]) {
+    update_len(hasher, bytes.len() as u64);
+    hasher.update(bytes);
+}
+
+/// Length-prefixed `f64` run.
+fn update_f64(hasher: &mut Sha256, values: &[f64]) {
+    update_len(hasher, values.len() as u64);
+    for value in values {
+        hasher.update(value.to_le_bytes());
+    }
+}
+
+/// One mesh field of the solver request: authored pose, revision, mask, and the
+/// actual positions and indices the search reads.
+fn update_mesh(hasher: &mut Sha256, tag: &[u8], mesh: &MeshInput<'_>) {
+    update_bytes(hasher, tag);
+    update_f64(hasher, &mesh.world_from_local.to_cols_array());
+    update_len(hasher, mesh.revision);
+    match mesh.soup.mask {
+        Some(mask) => {
+            hasher.update([1_u8]);
+            update_bytes(hasher, mask);
+        }
+        None => hasher.update([0_u8]),
+    }
+    update_len(hasher, mesh.soup.positions.len() as u64);
+    for position in mesh.soup.positions {
         hasher.update(position.to_le_bytes());
     }
-    for &index in &mesh.triangles {
+    update_len(hasher, mesh.soup.indices.len() as u64);
+    for &index in mesh.soup.indices {
         hasher.update(index.to_le_bytes());
+    }
+}
+
+/// Content identity of the complete solver request: both meshes with their
+/// authored poses, revisions and masks, plus landmarks and seeds. It is
+/// independent of any file or case name.
+fn request_sha256(input: &AlignmentInput<'_>) -> String {
+    let mut hasher = Sha256::new();
+    update_mesh(&mut hasher, b"moving", &input.moving);
+    update_mesh(&mut hasher, b"fixed", &input.fixed);
+    update_len(&mut hasher, input.landmarks.len() as u64);
+    for pair in input.landmarks {
+        update_f64(&mut hasher, &pair.moving_local.to_array());
+        update_f64(&mut hasher, &pair.fixed_local.to_array());
+        match pair.normals_local {
+            Some(normals) => {
+                hasher.update([1_u8]);
+                update_f64(&mut hasher, &normals[0].to_array());
+                update_f64(&mut hasher, &normals[1].to_array());
+            }
+            None => hasher.update([0_u8]),
+        }
+    }
+    update_len(&mut hasher, input.seeds.len() as u64);
+    for seed in input.seeds {
+        update_f64(&mut hasher, &seed.rotation.to_array());
+        update_f64(&mut hasher, &seed.translation.to_array());
     }
     hex_digest(&hasher.finalize())
 }
@@ -185,22 +251,93 @@ fn hex_digest(bytes: &[u8]) -> String {
     encoded
 }
 
-/// Read the declared machine and source identity, failing closed when either is
-/// absent so no measurement is attributed to an undeclared baseline.
-fn declared_context() -> [String; 2] {
-    let mut context = [String::new(), String::new()];
-    let mut missing = Vec::new();
-    for (index, name) in BENCH_CONTEXT_VARS.iter().enumerate() {
-        match std::env::var(name) {
-            Ok(value) if !value.trim().is_empty() => context[index] = value.trim().to_owned(),
-            _ => missing.push(*name),
-        }
-    }
+/// Caller-declared host identity. The process cannot read the CPU model or
+/// installed RAM without a new dependency, so these stay declared.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BenchMachine {
+    cpu: String,
+    ram_bytes: u64,
+}
+
+/// Caller-declared build identity: the profile actually built, the toolchain,
+/// and the enabled features. `debug_assertions` is a separate derived fact.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BenchBuild {
+    profile: String,
+    toolchain: String,
+    features: Vec<String>,
+}
+
+/// Caller-declared target; checked against the actual compile target.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BenchTarget {
+    arch: String,
+    os: String,
+}
+
+/// The complete declared context; see [`large_scan_search_benchmark`].
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BenchContext {
+    machine: BenchMachine,
+    build: BenchBuild,
+    source_sha: String,
+    target: BenchTarget,
+}
+
+/// A full lowercase 40-character git revision, which rejects placeholders and
+/// abbreviated revisions. The process cannot re-derive git identity.
+fn is_full_source_sha(value: &str) -> bool {
+    value.len() == 40
+        && value
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// Read and validate the declared benchmark context, failing closed with a
+/// named reason before any fixture or measurement when a field is missing,
+/// malformed, or contradicts the actual compile target.
+fn read_context() -> BenchContext {
+    let raw = std::env::var(BENCH_CONTEXT_VAR).unwrap_or_default();
     assert!(
-        missing.is_empty(),
-        "manual benchmark context is not declared: set {} to the machine and source \
-         identity this run reports against; refusing to emit an unattributed baseline",
-        missing.join(", ")
+        !raw.trim().is_empty(),
+        "manual benchmark context is not declared: set {BENCH_CONTEXT_VAR} to the JSON \
+         object documented on large_scan_search_benchmark"
+    );
+    let context: BenchContext = serde_json::from_str(&raw)
+        .expect("manual benchmark context is not valid JSON for the documented shape");
+    assert!(
+        !context.machine.cpu.trim().is_empty(),
+        "manual benchmark context.machine.cpu is empty"
+    );
+    assert!(
+        context.machine.ram_bytes > 0,
+        "manual benchmark context.machine.ram_bytes must be positive"
+    );
+    assert!(
+        !context.build.profile.trim().is_empty(),
+        "manual benchmark context.build.profile is empty"
+    );
+    assert!(
+        !context.build.toolchain.trim().is_empty(),
+        "manual benchmark context.build.toolchain is empty"
+    );
+    assert!(
+        is_full_source_sha(&context.source_sha),
+        "manual benchmark context.source_sha must be a full lowercase 40-character revision"
+    );
+    assert_eq!(
+        context.target.arch,
+        std::env::consts::ARCH,
+        "manual benchmark context.target.arch does not match the actual compile target"
+    );
+    assert_eq!(
+        context.target.os,
+        std::env::consts::OS,
+        "manual benchmark context.target.os does not match the actual compile target"
     );
     context
 }
@@ -211,52 +348,72 @@ fn declared_context() -> [String; 2] {
 /// Run it deliberately on the target machine, in the profile being reported:
 ///
 /// ```text
-/// OCCLUVIEW_BENCH_MACHINE="<host/cpu/ram>" \
-/// OCCLUVIEW_BENCH_SOURCE="<git sha>" \
+/// OCCLUVIEW_BENCH_CONTEXT='{"machine":{"cpu":"AMD Ryzen 9 5950X","ram_bytes":17179869184},"build":{"profile":"release","toolchain":"1.98.0","features":[]},"source_sha":"0123456789abcdef0123456789abcdef01234567","target":{"arch":"x86_64","os":"linux"}}' \
 /// cargo test -p occluview-align --release --test search_large \
 ///     -- --ignored --nocapture large_scan_search_benchmark
 /// ```
 ///
-/// The header declares the machine, source, build profile, target, backend and
-/// corpus identity; [`BENCH_WARMUP_RUNS`] searches are discarded per corpus and
-/// [`BENCH_REPETITIONS`] are printed raw. Each repetition records wall time,
-/// work counters and the independent probe quality. No speed budget is
-/// asserted: a threshold needs a recorded baseline, which this harness does not
-/// claim to have. The run fails closed when the machine or source identity is
-/// undeclared.
+/// The context is caller-declared and reported under `declared`: the machine
+/// CPU and RAM, the build profile, toolchain and features, the source SHA, and
+/// the target arch/os. The run fails closed before building any fixture when a
+/// field is missing, the source SHA is not a full lowercase 40-character
+/// revision, or the target arch/os disagree with the actual compile target.
+/// `debug_assertions`, the actual target, the backend and the thread count are
+/// reported separately under `derived`; `debug_assertions` is not presented as
+/// the build profile.
+///
+/// The header also declares the corpus, the fixed [`BENCH_WARMUP_RUNS`] warmup
+/// and [`BENCH_REPETITIONS`] repetitions. Each repetition records raw wall time,
+/// work counters, the effective numerical settings and wall allowance, the
+/// algorithm version, threshold set and input revisions, and the independent
+/// probe quality. No speed budget is asserted: a threshold needs a recorded
+/// baseline, which this harness does not claim to have.
 #[test]
-#[ignore = "manual perf benchmark: declare OCCLUVIEW_BENCH_MACHINE and OCCLUVIEW_BENCH_SOURCE, then run with --ignored --nocapture"]
+#[ignore = "manual perf benchmark: set OCCLUVIEW_BENCH_CONTEXT, then run with --ignored --nocapture"]
 fn large_scan_search_benchmark() {
-    let [machine, source_revision] = declared_context();
+    let context = read_context();
     let parallelism = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
-    let build_profile = if cfg!(debug_assertions) {
-        "debug"
-    } else {
-        "release"
-    };
     let triangle_targets = LARGE_SCAN_CASES.map(|(least, _)| least);
     println!(
         "{}",
         json!({
             "benchmark": "search_large",
-            "machine": machine,
-            "source_revision": source_revision,
-            "build_profile": build_profile,
-            "target_arch": std::env::consts::ARCH,
-            "target_os": std::env::consts::OS,
-            "backend": "cpu-rayon",
-            "parallelism": parallelism,
-            "corpus": "synthetic-quartered-dental-arch",
-            "warmup_runs": BENCH_WARMUP_RUNS,
-            "repetitions": BENCH_REPETITIONS,
-            "triangle_targets": triangle_targets,
+            "declared": {
+                "machine": {
+                    "cpu": context.machine.cpu,
+                    "ram_bytes": context.machine.ram_bytes,
+                },
+                "build": {
+                    "profile": context.build.profile,
+                    "toolchain": context.build.toolchain,
+                    "features": context.build.features,
+                },
+                "source_sha": context.source_sha,
+                "target": {
+                    "arch": context.target.arch,
+                    "os": context.target.os,
+                },
+            },
+            "derived": {
+                "debug_assertions": cfg!(debug_assertions),
+                "target_arch": std::env::consts::ARCH,
+                "target_os": std::env::consts::OS,
+                "backend": "cpu-rayon",
+                "parallelism": parallelism,
+            },
+            "method": {
+                "corpus": "synthetic-quartered-dental-arch",
+                "warmup_runs": BENCH_WARMUP_RUNS,
+                "repetitions": BENCH_REPETITIONS,
+                "triangle_targets": triangle_targets,
+            },
         })
     );
     let mut fixed = arch::dental_arch(&arch::ArchSpec::default());
     for (least, _) in LARGE_SCAN_CASES {
         let (moving, truth, probes) = large_scan(least, &mut fixed);
-        let corpus_digest = corpus_sha256(&fixed);
         let input = alignment_input(moving.soup(), fixed.soup());
+        let request_digest = request_sha256(&input);
         for _ in 0..BENCH_WARMUP_RUNS {
             drop(search_alignment(&input, &safety_settings(), &safety_control()).unwrap());
         }
@@ -266,15 +423,22 @@ fn large_scan_search_benchmark() {
             let wall = started.elapsed();
             let best = &result.candidates[0];
             let error = metrics::probe_error(best.pose, truth, &probes);
+            let settings = &result.provenance.settings;
             println!(
                 "{}",
                 json!({
                     "benchmark": "search_large",
                     "corpus": "synthetic-quartered-dental-arch",
-                    "corpus_sha256": corpus_digest,
-                    "triangles": fixed.triangles.len() / 3,
-                    "vertices": fixed.positions.len() / 3,
+                    "request_sha256": request_digest,
                     "repetition": repetition,
+                    "triangles": {
+                        "moving": moving.triangles.len() / 3,
+                        "fixed": fixed.triangles.len() / 3,
+                    },
+                    "vertices": {
+                        "moving": moving.positions.len() / 3,
+                        "fixed": fixed.positions.len() / 3,
+                    },
                     "wall_ms": wall.as_secs_f64() * 1e3,
                     "work": {
                         "elapsed_ms": result.work.elapsed.as_secs_f64() * 1e3,
@@ -286,6 +450,19 @@ fn large_scan_search_benchmark() {
                             "examined": family.examined,
                             "retained": family.retained,
                         })).collect::<Vec<_>>(),
+                    },
+                    "settings": {
+                        "normal_policy": format!("{:?}", settings.normal_policy),
+                        "profile": format!("{:?}", settings.profile),
+                        "top_k": settings.top_k,
+                        "reference_regions": format!("{:?}", settings.reference_regions),
+                        "wall_limit_ms": settings.wall_limit.as_secs_f64() * 1e3,
+                    },
+                    "provenance": {
+                        "threshold_set_id": result.provenance.threshold_set_id,
+                        "algorithm_version": result.provenance.algorithm_version,
+                        "input_revisions": result.provenance.input_revisions,
+                        "masked": result.provenance.masked,
                     },
                     "quality": {
                         "completion": format!("{:?}", result.completion),
