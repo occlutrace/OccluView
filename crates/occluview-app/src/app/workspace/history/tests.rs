@@ -501,3 +501,42 @@ fn closing_a_participant_discards_transfer_prefix_but_keeps_later_neighbor_work(
         Some(later_edit)
     );
 }
+
+/// A payload declares which allocations it shares. The journal deduplicates
+/// those against a live Edit checkpoint baseline that already owns the same
+/// mesh: the second reference adds only the snapshot's exclusive metadata, so
+/// Cancel keeps its geometry and the same vertices are never counted twice.
+#[test]
+fn a_checkpoint_and_a_committed_snapshot_share_one_mesh_allocation() {
+    use crate::edit_mode::undo_snapshot::MeshEditUndoSnapshot;
+
+    let scope = scene_key(11, 1);
+    let layer = SceneMesh::new(
+        occluview_core::test_support::simple_triangle_mesh(None).expect("valid mesh"),
+    );
+    let mut baseline = Scene::new();
+    baseline.add(layer.clone());
+
+    let mut history = WorkspaceHistory::new(usize::MAX, usize::MAX);
+    let Some(_checkpoint) = history.begin_edit_checkpoint(Some(scope), baseline, 1) else {
+        panic!("checkpoint id should be available");
+    };
+    let bytes = history.used_bytes();
+
+    let command = history
+        .push_pending_edit(
+            Some(scope),
+            HistoryStepKind::LayerEdit {
+                layer_id: layer.id(),
+            },
+            MeshEditUndoSnapshot::Layer(layer),
+            usize::MAX,
+        )
+        .expect("the snapshot shares the checkpoint's mesh");
+    assert!(history.commit_pending_edit(command));
+    assert_eq!(
+        history.used_bytes() - bytes,
+        std::mem::size_of::<SceneMesh>(),
+        "the shared mesh is counted once across the checkpoint and the command"
+    );
+}
