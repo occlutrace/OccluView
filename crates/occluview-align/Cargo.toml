@@ -21,3 +21,9 @@ search-probe = []
 glam = { workspace = true }
 rayon = { workspace = true }
 occluview-geometry = { workspace = true }
+
+[dev-dependencies]
+occluview-formats = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }

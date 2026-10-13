@@ -12,8 +12,9 @@
 //! therefore loose clinical sanity checks rather than exact values, and the
 //! render is written to `target/contact-verify/` for inspection.
 //!
-//! The fixture-backed tests are ignored in ordinary runs and run through
-//! `scripts/validate-release-private.sh` with the private scan corpus.
+//! These fixture-backed contact tests remain a separate manual GPU exercise.
+//! The Align acceptance runner does not invoke them or include them in its
+//! receipt. Run this module directly with `OCCLUVIEW_CONTACT_FIXTURES` set.
 
 #![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
 
@@ -380,7 +381,7 @@ fn output_dir() -> PathBuf {
 /// that happens: a bare tooth surface with no marks on it, which is the correct
 /// answer, rather than noise or a false contact.
 #[test]
-#[ignore = "requires private upper/lower STL scans and a GPU; run scripts/validate-release-private.sh with OCCLUVIEW_ALIGN_FIXTURES=/path/to/corpus"]
+#[ignore = "separate manual contact acceptance; requires private fixtures and a GPU, see module docs"]
 fn a_pair_that_cannot_meet_paints_nothing() {
     let (id, upper, lower) = available_fixtures()
         .into_iter()
@@ -449,7 +450,7 @@ fn a_pair_that_cannot_meet_paints_nothing() {
 
 /// The acceptance run. Every pair in the local corpus, measured and painted.
 #[test]
-#[ignore = "requires private upper/lower STL scans and a GPU; run scripts/validate-release-private.sh with OCCLUVIEW_ALIGN_FIXTURES=/path/to/corpus"]
+#[ignore = "separate manual contact acceptance; requires private fixtures and a GPU, see module docs"]
 fn real_scan_pairs_measure_and_render_a_readable_contact_map() {
     let fixtures = available_fixtures();
     for (id, upper, lower) in fixtures {

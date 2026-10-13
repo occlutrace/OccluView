@@ -1,194 +1,393 @@
 #!/usr/bin/env bash
-# Validate a release against the private scan corpus.
-#
-# The alignment and contact acceptance tests need real scans, and real scans
-# are patient data: they live outside the repository and CI never has them.
-# The fixture-backed Rust tests are ignored in ordinary runs. This gate opts in
-# to those tests and fails when their scan corpus or required GPU is missing.
-#
-# This script is that gate. It fails when the corpus is absent, runs the ignored
-# acceptance tests, and writes a receipt that records the corpus fingerprint
-# and what the tests proved. It does not name a scan, so
-# it can be kept next to a release without carrying patient data.
+# Optional maintainer-run acceptance against a private, manifest-described
+# corpus. This script is deliberately not called by release-check or CI.
 #
 # Usage:
-#   OCCLUVIEW_ALIGN_FIXTURES=/path/to/stl/corpus scripts/validate-release-private.sh
+#   OCCLUVIEW_PRIVATE_MANIFEST=/private/acceptance.json \
+#   OCCLUVIEW_PRIVATE_CORPUS=/private/corpus \
+#     scripts/validate-release-private.sh
 #
-# Environment:
-#   OCCLUVIEW_ALIGN_FIXTURES  directory of binary STL scans (required)
-#   OCCLUVIEW_RECEIPT         receipt path (default dist/private-acceptance.json)
-#   OCCLUVIEW_SKIP_GATE=1     exit 2 without running anything (for a rehearsal
-#                             that must not claim clinical coverage)
+# The manifest contract is documented in
+# crates/occluview-align/tests/private-acceptance.md.
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+repo_root="$(cd "$(dirname "$0")/.." && pwd -P)"
+cd "$repo_root"
 
-receipt="${OCCLUVIEW_RECEIPT:-dist/private-acceptance.json}"
-
-if [[ "${OCCLUVIEW_SKIP_GATE:-0}" != "0" ]]; then
-  echo "validate-release-private: skipped on request; this run proves nothing about real scans" >&2
+manifest_input="${OCCLUVIEW_PRIVATE_MANIFEST:-}"
+corpus_input="${OCCLUVIEW_PRIVATE_CORPUS:-}"
+if [[ -z "$manifest_input" || -z "$corpus_input" ]]; then
+  echo "private acceptance requires OCCLUVIEW_PRIVATE_MANIFEST and OCCLUVIEW_PRIVATE_CORPUS" >&2
+  exit 2
+fi
+if [[ ! -f "$manifest_input" ]]; then
+  echo "private acceptance manifest is unavailable" >&2
+  exit 2
+fi
+if [[ ! -d "$corpus_input" ]]; then
+  echo "private acceptance corpus is unavailable" >&2
   exit 2
 fi
 
-corpus="${OCCLUVIEW_ALIGN_FIXTURES:-}"
-if [[ -z "$corpus" ]]; then
-  cat >&2 <<'MESSAGE'
-validate-release-private: OCCLUVIEW_ALIGN_FIXTURES is not set.
+manifest="$(realpath -e -- "$manifest_input" 2>/dev/null)" || {
+  echo "private acceptance manifest is unavailable" >&2
+  exit 2
+}
+corpus="$(realpath -e -- "$corpus_input" 2>/dev/null)" || {
+  echo "private acceptance corpus is unavailable" >&2
+  exit 2
+}
 
-This gate exists because the align acceptance criteria (0.05 mm residual, 85%
-measured, 90% inside the clinical band) are only checked against real scans, and
-real scans are not in the repository. Point the variable at a directory of
-binary STL scans and run it again:
-
-  OCCLUVIEW_ALIGN_FIXTURES=/path/to/corpus scripts/validate-release-private.sh
-
-A release that skips this step ships an alignment solver whose clinical
-behaviour nothing has verified.
-MESSAGE
+target="crates/occluview-align/tests/private_acceptance.rs"
+if [[ ! -f "$target" ]]; then
+  echo "private acceptance test target is missing" >&2
   exit 2
 fi
 
-if [[ ! -d "$corpus" ]]; then
-  echo "validate-release-private: $corpus is not a directory" >&2
-  exit 2
-fi
+profile="${OCCLUVIEW_PRIVATE_PROFILE:-debug}"
+case "$profile" in
+  debug|release) ;;
+  *)
+    echo "OCCLUVIEW_PRIVATE_PROFILE must be debug or release" >&2
+    exit 2
+    ;;
+esac
 
-scans=()
-while IFS= read -r -d '' file; do
-  scans+=("$file")
-done < <(find "$corpus" -maxdepth 1 -type f -iname '*.stl' -print0 | sort -z)
-if [[ ${#scans[@]} -eq 0 ]]; then
-  echo "validate-release-private: $corpus holds no .stl files" >&2
-  exit 2
+features="${OCCLUVIEW_PRIVATE_FEATURES:-}"
+feature_args=()
+if [[ -n "$features" ]]; then
+  if [[ "$features" != "search-probe" ]]; then
+    echo "private acceptance supports only the search-probe feature" >&2
+    exit 2
+  fi
+  feature_args=(--features "$features")
 fi
-
-echo "validate-release-private: ${#scans[@]} scan(s) in the corpus"
 
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-log="$(mktemp -t occluview-private-acceptance-XXXXXX.log)"
-trap 'rm -f "$log"' EXIT
+run_stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+revision="$(git rev-parse HEAD)"
+receipt="${OCCLUVIEW_RECEIPT:-dist/private-acceptance-${revision}-${run_stamp}.json}"
+if [[ -e "$receipt" ]]; then
+  echo "private acceptance receipt path already exists; choose a new path" >&2
+  exit 2
+fi
+
+scratch="$(mktemp -d -t occluview-private-acceptance-XXXXXX)"
+result_path="$scratch/results.json"
+log_path="$scratch/test.log"
+receipt_tmp=""
+cleanup() {
+  [[ -z "$receipt_tmp" ]] || rm -f -- "$receipt_tmp"
+  rm -rf -- "$scratch"
+}
+trap cleanup EXIT
+
+tree_snapshot() {
+  python3 - <<'PYTHON'
+import hashlib
+import subprocess
+
+diff = subprocess.run(
+    ["git", "diff", "--binary", "HEAD"],
+    check=True,
+    stdout=subprocess.PIPE,
+).stdout
+status = subprocess.run(
+    ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+    check=True,
+    stdout=subprocess.PIPE,
+).stdout
+untracked = subprocess.run(
+    ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+    check=True,
+    stdout=subprocess.PIPE,
+).stdout.split(b"\0")
+digest = hashlib.sha256()
+digest.update(b"occluview-worktree-diff-v1\0")
+digest.update(len(diff).to_bytes(8, "big"))
+digest.update(diff)
+for raw_path in sorted(path for path in untracked if path):
+    with open(raw_path, "rb") as source:
+        content = source.read()
+    digest.update(len(raw_path).to_bytes(8, "big"))
+    digest.update(raw_path)
+    digest.update(len(content).to_bytes(8, "big"))
+    digest.update(content)
+print(("clean" if not status else "dirty") + " " + digest.hexdigest())
+PYTHON
+}
+
+before_tree="$(tree_snapshot)"
+before_revision="$(git rev-parse HEAD)"
+if [[ "$before_revision" != "$revision" ]]; then
+  echo "source revision changed during private acceptance setup; no receipt was written" >&2
+  exit 1
+fi
+rustc_version="$(rustc --version --verbose 2>/dev/null)" || {
+  echo "pinned rustc is unavailable" >&2
+  exit 2
+}
+cargo_version="$(cargo --version 2>/dev/null)" || {
+  echo "Cargo is unavailable" >&2
+  exit 2
+}
+
+cargo_args=(test --locked --no-default-features -p occluview-align)
+if [[ "$profile" == "release" ]]; then
+  cargo_args+=(--release)
+fi
+cargo_args+=("${feature_args[@]}" --test private_acceptance private_acceptance_manifest -- --ignored --exact --nocapture --test-threads=1)
 
 status=0
-OCCLUVIEW_ALIGN_FIXTURES="$corpus" \
-  cargo test --locked -p occluview-align --test real_scans fixtures_are_present \
-    -- --ignored --nocapture --test-threads=1 \
-  >"$log" 2>&1 || status=$?
-
+OCCLUVIEW_PRIVATE_MANIFEST="$manifest" \
+OCCLUVIEW_PRIVATE_CORPUS="$corpus" \
+OCCLUVIEW_PRIVATE_RESULT="$result_path" \
+  cargo "${cargo_args[@]}" >"$log_path" 2>&1 || status=$?
 if [[ $status -ne 0 ]]; then
-  echo "validate-release-private: the acceptance tests failed" >&2
-  tail -n 40 "$log" >&2
+  echo "private acceptance did not complete successfully; no receipt was written" >&2
+  tail -n 40 "$log_path" >&2
+  if [[ -s "$result_path" ]]; then
+    python3 - "$result_path" <<'PYTHON' >&2
+import json
+import pathlib
+import sys
+try:
+    result = json.loads(pathlib.Path(sys.argv[1]).read_bytes())
+except (OSError, ValueError):
+    raise SystemExit(0)
+print("structured results for cases actually invoked:")
+for case in result.get("cases", []):
+    print(json.dumps({key: case.get(key) for key in (
+        "case_id", "passed", "completion", "confidence", "reasons",
+        "rotation_error_deg", "translation_error_mm",
+        "maximum_control_landmark_error_mm", "overlap_smaller",
+        "rms_mm", "p95_mm", "examined_poses", "iterations", "elapsed_ms",
+    )}, allow_nan=False))
+PYTHON
+  fi
   exit "$status"
 fi
-
-# These fourteen root-corpus tests share this filter: six established positive
-# cases, six unrelated-arch start offsets, and both default-ratio crop roles.
-# Other ignored tests need separately acquired prepared or partial-overlap pairs.
-if ! grep -Eq 'test result: ok\. 14 passed; 0 failed' "$log"; then
-  echo "validate-release-private: expected fourteen alignment tests to pass" >&2
-  tail -n 40 "$log" >&2
+if [[ ! -s "$result_path" ]]; then
+  echo "private acceptance target produced no structured results; no receipt was written" >&2
   exit 1
 fi
 
-# The contact reading is the other set of numbers the panel publishes as a
-# clinical measurement. The ignored contact tests use the same corpus and
-# require a GPU to write both acceptance frames.
-OCCLUVIEW_CONTACT_FIXTURES="$corpus" \
-OCCLUVIEW_REQUIRE_GPU_TESTS=1 \
-  cargo test --locked -p occluview-app contact_render_tests -- --ignored --nocapture --test-threads=1 \
-  >>"$log" 2>&1 || status=$?
-
-if [[ $status -ne 0 ]]; then
-  echo "validate-release-private: the contact acceptance tests failed" >&2
-  tail -n 40 "$log" >&2
-  exit "$status"
-fi
-
-if ! grep -Eq 'test result: ok\. 2 passed; 0 failed' "$log"; then
-  echo "validate-release-private: expected both contact tests to pass" >&2
-  tail -n 40 "$log" >&2
+finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+after_tree="$(tree_snapshot)"
+after_revision="$(git rev-parse HEAD)"
+if [[ "$before_tree" != "$after_tree" || "$revision" != "$after_revision" ]]; then
+  echo "source tree changed during private acceptance; no receipt was written" >&2
   exit 1
 fi
 
-revision="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
-if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
-  tree_state="dirty"
-else
-  tree_state="clean"
+mkdir -p -- "$(dirname "$receipt")"
+receipt_tmp="${receipt}.tmp.$$"
+if [[ -e "$receipt_tmp" ]]; then
+  echo "private acceptance temporary receipt path already exists" >&2
+  exit 2
 fi
 
-mkdir -p "$(dirname "$receipt")"
-OCCLUVIEW_RECEIPT_PATH="$receipt" \
-OCCLUVIEW_RECEIPT_CORPUS="$corpus" \
-OCCLUVIEW_RECEIPT_STARTED="$started_at" \
-OCCLUVIEW_RECEIPT_REVISION="$revision" \
-OCCLUVIEW_RECEIPT_TREE="$tree_state" \
-OCCLUVIEW_RECEIPT_LOG="$log" \
-python3 - "${scans[@]}" <<'PYTHON'
-"""Write the receipt: what was proved, against which corpus, at which revision.
-
-The corpus is described by a fingerprint over hashed file names and sizes. The
-receipt travels with a release, and a release is public: it must not name a
-patient's scan or say where the maintainer keeps them.
-"""
+PRIVATE_MANIFEST="$manifest" \
+PRIVATE_CORPUS="$corpus" \
+PRIVATE_RESULT="$result_path" \
+PRIVATE_RECEIPT="$receipt_tmp" \
+PRIVATE_STARTED="$started_at" \
+PRIVATE_FINISHED="$finished_at" \
+PRIVATE_REVISION="$revision" \
+PRIVATE_TREE="$after_tree" \
+PRIVATE_RUSTC="$rustc_version" \
+PRIVATE_CARGO="$cargo_version" \
+PRIVATE_PROFILE="$profile" \
+PRIVATE_FEATURES="$features" \
+python3 - <<'PYTHON'
+"""Validate the target's structured output and write a path-free receipt."""
 
 import hashlib
 import json
+import math
 import os
 import pathlib
 import re
-import subprocess
-import sys
 
-files = [pathlib.Path(argument) for argument in sys.argv[1:]]
-digest = hashlib.sha256()
-for path in sorted(files, key=lambda path: path.name):
-    name = hashlib.sha256(path.name.encode("utf-8", "replace")).hexdigest()
-    digest.update(f"{name} {path.stat().st_size}\n".encode("utf-8"))
+manifest_path = pathlib.Path(os.environ["PRIVATE_MANIFEST"])
+try:
+    corpus_root = pathlib.Path(os.environ["PRIVATE_CORPUS"]).resolve(strict=True)
+except (OSError, RuntimeError):
+    raise SystemExit("private acceptance corpus changed during receipt validation; no receipt was written") from None
+try:
+    manifest_bytes = manifest_path.read_bytes()
+except OSError:
+    raise SystemExit("private acceptance manifest changed during receipt validation; no receipt was written") from None
+manifest_sha = hashlib.sha256(manifest_bytes).digest()
+manifest = json.loads(manifest_bytes)
+if manifest.get("schema_version") != 1 or not isinstance(manifest.get("cases"), list):
+    raise SystemExit("private acceptance manifest schema is invalid; no receipt was written")
+cases = manifest["cases"]
+if not cases:
+    raise SystemExit("private acceptance manifest has no cases; no receipt was written")
 
-thresholds = {}
-test_names = []
-log = pathlib.Path(os.environ["OCCLUVIEW_RECEIPT_LOG"]).read_text(
-    encoding="utf-8", errors="replace"
+case_ids = [case.get("id") for case in cases]
+if any(not isinstance(case_id, str) or not re.fullmatch(r"case_[0-9a-f]{12}", case_id) for case_id in case_ids):
+    raise SystemExit("private acceptance manifest contains an invalid case ID; no receipt was written")
+if len(set(case_ids)) != len(case_ids):
+    raise SystemExit("private acceptance manifest contains duplicate case IDs; no receipt was written")
+
+def update_field(digest, value):
+    digest.update(len(value).to_bytes(8, "big"))
+    digest.update(value)
+
+corpus_digest = hashlib.sha256()
+update_field(corpus_digest, b"occluview-private-acceptance-corpus-v1")
+update_field(corpus_digest, manifest_sha)
+for case in cases:
+    case_id = case["id"]
+    for role in ("moving", "fixed"):
+        asset = case[role]
+        if not isinstance(asset.get("file"), str):
+            raise SystemExit("private acceptance manifest has an invalid asset path; no receipt was written")
+        relative = pathlib.PurePosixPath(asset["file"])
+        if relative.is_absolute() or not relative.parts or any(part in ("", ".", "..") for part in relative.parts):
+            raise SystemExit("private acceptance manifest has an unsafe asset path; no receipt was written")
+        if "\\" in asset["file"] or ":" in asset["file"]:
+            raise SystemExit("private acceptance manifest has an unsafe asset path; no receipt was written")
+        try:
+            path = (corpus_root / pathlib.Path(*relative.parts)).resolve(strict=True)
+        except (OSError, RuntimeError):
+            raise SystemExit("private acceptance asset changed during receipt validation; no receipt was written") from None
+        try:
+            path.relative_to(corpus_root)
+        except ValueError:
+            raise SystemExit("private acceptance asset escapes the corpus; no receipt was written") from None
+        if not path.is_file():
+            raise SystemExit("private acceptance asset is unavailable; no receipt was written")
+        try:
+            file_sha = hashlib.sha256(path.read_bytes()).digest()
+        except OSError:
+            raise SystemExit("private acceptance asset changed during receipt validation; no receipt was written") from None
+        update_field(corpus_digest, case_id.encode("utf-8"))
+        update_field(corpus_digest, asset["file"].encode("utf-8"))
+        update_field(corpus_digest, file_sha)
+
+result = json.loads(pathlib.Path(os.environ["PRIVATE_RESULT"]).read_bytes())
+if result.get("schema_version") != 1 or result.get("all_passed") is not True:
+    raise SystemExit("private acceptance result is incomplete or failed; no receipt was written")
+if result.get("manifest_sha256") != manifest_sha.hex():
+    raise SystemExit("private acceptance manifest changed during execution; no receipt was written")
+if result.get("corpus_sha256") != corpus_digest.hexdigest():
+    raise SystemExit("private acceptance corpus changed during execution; no receipt was written")
+actual = result.get("cases")
+if not isinstance(actual, list) or [item.get("case_id") for item in actual] != case_ids:
+    raise SystemExit("private acceptance cases are missing, duplicated, or out of order; no receipt was written")
+
+confidence_rank = {"weak": 0, "ambiguous": 1, "probable": 2, "verified": 3}
+numeric_fields = (
+    "rotation_error_deg",
+    "translation_error_mm",
+    "maximum_control_landmark_error_mm",
+    "overlap_smaller",
+    "rms_mm",
+    "p95_mm",
+    "elapsed_ms",
 )
-for match in re.finditer(r"^test ([a-z0-9_:]+) \.\.\.", log, flags=re.MULTILINE):
-    test_names.append(match.group(1))
-if len(test_names) != 16:
-    raise SystemExit(
-        f"validate-release-private: expected sixteen completed acceptance tests in the log, found {len(test_names)}"
-    )
-for name, value in (
-    ("max_residual_mm", r"MAX_RESIDUAL_MM: f64 = ([0-9.]+)"),
-    ("min_measured_share", r"MIN_MEASURED_SHARE: f64 = ([0-9.]+)"),
-    ("min_within_tolerance", r"MIN_WITHIN_TOLERANCE: f64 = ([0-9.]+)"),
-    ("tolerance_mm", r"TOLERANCE_MM: f64 = ([0-9.]+)"),
-):
-    source = pathlib.Path("crates/occluview-align/tests/real_scans.rs").read_text(
-        encoding="utf-8"
-    )
-    found = re.search(value, source)
-    thresholds[name] = float(found.group(1)) if found else None
+receipt_cases = []
+for planned, observed in zip(cases, actual, strict=True):
+    if observed.get("passed") is not True or observed.get("completion") != "complete" or observed.get("input_check_complete") is not True:
+        raise SystemExit("private acceptance contains an incomplete case; no receipt was written")
+    confidence = observed.get("confidence")
+    if confidence not in confidence_rank:
+        raise SystemExit("private acceptance contains an unknown confidence; no receipt was written")
+    for field in numeric_fields:
+        value = observed.get(field)
+        if value is not None and (not isinstance(value, (int, float)) or not math.isfinite(value)):
+            raise SystemExit("private acceptance contains a non-finite result; no receipt was written")
+    expectation = planned.get("expectation", {})
+    kind = expectation.get("type")
+    if kind == "pose":
+        tolerance = expectation.get("transform_tolerance", {})
+        quality = expectation.get("quality", {})
+        checks = (
+            observed.get("rotation_error_deg") is not None
+            and observed["rotation_error_deg"] <= tolerance.get("rotation_deg", -1)
+            and observed.get("translation_error_mm") is not None
+            and observed["translation_error_mm"] <= tolerance.get("translation_mm", -1)
+            and observed.get("maximum_control_landmark_error_mm") is not None
+            and observed["maximum_control_landmark_error_mm"] <= expectation.get("maximum_control_landmark_error_mm", -1)
+            and observed.get("overlap_smaller") is not None
+            and observed["overlap_smaller"] >= quality.get("minimum_overlap_smaller", 2)
+            and observed.get("rms_mm") is not None
+            and observed["rms_mm"] <= quality.get("maximum_rms_mm", -1)
+            and observed.get("p95_mm") is not None
+            and observed["p95_mm"] <= quality.get("maximum_p95_mm", -1)
+            and confidence_rank[confidence] >= confidence_rank.get(quality.get("minimum_confidence"), 99)
+        )
+        if not checks:
+            raise SystemExit("private acceptance pose result no longer satisfies its manifest; no receipt was written")
+    elif kind == "not_verified":
+        maximum = expectation.get("maximum_confidence")
+        required_reason = expectation.get("required_reason")
+        if maximum not in confidence_rank or maximum == "verified" or confidence_rank[confidence] > confidence_rank[maximum]:
+            raise SystemExit("private acceptance rejection result does not meet its confidence cap; no receipt was written")
+        if required_reason not in observed.get("reasons", []):
+            raise SystemExit("private acceptance rejection reason is missing; no receipt was written")
+    else:
+        raise SystemExit("private acceptance manifest has an unknown expectation; no receipt was written")
+    receipt_cases.append({"case_id": observed["case_id"], **{field: observed.get(field) for field in (
+        "completion",
+        "input_check_complete",
+        "confidence",
+        "reasons",
+        "candidate_family",
+        "candidate_proposal",
+        *numeric_fields,
+        "examined_poses",
+        "iterations",
+    )}})
 
-rustc = subprocess.run(
-    ["rustc", "--version"], capture_output=True, text=True, check=False
-).stdout.strip()
-
+tree_state, tree_digest = os.environ["PRIVATE_TREE"].split(" ", 1)
 receipt = {
-    "schema": 1,
-    "kind": "occluview-private-acceptance",
-    "generated_at": os.environ["OCCLUVIEW_RECEIPT_STARTED"],
-    "git_revision": os.environ["OCCLUVIEW_RECEIPT_REVISION"],
-    "worktree": os.environ["OCCLUVIEW_RECEIPT_TREE"],
-    "rustc": rustc,
-    "corpus": {
-        "scans": len(files),
-        "fingerprint": digest.hexdigest(),
+    "schema_version": 1,
+    "kind": "occluview-private-align-acceptance",
+    "generated_at_utc": os.environ["PRIVATE_FINISHED"],
+    "started_at_utc": os.environ["PRIVATE_STARTED"],
+    "source": {
+        "git_sha": os.environ["PRIVATE_REVISION"],
+        "worktree": tree_state,
+        "worktree_diff_sha256": tree_digest,
     },
-    "thresholds": thresholds,
-    "tests": sorted(test_names),
+    "toolchain": {
+        "rustc_version_verbose": os.environ["PRIVATE_RUSTC"],
+        "cargo_version": os.environ["PRIVATE_CARGO"],
+    },
+    "build": {
+        "profile": os.environ["PRIVATE_PROFILE"],
+        "default_features": False,
+        "features": os.environ["PRIVATE_FEATURES"].split(",") if os.environ["PRIVATE_FEATURES"] else [],
+        "test_target": "private_acceptance::private_acceptance_manifest",
+    },
+    "manifest_sha256": manifest_sha.hex(),
+    "corpus_content_sha256": corpus_digest.hexdigest(),
+    "executed_case_ids": case_ids,
+    "cases": receipt_cases,
     "verdict": "passed",
 }
-path = pathlib.Path(os.environ["OCCLUVIEW_RECEIPT_PATH"])
-path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
-print(f"validate-release-private: {len(test_names)} test(s) passed against {len(files)} scan(s)")
-print(f"validate-release-private: receipt at {path}")
+pathlib.Path(os.environ["PRIVATE_RECEIPT"]).write_text(
+    json.dumps(receipt, indent=2, allow_nan=False) + "\n",
+    encoding="utf-8",
+)
 PYTHON
+
+python3 - "$receipt_tmp" "$receipt" <<'PYTHON'
+import os
+import sys
+os.link(sys.argv[1], sys.argv[2])
+os.unlink(sys.argv[1])
+PYTHON
+receipt_tmp=""
+case_count="$(python3 - "$receipt" <<'PYTHON'
+import json
+import sys
+print(len(json.load(open(sys.argv[1], encoding="utf-8"))["executed_case_ids"]))
+PYTHON
+)"
+echo "private Align acceptance passed for $case_count manifest case(s)"
+echo "path-free receipt written"
