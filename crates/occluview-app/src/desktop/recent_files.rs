@@ -18,7 +18,7 @@ enum NativeRecentFilesV2 {
         entries: Vec<Vec<Vec<u8>>>,
     },
     #[cfg(windows)]
-    #[serde(rename = "windows_utf16_le")]
+    #[serde(rename = "windows_utf16")]
     WindowsUtf16Le {
         version: u8,
         entries: Vec<Vec<Vec<u16>>>,
@@ -285,7 +285,7 @@ fn decode_native_v2(limit: usize, payload: &str) -> Option<RecentFiles> {
     }
 }
 
-fn decode_native_groups<T>(
+fn decode_native_groups<T: Default + PartialEq>(
     limit: usize,
     entries: Vec<Vec<Vec<T>>>,
     decode_path: impl Fn(&[T]) -> Option<PathBuf>,
@@ -301,7 +301,7 @@ fn decode_native_groups<T>(
         }
         let mut paths = Vec::with_capacity(encoded_paths.len());
         for units in encoded_paths {
-            if units.is_empty() {
+            if units.is_empty() || units.contains(&T::default()) {
                 return None;
             }
             paths.push(decode_path(&units)?);
@@ -388,7 +388,7 @@ fn decode_escape(first: char, second: char) -> Option<char> {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
-    use super::{RecentFiles, RecentFilesDecode};
+    use super::{RecentFiles, RecentFilesDecode, NATIVE_V2_HEADER};
     use std::path::PathBuf;
 
     fn entry_paths(recent: &RecentFiles) -> Vec<Vec<PathBuf>> {
@@ -561,7 +561,7 @@ mod tests {
         let platform = if cfg!(unix) {
             "unix_bytes"
         } else if cfg!(windows) {
-            "windows_utf16_le"
+            "windows_utf16"
         } else {
             "other_encoded"
         };
@@ -588,6 +588,14 @@ mod tests {
         );
         assert!(matches!(
             RecentFiles::deserialize_storage(8, &unknown_field),
+            RecentFilesDecode::Unsupported
+        ));
+
+        let nul_path_unit = format!(
+            "{NATIVE_V2_HEADER}{{\"platform\":\"{platform}\",\"version\":2,\"entries\":[[[97],[0]]]}}"
+        );
+        assert!(matches!(
+            RecentFiles::deserialize_storage(8, &nul_path_unit),
             RecentFilesDecode::Unsupported
         ));
 
@@ -655,7 +663,7 @@ mod tests {
 
         let serialized = recent.serialize().expect("native serialization should succeed");
         assert!(serialized.starts_with("\0occluview-recent-v2:"));
-        assert!(serialized.contains("\"platform\":\"windows_utf16_le\""));
+        assert!(serialized.contains("\"platform\":\"windows_utf16\""));
         assert!(serialized.contains("\"version\":2"));
         assert!(!serialized.contains('\n'));
         let RecentFilesDecode::Supported(restored) =

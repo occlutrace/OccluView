@@ -144,7 +144,7 @@ mod tests {
         let platform = if cfg!(unix) {
             "unix_bytes"
         } else if cfg!(windows) {
-            "windows_utf16_le"
+            "windows_utf16"
         } else {
             "other_encoded"
         };
