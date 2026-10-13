@@ -1004,12 +1004,15 @@ fn a_pose_is_refused_while_another_edit_owns_the_transaction() {
         .finish_layer_edit_error(token, "Canceled".into());
 }
 
-/// Closing the scene revokes the generation a job was submitted under. A
-/// completion computed for the old scene cannot land on the recreated one, even
-/// before its worker is replaced.
+/// Resetting the Align state for a scene clear revokes the generation a job was
+/// submitted under, so a completion already queued for the old state is
+/// discarded before the UI can poll it.
+///
+/// This exercises the Align state reset and its generation fence. It does not
+/// exercise the full document close/recreate path.
 #[test]
-fn a_completion_from_a_cleared_scene_cannot_land() {
-    let (mut app, _moving_id, _fixed_id) = app_with_a_landed_fit("align-cleared-generation");
+fn resetting_the_align_state_discards_a_queued_completion() {
+    let (mut app, _moving_id, _fixed_id) = app_with_a_landed_fit("align-reset-generation");
     let mut scene = app.active_context().expect("live test scene");
     scene.tools.align.pending_fit = scene.current_fit_key();
     let stale_generation = scene.align_worker_mut().generation();
@@ -1022,19 +1025,21 @@ fn a_completion_from_a_cleared_scene_cannot_land() {
         ))),
     );
 
-    // The scene is closed before the queued completion is drained.
+    // The Align state resets before the queued completion is polled.
     scene.reset_align_state_for_scene_clear();
+    assert_ne!(
+        scene.align_worker_mut().generation(),
+        stale_generation,
+        "the reset must revoke the generation the completion was stamped with"
+    );
     assert!(
-        scene
-            .align_worker_mut()
-            .drain()
-            .is_empty(),
-        "a completion from the closed scene's generation is dropped"
+        scene.align_worker_mut().drain().is_empty(),
+        "a completion queued before the reset is discarded"
     );
     scene.drain_align_worker(&egui::Context::default());
     assert_eq!(
         scene.document.edit_mode.undo_len(),
         0,
-        "the closed scene's result must not become a history step"
+        "the discarded completion must not become a history step"
     );
 }
