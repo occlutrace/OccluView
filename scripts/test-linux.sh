@@ -14,8 +14,9 @@
 #   scripts/test-linux.sh -p occluview-render --lib
 #   scripts/test-linux.sh -p occluview-app --lib
 #
-# Box-heavy commands are serialized through the shared heavy.sh lock; exit 75
-# means the box is busy, not a test failure. Set HEAVY_WAIT_SECONDS to wait.
+# The portable default invokes Cargo directly. A host may opt into its local
+# scheduler with OCCLUVIEW_HEAVY_WRAPPER=/path/to/heavy.sh; that wrapper must
+# pass Cargo's exit status through unchanged.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -44,5 +45,12 @@ export WGPU_BACKEND="${WGPU_BACKEND:-vulkan}"
 export OCCLUVIEW_REQUIRE_GPU_TESTS=1
 unset DISPLAY WAYLAND_DISPLAY
 
-exec /home/wow/occlutraceio/scripts/heavy.sh bash -c \
-  'cargo test --locked "$@"' _ "$@"
+if [[ -n "${OCCLUVIEW_HEAVY_WRAPPER:-}" ]]; then
+  if [[ ! -x "$OCCLUVIEW_HEAVY_WRAPPER" ]]; then
+    echo "test-linux: OCCLUVIEW_HEAVY_WRAPPER is not executable: $OCCLUVIEW_HEAVY_WRAPPER" >&2
+    exit 2
+  fi
+  exec "$OCCLUVIEW_HEAVY_WRAPPER" cargo test --locked "$@"
+fi
+
+exec cargo test --locked "$@"
