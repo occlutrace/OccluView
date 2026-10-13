@@ -180,9 +180,9 @@ impl SceneContext<'_> {
                             rect,
                             AppIcon::ChevronDown,
                             if response.hovered() {
-                                ui_theme::ThemeTokens::from_ui(root_ui).text()
+                                ui_theme::ThemeTokens::from_ui(ui).text()
                             } else {
-                                ui_theme::ThemeTokens::from_ui(root_ui).text_weak()
+                                ui_theme::ThemeTokens::from_ui(ui).text_weak()
                             },
                         );
                         crate::ui::accessibility::button(
