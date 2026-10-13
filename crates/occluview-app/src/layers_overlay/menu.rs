@@ -155,7 +155,10 @@ fn show_unit_actions(
         (crate::i18n::message_id!("layer-units-use-mm"), LayerContextAction::ConfirmMillimeters),
         (crate::i18n::message_id!("layer-units-use-meters"), LayerContextAction::ConfirmMeters),
     ] {
-        if ui.button(locale.tr(key)).clicked() {
+        if ui.button(locale.tr(key))
+            .on_hover_text(locale.tr(crate::i18n::message_id!("layer-units-source-scope")))
+            .clicked()
+        {
             *request = Some(LayerContextRequest {
                 index: target.index,
                 layer_id: target.layer_id,

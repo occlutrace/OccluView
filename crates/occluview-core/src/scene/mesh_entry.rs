@@ -150,20 +150,29 @@ impl SceneMesh {
         self
     }
 
-    /// Apply an explicit interpretation to an ambiguous layer once. Scaling
-    /// acts in the mesh's local frame, preserving its authored scene placement.
+    /// Apply an explicit interpretation to imported or operator-confirmed units.
+    /// Repeating the same choice is a no-op; a changed choice uses the ratio
+    /// to the scale already applied, rather than scaling source units twice.
+    /// Scaling acts in the mesh's local frame, preserving its authored placement.
     /// The caller records the complete layer in Undo before invoking this.
     #[must_use]
     pub fn confirm_import_units(&mut self, interpreted: SourceUnit) -> bool {
-        if self.import_units.confidence != UnitConfidence::Ambiguous {
+        if !matches!(self.import_units.confidence,
+            UnitConfidence::Ambiguous | UnitConfidence::ConfirmedByOperator)
+        {
             return false;
         }
-        let scale_to_mm = match interpreted {
+        let scale_to_mm: f32 = match interpreted {
             SourceUnit::Meters => 1000.0,
             SourceUnit::Millimeters => 1.0,
             SourceUnit::Unitless => return false,
         };
         let previous = self.import_units.scale_to_mm;
+        if self.import_units.confidence == UnitConfidence::ConfirmedByOperator
+            && previous.to_bits() == scale_to_mm.to_bits()
+        {
+            return false;
+        }
         if !previous.is_finite() || previous <= 0.0 {
             return false;
         }
