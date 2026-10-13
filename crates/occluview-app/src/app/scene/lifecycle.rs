@@ -50,9 +50,9 @@ impl SceneContext<'_> {
         if reset_camera || self.render.camera.is_none() {
             self.reset_camera_to_home();
         }
-        self.render.mark_scene_geometry_changed();
+        self.render.invalidation.scene_geometry_changed();
         self.document.clear_mesh_selection_drag();
-        self.render.discard_rendered_frame();
+        self.render.rendered = None;
         // Whatever the align tool was showing described the geometry that just
         // got replaced. Every structural path (undo, redo, repair, close holes,
         // crop, cut, separate, a bridge split commit, a cancelled mesh-edit
@@ -100,7 +100,7 @@ impl SceneContext<'_> {
         if let Some(scene) = self.document.scene.clone() {
             self.document.sync_edit_mode_to_scene(&scene);
         }
-        self.render.mark_scene_geometry_changed();
+        self.render.invalidation.scene_geometry_changed();
         self.document.clear_mesh_selection_drag();
         if self.can_render_cut_view() {
             self.tools.cut_view.mark_dirty();
@@ -133,6 +133,6 @@ impl SceneContext<'_> {
         self.tools.bridge_split_section.reset();
         self.tools.cut_view.disable();
         self.tools.measure.disarm();
-        self.render.clear_section_cache();
+        self.render.section_cache.clear();
     }
 }
