@@ -146,8 +146,14 @@ impl GeometryControl {
 
     /// Unlimited admission for existing non-registration consumers.
     pub fn unlimited() -> Self {
+        Self::cancellable(CancelFlag::new())
+    }
+
+    /// Preserve unrestricted work/allocation admission while allowing the
+    /// owning worker to cancel preprocessing through its existing flag.
+    pub fn cancellable(cancel: CancelFlag) -> Self {
         Self::new(
-            CancelFlag::new(),
+            cancel,
             Duration::MAX,
             GeometryLimits {
                 query_calls: u64::MAX,
