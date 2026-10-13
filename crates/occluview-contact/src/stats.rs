@@ -73,10 +73,24 @@ pub(crate) fn compute(positions: &[f32], indices: &[u32], values: &[f32]) -> Con
         return ContactStats::default();
     }
     let mut total_x = 0.0_f64;
+    let mut finite_vertex_count = 0usize;
     for vertex in 0..vertex_count {
-        total_x += f64::from(positions[vertex * 3]);
+        let offset = vertex * 3;
+        let point = DVec3::new(
+            f64::from(positions[offset]),
+            f64::from(positions[offset + 1]),
+            f64::from(positions[offset + 2]),
+        );
+        if point.is_finite() {
+            total_x += point.x;
+            finite_vertex_count += 1;
+        }
     }
-    let mean_x = total_x / to_f64(vertex_count);
+    let mean_x = if finite_vertex_count == 0 {
+        0.0
+    } else {
+        total_x / to_f64(finite_vertex_count)
+    };
 
     let mut stats = ContactStats::default();
     let mut contact_centroids: Vec<DVec3> = Vec::new();
