@@ -3,7 +3,7 @@ use super::{
 };
 use crate::edit_mode::{BusyFinish, EditModeCommand, EditModeController, StructuralHistoryStep};
 use glam::{Affine3A, Vec3};
-use occluview_core::{Mesh, Scene, SceneMesh, Vertex};
+use occluview_core::{Mesh, Scene, SceneMesh, UnitInterpretation, Vertex};
 use occluview_mesh_edit::{BridgeSplitReport, CoreBridgeSplitResult};
 
 fn mesh(name: &str, z: f32) -> Option<Mesh> {
@@ -45,6 +45,7 @@ fn scene_apply_replaces_source_and_inserts_presentation_matched_part_b() {
     scene.add(SceneMesh::new(other));
     let source_index = scene.add(
         SceneMesh::new(bridge)
+            .with_import_units(UnitInterpretation::ambiguous_gltf())
             .with_transform(Affine3A::from_translation(Vec3::new(3.0, 4.0, 5.0)))
             .with_tint([0.2, 0.4, 0.6, 1.0])
             .with_opacity(0.45)
@@ -72,6 +73,9 @@ fn scene_apply_replaces_source_and_inserts_presentation_matched_part_b() {
     assert_eq!(part_a.mesh.name(), Some("Bridge - Part A"));
     assert_eq!(part_b.mesh.name(), Some("Bridge - Part B"));
     for part in [part_a, part_b] {
+        assert_eq!(part.import_units(), source.import_units());
+        assert_eq!(part.import_bbox(), source.import_bbox());
+        assert_eq!(part.export_source_layer_id(), source.export_source_layer_id());
         assert_eq!(part.transform, source.transform);
         assert!(part
             .tint
