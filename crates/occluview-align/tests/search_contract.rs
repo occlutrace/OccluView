@@ -6,14 +6,21 @@ use occluview_align::*;
 use support::{arch, metrics, operators};
 
 use support::alignment_input as input;
+
+/// Finite safety allowance for the ordinary correctness searches. It is a
+/// safety timeout, not a performance budget; the explicit deadline, cancel and
+/// resource contracts in this file keep their own limits.
+const TEST_SEARCH_SAFETY_ALLOWANCE: std::time::Duration = std::time::Duration::from_secs(600);
+
 fn search(i: &AlignmentInput<'_>) -> AlignmentSearchResult {
     search_alignment(
         i,
         &SearchSettings {
             profile: SearchProfile::Local,
+            wall_limit: TEST_SEARCH_SAFETY_ALLOWANCE,
             ..SearchSettings::default()
         },
-        &SearchControl::default(),
+        &SearchControl::new(CancelFlag::new(), TEST_SEARCH_SAFETY_ALLOWANCE),
     )
     .unwrap()
 }
@@ -379,11 +386,17 @@ fn equal_requests_give_equal_results() {
     let request = input(moving.soup(), fixed.soup());
     let settings = SearchSettings {
         top_k: usize::MAX,
+        wall_limit: TEST_SEARCH_SAFETY_ALLOWANCE,
         ..SearchSettings::default()
     };
     let mut previous: Option<AlignmentSearchResult> = None;
     for _ in 0..3 {
-        let mut result = search_alignment(&request, &settings, &SearchControl::default()).unwrap();
+        let mut result = search_alignment(
+            &request,
+            &settings,
+            &SearchControl::new(CancelFlag::new(), TEST_SEARCH_SAFETY_ALLOWANCE),
+        )
+        .unwrap();
         proper(&result);
         assert_eq!(result.completion, Completion::Complete);
         assert_eq!(result.provenance.settings.top_k, 5);

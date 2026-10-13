@@ -251,8 +251,8 @@ fn hex_digest(bytes: &[u8]) -> String {
     encoded
 }
 
-/// Caller-declared host identity. The process cannot read the CPU model or
-/// installed RAM without a new dependency, so these stay declared.
+/// Caller-declared host identity. CPU and RAM are operator-declared rather than
+/// probed.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct BenchMachine {
@@ -358,9 +358,9 @@ fn read_context() -> BenchContext {
 /// the target arch/os. The run fails closed before building any fixture when a
 /// field is missing, the source SHA is not a full lowercase 40-character
 /// revision, or the target arch/os disagree with the actual compile target.
-/// `debug_assertions`, the actual target, the backend and the thread count are
-/// reported separately under `derived`; `debug_assertions` is not presented as
-/// the build profile.
+/// `debug_assertions`, the actual target, the backend, the available
+/// parallelism and the actual Rayon pool size are reported separately under
+/// `derived`; `debug_assertions` is not presented as the build profile.
 ///
 /// The header also declares the corpus, the fixed [`BENCH_WARMUP_RUNS`] warmup
 /// and [`BENCH_REPETITIONS`] repetitions. Each repetition records raw wall time,
@@ -372,7 +372,9 @@ fn read_context() -> BenchContext {
 #[ignore = "manual perf benchmark: set OCCLUVIEW_BENCH_CONTEXT, then run with --ignored --nocapture"]
 fn large_scan_search_benchmark() {
     let context = read_context();
-    let parallelism = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+    let available_parallelism =
+        std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+    let rayon_current_num_threads = rayon::current_num_threads();
     let triangle_targets = LARGE_SCAN_CASES.map(|(least, _)| least);
     println!(
         "{}",
@@ -399,7 +401,8 @@ fn large_scan_search_benchmark() {
                 "target_arch": std::env::consts::ARCH,
                 "target_os": std::env::consts::OS,
                 "backend": "cpu-rayon",
-                "parallelism": parallelism,
+                "available_parallelism": available_parallelism,
+                "rayon_current_num_threads": rayon_current_num_threads,
             },
             "method": {
                 "corpus": "synthetic-quartered-dental-arch",
