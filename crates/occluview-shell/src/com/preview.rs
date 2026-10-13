@@ -734,12 +734,13 @@ impl IObjectWithSite_Impl for PreviewHandler_Impl {
             "IObjectWithSite::SetSite",
             || Err(e_fail()),
             || {
-                // Take the incoming COM reference before evaluating the
-                // `borrow_mut()` receiver below. Null clears the site.
+                // Take the incoming COM reference before the RefCell
+                // replacement. Null clears the site.
                 let site = punksite.as_ref().cloned().map(Rc::new);
-                let retired = self.this.site.borrow_mut().replace(site);
-                // Drop the retired Rc only after the RefCell borrow ends; its
-                // final Release can reenter GetSite/SetSite.
+                let retired = self.this.site.replace(site);
+                // RefCell::replace released its internal borrow before
+                // returning; drop the retired Rc outside the borrow because
+                // its final Release can reenter GetSite/SetSite.
                 drop(retired);
                 Ok(())
             },
