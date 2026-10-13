@@ -20,6 +20,8 @@ struct AccessibleControl {
     role: String,
     disabled: bool,
     toggled: Option<bool>,
+    expanded: Option<bool>,
+    has_popup: Option<egui::accesskit::HasPopup>,
 }
 
 const INTERACTIVE_ROLES: &[&str] = &[
@@ -113,6 +115,8 @@ fn controls(output: &egui::FullOutput, surface: &str) -> Vec<AccessibleControl> 
                 toggled: node
                     .toggled()
                     .map(|toggled| format!("{toggled:?}") == "True"),
+                expanded: node.is_expanded(),
+                has_popup: node.has_popup(),
             });
         }
     }
@@ -211,6 +215,23 @@ fn assert_disabled(controls: &[AccessibleControl], name: &str) {
     assert!(control.disabled, "{name:?} must be disabled");
 }
 
+fn assert_expanded(controls: &[AccessibleControl], name: &str, expanded: bool) {
+    let control = controls
+        .iter()
+        .find(|control| control.name == name)
+        .unwrap_or_else(|| panic!("missing expandable control {name:?}; controls={controls:#?}"));
+    assert_eq!(
+        control.expanded,
+        Some(expanded),
+        "{name:?} must expose its popup state"
+    );
+    assert_eq!(
+        control.has_popup,
+        Some(egui::accesskit::HasPopup::Menu),
+        "{name:?} must expose a menu popup"
+    );
+}
+
 fn app_with_scene(ctx: &egui::Context) -> OccluViewApp {
     let mut app = OccluViewApp::new_for_tests(ctx.clone());
     app.workspace.scenes[0].document.scene =
@@ -303,10 +324,12 @@ fn viewer_surfaces_publish_named_controls_with_roles_and_toggle_states() {
         "Thickness",
         "Align",
         "Edit",
+        "View",
         "Settings",
     ] {
         assert_role(&controls, name, "Button");
     }
+    assert_expanded(&controls, "View", false);
     assert_role(&controls, "max influence", "Slider");
     assert_role(&controls, "max influence", "SpinButton");
     assert_role(&controls, "UI scale", "Slider");
@@ -362,6 +385,7 @@ fn localized_toolbar_controls_fit_narrow_windows_without_overlapping() {
                 crate::i18n::message_id!("toolbar-thickness-label"),
                 crate::i18n::message_id!("toolbar-align-label"),
                 crate::i18n::message_id!("toolbar-edit-label"),
+                crate::i18n::message_id!("toolbar-view-label"),
                 crate::i18n::message_id!("toolbar-settings-label"),
             ] {
                 assert_role(&named, &app.ui.locale.tr(key), "Button");
@@ -421,6 +445,7 @@ fn unavailable_toolbar_commands_expose_disabled_state() {
         "Thickness",
         "Align",
         "Edit",
+        "View",
     ] {
         assert_disabled(&controls, name);
     }
@@ -430,6 +455,38 @@ fn unavailable_toolbar_commands_expose_disabled_state() {
             .any(|control| control.name == "Add" && !control.disabled),
         "an empty scene must accept added files"
     );
+}
+
+#[test]
+fn axis_view_menu_publishes_six_named_buttons_and_expanded_state() {
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    let mut app = OccluViewApp::new_for_tests(ctx.clone());
+    let model = app_test_support::named_scene("Upper arch", 0.0);
+    app.workspace.scenes[0].render.camera = Some(crate::viewer::home_camera_for_scene(&model));
+    app.workspace.scenes[0].document.scene = Some(model.into());
+    let trigger_label = app
+        .ui
+        .locale
+        .tr(crate::i18n::message_id!("toolbar-view-label"));
+    egui::Popup::open_id(&ctx, super::app_dialogs::axis_view_popup_id());
+
+    let mut output = ctx.run_ui(input(), |ui| {
+        app.active_context()
+            .expect("live test scene")
+            .show_toolbar(ui);
+    });
+    output.textures_delta.clear();
+    let controls = controls(&output, "axis view menu");
+    assert_role(&controls, &trigger_label, "Button");
+    assert_expanded(&controls, &trigger_label, true);
+    for axis in occluview_core::CameraAxisView::ALL {
+        let label = app.ui.locale.tr_with(
+            crate::i18n::message_id!("toolbar-view-from-axis"),
+            &[("axis", axis.label())],
+        );
+        assert_role(&controls, &label, "Button");
+    }
 }
 
 #[test]
@@ -697,6 +754,13 @@ fn accessibility_names_follow_the_active_locale() {
     let controls = controls(&output, "Russian toolbar");
 
     assert_role(&controls, "Открыть", "Button");
+    assert_role(
+        &controls,
+        &app.ui
+            .locale
+            .tr(crate::i18n::message_id!("toolbar-view-label")),
+        "Button",
+    );
     assert_role(&controls, "Настройки", "Button");
 }
 
