@@ -1,11 +1,12 @@
 use super::protocol::{
     is_fallback_ack, is_native_request, parse_request, serialize_fallback_ack, serialize_request,
-    CAPABILITY_ACK, CAPABILITY_PROBE, OPEN_REQUEST_ACK,
+    CAPABILITY_ACK, CAPABILITY_PROBE, MAX_REQUEST_BYTES, OPEN_REQUEST_ACK,
 };
 use super::{OpenRequest, FALLBACK_POLL_INTERVAL};
 use crate::desktop::app_paths::app_state_dir;
 use anyhow::{Context, Result};
 use eframe::egui;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
@@ -27,10 +28,24 @@ pub(super) enum NativeDiskOutcome {
 
 pub(super) fn write_disk_open_request(request: &OpenRequest) -> Result<()> {
     let dir = open_request_dir().context("locating open request directory")?;
-    std::fs::create_dir_all(&dir).context("creating open request directory")?;
-    let request_path = dir.join(unique_request_file_name());
     let payload = serialize_request(request)?;
-    publish_disk_open_request(&request_path, &payload, |path, payload| {
+    publish_new_open_request_in(&dir, &payload)
+}
+
+/// Queue a Finder callback for the primary instance that is still starting.
+/// Unlike an external handoff, this caller knows the matching listener will
+/// start in this process and must not wait for its capability probe.
+#[cfg(target_os = "macos")]
+pub(super) fn write_macos_startup_open_request(request: &OpenRequest) -> Result<()> {
+    let payload = serialize_request(request).context("encoding a Finder document-open request")?;
+    let dir = open_request_dir().context("locating the single-instance request queue")?;
+    publish_new_open_request_in(&dir, &payload)
+}
+
+fn publish_new_open_request_in(dir: &Path, payload: &[u8]) -> Result<()> {
+    std::fs::create_dir_all(dir).context("creating the open request directory")?;
+    let request_path = dir.join(unique_request_file_name());
+    publish_disk_open_request(&request_path, payload, |path, payload| {
         std::fs::write(path, payload)
     })
 }
@@ -87,8 +102,9 @@ fn publish_native_file(path: &Path, payload: &[u8]) -> Result<()> {
 
 fn wait_for_native_ack(path: &Path, kind: &[u8; 8], nonce: &str) -> bool {
     let deadline = Instant::now() + NATIVE_ACK_TIMEOUT;
+    let max_ack_bytes = CAPABILITY_ACK.len().saturating_add(nonce.len());
     loop {
-        if let Ok(bytes) = std::fs::read(path) {
+        if let Ok(bytes) = read_bounded_file(path, max_ack_bytes) {
             let accepted = is_fallback_ack(&bytes, kind, nonce);
             let _ = std::fs::remove_file(path);
             return accepted;
@@ -100,6 +116,20 @@ fn wait_for_native_ack(path: &Path, kind: &[u8; 8], nonce: &str) -> bool {
     }
 }
 
+fn read_bounded_file(path: &Path, max_bytes: usize) -> io::Result<Vec<u8>> {
+    let read_limit = u64::try_from(max_bytes.saturating_add(1)).unwrap_or(u64::MAX);
+    let file = std::fs::File::open(path)?;
+    let mut bytes = Vec::new();
+    file.take(read_limit).read_to_end(&mut bytes)?;
+    if bytes.len() > max_bytes {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "single-instance queue file exceeds its size limit",
+        ));
+    }
+    Ok(bytes)
+}
+
 fn publish_disk_open_request(
     request_path: &Path,
     payload: &[u8],
@@ -108,13 +138,11 @@ fn publish_disk_open_request(
     let partial_path = request_path.with_extension("partial");
     if let Err(error) = write_payload(&partial_path, payload) {
         let _ = std::fs::remove_file(&partial_path);
-        return Err(error)
-            .with_context(|| format!("writing open request {}", request_path.display()));
+        return Err(error).context("writing an open request");
     }
     if let Err(error) = std::fs::rename(&partial_path, request_path) {
         let _ = std::fs::remove_file(&partial_path);
-        return Err(error)
-            .with_context(|| format!("publishing open request {}", request_path.display()));
+        return Err(error).context("publishing an open request");
     }
     Ok(())
 }
@@ -187,7 +215,7 @@ fn take_open_requests_in(dir: &Path) -> Vec<QueuedOpenRequest> {
             .and_then(|name| name.to_str())
             .unwrap_or("<unnamed>")
             .to_owned();
-        match std::fs::read(&path) {
+        match read_bounded_file(&path, MAX_REQUEST_BYTES) {
             Ok(bytes) => match parse_request(&bytes) {
                 Ok(request) if !request.paths.is_empty() => {
                     if is_native_request(&bytes) {
@@ -251,7 +279,7 @@ fn process_native_probes_in(dir: &Path) {
             let _ = std::fs::remove_file(path);
             continue;
         }
-        match std::fs::read(&path) {
+        match read_bounded_file(&path, CAPABILITY_PROBE.len()) {
             Ok(bytes) if bytes.as_slice() == CAPABILITY_PROBE.as_slice() => {
                 let ack_path = path.with_extension("ack");
                 let ack = serialize_fallback_ack(CAPABILITY_ACK, nonce);
@@ -262,6 +290,9 @@ fn process_native_probes_in(dir: &Path) {
                 }
             }
             Ok(_) => {
+                let _ = std::fs::remove_file(path);
+            }
+            Err(error) if error.kind() == io::ErrorKind::InvalidData => {
                 let _ = std::fs::remove_file(path);
             }
             Err(_) => {}
@@ -345,6 +376,63 @@ fn unique_request_id() -> String {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn fallback_queue_reads_reject_files_just_over_the_protocol_limit() -> Result<()> {
+        let path = std::env::temp_dir().join(format!(
+            "occluview-bounded-queue-read-{}-{}",
+            std::process::id(),
+            unique_request_id()
+        ));
+        std::fs::write(&path, vec![0u8; MAX_REQUEST_BYTES + 1])?;
+
+        let result = read_bounded_file(&path, MAX_REQUEST_BYTES);
+
+        assert!(result.is_err(), "an oversized queue file must be rejected");
+        let Err(error) = result else {
+            panic!("required test setup or expected result was missing");
+        };
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        std::fs::remove_file(path)?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_startup_queue_publishes_native_paths_without_a_peer_probe() -> Result<()> {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+        let dir = std::env::temp_dir().join(format!(
+            "occluview-local-native-queue-{}-{}",
+            std::process::id(),
+            unique_request_id()
+        ));
+        let request = OpenRequest {
+            paths: vec![PathBuf::from(std::ffi::OsString::from_vec(
+                b"/tmp/finder-\xff.stl".to_vec(),
+            ))],
+            activation_token: None,
+        };
+        let payload = serialize_request(&request)?;
+
+        publish_new_open_request_in(&dir, &payload)?;
+
+        let entries = std::fs::read_dir(&dir)?
+            .filter_map(std::result::Result::ok)
+            .map(|entry| entry.path())
+            .collect::<Vec<_>>();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].extension().and_then(|ext| ext.to_str()), Some("open"));
+        let queued = take_open_requests_in(&dir);
+        assert_eq!(queued.len(), 1);
+        assert_eq!(
+            queued[0].request.paths[0].as_os_str().as_bytes(),
+            request.paths[0].as_os_str().as_bytes()
+        );
+        assert!(queued[0].native_delivery.is_some());
+        std::fs::remove_dir_all(dir)?;
+        Ok(())
+    }
 
     #[test]
     fn a_disk_request_is_visible_only_after_its_payload_is_complete() -> Result<()> {

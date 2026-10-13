@@ -204,7 +204,7 @@ fn queue_open_paths(paths: Vec<PathBuf>) -> bool {
         paths,
         activation_token: None,
     };
-    match super::write_open_request(&request) {
+    match super::fallback::write_macos_startup_open_request(&request) {
         Ok(()) => true,
         Err(error) => {
             tracing::warn!(?error, "could not queue Finder document-open request");

@@ -52,21 +52,38 @@ pub(super) fn serialize_request(request: &OpenRequest) -> Result<Vec<u8>> {
         payload.push(native_path_codec_tag()?);
     }
     for path in &request.paths {
-        let native_bytes;
-        let bytes = if native_paths {
-            validate_native_path(path)?;
-            native_bytes = encode_native_path(path)?;
-            native_bytes.as_slice()
+        let text_path = if native_paths {
+            None
         } else {
             let text = path
                 .to_str()
                 .context("single-instance path is not valid Unicode")?;
             validate_request_text(text, "path")?;
-            text.as_bytes()
+            Some(text)
         };
-        let len = u32::try_from(bytes.len()).context("request path length exceeds u32")?;
+        let encoded_path_len = match text_path {
+            Some(text) => text.len(),
+            None => native_path_encoded_len(path)?,
+        };
+        let len = u32::try_from(encoded_path_len).context("request path length exceeds u32")?;
+        let path_payload_len = 4usize
+            .checked_add(encoded_path_len)
+            .context("single-instance request path payload length overflow")?;
+        let next_payload_len = admit_request_payload_growth(payload.len(), path_payload_len)?;
         payload.extend_from_slice(&len.to_le_bytes());
-        payload.extend_from_slice(bytes);
+        if let Some(text) = text_path {
+            payload.extend_from_slice(text.as_bytes());
+        } else {
+            // Check the complete envelope budget before producing either a
+            // lossy validation string or a native-unit encoding buffer.
+            validate_native_path(path)?;
+            let native_bytes = encode_native_path(path)?;
+            if native_bytes.len() != encoded_path_len {
+                bail!("native single-instance path length changed while encoding");
+            }
+            payload.extend_from_slice(&native_bytes);
+        }
+        debug_assert_eq!(payload.len(), next_payload_len);
     }
 
     // Only bump to the token-carrying version when a token is actually present,
@@ -83,8 +100,13 @@ pub(super) fn serialize_request(request: &OpenRequest) -> Result<Vec<u8>> {
                 );
             }
             let len = u32::try_from(bytes.len()).context("activation token length exceeds u32")?;
+            let token_payload_len = 4usize
+                .checked_add(bytes.len())
+                .context("single-instance activation token length overflow")?;
+            let next_payload_len = admit_request_payload_growth(payload.len(), token_payload_len)?;
             payload.extend_from_slice(&len.to_le_bytes());
             payload.extend_from_slice(bytes);
+            debug_assert_eq!(payload.len(), next_payload_len);
             if native_paths {
                 REQUEST_VERSION_NATIVE_PATHS_WITH_TOKEN
             } else {
@@ -117,6 +139,19 @@ pub(super) fn serialize_request(request: &OpenRequest) -> Result<Vec<u8>> {
     );
     request_bytes.extend_from_slice(&payload);
     Ok(request_bytes)
+}
+
+fn admit_request_payload_growth(payload_len: usize, addition: usize) -> Result<usize> {
+    let next_payload_len = payload_len
+        .checked_add(addition)
+        .context("single-instance request payload length overflow")?;
+    let total_len = REQUEST_HEADER_BYTES
+        .checked_add(next_payload_len)
+        .context("single-instance request length overflow")?;
+    if total_len > MAX_REQUEST_BYTES {
+        bail!("single-instance request is {total_len} bytes; max is {MAX_REQUEST_BYTES}");
+    }
+    Ok(next_payload_len)
 }
 
 pub(super) fn request_needs_native_encoding(request: &OpenRequest) -> bool {
@@ -364,6 +399,26 @@ fn encode_native_path(path: &std::path::Path) -> Result<Vec<u8>> {
     }
 }
 
+fn native_path_encoded_len(path: &std::path::Path) -> Result<usize> {
+    #[cfg(unix)]
+    {
+        Ok(path.as_os_str().as_bytes().len())
+    }
+    #[cfg(windows)]
+    {
+        path.as_os_str()
+            .encode_wide()
+            .count()
+            .checked_mul(2)
+            .context("native single-instance path length overflow")
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = path;
+        bail!("native single-instance paths are unsupported on this operating system")
+    }
+}
+
 fn decode_native_path(bytes: &[u8]) -> Result<PathBuf> {
     #[cfg(unix)]
     {
@@ -563,6 +618,63 @@ mod tests {
             error.to_string().contains("max is"),
             "unexpected error: {error:?}"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_request_serializer_admits_only_envelopes_within_the_byte_limit() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let max_path_bytes = MAX_REQUEST_BYTES - REQUEST_HEADER_BYTES - 1 - 4;
+        let mut native_bytes = vec![b'x'; max_path_bytes];
+        native_bytes[0] = 0xff;
+        let request = OpenRequest {
+            paths: vec![PathBuf::from(std::ffi::OsString::from_vec(native_bytes.clone()))],
+            activation_token: None,
+        };
+
+        let encoded = serialize_request(&request);
+        assert!(encoded.is_ok(), "an envelope at the limit must fit: {encoded:?}");
+        let Ok(encoded) = encoded else {
+            panic!("required test setup or expected result was missing");
+        };
+        assert_eq!(encoded.len(), MAX_REQUEST_BYTES);
+
+        native_bytes.push(b'x');
+        let oversized = serialize_request(&OpenRequest {
+            paths: vec![PathBuf::from(std::ffi::OsString::from_vec(native_bytes))],
+            activation_token: None,
+        });
+        assert!(oversized.is_err(), "a path over the envelope budget must fail");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn native_windows_request_serializer_admits_only_bounded_utf16_paths() {
+        use std::os::windows::ffi::OsStringExt;
+
+        let max_path_bytes = MAX_REQUEST_BYTES - REQUEST_HEADER_BYTES - 1 - 4;
+        let mut units = vec![u16::from(b'x'); max_path_bytes / 2];
+        units[0] = 0xD800;
+        let request = OpenRequest {
+            paths: vec![PathBuf::from(std::ffi::OsString::from_wide(&units))],
+            activation_token: None,
+        };
+
+        let encoded = serialize_request(&request);
+        assert!(encoded.is_ok(), "a bounded UTF-16 envelope must fit: {encoded:?}");
+        let Ok(encoded) = encoded else {
+            panic!("required test setup or expected result was missing");
+        };
+        assert_eq!(encoded.len(), MAX_REQUEST_BYTES - 1);
+
+        let mut oversized_units = units;
+        oversized_units.push(u16::from(b'x'));
+        let oversized = serialize_request(&OpenRequest {
+            paths: vec![PathBuf::from(std::ffi::OsString::from_wide(&oversized_units))],
+            activation_token: None,
+        });
+        assert!(oversized.is_err(), "a path over the envelope budget must fail");
     }
 
     #[test]
