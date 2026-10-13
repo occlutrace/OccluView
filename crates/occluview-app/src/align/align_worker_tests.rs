@@ -973,10 +973,11 @@ fn cylinder_indices(around: usize, along: usize) -> Vec<u32> {
 /// doing real work. That is a *warning about the measurement*, not a reason to
 /// withhold it: the deviation map is still the operator's evidence, the
 /// observability estimate is what bounds its blind mode, and refusing here
-/// would block legitimate full-arch alignments — real-arch sensitivity can
-/// reach below the same threshold. That calibration is checked only by the
-/// opt-in private acceptance target (`private_acceptance.rs`); the removed
-/// `real_scans.rs` thresholds are historical, not acceptance for this API.
+/// would block legitimate full-arch alignments. This test holds that
+/// separation: weak-but-present observability is reported without discarding
+/// the otherwise valid raw/display map. Real-scan acceptance requires
+/// independently authored manifest case bounds in the opt-in private acceptance
+/// target; no earlier threshold carries over automatically.
 #[test]
 fn a_weakly_observable_surface_still_produces_its_map() {
     let cancel = occluview_align::CancelFlag::new();
