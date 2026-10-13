@@ -133,7 +133,7 @@ fn read_bounded_file(path: &Path, max_bytes: usize) -> io::Result<Vec<u8>> {
 fn publish_disk_open_request(
     request_path: &Path,
     payload: &[u8],
-    write_payload: impl FnOnce(&Path, &[u8]) -> std::io::Result<()>,
+    write_payload: impl FnOnce(&Path, &[u8]) -> io::Result<()>,
 ) -> Result<()> {
     let partial_path = request_path.with_extension("partial");
     if let Err(error) = write_payload(&partial_path, payload) {
