@@ -88,11 +88,16 @@ fn cap_open_part_from_loops_best_effort(
     expected_normal: DVec3,
 ) -> Result<(MeshEditBuffers, usize), BridgeSplitError> {
     let rings = loop_vertices(&loops);
-    let rejected_loops: Vec<_> = loops.iter().map(|ring| !ring.cap_eligible).collect();
+    // Bounds-only component vertices stay in the planner input as rejected
+    // geometry. The planner computes their AABBs without treating them as rims.
+    let rejected_geometry: Vec<_> = loops
+        .iter()
+        .map(|ring| !ring.cap_eligible || ring.bounds_only)
+        .collect();
     let plan = triangulate_regions_best_effort(
         &mesh,
         &rings,
-        &rejected_loops,
+        &rejected_geometry,
         expected_normal,
     )?;
     apply_cut_rim_aliases(&mut mesh, &loops, &plan.accepted_loop_indices, provenance)?;
@@ -110,6 +115,7 @@ fn untagged_loops(loops: Vec<Vec<usize>>) -> Vec<CutLoop> {
             lineages: vec![None; vertices.len()],
             vertices,
             cap_eligible: true,
+            bounds_only: false,
         })
         .collect()
 }
@@ -144,7 +150,7 @@ fn apply_cut_rim_aliases(
             .ok_or_else(|| MeshEditError::MalformedMesh {
                 reason: "accepted cap loop index is out of range".to_string(),
             })?;
-        if !ring.cap_eligible {
+        if !ring.cap_eligible || ring.bounds_only {
             continue;
         }
         if ring.vertices.len() != ring.lineages.len() {
@@ -388,7 +394,7 @@ mod tests {
         // vertices. Its geometric cycle stays closed, but its lineage is
         // ambiguous and must block the enclosing outer lid.
         let tangent = u32::try_from(vertices.len()).expect("small fixture");
-        for position in [[1.0, 1.0, 0.0], [3.0, 1.0, 0.0], [3.2, 1.4, 0.0]] {
+        for position in [[1.0, 1.0, 0.0], [3.0, 1.0, 0.0], [3.2, 1.4, 1.0]] {
             let mut vertex = crate::EditVertex::at(position);
             vertex.color = TANGENT_COLOR;
             vertices.push(vertex);
