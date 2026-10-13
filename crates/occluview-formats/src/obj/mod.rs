@@ -92,19 +92,6 @@ pub(crate) fn estimate_peak_bytes(bytes: &[u8]) -> u64 {
         .saturating_add(parser_bytes.saturating_mul(2))
 }
 
-pub(crate) fn may_have_uvs(bytes: &[u8]) -> bool {
-    std::str::from_utf8(bytes).is_ok_and(|text| {
-        text.trim_start_matches('\u{feff}').lines().any(|line| {
-            line.split('#')
-                .next()
-                .unwrap_or_default()
-                .split_ascii_whitespace()
-                .next()
-                == Some("vt")
-        })
-    })
-}
-
 /// As [`read`], choosing how vertex normals are produced.
 ///
 /// # Errors
