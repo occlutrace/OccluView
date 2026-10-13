@@ -63,6 +63,12 @@ pub(crate) struct BridgeSplitGuard {
     pub(crate) target: BridgeSplitTarget,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct BridgeSplitWarmGuard {
+    pub(crate) session_id: u64,
+    pub(crate) target: BridgeSplitTarget,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum BridgeSplitToolError {
     WorkerStopped,
@@ -113,6 +119,7 @@ pub(crate) struct BridgeSplitSession {
     generation: u64,
     preview: Option<BridgeSplitPreview>,
     failure: Option<BridgeSplitToolError>,
+    warm_failure: bool,
 }
 
 impl Default for BridgeSplitSession {
@@ -126,6 +133,7 @@ impl Default for BridgeSplitSession {
             generation: 0,
             preview: None,
             failure: None,
+            warm_failure: false,
         }
     }
 }
@@ -174,6 +182,7 @@ impl BridgeSplitSession {
         self.generation = 0;
         self.preview = None;
         self.failure = None;
+        self.warm_failure = false;
     }
 
     pub(crate) fn set_follow_pose(&mut self, pose: Option<BridgeSplitPose>) -> bool {
@@ -196,6 +205,9 @@ impl BridgeSplitSession {
     }
 
     pub(crate) fn update_pose(&mut self, pose: BridgeSplitPose) -> Option<BridgeSplitGuard> {
+        if self.warm_failure {
+            return None;
+        }
         if !matches!(
             self.mode,
             BridgeSplitMode::PlantedPending
@@ -217,6 +229,9 @@ impl BridgeSplitSession {
             return None;
         }
         self.kerf_mm = clamped;
+        if self.warm_failure {
+            return None;
+        }
         if matches!(
             self.mode,
             BridgeSplitMode::PlantedPending
@@ -242,6 +257,13 @@ impl BridgeSplitSession {
         })
     }
 
+    pub(crate) fn warm_guard(&self) -> Option<BridgeSplitWarmGuard> {
+        Some(BridgeSplitWarmGuard {
+            session_id: self.session_id,
+            target: self.target?,
+        })
+    }
+
     pub(crate) fn current_request(&self) -> Option<BridgeSplitRequest> {
         if self.mode != BridgeSplitMode::PlantedPending {
             return None;
@@ -254,7 +276,8 @@ impl BridgeSplitSession {
         live_target: Option<BridgeSplitTarget>,
         output: BridgeSplitJobOutput,
     ) -> bool {
-        if self.target != Some(output.guard.target)
+        if self.warm_failure
+            || self.target != Some(output.guard.target)
             || live_target != Some(output.guard.target)
             || self.session_id != output.guard.session_id
             || self.generation != output.guard.generation
@@ -287,6 +310,26 @@ impl BridgeSplitSession {
         true
     }
 
+    pub(crate) fn apply_warm_failure(
+        &mut self,
+        live_target: Option<BridgeSplitTarget>,
+        guard: BridgeSplitWarmGuard,
+        error: BridgeSplitToolError,
+    ) -> bool {
+        if self.target != Some(guard.target)
+            || live_target != Some(guard.target)
+            || self.session_id != guard.session_id
+            || self.mode == BridgeSplitMode::Off
+        {
+            return false;
+        }
+        self.preview = None;
+        self.failure = Some(error);
+        self.warm_failure = true;
+        self.mode = BridgeSplitMode::Failed;
+        true
+    }
+
     pub(crate) fn cancel(&mut self) {
         let session_id = self.session_id;
         *self = Self::default();
@@ -298,6 +341,7 @@ impl BridgeSplitSession {
         self.generation = self.generation.saturating_add(1);
         self.preview = None;
         self.failure = None;
+        self.warm_failure = false;
         self.mode = BridgeSplitMode::PlantedPending;
         Some(BridgeSplitGuard {
             session_id: self.session_id,
