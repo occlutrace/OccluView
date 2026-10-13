@@ -179,7 +179,7 @@ impl SceneContext<'_> {
                     ui.label(
                         egui::RichText::new(self.ui.locale.tr(message_id!("about-license-kind")))
                             .size(10.5)
-                            .color(ui_theme::text_muted()),
+                            .color(ui_theme::ThemeTokens::from_context(ctx).text_muted()),
                     );
                     ui.add_space(10.0);
                     if ui
@@ -218,12 +218,12 @@ fn about_header(
             egui::RichText::new(locale.text(message_id!("about-title")))
                 .size(19.0)
                 .strong()
-                .color(ui_theme::text()),
+                .color(ui_theme::ThemeTokens::from_ui(ui).text()),
         );
         ui.label(
             egui::RichText::new(locale.text(message_id!("about-tagline")))
                 .size(12.0)
-                .color(ui_theme::text_weak()),
+                .color(ui_theme::ThemeTokens::from_ui(ui).text_weak()),
         );
         ui.add_space(4.0);
         ui.label(
@@ -235,7 +235,7 @@ fn about_header(
                 )])),
             ))
             .size(11.0)
-            .color(ui_theme::text_muted()),
+            .color(ui_theme::ThemeTokens::from_ui(ui).text_muted()),
         );
         if let Some(adapter) = graphics {
             ui.add(
@@ -245,7 +245,7 @@ fn about_header(
                         Some(&crate::i18n::catalog::args(&[("adapter", adapter)])),
                     ))
                     .size(10.5)
-                    .color(ui_theme::text_muted()),
+                    .color(ui_theme::ThemeTokens::from_ui(ui).text_muted()),
                 )
                 .truncate(),
             );
@@ -281,19 +281,19 @@ fn about_link(ui: &mut egui::Ui, width: f32, icon: AppIcon, label: &str) -> bool
         ui.painter().rect_filled(
             rect,
             ui_theme::RADIUS_CONTROL,
-            ui_theme::accent().gamma_multiply(0.08),
+            ui_theme::ThemeTokens::from_ui(ui).accent().gamma_multiply(0.08),
         );
     }
     if response.has_focus() {
         ui.painter().rect_stroke(
             rect,
             ui_theme::RADIUS_CONTROL,
-            egui::Stroke::new(1.0_f32, ui_theme::accent()),
+            egui::Stroke::new(1.0_f32, ui_theme::ThemeTokens::from_ui(ui).accent()),
             egui::StrokeKind::Inside,
         );
     }
     crate::ui::accessibility::link(&response, label, true);
-    let ink = ui_theme::text();
+    let ink = ui_theme::ThemeTokens::from_ui(ui).text();
     let font = egui::FontId::proportional(12.0);
     let galley = ui.painter().layout_no_wrap(label.to_owned(), font, ink);
     let icon_side = 14.0;
@@ -303,7 +303,7 @@ fn about_link(ui: &mut egui::Ui, width: f32, icon: AppIcon, label: &str) -> bool
         egui::pos2(content_left + icon_side * 0.5, rect.center().y),
         egui::Vec2::splat(icon_side),
     );
-    crate::ui::icons::paint(ui.painter(), icon_rect, icon, ui_theme::text_weak());
+    crate::ui::icons::paint(ui.painter(), icon_rect, icon, ui_theme::ThemeTokens::from_ui(ui).text_weak());
     ui.painter().galley(
         egui::pos2(
             icon_rect.right() + 7.0,

@@ -135,7 +135,7 @@ fn paint_readout(ui: &mut egui::Ui, readout: Readout<'_>) {
     );
 
     let font = egui::FontId::proportional(11.0);
-    let galley = ui.painter().layout_no_wrap(value, font, ui_theme::text());
+    let galley = ui.painter().layout_no_wrap(value, font, ui_theme::ThemeTokens::from_ui(ui).text());
     let padding = egui::vec2(8.0, 5.0);
     let swatch_width = 3.0;
     let swatch_gap = 6.0;
@@ -156,11 +156,11 @@ fn paint_readout(ui: &mut egui::Ui, readout: Readout<'_>) {
     let chip = egui::Rect::from_min_size(origin, size);
 
     let painter = ui.painter();
-    painter.rect_filled(chip, 4.0, ui_theme::panel_fill().gamma_multiply(0.94));
+    painter.rect_filled(chip, 4.0, ui_theme::ThemeTokens::from_ui(ui).panel_fill().gamma_multiply(0.94));
     painter.rect_stroke(
         chip,
         4.0,
-        egui::Stroke::new(1.0, ui_theme::hairline()),
+        egui::Stroke::new(1.0, ui_theme::ThemeTokens::from_ui(ui).hairline()),
         egui::StrokeKind::Inside,
     );
     let text_left = match accent {
@@ -178,6 +178,6 @@ fn paint_readout(ui: &mut egui::Ui, readout: Readout<'_>) {
     painter.galley(
         egui::pos2(text_left, chip.top() + padding.y),
         galley,
-        ui_theme::text(),
+        ui_theme::ThemeTokens::from_ui(ui).text(),
     );
 }

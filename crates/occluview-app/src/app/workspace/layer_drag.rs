@@ -211,7 +211,7 @@ impl OccluViewApp {
         };
         if let Some(painted) = painted {
             if alpha > 0.002 {
-                let accent = crate::ui::ui_theme::accent();
+                let accent = crate::ui::ui_theme::ThemeTokens::from_ui(ui).accent();
                 // A pane is a whole canvas, so tinting it reads as burning the
                 // view the operator is about to use. Mark it with its border
                 // instead and keep the tint for the narrow bands.
@@ -261,7 +261,7 @@ impl OccluViewApp {
         let galley = painter.layout_no_wrap(
             payload.label.clone(),
             egui::FontId::proportional(13.0),
-            crate::ui::ui_theme::text(),
+            crate::ui::ui_theme::ThemeTokens::from_painter(painter).text(),
         );
         let chip = Rect::from_min_size(
             at + vec2(16.0, 18.0),
@@ -271,11 +271,11 @@ impl OccluViewApp {
             ),
         );
         let stroke = if accepted {
-            crate::ui::ui_theme::accent()
+            crate::ui::ui_theme::ThemeTokens::from_painter(painter).accent()
         } else {
-            crate::ui::ui_theme::hairline()
+            crate::ui::ui_theme::ThemeTokens::from_painter(painter).hairline()
         };
-        painter.rect_filled(chip, 8.0, crate::ui::ui_theme::panel_fill());
+        painter.rect_filled(chip, 8.0, crate::ui::ui_theme::ThemeTokens::from_painter(painter).panel_fill());
         painter.rect_stroke(
             chip,
             8.0,
@@ -300,7 +300,7 @@ impl OccluViewApp {
                 chip.center().y - galley.size().y * 0.5,
             ),
             galley,
-            crate::ui::ui_theme::text(),
+            crate::ui::ui_theme::ThemeTokens::from_painter(painter).text(),
         );
     }
     /// The destination's own name under the highlight, so a drop reads as
@@ -321,7 +321,7 @@ impl OccluViewApp {
         let galley = painter.layout_no_wrap(
             label,
             egui::FontId::proportional(14.0),
-            crate::ui::ui_theme::text(),
+            crate::ui::ui_theme::ThemeTokens::from_painter(painter).text(),
         );
         // A drop band is narrower than this pill, so centring the pill on the
         // band would hang it off the workspace, where the panel clips it. Shift
@@ -334,11 +334,11 @@ impl OccluViewApp {
                 - (wanted.bottom() - workspace_rect.bottom()).max(0.0),
         );
         let label_rect = wanted.translate(shift);
-        painter.rect_filled(label_rect, 6.0, crate::ui::ui_theme::panel_fill());
+        painter.rect_filled(label_rect, 6.0, crate::ui::ui_theme::ThemeTokens::from_painter(painter).panel_fill());
         painter.galley(
             label_rect.min + vec2(12.0, 8.0),
             galley,
-            crate::ui::ui_theme::text(),
+            crate::ui::ui_theme::ThemeTokens::from_painter(painter).text(),
         );
     }
     /// The name of the scene a drop would land in: an existing scene's own

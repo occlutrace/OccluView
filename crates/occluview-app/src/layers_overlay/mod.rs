@@ -161,7 +161,7 @@ pub(crate) fn show(
     let expanded = collapsing_state.is_open();
     let overlay_rect = layout::layer_overlay_rect_for_state(viewport_rect, layer_count, expanded);
     ui.scope_builder(egui::UiBuilder::new().max_rect(overlay_rect), |ui| {
-        ui_theme::overlay_frame().show(ui, |ui| {
+        ui_theme::overlay_frame(ui_theme::ThemeTokens::from_ui(ui)).show(ui, |ui| {
             let overlay_inner_width = overlay_rect.width() - 20.0;
             ui.set_min_width(overlay_inner_width);
             ui.set_max_width(overlay_inner_width);
@@ -306,9 +306,9 @@ fn show_scene_footer(
             let button = egui::Button::selectable(
                 selected,
                 egui::RichText::new(tab.name).size(10.5).color(if selected {
-                    ui_theme::text()
+                    ui_theme::ThemeTokens::from_ui(ui).text()
                 } else {
-                    ui_theme::text_weak()
+                    ui_theme::ThemeTokens::from_ui(ui).text_weak()
                 }),
             )
             .truncate();
@@ -357,14 +357,14 @@ fn show_header(ui: &mut egui::Ui, layer_count: usize, locale: &crate::i18n::Loca
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(locale.tr(crate::i18n::message_id!("layers-title")))
-                .color(ui_theme::text())
+                .color(ui_theme::ThemeTokens::from_ui(ui).text())
                 .size(12.0)
                 .strong(),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(
                 egui::RichText::new(count_text)
-                    .color(ui_theme::text_weak())
+                    .color(ui_theme::ThemeTokens::from_ui(ui).text_weak())
                     .size(11.0),
             );
         });
@@ -378,7 +378,7 @@ fn show_header_separator(ui: &mut egui::Ui, inner_width: f32) {
     ui.painter().hline(
         egui::Rangef::new(left, left + inner_width),
         y,
-        egui::Stroke::new(1.0_f32, ui_theme::hairline()),
+        egui::Stroke::new(1.0_f32, ui_theme::ThemeTokens::from_ui(ui).hairline()),
     );
     ui.add_space(4.0);
 }

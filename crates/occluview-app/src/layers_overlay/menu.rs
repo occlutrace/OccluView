@@ -141,7 +141,7 @@ fn show_unit_actions(
     locale: &crate::i18n::LocaleManager,
 ) {
     ui.label(egui::RichText::new(locale.tr(crate::i18n::message_id!("layer-units-unverified")))
-        .color(ui_theme::warning()));
+        .color(ui_theme::ThemeTokens::from_ui(ui).warning()));
     let suggestion = match occluview_formats::units::recommend_glb_scale(extent) {
         occluview_formats::units::GlbScaleRecommendation::MetersToMillimeters =>
             crate::i18n::message_id!("load-units-suggest-meters"),
@@ -487,14 +487,14 @@ fn menu_item_state(
     let fg = if !enabled {
         ui.visuals().weak_text_color()
     } else if hovered {
-        ui_theme::accent()
+        ui_theme::ThemeTokens::from_ui(ui).accent()
     } else {
-        ui_theme::text()
+        ui_theme::ThemeTokens::from_ui(ui).text()
     };
 
     let painter = ui.painter();
     if hovered {
-        painter.rect_filled(rect, CELL_ROUNDING, ui_theme::accent().gamma_multiply(0.12));
+        painter.rect_filled(rect, CELL_ROUNDING, ui_theme::ThemeTokens::from_ui(ui).accent().gamma_multiply(0.12));
     }
     let icon_center = egui::pos2(rect.left() + PAD_L + GUTTER * 0.5, rect.center().y);
     let icon_rect = egui::Rect::from_center_size(icon_center, egui::vec2(ICON, ICON));

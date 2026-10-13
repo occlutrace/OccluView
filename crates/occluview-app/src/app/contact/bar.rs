@@ -101,7 +101,7 @@ impl SceneContext<'_> {
                 ui.set_width(inner.width());
                 ui.set_height(rect.height());
                 ui.set_max_width(inner.width());
-                ui_theme::overlay_frame().show(ui, |ui| {
+                ui_theme::overlay_frame(ui_theme::ThemeTokens::from_ui(ui)).show(ui, |ui| {
                     ui.set_max_width(inner.width());
                     paint_strip(
                         ui,
@@ -307,7 +307,7 @@ fn paint_strip(
             ui.label(
                 egui::RichText::new(locale.tr(status.key()))
                     .size(11.0)
-                    .color(ui_theme::text_weak()),
+                    .color(ui_theme::ThemeTokens::from_ui(ui).text_weak()),
             )
             .on_hover_text(locale.tr(status_hint_key(status)));
         }
@@ -338,9 +338,9 @@ fn paint_strip(
                     close_rect.shrink(5.0),
                     AppIcon::Close,
                     if close_response.hovered() {
-                        ui_theme::accent()
+                        ui_theme::ThemeTokens::from_ui(ui).accent()
                     } else {
-                        ui_theme::text_weak()
+                        ui_theme::ThemeTokens::from_ui(ui).text_weak()
                     },
                 );
                 if close_response
@@ -403,7 +403,7 @@ fn contact_bar_rect_avoiding_layers(
 /// The reading's name and the mark that says what it is.
 fn paint_identity(ui: &mut egui::Ui, title: &str) {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
-    crate::ui::icons::paint(ui.painter(), rect, AppIcon::Contacts, ui_theme::accent());
+    crate::ui::icons::paint(ui.painter(), rect, AppIcon::Contacts, ui_theme::ThemeTokens::from_ui(ui).accent());
     response.on_hover_text(title);
 }
 
@@ -453,7 +453,7 @@ fn paint_load(
             let label_response = ui.label(
                 egui::RichText::new(label.clone())
                     .size(10.5)
-                    .color(ui_theme::text_weak()),
+                    .color(ui_theme::ThemeTokens::from_ui(ui).text_weak()),
             );
             let item_spacing = ui.spacing().item_spacing.x;
             let value_width = if show_value { LOAD_VALUE_WIDTH } else { 0.0 };
@@ -563,7 +563,7 @@ fn paint_legend(
             egui::pos2(rect.left() + fraction * rect.width(), rect.top()),
             egui::vec2(rect.width() / steps + 1.0, rect.height()),
         );
-        painter.rect_filled(cell, 0.0, ui_theme::panel_fill());
+        painter.rect_filled(cell, 0.0, ui_theme::ThemeTokens::from_ui(ui).panel_fill());
         painter.rect_filled(
             cell,
             0.0,
@@ -573,7 +573,7 @@ fn paint_legend(
     painter.rect_stroke(
         rect,
         2.0,
-        egui::Stroke::new(1.0, ui_theme::hairline()),
+        egui::Stroke::new(1.0, ui_theme::ThemeTokens::from_ui(ui).hairline()),
         egui::StrokeKind::Inside,
     );
 
@@ -590,14 +590,14 @@ fn paint_legend(
         egui::Align2::LEFT_TOP,
         gap_label,
         egui::FontId::proportional(9.0),
-        ui_theme::text_muted(),
+        ui_theme::ThemeTokens::from_ui(ui).text_muted(),
     );
     painter.text(
         egui::pos2(ramp.right(), label_y),
         egui::Align2::RIGHT_TOP,
         bite_label,
         egui::FontId::proportional(9.0),
-        ui_theme::text_muted(),
+        ui_theme::ThemeTokens::from_ui(ui).text_muted(),
     );
 }
 
@@ -644,7 +644,7 @@ impl SceneContext<'_> {
 
         let details_response = ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
             ui.set_width(width);
-            ui_theme::overlay_frame().show(ui, |ui| {
+            ui_theme::overlay_frame(ui_theme::ThemeTokens::from_ui(ui)).show(ui, |ui| {
                 ui.set_width(width - 20.0);
                 ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
                 if crate::align::align_panel::chip(
@@ -667,7 +667,7 @@ impl SceneContext<'_> {
                 if let Some(sentence) = shown.sentence {
                     ui.label(
                         egui::RichText::new(locale.tr(sentence.key()))
-                            .color(ui_theme::text_weak())
+                            .color(ui_theme::ThemeTokens::from_ui(ui).text_weak())
                             .size(11.0),
                     )
                     .on_hover_text(locale.tr(status_hint_key(sentence)));
@@ -742,7 +742,7 @@ fn paint_antagonist_picker(
     ui.label(
         egui::RichText::new(locale.tr(crate::i18n::message_id!("contact-antagonist-pick")))
             .size(11.0)
-            .color(ui_theme::text_muted()),
+            .color(ui_theme::ThemeTokens::from_ui(ui).text_muted()),
     )
     .on_hover_text(locale.tr(crate::i18n::message_id!("contact-antagonist-pick-hint")));
     for (id, name) in candidates {
@@ -838,7 +838,7 @@ fn paint_stats(
                 let label = ui.label(
                     egui::RichText::new(locale.tr(key))
                         .size(11.0)
-                        .color(ui_theme::text_weak()),
+                        .color(ui_theme::ThemeTokens::from_ui(ui).text_weak()),
                 );
                 // "Area each side" is a mid-line split, not a contact count;
                 // this hover is where an operator finds that meaning.

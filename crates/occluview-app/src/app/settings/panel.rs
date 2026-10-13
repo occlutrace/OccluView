@@ -87,6 +87,7 @@ pub(in crate::app) fn show_settings_popup(
     save_error: Option<&str>,
     language_save_error: Option<&str>,
 ) -> Option<SettingsAction> {
+    let theme = ui_theme::ThemeTokens::from_context(&trigger.ctx);
     let popup = egui::Popup::from_toggle_button_response(trigger)
         .id(settings_popup_id())
         .align(egui::RectAlign::BOTTOM_END)
@@ -97,8 +98,8 @@ pub(in crate::app) fn show_settings_popup(
         .width(312.0)
         .frame(
             egui::Frame::new()
-                .fill(ui_theme::panel_fill())
-                .stroke(egui::Stroke::new(1.0_f32, ui_theme::panel_stroke()))
+                .fill(theme.panel_fill())
+                .stroke(egui::Stroke::new(1.0_f32, theme.panel_stroke()))
                 .corner_radius(6)
                 .shadow(ui_theme::panel_shadow())
                 .inner_margin(egui::Margin::same(PANEL_MARGIN)),
@@ -150,7 +151,7 @@ pub(in crate::app) fn show_settings_popup(
                                     .text(crate::i18n::message_id!("settings-language-save-error")),
                             )
                             .size(10.5)
-                            .color(ui_theme::danger()),
+                            .color(theme.danger()),
                         );
                     }
 
@@ -365,7 +366,7 @@ pub(in crate::app) fn show_settings_popup(
                 ui.label(
                     egui::RichText::new(locale.tr(crate::i18n::message_id!("settings-save-error")))
                         .size(10.5)
-                        .color(ui_theme::danger()),
+                        .color(theme.danger()),
                 )
                 .on_hover_text(locale.tr(crate::i18n::message_id!("settings-save-error-hint")));
             }
@@ -421,13 +422,13 @@ fn panel_header(ui: &mut egui::Ui, locale: &LocaleManager) {
         |ui| {
             let (icon_rect, _) =
                 ui.allocate_exact_size(egui::vec2(17.0, 17.0), egui::Sense::hover());
-            crate::ui::icons::paint(ui.painter(), icon_rect, AppIcon::Settings, ui_theme::text());
+            crate::ui::icons::paint(ui.painter(), icon_rect, AppIcon::Settings, ui_theme::ThemeTokens::from_ui(ui).text());
             ui.add_space(4.0);
             ui.label(
                 egui::RichText::new(locale.tr(crate::i18n::message_id!("settings-header")))
                     .size(14.0)
                     .strong()
-                    .color(ui_theme::text()),
+                    .color(ui_theme::ThemeTokens::from_ui(ui).text()),
             );
         },
     );
@@ -438,7 +439,7 @@ fn section_label(ui: &mut egui::Ui, label: &str) {
         egui::RichText::new(label)
             .size(10.5)
             .strong()
-            .color(ui_theme::text_muted()),
+            .color(ui_theme::ThemeTokens::from_ui(ui).text_muted()),
     );
 }
 
@@ -578,7 +579,7 @@ fn slider_f32_row_inner(
         egui::Label::new(
             egui::RichText::new(format!("{edit:.2}{suffix}"))
                 .size(11.0)
-                .color(ui_theme::text_muted()),
+                .color(ui_theme::ThemeTokens::from_ui(ui).text_muted()),
         )
         .truncate(),
     );
@@ -692,7 +693,7 @@ fn language_section(
                             &[("tag", tag)],
                         ))
                         .size(10.5)
-                        .color(ui_theme::text_muted()),
+                        .color(ui_theme::ThemeTokens::from_ui(ui).text_muted()),
                     );
                 }
             });
@@ -753,7 +754,8 @@ fn update_row(
                 *action = Some(SettingsAction::CheckForUpdates);
             }
             ui.add_space(5.0);
-            let (text, color, detail) = update_status_text(status, locale);
+            let (text, color, detail) =
+                update_status_text(status, locale, ui_theme::ThemeTokens::from_ui(ui));
             if !text.is_empty() {
                 let response = ui.label(egui::RichText::new(text).size(10.5).color(color));
                 if let Some(detail) = detail {
@@ -767,37 +769,38 @@ fn update_row(
 fn update_status_text<'a>(
     status: &'a UpdateCheckStatus,
     locale: &LocaleManager,
+    theme: ui_theme::ThemeTokens,
 ) -> (String, egui::Color32, Option<&'a str>) {
     match status {
-        UpdateCheckStatus::Idle => (String::new(), ui_theme::text_weak(), None),
+        UpdateCheckStatus::Idle => (String::new(), theme.text_weak(), None),
         UpdateCheckStatus::Disabled => (
             locale.tr(crate::i18n::message_id!("settings-update-disabled")),
-            ui_theme::text_muted(),
+            theme.text_muted(),
             None,
         ),
         UpdateCheckStatus::Checking => (
             locale.tr(crate::i18n::message_id!("settings-update-checking")),
-            ui_theme::text_weak(),
+            theme.text_weak(),
             None,
         ),
         UpdateCheckStatus::Current => (
             locale.tr(crate::i18n::message_id!("settings-update-current")),
-            ui_theme::text_weak(),
+            theme.text_weak(),
             None,
         ),
         UpdateCheckStatus::Available(version) => (
             locale.tr(crate::i18n::message_id!("update-available-title")),
-            ui_theme::text(),
+            theme.text(),
             Some(version.as_str()),
         ),
         UpdateCheckStatus::Skipped(version) => (
             locale.tr(crate::i18n::message_id!("settings-update-skipped")),
-            ui_theme::text_muted(),
+            theme.text_muted(),
             Some(version.as_str()),
         ),
         UpdateCheckStatus::Failed(error) => (
             locale.tr(crate::i18n::message_id!("settings-update-failed")),
-            ui_theme::danger(),
+            theme.danger(),
             Some(error.as_str()),
         ),
     }

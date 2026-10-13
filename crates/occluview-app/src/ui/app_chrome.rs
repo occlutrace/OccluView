@@ -36,15 +36,16 @@ pub(crate) fn status_overlay_rect(viewport_rect: egui::Rect) -> egui::Rect {
 /// a single neutral accent for hover/active/selection, and softly rounded
 /// controls. Tuned to read as a professional CAD viewer rather than a demo.
 pub(crate) fn viewer_visuals(theme: ThemePreference) -> egui::Visuals {
-    use crate::ui::ui_theme::{accent, hairline, text};
+    use crate::ui::ui_theme::ThemeTokens;
 
+    let tokens = ThemeTokens::from_preference(theme);
     let dark = theme == ThemePreference::Dark;
     let mut visuals = if dark {
         egui::Visuals::dark()
     } else {
         egui::Visuals::light()
     };
-    let accent = accent();
+    let accent = tokens.accent();
     if dark {
         visuals.window_fill = egui::Color32::from_rgb(24, 27, 32);
         visuals.panel_fill = egui::Color32::from_rgb(28, 31, 37);
@@ -62,7 +63,7 @@ pub(crate) fn viewer_visuals(theme: ThemePreference) -> egui::Visuals {
     }
     visuals.window_corner_radius = egui::CornerRadius::same(10);
     visuals.menu_corner_radius = egui::CornerRadius::same(8);
-    visuals.window_stroke = egui::Stroke::new(1.0_f32, crate::ui::ui_theme::panel_stroke());
+    visuals.window_stroke = egui::Stroke::new(1.0_f32, tokens.panel_stroke());
     visuals.window_shadow = crate::ui::ui_theme::panel_shadow();
     visuals.popup_shadow = egui::epaint::Shadow {
         offset: [0, 3],
@@ -76,22 +77,22 @@ pub(crate) fn viewer_visuals(theme: ThemePreference) -> egui::Visuals {
     // Modal titles and plain labels must use the active chrome ink. The
     // platform's default text override can remain white in the light theme
     // even though the window surface has already switched to near-white.
-    visuals.override_text_color = Some(text());
+    visuals.override_text_color = Some(tokens.text());
 
     // Static text and disabled chrome.
-    visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0_f32, text());
-    visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0_f32, hairline());
+    visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0_f32, tokens.text());
+    visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0_f32, tokens.hairline());
 
     // Resting interactive controls: flat, hairline outline, rounded.
-    visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0_f32, hairline());
-    visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0_f32, text());
+    visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0_f32, tokens.hairline());
+    visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0_f32, tokens.text());
     visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(4);
 
     // Hover: a light accent wash, accent hairline.
     visuals.widgets.hovered.weak_bg_fill = accent.gamma_multiply(0.12);
     visuals.widgets.hovered.bg_fill = accent.gamma_multiply(0.12);
     visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0_f32, accent.gamma_multiply(0.55));
-    visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0_f32, text());
+    visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0_f32, tokens.text());
     visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(4);
 
     // Active / pressed: solid accent.
@@ -111,8 +112,8 @@ pub(crate) fn viewer_visuals(theme: ThemePreference) -> egui::Visuals {
     // Open menus track the resting palette so dropdowns stay quiet.
     visuals.widgets.open.weak_bg_fill = accent.gamma_multiply(0.12);
     visuals.widgets.open.bg_fill = accent.gamma_multiply(0.12);
-    visuals.widgets.open.bg_stroke = egui::Stroke::new(1.0_f32, hairline());
-    visuals.widgets.open.fg_stroke = egui::Stroke::new(1.0_f32, text());
+    visuals.widgets.open.bg_stroke = egui::Stroke::new(1.0_f32, tokens.hairline());
+    visuals.widgets.open.fg_stroke = egui::Stroke::new(1.0_f32, tokens.text());
 
     visuals
 }

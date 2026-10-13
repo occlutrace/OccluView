@@ -256,6 +256,7 @@ impl UpdateNotice {
         let mut start_download: Option<AvailableUpdate> = None;
         let mut open = true;
         let mut window = crate::ui::ui_theme::window(
+            crate::ui::ui_theme::ThemeTokens::from_context(ctx),
             locale.tr(crate::i18n::message_id!("update-window-title")),
             (ctx.content_rect().width() - 32.0).clamp(80.0, 416.0),
         )
@@ -409,7 +410,7 @@ fn draw_available(
         ui.painter(),
         icon_rect,
         crate::ui::icons::AppIcon::InstallUpdate,
-        crate::ui::ui_theme::text(),
+        crate::ui::ui_theme::ThemeTokens::from_ui(ui).text(),
     );
     ui.label(
         egui::RichText::new(locale.text_with(
@@ -423,7 +424,7 @@ fn draw_available(
             crate::i18n::message_id!("update-current-version"),
             Some(&args(&[("version", env!("CARGO_PKG_VERSION"))])),
         ))
-        .color(crate::ui::ui_theme::text_weak())
+        .color(crate::ui::ui_theme::ThemeTokens::from_ui(ui).text_weak())
         .size(12.0),
     );
     if let Some(notes) = update.notes.as_deref() {
@@ -444,7 +445,10 @@ fn draw_available(
         if ui
             .add_sized(
                 egui::vec2(ui.available_width(), 34.0),
-                crate::ui::ui_theme::primary_button(&label),
+                crate::ui::ui_theme::primary_button(
+                    crate::ui::ui_theme::ThemeTokens::from_context(ui.ctx()),
+                    &label,
+                ),
             )
             .clicked()
         {
@@ -527,13 +531,13 @@ fn draw_ready(
     };
     ui.label(
         egui::RichText::new(handoff_hint)
-            .color(crate::ui::ui_theme::text_weak())
+            .color(crate::ui::ui_theme::ThemeTokens::from_ui(ui).text_weak())
             .size(12.0),
     );
     if !can_install {
         ui.label(
             egui::RichText::new(locale.tr(crate::i18n::message_id!("update-save-first")))
-                .color(crate::ui::ui_theme::warning()),
+                .color(crate::ui::ui_theme::ThemeTokens::from_ui(ui).warning()),
         );
     }
     ui.add_space(6.0);
@@ -542,7 +546,10 @@ fn draw_ready(
         if ui
             .add_enabled(
                 can_install,
-                crate::ui::ui_theme::primary_button(&install_label)
+                crate::ui::ui_theme::primary_button(
+                    crate::ui::ui_theme::ThemeTokens::from_context(ctx),
+                    &install_label,
+                )
                     .min_size(egui::vec2(ui.available_width(), 34.0)),
             )
             .clicked()
@@ -578,7 +585,7 @@ fn draw_failed(
     // through the catalogs would corrupt diagnostics.
     ui.label(
         egui::RichText::new(message)
-            .color(crate::ui::ui_theme::text_weak())
+            .color(crate::ui::ui_theme::ThemeTokens::from_ui(ui).text_weak())
             .size(12.0),
     );
     ui.add_space(6.0);

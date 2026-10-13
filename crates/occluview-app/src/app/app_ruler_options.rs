@@ -58,13 +58,13 @@ impl SceneContext<'_> {
             .fixed_pos(origin)
             .constrain_to(viewport_rect)
             .show(ctx, |ui| {
-                ui_theme::overlay_frame().show(ui, |ui| {
+                ui_theme::overlay_frame(ui_theme::ThemeTokens::from_ui(ui)).show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 6.0;
                         ui.label(
                             egui::RichText::new(&title)
                                 .size(12.0)
-                                .color(ui_theme::text_muted()),
+                                .color(ui_theme::ThemeTokens::from_context(ctx).text_muted()),
                         )
                         .on_hover_text(&hint);
                         for option in RulerLineAngle::OPTIONS {
@@ -78,7 +78,7 @@ impl SceneContext<'_> {
                                 .layout_no_wrap(
                                     label.clone(),
                                     egui::FontId::proportional(11.5),
-                                    ui_theme::text(),
+                                    ui_theme::ThemeTokens::from_context(ctx).text(),
                                 )
                                 .rect
                                 .width();
@@ -100,7 +100,7 @@ impl SceneContext<'_> {
                         ui.label(
                             egui::RichText::new(&shift_note)
                                 .size(11.5)
-                                .color(ui_theme::text_weak()),
+                                .color(ui_theme::ThemeTokens::from_context(ctx).text_weak()),
                         );
                     });
                 });
@@ -160,16 +160,16 @@ fn strip_origin(
 fn shift_keycap(ui: &mut egui::Ui, held: bool) {
     let font = egui::FontId::proportional(10.5);
     let ink = if held {
-        ui_theme::accent()
+        ui_theme::ThemeTokens::from_ui(ui).accent()
     } else {
-        ui_theme::text_muted()
+        ui_theme::ThemeTokens::from_ui(ui).text_muted()
     };
     let galley = ui.painter().layout_no_wrap("Shift".to_owned(), font, ink);
     let size = galley.size() + egui::vec2(10.0, 4.0);
     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
     let painter = ui.painter();
     if held {
-        painter.rect_filled(rect, 3.0, ui_theme::accent().gamma_multiply(0.16));
+        painter.rect_filled(rect, 3.0, ui_theme::ThemeTokens::from_ui(ui).accent().gamma_multiply(0.16));
     }
     painter.rect_stroke(
         rect,

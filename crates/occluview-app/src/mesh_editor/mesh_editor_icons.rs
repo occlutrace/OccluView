@@ -29,26 +29,26 @@ pub(crate) fn icon_button(
     let fg = if !enabled {
         ui.visuals().weak_text_color()
     } else if active {
-        ui_theme::accent()
+        ui_theme::ThemeTokens::from_ui(ui).accent()
     } else {
         ui.visuals().widgets.inactive.fg_stroke.color
     };
 
     let painter = ui.painter();
     if active {
-        painter.rect_filled(rect, CELL_ROUNDING, ui_theme::accent().gamma_multiply(0.20));
+        painter.rect_filled(rect, CELL_ROUNDING, ui_theme::ThemeTokens::from_ui(ui).accent().gamma_multiply(0.20));
         painter.rect_stroke(
             rect,
             CELL_ROUNDING,
-            egui::Stroke::new(1.2_f32, ui_theme::accent().gamma_multiply(0.90)),
+            egui::Stroke::new(1.2_f32, ui_theme::ThemeTokens::from_ui(ui).accent().gamma_multiply(0.90)),
             egui::StrokeKind::Middle,
         );
     } else if enabled && response.hovered() {
-        painter.rect_filled(rect, CELL_ROUNDING, ui_theme::accent().gamma_multiply(0.12));
+        painter.rect_filled(rect, CELL_ROUNDING, ui_theme::ThemeTokens::from_ui(ui).accent().gamma_multiply(0.12));
         painter.rect_stroke(
             rect,
             CELL_ROUNDING,
-            egui::Stroke::new(1.0_f32, ui_theme::accent().gamma_multiply(0.30)),
+            egui::Stroke::new(1.0_f32, ui_theme::ThemeTokens::from_ui(ui).accent().gamma_multiply(0.30)),
             egui::StrokeKind::Middle,
         );
     }
@@ -76,7 +76,7 @@ pub(crate) fn icon_button(
         painter.rect_stroke(
             rect.shrink(1.0),
             CELL_ROUNDING,
-            egui::Stroke::new(1.5_f32, ui_theme::accent()),
+            egui::Stroke::new(1.5_f32, ui_theme::ThemeTokens::from_ui(ui).accent()),
             egui::StrokeKind::Inside,
         );
     }

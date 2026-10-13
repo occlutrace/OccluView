@@ -135,8 +135,8 @@ impl SceneContext<'_> {
             .exact_size(ui_theme::MENUBAR_HEIGHT_PX)
             .frame(
                 egui::Frame::default()
-                    .fill(ui_theme::toolbar_fill())
-                    .stroke(egui::Stroke::new(1.0_f32, ui_theme::hairline()))
+                    .fill(ui_theme::ThemeTokens::from_ui(root_ui).toolbar_fill())
+                    .stroke(egui::Stroke::new(1.0_f32, ui_theme::ThemeTokens::from_ui(root_ui).hairline()))
                     .inner_margin(egui::Margin::symmetric(8, 0)),
             )
             .show(root_ui, |ui| {
@@ -180,9 +180,9 @@ impl SceneContext<'_> {
                             rect,
                             AppIcon::ChevronDown,
                             if response.hovered() {
-                                ui_theme::text()
+                                ui_theme::ThemeTokens::from_ui(root_ui).text()
                             } else {
-                                ui_theme::text_weak()
+                                ui_theme::ThemeTokens::from_ui(root_ui).text_weak()
                             },
                         );
                         crate::ui::accessibility::button(
@@ -703,7 +703,7 @@ impl SceneContext<'_> {
                         egui::RichText::new(&error.summary)
                             .strong()
                             .size(13.5)
-                            .color(ui_theme::text()),
+                            .color(ui_theme::ThemeTokens::from_context(ctx).text()),
                     )
                     .wrap(),
                 );
@@ -716,7 +716,7 @@ impl SceneContext<'_> {
                             egui::Label::new(
                                 egui::RichText::new(&error.details)
                                     .size(12.0)
-                                    .color(ui_theme::text_weak()),
+                                    .color(ui_theme::ThemeTokens::from_context(ctx).text_weak()),
                             )
                             .wrap()
                             .selectable(false),
@@ -727,7 +727,13 @@ impl SceneContext<'_> {
                 ui.add_space(4.0);
                 let mut retry_clicked = false;
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.add(ui_theme::primary_button(&close_label)).clicked() {
+                    if ui
+                        .add(ui_theme::primary_button(
+                            ui_theme::ThemeTokens::from_context(ctx),
+                            &close_label,
+                        ))
+                        .clicked()
+                    {
                         close_clicked = true;
                     }
                     if error.action == AppErrorAction::RetryGraphics

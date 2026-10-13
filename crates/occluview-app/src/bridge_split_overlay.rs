@@ -59,6 +59,7 @@ pub(crate) fn show_panel(
     let mut action = None;
     let mut open = true;
     ui_theme::window(
+        ui_theme::ThemeTokens::from_context(ctx),
         locale.tr(crate::i18n::message_id!("bridge-panel-title")),
         PANEL_WIDTH,
     )
@@ -80,7 +81,7 @@ pub(crate) fn show_panel(
             if let Some(error) = state.failure {
                 ui.label(
                     egui::RichText::new(error_label(error, locale))
-                        .color(ui_theme::danger())
+                        .color(ui_theme::ThemeTokens::from_context(ctx).danger())
                         .size(11.0),
                 );
             }

@@ -51,12 +51,12 @@ pub(super) fn show_guard_dialog(
                     ui.painter(),
                     icon_rect,
                     AppIcon::Warn,
-                    ui_theme::warning(),
+                    ui_theme::ThemeTokens::from_context(ctx).warning(),
                 );
                 ui.label(
                     egui::RichText::new(spec.headline)
                         .strong()
-                        .color(ui_theme::text()),
+                        .color(ui_theme::ThemeTokens::from_context(ctx).text()),
                 );
             });
             if let Some(note) = spec.note {
@@ -64,7 +64,7 @@ pub(super) fn show_guard_dialog(
             }
             ui.label(
                 egui::RichText::new(spec.detail)
-                    .color(ui_theme::text_weak())
+                    .color(ui_theme::ThemeTokens::from_context(ctx).text_weak())
                     .size(12.0),
             );
             ui.add_space(10.0);
@@ -74,6 +74,7 @@ pub(super) fn show_guard_dialog(
                 |ui| {
                     if ui
                         .add(ui_theme::primary_button(
+                            ui_theme::ThemeTokens::from_context(ctx),
                             &locale.tr(crate::i18n::message_id!("guard-save")),
                         ))
                         .clicked()

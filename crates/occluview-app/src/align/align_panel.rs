@@ -124,6 +124,7 @@ pub(crate) fn show(
     let id = scope.with("occluview_align_window");
     let previous_rect = ctx.memory(|memory| memory.area_rect(id));
     let mut window = ui_theme::window(
+        ui_theme::ThemeTokens::from_context(ctx),
         locale.text(crate::i18n::message_id!("align-panel-title")),
         WINDOW_WIDTH,
     )
@@ -216,21 +217,21 @@ fn tab_strip(ui: &mut egui::Ui, tab: &mut AlignTab, locale: &crate::i18n::Locale
             let (rect, response) =
                 ui.allocate_exact_size(egui::vec2(width, CHIP_HEIGHT), egui::Sense::click());
             let ink = if active {
-                ui_theme::accent()
+                ui_theme::ThemeTokens::from_ui(ui).accent()
             } else {
-                ui_theme::text_weak()
+                ui_theme::ThemeTokens::from_ui(ui).text_weak()
             };
             let painter = ui.painter();
             if active {
-                painter.rect_filled(rect, 4.0, ui_theme::accent().gamma_multiply(0.14));
+                painter.rect_filled(rect, 4.0, ui_theme::ThemeTokens::from_ui(ui).accent().gamma_multiply(0.14));
             } else if response.hovered() {
-                painter.rect_filled(rect, 4.0, ui_theme::accent().gamma_multiply(0.07));
+                painter.rect_filled(rect, 4.0, ui_theme::ThemeTokens::from_ui(ui).accent().gamma_multiply(0.07));
             }
             if response.has_focus() {
                 painter.rect_stroke(
                     rect,
                     4.0,
-                    egui::Stroke::new(1.2_f32, ui_theme::accent()),
+                    egui::Stroke::new(1.2_f32, ui_theme::ThemeTokens::from_ui(ui).accent()),
                     egui::StrokeKind::Inside,
                 );
             }
@@ -245,7 +246,7 @@ fn tab_strip(ui: &mut egui::Ui, tab: &mut AlignTab, locale: &crate::i18n::Locale
                 painter.hline(
                     egui::Rangef::new(rect.left() + 6.0, rect.right() - 6.0),
                     rect.bottom() - 1.0,
-                    egui::Stroke::new(1.6_f32, ui_theme::accent()),
+                    egui::Stroke::new(1.6_f32, ui_theme::ThemeTokens::from_ui(ui).accent()),
                 );
             }
             if response.clicked() {
@@ -391,7 +392,7 @@ fn prompt(ui: &mut egui::Ui, tool: &AlignTool, locale: &crate::i18n::LocaleManag
             &[("count", placed)],
         )
     };
-    ui.label(egui::RichText::new(text).size(12.0).color(ui_theme::text()));
+    ui.label(egui::RichText::new(text).size(12.0).color(ui_theme::ThemeTokens::from_ui(ui).text()));
     ui.add_space(2.0);
 }
 
@@ -516,7 +517,7 @@ fn hint(ui: &mut egui::Ui, text: &str) {
     ui.label(
         egui::RichText::new(text)
             .size(11.0)
-            .color(ui_theme::text_muted()),
+            .color(ui_theme::ThemeTokens::from_ui(ui).text_muted()),
     );
 }
 
@@ -529,7 +530,7 @@ fn status(ui: &mut egui::Ui, status: Option<&str>) {
     ui.label(
         egui::RichText::new(status)
             .size(11.0)
-            .color(ui_theme::text_weak()),
+            .color(ui_theme::ThemeTokens::from_ui(ui).text_weak()),
     );
 }
 
@@ -638,24 +639,24 @@ fn chip_with_accessibility(
         .inner;
     let ink = if enabled {
         if active {
-            ui_theme::accent()
+            ui_theme::ThemeTokens::from_ui(ui).accent()
         } else {
-            ui_theme::text()
+            ui_theme::ThemeTokens::from_ui(ui).text()
         }
     } else {
         ui.visuals().weak_text_color()
     };
     let painter = ui.painter();
     if enabled && active {
-        painter.rect_filled(rect, CHIP_ROUNDING, ui_theme::accent().gamma_multiply(0.16));
+        painter.rect_filled(rect, CHIP_ROUNDING, ui_theme::ThemeTokens::from_ui(ui).accent().gamma_multiply(0.16));
     } else if enabled && response.hovered() {
-        painter.rect_filled(rect, CHIP_ROUNDING, ui_theme::accent().gamma_multiply(0.08));
+        painter.rect_filled(rect, CHIP_ROUNDING, ui_theme::ThemeTokens::from_ui(ui).accent().gamma_multiply(0.08));
     }
     if response.has_focus() {
         painter.rect_stroke(
             rect,
             CHIP_ROUNDING,
-            egui::Stroke::new(1.2_f32, ui_theme::accent()),
+            egui::Stroke::new(1.2_f32, ui_theme::ThemeTokens::from_ui(ui).accent()),
             egui::StrokeKind::Inside,
         );
     }
@@ -727,25 +728,25 @@ fn fit_button(
         .inner;
     let ink = if enabled {
         if primary {
-            ui_theme::accent()
+            ui_theme::ThemeTokens::from_ui(ui).accent()
         } else {
-            ui_theme::text()
+            ui_theme::ThemeTokens::from_ui(ui).text()
         }
     } else {
         ui.visuals().weak_text_color()
     };
     let painter = ui.painter();
     if enabled && primary {
-        painter.rect_filled(rect, CHIP_ROUNDING, ui_theme::accent().gamma_multiply(0.14));
+        painter.rect_filled(rect, CHIP_ROUNDING, ui_theme::ThemeTokens::from_ui(ui).accent().gamma_multiply(0.14));
     }
     if enabled && response.hovered() {
-        painter.rect_filled(rect, CHIP_ROUNDING, ui_theme::accent().gamma_multiply(0.10));
+        painter.rect_filled(rect, CHIP_ROUNDING, ui_theme::ThemeTokens::from_ui(ui).accent().gamma_multiply(0.10));
     }
     if response.has_focus() {
         painter.rect_stroke(
             rect,
             CHIP_ROUNDING,
-            egui::Stroke::new(1.2_f32, ui_theme::accent()),
+            egui::Stroke::new(1.2_f32, ui_theme::ThemeTokens::from_ui(ui).accent()),
             egui::StrokeKind::Inside,
         );
     }
@@ -781,15 +782,15 @@ fn tall_button(ui: &mut egui::Ui, width: f32, label: &str, primary: bool) -> egu
             egui::RichText::new(label)
                 .size(12.5)
                 .strong()
-                .color(ui_theme::on_accent()),
+                .color(ui_theme::ThemeTokens::from_ui(ui).on_accent()),
         )
-        .fill(ui_theme::accent())
+        .fill(ui_theme::ThemeTokens::from_ui(ui).accent())
         .corner_radius(CHIP_ROUNDING);
         ui.add(button.min_size(egui::vec2(width, 28.0)))
     } else {
         let text = egui::RichText::new(label)
             .size(12.5)
-            .color(ui_theme::text());
+            .color(ui_theme::ThemeTokens::from_ui(ui).text());
         ui.add(egui::Button::new(text).min_size(egui::vec2(width, 28.0)))
     }
 }

@@ -20,7 +20,7 @@ pub(crate) fn matching(
     ui.label(
         egui::RichText::new(locale.tr(crate::i18n::message_id!("align-max-influence")))
             .size(11.0)
-            .color(ui_theme::text_muted()),
+            .color(ui_theme::ThemeTokens::from_ui(ui).text_muted()),
     )
     .on_hover_text(locale.tr(crate::i18n::message_id!("align-max-influence-hint")));
     ui.scope(|ui| {

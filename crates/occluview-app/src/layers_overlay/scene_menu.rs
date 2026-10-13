@@ -40,7 +40,7 @@ pub(crate) fn show_scene_context_menu(
     ui.add_space(4.0);
     ui.label(
         egui::RichText::new(locale.tr(crate::i18n::message_id!("scene-menu-title")))
-            .color(ui_theme::text_weak())
+            .color(ui_theme::ThemeTokens::from_ui(ui).text_weak())
             .size(11.0),
     );
     ui.add_space(2.0);

@@ -95,27 +95,27 @@ pub(super) fn show_layer_row(
     let hovered = ui.rect_contains_pointer(row_rect);
     if view.active {
         ui.painter()
-            .rect_filled(row_rect, 5.0, ui_theme::row_active_fill());
+            .rect_filled(row_rect, 5.0, ui_theme::ThemeTokens::from_ui(ui).row_active_fill());
         ui.painter().rect_filled(
             egui::Rect::from_min_max(
                 row_rect.min,
                 egui::pos2(row_rect.min.x + 3.0, row_rect.max.y),
             ),
             1.5,
-            ui_theme::accent(),
+            ui_theme::ThemeTokens::from_ui(ui).accent(),
         );
     } else if view.focused {
         ui.painter()
-            .rect_filled(row_rect, 5.0, ui_theme::row_hover_fill());
+            .rect_filled(row_rect, 5.0, ui_theme::ThemeTokens::from_ui(ui).row_hover_fill());
         ui.painter().rect_stroke(
             row_rect.shrink(0.5),
             5.0,
-            egui::Stroke::new(1.0, ui_theme::accent()),
+            egui::Stroke::new(1.0, ui_theme::ThemeTokens::from_ui(ui).accent()),
             egui::StrokeKind::Middle,
         );
     } else if hovered {
         ui.painter()
-            .rect_filled(row_rect, 5.0, ui_theme::row_hover_fill());
+            .rect_filled(row_rect, 5.0, ui_theme::ThemeTokens::from_ui(ui).row_hover_fill());
     }
 
     let target = |visible: bool| LayerContextMenuTarget {
@@ -175,9 +175,9 @@ pub(super) fn show_layer_row(
                     crate::ui::icons::AppIcon::EyeOff
                 },
                 if visible {
-                    ui_theme::text()
+                    ui_theme::ThemeTokens::from_ui(ui).text()
                 } else {
-                    ui_theme::text_muted()
+                    ui_theme::ThemeTokens::from_ui(ui).text_muted()
                 },
             );
             let eye_hint = if visible {
@@ -208,13 +208,13 @@ pub(super) fn show_layer_row(
             if warning_width > 0.0 {
                 ui.add_sized(
                     [warning_width, LAYER_ROW_CONTROL_HEIGHT_PX],
-                    egui::Label::new(egui::RichText::new("?").color(ui_theme::warning())),
+                    egui::Label::new(egui::RichText::new("?").color(ui_theme::ThemeTokens::from_ui(ui).warning())),
                 ).on_hover_text(locale.tr(crate::i18n::message_id!("layer-units-unverified")));
             }
             let label_width = (layer_name_width(row_width) - warning_width).max(0.0);
             let label = egui::Label::new(
                 egui::RichText::new(view.label)
-                    .color(ui_theme::text())
+                    .color(ui_theme::ThemeTokens::from_ui(ui).text())
                     .size(11.5),
             )
             .truncate()
@@ -334,9 +334,9 @@ pub(super) fn show_layer_row(
                 remove_rect,
                 crate::ui::icons::AppIcon::Close,
                 if remove_response.hovered() {
-                    ui_theme::accent()
+                    ui_theme::ThemeTokens::from_ui(ui).accent()
                 } else {
-                    ui_theme::text_muted()
+                    ui_theme::ThemeTokens::from_ui(ui).text_muted()
                 },
             );
             let remove_label = format!(
@@ -405,7 +405,7 @@ fn tint_swatch(
     let mut changed = false;
     let swatch = egui::Button::new("")
         .fill(color32_from_tint(*tint))
-        .stroke(egui::Stroke::new(1.0_f32, ui_theme::panel_stroke()));
+        .stroke(egui::Stroke::new(1.0_f32, ui_theme::ThemeTokens::from_ui(ui).panel_stroke()));
     let response = ui
         .add_enabled_ui(enabled, |ui| {
             ui.add_sized(
@@ -454,7 +454,7 @@ fn tint_swatch(
                     ] {
                         ui.label(
                             egui::RichText::new(locale.tr(heading_key))
-                                .color(ui_theme::text_weak())
+                                .color(ui_theme::ThemeTokens::from_ui(ui).text_weak())
                                 .size(10.5),
                         );
                         for &(color, label_key) in presets {
@@ -474,7 +474,7 @@ fn tint_swatch(
                                     ui.painter().rect_stroke(
                                         swatch_rect,
                                         3.0,
-                                        egui::Stroke::new(1.0_f32, ui_theme::hairline()),
+                                        egui::Stroke::new(1.0_f32, ui_theme::ThemeTokens::from_ui(ui).hairline()),
                                         egui::StrokeKind::Middle,
                                     );
                                     ui.selectable_label(is_current, label)

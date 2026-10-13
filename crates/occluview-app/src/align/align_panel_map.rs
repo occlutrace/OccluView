@@ -56,9 +56,9 @@ fn toggle(
             glyph,
             AppIcon::Heatmap,
             if settings.show_deviation {
-                ui_theme::accent()
+                ui_theme::ThemeTokens::from_ui(ui).accent()
             } else {
-                ui_theme::text_muted()
+                ui_theme::ThemeTokens::from_ui(ui).text_muted()
             },
         );
         let mut shown = settings.show_deviation;
