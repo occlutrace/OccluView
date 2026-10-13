@@ -9,7 +9,8 @@
 
 use super::*;
 use occluview_contact::ContactSettings;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
 /// A flat square, two triangles, all vertices on `z`, in world coordinates.
@@ -305,6 +306,93 @@ fn dropping_the_worker_stops_it_cleanly() {
     let worker = ContactWorker::spawn();
     let _ = worker.submit(job(&worker, 0, -0.1));
     drop(worker);
+}
+
+/// A submit that arrives after dequeue must see the running token before the
+/// worker releases the queue lock. Otherwise it can miss cancellation and leave
+/// the superseded contact calculation running.
+#[test]
+fn a_submission_cancels_the_job_at_the_dequeue_handoff() {
+    let (dequeued_tx, dequeued_rx) = mpsc::channel();
+    let (release_dequeue_tx, release_dequeue_rx) = mpsc::channel();
+    let (registered_tx, registered_rx) = mpsc::channel();
+    let (release_execution_tx, release_execution_rx) = mpsc::channel();
+    let pause_after_dequeue = Arc::new(AtomicBool::new(true));
+    let pause_after_registration = Arc::new(AtomicBool::new(true));
+    let worker = ContactWorker::spawn_with(
+        move |queue, completions, running, busy, unusable| {
+            let pause_after_dequeue = Arc::clone(&pause_after_dequeue);
+            let pause_after_registration = Arc::clone(&pause_after_registration);
+            thread::Builder::new()
+                .name("occluview-contacts-handoff-test".into())
+                .spawn(move || {
+                    guard(&unusable, || {
+                        run_worker_with_hooks(
+                            &queue,
+                            &completions,
+                            &running,
+                            &busy,
+                            &unusable,
+                            move || {
+                                if pause_after_dequeue.swap(false, Ordering::AcqRel) {
+                                    let _ = dequeued_tx.send(());
+                                    let _ = release_dequeue_rx.recv();
+                                }
+                            },
+                            move || {
+                                if pause_after_registration.swap(false, Ordering::AcqRel) {
+                                    let _ = registered_tx.send(());
+                                    let _ = release_execution_rx.recv();
+                                }
+                            },
+                        );
+                    });
+                    signal_waiters(&queue);
+                })
+        },
+    );
+
+    let first_request = worker.submit(job(&worker, 0, -0.1)).expect("first queued job");
+    let dequeue_seen = dequeued_rx.recv_timeout(Duration::from_secs(5));
+    let next_job = job(&worker, 7, -0.1);
+    let (attempted_tx, attempted_rx) = mpsc::channel();
+    let (submitted_tx, submitted_rx) = mpsc::channel();
+
+    let (attempted, registered, submitted) = thread::scope(|scope| {
+        let worker_ref = &worker;
+        scope.spawn(move || {
+            let _ = attempted_tx.send(());
+            let result = worker_ref.submit(next_job);
+            let cancelled = worker_ref
+                .running
+                .lock()
+                .ok()
+                .and_then(|running| running.as_ref().cloned())
+                .is_some_and(|flag| flag.is_cancelled());
+            let _ = submitted_tx.send((result, cancelled));
+        });
+
+        let attempted = attempted_rx.recv_timeout(Duration::from_secs(5));
+        // Always release the test worker before asserting, so a failed
+        // assertion cannot leave its Drop join waiting on this gate.
+        let _ = release_dequeue_tx.send(());
+        let registered = registered_rx.recv_timeout(Duration::from_secs(5));
+        let second_request = submitted_rx.recv_timeout(Duration::from_secs(5));
+        let _ = release_execution_tx.send(());
+        (attempted, registered, second_request)
+    });
+
+    assert!(dequeue_seen.is_ok(), "the worker must reach the handoff gate");
+    assert!(attempted.is_ok(), "the concurrent submit must start");
+    assert!(registered.is_ok(), "the active token must be published");
+    assert!(submitted.is_ok(), "the concurrent submit must complete");
+    let (second_request, cancelled) = submitted.expect("the submit result");
+    assert_ne!(
+        first_request,
+        second_request.expect("queued"),
+        "a superseding submission must receive a fresh request identity"
+    );
+    assert!(cancelled, "the submitter must cancel the registered active job");
 }
 
 /// The queue reports itself as busy while work is outstanding, which is what
