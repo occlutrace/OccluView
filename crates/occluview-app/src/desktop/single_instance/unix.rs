@@ -83,7 +83,9 @@ pub(super) fn send_native_socket_open_request(payload: &[u8]) -> NativeSocketOut
         Ok(stream) => stream,
         Err(_) => return NativeSocketOutcome::Unavailable,
     };
-    if stream.set_read_timeout(Some(SOCKET_READ_TIMEOUT)).is_err() {
+    if stream.set_read_timeout(Some(SOCKET_READ_TIMEOUT)).is_err()
+        || stream.set_write_timeout(Some(SOCKET_WRITE_TIMEOUT)).is_err()
+    {
         return NativeSocketOutcome::Unavailable;
     }
     if stream.write_all(payload).is_err() || stream.shutdown(std::net::Shutdown::Write).is_err() {
@@ -104,6 +106,9 @@ fn probe_socket(path: &std::path::Path) -> bool {
     if stream
         .set_read_timeout(Some(SOCKET_READ_TIMEOUT))
         .is_err()
+        || stream
+            .set_write_timeout(Some(SOCKET_WRITE_TIMEOUT))
+            .is_err()
         || stream.write_all(&CAPABILITY_PROBE).is_err()
         || stream.shutdown(std::net::Shutdown::Write).is_err()
     {
@@ -182,6 +187,8 @@ fn bind_socket_listener() -> std::io::Result<UnixListener> {
 /// though the primary is healthy. The bound is generous for a handful of paths
 /// on a local socket.
 const SOCKET_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// Bound native request and acknowledgement writes to an unresponsive peer.
+const SOCKET_WRITE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 fn handle_socket_open_request(
     mut stream: UnixStream,
@@ -189,6 +196,7 @@ fn handle_socket_open_request(
     repaint_ctx: &egui::Context,
 ) -> std::io::Result<bool> {
     stream.set_read_timeout(Some(SOCKET_READ_TIMEOUT))?;
+    stream.set_write_timeout(Some(SOCKET_WRITE_TIMEOUT))?;
     let mut bytes = Vec::new();
     (&mut stream)
         .take((MAX_REQUEST_BYTES + 1) as u64)
@@ -212,10 +220,10 @@ fn handle_socket_open_request(
     if sender.send(request).is_err() {
         return Ok(false);
     }
+    super::request_open_handoff_repaint(repaint_ctx);
     if native_request {
         stream.write_all(OPEN_REQUEST_ACK)?;
     }
-    super::request_open_handoff_repaint(repaint_ctx);
     Ok(true)
 }
 
@@ -279,6 +287,45 @@ mod tests {
         assert!(client.read_exact(&mut response).is_ok());
         assert_eq!(&response, OPEN_REQUEST_ACK);
         assert!(matches!(handler.join(), Ok(Ok(true))));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn queued_native_request_repaints_when_disconnected_peer_rejects_ack() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let request = OpenRequest {
+            paths: vec![PathBuf::from(std::ffi::OsString::from_vec(
+                b"/tmp/disconnected-\xff.stl".to_vec(),
+            ))],
+            activation_token: None,
+        };
+        let payload = serialize_request(&request);
+        assert!(payload.is_ok());
+        let Ok(payload) = payload else {
+            panic!("required test setup or expected result was missing");
+        };
+        let pair = UnixStream::pair();
+        assert!(pair.is_ok());
+        let Ok((mut client, server)) = pair else {
+            panic!("Unix stream pair setup failed");
+        };
+        let (sender, receiver) = mpsc::channel();
+        let repaint_context = egui::Context::default();
+        let handler_context = repaint_context.clone();
+        let handler = thread::spawn(move || {
+            handle_socket_open_request(server, &sender, &handler_context)
+        });
+
+        assert!(client.write_all(&payload).is_ok());
+        assert!(client.shutdown(std::net::Shutdown::Both).is_ok());
+        drop(client);
+
+        let result = handler.join();
+        assert!(matches!(result, Ok(Err(_))), "the disconnected peer rejects the ACK");
+        let queued = receiver.try_recv();
+        assert!(queued.is_ok(), "the accepted request stays queued");
+        assert!(repaint_context.has_requested_repaint());
     }
 
     #[test]
