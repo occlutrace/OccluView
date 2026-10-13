@@ -221,6 +221,66 @@ fn nonfinite_input_is_the_only_numeric_error() {
     }
 }
 
+/// More than the admitted seeds returns a bounded partial result without
+/// validating the unadmitted seeds.
+#[test]
+fn seed_limit_returns_partial_without_scanning_extra_seeds() {
+    let empty = Soup {
+        positions: &[],
+        indices: &[],
+        mask: None,
+    };
+    let mut seeds = vec![Rigid::IDENTITY; 33];
+    seeds[0] = Rigid::new(
+        DQuat::from_rotation_y(0.5),
+        DVec3::new(1.25, -2.0, 3.0),
+    );
+    seeds[32].translation.x = f64::NAN;
+    let mut request = input(empty, empty);
+    request.seeds = &seeds;
+
+    let result = search(&request);
+    assert_eq!(result.completion, Completion::ResourceLimit);
+    assert_eq!(result.candidates[0].confidence, Confidence::Weak);
+    assert!(matches!(
+        result.input_check,
+        InputCheck::Partial { checked: 0, .. }
+    ));
+    assert_eq!(result.candidates[0].pose.translation, seeds[0].translation);
+    assert!(result.candidates[0]
+        .reasons
+        .contains(&EvidenceReason::UnvalidatedInput));
+    proper(&result);
+}
+
+/// A nonfinite first seed cannot leak into the finite partial pose used for a
+/// resource-limited request.
+#[test]
+fn nonfinite_first_seed_uses_finite_partial_pose_when_seed_limit_is_hit() {
+    let empty = Soup {
+        positions: &[],
+        indices: &[],
+        mask: None,
+    };
+    let mut seeds = vec![Rigid::IDENTITY; 33];
+    seeds[0].translation.x = f64::NAN;
+    let mut request = input(empty, empty);
+    request.seeds = &seeds;
+
+    let result = search(&request);
+    assert_eq!(result.completion, Completion::ResourceLimit);
+    assert_eq!(result.candidates[0].confidence, Confidence::Weak);
+    assert!(matches!(
+        result.input_check,
+        InputCheck::Partial { checked: 0, .. }
+    ));
+    assert_eq!(result.candidates[0].pose, Rigid::IDENTITY);
+    assert!(result.candidates[0]
+        .reasons
+        .contains(&EvidenceReason::UnvalidatedInput));
+    proper(&result);
+}
+
 /// A pose the evidence does not support is returned Weak, with the reason.
 #[test]
 fn unsupported_poses_are_weak_and_say_why() {

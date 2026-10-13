@@ -43,17 +43,29 @@ pub fn search_alignment(
 ) -> Result<AlignmentSearchResult, AlignmentInputError> {
     let mut effective = settings.clone();
     effective.top_k = effective.top_k.clamp(1, 5);
-    let mut reasons = Vec::new();
-    let seeds: Vec<Rigid> = input
-        .seeds
-        .iter()
-        .take(MAX_SEEDS)
-        .map(|&seed| canonical_seed(seed, &mut reasons))
-        .collect();
-    let mut result = initial_result(input, &effective, seeds.first().copied(), reasons);
     let too_large = [input.moving, input.fixed].iter().any(|mesh| {
         mesh.soup.triangle_count() > MAX_TRIANGLES || mesh.soup.vertex_count() > MAX_VERTICES
-    }) || input.landmarks.len() > MAX_LANDMARKS;
+    }) || input.landmarks.len() > MAX_LANDMARKS
+        || input.seeds.len() > MAX_SEEDS;
+    let mut reasons = Vec::new();
+    let (seeds, start) = if too_large {
+        let start = input
+            .seeds
+            .first()
+            .copied()
+            .filter(|seed| seed.is_finite())
+            .map(|seed| canonical_seed(seed, &mut reasons));
+        (Vec::new(), start)
+    } else {
+        let seeds: Vec<Rigid> = input
+            .seeds
+            .iter()
+            .map(|&seed| canonical_seed(seed, &mut reasons))
+            .collect();
+        let start = seeds.first().copied();
+        (seeds, start)
+    };
+    let mut result = initial_result(input, &effective, start, reasons);
     let unchecked = if too_large {
         result.input_check = InputCheck::Partial {
             checked: 0,
