@@ -20,7 +20,9 @@ regions where that text lands are kept light:
               right panel (where WiX draws the Welcome/Exit text) is plain
               white, separated by a 1px hairline seam.
 
-No network, no randomness: same inputs -> byte-identical output.
+No network or randomness is used. Output bytes depend on the source logo,
+host-selected font, and Python/Pillow rendering and encoding. Cross-host
+byte-identical regeneration requires those inputs to be pinned.
 
 Run (from the repository root):
     python3 install/assets/gen-installer-art.py
