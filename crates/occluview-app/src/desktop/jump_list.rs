@@ -69,12 +69,13 @@ fn shell_link_for_item(exe_path: &Path, item: &JumpListItem) -> windows::core::R
     // SAFETY: COM is initialized by publish_recent_files before this helper is
     // called; ShellLink is an in-process shell COM class.
     let link: IShellLinkW = unsafe { CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)? };
-    let exe_path = HSTRING::from(exe_path.display().to_string());
+    let exe_path = hstring_from_path(exe_path);
+    let arguments = HSTRING::from_wide(&item.arguments);
     // SAFETY: The HSTRING values live for the duration of each call and are
     // copied by IShellLink.
     unsafe {
         link.SetPath(&exe_path)?;
-        link.SetArguments(&HSTRING::from(&item.arguments))?;
+        link.SetArguments(&arguments)?;
         link.SetDescription(&HSTRING::from(&item.tooltip))?;
         link.SetIconLocation(&exe_path, 0)?;
     }
@@ -89,6 +90,13 @@ fn shell_link_for_item(exe_path: &Path, item: &JumpListItem) -> windows::core::R
     }
 
     Ok(link)
+}
+
+fn hstring_from_path(path: &Path) -> HSTRING {
+    use std::os::windows::ffi::OsStrExt;
+
+    let wide: Vec<u16> = path.as_os_str().encode_wide().collect();
+    HSTRING::from_wide(&wide)
 }
 
 struct OwnedPropVariant(PROPVARIANT);
@@ -136,5 +144,29 @@ impl Drop for ComApartment {
     fn drop(&mut self) {
         // SAFETY: Paired with successful CoInitializeEx in ComApartment::init.
         unsafe { CoUninitialize() };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::hstring_from_path;
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt;
+    use std::path::PathBuf;
+
+    #[test]
+    fn executable_path_hstring_preserves_native_utf16_units() {
+        let native_path = [
+            0xD800,
+            u16::from(b'.'),
+            u16::from(b'e'),
+            u16::from(b'x'),
+            u16::from(b'e'),
+        ];
+        let path = PathBuf::from(OsString::from_wide(&native_path));
+
+        let shell_path = hstring_from_path(&path);
+
+        assert_eq!(&*shell_path, native_path.as_slice());
     }
 }
