@@ -274,6 +274,14 @@ fn remeshing_sampling_density_changes_vertex_summary_not_raw_readings() {
         },
     );
     assert_eq!(coarse_map, raw_before_display, "display smoothing must copy");
+    assert!(coarse_map
+        .signed_mm
+        .iter()
+        .zip(&shown.signed_mm)
+        .zip(&coarse_map.validity)
+        .any(|((&raw, &displayed), state)| {
+            *state == Validity::Measured && (raw - displayed).abs() > 1e-6
+        }), "the varying field must change in the display copy");
     assert_eq!(shown.validity, coarse_map.validity);
     assert_eq!(shown.signed_mm.last(), coarse_map.signed_mm.last());
     assert_eq!(deviation_stats(&coarse_map, 0.1), coarse_stats);
