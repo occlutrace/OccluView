@@ -15,9 +15,9 @@ use std::sync::mpsc::TryRecvError;
 /// the same global import reservation and cannot overlap another parse.
 #[derive(Default)]
 pub(crate) struct LoadCoordinator {
-    pub(crate) active: Option<PendingSceneLoad>,
-    pub(crate) decoded: Option<DecodedSceneLoad>,
-    pub(crate) queued: VecDeque<SceneLoadRequest>,
+    active: Option<PendingSceneLoad>,
+    decoded: Option<DecodedSceneLoad>,
+    queued: VecDeque<SceneLoadRequest>,
 }
 
 /// One poll of the single active decoder for an explicit scene lifetime.
@@ -33,6 +33,17 @@ pub(crate) enum DecoderPoll {
     Superseded,
     /// A result (including a disconnected receiver) is ready to hand off.
     Decoded(DecodedSceneLoad),
+}
+
+/// Copy-only request metadata for the one parked result. Production callers
+/// inspect this instead of borrowing the parked `DecodedSceneLoad`, whose
+/// `PendingSceneLoad` still owns the decoder receiver.
+#[derive(Clone, Copy)]
+pub(crate) struct ParkedLoadMeta {
+    pub(crate) mode: SceneLoadMode,
+    pub(crate) content_revision_at_request: u64,
+    pub(crate) dirty_at_request: bool,
+    pub(crate) requested_at: std::time::Instant,
 }
 
 impl LoadCoordinator {
@@ -148,13 +159,30 @@ impl LoadCoordinator {
         self.queued.remove(eligible_position)
     }
 
+    /// Whether the one decoder/parked-result slot is occupied.
+    pub(crate) fn is_busy(&self) -> bool {
+        self.active.is_some() || self.decoded.is_some()
+    }
+
+    /// Immutable request metadata for the parked result of `scene_key`, if
+    /// any. The receiver and result stay inside the coordinator.
+    pub(crate) fn parked_meta_for(&self, scene_key: SceneKey) -> Option<ParkedLoadMeta> {
+        let decoded = self.decoded.as_ref()?;
+        (decoded.pending.scene_key == scene_key).then_some(ParkedLoadMeta {
+            mode: decoded.pending.mode,
+            content_revision_at_request: decoded.pending.content_revision_at_request,
+            dirty_at_request: decoded.pending.dirty_at_request,
+            requested_at: decoded.pending.requested_at,
+        })
+    }
+
     pub(crate) fn active_for(&self, scene_key: SceneKey) -> bool {
         self.active
             .as_ref()
             .is_some_and(|active| active.scene_key == scene_key)
     }
 
-    pub(crate) fn take_active_for(&mut self, scene_key: SceneKey) -> Option<PendingSceneLoad> {
+    fn take_active_for(&mut self, scene_key: SceneKey) -> Option<PendingSceneLoad> {
         self.active
             .as_ref()
             .is_some_and(|active| active.scene_key == scene_key)
@@ -267,6 +295,15 @@ impl LoadCoordinator {
         self.decoded = Some(decoded);
     }
 
+    /// Whether a later Append for `scene_key` remains queued. The caller has
+    /// already taken the current Append, so any queued same-scene Append is
+    /// accepted after it.
+    pub(crate) fn has_queued_append_for(&self, scene_key: SceneKey) -> bool {
+        self.queued.iter().any(|request| {
+            request.scene_key == scene_key && request.mode == SceneLoadMode::Append
+        })
+    }
+
     /// Whether queued work exists for one exact scene lifetime.
     pub(crate) fn has_queued_for(&self, scene_key: SceneKey) -> bool {
         self.queued
@@ -281,6 +318,35 @@ impl LoadCoordinator {
     /// Number of queued requests, useful for localized progress reporting.
     pub(crate) fn queued_len(&self) -> usize {
         self.queued.len()
+    }
+
+    /// Test-only raw access to the active slot for callers outside this module
+    /// that construct and deliver synthetic worker results.
+    #[cfg(test)]
+    pub(crate) fn active_for_test(&self) -> Option<&PendingSceneLoad> {
+        self.active.as_ref()
+    }
+
+    /// Test-only raw access to the parked slot for callers outside this module.
+    #[cfg(test)]
+    pub(crate) fn decoded_for_test(&self) -> Option<&DecodedSceneLoad> {
+        self.decoded.as_ref()
+    }
+
+    /// Test-only explicit take of the active slot. Production polling goes
+    /// through [`Self::poll_decoder`].
+    #[cfg(test)]
+    pub(crate) fn take_active_for_test(
+        &mut self,
+        scene_key: SceneKey,
+    ) -> Option<PendingSceneLoad> {
+        self.take_active_for(scene_key)
+    }
+
+    /// Test-only raw queue access for callers outside this module.
+    #[cfg(test)]
+    pub(crate) fn queued_for_test(&self) -> &VecDeque<SceneLoadRequest> {
+        &self.queued
     }
 }
 
