@@ -83,6 +83,31 @@ fn two_contacts_four_millimetres_apart_stay_two() {
     );
 }
 
+/// Nonfinite vertex positions do not poison or skew the raw-coordinate split.
+#[test]
+fn nonfinite_vertex_positions_are_excluded_from_x_balance_center() {
+    let subject = Mesh::new(
+        &[
+            [-2.0, -1.0, 0.0],
+            [-1.0, -1.0, 0.0],
+            [-2.0, 1.0, 0.0],
+            [4.0, 0.0, 0.0],
+            [f64::NAN, 0.0, 0.0],
+            [-30.0, f64::NAN, 0.0],
+        ],
+        &[0, 1, 2],
+    );
+    let antagonist = quad(-3.0, -1.0, -2.0, 2.0, -0.01, false);
+    let measured = field(&subject, &antagonist);
+
+    assert!(measured.stats.contact_area_mm2 > 0.0);
+    assert_eq!(
+        measured.stats.minus_x_area_mm2,
+        measured.stats.contact_area_mm2
+    );
+    assert_eq!(measured.stats.plus_x_area_mm2, 0.0);
+}
+
 /// Flattening a patch collapses it to its peak depth, and leaves a lone vertex
 /// alone.
 #[test]
