@@ -18,11 +18,14 @@ mod budget;
 mod checkpoint;
 mod edit;
 mod journal;
+mod payload;
 #[cfg(test)]
 mod tests;
 mod transfer;
 
 use self::journal::{EditCheckpoint, HistoryEntry, PendingEntry, SceneTimeline};
+pub(crate) use self::budget::MemoryContribution;
+pub(crate) use self::payload::HistoryPayload;
 
 /// Retention targets, allocated only as snapshots are actually recorded.
 pub(crate) const DEFAULT_HISTORY_BYTES: usize = 1024 * 1024 * 1024;

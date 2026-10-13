@@ -1,18 +1,19 @@
 //! The command store: entry records, identity allocation, and eviction.
 
-use std::any::Any;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use occluview_core::Scene;
 
-use super::{EditCheckpointId, HistoryCommandId, HistoryStepKind, SceneKey, WorkspaceHistory};
+use super::{
+    EditCheckpointId, HistoryCommandId, HistoryPayload, HistoryStepKind, SceneKey, WorkspaceHistory,
+};
 
 pub(super) struct HistoryEntry {
     pub(super) id: HistoryCommandId,
     pub(super) participants: Vec<SceneKey>,
     pub(super) owner: EntryOwner,
     pub(super) kind: HistoryStepKind,
-    pub(super) payload: Box<dyn Any>,
+    pub(super) payload: Box<dyn HistoryPayload>,
     pub(super) bytes: usize,
     pub(super) applied: bool,
 }
@@ -21,7 +22,7 @@ pub(super) struct PendingEntry {
     pub(super) participants: Vec<SceneKey>,
     pub(super) owner: EntryOwner,
     pub(super) kind: HistoryStepKind,
-    pub(super) payload: Box<dyn Any>,
+    pub(super) payload: Box<dyn HistoryPayload>,
     pub(super) bytes: usize,
     /// Oldest-command removals reserved during transfer preflight. They are
     /// applied only if the document transaction commits successfully.
@@ -93,7 +94,7 @@ impl WorkspaceHistory {
                         .any(|id| *id != except)
             })
     }
-    pub(super) fn reserve_pending<T: Any>(
+    pub(super) fn reserve_pending<T: HistoryPayload>(
         &mut self,
         reservation: PendingReservation<T>,
     ) -> Option<HistoryCommandId> {
@@ -104,7 +105,7 @@ impl WorkspaceHistory {
         }
         self.insert_pending_reservation(reservation, Vec::new())
     }
-    pub(super) fn reserve_transfer_pending<T: Any>(
+    pub(super) fn reserve_transfer_pending<T: HistoryPayload>(
         &mut self,
         reservation: PendingReservation<T>,
         eviction_plan: Vec<HistoryCommandId>,
@@ -114,7 +115,7 @@ impl WorkspaceHistory {
         }
         self.insert_pending_reservation(reservation, eviction_plan)
     }
-    fn insert_pending_reservation<T: Any>(
+    fn insert_pending_reservation<T: HistoryPayload>(
         &mut self,
         reservation: PendingReservation<T>,
         eviction_plan: Vec<HistoryCommandId>,

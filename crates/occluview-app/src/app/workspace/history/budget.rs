@@ -1,6 +1,5 @@
 //! Soft history retention: shared meshes count once and old steps expire after commit.
 
-use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::mem::size_of;
 use std::sync::Arc;
@@ -8,8 +7,7 @@ use std::sync::Arc;
 use occluview_core::{Mesh, Scene, SceneMesh, SceneMeshId};
 
 use super::journal::EditCheckpoint;
-use super::{HistoryCommandId, WorkspaceHistory};
-use crate::edit_mode::undo_snapshot::MeshEditUndoSnapshot;
+use super::{HistoryCommandId, HistoryPayload, WorkspaceHistory};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum SharedAllocation {
@@ -18,7 +16,7 @@ enum SharedAllocation {
 }
 
 #[derive(Default)]
-struct CommandMemory {
+pub(crate) struct MemoryContribution {
     exclusive_bytes: usize,
     shared_allocations: Vec<(SharedAllocation, usize)>,
 }
@@ -33,7 +31,7 @@ struct AllocationUse {
 struct MemoryLedger {
     used_bytes: usize,
     allocations: HashMap<SharedAllocation, AllocationUse>,
-    commands: HashMap<HistoryCommandId, CommandMemory>,
+    commands: HashMap<HistoryCommandId, MemoryContribution>,
 }
 
 impl MemoryLedger {
@@ -62,7 +60,7 @@ impl MemoryLedger {
     }
 
     fn add_checkpoint(&mut self, checkpoint: &EditCheckpoint) {
-        let mut memory = CommandMemory {
+        let mut memory = MemoryContribution {
             exclusive_bytes: checkpoint
                 .baseline_bytes
                 .saturating_add(
@@ -77,17 +75,17 @@ impl MemoryLedger {
                         .capacity()
                         .saturating_mul(size_of::<HistoryCommandId>()),
                 ),
-            ..CommandMemory::default()
+            ..MemoryContribution::default()
         };
         scene_allocations(&checkpoint.baseline, &mut memory);
         self.add_memory(None, memory);
     }
 
-    fn add_command(&mut self, id: HistoryCommandId, memory: CommandMemory) {
+    fn add_command(&mut self, id: HistoryCommandId, memory: MemoryContribution) {
         self.add_memory(Some(id), memory);
     }
 
-    fn add_memory(&mut self, id: Option<HistoryCommandId>, memory: CommandMemory) {
+    fn add_memory(&mut self, id: Option<HistoryCommandId>, memory: MemoryContribution) {
         self.used_bytes = self.used_bytes.saturating_add(memory.exclusive_bytes);
         for (allocation, bytes) in &memory.shared_allocations {
             let usage = self.allocations.entry(*allocation).or_insert(AllocationUse {
@@ -134,7 +132,7 @@ fn mesh_allocation(layer: &SceneMesh) -> (SharedAllocation, usize) {
     )
 }
 
-fn scene_mesh_allocations(layer: &SceneMesh, memory: &mut CommandMemory) {
+fn scene_mesh_allocations(layer: &SceneMesh, memory: &mut MemoryContribution) {
     memory.shared_allocations.push(mesh_allocation(layer));
     if let Some(colors) = layer.overlay_colors() {
         let color_bytes = colors
@@ -149,32 +147,36 @@ fn scene_mesh_allocations(layer: &SceneMesh, memory: &mut CommandMemory) {
     }
 }
 
-fn scene_allocations(scene: &Scene, memory: &mut CommandMemory) {
+fn scene_allocations(scene: &Scene, memory: &mut MemoryContribution) {
     for layer in scene.meshes() {
         scene_mesh_allocations(layer, memory);
     }
 }
 
-fn payload_memory(payload: &dyn Any, fallback: usize) -> CommandMemory {
-    let mut memory = CommandMemory::default();
-    match payload.downcast_ref::<MeshEditUndoSnapshot>() {
-        Some(MeshEditUndoSnapshot::Layer(layer)) => {
-            memory.exclusive_bytes = size_of::<SceneMesh>();
-            scene_mesh_allocations(layer, &mut memory);
-        }
-        Some(MeshEditUndoSnapshot::Scene { scene, guard_ids }) => {
-            memory.exclusive_bytes = size_of::<Scene>()
-                .saturating_add(scene.meshes().len().saturating_mul(size_of::<SceneMesh>()))
-                .saturating_add(
-                    guard_ids
-                        .capacity()
-                        .saturating_mul(size_of::<SceneMeshId>()),
-                );
-            scene_allocations(scene, &mut memory);
-        }
-        None => memory.exclusive_bytes = fallback,
+impl MemoryContribution {
+    pub(crate) fn exclusive(bytes: usize) -> Self {
+        Self { exclusive_bytes: bytes, ..Self::default() }
     }
-    memory
+
+    pub(crate) fn layer(layer: &SceneMesh) -> Self {
+        let mut memory = Self::exclusive(size_of::<SceneMesh>());
+        scene_mesh_allocations(layer, &mut memory);
+        memory
+    }
+
+    pub(crate) fn scene(scene: &Scene, guard_capacity: usize) -> Self {
+        let mut memory = Self::exclusive(
+            size_of::<Scene>()
+                .saturating_add(scene.meshes().len().saturating_mul(size_of::<SceneMesh>()))
+                .saturating_add(guard_capacity.saturating_mul(size_of::<SceneMeshId>())),
+        );
+        scene_allocations(scene, &mut memory);
+        memory
+    }
+}
+
+fn payload_memory(payload: &dyn HistoryPayload, declared_bytes: usize) -> MemoryContribution {
+    payload.memory_contribution(declared_bytes)
 }
 
 impl WorkspaceHistory {
