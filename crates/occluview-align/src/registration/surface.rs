@@ -26,15 +26,8 @@ fn triangles<'a>(
     regions: RegionPolicy,
     origin: DVec3,
     omitted: &'a mut usize,
+    normal_matrix: Option<DMat3>,
 ) -> impl Iterator<Item = ([DVec3; 3], Option<DVec3>)> + 'a {
-    let matrix = mesh.world_from_local.matrix3;
-    let determinant = matrix.determinant();
-    let normal_matrix = if determinant.is_finite() && determinant != 0. {
-        let inverse = matrix.inverse().transpose();
-        inverse.is_finite().then_some(inverse)
-    } else {
-        None
-    };
     mesh.soup
         .indices
         .as_chunks::<3>()
@@ -65,6 +58,15 @@ fn triangles<'a>(
         })
 }
 
+fn authored_normal_matrix(matrix: DMat3) -> Option<DMat3> {
+    let determinant = matrix.determinant();
+    if !determinant.is_finite() || determinant == 0. {
+        return None;
+    }
+    let inverse = matrix.inverse().transpose();
+    inverse.is_finite().then_some(inverse)
+}
+
 /// Match the authored-normal convention and numerical fallback of SurfaceIndex.
 fn mapped_normal(matrix: DMat3, normal: DVec3) -> Option<DVec3> {
     let transformed = matrix * normal;
@@ -79,7 +81,7 @@ fn mapped_normal(matrix: DMat3, normal: DVec3) -> Option<DVec3> {
 /// Area and area-weighted centre of the eligible surface, in world.
 pub(super) fn extent(mesh: MeshInput<'_>, regions: RegionPolicy) -> (f64, DVec3) {
     let (mut area, mut centre, mut omitted) = (0., DVec3::ZERO, 0);
-    for ([first, second, third], _) in triangles(mesh, regions, DVec3::ZERO, &mut omitted) {
+    for ([first, second, third], _) in triangles(mesh, regions, DVec3::ZERO, &mut omitted, None) {
         let piece = (second - first).cross(third - first).length() * 0.5;
         if piece.is_finite() && piece > 0. {
             area += piece;
@@ -107,7 +109,10 @@ impl Side {
     pub(super) fn read(mesh: MeshInput<'_>, layout: &Layout, admission: GeometryControl) -> Self {
         let mut omitted = 0;
         let mut gather = Gather::new(layout.fine_mm);
-        for (corners, normal) in triangles(mesh, layout.regions, layout.origin, &mut omitted) {
+        let normal_matrix = authored_normal_matrix(mesh.world_from_local.matrix3);
+        for (corners, normal) in
+            triangles(mesh, layout.regions, layout.origin, &mut omitted, normal_matrix)
+        {
             gather.add_triangle_with_normal(corners, normal);
         }
         let area = gather.area();
