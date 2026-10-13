@@ -409,39 +409,80 @@ pub fn try_render_thumbnail_file_with_request(
     spec: ThumbnailSpec,
     request: ThumbnailRenderRequest,
 ) -> ThumbnailAttempt {
-    let plan = match prepare_file_thumbnail_render(path) {
+    if Instant::now() >= request.response_deadline() {
+        return ThumbnailAttempt::TransientFailure;
+    }
+
+    // Extension support is a path-only, deterministic verdict. Keep it outside
+    // the worker so unrelated files in a mixed folder do not consume a lane.
+    if !path_has_supported_thumbnail_extension(path) {
+        tracing::warn!(
+            extension = ?path.extension(),
+            "thumbnail file extension is not registered for OccluView; returning placeholder"
+        );
+        return ThumbnailAttempt::Bitmap(placeholder_thumbnail(spec));
+    }
+
+    let path = path.to_path_buf();
+    let outcome = run_thumbnail_job_by_deadline(request.response_deadline(), move |progress| {
+        render_file_thumbnail_worker(path, spec, request, progress);
+    });
+    thumbnail_attempt_for_file_worker_outcome(outcome, spec, request)
+}
+
+fn path_has_supported_thumbnail_extension(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase)
+        .is_some_and(|extension| {
+            crate::SUPPORTED_EXTENSIONS
+                .iter()
+                .any(|supported| extension == *supported)
+        })
+}
+
+fn render_file_thumbnail_worker(
+    path: PathBuf,
+    spec: ThumbnailSpec,
+    request: ThumbnailRenderRequest,
+    progress: std::sync::mpsc::SyncSender<ThumbnailJobProgress<ThumbnailAttempt>>,
+) {
+    let plan = match prepare_file_thumbnail_render(&path) {
         Ok(plan) => plan,
         Err(FileThumbnailPreflightError::UnsupportedExtension) => {
-            // Deterministic: the extension is simply not ours. This repeats on
-            // every attempt, so the placeholder is a correct cacheable verdict.
-            // Extension, not path: this runs inside dllhost over whatever
-            // folder Explorer is showing, and a scan's file name is the case.
-            tracing::warn!(
-                extension = ?path.extension(),
-                "thumbnail file extension is not registered for OccluView; returning placeholder"
-            );
-            return ThumbnailAttempt::Bitmap(placeholder_thumbnail(spec));
+            let _ = progress.send(ThumbnailJobProgress::Finished(
+                ThumbnailAttempt::Bitmap(placeholder_thumbnail(spec)),
+            ));
+            return;
         }
         Err(FileThumbnailPreflightError::Metadata(error)) => {
             // Transient: the common causes are a sharing violation while the
             // scanner is still writing the file, or a file that vanished
             // mid-browse. Neither is a verdict about the file's content.
             tracing::warn!(?error, extension = ?path.extension(), "thumbnail file metadata failed");
-            return ThumbnailAttempt::TransientFailure;
+            let _ = progress.send(ThumbnailJobProgress::Finished(
+                ThumbnailAttempt::TransientFailure,
+            ));
+            return;
         }
         Err(FileThumbnailPreflightError::NotAFile) => {
             // Deterministic: a directory or a named pipe does not become a
-            // scan by being asked twice. Refusing here is also what keeps the
-            // open below from blocking on a pipe with no writer -- which it
-            // would do on the caller's thread, before any deadline applies.
+            // scan by being asked twice. Refusing here keeps the bounded
+            // worker from opening a pipe with no writer and blocking forever.
             tracing::warn!(
                 extension = ?path.extension(),
                 "thumbnail path is not a regular file; returning placeholder"
             );
-            return ThumbnailAttempt::Bitmap(placeholder_thumbnail(spec));
+            let _ = progress.send(ThumbnailJobProgress::Finished(
+                ThumbnailAttempt::Bitmap(placeholder_thumbnail(spec)),
+            ));
+            return;
         }
         Err(FileThumbnailPreflightError::Oversize { byte_len }) => {
-            return ThumbnailAttempt::Bitmap(placeholder_for_oversize_input(spec, byte_len));
+            let _ = progress.send(ThumbnailJobProgress::Finished(
+                ThumbnailAttempt::Bitmap(placeholder_for_oversize_input(spec, byte_len)),
+            ));
+            return;
         }
     };
 
@@ -449,9 +490,12 @@ pub fn try_render_thumbnail_file_with_request(
     // preserve both byte length and coarse mtime when a file is replaced; an
     // early path-cache hit would then show the previous mesh indefinitely.
     // Content hashing is bounded and also deduplicates copied CAD exports.
-    let (content_key, content_hit) = file_content_cache_lookup(path, &plan, spec);
+    let (content_key, content_hit) = file_content_cache_lookup(&path, &plan, spec);
     if let Some(pixels) = content_hit {
-        return ThumbnailAttempt::Bitmap(pixels);
+        let _ = progress.send(ThumbnailJobProgress::Finished(
+            ThumbnailAttempt::Bitmap(pixels),
+        ));
+        return;
     }
 
     let inflight_key = match content_key.clone() {
@@ -468,14 +512,26 @@ pub fn try_render_thumbnail_file_with_request(
     };
     let path_cache_key = plan.cache_key;
     let metadata = plan.metadata;
-    let path = path.to_path_buf();
     let cache_keys = FileThumbnailCacheKeys {
         path: path_cache_key,
         content: content_key,
     };
-    render_coalesced_thumbnail_by(inflight_key, request.response_deadline(), move || {
-        render_file_thumbnail_job(path, metadata, cache_keys, spec, request)
-    })
+    let progress_for_render = progress.clone();
+    let attempt = render_coalesced_thumbnail_by(
+        inflight_key,
+        request.response_deadline(),
+        move || {
+            render_file_thumbnail_mesh_job(
+                path,
+                metadata,
+                cache_keys,
+                spec,
+                request,
+                Some(progress_for_render),
+            )
+        },
+    );
+    let _ = progress.send(ThumbnailJobProgress::Finished(attempt));
 }
 
 fn file_content_cache_lookup(
@@ -514,6 +570,7 @@ struct FileThumbnailCacheKeys {
     content: Option<ThumbnailFileContentKey>,
 }
 
+#[cfg(test)]
 fn render_file_thumbnail_job(
     path: PathBuf,
     metadata: ThumbnailFileMetadata,
@@ -521,38 +578,49 @@ fn render_file_thumbnail_job(
     spec: ThumbnailSpec,
     request: ThumbnailRenderRequest,
 ) -> ThumbnailAttempt {
+    render_file_thumbnail_mesh_job(path, metadata, cache_keys, spec, request, None)
+}
+
+fn render_file_thumbnail_mesh_job(
+    path: PathBuf,
+    metadata: ThumbnailFileMetadata,
+    cache_keys: FileThumbnailCacheKeys,
+    spec: ThumbnailSpec,
+    request: ThumbnailRenderRequest,
+    progress: Option<std::sync::mpsc::SyncSender<ThumbnailJobProgress<ThumbnailAttempt>>>,
+) -> ThumbnailAttempt {
     let measured_path = path.clone();
-    let result = run_thumbnail_job_by_deadline(request.response_deadline(), move |progress| {
-        let result = (|| -> Result<Vec<u8>, ThumbnailError> {
-            let mesh = load_thumbnail_mesh_from_file(&path, metadata)?;
+    let result = (|| -> Result<Vec<u8>, ThumbnailError> {
+        let mesh = load_thumbnail_mesh_from_file(&path, metadata)?;
+        if let Some(progress) = &progress {
             let _ = progress.send(ThumbnailJobProgress::Prepared);
-            rendering::render_mesh_thumbnail_with_adapter_policy(
-                mesh,
-                spec,
-                RenderDeadline::at(request.cache_warm_deadline()),
-                request.adapter_policy(),
-            )
-        })();
-        if let Ok(pixels) = &result {
-            cache_file_thumbnail(
-                cache_keys.path,
-                cache_keys.content,
-                spec.size_px,
-                thumbnail_background_key(spec.background),
-                pixels,
-            );
         }
-        let _ = progress.send(ThumbnailJobProgress::Finished(result));
-    });
+        rendering::render_mesh_thumbnail_with_adapter_policy(
+            mesh,
+            spec,
+            RenderDeadline::at(request.cache_warm_deadline()),
+            request.adapter_policy(),
+        )
+    })();
+    if let Ok(pixels) = &result {
+        cache_file_thumbnail(
+            cache_keys.path,
+            cache_keys.content,
+            spec.size_px,
+            thumbnail_background_key(spec.background),
+            pixels,
+        );
+    }
 
     // "Truncated" is a verdict about the file, and the shell keeps verdicts
     // forever. When the file is still being written -- a scanner exporting into
     // the folder the operator is looking at -- it is a verdict about the
     // moment, and the badge would outlive the cause. The preflight measured
     // this file; if it no longer matches, say so instead.
-    if let ThumbnailJobOutcome::Finished(Err(ThumbnailError::Format(FormatError::Truncated {
-        ..
-    }))) = &result
+    if matches!(
+        &result,
+        Err(ThumbnailError::Format(FormatError::Truncated { .. }))
+    )
     {
         if cache::thumbnail_file_changed_since(&measured_path, &metadata) {
             tracing::warn!(
@@ -562,7 +630,70 @@ fn render_file_thumbnail_job(
             return ThumbnailAttempt::TransientFailure;
         }
     }
-    thumbnail_attempt_for_job_outcome(result, spec, request.response_timeout(), "file")
+    thumbnail_attempt_for_job_outcome(
+        ThumbnailJobOutcome::Finished(result),
+        spec,
+        request.response_timeout(),
+        "file",
+    )
+}
+
+fn thumbnail_attempt_for_file_worker_outcome(
+    outcome: ThumbnailJobOutcome<ThumbnailAttempt>,
+    spec: ThumbnailSpec,
+    request: ThumbnailRenderRequest,
+) -> ThumbnailAttempt {
+    match outcome {
+        ThumbnailJobOutcome::Finished(attempt) => {
+            if Instant::now() < request.response_deadline() {
+                attempt
+            } else {
+                tracing::warn!(
+                    ?request.response_timeout,
+                    source = "file",
+                    "thumbnail completion arrived after the response deadline; reporting transient failure"
+                );
+                ThumbnailAttempt::TransientFailure
+            }
+        }
+        ThumbnailJobOutcome::SetupTimedOut => thumbnail_attempt_for_job_outcome(
+            ThumbnailJobOutcome::<Result<Vec<u8>, ThumbnailError>>::SetupTimedOut,
+            spec,
+            request.response_timeout(),
+            "file",
+        ),
+        ThumbnailJobOutcome::RenderTimedOut => thumbnail_attempt_for_job_outcome(
+            ThumbnailJobOutcome::<Result<Vec<u8>, ThumbnailError>>::RenderTimedOut,
+            spec,
+            request.response_timeout(),
+            "file",
+        ),
+        ThumbnailJobOutcome::Failed => thumbnail_attempt_for_job_outcome(
+            ThumbnailJobOutcome::<Result<Vec<u8>, ThumbnailError>>::Failed,
+            spec,
+            request.response_timeout(),
+            "file",
+        ),
+    }
+}
+
+fn thumbnail_attempt_for_request_job_outcome(
+    outcome: ThumbnailJobOutcome<Result<Vec<u8>, ThumbnailError>>,
+    spec: ThumbnailSpec,
+    request: ThumbnailRenderRequest,
+    source: &'static str,
+) -> ThumbnailAttempt {
+    if matches!(&outcome, ThumbnailJobOutcome::Finished(_))
+        && Instant::now() >= request.response_deadline()
+    {
+        tracing::warn!(
+            ?request.response_timeout,
+            source,
+            "thumbnail completion arrived after the response deadline; reporting transient failure"
+        );
+        return ThumbnailAttempt::TransientFailure;
+    }
+    thumbnail_attempt_for_job_outcome(outcome, spec, request.response_timeout(), source)
 }
 
 /// Translate a worker outcome into the cache-safety split: decode verdicts
@@ -743,7 +874,17 @@ fn try_render_thumbnail_shared_impl(
     request: ThumbnailRenderRequest,
     reservation: Option<ThumbnailJobReservation>,
 ) -> ThumbnailAttempt {
-    let plan = match prepare_stream_thumbnail_render(extension.as_deref(), bytes.as_ref()) {
+    if Instant::now() >= request.response_deadline() {
+        return ThumbnailAttempt::TransientFailure;
+    }
+
+    // Format inference and the full-byte digest both consume the response
+    // budget, even when the eventual result would otherwise be a cache hit.
+    let preflight = prepare_stream_thumbnail_render(extension.as_deref(), bytes.as_ref());
+    if Instant::now() >= request.response_deadline() {
+        return ThumbnailAttempt::TransientFailure;
+    }
+    let plan = match preflight {
         Ok(plan) => plan,
         Err(StreamThumbnailPreflightError::Oversize { byte_len }) => {
             return ThumbnailAttempt::Bitmap(placeholder_for_oversize_input(spec, byte_len));
@@ -758,14 +899,23 @@ fn try_render_thumbnail_shared_impl(
             return ThumbnailAttempt::Bitmap(placeholder_thumbnail(spec));
         }
     };
-    if let Ok(mut cache) = thumbnail_stream_cache().lock() {
-        if let Some(pixels) = cache.get_with_background(
+
+    let cached = thumbnail_stream_cache().lock().ok().and_then(|mut cache| {
+        cache.get_with_background(
             &plan.cache_key,
             spec.size_px,
             thumbnail_background_key(spec.background),
-        ) {
-            return ThumbnailAttempt::Bitmap(pixels);
-        }
+        )
+    });
+    if let Some(pixels) = cached {
+        return if Instant::now() < request.response_deadline() {
+            ThumbnailAttempt::Bitmap(pixels)
+        } else {
+            ThumbnailAttempt::TransientFailure
+        };
+    }
+    if Instant::now() >= request.response_deadline() {
+        return ThumbnailAttempt::TransientFailure;
     }
 
     let inflight_key = ThumbnailRequestKey::Stream {
@@ -773,52 +923,61 @@ fn try_render_thumbnail_shared_impl(
         size_px: spec.size_px,
         background: thumbnail_background_key(spec.background),
     };
-    render_coalesced_thumbnail_by(inflight_key, request.response_deadline(), move || {
-        let cache_key_for_store = plan.cache_key.clone();
-        let kind = plan.kind;
-        let work = move |progress: std::sync::mpsc::SyncSender<
-            ThumbnailJobProgress<Result<Vec<u8>, ThumbnailError>>,
-        >| {
-            let result = (|| -> Result<Vec<u8>, ThumbnailError> {
-                let mesh = load_thumbnail_mesh_from_bytes_kind(kind, bytes.as_ref())?;
-                let _ = progress.send(ThumbnailJobProgress::Prepared);
-                rendering::render_mesh_thumbnail_with_adapter_policy(
-                    mesh,
-                    spec,
-                    RenderDeadline::at(request.cache_warm_deadline()),
-                    request.adapter_policy(),
-                )
-            })();
-            // See the file path: cache from the worker so a render that
-            // outran the caller's deadline still lands in the cache for the
-            // next repaint instead of being thrown away.
-            if let Ok(pixels) = &result {
-                if let Ok(mut cache) = thumbnail_stream_cache().lock() {
-                    cache.insert_with_background(
-                        cache_key_for_store,
-                        spec.size_px,
-                        thumbnail_background_key(spec.background),
-                        pixels,
-                    );
+    let attempt = render_coalesced_thumbnail_by(
+        inflight_key,
+        request.response_deadline(),
+        move || {
+            let cache_key_for_store = plan.cache_key.clone();
+            let kind = plan.kind;
+            let work = move |progress: std::sync::mpsc::SyncSender<
+                ThumbnailJobProgress<Result<Vec<u8>, ThumbnailError>>,
+            >| {
+                let result = (|| -> Result<Vec<u8>, ThumbnailError> {
+                    let mesh = load_thumbnail_mesh_from_bytes_kind(kind, bytes.as_ref())?;
+                    let _ = progress.send(ThumbnailJobProgress::Prepared);
+                    rendering::render_mesh_thumbnail_with_adapter_policy(
+                        mesh,
+                        spec,
+                        RenderDeadline::at(request.cache_warm_deadline()),
+                        request.adapter_policy(),
+                    )
+                })();
+                // See the file path: cache from the worker so a render that
+                // outran the caller's deadline still lands in the cache for
+                // the next repaint instead of being thrown away.
+                if let Ok(pixels) = &result {
+                    if let Ok(mut cache) = thumbnail_stream_cache().lock() {
+                        cache.insert_with_background(
+                            cache_key_for_store,
+                            spec.size_px,
+                            thumbnail_background_key(spec.background),
+                            pixels,
+                        );
+                    }
                 }
-            }
-            let _ = progress.send(ThumbnailJobProgress::Finished(result));
-        };
-        let result = match reservation {
-            Some(ThumbnailJobReservation {
-                permit,
-                request: reserved_request,
-            }) => {
-                debug_assert_eq!(
-                    request.response_deadline(),
-                    reserved_request.response_deadline(),
-                    "the copied stream must keep the reservation's original response deadline"
-                );
-                run_thumbnail_job_by(permit, reserved_request.response_deadline(), work)
-            }
-            None => run_thumbnail_job_by_deadline(request.response_deadline(), work),
-        };
+                let _ = progress.send(ThumbnailJobProgress::Finished(result));
+            };
+            let result = match reservation {
+                Some(ThumbnailJobReservation {
+                    permit,
+                    request: reserved_request,
+                }) => {
+                    debug_assert_eq!(
+                        request.response_deadline(),
+                        reserved_request.response_deadline(),
+                        "the copied stream must keep the reservation's original response deadline"
+                    );
+                    run_thumbnail_job_by(permit, reserved_request.response_deadline(), work)
+                }
+                None => run_thumbnail_job_by_deadline(request.response_deadline(), work),
+            };
 
-        thumbnail_attempt_for_job_outcome(result, spec, request.response_timeout(), "stream")
-    })
+            thumbnail_attempt_for_request_job_outcome(result, spec, request, "stream")
+        },
+    );
+    if Instant::now() < request.response_deadline() {
+        attempt
+    } else {
+        ThumbnailAttempt::TransientFailure
+    }
 }

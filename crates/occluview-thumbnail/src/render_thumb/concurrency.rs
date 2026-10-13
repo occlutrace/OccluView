@@ -454,7 +454,10 @@ fn wait_for_inflight_thumbnail_by(
 
     loop {
         match &*state {
-            InflightThumbnailState::Finished(result) => return Some(result.clone()),
+            InflightThumbnailState::Finished(result) => {
+                let result = result.clone();
+                return (Instant::now() < deadline).then_some(result);
+            }
             InflightThumbnailState::Running => {
                 let remaining = deadline.checked_duration_since(Instant::now())?;
                 let (next_state, wait_result) = entry
@@ -519,12 +522,20 @@ fn render_coalesced_thumbnail_by_inner(
             });
             let result = InflightThumbnailResult::from(attempt);
             finish_inflight_thumbnail(&key, &entry, result.clone());
-            result.into()
+            if Instant::now() < deadline {
+                result.into()
+            } else {
+                ThumbnailAttempt::TransientFailure
+            }
         }
         InflightThumbnailLease::Follower(entry) => {
             follower_waiting();
             if let Some(result) = wait_for_inflight_thumbnail_by(&entry, deadline) {
-                result.into()
+                if Instant::now() < deadline {
+                    result.into()
+                } else {
+                    ThumbnailAttempt::TransientFailure
+                }
             } else {
                 tracing::warn!(
                     ?deadline,
@@ -620,7 +631,11 @@ where
         match rx.recv_timeout(remaining) {
             Ok(ThumbnailJobProgress::Prepared) => prepared = true,
             Ok(ThumbnailJobProgress::Finished(value)) => {
-                return ThumbnailJobOutcome::Finished(value)
+                let outcome = finished_message_outcome(deadline, Instant::now(), prepared, value);
+                if !matches!(&outcome, ThumbnailJobOutcome::Finished(_)) {
+                    timed_out.store(true, Ordering::Relaxed);
+                }
+                return outcome;
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 timed_out.store(true, Ordering::Relaxed);
@@ -632,6 +647,62 @@ where
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => return ThumbnailJobOutcome::Failed,
         }
+    }
+}
+
+fn finished_message_outcome<T>(
+    deadline: Instant,
+    received_at: Instant,
+    prepared: bool,
+    value: T,
+) -> ThumbnailJobOutcome<T> {
+    if received_at < deadline {
+        ThumbnailJobOutcome::Finished(value)
+    } else if prepared {
+        ThumbnailJobOutcome::RenderTimedOut
+    } else {
+        ThumbnailJobOutcome::SetupTimedOut
+    }
+}
+
+#[cfg(test)]
+mod deadline_tests {
+    use super::*;
+
+    #[test]
+    fn a_finished_message_received_at_the_deadline_is_not_a_bitmap() {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let (sent, received) = mpsc::sync_channel(1);
+        sent.send(ThumbnailJobProgress::Finished(ThumbnailAttempt::Bitmap(
+            vec![1, 2, 3, 4],
+        )))
+            .expect("queue the worker response");
+        let ThumbnailJobProgress::Finished(value) =
+            received.recv().expect("receive the queued response")
+        else {
+            panic!("expected a finished response");
+        };
+
+        let outcome = finished_message_outcome(deadline, deadline, false, value);
+        assert!(matches!(outcome, ThumbnailJobOutcome::SetupTimedOut));
+    }
+
+    #[test]
+    fn a_finished_message_after_preparation_is_a_render_timeout() {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let (sent, received) = mpsc::sync_channel(1);
+        sent.send(ThumbnailJobProgress::Finished(ThumbnailAttempt::Bitmap(
+            vec![1, 2, 3, 4],
+        )))
+            .expect("queue the worker response");
+        let ThumbnailJobProgress::Finished(value) =
+            received.recv().expect("receive the queued response")
+        else {
+            panic!("expected a finished response");
+        };
+
+        let outcome = finished_message_outcome(deadline, deadline, true, value);
+        assert!(matches!(outcome, ThumbnailJobOutcome::RenderTimedOut));
     }
 }
 

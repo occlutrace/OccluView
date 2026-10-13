@@ -156,6 +156,50 @@ mod poison_recovery_tests {
     }
 }
 
+mod bounded_worker_tests {
+    use super::super::{run_thumbnail_job_by, ThumbnailJobGate, ThumbnailJobOutcome};
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn a_blocked_read_keeps_its_bounded_lane_after_the_caller_times_out() {
+        let gate = ThumbnailJobGate::new(1);
+        let permit = gate
+            .acquire_by(Instant::now() + Duration::from_secs(1))
+            .expect("an idle private gate hands out its permit");
+        let (read_started_tx, read_started_rx) = mpsc::channel();
+        let (release_read_tx, release_read_rx) = mpsc::channel();
+
+        let outcome: ThumbnailJobOutcome<()> = run_thumbnail_job_by(
+            permit,
+            Instant::now(),
+            move |_progress| {
+                read_started_tx
+                    .send(())
+                    .expect("the caller is waiting for the read start");
+                release_read_rx
+                    .recv()
+                    .expect("the test releases the blocked read");
+            },
+        );
+        assert!(matches!(outcome, ThumbnailJobOutcome::SetupTimedOut));
+        read_started_rx
+            .recv()
+            .expect("the worker started its bounded read");
+        assert!(
+            gate.acquire_by(Instant::now()).is_none(),
+            "a timed-out caller must not release the worker's lane while IO is blocked"
+        );
+
+        release_read_tx
+            .send(())
+            .expect("release the blocked worker");
+        let _regained = gate
+            .acquire_by(Instant::now() + Duration::from_secs(1))
+            .expect("the lane returns when the worker actually exits");
+    }
+}
+
 mod renderer_pool_recovery_tests {
     use super::{ThumbnailError, ThumbnailRendererPool};
     use occluview_render::{AdapterPolicy, RenderDeadline, RenderError};

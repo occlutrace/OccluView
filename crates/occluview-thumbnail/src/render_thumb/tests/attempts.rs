@@ -62,6 +62,37 @@ fn expired_shell_request_never_starts_a_fresh_file_render_budget() {
 }
 
 #[test]
+fn expired_file_request_does_not_return_a_content_cache_hit() {
+    let spec = spec_64();
+    let mut bytes = fixtures::binary_stl_cube();
+    bytes[..8].copy_from_slice(b"latefile");
+    let path = write_verdict_fixture("deadline-file-cache-hit.stl", &bytes);
+    let metadata = cache::thumbnail_file_metadata(&path).expect("fixture metadata");
+    let content_key =
+        cache::thumbnail_file_content_key(&path, &metadata).expect("fixture content key");
+    let cached_pixels = vec![31_u8; usize::from(spec.size_px).pow(2) * 4];
+    thumbnail_file_content_cache()
+        .lock()
+        .expect("content cache lock")
+        .insert_with_background(
+            content_key,
+            spec.size_px,
+            thumbnail_background_key(spec.background),
+            &cached_pixels,
+        );
+    let request = ThumbnailRenderRequest::from_started_at(
+        expired_request_start(),
+        Duration::from_millis(1),
+        AdapterPolicy::HardwareThenFallback,
+    );
+
+    let attempt = try_render_thumbnail_file_with_request(&path, spec, request);
+
+    assert_eq!(attempt, ThumbnailAttempt::TransientFailure);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
 fn expired_shell_stream_request_cannot_reserve_a_new_lane() {
     let request = ThumbnailRenderRequest::from_started_at(
         expired_request_start(),
@@ -86,6 +117,39 @@ fn expired_shell_stream_request_never_starts_a_fresh_render_budget() {
         Some("stl".to_string()),
         Arc::<[u8]>::from(bytes),
         spec_64(),
+        request,
+    );
+
+    assert_eq!(attempt, ThumbnailAttempt::TransientFailure);
+}
+
+#[test]
+fn expired_stream_request_does_not_return_a_stream_cache_hit() {
+    let spec = spec_64();
+    let mut bytes = fixtures::binary_stl_cube();
+    bytes[..8].copy_from_slice(b"latstm01");
+    let plan = prepare_stream_thumbnail_render(Some("stl"), &bytes)
+        .expect("fixture stream preflight");
+    let cached_pixels = vec![47_u8; usize::from(spec.size_px).pow(2) * 4];
+    thumbnail_stream_cache()
+        .lock()
+        .expect("stream cache lock")
+        .insert_with_background(
+            plan.cache_key,
+            spec.size_px,
+            thumbnail_background_key(spec.background),
+            &cached_pixels,
+        );
+    let request = ThumbnailRenderRequest::from_started_at(
+        expired_request_start(),
+        Duration::from_millis(1),
+        AdapterPolicy::HardwareThenFallback,
+    );
+
+    let attempt = try_render_thumbnail_shared_with_request(
+        Some("stl".to_string()),
+        Arc::<[u8]>::from(bytes),
+        spec,
         request,
     );
 
