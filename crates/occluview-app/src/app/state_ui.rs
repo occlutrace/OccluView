@@ -196,6 +196,20 @@ impl SceneUiState {
 }
 
 impl UiState {
+    fn open_dialogs(&self, camera_view_popup_open: bool) -> OpenDialogs {
+        OpenDialogs {
+            close_guard: self.close_guard_open,
+            pending_replace: self.pending_replace_open.is_some(),
+            error: self.app_error.is_some(),
+            // Preserve the frame-start snapshot for every other popup. The
+            // camera menu owns its own toolbar route and is handled by the
+            // narrowly scoped predicate below.
+            settings_popup: self.popup_open_at_frame_start && !camera_view_popup_open,
+            information_dialog: self.information_dialog.is_open(),
+            repair_report: self.scene_report_open,
+        }
+    }
+
     pub(super) fn new(repaint_ctx: egui::Context, locale: crate::i18n::LocaleManager) -> Self {
         Self {
             repaint_ctx,
@@ -227,18 +241,21 @@ impl UiState {
         if self.workspace_modal_open {
             return true;
         }
-        OpenDialogs {
-            close_guard: self.close_guard_open,
-            pending_replace: self.pending_replace_open.is_some(),
-            error: self.app_error.is_some(),
-            // Any popup, read from the frame-start snapshot. The settings
-            // popup is included by that term; the comment on the field explains
-            // why a live query is too late.
-            settings_popup: self.popup_open_at_frame_start,
-            information_dialog: self.information_dialog.is_open(),
-            repair_report: self.scene_report_open,
+        self.open_dialogs(false).any()
+    }
+
+    /// The camera toolbar popup may issue its own command while open. Only
+    /// that exact popup is exempt; all explicit dialogs and workspace modals
+    /// retain their normal ownership.
+    pub(super) fn modal_dialog_open_except_axis_view_menu(&self, ctx: &egui::Context) -> bool {
+        if self.workspace_modal_open {
+            return true;
         }
-        .any()
+        let camera_view_popup_open = egui::Popup::is_id_open(
+            ctx,
+            super::app_dialogs::axis_view_popup_id(),
+        );
+        self.open_dialogs(camera_view_popup_open).any()
     }
 
     /// Accepted commands may originate inside a popup. A popup that produced

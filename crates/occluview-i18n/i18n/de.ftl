@@ -71,6 +71,7 @@ help-hint-navigation-zoom-toward-the-pointer = Zum Zeiger zoomen
 help-hint-navigation-recenter-on-the-surface = Auf Oberfläche zentrieren
 help-hint-navigation-recenter-on-the-surface-when-enabled = Auf Oberfläche zentrieren, wenn aktiviert
 help-hint-navigation-open-the-layer-or-scene-menu-when-stationary = Ebenen- oder Szenenmenü per ruhigem Klick öffnen
+help-hint-navigation-choose-an-axis-aligned-camera-view = Mit Tab zu „Ansicht“, mit Enter oder Leertaste öffnen, mit Tab eine Richtung wählen und mit Enter oder Leertaste bestätigen
 help-hint-tools-open-a-file = Datei öffnen
 help-hint-tools-open-cut-view = Schnittansicht öffnen
 help-hint-tools-arm-the-ruler = Lineal aktivieren
@@ -137,6 +138,9 @@ toolbar-align-hint = Zwei Scans zusammenführen: je ein Punkt ({ $shortcut })
 toolbar-edit-label = Bearbeiten
 toolbar-edit-open = Netzbearbeitung ist offen
 toolbar-edit-hint = Netzbearbeitung: Auswahl und Sculpting ({ $shortcut })
+toolbar-view-label = Ansicht
+toolbar-view-hint = Eine achsenparallele Kameraperspektive wählen
+toolbar-view-from-axis = Ansicht von { $axis }
 toolbar-settings-label = Einstellungen
 toolbar-settings-hint = Einstellungen öffnen
 
