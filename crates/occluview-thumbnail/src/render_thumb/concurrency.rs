@@ -534,6 +534,10 @@ fn render_coalesced_thumbnail_by_inner(
             }
         }
         InflightThumbnailLease::Follower(entry) => {
+            // A follower does not use its producer closure. Drop it before
+            // waiting so captured owned source buffers do not stay resident
+            // for the leader's entire render.
+            drop(render);
             follower_waiting();
             if let Some(result) = wait_for_inflight_thumbnail_by(&entry, deadline) {
                 if Instant::now() < deadline {

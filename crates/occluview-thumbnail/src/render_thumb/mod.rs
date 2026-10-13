@@ -54,8 +54,11 @@ pub use fallback::placeholder_for_oversize_input;
 use fallback::placeholder_kind_for_error;
 use loading::{
     load_thumbnail_mesh_from_bytes, load_thumbnail_mesh_from_bytes_kind,
-    load_thumbnail_mesh_from_file, prepare_file_thumbnail_render, prepare_stream_thumbnail_render,
+    load_thumbnail_mesh_from_opened_file, prepare_file_thumbnail_render,
+    prepare_stream_thumbnail_render, thumbnail_format_kind_from_file_bytes,
 };
+#[cfg(test)]
+use loading::load_thumbnail_mesh_from_file;
 
 /// Default maximum wall-clock wait for a shell thumbnail request.
 pub const DEFAULT_THUMBNAIL_TIMEOUT: Duration = Duration::from_millis(6_000);
@@ -486,35 +489,101 @@ fn render_file_thumbnail_worker(
         }
     };
 
-    // Do not trust the metadata key as the first lookup. Some file systems
-    // preserve both byte length and coarse mtime when a file is replaced; an
-    // early path-cache hit would then show the previous mesh indefinitely.
-    // Content hashing is bounded and also deduplicates copied CAD exports.
-    let (content_key, content_hit) = file_content_cache_lookup(&path, &plan, spec);
-    if let Some(pixels) = content_hit {
+    let source = match occluview_formats::dispatch::read_opened_file_bytes_with_limit(
+        &path,
+        MAX_THUMBNAIL_FILE_BYTES as u64,
+    ) {
+        Ok(source) => source,
+        Err(FormatError::TooLarge { bytes, .. }) => {
+            let byte_len = usize::try_from(bytes).unwrap_or(usize::MAX);
+            let _ = progress.send(ThumbnailJobProgress::Finished(ThumbnailAttempt::Bitmap(
+                placeholder_for_oversize_input(spec, byte_len),
+            )));
+            return;
+        }
+        Err(error) => {
+            tracing::warn!(?error, extension = ?path.extension(), "thumbnail file read failed");
+            let _ = progress.send(ThumbnailJobProgress::Finished(
+                ThumbnailAttempt::TransientFailure,
+            ));
+            return;
+        }
+    };
+
+    let opened_metadata = cache::thumbnail_file_metadata_from_std(source.initial_metadata());
+    if !source.initial_metadata().is_file()
+        || opened_metadata != plan.metadata
+        || u64::try_from(source.file_bytes().as_slice().len()).unwrap_or(u64::MAX)
+            != plan.metadata.byte_len
+    {
+        tracing::warn!(
+            extension = ?path.extension(),
+            "thumbnail source changed between preflight and bounded read"
+        );
         let _ = progress.send(ThumbnailJobProgress::Finished(
-            ThumbnailAttempt::Bitmap(pixels),
+            ThumbnailAttempt::TransientFailure,
         ));
         return;
     }
 
-    let inflight_key = match content_key.clone() {
-        Some(cache_key) => ThumbnailRequestKey::FileContent {
-            cache_key,
-            size_px: spec.size_px,
-            background: thumbnail_background_key(spec.background),
-        },
-        None => ThumbnailRequestKey::File {
-            cache_key: plan.cache_key.clone(),
-            size_px: spec.size_px,
-            background: thumbnail_background_key(spec.background),
-        },
+    let kind = match thumbnail_format_kind_from_file_bytes(source.file_bytes()) {
+        Ok(kind) => kind,
+        Err(error) => {
+            let attempt = thumbnail_attempt_for_job_outcome(
+                ThumbnailJobOutcome::Finished(Err(error)),
+                spec,
+                request.response_timeout(),
+                "file",
+            );
+            let _ = progress.send(ThumbnailJobProgress::Finished(attempt));
+            return;
+        }
     };
-    let path_cache_key = plan.cache_key;
-    let metadata = plan.metadata;
+    let content_key = thumbnail_file_content_key(&path, source.file_bytes().as_slice());
+
+    // The preflight was path based; verify both the held source handle and the
+    // current path after hashing, before a cache hit can return any pixels.
+    if !thumbnail_file_source_matches(&path, &source, &plan.metadata) {
+        tracing::warn!(
+            extension = ?path.extension(),
+            "thumbnail source changed during content preparation"
+        );
+        let _ = progress.send(ThumbnailJobProgress::Finished(
+            ThumbnailAttempt::TransientFailure,
+        ));
+        return;
+    }
+
+    if let Some(pixels) = file_content_cache_lookup(&content_key, spec) {
+        if !thumbnail_file_source_matches(&path, &source, &plan.metadata) {
+            let _ = progress.send(ThumbnailJobProgress::Finished(
+                ThumbnailAttempt::TransientFailure,
+            ));
+            return;
+        }
+        if let Ok(mut path_cache) = thumbnail_file_cache().lock() {
+            path_cache.insert_with_background(
+                plan.cache_key.clone(),
+                spec.size_px,
+                thumbnail_background_key(spec.background),
+                &pixels,
+            );
+        }
+        let _ = progress.send(ThumbnailJobProgress::Finished(ThumbnailAttempt::Bitmap(
+            pixels,
+        )));
+        return;
+    }
+
     let cache_keys = FileThumbnailCacheKeys {
-        path: path_cache_key,
-        content: content_key,
+        path: Some(plan.cache_key.clone()),
+        content: Some(content_key.clone()),
+    };
+    let metadata = plan.metadata;
+    let inflight_key = ThumbnailRequestKey::FileContent {
+        cache_key: content_key,
+        size_px: spec.size_px,
+        background: thumbnail_background_key(spec.background),
     };
     let progress_for_render = progress.clone();
     let attempt = render_coalesced_thumbnail_by(
@@ -523,6 +592,8 @@ fn render_file_thumbnail_worker(
         move || {
             render_file_thumbnail_mesh_job(
                 path,
+                source,
+                kind,
                 metadata,
                 cache_keys,
                 spec,
@@ -534,39 +605,33 @@ fn render_file_thumbnail_worker(
     let _ = progress.send(ThumbnailJobProgress::Finished(attempt));
 }
 
-fn file_content_cache_lookup(
+fn thumbnail_file_source_matches(
     path: &Path,
-    plan: &cache::FileThumbnailRenderPlan,
+    source: &occluview_formats::dispatch::OpenedFileBytes,
+    expected: &ThumbnailFileMetadata,
+) -> bool {
+    source
+        .current_metadata()
+        .ok()
+        .filter(std::fs::Metadata::is_file)
+        .is_some_and(|metadata| cache::thumbnail_file_metadata_from_std(&metadata) == *expected)
+        && !cache::thumbnail_file_changed_since(path, expected)
+}
+
+fn file_content_cache_lookup(
+    key: &ThumbnailFileContentKey,
     spec: ThumbnailSpec,
-) -> (Option<ThumbnailFileContentKey>, Option<Vec<u8>>) {
-    // If the file changes while Explorer is probing it, hashing is merely an
-    // optimization failure: fall back to the path key and keep the contract.
-    let content_key = thumbnail_file_content_key(path, &plan.metadata).ok();
-    let Some(key) = content_key.as_ref() else {
-        return (None, None);
-    };
-    let Some(pixels) = thumbnail_file_content_cache()
+) -> Option<Vec<u8>> {
+    thumbnail_file_content_cache()
         .lock()
         .ok()
         .and_then(|mut cache| {
             cache.get_with_background(key, spec.size_px, thumbnail_background_key(spec.background))
         })
-    else {
-        return (content_key, None);
-    };
-    if let Ok(mut path_cache) = thumbnail_file_cache().lock() {
-        path_cache.insert_with_background(
-            plan.cache_key.clone(),
-            spec.size_px,
-            thumbnail_background_key(spec.background),
-            &pixels,
-        );
-    }
-    (content_key, Some(pixels))
 }
 
 struct FileThumbnailCacheKeys {
-    path: ThumbnailFileCacheKey,
+    path: Option<ThumbnailFileCacheKey>,
     content: Option<ThumbnailFileContentKey>,
 }
 
@@ -578,56 +643,105 @@ fn render_file_thumbnail_job(
     spec: ThumbnailSpec,
     request: ThumbnailRenderRequest,
 ) -> ThumbnailAttempt {
-    render_file_thumbnail_mesh_job(path, metadata, cache_keys, spec, request, None)
+    let source = match occluview_formats::dispatch::read_opened_file_bytes_with_limit(
+        &path,
+        MAX_THUMBNAIL_FILE_BYTES as u64,
+    ) {
+        Ok(source) => source,
+        Err(error) => {
+            return thumbnail_attempt_for_job_outcome(
+                ThumbnailJobOutcome::Finished(Err(error.into())),
+                spec,
+                request.response_timeout(),
+                "file",
+            );
+        }
+    };
+    if !source.initial_metadata().is_file()
+        || cache::thumbnail_file_metadata_from_std(source.initial_metadata()) != metadata
+    {
+        return ThumbnailAttempt::TransientFailure;
+    }
+    let kind = match thumbnail_format_kind_from_file_bytes(source.file_bytes()) {
+        Ok(kind) => kind,
+        Err(error) => {
+            return thumbnail_attempt_for_job_outcome(
+                ThumbnailJobOutcome::Finished(Err(error)),
+                spec,
+                request.response_timeout(),
+                "file",
+            );
+        }
+    };
+    render_file_thumbnail_mesh_job(path, source, kind, metadata, cache_keys, spec, request, None)
 }
 
 fn render_file_thumbnail_mesh_job(
     path: PathBuf,
+    source: occluview_formats::dispatch::OpenedFileBytes,
+    kind: occluview_formats::FormatKind,
     metadata: ThumbnailFileMetadata,
     cache_keys: FileThumbnailCacheKeys,
     spec: ThumbnailSpec,
     request: ThumbnailRenderRequest,
     progress: Option<std::sync::mpsc::SyncSender<ThumbnailJobProgress<ThumbnailAttempt>>>,
 ) -> ThumbnailAttempt {
-    let measured_path = path.clone();
-    let result = (|| -> Result<Vec<u8>, ThumbnailError> {
-        let mesh = load_thumbnail_mesh_from_file(&path, metadata)?;
-        if let Some(progress) = &progress {
-            let _ = progress.send(ThumbnailJobProgress::Prepared);
-        }
-        rendering::render_mesh_thumbnail_with_adapter_policy(
-            mesh,
-            spec,
-            RenderDeadline::at(request.cache_warm_deadline()),
-            request.adapter_policy(),
-        )
-    })();
-    if let Ok(pixels) = &result {
-        cache_file_thumbnail(
-            cache_keys.path,
-            cache_keys.content,
-            spec.size_px,
-            thumbnail_background_key(spec.background),
-            pixels,
+    if !thumbnail_file_source_matches(&path, &source, &metadata) {
+        tracing::warn!(
+            extension = ?path.extension(),
+            "thumbnail source changed before parsing; reporting transient failure"
         );
+        return ThumbnailAttempt::TransientFailure;
     }
-
-    // "Truncated" is a verdict about the file, and the shell keeps verdicts
-    // forever. When the file is still being written -- a scanner exporting into
-    // the folder the operator is looking at -- it is a verdict about the
-    // moment, and the badge would outlive the cause. The preflight measured
-    // this file; if it no longer matches, say so instead.
-    if matches!(
-        &result,
-        Err(ThumbnailError::Format(FormatError::Truncated { .. }))
-    )
-    {
-        if cache::thumbnail_file_changed_since(&measured_path, &metadata) {
-            tracing::warn!(
-                extension = ?measured_path.extension(),
-                "thumbnail source changed while it was being read; reporting transient failure"
+    let mesh = match load_thumbnail_mesh_from_opened_file(&path, &source, kind) {
+        Ok(mesh) => mesh,
+        Err(error) => {
+            if !thumbnail_file_source_matches(&path, &source, &metadata) {
+                return ThumbnailAttempt::TransientFailure;
+            }
+            return thumbnail_attempt_for_job_outcome(
+                ThumbnailJobOutcome::Finished(Err(error)),
+                spec,
+                request.response_timeout(),
+                "file",
             );
-            return ThumbnailAttempt::TransientFailure;
+        }
+    };
+    if !thumbnail_file_source_matches(&path, &source, &metadata) {
+        tracing::warn!(
+            extension = ?path.extension(),
+            "thumbnail source changed during parsing; reporting transient failure"
+        );
+        return ThumbnailAttempt::TransientFailure;
+    }
+    if let Some(progress) = &progress {
+        let _ = progress.send(ThumbnailJobProgress::Prepared);
+    }
+    // The parser has consumed the owned primary snapshot. Release up to the
+    // file cap before waiting on renderer setup or GPU work.
+    drop(source);
+    let result = rendering::render_mesh_thumbnail_with_adapter_policy(
+        mesh,
+        spec,
+        RenderDeadline::at(request.cache_warm_deadline()),
+        request.adapter_policy(),
+    );
+    if cache::thumbnail_file_changed_since(&path, &metadata) {
+        tracing::warn!(
+            extension = ?path.extension(),
+            "thumbnail source changed during rendering; reporting transient failure"
+        );
+        return ThumbnailAttempt::TransientFailure;
+    }
+    if let Ok(pixels) = &result {
+        if cache_keys.path.is_some() || cache_keys.content.is_some() {
+            cache_file_thumbnail(
+                cache_keys.path,
+                cache_keys.content,
+                spec.size_px,
+                thumbnail_background_key(spec.background),
+                pixels,
+            );
         }
     }
     thumbnail_attempt_for_job_outcome(
@@ -769,14 +883,16 @@ fn thumbnail_attempt_for_job_outcome(
 }
 
 fn cache_file_thumbnail(
-    path_cache_key: ThumbnailFileCacheKey,
+    path_cache_key: Option<ThumbnailFileCacheKey>,
     content_cache_key: Option<ThumbnailFileContentKey>,
     size_px: u16,
     background: [u64; 4],
     pixels: &[u8],
 ) {
-    if let Ok(mut cache) = thumbnail_file_cache().lock() {
-        cache.insert_with_background(path_cache_key, size_px, background, pixels);
+    if let Some(path_cache_key) = path_cache_key {
+        if let Ok(mut cache) = thumbnail_file_cache().lock() {
+            cache.insert_with_background(path_cache_key, size_px, background, pixels);
+        }
     }
     if let Some(content_key) = content_cache_key {
         if let Ok(mut cache) = thumbnail_file_content_cache().lock() {

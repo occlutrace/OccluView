@@ -1,8 +1,8 @@
 //! File input, memory admission, and scene assembly for format readers.
 
 use crate::dispatch::{
-    dispatch_by_extension_loaded_with_companion_budget, dispatch_by_extension_with_key_provider,
-    dispatch_by_kind_loaded_admitted, probe_kind, LoadedMesh,
+    dispatch_by_extension_with_key_provider, dispatch_by_kind_loaded_admitted, probe_kind,
+    LoadedMesh,
 };
 use crate::error::FormatError;
 use crate::hps::HpsKeyProvider;
@@ -56,6 +56,39 @@ pub struct FileBytes {
     bytes: Vec<u8>,
 }
 
+/// Owned primary bytes together with the handle they were read from.
+///
+/// Thumbnail callers keep this value through hashing so they can verify the
+/// opened source again, then dispatch the exact same byte buffer. Companion
+/// files remain path based and are resolved by the canonical dispatcher.
+pub struct OpenedFileBytes {
+    file: std::fs::File,
+    initial_metadata: std::fs::Metadata,
+    bytes: FileBytes,
+}
+
+impl OpenedFileBytes {
+    /// Borrow the owned bytes read from the opened file.
+    #[must_use]
+    pub fn file_bytes(&self) -> &FileBytes {
+        &self.bytes
+    }
+
+    /// Metadata observed on the same handle before its bounded read.
+    #[must_use]
+    pub fn initial_metadata(&self) -> &std::fs::Metadata {
+        &self.initial_metadata
+    }
+
+    /// Query the same opened file handle again.
+    ///
+    /// # Errors
+    /// Returns [`FormatError::Io`] if the handle can no longer be queried.
+    pub fn current_metadata(&self) -> Result<std::fs::Metadata, FormatError> {
+        self.file.metadata().map_err(FormatError::Io)
+    }
+}
+
 impl FileBytes {
     /// Return the normalized lowercase extension used for dispatch.
     #[must_use]
@@ -101,8 +134,8 @@ fn normalized_extension(path: &Path) -> Result<String, FormatError> {
 
 /// Read a file into owned bytes, refusing anything above [`MAX_IMPORT_BYTES`].
 ///
-/// A concurrent truncation during the read may yield a parse error, but a
-/// later truncation cannot invalidate this buffer.
+/// A concurrent short read reports `UnexpectedEof`; a later truncation cannot
+/// invalidate this buffer.
 ///
 /// # Errors
 /// - [`FormatError::Io`] if the file cannot be opened or read.
@@ -117,16 +150,32 @@ pub fn read_file_bytes(path: &Path) -> Result<FileBytes, FormatError> {
 /// The thumbnail host passes its own, smaller budget: it runs inside Explorer,
 /// where an over-large read costs more than a missing preview.
 ///
-/// The size is checked twice. The metadata check refuses the ordinary case
-/// before a byte is read; the length check after the read covers a file that
-/// grew between the two, which is the window a hostile or merely busy writer
-/// would use.
+/// The opened length and the bytes actually read are both checked against the
+/// limit; the owned byte count must also match the opened length.
 ///
 /// # Errors
 /// See [`read_file_bytes`].
 pub fn read_file_bytes_with_limit(path: &Path, limit: u64) -> Result<FileBytes, FormatError> {
+    read_opened_file_bytes_with_limit(path, limit).map(|opened| opened.bytes)
+}
+
+/// Open a file once and read its primary bytes into an owned, bounded buffer.
+///
+/// The returned handle supports a later metadata check after content hashing.
+/// The byte count must exactly match the length observed on that handle before
+/// the read; short reads report `UnexpectedEof`, and growth or metadata changes
+/// report an I/O interruption. Reads are capped at `limit + 1` bytes.
+///
+/// # Errors
+/// - [`FormatError::Io`] if opening, reading, or metadata access fails.
+/// - [`FormatError::TooLarge`] if the opened file or bytes read exceed `limit`.
+/// - [`FormatError::Unsupported`] when the file has no UTF-8 extension.
+pub fn read_opened_file_bytes_with_limit(
+    path: &Path,
+    limit: u64,
+) -> Result<OpenedFileBytes, FormatError> {
     let extension = normalized_extension(path)?;
-    let file = std::fs::File::open(path).map_err(FormatError::Io)?;
+    let mut file = std::fs::File::open(path).map_err(FormatError::Io)?;
     let metadata = file.metadata().map_err(FormatError::Io)?;
     if metadata.len() > limit {
         return Err(FormatError::TooLarge {
@@ -134,17 +183,82 @@ pub fn read_file_bytes_with_limit(path: &Path, limit: u64) -> Result<FileBytes, 
             limit,
         });
     }
-    let capacity = usize::try_from(metadata.len()).unwrap_or(0);
-    let mut bytes = Vec::with_capacity(capacity);
-    let mut reader = file.take(limit.saturating_add(1));
-    reader.read_to_end(&mut bytes).map_err(FormatError::Io)?;
-    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > limit {
+    let bytes = read_bounded_file_bytes(&mut file, metadata.len(), limit)?;
+    let after_read = file.metadata().map_err(FormatError::Io)?;
+    if !file_metadata_unchanged(&metadata, &after_read) {
+        return Err(FormatError::Io(std::io::Error::new(
+            std::io::ErrorKind::Interrupted,
+            "file changed during bounded read",
+        )));
+    }
+    Ok(OpenedFileBytes {
+        file,
+        initial_metadata: metadata,
+        bytes: FileBytes { extension, bytes },
+    })
+}
+
+fn read_bounded_file_bytes(
+    reader: &mut impl Read,
+    expected_length: u64,
+    limit: u64,
+) -> Result<Vec<u8>, FormatError> {
+    if expected_length > limit {
         return Err(FormatError::TooLarge {
-            bytes: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+            bytes: expected_length,
             limit,
         });
     }
-    Ok(FileBytes { extension, bytes })
+    let capacity = usize::try_from(expected_length).unwrap_or(0);
+    let mut bytes = Vec::with_capacity(capacity);
+    reader
+        .take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(FormatError::Io)?;
+    let actual_length = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+    if actual_length > limit {
+        return Err(FormatError::TooLarge {
+            bytes: actual_length,
+            limit,
+        });
+    }
+    if actual_length < expected_length {
+        return Err(FormatError::Io(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "file ended before its opened length was read",
+        )));
+    }
+    if actual_length > expected_length {
+        return Err(FormatError::Io(std::io::Error::new(
+            std::io::ErrorKind::Interrupted,
+            "file grew during bounded read",
+        )));
+    }
+    Ok(bytes)
+}
+
+fn file_metadata_unchanged(before: &std::fs::Metadata, after: &std::fs::Metadata) -> bool {
+    before.len() == after.len() && before.modified().ok() == after.modified().ok()
+}
+
+#[cfg(test)]
+mod bounded_file_read_tests {
+    use super::{read_bounded_file_bytes, FormatError};
+    use std::io::{Cursor, ErrorKind};
+
+    #[test]
+    fn a_short_read_is_an_unexpected_eof() {
+        let mut reader = Cursor::new(b"ab".to_vec());
+        let error = read_bounded_file_bytes(&mut reader, 3, 8).expect_err("short source");
+        assert!(matches!(error, FormatError::Io(error) if error.kind() == ErrorKind::UnexpectedEof));
+    }
+
+    #[test]
+    fn reading_past_the_cap_returns_too_large_at_the_extra_byte() {
+        let mut reader = Cursor::new(b"123456".to_vec());
+        let error = read_bounded_file_bytes(&mut reader, 5, 5).expect_err("over-cap source");
+        assert!(matches!(error, FormatError::TooLarge { bytes: 6, limit: 5 }));
+    }
 }
 
 /// Group files into the batches a multi-file import parses together.
@@ -251,25 +365,12 @@ pub fn read_file_loaded_shaded_with_limit(
     limit: u64,
 ) -> Result<LoadedMesh, FormatError> {
     let bytes = read_file_bytes_with_limit(path, limit)?;
-    // The picture beside the file is found before the mesh is read, because a
-    // PLY keeps its per-corner texture coordinates only when one exists.
-    let mut atlas = None;
-    let mut loaded = dispatch_by_extension_loaded_with_companion_budget(
-        bytes.extension(),
-        bytes.as_slice(),
+    crate::dispatch::dispatch_file_bytes_loaded_shaded_with_companions(
+        path,
+        &bytes,
         key_provider,
         shading,
-        &mut |kind| {
-            atlas = crate::companions::find(
-                path,
-                crate::companions::LocateKind::for_kind(kind),
-                bytes.as_slice(),
-            )?;
-            Ok(atlas.is_some())
-        },
-    )?;
-    crate::companions::attach(&mut loaded.mesh, atlas);
-    Ok(loaded)
+    )
 }
 
 /// Read multiple files into a [`Scene`], wrapping each [`Mesh`] in a

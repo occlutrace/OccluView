@@ -11,14 +11,15 @@ use crate::probe::FormatKind;
 pub(crate) use crate::read::import_batches;
 pub use crate::read::{
     read_file, read_file_bytes, read_file_bytes_with_limit, read_file_loaded_shaded,
-    read_file_loaded_shaded_with_limit, read_file_loaded_with_key_provider, read_file_shaded,
-    read_file_with_key_provider, read_files,
+    read_file_loaded_shaded_with_limit, read_file_loaded_with_key_provider,
+    read_opened_file_bytes_with_limit, read_file_shaded, read_file_with_key_provider, read_files,
     read_files_with_key_provider, read_files_with_memory_budget, FileBytes,
-    IMPORT_BATCH_BUDGET_BYTES, IMPORT_PARALLELISM, MAX_IMPORT_BYTES,
+    OpenedFileBytes, IMPORT_BATCH_BUDGET_BYTES, IMPORT_PARALLELISM, MAX_IMPORT_BYTES,
 };
 use crate::units::{policy_for, UnitInterpretation};
 
 use occluview_core::Mesh;
+use std::path::Path;
 
 /// Read `bytes` as the format indicated by `kind`, returning a [`Mesh`].
 ///
@@ -54,6 +55,41 @@ pub struct LoadedMesh {
     pub kind: FormatKind,
     /// Import-unit policy for that kind (see [`policy_for`]).
     pub units: UnitInterpretation,
+}
+
+/// Dispatch owned primary bytes through the canonical path-aware readers.
+///
+/// The primary mesh is parsed from `bytes`; the path is used only to locate
+/// companion material or atlas images. This keeps a hash and a thumbnail tied
+/// to the same owned primary buffer while preserving existing companion
+/// lookup and memory admission.
+///
+/// # Errors
+/// Returns [`FormatError`] when dispatch, parsing, companion lookup, or memory
+/// admission fails.
+pub fn dispatch_file_bytes_loaded_shaded_with_companions(
+    path: &Path,
+    bytes: &FileBytes,
+    key_provider: &dyn HpsKeyProvider,
+    shading: crate::MeshShading,
+) -> Result<LoadedMesh, FormatError> {
+    let mut atlas = None;
+    let mut loaded = dispatch_by_extension_loaded_with_companion_budget(
+        bytes.extension(),
+        bytes.as_slice(),
+        key_provider,
+        shading,
+        &mut |kind| {
+            atlas = crate::companions::find(
+                path,
+                crate::companions::LocateKind::for_kind(kind),
+                bytes.as_slice(),
+            )?;
+            Ok(atlas.is_some())
+        },
+    )?;
+    crate::companions::attach(&mut loaded.mesh, atlas);
+    Ok(loaded)
 }
 
 /// Read `bytes` with an explicit format kind, choosing how vertex normals

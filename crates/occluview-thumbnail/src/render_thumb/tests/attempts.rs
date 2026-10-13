@@ -68,9 +68,8 @@ fn expired_file_request_does_not_return_a_content_cache_hit() {
     let mut bytes = fixtures::binary_stl_cube();
     bytes[..8].copy_from_slice(b"latefile");
     let path = write_verdict_fixture("deadline-file-cache-hit.stl", &bytes);
-    let metadata = cache::thumbnail_file_metadata(&path).expect("fixture metadata");
-    let content_key =
-        cache::thumbnail_file_content_key(&path, &metadata).expect("fixture content key");
+    let file_bytes = fs::read(&path).expect("fixture bytes");
+    let content_key = cache::thumbnail_file_content_key(&path, &file_bytes);
     let cached_pixels = vec![31_u8; usize::from(spec.size_px).pow(2) * 4];
     thumbnail_file_content_cache()
         .lock()

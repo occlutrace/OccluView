@@ -258,7 +258,7 @@ fn a_file_that_changed_since_it_was_measured_is_transient_not_corrupt() {
     };
     let measured = cache::thumbnail_file_metadata(&path).expect("fixture metadata");
     let keys = || FileThumbnailCacheKeys {
-        path: ThumbnailFileCacheKey::new(&path, &measured),
+        path: Some(ThumbnailFileCacheKey::new(&path, &measured)),
         content: None,
     };
 

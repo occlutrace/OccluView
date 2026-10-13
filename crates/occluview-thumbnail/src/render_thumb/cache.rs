@@ -6,7 +6,6 @@ use occluview_formats::{FormatError, FormatKind};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, VecDeque};
 use std::hash::Hash;
-use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
 use std::time::UNIX_EPOCH;
 
@@ -80,7 +79,7 @@ pub(super) type ThumbnailFileCache = ThumbnailCache<ThumbnailFileCacheKey>;
 pub(super) type ThumbnailFileContentCache = ThumbnailCache<ThumbnailFileContentKey>;
 pub(super) type ThumbnailStreamCache = ThumbnailCache<ThumbnailStreamCacheKey>;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct ThumbnailFileMetadata {
     pub(super) byte_len: u64,
     pub(super) modified_nanos: u128,
@@ -288,18 +287,21 @@ pub(super) fn thumbnail_file_metadata_checked(
 ) -> Result<(ThumbnailFileMetadata, bool), ThumbnailError> {
     let metadata = std::fs::metadata(path).map_err(file_io_error)?;
     let is_regular_file = metadata.is_file();
+    Ok((thumbnail_file_metadata_from_std(&metadata), is_regular_file))
+}
+
+pub(super) fn thumbnail_file_metadata_from_std(
+    metadata: &std::fs::Metadata,
+) -> ThumbnailFileMetadata {
     let modified_nanos = metadata
         .modified()
         .ok()
         .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
         .map_or(0, |duration| duration.as_nanos());
-    Ok((
-        ThumbnailFileMetadata {
-            byte_len: metadata.len(),
-            modified_nanos,
-        },
-        is_regular_file,
-    ))
+    ThumbnailFileMetadata {
+        byte_len: metadata.len(),
+        modified_nanos,
+    }
 }
 
 /// Whether the file is not the one the preflight measured.
@@ -315,53 +317,28 @@ pub(super) fn thumbnail_file_changed_since(path: &Path, measured: &ThumbnailFile
     })
 }
 
-/// Build a bounded content key for a file-backed thumbnail.
+/// Build a full-content key from the same owned bytes that will be parsed.
 ///
 /// The content key lets Explorer's common copy-heavy folders (for example,
 /// exported CAD projects) share one decode and one GPU render across
-/// differently named files. Callers compute it before consulting the cheap
-/// path cache so same-size replacements cannot return stale pixels.
+/// differently named files. Hashing an owned buffer prevents a path reopen
+/// from associating one file's digest with another file's parsed mesh.
 pub(super) fn thumbnail_file_content_key(
     path: &Path,
-    metadata: &ThumbnailFileMetadata,
-) -> Result<ThumbnailFileContentKey, ThumbnailError> {
-    let mut file = std::fs::File::open(path).map_err(file_io_error)?;
+    bytes: &[u8],
+) -> ThumbnailFileContentKey {
     let mut hasher = Sha256::new();
     let format_tag = thumbnail_file_format_tag(path);
+    let byte_len = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
     hasher.update([format_tag]);
-    hasher.update(metadata.byte_len.to_le_bytes());
+    hasher.update(byte_len.to_le_bytes());
+    hasher.update(bytes);
 
-    hash_file_range(&mut file, &mut hasher, 0, metadata.byte_len)
-        .map_err(file_io_error)?;
-
-    Ok(ThumbnailFileContentKey {
+    ThumbnailFileContentKey {
         format_tag,
-        byte_len: metadata.byte_len,
+        byte_len,
         fingerprint: hasher.finalize().into(),
-    })
-}
-
-fn hash_file_range(
-    file: &mut std::fs::File,
-    hasher: &mut Sha256,
-    start: u64,
-    length: u64,
-) -> std::io::Result<()> {
-    file.seek(SeekFrom::Start(start))?;
-    let mut remaining = length;
-    let mut buffer = [0u8; 16 * 1024];
-    while remaining > 0 {
-        let request = usize::try_from(remaining)
-            .unwrap_or(buffer.len())
-            .min(buffer.len());
-        let read = file.read(&mut buffer[..request])?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-        remaining = remaining.saturating_sub(u64::try_from(read).unwrap_or(u64::MAX));
     }
-    Ok(())
 }
 
 fn thumbnail_file_format_tag(path: &Path) -> u8 {

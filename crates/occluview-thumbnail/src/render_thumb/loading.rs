@@ -2,15 +2,14 @@ use super::{
     cache, oversize_input_error, FileThumbnailPreflightError, Path, StreamThumbnailPreflightError,
     ThumbnailError, MAX_THUMBNAIL_FILE_BYTES, MAX_THUMBNAIL_INPUT_BYTES,
 };
-use crate::fast_thumb::{
-    try_read_fast_thumbnail_mesh_for_kind, try_read_fast_thumbnail_mesh_from_file_with_limit,
-};
+use crate::fast_thumb::try_read_fast_thumbnail_mesh_for_kind;
 use crate::fidelity::THUMBNAIL_FULL_FIDELITY_FILE_BYTES;
 use crate::thumbnail_format::infer_thumbnail_format;
 use glam::Vec3;
 use occluview_core::Mesh;
 use occluview_formats::dispatch::{
-    dispatch_by_kind_loaded, read_file_loaded_shaded_with_limit, LoadedMesh,
+    dispatch_by_kind_loaded, dispatch_file_bytes_loaded_shaded_with_companions,
+    read_opened_file_bytes_with_limit, FileBytes, LoadedMesh, OpenedFileBytes,
 };
 use occluview_formats::hps::RuntimeHpsKeyProvider;
 use occluview_formats::{FormatError, FormatKind};
@@ -73,6 +72,7 @@ pub(super) fn load_thumbnail_mesh_from_bytes_kind(
     )
 }
 
+#[cfg(test)]
 pub(super) fn load_thumbnail_mesh_from_file(
     path: &Path,
     metadata: cache::ThumbnailFileMetadata,
@@ -82,18 +82,40 @@ pub(super) fn load_thumbnail_mesh_from_file(
             usize::try_from(metadata.byte_len).unwrap_or(usize::MAX),
         ));
     }
+    let source = read_opened_file_bytes_with_limit(path, MAX_THUMBNAIL_FILE_BYTES as u64)?;
+    let file_bytes = source.file_bytes();
+    let kind = infer_thumbnail_format(Some(file_bytes.extension()), file_bytes.as_slice())?;
+    load_thumbnail_mesh_from_opened_file(path, &source, kind)
+}
+
+pub(super) fn load_thumbnail_mesh_from_opened_file(
+    path: &Path,
+    source: &OpenedFileBytes,
+    kind: FormatKind,
+) -> Result<Mesh, ThumbnailError> {
+    let file_bytes = source.file_bytes();
+    let bytes = file_bytes.as_slice();
+    if bytes.len() > MAX_THUMBNAIL_FILE_BYTES {
+        return Err(cache::oversize_file_error(bytes.len()));
+    }
     select_thumbnail_mesh(
-        metadata.byte_len <= THUMBNAIL_FULL_FIDELITY_FILE_BYTES,
+        bytes.len() as u64 <= THUMBNAIL_FULL_FIDELITY_FILE_BYTES,
         || {
-            read_file_loaded_shaded_with_limit(
+            dispatch_file_bytes_loaded_shaded_with_companions(
                 path,
+                file_bytes,
                 &RuntimeHpsKeyProvider,
                 THUMBNAIL_SHADING,
-                MAX_THUMBNAIL_FILE_BYTES as u64,
             )
         },
-        || try_read_fast_thumbnail_mesh_from_file_with_limit(path, MAX_THUMBNAIL_FILE_BYTES as u64),
+        || try_read_fast_thumbnail_mesh_for_kind(kind, bytes),
     )
+}
+
+pub(super) fn thumbnail_format_kind_from_file_bytes(
+    file_bytes: &FileBytes,
+) -> Result<FormatKind, ThumbnailError> {
+    infer_thumbnail_format(Some(file_bytes.extension()), file_bytes.as_slice()).map_err(Into::into)
 }
 
 /// Pick the mesh a thumbnail should render, preferring whichever source is
