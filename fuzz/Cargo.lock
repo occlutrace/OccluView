@@ -364,7 +364,7 @@ dependencies = [
 
 [[package]]
 name = "occluview-core"
-version = "1.2.2"
+version = "1.2.3"
 dependencies = [
  "bytemuck",
  "glam",
@@ -375,7 +375,7 @@ dependencies = [
 
 [[package]]
 name = "occluview-formats"
-version = "1.2.2"
+version = "1.2.3"
 dependencies = [
  "adler2",
  "blowfish",
@@ -404,7 +404,7 @@ dependencies = [
 
 [[package]]
 name = "occluview-geometry"
-version = "1.2.2"
+version = "1.2.3"
 dependencies = [
  "glam",
 ]
