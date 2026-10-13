@@ -504,6 +504,8 @@ jobs:
               printf '%s\n' '- **OccluView-macOS-AppleSilicon.pkg** — signed, notarized installer.'
             fi
           } > dist/release-notes.md
+      - name: Install release signing tools
+        run: sudo apt-get update -q && sudo apt-get install -qy minisign
       - name: Sign update artifacts and write latest.json
         env:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
@@ -512,10 +514,11 @@ jobs:
             echo "MINISIGN_SECRET_KEY secret is not configured." >&2
             exit 1
           fi
-          sudo apt-get update -q && sudo apt-get install -qy minisign
           umask 077
-          printf '%s\n' "$MINISIGN_SECRET_KEY" > /tmp/minisign.key
-          trap 'rm -f /tmp/minisign.key' EXIT
+          signing_key=$(mktemp)
+          trap 'rm -f "$signing_key"' EXIT
+          printf '%s\n' "$MINISIGN_SECRET_KEY" > "$signing_key"
+          unset MINISIGN_SECRET_KEY
 
           tag="$RELEASE_TAG"
           version="${tag#v}"
@@ -546,7 +549,7 @@ jobs:
 
           sign_and_hash() {
             local file="$1"
-            minisign -S -s /tmp/minisign.key -m "$file"
+            minisign -S -s "$signing_key" -m "$file"
             sha256sum "$file" | cut -d' ' -f1
           }
           msi_sha=$(sign_and_hash "$msi")
@@ -586,7 +589,7 @@ jobs:
             "$msi_name" "$msi_sha" "$msi.minisig" \
             "$deb_name" "$deb_sha" "$deb.minisig" \
             "$pkg_name" "$pkg_sha" "$pkg_sig"
-          minisign -S -s /tmp/minisign.key -m dist/latest.json
+          minisign -S -s "$signing_key" -m dist/latest.json
           echo "Update manifest:" && cat dist/latest.json
       - name: Verify the signatures against the key the updater ships
         run: |
@@ -626,6 +629,7 @@ jobs:
           signing_key=$(mktemp)
           trap 'rm -f "$signing_key"' EXIT
           printf '%s\n' "$MINISIGN_SECRET_KEY" > "$signing_key"
+          unset MINISIGN_SECRET_KEY
           bundle="./dist/OccluView-${version}-verification.zip"
           minisign -S -s "$signing_key" -m "$bundle"
           pubkey=$(sed -n 's/^pub const UPDATE_PUBKEY: &str = "\(.*\)";$/\1/p' \
@@ -661,7 +665,8 @@ jobs:
           tag="$RELEASE_TAG"
           source_sha="$RELEASE_SOURCE_SHA"
           source_link="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${source_sha})"
-          mapfile -d '' assets < <(find ./dist -maxdepth 1 -type f \( -name 'OccluView-Windows-Setup.msi' -o -name 'OccluView-Windows-Portable.zip' -o -name 'OccluView-Linux.deb' -o -name 'OccluView-macOS-AppleSilicon.dmg' -o -name 'OccluView-macOS-AppleSilicon.pkg' -o -name '*-verification.zip' -o -name 'latest.json' \) -print0 | sort -z)
+          verification_bundle="OccluView-${tag#v}-verification.zip"
+          mapfile -d '' assets < <(find ./dist -maxdepth 1 -type f \( -name 'OccluView-Windows-Setup.msi' -o -name 'OccluView-Windows-Portable.zip' -o -name 'OccluView-Linux.deb' -o -name 'OccluView-macOS-AppleSilicon.dmg' -o -name 'OccluView-macOS-AppleSilicon.pkg' -o -name "$verification_bundle" -o -name 'latest.json' \) -print0 | sort -z)
           if [[ "${#assets[@]}" -eq 0 ]]; then
             echo "No release assets found." >&2
             exit 1
