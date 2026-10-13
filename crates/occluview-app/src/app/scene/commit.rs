@@ -1,3 +1,4 @@
+use super::super::state_document::DocumentState;
 use super::super::{egui, PathBuf, Scene, SceneContext};
 use std::collections::{BTreeSet, HashMap};
 
@@ -46,22 +47,20 @@ pub(in crate::app) fn reconcile_scene_paths(
         .collect()
 }
 
-impl SceneContext<'_> {
+impl DocumentState {
     /// [`reconcile_scene_paths`], with the source path of a layer that leaves
     /// kept for the history step that brings the same layer back.
     fn reconcile_paths_across_history(&mut self, old_scene: &Scene, draft: &Scene) -> Vec<PathBuf> {
-        let document = &mut *self.document;
-        for (entry, path) in old_scene.meshes().iter().zip(&document.current_paths) {
+        for (entry, path) in old_scene.meshes().iter().zip(&self.current_paths) {
             let leaves = !draft.meshes().iter().any(|kept| kept.id() == entry.id());
             if leaves && !path.as_os_str().is_empty() {
-                document
-                    .departed_layer_paths
+                self.departed_layer_paths
                     .insert(entry.id(), path.clone());
             }
         }
-        let mut paths = reconcile_scene_paths(old_scene, &document.current_paths, draft);
+        let mut paths = reconcile_scene_paths(old_scene, &self.current_paths, draft);
         for (entry, path) in draft.meshes().iter().zip(&mut paths) {
-            if let Some(returned) = document.departed_layer_paths.remove(&entry.id()) {
+            if let Some(returned) = self.departed_layer_paths.remove(&entry.id()) {
                 if path.as_os_str().is_empty() {
                     *path = returned;
                 }
@@ -76,11 +75,12 @@ impl SceneContext<'_> {
             .iter()
             .map(occluview_core::SceneMesh::id)
             .collect();
-        self.document
-            .unsaved_edit_layer_ids
+        self.unsaved_edit_layer_ids
             .retain(|id| retained_ids.contains(id));
     }
+}
 
+impl SceneContext<'_> {
     pub(in crate::app) fn commit_structural_scene(
         &mut self,
         previous_scene: Option<&Scene>,
@@ -95,9 +95,9 @@ impl SceneContext<'_> {
 
         let reconciled_paths = previous_scene.map_or_else(
             || vec![PathBuf::new(); draft.meshes().len()],
-            |scene| self.reconcile_paths_across_history(scene, &draft),
+            |scene| self.document.reconcile_paths_across_history(scene, &draft),
         );
-        self.retain_unsaved_edit_layer_ids(&draft);
+        self.document.retain_unsaved_edit_layer_ids(&draft);
         self.document.current_paths = reconciled_paths;
         self.set_scene(draft, false);
         ctx.request_repaint();
