@@ -178,6 +178,9 @@ impl SceneContext<'_> {
     #[allow(clippy::too_many_lines)]
     pub(super) fn show_toolbar(&mut self, root_ui: &mut egui::Ui) {
         let ctx = root_ui.ctx().clone();
+        self.ui.camera_view_popup_open_at_frame_start =
+            egui::Popup::is_id_open(&ctx, axis_view_popup_id());
+        self.ui.camera_view_popup_area = None;
         if self.ui.close_guard_open
             || self.ui.pending_replace_open.is_some()
             || self.ui.app_error.is_some()
@@ -524,7 +527,7 @@ impl SceneContext<'_> {
                             compact,
                             &view_hint,
                         );
-                        egui::Popup::menu(&response)
+                        let popup_area = egui::Popup::menu(&response)
                             .id(axis_view_popup_id())
                             .align(egui::RectAlign::BOTTOM_END)
                             .align_alternatives(&[])
@@ -550,6 +553,9 @@ impl SceneContext<'_> {
                                     }
                                 }
                             });
+                        self.ui.camera_view_popup_area = popup_area
+                            .as_ref()
+                            .map(|popup| (popup.response.rect, popup.response.layer_id));
                         if snap_axis.is_some() {
                             egui::Popup::close_id(&ctx, axis_view_popup_id());
                         }
@@ -997,6 +1003,42 @@ mod tests {
         output
     }
 
+    fn toolbar_workspace_frame(
+        app: &mut crate::app::OccluViewApp,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
+        toolbar_workspace_frame_with_focus(app, ctx, events, true)
+    }
+
+    fn toolbar_workspace_frame_with_focus(
+        app: &mut crate::app::OccluViewApp,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        focused: bool,
+    ) -> egui::FullOutput {
+        app.ui.popup_open_at_frame_start = egui::Popup::is_any_open(ctx);
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1000.0, 800.0),
+                )),
+                focused,
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                app.active_context()
+                    .expect("test scene")
+                    .show_toolbar(ui);
+                app.show_workspace(ui);
+            },
+        );
+        output.textures_delta.clear();
+        output
+    }
+
     fn accesskit_node<'a>(
         output: &'a egui::FullOutput,
         label: &str,
@@ -1118,6 +1160,189 @@ mod tests {
         assert!(
             camera.view_direction().dot(glam::Vec3::NEG_X) > 0.9999,
             "a menu click captured by the active pane must snap to the +X view"
+        );
+    }
+
+    #[test]
+    fn workspace_routes_axis_popup_press_and_release_without_unfencing_viewport() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut app = axis_view_app(&ctx);
+        let trigger_label = app
+            .ui
+            .locale
+            .tr(crate::i18n::message_id!("toolbar-view-label"));
+        let initial = toolbar_workspace_frame(&mut app, &ctx, Vec::new());
+        let (_, trigger) = accesskit_node(&initial, &trigger_label);
+        let trigger_pos = accessible_center(trigger.bounds().expect("View button bounds"));
+
+        toolbar_workspace_frame(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(trigger_pos),
+                pointer_button(trigger_pos, true),
+            ],
+        );
+        let opened = toolbar_workspace_frame(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(trigger_pos),
+                pointer_button(trigger_pos, false),
+            ],
+        );
+        assert!(egui::Popup::is_id_open(&ctx, axis_view_popup_id()));
+
+        let item_label = axis_view_item_label(&app, CameraAxisView::NegativeZ);
+        let (_, item) = accesskit_node(&opened, &item_label);
+        let item_pos = accessible_center(item.bounds().expect("axis button bounds"));
+        toolbar_workspace_frame(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(item_pos),
+                pointer_button(item_pos, true),
+            ],
+        );
+        assert!(app.ui.modal_dialog_open());
+        let active = app.workspace.input.active();
+        let owner = app.workspace.input.capture().expect("popup owns the press");
+        assert_eq!(owner.target, active);
+        assert_eq!(
+            owner.kind,
+            super::super::workspace::input::GestureKind::UiControl
+        );
+        assert_eq!(
+            app.workspace.input.route_pointer(None),
+            super::super::workspace::input::PointerRoute::Captured(owner)
+        );
+
+        toolbar_workspace_frame(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(item_pos),
+                pointer_button(item_pos, false),
+            ],
+        );
+        let camera = app.workspace.scenes[0]
+            .render
+            .camera
+            .as_ref()
+            .expect("axis menu retains the camera");
+        assert!(
+            camera.view_direction().dot(glam::Vec3::Z) > 0.9999,
+            "the production workspace route must deliver the -Z menu selection"
+        );
+        assert!(app.workspace.input.capture().is_none());
+        assert_eq!(
+            app.workspace.input.route_pointer(None),
+            super::super::workspace::input::PointerRoute::Target(active),
+            "popup release leaves no suppressed pointer fence"
+        );
+    }
+
+    #[test]
+    fn workspace_keeps_outside_modal_and_focus_routes_suppressed() {
+        let ctx = egui::Context::default();
+        let mut app = axis_view_app(&ctx);
+        egui::Popup::open_id(&ctx, axis_view_popup_id());
+        toolbar_workspace_frame(&mut app, &ctx, Vec::new());
+
+        let outside = egui::pos2(500.0, 400.0);
+        toolbar_workspace_frame(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(outside),
+                pointer_button(outside, true),
+            ],
+        );
+        assert!(app.workspace.input.capture().is_none());
+        assert_eq!(
+            app.workspace.input.route_pointer(None),
+            super::super::workspace::input::PointerRoute::Suppressed,
+            "a camera popup must not admit a press outside its own layer"
+        );
+        toolbar_workspace_frame(
+            &mut app,
+            &ctx,
+            vec![pointer_button(outside, false)],
+        );
+        assert_eq!(
+            app.workspace.input.route_pointer(None),
+            super::super::workspace::input::PointerRoute::Target(app.workspace.input.active()),
+            "the outside-click fence clears on release"
+        );
+
+        let capture_ctx = egui::Context::default();
+        let mut capture_app = axis_view_app(&capture_ctx);
+        egui::Popup::open_id(&capture_ctx, axis_view_popup_id());
+        toolbar_workspace_frame(&mut capture_app, &capture_ctx, Vec::new());
+        let popup_center = capture_app
+            .ui
+            .camera_view_popup_area
+            .expect("open camera popup area")
+            .0
+            .center();
+        let active = capture_app.workspace.input.active();
+        assert!(matches!(
+            capture_app.workspace.input.primary_pressed(
+                active,
+                super::super::workspace::input::GestureKind::UiControl,
+                None,
+            ),
+            super::super::workspace::input::PressResult::Begin(_)
+        ));
+        toolbar_workspace_frame(
+            &mut capture_app,
+            &capture_ctx,
+            vec![
+                egui::Event::PointerMoved(popup_center),
+                pointer_button(popup_center, true),
+            ],
+        );
+        assert_eq!(
+            capture_app.workspace.input.route_pointer(None),
+            super::super::workspace::input::PointerRoute::Suppressed,
+            "an unrelated UI capture cannot inherit the camera popup exception"
+        );
+
+        let modal_ctx = egui::Context::default();
+        let mut modal_app = axis_view_app(&modal_ctx);
+        modal_app.ui.close_guard_open = true;
+        egui::Popup::open_id(&modal_ctx, axis_view_popup_id());
+        toolbar_workspace_frame(&mut modal_app, &modal_ctx, Vec::new());
+        toolbar_workspace_frame(
+            &mut modal_app,
+            &modal_ctx,
+            vec![
+                egui::Event::PointerMoved(outside),
+                pointer_button(outside, true),
+            ],
+        );
+        assert_eq!(
+            modal_app.workspace.input.route_pointer(None),
+            super::super::workspace::input::PointerRoute::Suppressed,
+            "a foreground decision dialog keeps the popup exception closed"
+        );
+
+        let focus_ctx = egui::Context::default();
+        let mut focus_app = axis_view_app(&focus_ctx);
+        toolbar_workspace_frame_with_focus(
+            &mut focus_app,
+            &focus_ctx,
+            vec![
+                egui::Event::PointerMoved(outside),
+                pointer_button(outside, true),
+            ],
+            false,
+        );
+        assert_eq!(
+            focus_app.workspace.input.route_pointer(None),
+            super::super::workspace::input::PointerRoute::Suppressed,
+            "window focus loss keeps pointer ownership suppressed"
         );
     }
 

@@ -64,6 +64,8 @@ impl OccluViewApp {
 
         egui::CentralPanel::no_frame().show(root_ui, |ui| {
             let modal_open = self.ui.modal_dialog_open();
+            let camera_view_popup_is_only_modal = self.ui.camera_view_popup_open_at_frame_start
+                && !self.ui.modal_dialog_open_except_axis_view_menu(&ctx);
             self.handle_workspace_escape(&ctx, modal_open);
             self.sync_single_layout_to_active();
 
@@ -98,6 +100,7 @@ impl OccluViewApp {
                     workspace_rect: canvas_bounds,
                     divider_rect: divider_rect(effective),
                     modal_open,
+                    camera_view_popup_is_only_modal,
                 },
             );
             if self.sync_single_layout_to_active() {
@@ -117,6 +120,7 @@ impl OccluViewApp {
                 workspace_rect: canvas_bounds,
                 divider_rect: divider_rect(effective),
                 modal_open,
+                camera_view_popup_is_only_modal,
             };
 
             for pane in &panes {
