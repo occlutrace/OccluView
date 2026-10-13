@@ -65,6 +65,16 @@ pub(crate) fn save_recent_files(recent_files: &RecentFiles, may_write_recent: bo
     if !may_write_recent {
         return;
     }
+    let stored = match recent_files.serialize() {
+        Ok(stored) => stored,
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.classify(),
+                "recent files serialization failed"
+            );
+            return;
+        }
+    };
     let Some(path) = recent_files_path() else {
         return;
     };
@@ -74,7 +84,7 @@ pub(crate) fn save_recent_files(recent_files: &RecentFiles, may_write_recent: bo
             return;
         }
     }
-    if let Err(e) = std::fs::write(path, recent_files.serialize()) {
+    if let Err(e) = std::fs::write(path, stored) {
         tracing::warn!(error = ?e, "recent files save failed");
     }
     #[cfg(windows)]
@@ -124,6 +134,25 @@ mod tests {
     #[test]
     fn unknown_future_format_stays_read_only_until_explicit_clear() {
         let loaded = decode_recent_files(4, "\0occluview-recent-v3:abcd");
+
+        assert!(loaded.recent_files.is_empty());
+        assert!(!loaded.may_write_recent);
+    }
+
+    #[test]
+    fn unsupported_v2_version_stays_read_only_until_explicit_clear() {
+        let platform = if cfg!(unix) {
+            "unix_bytes"
+        } else if cfg!(windows) {
+            "windows_utf16_le"
+        } else {
+            "other_encoded"
+        };
+        let stored = format!(
+            "\0occluview-recent-v2:{{\"platform\":\"{platform}\",\"version\":3,\"entries\":[[[97]]]}}"
+        );
+
+        let loaded = decode_recent_files(4, &stored);
 
         assert!(loaded.recent_files.is_empty());
         assert!(!loaded.may_write_recent);
