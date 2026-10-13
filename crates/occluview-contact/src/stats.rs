@@ -1,25 +1,21 @@
-//! What a contact reading counts: how much surface is in contact, how many
-//! marks there are, and how deep the deepest one goes.
+//! Corner-weighted contact area, clustered patches, and maximum normal-projected
+//! penetration within the measured field.
 //!
 //! # Why the area is weighted by corners
 //!
-//! A triangle either has contact or it does not, and the boundary between the
-//! two runs through the middle of triangles. Clipping the exact contact region
-//! would need a contour per triangle for a number that is read as "how much of
-//! this arch is carrying", so a triangle contributes its own area scaled by how
+//! The contact boundary can run through triangles. Clipping the exact region
+//! would need a contour per triangle, so a triangle contributes its area scaled by how
 //! many of its three corners are in contact. That is a partial-credit weight,
 //! not a clipped area: it is exact when the contact boundary follows the mesh
-//! and slightly under- or over-counts where it does not, which is a fraction of
-//! a triangle out of square millimetres.
+//! and can under- or over-count where it does not. The error depends on the
+//! triangulation and the contact boundary.
 //!
 //! # Why the split is x against the mean
 //!
-//! The left/right split is a balance reading: "is this bite loading evenly".
-//! It is a raw-coordinate split on the subject surface's own vertex mean, not
+//! The split uses raw coordinates and the subject surface's finite-vertex mean, not
 //! an anatomical left and right, so a mirrored or rotated scan can swap the two
-//! columns. An operator comparing the two numbers against each other on the
-//! same case is reading what the number means; one comparing a left column
-//! across differently oriented cases is not.
+//! columns. It measures geometric area on either side of that coordinate split;
+//! it does not measure bite force or load balance.
 
 use glam::DVec3;
 
@@ -28,36 +24,31 @@ use crate::NO_CONTACT_MM;
 
 /// A vertex this close to the antagonist counts as touching, in millimetres.
 ///
-/// Twenty micrometres: below what a scan pair resolves, and wide enough that a
-/// real contact is never missed by a rounding step. It is not the tightness
-/// law's paint gate (10 um): the painted band is the reading a technician takes
-/// one mark at a time, while this gate measures how much of the arch is
-/// carrying, and a band that stopped where the paint stops would report an area
-/// short by the whole feather. The two numbers differ by one
-/// feather's width and say two different things.
+/// The area threshold is 20 micrometres; the tightness law's paint gate is
+/// 10 micrometres. These are separate definitions of the counted and painted
+/// bands, not guarantees about scanner accuracy or missed physical contacts.
 pub(crate) const TOUCH_MM: f32 = 0.02;
 
 /// Chaining radius for counting separate contacts, in millimetres.
 ///
 /// Not the flatten radius (0.75 mm, `FLATTEN_RADIUS_MM` in `components`): this
-/// one answers "how many marks does this bite have", and it has to hold a whole
-/// occlusal patch together on a coarse scan while keeping two teeth apart.
-/// Three millimetres does both on a dental arch.
+/// one groups contact triangle centroids within 3 mm. It does not identify
+/// teeth, and sufficiently close patches can belong to one cluster.
 pub(crate) const CONTACT_CLUSTER_RADIUS_MM: f64 = 3.0;
 
 /// What one contact reading counted.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ContactStats {
-    /// Total contact area on the subject surface, in mm².
+    /// Corner-weighted approximation of contact area on the subject, in mm².
     pub contact_area_mm2: f64,
-    /// Connected contact patches.
+    /// Contact patches clustered by centroid proximity.
     pub contacts: u32,
-    /// Deepest measured penetration on the subject, in millimetres (>= 0).
+    /// Maximum measured normal-projected penetration, in millimetres (>= 0).
     pub deepest_mm: f64,
-    /// Contact area where the subject triangle sits below the surface's own
-    /// mean x, in mm².
+    /// Contact area where the triangle centroid sits below the surface's own
+    /// finite-vertex mean x, in mm².
     pub minus_x_area_mm2: f64,
-    /// Contact area where the subject triangle sits at or above the mean x.
+    /// Contact area where its centroid sits at or above the finite-vertex mean x.
     pub plus_x_area_mm2: f64,
 }
 
