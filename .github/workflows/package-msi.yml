@@ -602,6 +602,8 @@ jobs:
             echo "Verified against the shipped public key: $file"
           done
       - name: Bundle verification material
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
         run: |
           version="${RELEASE_TAG#v}"
           cp ./occluview.pub ./dist/occluview.pub
@@ -614,7 +616,25 @@ jobs:
               exit 1
             fi
             zip -q "OccluView-${version}-verification.zip" "${material[@]}"
+            sha256sum "OccluView-${version}-verification.zip" > "OccluView-${version}-verification.zip.sha256"
           )
+          if [[ -z "$MINISIGN_SECRET_KEY" ]]; then
+            echo "MINISIGN_SECRET_KEY secret is not configured." >&2
+            exit 1
+          fi
+          umask 077
+          signing_key=$(mktemp)
+          trap 'rm -f "$signing_key"' EXIT
+          printf '%s\n' "$MINISIGN_SECRET_KEY" > "$signing_key"
+          bundle="./dist/OccluView-${version}-verification.zip"
+          minisign -S -s "$signing_key" -m "$bundle"
+          pubkey=$(sed -n 's/^pub const UPDATE_PUBKEY: &str = "\(.*\)";$/\1/p' \
+            crates/occluview-update/src/lib.rs)
+          if [[ -z "$pubkey" ]]; then
+            echo "Could not read the shipped update public key." >&2
+            exit 1
+          fi
+          minisign -V -P "$pubkey" -m "$bundle"
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
@@ -641,7 +661,7 @@ jobs:
           tag="$RELEASE_TAG"
           source_sha="$RELEASE_SOURCE_SHA"
           source_link="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${source_sha})"
-          mapfile -d '' assets < <(find ./dist -maxdepth 1 -type f \( -name 'OccluView-Windows-Setup.msi' -o -name 'OccluView-Windows-Portable.zip' -o -name 'OccluView-Linux.deb' -o -name 'OccluView-macOS-AppleSilicon.dmg' -o -name 'OccluView-macOS-AppleSilicon.pkg' -o -name '*-verification.zip' -o -name 'latest.json' -o -name 'latest.json.minisig' \) -print0 | sort -z)
+          mapfile -d '' assets < <(find ./dist -maxdepth 1 -type f \( -name 'OccluView-Windows-Setup.msi' -o -name 'OccluView-Windows-Portable.zip' -o -name 'OccluView-Linux.deb' -o -name 'OccluView-macOS-AppleSilicon.dmg' -o -name 'OccluView-macOS-AppleSilicon.pkg' -o -name '*-verification.zip' -o -name 'latest.json' -o -name '*.minisig' -o -name '*.sha256' \) -print0 | sort -z)
           if [[ "${#assets[@]}" -eq 0 ]]; then
             echo "No release assets found." >&2
             exit 1

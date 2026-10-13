@@ -74,8 +74,12 @@ repository.
 
 ## Verifying a release
 
-Every release asset carries SHA-256 and minisign signatures; releases also
-carry GitHub build provenance and a CycloneDX SBOM.
+Installers, portable runtime archives and the verification bundle have SHA-256
+checksums and minisign signatures published alongside them. The signed update
+manifest embeds the installer hashes and signatures used by installed clients.
+The verification bundle carries the public key, package checksums and signatures,
+and CycloneDX SBOMs. Releases also carry GitHub build provenance; a signature
+or checksum sidecar does not itself require another signature sidecar.
 
 ## Supported versions
 
