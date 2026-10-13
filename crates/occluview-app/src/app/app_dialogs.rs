@@ -1447,6 +1447,89 @@ mod tests {
         );
 
         let active = app.workspace.input.active();
+        egui::Popup::open_id(&ctx, axis_view_popup_id());
+        let opened_with_foreign_capture = toolbar_frame(&mut app, &ctx, Vec::new());
+        let foreign_item_label = axis_view_item_label(&app, CameraAxisView::PositiveZ);
+        let (foreign_item_id, _) =
+            accesskit_node(&opened_with_foreign_capture, &foreign_item_label);
+        let before_foreign_action = app.workspace.scenes[0]
+            .render
+            .camera
+            .as_ref()
+            .expect("axis menu retains the camera")
+            .view_direction();
+        assert!(matches!(
+            app.workspace.input.primary_pressed(
+                active,
+                super::super::workspace::input::GestureKind::UiControl,
+                None,
+            ),
+            super::super::workspace::input::PressResult::Begin(_)
+        ));
+        toolbar_frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::AccessKitActionRequest(
+                egui::accesskit::ActionRequest {
+                    action: egui::accesskit::Action::Click,
+                    target_node: foreign_item_id,
+                    target_tree: egui::accesskit::TreeId::ROOT,
+                    data: None,
+                },
+            )],
+        );
+        let after_foreign_action = app.workspace.scenes[0]
+            .render
+            .camera
+            .as_ref()
+            .expect("axis menu retains the camera")
+            .view_direction();
+        assert!(
+            after_foreign_action.dot(before_foreign_action) > 0.9999,
+            "an AccessKit axis action cannot cross a foreign active-scene UI capture"
+        );
+        assert!(
+            !egui::Popup::is_id_open(&ctx, axis_view_popup_id()),
+            "the existing menu closes when its route belongs to another control"
+        );
+        let _ = app.workspace.input.primary_released();
+
+        ctx.memory_mut(|memory| memory.request_focus(axis_view_trigger_id()));
+        let reopened = toolbar_frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        let own_item_label = axis_view_item_label(&app, CameraAxisView::PositiveZ);
+        let (own_item_id, _) = accesskit_node(&reopened, &own_item_label);
+        toolbar_frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::AccessKitActionRequest(
+                egui::accesskit::ActionRequest {
+                    action: egui::accesskit::Action::Click,
+                    target_node: own_item_id,
+                    target_tree: egui::accesskit::TreeId::ROOT,
+                    data: None,
+                },
+            )],
+        );
+        let camera = app.workspace.scenes[0]
+            .render
+            .camera
+            .as_ref()
+            .expect("axis menu retains the camera");
+        assert!(
+            camera.view_direction().dot(glam::Vec3::NEG_Z) > 0.9999,
+            "the active Target route keeps keyboard and AccessKit menu use available"
+        );
+
         let _ = app
             .workspace
             .input
