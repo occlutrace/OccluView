@@ -514,11 +514,13 @@ jobs:
             echo "MINISIGN_SECRET_KEY secret is not configured." >&2
             exit 1
           fi
+          release_signing_secret="$MINISIGN_SECRET_KEY"
+          unset MINISIGN_SECRET_KEY
           umask 077
           signing_key=$(mktemp)
           trap 'rm -f "$signing_key"' EXIT
-          printf '%s\n' "$MINISIGN_SECRET_KEY" > "$signing_key"
-          unset MINISIGN_SECRET_KEY
+          printf '%s\n' "$release_signing_secret" > "$signing_key"
+          unset release_signing_secret
 
           tag="$RELEASE_TAG"
           version="${tag#v}"
@@ -609,6 +611,17 @@ jobs:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
         run: |
           version="${RELEASE_TAG#v}"
+          if [[ -z "$MINISIGN_SECRET_KEY" ]]; then
+            echo "MINISIGN_SECRET_KEY secret is not configured." >&2
+            exit 1
+          fi
+          release_signing_secret="$MINISIGN_SECRET_KEY"
+          unset MINISIGN_SECRET_KEY
+          umask 077
+          signing_key=$(mktemp)
+          trap 'rm -f "$signing_key"' EXIT
+          printf '%s\n' "$release_signing_secret" > "$signing_key"
+          unset release_signing_secret
           cp ./occluview.pub ./dist/occluview.pub
           (
             cd ./dist
@@ -621,15 +634,6 @@ jobs:
             zip -q "OccluView-${version}-verification.zip" "${material[@]}"
             sha256sum "OccluView-${version}-verification.zip" > "OccluView-${version}-verification.zip.sha256"
           )
-          if [[ -z "$MINISIGN_SECRET_KEY" ]]; then
-            echo "MINISIGN_SECRET_KEY secret is not configured." >&2
-            exit 1
-          fi
-          umask 077
-          signing_key=$(mktemp)
-          trap 'rm -f "$signing_key"' EXIT
-          printf '%s\n' "$MINISIGN_SECRET_KEY" > "$signing_key"
-          unset MINISIGN_SECRET_KEY
           bundle="./dist/OccluView-${version}-verification.zip"
           minisign -S -s "$signing_key" -m "$bundle"
           pubkey=$(sed -n 's/^pub const UPDATE_PUBKEY: &str = "\(.*\)";$/\1/p' \
