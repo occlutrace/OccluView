@@ -58,8 +58,11 @@ pub(crate) fn estimate_file_peak_bytes(
     Ok(parser_bytes.saturating_add(texture_bytes))
 }
 
-pub(crate) fn estimate_companion_peak_bytes(kind: FormatKind, bytes: &[u8]) -> u64 {
-    if may_load_companion_image(kind, bytes) {
+pub(crate) fn estimate_companion_peak_bytes(kind: FormatKind, _bytes: &[u8]) -> u64 {
+    // Path-aware lookup can decode a same-stem image without a TextureFile
+    // header or UVs. Attachment decides later whether the mesh can use it.
+    // Reserve for every format whose companion lookup may read an image.
+    if matches!(kind, FormatKind::Obj | FormatKind::Ply) {
         crate::companions::MAX_COMPANION_IMAGE_BYTES
             .saturating_add(crate::hps::parser::MAX_TEXTURE_RGBA_BYTES.saturating_mul(2))
     } else {
@@ -96,14 +99,6 @@ fn may_decode_texture(kind: FormatKind, bytes: &[u8]) -> bool {
     }
 }
 
-fn may_load_companion_image(kind: FormatKind, bytes: &[u8]) -> bool {
-    match kind {
-        FormatKind::Obj => crate::obj::may_have_uvs(bytes),
-        FormatKind::Ply => contains(bytes, b"TextureFile") && crate::ply::may_have_uvs(bytes),
-        _ => false,
-    }
-}
-
 fn contains(bytes: &[u8], needle: &[u8]) -> bool {
     bytes.windows(needle.len()).any(|window| window == needle)
 }
@@ -134,10 +129,23 @@ mod tests {
         let untextured_obj = estimate_file_peak_bytes(FormatKind::Obj, b"v 0 0 0\n", 0)
             .expect("untextured OBJ estimate");
         assert!(untextured_obj < 1024 * 1024);
-        assert_eq!(
-            estimate_companion_peak_bytes(FormatKind::Obj, b"v 0 0 0\n"),
-            0
+        assert!(
+            estimate_companion_peak_bytes(FormatKind::Obj, b"v 0 0 0\n")
+                >= crate::companions::MAX_COMPANION_IMAGE_BYTES
+                    .saturating_add(crate::hps::parser::MAX_TEXTURE_RGBA_BYTES.saturating_mul(2))
         );
+    }
+
+    #[test]
+    fn same_stem_ply_companions_do_not_require_a_texture_file_header() {
+        let ply = b"ply\nformat ascii 1.0\nelement vertex 1\nproperty float x\nproperty float y\nproperty float z\nproperty float s\nproperty float t\nend_header\n0 0 0 0 0\n";
+        assert!(!contains(ply, b"TextureFile"));
+        assert!(crate::ply::may_have_uvs(ply));
+        let reserve = crate::companions::MAX_COMPANION_IMAGE_BYTES
+            .saturating_add(crate::hps::parser::MAX_TEXTURE_RGBA_BYTES.saturating_mul(2));
+        assert_eq!(estimate_companion_peak_bytes(FormatKind::Ply, ply), reserve);
+        assert_eq!(estimate_companion_peak_bytes(FormatKind::Ply, b"ply\n"), reserve);
+        assert_eq!(estimate_companion_peak_bytes(FormatKind::Stl, ply), 0);
     }
 
     #[test]
