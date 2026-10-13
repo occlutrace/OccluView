@@ -13,9 +13,10 @@
 //!
 //! Positive is a gap to the opposing surface, zero is exact touch, negative is
 //! penetration depth, and [`NO_CONTACT_MM`] means nothing was inside reach. The
-//! gap magnitude is the true Euclidean distance to the closest point, while the
-//! sign comes from that point's triangle normal — so near a cusp edge the two
-//! are not the same number, and the distance is the one that is reported. A
+//! positive gap is the Euclidean distance to the closest point. Negative
+//! penetration is the displacement projected onto that point's triangle
+//! normal. Near an edge, its magnitude can be smaller than the Euclidean
+//! distance; it is a local normal-depth estimate, not a signed distance field. A
 //! vertex that is *inside* the antagonist by less than
 //! [`PENETRATION_EPS_MM`](crate::PENETRATION_EPS_MM) reports the positive gap
 //! instead, because below a micrometre the sign is decided by scanner noise
@@ -53,8 +54,8 @@ pub struct ContactSettings {
     /// Off by default, which is what the shipped case viewer runs with. On is
     /// the right answer for a multi-hue ramp: without it the rim of an
     /// interference paints every intermediate depth as a rainbow ring around
-    /// the saturated centre. Off keeps the force distribution *inside* a mark,
-    /// which is the reading a technician wants from the tightness law.
+    /// the saturated centre. Off retains the geometric depth variation inside a
+    /// mark; neither mode measures physical force.
     pub flatten_patches: bool,
 }
 
@@ -271,4 +272,18 @@ fn to_f32(value: f64) -> f32 {
 #[allow(clippy::cast_possible_truncation)]
 fn to_u32(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn oblique_edge_displacement_uses_normal_depth_for_penetration() {
+        let normal = DVec3::Z;
+        let penetration = classify(DVec3::new(0.4, 0.0, -0.3), normal, 1.0);
+        let gap = classify(DVec3::new(0.4, 0.0, 0.3), normal, 1.0);
+        assert!((penetration + 0.3).abs() < 1e-6);
+        assert!((gap - 0.5).abs() < 1e-6);
+    }
 }
