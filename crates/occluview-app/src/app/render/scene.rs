@@ -15,8 +15,9 @@ impl SceneContext<'_> {
             && !self.axis_gizmo_is_hidden()
     }
 
-    /// The toolbar may act through the active pane's own control capture, but
-    /// must not cross a peer-pane, divider, workspace, or suppressed route.
+    /// Keyboard routes may target the active scene directly. While the menu
+    /// was already open at frame start, a captured route is accepted only if
+    /// that exact capture came from the camera popup itself.
     pub(in crate::app) fn camera_axis_menu_enabled(&self, ctx: &egui::Context) -> bool {
         if !self.camera_axis_controls_visible(ctx)
             || self.ui.modal_dialog_open_except_axis_view_menu(ctx)
@@ -30,6 +31,8 @@ impl SceneContext<'_> {
             super::super::workspace::input::PointerRoute::Captured(owner) => {
                 owner.target.scene == self.scene_key
                     && owner.kind == super::super::workspace::input::GestureKind::UiControl
+                    && (!self.ui.camera_view_popup_open_at_frame_start
+                        || self.ui.camera_view_popup_capture == Some(owner))
             }
             super::super::workspace::input::PointerRoute::Suppressed => false,
         }
