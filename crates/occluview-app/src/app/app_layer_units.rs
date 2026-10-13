@@ -117,11 +117,17 @@ mod tests {
         let id = layer.id();
         let original_pose = layer.transform;
         let original_bounds = layer.import_bbox();
-        let sibling = super::super::app_layer_edits::clone_layer_with_mesh(
-            &layer, layer.mesh.as_ref().clone());
-        let sibling_id = sibling.id();
+        let preview = occluview_mesh_edit::CoreBridgeSplitResult {
+            part_a: layer.mesh.as_ref().clone(),
+            part_b: layer.mesh.as_ref().clone(),
+            report: occluview_mesh_edit::BridgeSplitReport::default(),
+        };
+        let target = crate::bridge_split::BridgeSplitTarget::capture(&layer);
         scene.add(layer);
-        scene.add(sibling);
+        let split = crate::bridge_split::apply_preview_to_scene(&scene, target, &preview)
+            .expect("valid split preview");
+        let sibling_id = split.part_b_layer_id;
+        scene = split.scene;
         scene.add(ambiguous_layer());
         app.workspace.scenes[0].document.scene = Some(std::sync::Arc::new(scene.clone()));
         let mut context = app.active_context().expect("scene");
