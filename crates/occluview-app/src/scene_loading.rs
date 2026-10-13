@@ -148,26 +148,25 @@ mod tests {
                 requested_at: Instant::now(),
             });
         }
-        assert!(coordinator.active.as_ref().expect("active load").superseded);
+        assert!(coordinator.active_for_test().expect("active load").superseded);
         assert_eq!(coordinator.queued_len(), 2);
         assert_eq!(
             coordinator
-                .queued
+                .queued_for_test()
                 .front()
                 .map(|request| request.paths[0].as_path()),
             Some(Path::new("other-scene.stl"))
         );
         assert_eq!(
             coordinator
-                .queued
+                .queued_for_test()
                 .back()
                 .map(|request| request.paths[0].as_path()),
             Some(Path::new("third.stl"))
         );
         assert!(sender.send(Ok(Scene::new())).is_ok());
         assert!(coordinator
-            .active
-            .as_ref()
+            .active_for_test()
             .expect("active load")
             .receiver
             .try_recv()

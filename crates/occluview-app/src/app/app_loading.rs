@@ -227,9 +227,8 @@ impl SceneContext<'_> {
             self.document.load_queue_camera_reset = LoadQueueCameraReset::Idle;
             self.document.camera_modified_during_load = false;
         }
-        let queued = self.loader.active.is_some()
-            || self.loader.decoded.is_some()
-            || !self.loader.queued.is_empty()
+        let queued = self.loader.is_busy()
+            || self.loader.queued_len() > 0
             || self.ui.modal_dialog_open()
             || (mode == SceneLoadMode::Append && self.append_load_is_blocked());
         self.loader.enqueue(request);
@@ -272,7 +271,7 @@ impl SceneContext<'_> {
             DecoderPoll::Idle | DecoderPoll::Superseded => self.start_next_queued_load(),
             DecoderPoll::Pending => {}
             DecoderPoll::Decoded(decoded) => {
-                if self.must_park_decoded(&decoded) {
+                if self.must_park_decoded(decoded.pending.mode) {
                     self.park_load(decoded);
                 } else {
                     self.apply_decoded_load(decoded, ctx);
@@ -284,40 +283,24 @@ impl SceneContext<'_> {
     /// Returns true when a parked result belongs to this target. It either
     /// stays parked, is converted into the Replace confirmation, or commits.
     fn process_parked_result(&mut self, ctx: &egui::Context) -> bool {
-        if !self.loader.decoded_for(self.scene_key) {
+        let Some(meta) = self.loader.parked_meta_for(self.scene_key) else {
             return false;
-        }
-        let replace_needs_guard = self
-            .loader
-            .decoded
-            .as_ref()
-            .is_some_and(|decoded| self.loaded_replace_needs_guard(&decoded.pending));
+        };
+        let append_parked_blocked =
+            meta.mode == SceneLoadMode::Append && self.append_load_is_blocked();
+        let replace_needs_guard = meta.mode == SceneLoadMode::Replace
+            && self.document.replace_requires_guard(
+                meta.content_revision_at_request,
+                meta.dirty_at_request,
+            );
         if self.ui.pending_replace_open.as_ref().is_some_and(|open| {
-            open.scene_key == self.scene_key
-                && self
-                    .loader
-                    .decoded
-                    .as_ref()
-                    .is_some_and(|decoded| open.requested_at > decoded.pending.requested_at)
+            open.scene_key == self.scene_key && open.requested_at > meta.requested_at
         }) {
             let _ = self.loader.take_decoded_for(self.scene_key);
             return true;
         }
-        if self.ui.modal_dialog_open()
-            || (self
-                .loader
-                .decoded
-                .as_ref()
-                .is_some_and(|decoded| decoded.pending.mode == SceneLoadMode::Append)
-                && self.append_load_is_blocked())
-        {
-            if self.append_load_is_blocked()
-                && self
-                    .loader
-                    .decoded
-                    .as_ref()
-                    .is_some_and(|decoded| decoded.pending.mode == SceneLoadMode::Append)
-            {
+        if self.ui.modal_dialog_open() || append_parked_blocked {
+            if append_parked_blocked {
                 self.scene_ui.status_message = Some(
                     self.ui
                         .locale
@@ -338,9 +321,9 @@ impl SceneContext<'_> {
         true
     }
 
-    fn must_park_decoded(&self, decoded: &DecodedSceneLoad) -> bool {
+    fn must_park_decoded(&self, mode: SceneLoadMode) -> bool {
         self.ui.modal_dialog_open()
-            || (decoded.pending.mode == SceneLoadMode::Append && self.append_load_is_blocked())
+            || (mode == SceneLoadMode::Append && self.append_load_is_blocked())
     }
 
     fn park_load(&mut self, decoded: DecodedSceneLoad) {
@@ -372,10 +355,7 @@ impl SceneContext<'_> {
     }
 
     fn start_next_queued_load(&mut self) {
-        if self.loader.active.is_some()
-            || self.loader.decoded.is_some()
-            || self.ui.modal_dialog_open()
-        {
+        if self.loader.is_busy() || self.ui.modal_dialog_open() {
             return;
         }
         let mut append_blocked_scenes = self.append_blocked_scene_keys.clone();
@@ -469,11 +449,16 @@ impl SceneContext<'_> {
     }
 
     /// Replace authorization is checked at acceptance and again at commit.
-    fn loaded_replace_needs_guard(&self, pending: &PendingSceneLoad) -> bool {
-        pending.mode == SceneLoadMode::Replace
+    fn replace_load_requires_guard(
+        &self,
+        mode: SceneLoadMode,
+        content_revision_at_request: u64,
+        dirty_at_request: bool,
+    ) -> bool {
+        mode == SceneLoadMode::Replace
             && self.document.replace_requires_guard(
-                pending.content_revision_at_request,
-                pending.dirty_at_request,
+                content_revision_at_request,
+                dirty_at_request,
             )
     }
 
@@ -535,7 +520,11 @@ impl SceneContext<'_> {
         }
         match result {
             Ok(scene) => {
-                if self.loaded_replace_needs_guard(&pending) {
+                if self.replace_load_requires_guard(
+                    pending.mode,
+                    pending.content_revision_at_request,
+                    pending.dirty_at_request,
+                ) {
                     self.park_replace_open(pending);
                     return;
                 }
@@ -611,11 +600,7 @@ impl SceneContext<'_> {
             (scene, pending.paths.clone())
         };
         let recent_paths = current_paths.clone();
-        let queued_after_current =
-            append
-                && self.loader.queued.iter().any(|queued| {
-                    queued.scene_key == old_key && queued.mode == SceneLoadMode::Append
-                });
+        let queued_after_current = append && self.loader.has_queued_append_for(old_key);
         if !append {
             self.forget_replaced_scene_state();
         }

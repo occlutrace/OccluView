@@ -379,8 +379,8 @@ fn drop_prompt_keeps_long_names_in_bounds_and_queues_only_the_chosen_scene() {
         "choice point {point:?}, dialog {area:?}, layer {:?}",
         ctx.layer_id_at(point)
     );
-    assert_eq!(app.loader.queued.len(), 1);
-    assert_eq!(app.loader.queued[0].scene_key, chosen);
+    assert_eq!(app.loader.queued_for_test().len(), 1);
+    assert_eq!(app.loader.queued_for_test()[0].scene_key, chosen);
 }
 
 #[test]

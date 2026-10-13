@@ -156,7 +156,7 @@ fn replace_delivered_into_an_idle_clean_session_is_applied() {
         target.ui.pending_replace_open.is_none(),
         "an idle clean session has nothing to guard"
     );
-    assert!(target.loader.active.is_none());
+    assert!(target.loader.active_for_test().is_none());
     assert_eq!(
         scene_names_for_context(&target),
         vec!["scene-b".to_string()]
@@ -248,7 +248,7 @@ fn blocked_append_in_one_scene_does_not_stall_another_scenes_load() {
             .begin_face_selection(&scene.meshes()[0], &scene,));
         first.append_paths(&[PathBuf::from("/missing/first-append.stl")], "drop");
         assert!(first.loader.has_queued_for(first_key));
-        assert!(first.loader.active.is_none());
+        assert!(first.loader.active_for_test().is_none());
     }
 
     {
@@ -321,7 +321,7 @@ fn successful_guarded_replace_rebinds_later_appends_without_reordering_other_sce
     );
     let replace = first
         .loader
-        .take_active_for(first_key)
+        .take_active_for_test(first_key)
         .expect("confirmed Replace starts before the later Appends");
     assert_eq!(replace.mode, SceneLoadMode::Replace);
 
@@ -340,7 +340,7 @@ fn successful_guarded_replace_rebinds_later_appends_without_reordering_other_sce
 
     assert_eq!(
         app.loader
-            .queued
+            .queued_for_test()
             .iter()
             .map(|request| (request.scene_key, request.paths[0].clone()))
             .collect::<Vec<_>>(),
@@ -384,7 +384,7 @@ fn failed_guarded_replace_keeps_later_appends_on_the_original_scene() {
     );
     let replace = first
         .loader
-        .take_active_for(first_key)
+        .take_active_for_test(first_key)
         .expect("confirmed Replace starts before the later Appends");
     let mut delivered = delivered_load_for_scene(
         first_key,
@@ -400,7 +400,7 @@ fn failed_guarded_replace_keeps_later_appends_on_the_original_scene() {
     assert_eq!(
         first
             .loader
-            .queued
+            .queued_for_test()
             .iter()
             .map(|request| (request.scene_key, request.paths[0].clone()))
             .collect::<Vec<_>>(),
@@ -423,8 +423,8 @@ fn append_remains_queued_while_an_edit_checkpoint_is_open() {
 
     target.append_paths(&[PathBuf::from("/cases/b.stl")], "test");
 
-    assert!(target.loader.active.is_none());
-    assert!(target.loader.decoded.is_none());
+    assert!(target.loader.active_for_test().is_none());
+    assert!(target.loader.decoded_for_test().is_none());
     assert!(target.loader.has_queued_for(target.scene_key));
 
     target.document.edit_mode.finish_edit_session();
@@ -494,7 +494,7 @@ fn decoded_append_waits_until_a_pending_mesh_edit_finishes() {
         2,
         "the Append commits after pending mesh work finishes"
     );
-    assert!(target.loader.decoded.is_none());
+    assert!(target.loader.decoded_for_test().is_none());
     assert!(target.ui.pending_replace_open.is_none());
     assert_eq!(target.document.current_paths.len(), 2);
 }
@@ -530,8 +530,7 @@ fn failed_final_append_preserves_camera_navigation() -> Result<()> {
         let before_failure = target.render.camera;
         let pending = target
             .loader
-            .active
-            .take()
+            .take_active_for_test(target.scene_key)
             .ok_or_else(|| anyhow::anyhow!("missing append"))?;
 
         apply_result(&mut target, pending, Err(anyhow::anyhow!("unreadable")));
@@ -574,7 +573,7 @@ fn failed_replace_leaves_the_scene_and_its_edits_untouched() {
         target.ui.app_error.is_some(),
         "the failure must be reported"
     );
-    assert!(target.loader.active.is_none());
+    assert!(target.loader.active_for_test().is_none());
     assert!(target.ui.pending_replace_open.is_none());
 }
 
@@ -613,8 +612,7 @@ fn superseded_replace_drops_its_result_and_keeps_other_scene_work_queued() {
     assert!(
         target
             .loader
-            .active
-            .as_ref()
+            .active_for_test()
             .expect("active load")
             .superseded
     );
@@ -628,11 +626,11 @@ fn superseded_replace_drops_its_result_and_keeps_other_scene_work_queued() {
         "the superseded Replace result cannot commit"
     );
     assert!(target.ui.pending_replace_open.is_none());
-    assert!(target.loader.active.is_none());
+    assert!(target.loader.active_for_test().is_none());
     assert_eq!(
         target
             .loader
-            .queued
+            .queued_for_test()
             .iter()
             .map(|request| (request.scene_key, request.paths[0].clone()))
             .collect::<Vec<_>>(),
