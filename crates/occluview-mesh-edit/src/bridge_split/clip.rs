@@ -219,7 +219,7 @@ fn source_lineage(topology: &CanonicalTopology) -> Result<SourceLineage, BridgeS
     let face_count = indices.len() / 3;
     let incidence = edge_incidence(indices);
     let mut duplicate_faces = vec![false; face_count];
-    let mut face_keys: Vec<((u32, u32, u32), usize)> = indices
+    let mut face_keys: Vec<([u32; 3], usize)> = indices
         .as_chunks::<3>()
         .0
         .iter()
