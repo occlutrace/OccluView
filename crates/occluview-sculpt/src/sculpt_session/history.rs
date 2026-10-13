@@ -214,7 +214,7 @@ impl SculptSession {
         }
         // Old spans of affected triangles, before any write.
         let tri_generation = self.next_tri_stamp();
-        let mut affected: Vec<(u32, ((i32, i32, i32), (i32, i32, i32)))> = Vec::new();
+        let mut affected = Vec::new();
         for &group in &groups {
             for &triangle in self.topology.incident_triangles(group) {
                 if self.tri_marks[triangle as usize] != tri_generation {

@@ -5,6 +5,54 @@
 
 use super::*;
 
+fn consider_ray_triangle(
+    triangle: u32,
+    verts: &[f32],
+    tris: &[u32],
+    marks: &mut [u32],
+    test_epoch: u32,
+    orig: DVec3,
+    dir: DVec3,
+    constraints: SculptRayConstraints<'_>,
+    best: &mut Option<(f64, u32)>,
+) {
+    let mark = &mut marks[triangle as usize];
+    if *mark == test_epoch {
+        return;
+    }
+    *mark = test_epoch;
+    let offset = triangle as usize * 3;
+    let vertex = |index: u32| {
+        let offset = index as usize * 3;
+        DVec3::new(
+            verts[offset] as f64,
+            verts[offset + 1] as f64,
+            verts[offset + 2] as f64,
+        )
+    };
+    let (a, b, c) = (
+        vertex(tris[offset]),
+        vertex(tris[offset + 1]),
+        vertex(tris[offset + 2]),
+    );
+    let Some(hit_t) = ray_tri(orig, dir, a, b, c) else {
+        return;
+    };
+    if hit_t < constraints.near
+        || hit_t > constraints.far
+        || !constraints.contains(orig + dir * hit_t)
+    {
+        return;
+    }
+    // Exact equal-distance hits are resolved by dense triangle id, regardless
+    // of bucket visitation or topology-history insertion order.
+    if best.is_none_or(|(best_t, best_triangle)| {
+        hit_t < best_t || (hit_t == best_t && triangle < best_triangle)
+    }) {
+        *best = Some((hit_t, triangle));
+    }
+}
+
 /// Travel one dab footprint stands for, as a share of the brush radius. It
 /// sizes remesh work for the area crossed, not the brush's material dose. A
 /// knife is a narrow blade, so its trail is denser.
@@ -497,6 +545,7 @@ impl SculptSession {
     /// Raycast the current deformed surface (3D-DDA through the triangle
     /// buckets). Returns (hit point, triangle normal). Both winding sides hit
     /// (the ray decides the brush anchor, frontface culling is per-vertex).
+    /// Exact hit-distance ties select the lower live triangle id.
     pub fn raycast(&mut self, orig: DVec3, dir: DVec3) -> Option<(DVec3, DVec3)> {
         self.raycast_visible(orig, dir, SculptRayConstraints::default())
     }
@@ -538,8 +587,6 @@ impl SculptSession {
         let dir = dir.normalize_or_zero();
         let cell = self.rays.cell;
         let lo = self.rays.lo;
-        // The grid bounds grow with the geometry while cell indices remain
-        // relative to its fixed origin `lo`, which is also the bucket key base.
         let (min_cell, max_cell) = (self.rays.min_cell, self.rays.max_cell);
         let min_cell = (
             i64::from(min_cell.0),
@@ -551,61 +598,6 @@ impl SculptSession {
             i64::from(max_cell.1),
             i64::from(max_cell.2),
         );
-        let box_lo = DVec3::new(
-            lo.x + min_cell.0 as f64 * cell,
-            lo.y + min_cell.1 as f64 * cell,
-            lo.z + min_cell.2 as f64 * cell,
-        );
-        let hi = DVec3::new(
-            lo.x + (max_cell.0 + 1) as f64 * cell,
-            lo.y + (max_cell.1 + 1) as f64 * cell,
-            lo.z + (max_cell.2 + 1) as f64 * cell,
-        );
-        let mut t0 = constraints.near;
-        let mut t1 = constraints.far;
-        for k in 0..3 {
-            let (o, d, l, h) = match k {
-                0 => (orig.x, dir.x, box_lo.x, hi.x),
-                1 => (orig.y, dir.y, box_lo.y, hi.y),
-                _ => (orig.z, dir.z, box_lo.z, hi.z),
-            };
-            if d.abs() < 1e-12 {
-                if o < l || o > h {
-                    return None;
-                }
-            } else {
-                let (a, b) = ((l - o) / d, (h - o) / d);
-                t0 = t0.max(a.min(b));
-                t1 = t1.min(a.max(b));
-            }
-        }
-        if t0 > t1 {
-            return None;
-        }
-        let start = orig + (dir * (t0 + 1e-9));
-        let mut cx = ((start.x - lo.x) / cell).floor() as i64;
-        let mut cy = ((start.y - lo.y) / cell).floor() as i64;
-        let mut cz = ((start.z - lo.z) / cell).floor() as i64;
-        let step = (
-            if dir.x > 0.0 { 1i64 } else { -1 },
-            if dir.y > 0.0 { 1i64 } else { -1 },
-            if dir.z > 0.0 { 1i64 } else { -1 },
-        );
-        let next_t = |c: i64, o: f64, d: f64, l: f64| -> f64 {
-            if d.abs() < 1e-12 {
-                return f64::INFINITY;
-            }
-            let edge = l + (c as f64 + f64::from(u8::from(d > 0.0))) * cell;
-            (edge - o) / d
-        };
-        let mut tmx = next_t(cx, orig.x, dir.x, lo.x);
-        let mut tmy = next_t(cy, orig.y, dir.y, lo.y);
-        let mut tmz = next_t(cz, orig.z, dir.z, lo.z);
-        let (tdx, tdy, tdz) = (
-            (cell / dir.x.abs()).abs(),
-            (cell / dir.y.abs()).abs(),
-            (cell / dir.z.abs()).abs(),
-        );
         self.ray_test_epoch = self.ray_test_epoch.wrapping_add(1);
         if self.ray_test_epoch == 0 {
             self.ray_test_marks.fill(0);
@@ -614,6 +606,177 @@ impl SculptSession {
         let test_epoch = self.ray_test_epoch;
         let verts = &self.verts;
         let tris = &self.tris;
+        let mut best: Option<(f64, u32)> = None;
+        // Broad and unrepresentable triangle spans are tested even when the
+        // regular-grid slab misses. All tests share the same ray, camera and
+        // clipping predicates and use a dense id tie-break below.
+        for &triangle in &self.rays.spilled_triangles {
+            consider_ray_triangle(
+                triangle,
+                verts,
+                tris,
+                &mut self.ray_test_marks,
+                test_epoch,
+                orig,
+                dir,
+                constraints,
+                &mut best,
+            );
+        }
+
+        let mut exact_fallback = false;
+        if !self.rays.map.is_empty() {
+            // The grid bounds grow with the geometry while cell indices remain
+            // relative to its fixed origin `lo`, also the bucket key base.
+            let box_lo = DVec3::new(
+                lo.x + min_cell.0 as f64 * cell,
+                lo.y + min_cell.1 as f64 * cell,
+                lo.z + min_cell.2 as f64 * cell,
+            );
+            let hi = DVec3::new(
+                lo.x + (max_cell.0 + 1) as f64 * cell,
+                lo.y + (max_cell.1 + 1) as f64 * cell,
+                lo.z + (max_cell.2 + 1) as f64 * cell,
+            );
+            let mut t0 = constraints.near;
+            let mut t1 = constraints.far;
+            let mut intersects_grid = true;
+            for k in 0..3 {
+                let (o, d, l, h) = match k {
+                    0 => (orig.x, dir.x, box_lo.x, hi.x),
+                    1 => (orig.y, dir.y, box_lo.y, hi.y),
+                    _ => (orig.z, dir.z, box_lo.z, hi.z),
+                };
+                if d.abs() < 1e-12 {
+                    if o < l || o > h {
+                        intersects_grid = false;
+                        break;
+                    }
+                } else {
+                    let (a, b) = ((l - o) / d, (h - o) / d);
+                    t0 = t0.max(a.min(b));
+                    t1 = t1.min(a.max(b));
+                }
+            }
+            if t0 > t1 {
+                intersects_grid = false;
+            }
+            if intersects_grid {
+                let start = orig + (dir * (t0 + 1e-9));
+                let mut cx = ((start.x - lo.x) / cell).floor() as i64;
+                let mut cy = ((start.y - lo.y) / cell).floor() as i64;
+                let mut cz = ((start.z - lo.z) / cell).floor() as i64;
+                let step = (
+                    if dir.x > 0.0 { 1i64 } else { -1 },
+                    if dir.y > 0.0 { 1i64 } else { -1 },
+                    if dir.z > 0.0 { 1i64 } else { -1 },
+                );
+                let next_t = |c: i64, o: f64, d: f64, l: f64| -> f64 {
+                    if d.abs() < 1e-12 {
+                        return f64::INFINITY;
+                    }
+                    let edge = l + (c as f64 + f64::from(u8::from(d > 0.0))) * cell;
+                    (edge - o) / d
+                };
+                let mut tmx = next_t(cx, orig.x, dir.x, lo.x);
+                let mut tmy = next_t(cy, orig.y, dir.y, lo.y);
+                let mut tmz = next_t(cz, orig.z, dir.z, lo.z);
+                let (tdx, tdy, tdz) = (
+                    (cell / dir.x.abs()).abs(),
+                    (cell / dir.y.abs()).abs(),
+                    (cell / dir.z.abs()).abs(),
+                );
+                // Preserve the existing grid-relative guard while ensuring
+                // traversal is O(live faces). A cutover exact-tests every
+                // unvisited live face, so the bound cannot become a ray miss.
+                let cell_span = (max_cell.0 - min_cell.0)
+                    .max(max_cell.1 - min_cell.1)
+                    .max(max_cell.2 - min_cell.2);
+                let cell_guard = cell_span.saturating_mul(3).saturating_add(16);
+                let face_guard = (self.rays.triangle_cells.len() as i64)
+                    .saturating_mul(3)
+                    .saturating_add(16);
+                let guard_limit = cell_guard.min(face_guard);
+                let mut guard = 0i64;
+                loop {
+                    guard += 1;
+                    if guard > guard_limit {
+                        exact_fallback = true;
+                        break;
+                    }
+                    if cx < min_cell.0 - 1
+                        || cy < min_cell.1 - 1
+                        || cz < min_cell.2 - 1
+                        || cx > max_cell.0 + 1
+                        || cy > max_cell.1 + 1
+                        || cz > max_cell.2 + 1
+                    {
+                        break;
+                    }
+                    let list = match [cx, cy, cz].map(i32::try_from) {
+                        [Ok(x), Ok(y), Ok(z)] => self.rays.map.get(&(x, y, z)),
+                        _ => None,
+                    };
+                    if let Some(list) = list {
+                        for &triangle in list {
+                            consider_ray_triangle(
+                                triangle,
+                                verts,
+                                tris,
+                                &mut self.ray_test_marks,
+                                test_epoch,
+                                orig,
+                                dir,
+                                constraints,
+                                &mut best,
+                            );
+                        }
+                    }
+                    // The first cell with a confirmed hit INSIDE it ends the
+                    // walk; later cells cannot have a nearer regular hit.
+                    if let Some((best_t, _)) = best {
+                        let cell_exit = tmx.min(tmy).min(tmz);
+                        if best_t < cell_exit {
+                            break;
+                        }
+                    }
+                    if tmx <= tmy && tmx <= tmz {
+                        if tmx > t1 {
+                            break;
+                        }
+                        cx += step.0;
+                        tmx += tdx;
+                    } else if tmy <= tmz {
+                        if tmy > t1 {
+                            break;
+                        }
+                        cy += step.1;
+                        tmy += tdy;
+                    } else {
+                        if tmz > t1 {
+                            break;
+                        }
+                        cz += step.2;
+                        tmz += tdz;
+                    }
+                }
+            }
+        }
+        if exact_fallback {
+            for triangle in 0..self.rays.triangle_cells.len() {
+                consider_ray_triangle(
+                    triangle as u32,
+                    verts,
+                    tris,
+                    &mut self.ray_test_marks,
+                    test_epoch,
+                    orig,
+                    dir,
+                    constraints,
+                    &mut best,
+                );
+            }
+        }
         let v = |i: u32| {
             let offset = i as usize * 3;
             DVec3::new(
@@ -622,82 +785,6 @@ impl SculptSession {
                 verts[offset + 2] as f64,
             )
         };
-        let mut best: Option<(f64, u32)> = None;
-        // The occupied bounds never move mid-raycast (only the per-triangle
-        // test marks do), so the walk limit is loop-invariant.
-        let cell_span = (max_cell.0 - min_cell.0)
-            .max(max_cell.1 - min_cell.1)
-            .max(max_cell.2 - min_cell.2);
-        let guard_limit = cell_span * 3 + 16;
-        let mut guard = 0;
-        loop {
-            guard += 1;
-            if guard > guard_limit {
-                break;
-            }
-            if cx < min_cell.0 - 1
-                || cy < min_cell.1 - 1
-                || cz < min_cell.2 - 1
-                || cx > max_cell.0 + 1
-                || cy > max_cell.1 + 1
-                || cz > max_cell.2 + 1
-            {
-                break;
-            }
-            let list = match [cx, cy, cz].map(i32::try_from) {
-                [Ok(x), Ok(y), Ok(z)] => self.rays.map.get(&(x, y, z)),
-                _ => None,
-            };
-            if let Some(list) = list {
-                for &ti in list {
-                    let mark = &mut self.ray_test_marks[ti as usize];
-                    if *mark == test_epoch {
-                        continue;
-                    }
-                    *mark = test_epoch;
-                    let t = ti as usize * 3;
-                    let (a, b, c) = (v(tris[t]), v(tris[t + 1]), v(tris[t + 2]));
-                    if let Some(hit_t) = ray_tri(orig, dir, a, b, c) {
-                        if hit_t < constraints.near
-                            || hit_t > constraints.far
-                            || !constraints.contains(orig + dir * hit_t)
-                        {
-                            continue;
-                        }
-                        if best.is_none_or(|(bt, _)| hit_t < bt) {
-                            best = Some((hit_t, ti));
-                        }
-                    }
-                }
-            }
-            // The first cell with a confirmed hit INSIDE it ends the walk
-            // (hits behind the current cell face can't be nearer).
-            if let Some((bt, _)) = best {
-                let cell_exit = tmx.min(tmy).min(tmz);
-                if bt <= cell_exit {
-                    break;
-                }
-            }
-            if tmx <= tmy && tmx <= tmz {
-                if tmx > t1 {
-                    break;
-                }
-                cx += step.0;
-                tmx += tdx;
-            } else if tmy <= tmz {
-                if tmy > t1 {
-                    break;
-                }
-                cy += step.1;
-                tmy += tdy;
-            } else {
-                if tmz > t1 {
-                    break;
-                }
-                cz += step.2;
-                tmz += tdz;
-            }
-        }
         let (t, ti) = best?;
         let k = ti as usize * 3;
         let (a, b, c) = (v(tris[k]), v(tris[k + 1]), v(tris[k + 2]));
@@ -780,5 +867,100 @@ mod tests {
                 assert!(session.raycast(DVec3::ZERO, direction).is_none());
             }
         }
+    }
+
+    #[test]
+    fn spilled_broad_triangle_obeys_near_far_and_clip_constraints() {
+        let mut session = SculptSession::new(
+            vec![
+                0.0, 0.0, 0.0, 20_000.0, 0.0, 0.0, 0.0, 20_000.0, 0.0,
+                0.0, 0.0, 100.0, 1.0, 0.0, 100.0, 0.0, 1.0, 100.0,
+            ],
+            vec![0, 1, 2, 3, 4, 5],
+        )
+        .expect("finite broad face remains a valid sculpt surface");
+        assert_eq!(session.rays.spilled_triangles, vec![0]);
+        assert!(!session.rays.map.is_empty());
+        let origin = DVec3::new(6_000.0, 6_000.0, 10.0);
+        let direction = -DVec3::Z;
+
+        let keep_x_from_five_thousand = [[1.0, 0.0, 0.0, -5_000.0]];
+        let hit = session
+            .raycast_visible(
+                origin,
+                direction,
+                SculptRayConstraints {
+                    near: 9.0,
+                    far: 10.0,
+                    clip_planes: &keep_x_from_five_thousand,
+                },
+            )
+            .expect("the spill scan keeps a hit on the visible ray interval");
+        assert!((hit.0 - DVec3::new(6_000.0, 6_000.0, 0.0)).length() < 1e-9);
+
+        assert!(session
+            .raycast_visible(
+                origin,
+                direction,
+                SculptRayConstraints {
+                    near: 0.0,
+                    far: 9.0,
+                    clip_planes: &[],
+                },
+            )
+            .is_none());
+
+        let clip_that_excludes_hit = [[1.0, 0.0, 0.0, -7_000.0]];
+        assert!(session
+            .raycast_visible(
+                origin,
+                direction,
+                SculptRayConstraints {
+                    near: 0.0,
+                    far: 20.0,
+                    clip_planes: &clip_that_excludes_hit,
+                },
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn dda_cutover_exactly_checks_unvisited_regular_faces() {
+        let mut session = SculptSession::new(
+            vec![
+                0.0, -1.0, -1.0, 0.0, 1.0, -1.0, 0.0, 0.0, 1.0,
+                1_000.0, -1.0, -1.0, 1_000.0, 1.0, -1.0, 1_000.0, 0.0, 1.0,
+            ],
+            vec![0, 1, 2, 3, 4, 5],
+        )
+        .expect("valid sparse mesh fixture");
+        assert!(session.rays.spilled_triangles.is_empty());
+
+        let (hit, _) = session
+            .raycast(DVec3::ZERO, DVec3::X)
+            .expect("the distant regular face is found after DDA cutover");
+        assert!((hit - DVec3::new(1_000.0, 0.0, 0.0)).length() < 1e-9);
+        assert_eq!(session.hit_triangle, Some(1));
+    }
+
+    #[test]
+    fn opposite_normal_coincident_faces_choose_the_lower_triangle_id() {
+        let mut session = SculptSession::new(
+            vec![
+                -1.0, -1.0, 0.0, 1.0, -1.0, 0.0, 0.0, 1.0, 0.0,
+                -1.0, -1.0, 0.0, 0.0, 1.0, 0.0, 1.0, -1.0, 0.0,
+            ],
+            vec![0, 1, 2, 3, 4, 5],
+        )
+        .expect("opposite winding faces remain valid");
+        for triangles in session.rays.map.values_mut() {
+            triangles.reverse();
+        }
+        let (_, normal) = session
+            .raycast(DVec3::Z, -DVec3::Z)
+            .expect("the coincident faces are hit");
+
+        assert_eq!(session.hit_triangle, Some(0));
+        assert!(normal.z > 0.9, "lower-id face normal should win: {normal:?}");
     }
 }
