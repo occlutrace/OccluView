@@ -648,6 +648,9 @@ fn thumbnail_file_source_matches(
     source: &occluview_formats::dispatch::OpenedFileBytes,
     expected: &ThumbnailFileMetadata,
 ) -> bool {
+    // Freshness is checked by length and timestamp, not by filesystem identity.
+    // A replacement preserving both can pass this fence; the owned buffer
+    // still keeps its digest and parser input consistent with each other.
     source
         .current_metadata()
         .ok()
