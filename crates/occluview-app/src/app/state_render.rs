@@ -71,6 +71,36 @@ pub(super) struct RenderState {
 }
 
 impl RenderState {
+    /// Drop GPU mirrors that describe the outgoing scene.
+    pub(super) fn drop_prepared_scene(&mut self) {
+        self.prepared_scene = None;
+        self.prepared_selection_overlay = None;
+    }
+
+    /// Mark every render consumer stale after scene structure or materials
+    /// changed.
+    pub(super) fn mark_scene_geometry_changed(&mut self) {
+        self.invalidation.scene_geometry_changed();
+    }
+
+    /// Drop the last presented frame while keeping the invalidation cursors.
+    pub(super) fn discard_rendered_frame(&mut self) {
+        self.rendered = None;
+    }
+
+    /// Drop the camera and presented frame, and catch the cursors up to a
+    /// cleared scene.
+    pub(super) fn clear_camera_and_frame(&mut self) {
+        self.camera = None;
+        self.rendered = None;
+        self.invalidation.reset();
+    }
+
+    /// Drop the section cache that indexed the cleared scene.
+    pub(super) fn clear_section_cache(&mut self) {
+        self.section_cache.clear();
+    }
+
     /// The texture edge the device accepts, not the requested one.
     ///
     /// `MAX_RENDER_TEXTURE_DIMENSION` is the request ceiling handed to
