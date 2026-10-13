@@ -47,6 +47,11 @@ positive-X portions use the subject's raw coordinate X relative to its vertex
 mean, rather than an anatomical left/right reference. Rotating or mirroring a
 scan can change that split.
 
+Positive gaps use Euclidean closest-point distance. Negative penetration uses
+the displacement projected onto the closest triangle's normal; near an edge,
+its magnitude can be smaller than the Euclidean distance. It is a local
+normal-depth estimate, not a signed distance field.
+
 Penetration and contact colors describe geometry in millimeters. They do not
 measure physical force. Comparisons require known units, a consistent pose and
 sampling policy, and a suitable reference for the intended use.
