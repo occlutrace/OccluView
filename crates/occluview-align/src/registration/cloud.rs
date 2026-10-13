@@ -119,19 +119,30 @@ impl Gather {
     }
 
     /// Add one triangle, cut so that no piece is longer than the spacing.
+    #[cfg(test)]
+    pub(super) fn add_triangle(&mut self, corners: [DVec3; 3]) {
+        self.add_triangle_with_normal(corners, None);
+    }
+
+    /// Sample transformed corners with the authored inverse-transpose normal.
+    /// An unavailable normal falls back to the world triangle's winding.
     #[allow(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
         clippy::cast_precision_loss
     )]
-    pub(super) fn add_triangle(&mut self, [apex, left, right]: [DVec3; 3]) {
+    pub(super) fn add_triangle_with_normal(
+        &mut self,
+        [apex, left, right]: [DVec3; 3],
+        authored_normal: Option<DVec3>,
+    ) {
         let (along, across) = (left - apex, right - apex);
         let cross = along.cross(across);
         let double_area = cross.length();
         if !(double_area.is_finite() && double_area > MIN_DOUBLE_AREA) {
             return;
         }
-        let normal = cross / double_area;
+        let normal = authored_normal.unwrap_or(cross / double_area);
         let area = double_area * 0.5;
         let longest = along
             .length()

@@ -5,7 +5,7 @@ use super::cloud::{Cloud, Gather};
 use super::seat::{Exact, Probe};
 use crate::sample::vertex_at;
 use crate::{MeshInput, RegionPolicy, SurfaceIndex};
-use glam::{DAffine3, DVec3};
+use glam::{DAffine3, DMat3, DVec3};
 use occluview_geometry::surface::{BuildOutcome, GeometryControl};
 
 /// Where and how finely the scans of one search are read.
@@ -26,7 +26,15 @@ fn triangles<'a>(
     regions: RegionPolicy,
     origin: DVec3,
     omitted: &'a mut usize,
-) -> impl Iterator<Item = [DVec3; 3]> + 'a {
+) -> impl Iterator<Item = ([DVec3; 3], Option<DVec3>)> + 'a {
+    let matrix = mesh.world_from_local.matrix3;
+    let determinant = matrix.determinant();
+    let normal_matrix = if determinant.is_finite() && determinant != 0. {
+        let inverse = matrix.inverse().transpose();
+        inverse.is_finite().then_some(inverse)
+    } else {
+        None
+    };
     mesh.soup
         .indices
         .as_chunks::<3>()
@@ -41,19 +49,37 @@ fn triangles<'a>(
                 return None;
             }
             crate::mask::eligible_region(mesh.soup, *ids, regions)?;
-            let corner = |id: u32| {
-                vertex_at(mesh.soup.positions, id as usize)
-                    .map(|point| mesh.world_from_local.transform_point3(point) - origin)
-                    .filter(|point| point.is_finite())
-            };
-            Some([corner(ids[0])?, corner(ids[1])?, corner(ids[2])?])
+            let local = [
+                vertex_at(mesh.soup.positions, ids[0] as usize)?,
+                vertex_at(mesh.soup.positions, ids[1] as usize)?,
+                vertex_at(mesh.soup.positions, ids[2] as usize)?,
+            ];
+            let corners = local.map(|point| mesh.world_from_local.transform_point3(point) - origin);
+            if corners.iter().any(|point| !point.is_finite()) {
+                return None;
+            }
+            let normal = normal_matrix.and_then(|matrix| {
+                mapped_normal(matrix, (local[1] - local[0]).cross(local[2] - local[0]))
+            });
+            Some((corners, normal))
         })
+}
+
+/// Match the authored-normal convention and numerical fallback of SurfaceIndex.
+fn mapped_normal(matrix: DMat3, normal: DVec3) -> Option<DVec3> {
+    let transformed = matrix * normal;
+    let scale = transformed.abs().max_element();
+    if !transformed.is_finite() || scale <= 0. {
+        return None;
+    }
+    let normalized = (transformed / scale).normalize_or_zero();
+    (normalized.is_finite() && normalized.length_squared() > 0.).then_some(normalized)
 }
 
 /// Area and area-weighted centre of the eligible surface, in world.
 pub(super) fn extent(mesh: MeshInput<'_>, regions: RegionPolicy) -> (f64, DVec3) {
     let (mut area, mut centre, mut omitted) = (0., DVec3::ZERO, 0);
-    for [first, second, third] in triangles(mesh, regions, DVec3::ZERO, &mut omitted) {
+    for ([first, second, third], _) in triangles(mesh, regions, DVec3::ZERO, &mut omitted) {
         let piece = (second - first).cross(third - first).length() * 0.5;
         if piece.is_finite() && piece > 0. {
             area += piece;
@@ -81,8 +107,8 @@ impl Side {
     pub(super) fn read(mesh: MeshInput<'_>, layout: &Layout, admission: GeometryControl) -> Self {
         let mut omitted = 0;
         let mut gather = Gather::new(layout.fine_mm);
-        for corners in triangles(mesh, layout.regions, layout.origin, &mut omitted) {
-            gather.add_triangle(corners);
+        for (corners, normal) in triangles(mesh, layout.regions, layout.origin, &mut omitted) {
+            gather.add_triangle_with_normal(corners, normal);
         }
         let area = gather.area();
         let fine = gather.finish();
@@ -154,6 +180,30 @@ mod tests {
             fine_mm: 0.3,
             coarse_mm: 1.,
             regions: RegionPolicy::AllEligible,
+        }
+    }
+
+    #[test]
+    fn clouds_and_exact_queries_share_authored_normals_after_reflection() {
+        let positions = [0., 0., 0., 1., 0., 0., 0., 1., 0.];
+        let indices = [0, 1, 2];
+        for scale in [DVec3::new(-1., 1., 1.), DVec3::new(1., 1., 0.)] {
+            let mesh = MeshInput {
+                soup: Soup { positions: &positions, indices: &indices, mask: None },
+                world_from_local: DAffine3::from_scale(scale),
+                revision: 0,
+            };
+            let admission = SearchControl::default().surface_control(&SearchSettings::default());
+            let side = Side::read(mesh, &layout(), admission);
+            let exact = side.exact.as_ref().expect("indexed triangle");
+            assert!(!side.fine.points.is_empty());
+            for cloud in [&side.fine, &side.coarse] {
+                for point in &cloud.points {
+                    let hit = exact.nearest(point.anchor, 1.).expect("sample lies on triangle");
+                    assert!(point.normal.dot(hit.normal) > 1. - 1e-12);
+                    assert!(point.normal.dot(DVec3::Z) > 1. - 1e-12);
+                }
+            }
         }
     }
 
