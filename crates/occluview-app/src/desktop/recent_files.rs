@@ -1,16 +1,35 @@
 //! Recent-file list logic for the desktop app.
 
+use serde::{Deserialize, Serialize};
 #[cfg(any(unix, windows))]
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 const NATIVE_V2_HEADER: &str = "\0occluview-recent-v2:";
-#[cfg(unix)]
-const NATIVE_PATH_TAG: u8 = 1;
-#[cfg(windows)]
-const NATIVE_PATH_TAG: u8 = 2;
-#[cfg(not(any(unix, windows)))]
-const NATIVE_PATH_TAG: u8 = 3;
+const NATIVE_V2_VERSION: u8 = 2;
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "platform", deny_unknown_fields)]
+enum NativeRecentFilesV2 {
+    #[cfg(unix)]
+    #[serde(rename = "unix_bytes")]
+    UnixBytes {
+        version: u8,
+        entries: Vec<Vec<Vec<u8>>>,
+    },
+    #[cfg(windows)]
+    #[serde(rename = "windows_utf16_le")]
+    WindowsUtf16Le {
+        version: u8,
+        entries: Vec<Vec<Vec<u16>>>,
+    },
+    #[cfg(not(any(unix, windows)))]
+    #[serde(rename = "other_encoded")]
+    OtherEncoded {
+        version: u8,
+        entries: Vec<Vec<Vec<u8>>>,
+    },
+}
 
 /// A stored list can be newer than this binary. Callers must leave that file
 /// untouched until the operator explicitly clears recent files.
@@ -138,8 +157,7 @@ impl RecentFiles {
     }
 
     /// Convert to the compact app-storage format.
-    #[must_use]
-    pub fn serialize(&self) -> String {
+    pub fn serialize(&self) -> Result<String, serde_json::Error> {
         if self
             .entries
             .iter()
@@ -149,7 +167,7 @@ impl RecentFiles {
             return self.serialize_native_v2();
         }
 
-        self.serialize_legacy()
+        Ok(self.serialize_legacy())
     }
 
     fn serialize_legacy(&self) -> String {
@@ -170,107 +188,123 @@ impl RecentFiles {
         out
     }
 
-    fn serialize_native_v2(&self) -> String {
-        // V1 is kept byte-identical whenever every path is Unicode. V2 is a
-        // single-line base64url envelope so arbitrary native path units cannot
-        // become separators or control characters in the legacy text format.
-        // Its leading NUL cannot occur in a valid filesystem path; older
-        // binaries cannot restore this history and can recover by explicitly
-        // clearing it. They cannot mistake the envelope for an openable path.
-        let mut bytes = vec![native_path_tag()];
-        write_count(&mut bytes, self.entries.len());
-        for entry in &self.entries {
-            write_count(&mut bytes, entry.paths.len());
-            for path in entry.paths() {
-                let units = native_path_units(path);
-                write_count(&mut bytes, native_unit_count(&units));
-                bytes.extend_from_slice(&units);
-            }
-        }
+    fn serialize_native_v2(&self) -> Result<String, serde_json::Error> {
+        // V1 remains byte-identical for all-Unicode paths. The NUL-prefixed
+        // V2 envelope begins with a byte no real filesystem path can contain.
+        // Older readers cannot restore it as a path, but may overwrite it on
+        // a later save; use Clear Recent before rolling back to an older build.
+        #[cfg(unix)]
+        let envelope = NativeRecentFilesV2::UnixBytes {
+            version: NATIVE_V2_VERSION,
+            entries: self
+                .entries
+                .iter()
+                .map(|entry| {
+                    entry
+                        .paths()
+                        .iter()
+                        .map(|path| {
+                            use std::os::unix::ffi::OsStrExt;
+                            path.as_os_str().as_bytes().to_vec()
+                        })
+                        .collect()
+                })
+                .collect(),
+        };
+        #[cfg(windows)]
+        let envelope = NativeRecentFilesV2::WindowsUtf16Le {
+            version: NATIVE_V2_VERSION,
+            entries: self
+                .entries
+                .iter()
+                .map(|entry| {
+                    entry
+                        .paths()
+                        .iter()
+                        .map(|path| {
+                            use std::os::windows::ffi::OsStrExt;
+                            path.as_os_str().encode_wide().collect()
+                        })
+                        .collect()
+                })
+                .collect(),
+        };
+        #[cfg(not(any(unix, windows)))]
+        let envelope = NativeRecentFilesV2::OtherEncoded {
+            version: NATIVE_V2_VERSION,
+            entries: self
+                .entries
+                .iter()
+                .map(|entry| {
+                    entry
+                        .paths()
+                        .iter()
+                        .map(|path| path.as_os_str().as_encoded_bytes().to_vec())
+                        .collect()
+                })
+                .collect(),
+        };
 
-        let mut out = String::with_capacity(NATIVE_V2_HEADER.len() + bytes.len() * 4 / 3 + 4);
+        let mut out = String::with_capacity(NATIVE_V2_HEADER.len() + self.entries.len() * 32);
         out.push_str(NATIVE_V2_HEADER);
-        out.push_str(&encode_base64url(&bytes));
-        out
+        out.push_str(&serde_json::to_string(&envelope)?);
+        Ok(out)
     }
-}
-
-fn write_count(bytes: &mut Vec<u8>, count: usize) {
-    bytes.extend_from_slice(&(count as u64).to_le_bytes());
-}
-
-fn native_unit_count(units: &[u8]) -> usize {
-    #[cfg(windows)]
-    {
-        units.len() / 2
-    }
-    #[cfg(not(windows))]
-    {
-        units.len()
-    }
-}
-
-#[cfg(unix)]
-const fn native_path_tag() -> u8 {
-    NATIVE_PATH_TAG
-}
-
-#[cfg(windows)]
-const fn native_path_tag() -> u8 {
-    NATIVE_PATH_TAG
-}
-
-#[cfg(not(any(unix, windows)))]
-const fn native_path_tag() -> u8 {
-    NATIVE_PATH_TAG
-}
-
-#[cfg(unix)]
-fn native_path_units(path: &Path) -> Vec<u8> {
-    use std::os::unix::ffi::OsStrExt;
-    path.as_os_str().as_bytes().to_vec()
-}
-
-#[cfg(windows)]
-fn native_path_units(path: &Path) -> Vec<u8> {
-    use std::os::windows::ffi::OsStrExt;
-    path.as_os_str()
-        .encode_wide()
-        .flat_map(u16::to_le_bytes)
-        .collect()
-}
-
-#[cfg(not(any(unix, windows)))]
-fn native_path_units(path: &Path) -> Vec<u8> {
-    path.as_os_str().as_encoded_bytes().to_vec()
 }
 
 fn decode_native_v2(limit: usize, payload: &str) -> Option<RecentFiles> {
-    let bytes = decode_base64url(payload)?;
-    let mut reader = NativeReader::new(&bytes);
-    if reader.read_byte()? != native_path_tag() {
+    let envelope: NativeRecentFilesV2 = serde_json::from_str(payload).ok()?;
+    match envelope {
+        #[cfg(unix)]
+        NativeRecentFilesV2::UnixBytes { version, entries }
+            if version == NATIVE_V2_VERSION =>
+        {
+            decode_native_groups(limit, entries, |units| {
+                use std::os::unix::ffi::OsStringExt;
+                Some(PathBuf::from(OsString::from_vec(units.to_vec())))
+            })
+        }
+        #[cfg(windows)]
+        NativeRecentFilesV2::WindowsUtf16Le { version, entries }
+            if version == NATIVE_V2_VERSION =>
+        {
+            decode_native_groups(limit, entries, |units| {
+                use std::os::windows::ffi::OsStringExt;
+                Some(PathBuf::from(OsString::from_wide(units)))
+            })
+        }
+        #[cfg(not(any(unix, windows)))]
+        NativeRecentFilesV2::OtherEncoded { version, entries }
+            if version == NATIVE_V2_VERSION =>
+        {
+            decode_native_groups(limit, entries, |units| {
+                Some(PathBuf::from(std::str::from_utf8(units).ok()?))
+            })
+        }
+        _ => None,
+    }
+}
+
+fn decode_native_groups<T>(
+    limit: usize,
+    entries: Vec<Vec<Vec<T>>>,
+    decode_path: impl Fn(&[T]) -> Option<PathBuf>,
+) -> Option<RecentFiles> {
+    if entries.is_empty() {
         return None;
     }
 
-    let entry_count = reader.read_count()?;
-    if entry_count == 0 {
-        return None;
-    }
     let mut recent = RecentFiles::new(limit);
-    for _ in 0..entry_count {
-        let path_count = reader.read_count()?;
-        if path_count == 0 {
+    for encoded_paths in entries {
+        if encoded_paths.is_empty() {
             return None;
         }
-        let mut paths = Vec::new();
-        for _ in 0..path_count {
-            let unit_count = reader.read_count()?;
-            if unit_count == 0 {
+        let mut paths = Vec::with_capacity(encoded_paths.len());
+        for units in encoded_paths {
+            if units.is_empty() {
                 return None;
             }
-            let byte_count = unit_count.checked_mul(native_unit_width())?;
-            let units = reader.read_bytes(byte_count)?;
-            paths.push(native_path_from_units(units)?);
+            paths.push(decode_path(&units)?);
         }
         let entry = RecentEntry::from_paths(&paths)?;
         if recent.entries.len() < recent.limit
@@ -279,143 +313,7 @@ fn decode_native_v2(limit: usize, payload: &str) -> Option<RecentFiles> {
             recent.entries.push(entry);
         }
     }
-    if !reader.is_finished() {
-        return None;
-    }
     Some(recent)
-}
-
-fn encode_base64url(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    let mut encoded = String::with_capacity(bytes.len() * 4 / 3 + 4);
-    for chunk in bytes.chunks(3) {
-        let first = u32::from(chunk[0]);
-        let second = chunk.get(1).copied().map_or(0, u32::from);
-        let third = chunk.get(2).copied().map_or(0, u32::from);
-        encoded.push(char::from(ALPHABET[((first >> 2) & 0x3f) as usize]));
-        encoded.push(char::from(
-            ALPHABET[(((first << 4) | (second >> 4)) & 0x3f) as usize],
-        ));
-        if chunk.len() > 1 {
-            encoded.push(char::from(
-                ALPHABET[(((second << 2) | (third >> 6)) & 0x3f) as usize],
-            ));
-        }
-        if chunk.len() > 2 {
-            encoded.push(char::from(ALPHABET[(third & 0x3f) as usize]));
-        }
-    }
-    encoded
-}
-
-fn decode_base64url(encoded: &str) -> Option<Vec<u8>> {
-    let source = encoded.as_bytes();
-    if source.len() % 4 == 1 {
-        return None;
-    }
-    let mut bytes = Vec::with_capacity(source.len() * 3 / 4 + 2);
-    for chunk in source.chunks(4) {
-        let first = u32::from(decode_base64url_digit(*chunk.first()?)?);
-        let second = u32::from(decode_base64url_digit(*chunk.get(1)?)?);
-        bytes.push(((first << 2) | (second >> 4)) as u8);
-        if let Some(third) = chunk.get(2) {
-            let third = u32::from(decode_base64url_digit(*third)?);
-            bytes.push((((second & 0x0f) << 4) | (third >> 2)) as u8);
-            if let Some(fourth) = chunk.get(3) {
-                let fourth = u32::from(decode_base64url_digit(*fourth)?);
-                bytes.push((((third & 0x03) << 6) | fourth) as u8);
-            } else if third & 0x03 != 0 {
-                return None;
-            }
-        } else if second & 0x0f != 0 {
-            return None;
-        }
-    }
-    Some(bytes)
-}
-
-fn decode_base64url_digit(byte: u8) -> Option<u8> {
-    match byte {
-        b'A'..=b'Z' => Some(byte - b'A'),
-        b'a'..=b'z' => Some(byte - b'a' + 26),
-        b'0'..=b'9' => Some(byte - b'0' + 52),
-        b'-' => Some(62),
-        b'_' => Some(63),
-        _ => None,
-    }
-}
-
-struct NativeReader<'a> {
-    bytes: &'a [u8],
-    offset: usize,
-}
-
-impl<'a> NativeReader<'a> {
-    fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes, offset: 0 }
-    }
-
-    fn read_byte(&mut self) -> Option<u8> {
-        let byte = *self.bytes.get(self.offset)?;
-        self.offset += 1;
-        Some(byte)
-    }
-
-    fn read_count(&mut self) -> Option<usize> {
-        let bytes = self.read_bytes(std::mem::size_of::<u64>())?;
-        let count = u64::from_le_bytes(bytes.try_into().ok()?);
-        usize::try_from(count).ok()
-    }
-
-    fn read_bytes(&mut self, count: usize) -> Option<&'a [u8]> {
-        let end = self.offset.checked_add(count)?;
-        let bytes = self.bytes.get(self.offset..end)?;
-        self.offset = end;
-        Some(bytes)
-    }
-
-    fn is_finished(&self) -> bool {
-        self.offset == self.bytes.len()
-    }
-}
-
-#[cfg(unix)]
-const fn native_unit_width() -> usize {
-    1
-}
-
-#[cfg(windows)]
-const fn native_unit_width() -> usize {
-    2
-}
-
-#[cfg(not(any(unix, windows)))]
-const fn native_unit_width() -> usize {
-    1
-}
-
-#[cfg(unix)]
-fn native_path_from_units(units: &[u8]) -> Option<PathBuf> {
-    use std::os::unix::ffi::OsStringExt;
-    Some(PathBuf::from(OsString::from_vec(units.to_vec())))
-}
-
-#[cfg(windows)]
-fn native_path_from_units(units: &[u8]) -> Option<PathBuf> {
-    use std::os::windows::ffi::OsStringExt;
-    let wide = units
-        .chunks_exact(2)
-        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-        .collect::<Vec<_>>();
-    Some(PathBuf::from(OsString::from_wide(&wide)))
-}
-
-#[cfg(not(any(unix, windows)))]
-fn native_path_from_units(units: &[u8]) -> Option<PathBuf> {
-    // The fallback target cannot reconstruct arbitrary native units without
-    // unsafe code; keep its unrecognized native history read-only instead.
-    Some(PathBuf::from(std::str::from_utf8(units).ok()?))
 }
 
 fn encode_path(path: &Path) -> String {
@@ -555,7 +453,11 @@ mod tests {
         recent.push(r"C:\cases\lower%scan.stl");
         recent.push("with\nnewline.obj");
 
-        let serialized = recent.serialize();
+        let serialized = recent.serialize().expect("legacy serialization is infallible");
+        assert_eq!(
+            serialized.as_bytes(),
+            b"with%0Anewline.obj\nC:\\cases\\lower%25scan.stl"
+        );
         assert_eq!(
             serialized,
             "with%0Anewline.obj\nC:\\cases\\lower%25scan.stl"
@@ -575,7 +477,7 @@ mod tests {
         ]);
         recent.push("single.obj");
 
-        let serialized = recent.serialize();
+        let serialized = recent.serialize().expect("legacy serialization is infallible");
         assert!(serialized.contains('\t'));
 
         let restored = deserialize_supported(8, &serialized);
@@ -631,7 +533,7 @@ mod tests {
         recent.clear();
 
         assert!(recent.is_empty());
-        assert_eq!(recent.serialize(), "");
+        assert_eq!(recent.serialize().expect("legacy serialization is infallible"), "");
     }
 
     #[test]
@@ -639,7 +541,7 @@ mod tests {
         let mut recent = RecentFiles::new(2);
         recent.push("occluview-recent-v2");
 
-        let serialized = recent.serialize();
+        let serialized = recent.serialize().expect("legacy serialization is infallible");
         assert_eq!(serialized, "occluview-recent-v2");
         let restored = RecentFiles::deserialize_storage(2, &serialized);
         let RecentFilesDecode::Supported(restored) = restored else {
@@ -652,6 +554,50 @@ mod tests {
     fn unknown_native_version_is_not_decoded_as_an_empty_writable_list() {
         let decoded = RecentFiles::deserialize_storage(8, "\0occluview-recent-v3:abcd");
         assert!(matches!(decoded, RecentFilesDecode::Unsupported));
+    }
+
+    #[test]
+    fn future_v2_version_and_malformed_envelopes_remain_unsupported() {
+        let platform = if cfg!(unix) {
+            "unix_bytes"
+        } else if cfg!(windows) {
+            "windows_utf16_le"
+        } else {
+            "other_encoded"
+        };
+        let future_version = format!(
+            "{NATIVE_V2_HEADER}{{\"platform\":\"{platform}\",\"version\":3,\"entries\":[[[97]]]}}"
+        );
+        assert!(matches!(
+            RecentFiles::deserialize_storage(8, &future_version),
+            RecentFilesDecode::Unsupported
+        ));
+
+        for entries in ["[]", "[[]]", "[[[]]]"] {
+            let malformed = format!(
+                "{NATIVE_V2_HEADER}{{\"platform\":\"{platform}\",\"version\":2,\"entries\":{entries}}}"
+            );
+            assert!(matches!(
+                RecentFiles::deserialize_storage(8, &malformed),
+                RecentFilesDecode::Unsupported
+            ));
+        }
+
+        let unknown_field = format!(
+            "{NATIVE_V2_HEADER}{{\"platform\":\"{platform}\",\"version\":2,\"entries\":[[[97]]],\"future\":true}}"
+        );
+        assert!(matches!(
+            RecentFiles::deserialize_storage(8, &unknown_field),
+            RecentFilesDecode::Unsupported
+        ));
+
+        let trailing_content = format!(
+            "{NATIVE_V2_HEADER}{{\"platform\":\"{platform}\",\"version\":2,\"entries\":[[[97]]]}}trailing"
+        );
+        assert!(matches!(
+            RecentFiles::deserialize_storage(8, &trailing_content),
+            RecentFilesDecode::Unsupported
+        ));
     }
 
     #[cfg(unix)]
@@ -668,8 +614,11 @@ mod tests {
         recent.push_paths(&[native_path.clone(), unicode_path.clone()]);
         recent.push("single.obj");
 
-        let serialized = recent.serialize();
+        let serialized = recent.serialize().expect("native serialization should succeed");
         assert!(serialized.starts_with("\0occluview-recent-v2:"));
+        assert!(serialized.contains("\"platform\":\"unix_bytes\""));
+        assert!(serialized.contains("\"version\":2"));
+        assert!(!serialized.contains('\n'));
         let RecentFilesDecode::Supported(restored) =
             RecentFiles::deserialize_storage(3, &serialized)
         else {
@@ -704,8 +653,11 @@ mod tests {
         recent.push_paths(&[native_path.clone(), unicode_path.clone()]);
         recent.push("single.obj");
 
-        let serialized = recent.serialize();
+        let serialized = recent.serialize().expect("native serialization should succeed");
         assert!(serialized.starts_with("\0occluview-recent-v2:"));
+        assert!(serialized.contains("\"platform\":\"windows_utf16_le\""));
+        assert!(serialized.contains("\"version\":2"));
+        assert!(!serialized.contains('\n'));
         let RecentFilesDecode::Supported(restored) =
             RecentFiles::deserialize_storage(3, &serialized)
         else {
@@ -718,5 +670,39 @@ mod tests {
                 vec![native_path, unicode_path]
             ]
         );
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn native_serialization_keeps_scene_pairs_whole_at_the_entry_limit() {
+        #[cfg(unix)]
+        let native_path = {
+            use std::ffi::OsString;
+            use std::os::unix::ffi::OsStringExt;
+            PathBuf::from(OsString::from_vec(b"scene-\xff.stl".to_vec()))
+        };
+        #[cfg(windows)]
+        let native_path = {
+            use std::ffi::OsString;
+            use std::os::windows::ffi::OsStringExt;
+            PathBuf::from(OsString::from_wide(&[
+                b's' as u16,
+                b'c' as u16,
+                0xd800,
+                b'.' as u16,
+                b's' as u16,
+                b't' as u16,
+                b'l' as u16,
+            ]))
+        };
+        let scene = vec![native_path, PathBuf::from("lower.stl")];
+        let mut recent = RecentFiles::new(1);
+        recent.push_paths(&scene);
+        recent.push_paths(&scene);
+
+        let serialized = recent.serialize().expect("native serialization should succeed");
+        let restored = deserialize_supported(1, &serialized);
+
+        assert_eq!(entry_paths(&restored), vec![scene]);
     }
 }
