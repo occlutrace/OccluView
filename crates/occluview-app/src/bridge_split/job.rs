@@ -117,6 +117,7 @@ enum PendingWork {
 }
 
 impl PendingWork {
+    #[cfg(test)]
     fn preview(&self) -> Option<&PendingPreview> {
         match self {
             Self::Preview(preview) => Some(preview),
