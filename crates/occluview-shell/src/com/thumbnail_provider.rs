@@ -117,7 +117,8 @@ impl ThumbnailProvider {
     /// Reads the stream into a byte buffer under the caller's absolute budget.
     /// The budget is checked before `Stat` and between read chunks; it cannot
     /// interrupt a synchronous `Stat` or `Read` already in progress. The
-    /// caller's separate `Seek` is outside this budget.
+    /// caller's preceding `Seek` consumes time before this helper checks the
+    /// deadline and likewise cannot be interrupted here.
     pub(super) fn read_stream_until(
         stream: &IStream,
         deadline: Instant,
