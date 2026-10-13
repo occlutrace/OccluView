@@ -357,6 +357,12 @@ fn a_submission_cancels_the_job_at_the_dequeue_handoff() {
 
     let first_request = worker.submit(job(&worker, 0, -0.1));
     let dequeue_seen = dequeued_rx.recv_timeout(Duration::from_secs(5));
+    // This test thread is distinct from the worker paused after dequeue.
+    // The queue must stay unavailable until that worker publishes its token.
+    let queue_held_at_handoff = matches!(
+        worker.queue.state.try_lock(),
+        Err(std::sync::TryLockError::WouldBlock)
+    );
     let next_job = job(&worker, 7, -0.1);
     let (submitted_tx, submitted_rx) = mpsc::channel();
 
@@ -390,6 +396,10 @@ fn a_submission_cancels_the_job_at_the_dequeue_handoff() {
     });
 
     assert!(dequeue_seen.is_ok(), "the worker must reach the handoff gate");
+    assert!(
+        queue_held_at_handoff,
+        "dequeue and token publication must exclude concurrent queue mutation"
+    );
     assert!(
         at_queue_lock.is_ok(),
         "the submit must reach its queue-lock boundary"
