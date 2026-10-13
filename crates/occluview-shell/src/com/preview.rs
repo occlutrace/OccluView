@@ -32,6 +32,7 @@ use crate::shell_diagnostics::{
 #[cfg(feature = "diagnostic-logs")]
 use occluview_render::AdapterResult;
 use std::os::windows::ffi::OsStringExt;
+use std::rc::Rc;
 #[cfg(feature = "diagnostic-logs")]
 use std::time::Instant;
 use windows::core::IUnknownImpl;
@@ -96,7 +97,10 @@ pub struct PreviewHandler {
     preview_bitmap: std::cell::RefCell<Option<HBITMAP>>,
     preview_scene: std::cell::RefCell<Option<PreviewSceneState>>,
     rect: std::cell::RefCell<RECT>,
-    site: std::cell::RefCell<Option<IUnknown>>,
+    // An `Rc` snapshot lets a site query run without holding the RefCell
+    // across a reentrant `QueryInterface`, while keeping the COM reference
+    // alive until the last snapshot is dropped.
+    site: std::cell::RefCell<Option<Rc<IUnknown>>>,
     drag_mode: std::cell::Cell<PreviewDragMode>,
     last_pointer: std::cell::Cell<POINT>,
     drag_moved: std::cell::Cell<bool>,
@@ -730,7 +734,13 @@ impl IObjectWithSite_Impl for PreviewHandler_Impl {
             "IObjectWithSite::SetSite",
             || Err(e_fail()),
             || {
-                *self.this.site.borrow_mut() = punksite.as_ref().cloned();
+                // Take the incoming COM reference before evaluating the
+                // `borrow_mut()` receiver below. Null clears the site.
+                let site = punksite.as_ref().cloned().map(Rc::new);
+                let retired = self.this.site.borrow_mut().replace(site);
+                // Drop the retired Rc only after the RefCell borrow ends; its
+                // final Release can reenter GetSite/SetSite.
+                drop(retired);
                 Ok(())
             },
         )
@@ -748,16 +758,19 @@ impl IObjectWithSite_Impl for PreviewHandler_Impl {
                 if riid.is_null() || ppvsite.is_null() {
                     return Err(e_pointer());
                 }
-                if let Some(site) = self.this.site.borrow().as_ref() {
-                    // SAFETY: COM supplied `riid`/`ppvsite`.
-                    let hr = unsafe { site.query(riid, ppvsite) };
-                    if hr.is_ok() {
-                        Ok(())
-                    } else {
-                        Err(windows::core::Error::from_hresult(hr))
-                    }
+                // Snapshot the Rc and end the RefCell borrow before calling
+                // the external site. The held Rc keeps the COM reference alive
+                // if the custom QueryInterface reenters SetSite.
+                let site = self.this.site.borrow().as_ref().map(Rc::clone);
+                let Some(site) = site else {
+                    return Err(e_fail());
+                };
+                // SAFETY: COM supplied `riid`/`ppvsite`.
+                let hr = unsafe { site.query(riid, ppvsite) };
+                if hr.is_ok() {
+                    Ok(())
                 } else {
-                    Err(e_fail())
+                    Err(windows::core::Error::from_hresult(hr))
                 }
             },
         )
