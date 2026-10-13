@@ -7,13 +7,13 @@
 <?define ShellClsid = "{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}" ?>
 <?define PreviewClsid = "{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}" ?>
 <?define PrevhostAppId = "{6D2B5079-2F0B-48DD-AB7F-97CEC514D30B}" ?>
-<!-- Two private installers were numbered ahead of the unreleased 1.2.1.
+<!-- Two private installers were numbered ahead of the first public 1.2.1.
      Recognize only their exact ProductCodes, never future public versions. -->
 <?define PrivateCandidate22 = "{B72A1528-296D-48B1-86C5-CC53C4092BC9}" ?>
 <?define PrivateCandidate23 = "{35DAB6DB-DB83-4A9B-9B43-E3C77FB7A804}" ?>
 <?define IsPrivateCandidate = '(WIX_DOWNGRADE_DETECTED = "$(var.PrivateCandidate22)" OR WIX_DOWNGRADE_DETECTED = "$(var.PrivateCandidate23)")' ?>
 <?ifndef ProductVersion?>
-<?define ProductVersion = "1.2.1" ?>
+<?define ProductVersion = "1.2.2" ?>
 <?endif?>
 <?ifndef BuildDir?>
 <?define BuildDir = "target\x86_64-pc-windows-msvc\release-unwind" ?>
