@@ -24,6 +24,10 @@ and the share within the selected tolerance all give each measured vertex one
 weight. More densely sampled regions contribute more. Remeshing the same
 surface can therefore change the summary without changing its physical shape.
 
+Search-candidate residual evidence uses its own area-weighted population. It is
+separate from this vertex-weighted deviation summary; their RMS and percentile
+values need not agree.
+
 The maximum is sampled over the measured moving vertices; it is not a
 certified continuous-surface maximum. Unmeasured vertices are excluded, with
 their causes retained separately. If too little is measured, the summary is
