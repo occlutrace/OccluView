@@ -10,14 +10,6 @@ on:
           - release
           - diagnostic
         default: release
-      release_tag:
-        description: Existing release tag to rebuild.
-        type: string
-        default: ""
-      replace_release:
-        description: Replace the files of an existing release without changing its version or tag.
-        type: boolean
-        default: false
       include_macos:
         description: Build and publish the notarized macOS package.
         type: boolean
@@ -44,6 +36,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       tag: ${{ steps.release.outputs.tag }}
+      source_sha: ${{ steps.release.outputs.source_sha }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -52,19 +45,18 @@ jobs:
       - id: release
         name: Resolve package version
         env:
-          REQUESTED_TAG: ${{ inputs.release_tag }}
           CONFIGURATION: ${{ inputs.windows_configuration }}
-          REPLACE_RELEASE: ${{ inputs.replace_release }}
         run: |
           if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$CONFIGURATION" == diagnostic ]]; then
             exit 0
           fi
           tag="$GITHUB_REF_NAME"
-          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
-            tag="$REQUESTED_TAG"
-          fi
           if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo 'Select an existing vX.Y.Z release tag.' >&2
+            echo 'Select a vX.Y.Z tag as the workflow ref.' >&2
+            exit 1
+          fi
+          if [[ "$GITHUB_REF" != "refs/tags/$tag" || "$GITHUB_REF_NAME" != "$tag" ]]; then
+            echo 'The selected workflow ref must be the requested release tag.' >&2
             exit 1
           fi
           version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
@@ -72,19 +64,14 @@ jobs:
             echo 'The release tag does not match the workspace version.' >&2
             exit 1
           fi
-          git rev-parse --verify "refs/tags/$tag^{commit}" >/dev/null
-          git merge-base --is-ancestor "refs/tags/$tag^{commit}" HEAD
-          # A deliberate replacement uses the reviewed current source while
-          # retaining the existing public version and immutable tag.
-          if [[ "$REPLACE_RELEASE" != true ]]; then
-            while IFS= read -r path; do
-              case "$path" in
-                install/build-msi.ps1|.github/workflows/package-msi.yml) ;;
-                *) echo "Native release source differs from $tag: $path" >&2; exit 1 ;;
-              esac
-            done < <(git diff --name-only "refs/tags/$tag^{commit}" HEAD)
+          tag_sha=$(git rev-parse --verify "refs/tags/$tag^{commit}")
+          source_sha=$(git rev-parse --verify "$GITHUB_SHA^{commit}")
+          if [[ "$tag_sha" != "$source_sha" ]]; then
+            echo "Release tag $tag resolves to $tag_sha, not workflow source $source_sha." >&2
+            exit 1
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
 
   windows-package:
     name: build msi
@@ -487,6 +474,7 @@ jobs:
       attestations: write
     env:
       RELEASE_TAG: ${{ needs.resolve-release.outputs.tag }}
+      RELEASE_SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
       GH_TOKEN: ${{ github.token }}
       # Only a signed, notarized macOS build is published or offered to the
       # updater; an unsigned one is a workflow artifact for testing.
@@ -504,7 +492,7 @@ jobs:
           {
             printf '# OccluView %s\n\n' "$RELEASE_TAG"
             printf '%s\n\n' 'A native desktop viewer for dental 3D scans.'
-            printf 'Source: [%s](https://github.com/%s/commit/%s)\n\n' "${GITHUB_SHA:0:7}" "$GITHUB_REPOSITORY" "$GITHUB_SHA"
+            printf 'Source SHA: [%s](%s/%s/commit/%s)\n\n' "$RELEASE_SOURCE_SHA" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$RELEASE_SOURCE_SHA"
             printf '%s\n' '## Downloads'
             printf '%s\n' '- **OccluView-Windows-Setup.msi** — installs the viewer and Explorer integration.'
             printf '%s\n' '- **OccluView-Windows-Portable.zip** — runs without installation.'
@@ -649,16 +637,74 @@ jobs:
       - name: Publish GitHub Release
         run: |
           tag="$RELEASE_TAG"
-          release_flags=()
+          source_sha="$RELEASE_SOURCE_SHA"
+          source_link="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${source_sha})"
           mapfile -d '' assets < <(find ./dist -maxdepth 1 -type f \( -name 'OccluView-Windows-Setup.msi' -o -name 'OccluView-Windows-Portable.zip' -o -name 'OccluView-Linux.deb' -o -name 'OccluView-macOS-AppleSilicon.dmg' -o -name 'OccluView-macOS-AppleSilicon.pkg' -o -name '*-verification.zip' -o -name 'latest.json' -o -name 'latest.json.minisig' \) -print0 | sort -z)
           if [[ "${#assets[@]}" -eq 0 ]]; then
             echo "No release assets found." >&2
             exit 1
           fi
-          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --title "OccluView $tag" --notes-file "./dist/release-notes.md" --draft=true "${release_flags[@]}"
-            gh release upload "$tag" --repo "$GITHUB_REPOSITORY" "${assets[@]}" --clobber
+
+          remote_tag_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$tag" --jq .sha)
+          if [[ "$remote_tag_sha" != "$source_sha" ]]; then
+            echo "Remote tag $tag resolves to $remote_tag_sha, not source $source_sha." >&2
+            exit 1
+          fi
+
+          release_json=""
+          if release_json=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" 2>/dev/null); then
+            if ! jq -e --arg source_link "$source_link" \
+              '(.draft == true) and ((.body // "") | contains($source_link))' \
+              <<< "$release_json" >/dev/null; then
+              echo "An existing release for $tag is published or belongs to a different source; refusing to change it." >&2
+              exit 1
+            fi
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --title "OccluView $tag" --notes-file "./dist/release-notes.md"
+            release_id=$(jq -r .id <<< "$release_json")
+            mapfile -t old_asset_ids < <(
+              gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$release_id/assets" --jq '.[].id'
+            )
+            for asset_id in "${old_asset_ids[@]}"; do
+              gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"
+            done
+            gh release upload "$tag" --repo "$GITHUB_REPOSITORY" "${assets[@]}"
           else
-            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" "${assets[@]}" --title "OccluView $tag" --notes-file "./dist/release-notes.md" --draft=true "${release_flags[@]}"
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --verify-tag --target "$source_sha" "${assets[@]}" --title "OccluView $tag" --notes-file "./dist/release-notes.md" --draft
+          fi
+
+          verify_dir=$(mktemp -d "$RUNNER_TEMP/occluview-release-assets.XXXXXX")
+          trap 'rm -rf "$verify_dir"' EXIT
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir "$verify_dir"
+          mapfile -d '' downloaded < <(find "$verify_dir" -maxdepth 1 -type f -print0 | sort -z)
+          if [[ "${#downloaded[@]}" -ne "${#assets[@]}" ]]; then
+            echo "Release asset count mismatch: expected ${#assets[@]}, downloaded ${#downloaded[@]}." >&2
+            exit 1
+          fi
+          for asset in "${assets[@]}"; do
+            name=$(basename "$asset")
+            downloaded_asset="$verify_dir/$name"
+            if [[ ! -f "$downloaded_asset" ]]; then
+              echo "Release asset is missing after download: $name." >&2
+              exit 1
+            fi
+            expected_sha=$(sha256sum "$asset" | cut -d' ' -f1)
+            actual_sha=$(sha256sum "$downloaded_asset" | cut -d' ' -f1)
+            if [[ "$actual_sha" != "$expected_sha" ]]; then
+              echo "Release asset digest mismatch: $name." >&2
+              exit 1
+            fi
+          done
+
+          remote_tag_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$tag" --jq .sha)
+          if [[ "$remote_tag_sha" != "$source_sha" ]]; then
+            echo "Remote tag $tag changed during package publication." >&2
+            exit 1
+          fi
+          release_json=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag")
+          if ! jq -e --arg source_link "$source_link" \
+            '(.draft == true) and ((.body // "") | contains($source_link))' \
+            <<< "$release_json" >/dev/null; then
+            echo "Release draft changed during asset verification; refusing to publish." >&2
+            exit 1
           fi
           gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --latest

@@ -178,6 +178,13 @@ Alignment quality needs review on real scans in the application. A successful
 package build does not establish clinical accuracy or operator acceptance.
 Patient scans stay out of the public repository.
 
+Every change to published runtime bytes requires a new patch version and tag;
+published releases are not replaced in place. The package workflow runs for a
+tag push or a manual run started from that tag, and requires the tag to point at
+the exact source commit being packaged. It stages and checks the release assets
+as an unpublished draft before publishing. A failed upload remains a draft
+until that same source can be retried.
+
 The MSI builds `occluview_shell.dll` from the revision in
 `install/shell-pin.json` while the viewer builds from the tagged tree. Explorer
 loads this DLL in its own process, so its pin names a revision exercised through
