@@ -36,6 +36,8 @@ pub(super) struct PersistenceState {
     /// settings.json can never erase the language choice.
     pub(super) language_persistence: SettingsPersistence,
     pub(super) recent_files: RecentFiles,
+    /// Unknown or unreadable on-disk history remains untouched until Clear Recent.
+    pub(super) may_write_recent: bool,
     pub(super) last_export_dir: Option<PathBuf>,
     pub(super) update_notice: UpdateNotice,
     /// When the sculpt sliders last changed during the current drag: the
@@ -47,6 +49,7 @@ pub(super) struct PersistenceState {
 impl PersistenceState {
     pub(super) fn new() -> Self {
         let settings = Settings::load();
+        let loaded_recent_files = load_recent_files(RECENT_FILES_LIMIT);
         let last_export_dir = if settings.remember_export_dir {
             settings.last_export_dir.as_ref().map(PathBuf::from)
         } else {
@@ -54,7 +57,8 @@ impl PersistenceState {
         };
         let update_check_on_start = settings.update_check_on_start;
         Self {
-            recent_files: load_recent_files(RECENT_FILES_LIMIT),
+            recent_files: loaded_recent_files.recent_files,
+            may_write_recent: loaded_recent_files.may_write_recent,
             settings,
             settings_persistence: SettingsPersistence::default(),
             language_persistence: SettingsPersistence::default(),
@@ -72,6 +76,7 @@ impl PersistenceState {
             settings_persistence: SettingsPersistence::default(),
             language_persistence: SettingsPersistence::default(),
             recent_files: RecentFiles::new(1),
+            may_write_recent: true,
             last_export_dir: None,
             update_notice: UpdateNotice::begin_check(false),
             sculpt_settings_dirty_since: None,
@@ -79,11 +84,20 @@ impl PersistenceState {
     }
 
     pub(super) fn push_recent_scene(&mut self, paths: &[PathBuf]) {
-        self.recent_files.push_paths(paths);
+        if self.may_write_recent {
+            self.recent_files.push_paths(paths);
+        }
     }
 
     pub(super) fn save_recent_files(&self) {
-        save_recent_files(&self.recent_files);
+        save_recent_files(&self.recent_files, self.may_write_recent);
+    }
+
+    /// Clear is the explicit operator action that allows an unsupported stored
+    /// format to be replaced by this binary's empty list.
+    pub(super) fn clear_recent_files(&mut self) {
+        mark_recent_files_cleared(&mut self.recent_files, &mut self.may_write_recent);
+        self.save_recent_files();
     }
 
     pub(super) fn persist_settings_if_due(&mut self, ctx: &egui::Context) {
@@ -205,6 +219,11 @@ impl PersistenceState {
     }
 }
 
+fn mark_recent_files_cleared(recent_files: &mut RecentFiles, may_write_recent: &mut bool) {
+    recent_files.clear();
+    *may_write_recent = true;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,6 +234,7 @@ mod tests {
             settings_persistence: SettingsPersistence::default(),
             language_persistence: SettingsPersistence::default(),
             recent_files: RecentFiles::new(10),
+            may_write_recent: true,
             last_export_dir: None,
             update_notice: UpdateNotice::begin_check(false),
             sculpt_settings_dirty_since: None,
@@ -228,6 +248,17 @@ mod tests {
         assert!(persistence.recent_files.is_empty());
         persistence.push_recent_scene(&[PathBuf::from("/tmp/a.stl")]);
         assert!(!persistence.recent_files.is_empty());
+    }
+
+    #[test]
+    fn explicit_clear_enables_replacement_of_unknown_recent_storage() {
+        let mut recent_files = RecentFiles::new(10);
+        let mut may_write_recent = false;
+
+        mark_recent_files_cleared(&mut recent_files, &mut may_write_recent);
+
+        assert!(recent_files.is_empty());
+        assert!(may_write_recent);
     }
 
     #[test]
