@@ -72,7 +72,6 @@ pub(super) fn load_thumbnail_mesh_from_bytes_kind(
     )
 }
 
-#[cfg(test)]
 pub(super) fn load_thumbnail_mesh_from_file(
     path: &Path,
     metadata: cache::ThumbnailFileMetadata,

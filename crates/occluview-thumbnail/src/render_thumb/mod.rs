@@ -54,11 +54,9 @@ pub use fallback::placeholder_for_oversize_input;
 use fallback::placeholder_kind_for_error;
 use loading::{
     load_thumbnail_mesh_from_bytes, load_thumbnail_mesh_from_bytes_kind,
-    load_thumbnail_mesh_from_opened_file, prepare_file_thumbnail_render,
+    load_thumbnail_mesh_from_file, load_thumbnail_mesh_from_opened_file, prepare_file_thumbnail_render,
     prepare_stream_thumbnail_render, thumbnail_format_kind_from_file_bytes,
 };
-#[cfg(test)]
-use loading::load_thumbnail_mesh_from_file;
 
 /// Default maximum wall-clock wait for a shell thumbnail request.
 pub const DEFAULT_THUMBNAIL_TIMEOUT: Duration = Duration::from_millis(6_000);
