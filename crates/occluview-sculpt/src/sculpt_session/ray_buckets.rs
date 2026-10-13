@@ -67,6 +67,10 @@ pub(super) struct TriBuckets {
     pub(super) spilled_triangles: Vec<u32>,
     /// Total number of triangle-to-cell references currently in `map`.
     bucket_references: usize,
+    /// Test-only source counter for proving batch removal scans each affected
+    /// bucket once, independent of the number of changed triangles.
+    #[cfg(test)]
+    last_batch_cell_passes: usize,
 }
 
 impl TriBuckets {
@@ -90,6 +94,8 @@ impl TriBuckets {
             triangle_cells: Vec::with_capacity(tris.len() / 3),
             spilled_triangles: Vec::new(),
             bucket_references: 0,
+            #[cfg(test)]
+            last_batch_cell_passes: 0,
         };
         let mut spilled = Vec::new();
         for (ti, _) in tris.as_chunks::<3>().0.iter().enumerate() {
@@ -175,9 +181,10 @@ impl TriBuckets {
             let became_occupied = {
                 let entries = self.map.entry(cell).or_default();
                 let was_empty = entries.is_empty();
-                if let Err(position) = entries.binary_search(&triangle) {
-                    entries.insert(position, triangle);
-                }
+                // IDs are unique within a cell, but updates can append an
+                // older ID after untouched faces. Ray hits resolve exact
+                // distance ties by ID, so bucket storage need not stay sorted.
+                entries.push(triangle);
                 was_empty
             };
             if became_occupied {
@@ -188,10 +195,22 @@ impl TriBuckets {
         debug_assert!(self.bucket_references <= MAX_BUCKET_REFERENCES);
     }
 
-    fn remove_triangle_from_buckets(&mut self, triangle: u32, span: CellSpan, references: usize) {
-        for cell in span_cells(span) {
+    /// Remove selected triangle ids from the union of their old cells. Each
+    /// affected bucket is compacted once, even when changed faces overlap it.
+    /// Updates use sorted touched-id membership; drops select a dense tail.
+    fn remove_triangles_from_cells(
+        &mut self,
+        cells: &[Cell],
+        mut should_remove: impl FnMut(u32) -> bool,
+    ) -> (usize, usize) {
+        let mut removed_references = 0;
+        let mut cell_passes = 0;
+        for &cell in cells {
             let became_empty = if let Some(entries) = self.map.get_mut(&cell) {
-                entries.retain(|&candidate| candidate != triangle);
+                cell_passes += 1;
+                let old_len = entries.len();
+                entries.retain(|&candidate| !should_remove(candidate));
+                removed_references += old_len - entries.len();
                 entries.is_empty()
             } else {
                 false
@@ -201,8 +220,7 @@ impl TriBuckets {
                 self.note_occupancy(cell, false);
             }
         }
-        debug_assert!(self.bucket_references >= references);
-        self.bucket_references -= references;
+        (removed_references, cell_passes)
     }
 
     /// Merge ascending spill ids into the existing ascending list in place.
@@ -266,10 +284,39 @@ impl TriBuckets {
         if touched.is_empty() {
             return;
         }
+        #[cfg(test)]
+        {
+            self.last_batch_cell_passes = 0;
+        }
         let updates: Vec<_> = touched
             .iter()
             .map(|&triangle| (triangle, self.span_of_triangle(verts, tris, triangle)))
             .collect();
+
+        let mut affected_cells = Vec::new();
+        let mut references = 0;
+        for &(triangle, _) in &updates {
+            if let Some(span) = self.triangle_cells[triangle as usize].take() {
+                references += span_cell_count(span)
+                    .expect("a regular ray span has a checked cell count");
+                affected_cells.extend(span_cells(span));
+            }
+        }
+        affected_cells.sort_unstable();
+        affected_cells.dedup();
+
+        let (removed_references, _cell_passes) = self.remove_triangles_from_cells(
+            &affected_cells,
+            |triangle| touched.binary_search(&triangle).is_ok(),
+        );
+        debug_assert_eq!(removed_references, references);
+        debug_assert!(self.bucket_references >= references);
+        self.bucket_references -= references;
+        #[cfg(test)]
+        {
+            self.last_batch_cell_passes = _cell_passes;
+        }
+
         let mut touched_index = 0;
         self.spilled_triangles.retain(|&triangle| {
             while touched_index < touched.len() && touched[touched_index] < triangle {
@@ -281,14 +328,6 @@ impl TriBuckets {
             }
             !remove
         });
-
-        for &(triangle, _) in &updates {
-            if let Some(span) = self.triangle_cells[triangle as usize].take() {
-                let references = span_cell_count(span)
-                    .expect("a regular ray span has a checked cell count");
-                self.remove_triangle_from_buckets(triangle, span, references);
-            }
-        }
         let mut spilled = Vec::new();
         for (triangle, next) in updates {
             let indexed = self.assign_triangle(triangle, next, &mut spilled);
@@ -327,13 +366,29 @@ impl TriBuckets {
     /// truncates its own index buffer afterwards.
     pub(super) fn drop_triangles(&mut self, from_id: u32) {
         let from = (from_id as usize).min(self.triangle_cells.len());
+        #[cfg(test)]
+        {
+            self.last_batch_cell_passes = 0;
+        }
+        let mut affected_cells = Vec::new();
+        let mut references = 0;
         for index in from..self.triangle_cells.len() {
-            let triangle = index as u32;
-            if let Some(span) = self.triangle_cells[index] {
-                let references = span_cell_count(span)
+            if let Some(span) = self.triangle_cells[index].take() {
+                references += span_cell_count(span)
                     .expect("a regular ray span has a checked cell count");
-                self.remove_triangle_from_buckets(triangle, span, references);
+                affected_cells.extend(span_cells(span));
             }
+        }
+        affected_cells.sort_unstable();
+        affected_cells.dedup();
+        let (removed_references, _cell_passes) =
+            self.remove_triangles_from_cells(&affected_cells, |triangle| triangle >= from_id);
+        debug_assert_eq!(removed_references, references);
+        debug_assert!(self.bucket_references >= references);
+        self.bucket_references -= references;
+        #[cfg(test)]
+        {
+            self.last_batch_cell_passes = _cell_passes;
         }
         self.spilled_triangles.retain(|&triangle| triangle < from_id);
         self.triangle_cells.truncate(from);
@@ -382,6 +437,10 @@ mod tests {
 
     fn small_triangle() -> Vec<f32> {
         vec![0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 2.0, 0.0]
+    }
+
+    fn repeated_face_indices(count: usize) -> Vec<u32> {
+        (0..count).flat_map(|_| [0, 1, 2]).collect()
     }
 
     #[test]
@@ -436,6 +495,57 @@ mod tests {
         assert!(grid.map.is_empty());
         assert_eq!(grid.min_cell, (0, 0, 0));
         assert_eq!(grid.max_cell, (0, 0, 0));
+    }
+
+    #[test]
+    fn overlapping_batch_updates_compact_each_affected_bucket_once() {
+        let verts = small_triangle();
+        let tris = repeated_face_indices(32);
+        let mut grid = TriBuckets::build(&verts, &tris, 2.0);
+
+        grid.update_triangles(&verts, &tris, &(0..32).collect::<Vec<_>>());
+
+        // Every face shares the same four-cell span. Work is one retain pass
+        // per affected bucket, not one pass per face per bucket.
+        assert_eq!(grid.last_batch_cell_passes, 4);
+        assert_eq!(grid.bucket_references, 32 * 4);
+        assert_eq!(grid.map.len(), 4);
+        assert!(grid.map.values().all(|faces| faces.len() == 32));
+    }
+
+    #[test]
+    fn dropping_a_dense_tail_compacts_each_affected_bucket_once() {
+        let verts = small_triangle();
+        let tris = repeated_face_indices(32);
+        let mut grid = TriBuckets::build(&verts, &tris, 2.0);
+
+        grid.drop_triangles(16);
+
+        assert_eq!(grid.last_batch_cell_passes, 4);
+        assert_eq!(grid.triangle_cells.len(), 16);
+        assert_eq!(grid.bucket_references, 16 * 4);
+        assert_eq!(grid.map.len(), 4);
+        assert!(grid
+            .map
+            .values()
+            .all(|faces| faces == &(0..16).collect::<Vec<_>>()));
+    }
+
+    #[test]
+    fn reinserting_a_low_id_appends_after_untouched_bucket_members() {
+        let mut verts = small_triangle();
+        verts.extend_from_slice(&small_triangle());
+        let tris = vec![0, 1, 2, 3, 4, 5];
+        let mut grid = TriBuckets::build(&verts, &tris, 2.0);
+
+        // Shrink face 0 into cell (0, 0, 0), which face 1 still occupies.
+        verts[3] = 1.5;
+        verts[7] = 1.5;
+        grid.update_triangles(&verts, &tris, &[0]);
+
+        assert_eq!(grid.map.get(&(0, 0, 0)), Some(&vec![1, 0]));
+        assert_eq!(grid.triangle_cells[0], Some(((0, 0, 0), (0, 0, 0))));
+        assert_eq!(grid.bucket_references, 5);
     }
 
     #[test]
