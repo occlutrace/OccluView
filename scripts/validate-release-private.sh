@@ -255,20 +255,28 @@ def resolve_asset(relative):
             "private acceptance asset is unavailable or uses a symlink; no receipt was written"
         ) from None
 
-def read_checked_asset(relative):
+def hash_checked_asset(relative):
     candidate, resolved = resolve_asset(relative)
     try:
         before = resolved.stat()
-        content = resolved.read_bytes()
+        digest = hashlib.sha256()
+        read_size = 0
+        with resolved.open("rb") as stream:
+            while chunk := stream.read(1024 * 1024):
+                read_size += len(chunk)
+                if read_size > before.st_size:
+                    raise OSError("asset grew during receipt validation")
+                digest.update(chunk)
         candidate_after, resolved_after = resolve_asset(relative)
         after = resolved_after.stat()
     except (OSError, RuntimeError):
         raise SystemExit("private acceptance asset changed during receipt validation; no receipt was written") from None
     before_identity = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
     after_identity = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
-    if candidate_after != candidate or resolved_after != resolved or before_identity != after_identity:
+    if (candidate_after != candidate or resolved_after != resolved
+            or before_identity != after_identity or read_size != before.st_size):
         raise SystemExit("private acceptance asset changed during receipt validation; no receipt was written")
-    return content
+    return digest.digest()
 
 corpus_digest = hashlib.sha256()
 update_field(corpus_digest, b"occluview-private-acceptance-corpus-v1")
@@ -284,7 +292,7 @@ for case in cases:
             raise SystemExit("private acceptance manifest has an unsafe asset path; no receipt was written")
         if "\\" in asset["file"] or ":" in asset["file"]:
             raise SystemExit("private acceptance manifest has an unsafe asset path; no receipt was written")
-        file_sha = hashlib.sha256(read_checked_asset(relative)).digest()
+        file_sha = hash_checked_asset(relative)
         update_field(corpus_digest, case_id.encode("utf-8"))
         update_field(corpus_digest, asset["file"].encode("utf-8"))
         update_field(corpus_digest, file_sha)
