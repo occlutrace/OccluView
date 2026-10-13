@@ -54,10 +54,16 @@ per case; the manifest has no acceptance defaults.
   mean the parser rejects the file or that the application has
   accepted/rejected an operator action.
 
-Confidence values are `weak`, `ambiguous`, `probable`, and `verified`. Expected
-reasons are `insufficient_support`, `unobservable_motion`, `close_rival`,
+Confidence values are `weak`, `ambiguous`, `probable`, and `verified`. A
+`not_verified` case names one manifest `required_reason` from
+`insufficient_support`, `unobservable_motion`, `close_rival`,
 `policy_conflict`, `suspected_units_or_deformation`, `missing_normals`,
-`uniqueness_not_established`, and `invalid_topology`.
+`uniqueness_not_established`, and `invalid_topology`. A returned candidate's
+evidence can additionally carry `unvalidated_input`, `budget_exhausted`,
+`invalid_seed`, or `landmark_rejected`; those explain why a candidate was not
+selected and cannot be demanded by a manifest. The manifest parser accepts only
+the eight reasons a case can require; the receipt records every returned
+candidate's reasons from the full result vocabulary.
 
 The manifest is strict: unknown fields, duplicate IDs, invalid bounds,
 unsupported schema, absent inputs, zero cases, incomplete search, missing

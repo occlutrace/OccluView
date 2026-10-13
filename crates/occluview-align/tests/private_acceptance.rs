@@ -864,7 +864,7 @@ fn manifest_validation_fails_closed_on_zero_fixtures() {
 
 #[test]
 #[should_panic(expected = "case ID")]
-fn manifest_validation_fails_closed_on_a_non_random_case_id() {
+fn manifest_validation_fails_closed_on_a_malformed_case_id() {
     validate_manifest(&manifest_with(vec![valid_pose_case("case_0123456789AB")]));
 }
 
@@ -930,13 +930,47 @@ fn asset_paths_must_be_relative_and_traversal_free() {
     assert!(!valid_relative_file(""));
 }
 
+/// A private temporary directory removed when this guard drops.
+struct TempDir(std::path::PathBuf);
+
+impl TempDir {
+    fn new() -> Self {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_nanos());
+        let base = std::env::temp_dir().join(format!(
+            "occluview-private-acceptance-{}-{nanos}",
+            std::process::id(),
+        ));
+        for attempt in 0..1024_u32 {
+            let candidate = if attempt == 0 {
+                base.clone()
+            } else {
+                base.with_extension(format!("retry-{attempt}"))
+            };
+            match std::fs::create_dir(&candidate) {
+                Ok(()) => return Self(candidate),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => panic!("cannot create a private fixture directory: {error}"),
+            }
+        }
+        panic!("cannot create a unique private fixture directory");
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 #[test]
 #[should_panic(expected = "unavailable")]
 fn a_missing_private_asset_fails_closed() {
-    let root = std::env::temp_dir();
+    let root = TempDir::new();
     let asset = AssetSpec {
-        file: format!("occluview-definitely-missing-{}.stl", std::process::id()),
+        file: "missing.stl".into(),
         scale_to_mm: 1.0,
     };
-    let _ = resolve_asset(&root, &asset);
+    let _ = resolve_asset(&root.0, &asset);
 }
