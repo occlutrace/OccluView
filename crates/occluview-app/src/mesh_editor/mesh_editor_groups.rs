@@ -69,18 +69,18 @@ pub(super) fn tab_strip(
 fn tab_pill(ui: &mut egui::Ui, label: &str, width: f32, active: bool) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, TAB_H), egui::Sense::click());
     let fill = if active {
-        ui_theme::accent()
+        ui_theme::ThemeTokens::from_ui(ui).accent()
     } else if response.hovered() {
-        ui_theme::accent().gamma_multiply(0.16)
+        ui_theme::ThemeTokens::from_ui(ui).accent().gamma_multiply(0.16)
     } else {
         egui::Color32::TRANSPARENT
     };
     let painter = ui.painter();
     painter.rect_filled(rect, TAB_H * 0.5, fill);
     let text = if active {
-        ui_theme::on_accent()
+        ui_theme::ThemeTokens::from_ui(ui).on_accent()
     } else {
-        ui_theme::text_weak()
+        ui_theme::ThemeTokens::from_ui(ui).text_weak()
     };
     painter.text(
         rect.center(),
@@ -93,7 +93,7 @@ fn tab_pill(ui: &mut egui::Ui, label: &str, width: f32, active: bool) -> egui::R
         painter.rect_stroke(
             rect.shrink(1.0),
             TAB_H * 0.5,
-            egui::Stroke::new(1.5_f32, ui_theme::accent()),
+            egui::Stroke::new(1.5_f32, ui_theme::ThemeTokens::from_ui(ui).accent()),
             egui::StrokeKind::Inside,
         );
     }
@@ -114,16 +114,16 @@ fn close_cross(
         rect.shrink(3.0),
         AppIcon::Close,
         if response.hovered() {
-            ui_theme::text()
+            ui_theme::ThemeTokens::from_ui(ui).text()
         } else {
-            ui_theme::text_weak()
+            ui_theme::ThemeTokens::from_ui(ui).text_weak()
         },
     );
     if response.has_focus() {
         ui.painter().rect_stroke(
             rect.shrink(1.0),
             CELL_ROUNDING,
-            egui::Stroke::new(1.5_f32, ui_theme::accent()),
+            egui::Stroke::new(1.5_f32, ui_theme::ThemeTokens::from_ui(ui).accent()),
             egui::StrokeKind::Inside,
         );
     }
@@ -572,7 +572,7 @@ fn sculpt_slider_row(
         ui.painter().rect_stroke(
             response.rect.shrink(1.0),
             CELL_ROUNDING,
-            egui::Stroke::new(1.25_f32, ui_theme::accent()),
+            egui::Stroke::new(1.25_f32, ui_theme::ThemeTokens::from_ui(ui).accent()),
             egui::StrokeKind::Inside,
         );
     }
@@ -605,7 +605,7 @@ fn close_holes_limit_control(
         ui.painter().rect_stroke(
             checkbox.rect.shrink(1.0),
             CELL_ROUNDING,
-            egui::Stroke::new(1.25_f32, ui_theme::accent()),
+            egui::Stroke::new(1.25_f32, ui_theme::ThemeTokens::from_ui(ui).accent()),
             egui::StrokeKind::Inside,
         );
     }
@@ -724,10 +724,10 @@ pub(super) fn tall_text_button(
     let button = if primary {
         egui::Button::new(
             egui::RichText::new(label)
-                .color(ui_theme::on_accent())
+                .color(ui_theme::ThemeTokens::from_ui(ui).on_accent())
                 .strong(),
         )
-        .fill(ui_theme::accent())
+        .fill(ui_theme::ThemeTokens::from_ui(ui).accent())
         .corner_radius(CELL_ROUNDING)
     } else {
         egui::Button::new(label).corner_radius(CELL_ROUNDING)

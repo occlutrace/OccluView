@@ -384,13 +384,13 @@ impl RepairReportDialog {
                         egui::RichText::new(locale.tr(crate::i18n::message_id!("repair-title")))
                             .size(18.0)
                             .strong()
-                            .color(ui_theme::text()),
+                            .color(ui_theme::ThemeTokens::from_context(ctx).text()),
                     );
                     ui.add(
                         egui::Label::new(
                             egui::RichText::new(&layer_label)
                                 .size(11.0)
-                                .color(ui_theme::text_weak()),
+                                .color(ui_theme::ThemeTokens::from_context(ctx).text_weak()),
                         )
                         .truncate(),
                     )
@@ -430,7 +430,7 @@ impl RepairReportDialog {
                                                 "repair-clean-headline"
                                             )),
                                         )
-                                        .color(ui_theme::text()),
+                                        .color(ui_theme::ThemeTokens::from_context(ctx).text()),
                                     );
                                 });
                             }
@@ -443,7 +443,7 @@ impl RepairReportDialog {
                                     ui.label(
                                         egui::RichText::new(info)
                                             .size(11.0)
-                                            .color(ui_theme::text_weak()),
+                                            .color(ui_theme::ThemeTokens::from_context(ctx).text_weak()),
                                     );
                                 }
                             }
@@ -474,7 +474,7 @@ impl RepairReportDialog {
 fn line_row(ui: &mut egui::Ui, icon: LineIcon, text: &str) {
     ui.horizontal(|ui| {
         gutter_icon(ui, icon);
-        ui.label(egui::RichText::new(text).color(ui_theme::text()));
+        ui.label(egui::RichText::new(text).color(ui_theme::ThemeTokens::from_ui(ui).text()));
     });
 }
 
@@ -484,13 +484,13 @@ fn gutter_icon(ui: &mut egui::Ui, icon: LineIcon) {
     let painter = ui.painter();
     match icon {
         LineIcon::Removed => {
-            crate::ui::icons::paint(painter, rect, AppIcon::Delete, ui_theme::text_weak());
+            crate::ui::icons::paint(painter, rect, AppIcon::Delete, ui_theme::ThemeTokens::from_ui(ui).text_weak());
         }
         LineIcon::Closed => {
-            crate::ui::icons::paint(painter, rect, AppIcon::CloseHoles, ui_theme::text_weak());
+            crate::ui::icons::paint(painter, rect, AppIcon::CloseHoles, ui_theme::ThemeTokens::from_ui(ui).text_weak());
         }
         LineIcon::Fixed => {
-            crate::ui::icons::paint(painter, rect, AppIcon::Check, ui_theme::accent());
+            crate::ui::icons::paint(painter, rect, AppIcon::Check, ui_theme::ThemeTokens::from_ui(ui).accent());
         }
     }
 }

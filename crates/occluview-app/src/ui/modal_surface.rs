@@ -21,7 +21,8 @@ pub(crate) fn show_information_modal<T>(
 ) -> egui::ModalResponse<T> {
     let viewport = ctx.content_rect();
     let bounds = viewport.shrink(16.0);
-    let frame = ui_theme::window_frame().inner_margin(egui::Margin::same(20));
+    let frame = ui_theme::window_frame(ui_theme::ThemeTokens::from_context(ctx))
+        .inner_margin(egui::Margin::same(20));
     let preferred_size = default_size.min(bounds.size());
     let modal_layer = egui::LayerId::new(egui::Order::Foreground, id);
     let is_top_modal = ctx.memory_mut(|memory| {
@@ -92,7 +93,8 @@ pub(crate) fn show_information_modal<T>(
                         // so plain labels must use the matching chrome ink
                         // even when the active button ink is tuned for an
                         // accent fill.
-                        ui.visuals_mut().override_text_color = Some(ui_theme::text());
+                        ui.visuals_mut().override_text_color =
+                            Some(ui_theme::ThemeTokens::from_context(ctx).text());
                         ui.set_width((preferred_size.x - 40.0).max(0.0));
                         ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
                         ui.style_mut().interaction.selectable_labels = false;

@@ -247,7 +247,12 @@ impl<P: Fn(Vec3) -> Option<egui::Pos2>> RulerPainter<'_, P> {
             reason = "preserve established label-pixel output"
         )]
         let mid = egui::pos2((a.x + b.x) * 0.5, (a.y + b.y) * 0.5 - LABEL_LIFT_PX);
-        measure_draw::label_chip(self.painter, mid, &label, ui_theme::text());
+        measure_draw::label_chip(
+            self.painter,
+            mid,
+            &label,
+            ui_theme::ThemeTokens::from_painter(self.painter).text(),
+        );
     }
 
     /// A ruler ending on another ruler's line: the segment from the picked
@@ -347,7 +352,7 @@ impl<P: Fn(Vec3) -> Option<egui::Pos2>> RulerPainter<'_, P> {
             painter,
             label_at,
             &format_angle(angle, self.number_format),
-            ui_theme::text(),
+            ui_theme::ThemeTokens::from_painter(painter).text(),
         );
         Some(label_at)
     }
@@ -382,7 +387,7 @@ fn paint_probe(
                 painter,
                 label_anchor,
                 &format_length(f64::from(thickness_mm), unit, locale.number_format()),
-                ui_theme::text(),
+                ui_theme::ThemeTokens::from_painter(painter).text(),
             );
         }
         ThicknessReading::Open => {
@@ -391,7 +396,7 @@ fn paint_probe(
                 painter,
                 label_anchor,
                 &locale.tr(crate::i18n::message_id!("measure-open-no-opposite-wall")),
-                ui_theme::text_weak(),
+                ui_theme::ThemeTokens::from_painter(painter).text_weak(),
             );
         }
     }
@@ -434,7 +439,7 @@ pub(crate) fn toolbar_toggle_width(ui: &egui::Ui, label: &str, active: bool) -> 
     let galley = ui.painter().layout_no_wrap(
         label.to_owned(),
         egui::FontId::proportional(12.5),
-        ui_theme::text(),
+        ui_theme::ThemeTokens::from_ui(ui).text(),
     );
     35.0 + galley.size().x + if active { 17.0 } else { 0.0 }
 }
@@ -452,7 +457,7 @@ pub(crate) fn toolbar_toggle(ui: &mut egui::Ui, control: ToolbarToggle<'_>) -> e
     let ink = if !enabled {
         ui.visuals().weak_text_color()
     } else if active {
-        ui_theme::accent()
+        ui_theme::ThemeTokens::from_ui(ui).accent()
     } else {
         ui.visuals().widgets.inactive.fg_stroke.color
     };
@@ -477,15 +482,15 @@ pub(crate) fn toolbar_toggle(ui: &mut egui::Ui, control: ToolbarToggle<'_>) -> e
     let (rect, response) = ui.allocate_exact_size(size, sense);
     let painter = ui.painter();
     if active {
-        painter.rect_filled(rect, 4.0, ui_theme::accent().gamma_multiply(0.16));
+        painter.rect_filled(rect, 4.0, ui_theme::ThemeTokens::from_ui(ui).accent().gamma_multiply(0.16));
         painter.rect_stroke(
             rect,
             4.0,
-            egui::Stroke::new(1.0_f32, ui_theme::accent().gamma_multiply(0.75)),
+            egui::Stroke::new(1.0_f32, ui_theme::ThemeTokens::from_ui(ui).accent().gamma_multiply(0.75)),
             egui::StrokeKind::Middle,
         );
     } else if enabled && response.hovered() {
-        painter.rect_filled(rect, 4.0, ui_theme::accent().gamma_multiply(0.10));
+        painter.rect_filled(rect, 4.0, ui_theme::ThemeTokens::from_ui(ui).accent().gamma_multiply(0.10));
     }
     let icon_rect = egui::Rect::from_center_size(
         egui::pos2(rect.left() + 7.0 + icon_side * 0.5, rect.center().y),

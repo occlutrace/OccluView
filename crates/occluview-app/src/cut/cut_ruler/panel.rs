@@ -286,11 +286,11 @@ where
 /// Paint the rounded panel background and the header hairline. The live distance
 /// is drawn on the ruler line itself ([`CutRuler::draw`]), not in the header.
 fn draw_panel_frame(painter: &egui::Painter, panel_rect: egui::Rect) {
-    painter.rect_filled(panel_rect, 8.0, ui_theme::panel_fill());
+    painter.rect_filled(panel_rect, 8.0, ui_theme::ThemeTokens::from_painter(painter).panel_fill());
     painter.rect_stroke(
         panel_rect,
         8.0,
-        egui::Stroke::new(1.0_f32, ui_theme::panel_stroke()),
+        egui::Stroke::new(1.0_f32, ui_theme::ThemeTokens::from_painter(painter).panel_stroke()),
         egui::StrokeKind::Middle,
     );
     let header_baseline = panel_rect.top() + PANEL_PAD_PX + PANEL_HEADER_PX;
@@ -299,7 +299,7 @@ fn draw_panel_frame(painter: &egui::Painter, panel_rect: egui::Rect) {
             egui::pos2(panel_rect.left() + 6.0, header_baseline),
             egui::pos2(panel_rect.right() - 6.0, header_baseline),
         ],
-        egui::Stroke::new(1.0_f32, ui_theme::hairline()),
+        egui::Stroke::new(1.0_f32, ui_theme::ThemeTokens::from_painter(painter).hairline()),
     );
 }
 
@@ -413,9 +413,9 @@ fn draw_close_button(ui: &mut egui::Ui, locale: &crate::i18n::LocaleManager) -> 
         close_rect,
         crate::ui::icons::AppIcon::Close,
         if close_hovered {
-            ui_theme::text()
+            ui_theme::ThemeTokens::from_ui(ui).text()
         } else {
-            ui_theme::text_weak()
+            ui_theme::ThemeTokens::from_ui(ui).text_weak()
         },
     );
     let close_clicked = close.on_hover_text(label).clicked();
@@ -629,7 +629,7 @@ fn draw_empty_state(
         egui::Align2::CENTER_CENTER,
         locale.tr(crate::i18n::message_id!("cut-empty")),
         egui::FontId::proportional(12.0),
-        ui_theme::text_muted(),
+        ui_theme::ThemeTokens::from_painter(painter).text_muted(),
     );
 }
 
@@ -650,7 +650,7 @@ fn draw_section_footer(
         egui::Align2::CENTER_BOTTOM,
         hint,
         egui::FontId::proportional(9.5),
-        ui_theme::text_muted(),
+        ui_theme::ThemeTokens::from_painter(painter).text_muted(),
     );
 }
 

@@ -51,6 +51,7 @@ pub(crate) fn show(
     let mut action = None;
     let mut open = true;
     ui_theme::window(
+        ui_theme::ThemeTokens::from_context(ctx),
         view.locale
             .tr(crate::i18n::message_id!("align-brush-title")),
         WINDOW_WIDTH,
@@ -122,12 +123,12 @@ fn mesh_selection(
             ui.painter(),
             rect,
             AppIcon::MaskBrush,
-            ui_theme::text_weak(),
+            ui_theme::ThemeTokens::from_ui(ui).text_weak(),
         );
         ui.label(
             egui::RichText::new(locale.tr(crate::i18n::message_id!("align-brush-mesh-selection")))
                 .size(11.0)
-                .color(ui_theme::text_muted()),
+                .color(ui_theme::ThemeTokens::from_ui(ui).text_muted()),
         );
     });
     for target in BrushTarget::ALL {

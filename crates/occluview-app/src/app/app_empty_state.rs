@@ -44,7 +44,7 @@ impl SceneContext<'_> {
                     ui.painter(),
                     icon_rect,
                     crate::ui::icons::AppIcon::Open,
-                    crate::ui::ui_theme::text_weak(),
+                    crate::ui::ui_theme::ThemeTokens::from_ui(ui).text_weak(),
                 );
                 ui.add_space(4.0);
                 ui.label(
@@ -53,7 +53,7 @@ impl SceneContext<'_> {
                             .locale
                             .text(crate::i18n::message_id!("empty-open-file")),
                     )
-                    .color(crate::ui::ui_theme::text())
+                    .color(crate::ui::ui_theme::ThemeTokens::from_ui(ui).text())
                     .size(14.0)
                     .strong(),
                 );
@@ -63,12 +63,12 @@ impl SceneContext<'_> {
                             .locale
                             .text(crate::i18n::message_id!("empty-formats-hint")),
                     )
-                    .color(crate::ui::ui_theme::text_weak())
+                    .color(crate::ui::ui_theme::ThemeTokens::from_ui(ui).text_weak())
                     .size(11.5),
                 );
                 ui.label(
                     egui::RichText::new(crate::i18n::platform_shortcut_text("Ctrl+O"))
-                        .color(crate::ui::ui_theme::text_muted())
+                        .color(crate::ui::ui_theme::ThemeTokens::from_ui(ui).text_muted())
                         .size(10.5),
                 );
             });

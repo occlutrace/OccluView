@@ -346,7 +346,6 @@ impl eframe::App for OccluViewApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        crate::ui::ui_theme::set_active(self.persistence.settings.theme);
         ctx.set_visuals(super::viewer_visuals(self.persistence.settings.theme));
         ctx.all_styles_mut(|style| {
             style.interaction.selectable_labels = false;

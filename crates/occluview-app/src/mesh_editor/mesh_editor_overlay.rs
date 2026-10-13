@@ -287,6 +287,7 @@ pub(crate) fn show(
     let width = window_width(viewport_rect);
     let mut action = None;
     crate::ui::ui_theme::window(
+        crate::ui::ui_theme::ThemeTokens::from_context(ctx),
         locale.text(crate::i18n::message_id!("meshedit-window-title")),
         width,
     )

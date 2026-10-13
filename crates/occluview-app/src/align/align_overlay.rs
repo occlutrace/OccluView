@@ -22,8 +22,8 @@ const MARKER_RADIUS_PX: f32 = 6.0;
 /// Fill behind a marker's number, so a digit stays legible over any scan.
 /// Paired with the theme-aware ink: the pale light fill would wash out the
 /// pale dark-theme accent.
-fn marker_fill() -> egui::Color32 {
-    if ui_theme::is_dark() {
+fn marker_fill(theme: ui_theme::ThemeTokens) -> egui::Color32 {
+    if theme.is_dark() {
         egui::Color32::from_rgb(44, 49, 58)
     } else {
         egui::Color32::from_rgb(246, 247, 249)
@@ -48,6 +48,7 @@ pub(crate) struct PairPaint<'a> {
 
 /// Paint every pair, the half-placed point, and the rubber band to the cursor.
 pub(crate) fn paint_pairs(painter: &egui::Painter, view: &PairPaint<'_>) {
+    let theme = ui_theme::ThemeTokens::from_painter(painter);
     let PairPaint {
         camera,
         viewport_rect,
@@ -80,9 +81,9 @@ pub(crate) fn paint_pairs(painter: &egui::Painter, view: &PairPaint<'_>) {
         // A rejected pair is drawn in the error colour rather than hidden: the
         // operator needs to see which click the fit threw away.
         let ink = if outlier {
-            ui_theme::danger()
+            theme.danger()
         } else {
-            ui_theme::accent()
+            theme.accent()
         };
         // An arrow, not a bare line. Dental CAD software calls each
         // correspondence an arrow and its Back button undoes one, so the
@@ -91,8 +92,8 @@ pub(crate) fn paint_pairs(painter: &egui::Painter, view: &PairPaint<'_>) {
         let stroke = egui::Stroke::new(1.1_f32, ink.gamma_multiply(0.7));
         painter.line_segment([moving, fixed], stroke);
         arrowhead(painter, moving, fixed, stroke);
-        marker(painter, moving, ink, index + 1);
-        marker(painter, fixed, ink, index + 1);
+        marker(painter, moving, ink, theme, index + 1);
+        marker(painter, fixed, ink, theme, index + 1);
     }
 
     if let Some(pending) = tool.pending() {
@@ -100,7 +101,7 @@ pub(crate) fn paint_pairs(painter: &egui::Painter, view: &PairPaint<'_>) {
             if let Some(hover) = hover {
                 painter.extend(egui::Shape::dashed_line(
                     &[anchor, hover],
-                    egui::Stroke::new(1.1_f32, ui_theme::accent()),
+                    egui::Stroke::new(1.1_f32, theme.accent()),
                     5.0,
                     4.0,
                 ));
@@ -116,7 +117,7 @@ pub(crate) fn paint_turn_ball(painter: &egui::Painter, centre: egui::Pos2, radiu
     painter.circle_stroke(
         centre,
         radius_px,
-        egui::Stroke::new(1.1_f32, ui_theme::accent().gamma_multiply(0.5)),
+        egui::Stroke::new(1.1_f32, ui_theme::ThemeTokens::from_painter(painter).accent().gamma_multiply(0.5)),
     );
     measure_draw::anchor_dot(painter, centre);
 }
@@ -149,8 +150,14 @@ fn arrowhead(painter: &egui::Painter, from: egui::Pos2, to: egui::Pos2, stroke: 
 }
 
 /// One numbered marker.
-fn marker(painter: &egui::Painter, at: egui::Pos2, ink: egui::Color32, number: usize) {
-    painter.circle_filled(at, MARKER_RADIUS_PX, marker_fill());
+fn marker(
+    painter: &egui::Painter,
+    at: egui::Pos2,
+    ink: egui::Color32,
+    theme: ui_theme::ThemeTokens,
+    number: usize,
+) {
+    painter.circle_filled(at, MARKER_RADIUS_PX, marker_fill(theme));
     painter.circle_stroke(at, MARKER_RADIUS_PX, egui::Stroke::new(1.6_f32, ink));
     painter.text(
         at,
@@ -296,7 +303,7 @@ pub(crate) fn paint_legend(
             ui.label(
                 egui::RichText::new(text)
                     .size(10.0)
-                    .color(ui_theme::text_muted()),
+                    .color(ui_theme::ThemeTokens::from_ui(ui).text_muted()),
             );
         };
         let number_format = locale.number_format();
@@ -332,7 +339,7 @@ fn no_data_key(ui: &mut egui::Ui, locale: &crate::i18n::LocaleManager) {
         ui.label(
             egui::RichText::new(locale.tr(crate::i18n::message_id!("align-map-not-measured")))
                 .size(10.0)
-                .color(ui_theme::text_muted()),
+                .color(ui_theme::ThemeTokens::from_ui(ui).text_muted()),
         )
         .on_hover_text(locale.tr(crate::i18n::message_id!("align-map-not-measured-hint")));
     });

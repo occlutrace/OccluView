@@ -99,6 +99,9 @@ fn language_selector_wireframes_for_visual_review() -> anyhow::Result<()> {
 
     for tag in EMBEDDED_TAGS {
         let ctx = egui::Context::default();
+        ctx.set_visuals(crate::ui::app_chrome::viewer_visuals(
+            crate::app_settings::ThemePreference::Light,
+        ));
         ctx.all_styles_mut(|style| style.animation_time = 0.0);
         let mut manager = LocaleManager::for_tests();
         if *tag != "en" {

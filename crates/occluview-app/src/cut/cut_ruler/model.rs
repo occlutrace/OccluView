@@ -375,7 +375,7 @@ impl CutRuler {
                         painter,
                         mid,
                         &measure_tool::format_mm(distance, number_format),
-                        ui_theme::text(),
+                        ui_theme::ThemeTokens::from_painter(painter).text(),
                     );
                 }
             }

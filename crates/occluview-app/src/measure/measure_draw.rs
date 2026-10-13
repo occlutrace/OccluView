@@ -47,19 +47,19 @@ pub(crate) fn segment(painter: &egui::Painter, a: egui::Pos2, b: egui::Pos2) {
     );
     painter.line_segment(
         [a, b],
-        egui::Stroke::new(SEGMENT_STROKE_PX, ui_theme::accent()),
+        egui::Stroke::new(SEGMENT_STROKE_PX, ui_theme::ThemeTokens::from_painter(painter).accent()),
     );
 }
 
 /// Endpoint anchor: white halo + accent dot (the primary end of a measurement).
 pub(crate) fn anchor_dot(painter: &egui::Painter, pos: egui::Pos2) {
     painter.circle_filled(pos, ANCHOR_HALO_PX, egui::Color32::WHITE);
-    painter.circle_filled(pos, ANCHOR_DOT_PX, ui_theme::accent());
+    painter.circle_filled(pos, ANCHOR_DOT_PX, ui_theme::ThemeTokens::from_painter(painter).accent());
 }
 
 /// Bare accent dot for the far end of a thickness chord (the ray's exit point).
 pub(crate) fn accent_dot(painter: &egui::Painter, pos: egui::Pos2) {
-    painter.circle_filled(pos, ANCHOR_DOT_PX, ui_theme::accent());
+    painter.circle_filled(pos, ANCHOR_DOT_PX, ui_theme::ThemeTokens::from_painter(painter).accent());
 }
 
 /// High-contrast label chip: frosted pill + hairline ring + ink text, centered
@@ -76,11 +76,11 @@ pub(crate) fn label_chip(
         ink,
     );
     let bg = egui::Rect::from_center_size(anchor, galley.size() + LABEL_PAD * 2.0);
-    painter.rect_filled(bg, 3.0, ui_theme::panel_fill());
+    painter.rect_filled(bg, 3.0, ui_theme::ThemeTokens::from_painter(painter).panel_fill());
     painter.rect_stroke(
         bg,
         3.0,
-        egui::Stroke::new(1.0_f32, ui_theme::hairline()),
+        egui::Stroke::new(1.0_f32, ui_theme::ThemeTokens::from_painter(painter).hairline()),
         egui::StrokeKind::Middle,
     );
     painter.text(
@@ -130,14 +130,14 @@ pub(crate) fn label_chip_beside(
     let galley = painter.layout_no_wrap(
         text.to_owned(),
         egui::FontId::proportional(LABEL_TEXT_PX),
-        ui_theme::text(),
+        ui_theme::ThemeTokens::from_painter(painter).text(),
     );
     let size = galley.size() + LABEL_PAD * 2.0;
     label_chip(
         painter,
         label_center_beside(a, b, size, away_from),
         text,
-        ui_theme::text(),
+        ui_theme::ThemeTokens::from_painter(painter).text(),
     );
 }
 
@@ -167,7 +167,7 @@ pub(crate) fn right_angle_mark(
     ));
     painter.add(egui::Shape::line(
         points,
-        egui::Stroke::new(SEGMENT_STROKE_PX, ui_theme::accent()),
+        egui::Stroke::new(SEGMENT_STROKE_PX, ui_theme::ThemeTokens::from_painter(painter).accent()),
     ));
 }
 
@@ -200,7 +200,7 @@ pub(crate) fn angle_arc(
     ));
     painter.add(egui::Shape::line(
         points,
-        egui::Stroke::new(SEGMENT_STROKE_PX, ui_theme::accent()),
+        egui::Stroke::new(SEGMENT_STROKE_PX, ui_theme::ThemeTokens::from_painter(painter).accent()),
     ));
     angle_label_anchor(corner, from, to)
 }
@@ -231,7 +231,7 @@ pub(crate) fn extension(painter: &egui::Painter, from: egui::Pos2, to: egui::Pos
         painter,
         from,
         to,
-        egui::Stroke::new(1.0_f32, ui_theme::accent().gamma_multiply(0.7)),
+        egui::Stroke::new(1.0_f32, ui_theme::ThemeTokens::from_painter(painter).accent().gamma_multiply(0.7)),
         4.0,
     );
 }
@@ -243,7 +243,7 @@ pub(crate) fn rubber_band(painter: &egui::Painter, from: egui::Pos2, to: egui::P
         painter,
         from,
         to,
-        egui::Stroke::new(1.1_f32, ui_theme::accent()),
+        egui::Stroke::new(1.1_f32, ui_theme::ThemeTokens::from_painter(painter).accent()),
         5.0,
     );
 }
@@ -315,7 +315,7 @@ pub(crate) fn thickness_ray(
         painter,
         egui::pos2(entry.x, entry.y - LABEL_LIFT_PX),
         label,
-        ui_theme::text(),
+        ui_theme::ThemeTokens::from_painter(painter).text(),
     );
 }
 
@@ -342,7 +342,12 @@ mod tests {
                 segment(painter, a, b);
                 anchor_dot(painter, a);
                 accent_dot(painter, b);
-                label_chip(painter, a, "1.23 mm", ui_theme::text());
+                label_chip(
+                    painter,
+                    a,
+                    "1.23 mm",
+                    ui_theme::ThemeTokens::from_painter(painter).text(),
+                );
                 thickness_ray(painter, a, b, "1.23 mm");
                 label_chip_beside(painter, a, b, "1.23 mm", Some(b));
                 right_angle_mark(painter, a, b - a, egui::vec2(0.0, 1.0));
@@ -352,12 +357,17 @@ mod tests {
                 extension(painter, a, b);
             }
             // Empty and long labels must not panic the galley layout either.
-            label_chip(painter, egui::pos2(50.0, 50.0), "", ui_theme::text());
+            label_chip(
+                painter,
+                egui::pos2(50.0, 50.0),
+                "",
+                ui_theme::ThemeTokens::from_painter(painter).text(),
+            );
             label_chip(
                 painter,
                 egui::pos2(50.0, 50.0),
                 "open: no opposite wall",
-                ui_theme::text_weak(),
+                ui_theme::ThemeTokens::from_painter(painter).text_weak(),
             );
         });
     }

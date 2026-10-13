@@ -41,7 +41,7 @@ impl SceneContext<'_> {
                         )
                         .strong()
                         .size(18.0)
-                        .color(ui_theme::text()),
+                        .color(ui_theme::ThemeTokens::from_context(ctx).text()),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button(&close_label).clicked() {
@@ -145,7 +145,7 @@ fn draw_help_basics(
                         egui::RichText::new(crate::i18n::platform_shortcut_text(gesture))
                             .strong()
                             .size(11.5)
-                            .color(ui_theme::text()),
+                            .color(ui_theme::ThemeTokens::from_ui(ui).text()),
                     )
                     .truncate(),
                 );
@@ -154,7 +154,7 @@ fn draw_help_basics(
                     egui::Label::new(
                         egui::RichText::new(action)
                             .size(12.0)
-                            .color(ui_theme::text_weak()),
+                            .color(ui_theme::ThemeTokens::from_ui(ui).text_weak()),
                     )
                     .wrap(),
                 );

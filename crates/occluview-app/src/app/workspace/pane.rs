@@ -24,7 +24,7 @@ impl OccluViewApp {
         let is_active = self.workspace.input.active().scene == pane.key;
         let split = matches!(layout, EffectiveLayout::SideBySide { .. });
         ui.painter()
-            .rect_filled(rect, 0.0, crate::ui::ui_theme::toolbar_fill());
+            .rect_filled(rect, 0.0, crate::ui::ui_theme::ThemeTokens::from_ui(ui).toolbar_fill());
         let separator_y = rect.bottom() - if is_active && split { 1.0 } else { 0.5 };
         ui.painter().line_segment(
             [
@@ -32,9 +32,9 @@ impl OccluViewApp {
                 pos2(rect.right(), separator_y),
             ],
             if is_active && split {
-                egui::Stroke::new(2.0, crate::ui::ui_theme::accent())
+                egui::Stroke::new(2.0, crate::ui::ui_theme::ThemeTokens::from_ui(ui).accent())
             } else {
-                egui::Stroke::new(1.0, crate::ui::ui_theme::hairline())
+                egui::Stroke::new(1.0, crate::ui::ui_theme::ThemeTokens::from_ui(ui).hairline())
             },
         );
 
@@ -55,7 +55,7 @@ impl OccluViewApp {
                         ui.painter().rect_filled(
                             title_rect,
                             4.0,
-                            crate::ui::ui_theme::row_hover_fill(),
+                            crate::ui::ui_theme::ThemeTokens::from_ui(ui).row_hover_fill(),
                         );
                     }
                     let icon_rect = Rect::from_center_size(
@@ -63,9 +63,9 @@ impl OccluViewApp {
                         vec2(16.0, 16.0),
                     );
                     let ink = if is_active {
-                        crate::ui::ui_theme::text()
+                        crate::ui::ui_theme::ThemeTokens::from_ui(ui).text()
                     } else {
-                        crate::ui::ui_theme::text_weak()
+                        crate::ui::ui_theme::ThemeTokens::from_ui(ui).text_weak()
                     };
                     crate::ui::icons::paint(ui.painter(), icon_rect, AppIcon::Object, ink);
                     let text = egui::RichText::new(&pane.name)
@@ -103,7 +103,7 @@ impl OccluViewApp {
                         ui.painter().rect_stroke(
                             title.rect,
                             3.0,
-                            egui::Stroke::new(1.0, crate::ui::ui_theme::accent()),
+                            egui::Stroke::new(1.0, crate::ui::ui_theme::ThemeTokens::from_ui(ui).accent()),
                             egui::StrokeKind::Inside,
                         );
                     }
@@ -133,9 +133,9 @@ impl OccluViewApp {
                             &response,
                             AppIcon::FitView,
                             if is_active {
-                                crate::ui::ui_theme::accent()
+                                crate::ui::ui_theme::ThemeTokens::from_ui(ui).accent()
                             } else {
-                                crate::ui::ui_theme::text_weak()
+                                crate::ui::ui_theme::ThemeTokens::from_ui(ui).text_weak()
                             },
                             !modal_open,
                         );
@@ -165,7 +165,7 @@ impl OccluViewApp {
                             ui,
                             &response,
                             AppIcon::SplitView,
-                            crate::ui::ui_theme::text_weak(),
+                            crate::ui::ui_theme::ThemeTokens::from_ui(ui).text_weak(),
                             !modal_open,
                         );
                         let response = response.on_hover_text(&label);
@@ -257,12 +257,12 @@ impl OccluViewApp {
             ui.painter().rect_filled(
                 divider.shrink(2.0),
                 2.0,
-                crate::ui::ui_theme::accent().gamma_multiply(0.16),
+                crate::ui::ui_theme::ThemeTokens::from_ui(ui).accent().gamma_multiply(0.16),
             );
             ui.painter().rect_stroke(
                 divider.shrink(1.0),
                 2.0,
-                egui::Stroke::new(1.0, crate::ui::ui_theme::accent()),
+                egui::Stroke::new(1.0, crate::ui::ui_theme::ThemeTokens::from_ui(ui).accent()),
                 egui::StrokeKind::Inside,
             );
         }
@@ -280,12 +280,12 @@ fn paint_pane_action(
     let rect = response.rect;
     if enabled && (response.hovered() || response.has_focus()) {
         ui.painter()
-            .rect_filled(rect, 3.0, crate::ui::ui_theme::row_hover_fill());
+            .rect_filled(rect, 3.0, crate::ui::ui_theme::ThemeTokens::from_ui(ui).row_hover_fill());
         if response.has_focus() {
             ui.painter().rect_stroke(
                 rect,
                 3.0,
-                egui::Stroke::new(1.0, crate::ui::ui_theme::accent()),
+                egui::Stroke::new(1.0, crate::ui::ui_theme::ThemeTokens::from_ui(ui).accent()),
                 egui::StrokeKind::Inside,
             );
         }

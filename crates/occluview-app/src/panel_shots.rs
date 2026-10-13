@@ -28,6 +28,9 @@ const SCREEN: egui::Rect = egui::Rect::from_min_max(
 
 fn frame(name: &str, mut draw: impl FnMut(&egui::Context)) {
     let ctx = egui::Context::default();
+    ctx.set_visuals(crate::ui::app_chrome::viewer_visuals(
+        crate::app_settings::ThemePreference::Light,
+    ));
     ctx.all_styles_mut(|style| style.animation_time = 0.0);
     let input = || egui::RawInput {
         screen_rect: Some(SCREEN),
@@ -132,7 +135,6 @@ fn render_align(name: &str, tab: AlignTab, refined: bool, brush_open: bool) {
 
 #[test]
 fn align_and_mesh_editor_wireframes_for_visual_review() {
-    crate::ui::ui_theme::set_active(crate::app_settings::ThemePreference::Light);
     render_align(
         "audit-align-automatic",
         AlignTab::Automatically,

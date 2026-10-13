@@ -68,7 +68,7 @@ impl SceneContext<'_> {
                                 egui::RichText::new(*line)
                                     .monospace()
                                     .size(11.0)
-                                    .color(ui_theme::text_weak()),
+                                    .color(ui_theme::ThemeTokens::from_context(ctx).text_weak()),
                             );
                         }
                     });

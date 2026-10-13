@@ -515,8 +515,8 @@ impl SceneContext<'_> {
             .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
             .frame(
                 egui::Frame::new()
-                    .fill(crate::ui::ui_theme::panel_fill())
-                    .stroke(egui::Stroke::new(1.0, crate::ui::ui_theme::panel_stroke()))
+                    .fill(crate::ui::ui_theme::ThemeTokens::from_ui(ui).panel_fill())
+                    .stroke(egui::Stroke::new(1.0, crate::ui::ui_theme::ThemeTokens::from_ui(ui).panel_stroke()))
                     .corner_radius(6)
                     .shadow(crate::ui::ui_theme::panel_shadow())
                     .inner_margin(egui::Margin::same(6)),

@@ -65,7 +65,7 @@ fn run_panel_frame(
             magnet: false, // raw placement, so we can count anchors exactly
             texture: None,
             section: None,
-            color_for: |_id: SceneMeshId| ui_theme::text(),
+            color_for: |_id: SceneMeshId| ui_theme::ThemeTokens::from_context(ctx).text(),
         };
         captured = Some(show_section_panel(
             ui,

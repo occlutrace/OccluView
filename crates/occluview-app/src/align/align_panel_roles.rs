@@ -104,9 +104,9 @@ pub(crate) fn show(
                         egui::RichText::new(roles.sentence(locale))
                             .size(11.5)
                             .color(if roles.implied {
-                                ui_theme::text_muted()
+                                ui_theme::ThemeTokens::from_ui(ui).text_muted()
                             } else {
-                                ui_theme::text()
+                                ui_theme::ThemeTokens::from_ui(ui).text()
                             }),
                     )
                     .on_hover_text(roles.hint(locale));
