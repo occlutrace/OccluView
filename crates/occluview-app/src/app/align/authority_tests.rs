@@ -9,6 +9,7 @@ use super::*;
 use crate::align::align_worker::{AlignOutcome, AlignWorker};
 use crate::app::app_test_support::{named_scene, push_named_layer, test_app};
 use crate::app::OccluViewApp;
+use crate::edit_mode::EditModeCommand;
 use glam::Vec3;
 use occluview_align::{DeviationStats, DeviationSummary, Observability, Unmeasured};
 use std::sync::Arc;
@@ -864,4 +865,176 @@ fn cancel_keeps_the_session_retryable_when_another_edit_is_busy() {
         .all(|entry| entry.transform == glam::Affine3A::IDENTITY));
     assert_eq!(scene.document.edit_mode.undo_len(), 1);
     assert!(scene.document.unsaved_edit_layer_ids.contains(&moving));
+}
+
+/// The narrow pose transaction is idempotent: a pose equal to the one already
+/// on the layer is accepted without a history step, and repeating it stays a
+/// no-op. Otherwise a repeated fit command would fill Undo with identical poses
+/// and claim unsaved work for a scan that did not move.
+#[test]
+fn a_pose_equal_to_the_current_one_records_nothing() {
+    let (mut app, moving_id, _fixed_id) = app_with_a_landed_fit("align-noop-pose");
+    let mut scene = app.active_context().expect("live test scene");
+    let current = scene
+        .document
+        .scene
+        .as_ref()
+        .expect("scene")
+        .meshes()
+        .iter()
+        .find(|entry| entry.id() == moving_id)
+        .expect("moving layer")
+        .transform;
+
+    assert!(
+        scene.commit_align_affine(current),
+        "a pose that changes nothing is still an accepted fit"
+    );
+    assert_eq!(
+        scene.document.edit_mode.undo_len(),
+        0,
+        "an unchanged pose must not become an undo step"
+    );
+    assert!(
+        !scene.document.unsaved_edit_layer_ids.contains(&moving_id),
+        "a pose that did not change is not unsaved work"
+    );
+
+    assert!(
+        scene.commit_align_affine(current),
+        "a repeated no-op command is still accepted"
+    );
+    assert_eq!(
+        scene.document.edit_mode.undo_len(),
+        0,
+        "repeating the no-op must not grow the undo stack either"
+    );
+}
+
+/// A job can outlive the layer it was computed from. The boundary has to refuse
+/// the pose instead of installing a scene that no longer contains the layer, and
+/// the caller has to see the refusal.
+#[test]
+fn a_pose_is_refused_when_the_moving_layer_is_gone() {
+    let (mut app, moving_id, _fixed_id) = app_with_a_landed_fit("align-vanished-layer");
+    let without_moving = {
+        let current = app.workspace.scenes[0]
+            .document
+            .scene
+            .as_ref()
+            .expect("scene");
+        let mut next = current.as_ref().clone();
+        let index = next
+            .meshes()
+            .iter()
+            .position(|entry| entry.id() == moving_id)
+            .expect("moving layer");
+        next.remove(index);
+        next
+    };
+    app.workspace.scenes[0].document.scene = Some(Arc::new(without_moving));
+
+    let mut scene = app.active_context().expect("live test scene");
+    assert!(
+        !scene.commit_align_affine(glam::Affine3A::from_translation(Vec3::Y)),
+        "a layer that left the scene cannot be posed"
+    );
+    assert_eq!(
+        scene.document.edit_mode.undo_len(),
+        0,
+        "a refused pose must not record history"
+    );
+    assert_eq!(
+        scene
+            .document
+            .scene
+            .as_ref()
+            .expect("scene")
+            .meshes()
+            .len(),
+        1,
+        "the surviving scene is untouched"
+    );
+}
+
+/// The edit state machine owns one transaction at a time. While another command
+/// holds it, the pose boundary must refuse, leave the scene where it was, and
+/// not report unsaved work.
+#[test]
+fn a_pose_is_refused_while_another_edit_owns_the_transaction() {
+    let (mut app, moving_id, _fixed_id) = app_with_a_landed_fit("align-busy-transaction");
+    let mut scene = app.active_context().expect("live test scene");
+    let current = scene.document.scene.clone().expect("scene");
+    let token = scene
+        .document
+        .edit_mode
+        .begin_scene_edit(&current, moving_id, EditModeCommand::MoveLayer)
+        .expect("another edit owns the scene");
+    drop(current);
+    let pose = glam::Affine3A::from_translation(Vec3::Y);
+
+    assert!(
+        !scene.commit_align_affine(pose),
+        "the transaction owner must be respected"
+    );
+    assert_eq!(
+        scene.document.edit_mode.undo_len(),
+        0,
+        "a refused pose must not record history"
+    );
+    assert!(
+        !scene.document.unsaved_edit_layer_ids.contains(&moving_id),
+        "a refused pose is not unsaved work"
+    );
+    let transform = scene
+        .document
+        .scene
+        .as_ref()
+        .expect("scene")
+        .meshes()
+        .iter()
+        .find(|entry| entry.id() == moving_id)
+        .expect("moving layer")
+        .transform;
+    assert_ne!(transform, pose, "the refused pose never reached the scene");
+
+    scene
+        .document
+        .edit_mode
+        .finish_layer_edit_error(token, "Canceled".into());
+}
+
+/// Closing the scene revokes the generation a job was submitted under. A
+/// completion computed for the old scene cannot land on the recreated one, even
+/// before its worker is replaced.
+#[test]
+fn a_completion_from_a_cleared_scene_cannot_land() {
+    let (mut app, _moving_id, _fixed_id) = app_with_a_landed_fit("align-cleared-generation");
+    let mut scene = app.active_context().expect("live test scene");
+    scene.tools.align.pending_fit = scene.current_fit_key();
+    let stale_generation = scene.align_worker_mut().generation();
+    let worker = scene.align_worker_mut();
+    worker.publish_for_tests(
+        stale_generation,
+        AlignOutcome::Candidates(fit_tests::candidate_result(Rigid::new(
+            glam::DQuat::IDENTITY,
+            glam::DVec3::X,
+        ))),
+    );
+
+    // The scene is closed before the queued completion is drained.
+    scene.reset_align_state_for_scene_clear();
+    assert!(
+        scene
+            .align_worker_mut()
+            .drain()
+            .is_empty(),
+        "a completion from the closed scene's generation is dropped"
+    );
+    scene.drain_align_worker(&egui::Context::default());
+    assert_eq!(
+        scene.document.edit_mode.undo_len(),
+        0,
+        "the closed scene's result must not become a history step"
+    );
 }
