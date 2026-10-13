@@ -1,6 +1,10 @@
 use super::OpenRequest;
 use anyhow::{bail, Context, Result};
 
+#[cfg(unix)]
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
+#[cfg(windows)]
+use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::path::PathBuf;
 const REQUEST_MAGIC: &[u8; 4] = b"OCVQ";
 /// Envelope carrying only file paths (the v1 layout).
@@ -10,6 +14,24 @@ const REQUEST_VERSION_PATHS_ONLY: u16 = 1;
 /// the running instance can raise itself past WM focus-stealing prevention
 /// (see `activation.rs`).
 const REQUEST_VERSION_WITH_TOKEN: u16 = 2;
+/// Envelope carrying native path units, with the codec tagged in the payload.
+const REQUEST_VERSION_NATIVE_PATHS_ONLY: u16 = 3;
+/// Native path units plus a forwarded window-activation token.
+const REQUEST_VERSION_NATIVE_PATHS_WITH_TOKEN: u16 = 4;
+#[cfg(unix)]
+const NATIVE_PATH_CODEC_UNIX_BYTES: u8 = 1;
+#[cfg(windows)]
+const NATIVE_PATH_CODEC_WINDOWS_UTF16LE: u8 = 2;
+/// Reserved, path-free capability probe. Older readers reject version zero.
+pub(super) const CAPABILITY_PROBE: [u8; REQUEST_HEADER_BYTES] = [
+    b'O', b'C', b'V', b'Q', 0, 0, 0, 0, 0, 0, 0, 0,
+];
+/// Fixed acknowledgements are exchanged only after the request has been
+/// recognized (and, for an open request, queued by the listener).
+pub(super) const CAPABILITY_ACK: &[u8; 8] = b"OCVA\x01\x00\x01\x00";
+pub(super) const OPEN_REQUEST_ACK: &[u8; 8] = b"OCVA\x01\x00\x02\x00";
+const FALLBACK_ACK_MAGIC: &[u8; 4] = b"OCFA";
+const FALLBACK_ACK_HEADER_BYTES: usize = 8;
 pub(super) const MAX_REQUEST_PATHS: usize = 128;
 pub(super) const MAX_REQUEST_BYTES: usize = 256 * 1024;
 const REQUEST_HEADER_BYTES: usize = 12;
@@ -24,11 +46,24 @@ pub(super) fn serialize_request(request: &OpenRequest) -> Result<Vec<u8>> {
         );
     }
 
+    let native_paths = request_needs_native_encoding(request);
     let mut payload = Vec::new();
+    if native_paths {
+        payload.push(native_path_codec_tag()?);
+    }
     for path in &request.paths {
-        let text = path.display().to_string();
-        validate_request_text(&text, "path")?;
-        let bytes = text.as_bytes();
+        let native_bytes;
+        let bytes = if native_paths {
+            validate_native_path(path)?;
+            native_bytes = encode_native_path(path)?;
+            native_bytes.as_slice()
+        } else {
+            let text = path
+                .to_str()
+                .context("single-instance path is not valid Unicode")?;
+            validate_request_text(text, "path")?;
+            text.as_bytes()
+        };
         let len = u32::try_from(bytes.len()).context("request path length exceeds u32")?;
         payload.extend_from_slice(&len.to_le_bytes());
         payload.extend_from_slice(bytes);
@@ -50,8 +85,13 @@ pub(super) fn serialize_request(request: &OpenRequest) -> Result<Vec<u8>> {
             let len = u32::try_from(bytes.len()).context("activation token length exceeds u32")?;
             payload.extend_from_slice(&len.to_le_bytes());
             payload.extend_from_slice(bytes);
-            REQUEST_VERSION_WITH_TOKEN
+            if native_paths {
+                REQUEST_VERSION_NATIVE_PATHS_WITH_TOKEN
+            } else {
+                REQUEST_VERSION_WITH_TOKEN
+            }
         }
+        None if native_paths => REQUEST_VERSION_NATIVE_PATHS_ONLY,
         None => REQUEST_VERSION_PATHS_ONLY,
     };
 
@@ -79,6 +119,35 @@ pub(super) fn serialize_request(request: &OpenRequest) -> Result<Vec<u8>> {
     Ok(request_bytes)
 }
 
+pub(super) fn request_needs_native_encoding(request: &OpenRequest) -> bool {
+    request.paths.iter().any(|path| path.to_str().is_none())
+}
+
+pub(super) fn is_capability_probe(bytes: &[u8]) -> bool {
+    bytes == CAPABILITY_PROBE.as_slice()
+}
+
+pub(super) fn is_native_request(bytes: &[u8]) -> bool {
+    bytes.starts_with(REQUEST_MAGIC)
+        && bytes.len() >= 6
+        && matches!(u16::from_le_bytes([bytes[4], bytes[5]]), 3 | 4)
+}
+
+pub(super) fn serialize_fallback_ack(kind: &[u8; 8], nonce: &str) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(FALLBACK_ACK_HEADER_BYTES + nonce.len());
+    bytes.extend_from_slice(FALLBACK_ACK_MAGIC);
+    bytes.extend_from_slice(&kind[4..]);
+    bytes.extend_from_slice(nonce.as_bytes());
+    bytes
+}
+
+pub(super) fn is_fallback_ack(bytes: &[u8], kind: &[u8; 8], nonce: &str) -> bool {
+    bytes.len() == FALLBACK_ACK_HEADER_BYTES + nonce.len()
+        && bytes.starts_with(FALLBACK_ACK_MAGIC)
+        && &bytes[4..FALLBACK_ACK_HEADER_BYTES] == &kind[4..]
+        && &bytes[FALLBACK_ACK_HEADER_BYTES..] == nonce.as_bytes()
+}
+
 pub(super) fn parse_request(bytes: &[u8]) -> Result<OpenRequest> {
     if bytes.starts_with(REQUEST_MAGIC) {
         parse_enveloped_request(bytes)
@@ -100,7 +169,13 @@ fn parse_enveloped_request(bytes: &[u8]) -> Result<OpenRequest> {
     }
 
     let version = u16::from_le_bytes([bytes[4], bytes[5]]);
-    if version != REQUEST_VERSION_PATHS_ONLY && version != REQUEST_VERSION_WITH_TOKEN {
+    if !matches!(
+        version,
+        REQUEST_VERSION_PATHS_ONLY
+            | REQUEST_VERSION_WITH_TOKEN
+            | REQUEST_VERSION_NATIVE_PATHS_ONLY
+            | REQUEST_VERSION_NATIVE_PATHS_WITH_TOKEN
+    ) {
         bail!("single-instance request version {version} is unsupported");
     }
 
@@ -123,7 +198,21 @@ fn parse_enveloped_request(bytes: &[u8]) -> Result<OpenRequest> {
         bail!("single-instance request is {total_len} bytes; max is {MAX_REQUEST_BYTES}");
     }
 
+    let native_paths = matches!(
+        version,
+        REQUEST_VERSION_NATIVE_PATHS_ONLY | REQUEST_VERSION_NATIVE_PATHS_WITH_TOKEN
+    );
     let mut cursor = REQUEST_HEADER_BYTES;
+    if native_paths {
+        let codec = *bytes
+            .get(cursor)
+            .context("single-instance request is missing its native path codec")?;
+        cursor += 1;
+        let expected_codec = native_path_codec_tag()?;
+        if codec != expected_codec {
+            bail!("single-instance native path codec does not match this operating system");
+        }
+    }
     let mut paths = Vec::with_capacity(path_count);
     for _ in 0..path_count {
         let len_end = cursor
@@ -145,14 +234,23 @@ fn parse_enveloped_request(bytes: &[u8]) -> Result<OpenRequest> {
         if path_end > bytes.len() {
             bail!("single-instance request truncated inside path payload");
         }
-        let text = std::str::from_utf8(&bytes[cursor..path_end])
-            .context("single-instance request path is not valid utf-8")?;
-        validate_request_text(text, "path")?;
-        paths.push(PathBuf::from(text));
+        if native_paths {
+            let path = decode_native_path(&bytes[cursor..path_end])?;
+            validate_native_path(&path)?;
+            paths.push(path);
+        } else {
+            let text = std::str::from_utf8(&bytes[cursor..path_end])
+                .context("single-instance request path is not valid utf-8")?;
+            validate_request_text(text, "path")?;
+            paths.push(PathBuf::from(text));
+        }
         cursor = path_end;
     }
 
-    let activation_token = if version == REQUEST_VERSION_WITH_TOKEN {
+    let activation_token = if matches!(
+        version,
+        REQUEST_VERSION_WITH_TOKEN | REQUEST_VERSION_NATIVE_PATHS_WITH_TOKEN
+    ) {
         Some(parse_token(bytes, &mut cursor)?)
     } else {
         None
@@ -225,7 +323,71 @@ fn validate_request_text(text: &str, kind: &str) -> Result<()> {
     Ok(())
 }
 
-#[cfg(all(test, not(windows)))]
+fn validate_native_path(path: &std::path::Path) -> Result<()> {
+    let text = path.to_string_lossy();
+    validate_request_text(&text, "path")
+}
+
+fn native_path_codec_tag() -> Result<u8> {
+    #[cfg(unix)]
+    {
+        Ok(NATIVE_PATH_CODEC_UNIX_BYTES)
+    }
+    #[cfg(windows)]
+    {
+        Ok(NATIVE_PATH_CODEC_WINDOWS_UTF16LE)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        bail!("native single-instance paths are unsupported on this operating system")
+    }
+}
+
+fn encode_native_path(path: &std::path::Path) -> Result<Vec<u8>> {
+    #[cfg(unix)]
+    {
+        Ok(path.as_os_str().as_bytes().to_vec())
+    }
+    #[cfg(windows)]
+    {
+        let units = path.as_os_str().encode_wide();
+        let mut bytes = Vec::new();
+        for unit in units {
+            bytes.extend_from_slice(&unit.to_le_bytes());
+        }
+        Ok(bytes)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = path;
+        bail!("native single-instance paths are unsupported on this operating system")
+    }
+}
+
+fn decode_native_path(bytes: &[u8]) -> Result<PathBuf> {
+    #[cfg(unix)]
+    {
+        Ok(PathBuf::from(std::ffi::OsString::from_vec(bytes.to_vec())))
+    }
+    #[cfg(windows)]
+    {
+        if bytes.len() % 2 != 0 {
+            bail!("single-instance UTF-16 path has an odd byte length");
+        }
+        let units = bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>();
+        Ok(PathBuf::from(std::ffi::OsString::from_wide(&units)))
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = bytes;
+        bail!("native single-instance paths are unsupported on this operating system")
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -400,6 +562,128 @@ mod tests {
         assert!(
             error.to_string().contains("max is"),
             "unexpected error: {error:?}"
+        );
+    }
+
+    #[test]
+    fn unicode_requests_keep_the_exact_v1_and_v2_wire_bytes() {
+        let no_token = serialize_request(&request(&["/tmp/π.stl"], None));
+        assert!(no_token.is_ok());
+        let Ok(no_token) = no_token else {
+            panic!("required test setup or expected result was missing");
+        };
+        assert_eq!(
+            no_token.as_slice(),
+            b"OCVQ\x01\x00\x01\x00\x0f\x00\x00\x00\x0b\x00\x00\x00/tmp/\xcf\x80.stl"
+        );
+
+        let with_token = serialize_request(&request(&["/tmp/π.stl"], Some("t")));
+        assert!(with_token.is_ok());
+        let Ok(with_token) = with_token else {
+            panic!("required test setup or expected result was missing");
+        };
+        assert_eq!(
+            with_token.as_slice(),
+            b"OCVQ\x02\x00\x01\x00\x14\x00\x00\x00\x0b\x00\x00\x00/tmp/\xcf\x80.stl\x01\x00\x00\x00t"
+        );
+    }
+
+    #[test]
+    fn capability_probe_is_path_free_and_not_an_open_request() {
+        assert!(is_capability_probe(&CAPABILITY_PROBE));
+        let parsed = parse_request(&CAPABILITY_PROBE);
+        assert!(parsed.is_err(), "a probe must not be accepted as an open request");
+        let Err(error) = parsed else {
+            panic!("a capability probe unexpectedly parsed as a request");
+        };
+        assert!(error.to_string().contains("version 0"));
+    }
+
+    #[test]
+    fn fallback_ack_requires_the_matching_nonce_and_kind() {
+        let ack = serialize_fallback_ack(CAPABILITY_ACK, "123-45-6");
+        assert!(is_fallback_ack(&ack, CAPABILITY_ACK, "123-45-6"));
+        assert!(!is_fallback_ack(&ack, CAPABILITY_ACK, "123-45-7"));
+        assert!(!is_fallback_ack(&ack, OPEN_REQUEST_ACK, "123-45-6"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_native_paths_round_trip_without_loss_and_reject_other_codec_tags() {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+        let native_path = PathBuf::from(std::ffi::OsString::from_vec(
+            b"/tmp/scan-\xff.stl".to_vec(),
+        ));
+        let original = OpenRequest {
+            paths: vec![PathBuf::from("/tmp/π.stl"), native_path.clone()],
+            activation_token: Some("launch-token".to_owned()),
+        };
+        let encoded = serialize_request(&original);
+        assert!(encoded.is_ok(), "serialize failed: {encoded:?}");
+        let Ok(encoded) = encoded else {
+            panic!("required test setup or expected result was missing");
+        };
+        assert_eq!(&encoded[4..6], &REQUEST_VERSION_NATIVE_PATHS_WITH_TOKEN.to_le_bytes());
+        assert_eq!(encoded[REQUEST_HEADER_BYTES], NATIVE_PATH_CODEC_UNIX_BYTES);
+        let decoded = parse_request(&encoded);
+        assert!(decoded.is_ok(), "parse failed: {decoded:?}");
+        let Ok(decoded) = decoded else {
+            panic!("required test setup or expected result was missing");
+        };
+        assert_eq!(decoded.paths[0], original.paths[0]);
+        assert_eq!(
+            decoded.paths[1].as_os_str().as_bytes(),
+            native_path.as_os_str().as_bytes()
+        );
+        assert_eq!(decoded.activation_token, original.activation_token);
+
+        let mut mismatched = encoded;
+        mismatched[REQUEST_HEADER_BYTES] = 2;
+        assert!(parse_request(&mismatched).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_native_paths_still_reject_control_characters() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let path = PathBuf::from(std::ffi::OsString::from_vec(b"/tmp/a\n\xff".to_vec()));
+        let request = OpenRequest {
+            paths: vec![path],
+            activation_token: None,
+        };
+        assert!(serialize_request(&request).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_native_paths_round_trip_unpaired_utf16_units() {
+        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+
+        let original_units = [u16::from(b'\\'), 0xD800, u16::from(b'.'), u16::from(b's')];
+        let path = PathBuf::from(std::ffi::OsString::from_wide(&original_units));
+        let encoded = serialize_request(&OpenRequest {
+            paths: vec![path.clone()],
+            activation_token: None,
+        });
+        assert!(encoded.is_ok());
+        let Ok(encoded) = encoded else {
+            panic!("required test setup or expected result was missing");
+        };
+        assert_eq!(&encoded[4..6], &REQUEST_VERSION_NATIVE_PATHS_ONLY.to_le_bytes());
+        assert_eq!(encoded[REQUEST_HEADER_BYTES], NATIVE_PATH_CODEC_WINDOWS_UTF16LE);
+        let decoded = parse_request(&encoded);
+        assert!(decoded.is_ok());
+        let Ok(decoded) = decoded else {
+            panic!("required test setup or expected result was missing");
+        };
+        assert_eq!(
+            decoded.paths[0]
+                .as_os_str()
+                .encode_wide()
+                .collect::<Vec<_>>(),
+            original_units
         );
     }
 }

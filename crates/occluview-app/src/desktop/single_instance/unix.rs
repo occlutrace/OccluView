@@ -1,4 +1,7 @@
-use super::protocol::{parse_request, serialize_request, MAX_REQUEST_BYTES};
+use super::protocol::{
+    is_capability_probe, is_native_request, parse_request, serialize_request,
+    CAPABILITY_ACK, CAPABILITY_PROBE, OPEN_REQUEST_ACK, MAX_REQUEST_BYTES,
+};
 use super::{OpenRequest, SingleInstance};
 use anyhow::{Context, Result};
 use eframe::egui;
@@ -28,15 +31,19 @@ pub(super) fn spawn_socket_listener(sender: mpsc::Sender<OpenRequest>, repaint_c
             }
         };
         for stream in listener.incoming() {
-            match stream.and_then(read_socket_open_request) {
-                Ok(Some(request)) => {
-                    if sender.send(request).is_err() {
-                        return;
-                    }
-                    super::request_open_handoff_repaint(&repaint_ctx);
+            let stream = match stream {
+                Ok(stream) => stream,
+                Err(error) => {
+                    tracing::warn!(?error, "single-instance socket accept failed");
+                    continue;
                 }
-                Ok(None) => {}
-                Err(error) => tracing::warn!(?error, "single-instance socket receive failed"),
+            };
+            match handle_socket_open_request(stream, &sender, &repaint_ctx) {
+                Ok(true) => {}
+                Ok(false) => return,
+                Err(error) => {
+                    tracing::warn!(?error, "single-instance socket receive failed");
+                }
             }
         }
     });
@@ -54,6 +61,56 @@ pub(super) fn send_socket_open_request(request: &OpenRequest) -> Result<()> {
         .write_all(&payload)
         .context("writing single-instance socket request")?;
     Ok(())
+}
+
+pub(super) enum NativeSocketOutcome {
+    Accepted,
+    Unavailable,
+    Unconfirmed,
+}
+
+/// Negotiate support without sending paths, then require an acknowledgement
+/// after the native request has entered the primary's queue.
+pub(super) fn send_native_socket_open_request(payload: &[u8]) -> NativeSocketOutcome {
+    let Some(path) = socket_path() else {
+        return NativeSocketOutcome::Unavailable;
+    };
+    if !probe_socket(&path) {
+        return NativeSocketOutcome::Unavailable;
+    }
+
+    let mut stream = match UnixStream::connect(&path) {
+        Ok(stream) => stream,
+        Err(_) => return NativeSocketOutcome::Unavailable,
+    };
+    if stream.set_read_timeout(Some(SOCKET_READ_TIMEOUT)).is_err() {
+        return NativeSocketOutcome::Unavailable;
+    }
+    if stream.write_all(payload).is_err() || stream.shutdown(std::net::Shutdown::Write).is_err() {
+        return NativeSocketOutcome::Unconfirmed;
+    }
+    let mut response = [0u8; OPEN_REQUEST_ACK.len()];
+    if stream.read_exact(&mut response).is_ok() && &response == OPEN_REQUEST_ACK {
+        NativeSocketOutcome::Accepted
+    } else {
+        NativeSocketOutcome::Unconfirmed
+    }
+}
+
+fn probe_socket(path: &std::path::Path) -> bool {
+    let Ok(mut stream) = UnixStream::connect(path) else {
+        return false;
+    };
+    if stream
+        .set_read_timeout(Some(SOCKET_READ_TIMEOUT))
+        .is_err()
+        || stream.write_all(&CAPABILITY_PROBE).is_err()
+        || stream.shutdown(std::net::Shutdown::Write).is_err()
+    {
+        return false;
+    }
+    let mut response = [0u8; CAPABILITY_ACK.len()];
+    stream.read_exact(&mut response).is_ok() && &response == CAPABILITY_ACK
 }
 
 fn socket_path() -> Option<PathBuf> {
@@ -126,10 +183,14 @@ fn bind_socket_listener() -> std::io::Result<UnixListener> {
 /// on a local socket.
 const SOCKET_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
-fn read_socket_open_request(stream: UnixStream) -> std::io::Result<Option<OpenRequest>> {
+fn handle_socket_open_request(
+    mut stream: UnixStream,
+    sender: &mpsc::Sender<OpenRequest>,
+    repaint_ctx: &egui::Context,
+) -> std::io::Result<bool> {
     stream.set_read_timeout(Some(SOCKET_READ_TIMEOUT))?;
     let mut bytes = Vec::new();
-    stream
+    (&mut stream)
         .take((MAX_REQUEST_BYTES + 1) as u64)
         .read_to_end(&mut bytes)?;
     if bytes.len() > MAX_REQUEST_BYTES {
@@ -138,17 +199,87 @@ fn read_socket_open_request(stream: UnixStream) -> std::io::Result<Option<OpenRe
             "single-instance socket request exceeds max size",
         ));
     }
+    if is_capability_probe(&bytes) {
+        stream.write_all(CAPABILITY_ACK)?;
+        return Ok(true);
+    }
+    let native_request = is_native_request(&bytes);
     let request = parse_request(&bytes)
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
     if request.paths.is_empty() {
-        return Ok(None);
+        return Ok(true);
     }
-    Ok(Some(request))
+    if sender.send(request).is_err() {
+        return Ok(false);
+    }
+    if native_request {
+        stream.write_all(OPEN_REQUEST_ACK)?;
+    }
+    super::request_open_handoff_repaint(repaint_ctx);
+    Ok(true)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn socket_probe_gets_a_fixed_path_free_ack_without_queueing() {
+        let pair = UnixStream::pair();
+        assert!(pair.is_ok());
+        let Ok((mut client, server)) = pair else {
+            panic!("Unix stream pair setup failed");
+        };
+        let (sender, receiver) = mpsc::channel();
+        let context = egui::Context::default();
+        let handler = thread::spawn(move || handle_socket_open_request(server, &sender, &context));
+
+        assert!(client.write_all(&CAPABILITY_PROBE).is_ok());
+        assert!(client.shutdown(std::net::Shutdown::Write).is_ok());
+        let mut response = [0u8; CAPABILITY_ACK.len()];
+        assert!(client.read_exact(&mut response).is_ok());
+        assert_eq!(&response, CAPABILITY_ACK);
+        assert!(matches!(handler.join(), Ok(Ok(true))));
+        assert!(receiver.try_recv().is_err(), "a capability probe queues no paths");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_socket_ack_follows_queue_delivery() {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+        let native_path = PathBuf::from(std::ffi::OsString::from_vec(b"/tmp/scan-\xff.stl".to_vec()));
+        let request = OpenRequest {
+            paths: vec![native_path.clone()],
+            activation_token: None,
+        };
+        let payload = serialize_request(&request);
+        assert!(payload.is_ok());
+        let Ok(payload) = payload else {
+            panic!("required test setup or expected result was missing");
+        };
+        let pair = UnixStream::pair();
+        assert!(pair.is_ok());
+        let Ok((mut client, server)) = pair else {
+            panic!("Unix stream pair setup failed");
+        };
+        let (sender, receiver) = mpsc::channel();
+        let context = egui::Context::default();
+        let handler = thread::spawn(move || handle_socket_open_request(server, &sender, &context));
+
+        assert!(client.write_all(&payload).is_ok());
+        assert!(client.shutdown(std::net::Shutdown::Write).is_ok());
+        let queued = receiver.recv_timeout(std::time::Duration::from_secs(1));
+        assert!(queued.is_ok(), "the request must enter the queue before its ack");
+        let Ok(queued) = queued else {
+            panic!("native request was not queued");
+        };
+        assert_eq!(queued.paths[0].as_os_str().as_bytes(), native_path.as_os_str().as_bytes());
+        let mut response = [0u8; OPEN_REQUEST_ACK.len()];
+        assert!(client.read_exact(&mut response).is_ok());
+        assert_eq!(&response, OPEN_REQUEST_ACK);
+        assert!(matches!(handler.join(), Ok(Ok(true))));
+    }
 
     #[test]
     fn an_unpublished_pid_cannot_create_a_second_primary() {
