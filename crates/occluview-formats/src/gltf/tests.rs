@@ -902,3 +902,32 @@ fn the_estimate_covers_the_fixture_it_admits() {
         "the estimate {estimate} must cover the {decoded} bytes the fixture decodes to"
     );
 }
+
+/// Compact node records expand into a much larger typed `Vec<Node>` than
+/// their JSON bytes suggest. Keep the regression small and inject a budget so
+/// the preflight proves that it charges those records before parsing GltfDoc.
+#[test]
+fn node_records_are_admitted_before_typed_document_deserialization() {
+    const TEST_BUDGET: u64 = 16 * 1024;
+    let mut nodes = String::new();
+    for index in 0..128 {
+        if index != 0 {
+            nodes.push(',');
+        }
+        nodes.push_str("{}");
+    }
+    let json = format!("{{\"nodes\":[{nodes}]}}");
+    let glb = glb::build_glb(json.as_bytes(), &[]);
+    let (json_chunk, _) = glb::split(&glb).expect("valid GLB fixture");
+    let existing_base = u64::try_from(glb.len())
+        .unwrap_or(u64::MAX)
+        .saturating_add(u64::try_from(json_chunk.len()).unwrap_or(u64::MAX).saturating_mul(4));
+    assert!(existing_base < TEST_BUDGET, "the byte-based estimate fits");
+
+    let error = estimate_peak_bytes_with_limit(&glb, 0, TEST_BUDGET)
+        .expect_err("typed node storage must exceed the injected budget");
+    assert!(
+        matches!(error, FormatError::MemoryBudgetExceeded { limit: TEST_BUDGET, .. }),
+        "expected typed metadata admission to refuse the document: {error}"
+    );
+}
