@@ -150,6 +150,11 @@ impl SceneUiState {
             return;
         }
         self.tool_gate_logged = true;
+        let input_route = match state.input_route {
+            PointerRoute::Target(_) => "Target",
+            PointerRoute::Captured(_) => "Captured",
+            PointerRoute::Suppressed => "Suppressed",
+        };
         tracing::debug!(
             event = "viewport_tool_input_skipped",
             scene_id = state.scene_key.id.get(),
@@ -159,7 +164,10 @@ impl SceneUiState {
             is_active = state.is_active,
             window_focused = state.window_focused,
             modal_dialog_open = state.modal_dialog_open,
-            input_route = ?state.input_route,
+            input_route,
+            capture_present = state.capture_owner.is_some(),
+            capture_scene_id = state.capture_owner.map_or(0, |owner| owner.target.scene.id.get()),
+            capture_scene_epoch = state.capture_owner.map_or(0, |owner| owner.target.scene.epoch.get()),
             capture_owner = ?state.capture_owner,
             "viewport tool input skipped"
         );
