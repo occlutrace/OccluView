@@ -1030,3 +1030,9 @@ workspace-import-cancelled = Le importazioni in attesa sono state annullate alla
 align-fit-outdated = Le scansioni sono cambiate durante il confronto — ripetilo
 align-fit-unsure = Il matching è incerto — controllalo sulla mappa di calore
 align-input-nonfinite = Valore numerico non valido: { $field } alla posizione { $index }.
+
+layer-units-unverified = Unità non confermate
+layer-units-use-mm = Conferma millimetri (mantieni scala)
+layer-units-use-meters = Conferma metri (scala ×1000)
+layer-units-confirmed = Unità del livello confermate. Annulla ripristina l’interpretazione precedente.
+measure-units-unverified = Unità non confermate: controlla il livello contrassegnato prima di utilizzare le misure.

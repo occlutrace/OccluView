@@ -6,6 +6,8 @@ mod selection_batch;
 mod selection_ops;
 mod structural;
 #[cfg(test)]
+pub(super) use structural::clone_layer_with_mesh;
+#[cfg(test)]
 mod structural_tests;
 #[cfg(test)]
 mod tests;
@@ -129,6 +131,13 @@ pub(super) fn apply_layer_context_action_with_status(
     if request.action == LayerContextAction::ExportLayer {
         app.save_layer_export_dialog(scene, paths, request);
         return LayerContextApply::default();
+    }
+
+    if matches!(
+        request.action,
+        LayerContextAction::ConfirmMillimeters | LayerContextAction::ConfirmMeters
+    ) {
+        return app.confirm_layer_units(scene, request);
     }
 
     if request.action != LayerContextAction::Remove {

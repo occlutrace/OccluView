@@ -597,6 +597,7 @@ fn layer_context_menu_rows_publish_names_roles_and_disabled_state() {
         has_texture: false,
         contacts: false,
         can_read_contacts: false,
+        unverified_units_extent: None,
     };
     let locale = crate::i18n::LocaleManager::for_tests();
     let mut request = None;

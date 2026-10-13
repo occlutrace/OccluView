@@ -1028,3 +1028,9 @@ workspace-import-cancelled = Ausstehende Importe wurden beim Schließen ihrer Sz
 align-fit-outdated = Die Scans haben sich während des Abgleichs geändert — bitte erneut starten
 align-fit-unsure = Der Abgleich ist unsicher — auf der Heatmap prüfen
 align-input-nonfinite = Ungültige Zahl: { $field } an Position { $index }.
+
+layer-units-unverified = Einheiten nicht bestätigt
+layer-units-use-mm = Millimeter bestätigen (Maßstab beibehalten)
+layer-units-use-meters = Meter bestätigen (Maßstab ×1000)
+layer-units-confirmed = Schichteinheiten bestätigt. Rückgängig stellt die vorherige Interpretation wieder her.
+measure-units-unverified = Einheiten nicht bestätigt: Prüfen Sie die markierte Schicht vor der Verwendung von Messungen.

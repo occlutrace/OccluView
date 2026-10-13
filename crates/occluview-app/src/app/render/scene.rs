@@ -261,6 +261,20 @@ impl SceneContext<'_> {
                 self.persistence.settings.viewport_background,
                 &self.ui.locale,
             );
+            if self.document.scene.as_ref().is_some_and(|scene| {
+                scene.meshes().iter().any(|layer| layer.visible
+                    && layer.import_units().confidence == occluview_core::UnitConfidence::Ambiguous)
+            }) {
+                ui.painter().text(
+                    response.rect.left_bottom() + egui::vec2(16.0, -52.0),
+                    egui::Align2::LEFT_BOTTOM,
+                    self.ui.locale.tr(crate::i18n::message_id!("measure-units-unverified")),
+                    egui::FontId::proportional(11.0),
+                    crate::ui::ui_theme::viewport_ink(
+                        self.persistence.settings.viewport_background.is_dark(),
+                    ),
+                );
+            }
         }
         if let Some(camera) = self.render.camera.as_ref() {
             let gizmo_hidden = self.axis_gizmo_is_hidden();

@@ -100,11 +100,14 @@ pub enum UnitConfidence {
     /// declares meters, but scanner exporters write millimeter numbers), so
     /// no scale is applied and the operator must confirm the interpretation.
     Ambiguous,
+    /// The operator explicitly selected the source interpretation. This is
+    /// provenance of a decision, not independent verification of the file.
+    ConfirmedByOperator,
 }
 
 /// Import-unit metadata carried per layer: what the file declared, what
 /// scale brings it to millimeters, and whether that scale is trustworthy.
-/// Coordinates are normalized to millimeters exactly once, at import; a
+/// Coordinates are normalized at import or by an explicit layer decision; a
 /// factor of `1.0` with anything but `Certain` confidence means "kept as-is,
 /// flagged", never "verified".
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -155,6 +158,9 @@ impl fmt::Display for UnitInterpretation {
                 "ambiguous: declares {:?}, coordinates kept as-is",
                 self.declared
             ),
+            (_, UnitConfidence::ConfirmedByOperator) => {
+                write!(f, "operator confirmed (x{} to mm)", self.scale_to_mm)
+            }
             (declared, UnitConfidence::Certain) => {
                 write!(f, "{:?} (x{} to mm)", declared, self.scale_to_mm)
             }

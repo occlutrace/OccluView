@@ -1032,3 +1032,9 @@ workspace-import-cancelled = As importações pendentes foram canceladas ao fech
 align-fit-outdated = Os escaneamentos mudaram durante a correspondência — execute novamente
 align-fit-unsure = O ajuste é incerto — confira no mapa de calor
 align-input-nonfinite = Valor numérico inválido: { $field } na posição { $index }.
+
+layer-units-unverified = Unidades não confirmadas
+layer-units-use-mm = Confirmar milímetros (manter escala)
+layer-units-use-meters = Confirmar metros (escala ×1000)
+layer-units-confirmed = Unidades da camada confirmadas. Desfazer restaura a interpretação anterior.
+measure-units-unverified = Unidades não confirmadas: confira a camada marcada antes de usar as medições.

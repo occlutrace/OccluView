@@ -1037,3 +1037,9 @@ workspace-import-cancelled = Pending imports were cancelled when their scene clo
 align-fit-outdated = The scans changed while matching ran — run it again
 align-fit-unsure = The match is uncertain — check it on the heatmap
 align-input-nonfinite = Invalid numeric input: { $field } at scalar { $index }.
+
+layer-units-unverified = Units not confirmed
+layer-units-use-mm = Confirm millimeters (keep scale)
+layer-units-use-meters = Confirm meters (scale ×1000)
+layer-units-confirmed = Layer units confirmed. Undo restores the previous interpretation.
+measure-units-unverified = Units not confirmed: check the marked layer before using measurements.

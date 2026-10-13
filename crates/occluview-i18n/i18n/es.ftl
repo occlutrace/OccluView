@@ -1030,3 +1030,9 @@ workspace-import-cancelled = Las importaciones pendientes se cancelaron al cerra
 align-fit-outdated = Los escaneos cambiaron durante la comparación — repítela
 align-fit-unsure = El ajuste es incierto — revísalo en el mapa de calor
 align-input-nonfinite = Valor numérico inválido: { $field } en la posición { $index }.
+
+layer-units-unverified = Unidades sin confirmar
+layer-units-use-mm = Confirmar milímetros (mantener escala)
+layer-units-use-meters = Confirmar metros (escala ×1000)
+layer-units-confirmed = Unidades de la capa confirmadas. Deshacer restaura la interpretación anterior.
+measure-units-unverified = Unidades sin confirmar: revise la capa marcada antes de utilizar las mediciones.

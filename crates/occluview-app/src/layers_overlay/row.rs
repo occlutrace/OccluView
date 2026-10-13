@@ -50,6 +50,7 @@ pub(super) struct LayerRowState {
     pub(super) show_texture: bool,
     pub(super) has_color_data: bool,
     pub(super) has_texture: bool,
+    pub(super) unverified_units_extent: Option<f32>,
 }
 
 #[derive(Clone, Copy)]
@@ -131,6 +132,7 @@ pub(super) fn show_layer_row(
         has_texture: state.has_texture,
         contacts: state.contacts,
         can_read_contacts: state.can_read_contacts,
+        unverified_units_extent: state.unverified_units_extent,
     };
 
     // Click-sense catch-all under the controls: a right-click in the gaps
@@ -202,7 +204,14 @@ pub(super) fn show_layer_row(
             ui.add_space(LAYER_ROW_GAP_PX);
 
             // Name (fills remaining width, middle-truncates).
-            let label_width = layer_name_width(row_width);
+            let warning_width = if state.unverified_units_extent.is_some() { 18.0 } else { 0.0 };
+            if warning_width > 0.0 {
+                ui.add_sized(
+                    [warning_width, LAYER_ROW_CONTROL_HEIGHT_PX],
+                    egui::Label::new(egui::RichText::new("?").color(ui_theme::warning())),
+                ).on_hover_text(locale.tr(crate::i18n::message_id!("layer-units-unverified")));
+            }
+            let label_width = (layer_name_width(row_width) - warning_width).max(0.0);
             let label = egui::Label::new(
                 egui::RichText::new(view.label)
                     .color(ui_theme::text())

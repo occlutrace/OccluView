@@ -8,9 +8,9 @@
 //! flagged [`UnitConfidence::Ambiguous`][occluview_core::units::UnitConfidence]
 //! instead of being silently scaled either way. [`recommend_glb_scale`]
 //! suggests an interpretation from the bounding box for operator confirmation;
-//! the suggestion is never applied without one — the app surfaces it in the
-//! status line when an ambiguous layer loads, which is the confirmation step
-//! this paragraph describes.
+//! the suggestion is never applied without one. The app keeps an unverified
+//! marker on the layer until its units are explicitly selected; transient
+//! load text does not confirm units.
 
 use crate::probe::FormatKind;
 pub use occluview_core::units::UnitInterpretation;

@@ -50,6 +50,7 @@ mod app_input;
 mod app_input_ownership_tests;
 pub(crate) mod app_layer_edits;
 mod app_layer_interaction;
+mod app_layer_units;
 mod app_load_errors;
 mod app_loading;
 #[cfg(test)]

@@ -41,6 +41,8 @@ pub(crate) struct LayerContextMenuTarget {
     /// toggle is a no-op (and stays disabled) on a plain uncolored scan.
     pub(crate) has_color_data: bool,
     pub(crate) has_texture: bool,
+    /// Raw import extent when this layer's units still need an explicit choice.
+    pub(crate) unverified_units_extent: Option<f32>,
 }
 
 /// Attach the layer context menu to a widget response (row controls / row body).
@@ -118,6 +120,10 @@ pub(crate) fn show_layer_context_menu(
     // spawn several coincident parts.
     menu_title(ui, &target.label);
     ui.separator();
+    if let Some(extent) = target.unverified_units_extent {
+        show_unit_actions(ui, target, extent, context_request, locale);
+        ui.separator();
+    }
     show_material_actions(ui, target, context_request, locale);
     ui.separator();
     show_mesh_edit_actions(ui, target, context_request, locale);
@@ -125,6 +131,39 @@ pub(crate) fn show_layer_context_menu(
     show_contact_actions(ui, target, context_request, locale);
     ui.separator();
     show_layer_actions(ui, target, context_request, locale);
+}
+
+fn show_unit_actions(
+    ui: &mut egui::Ui,
+    target: &LayerContextMenuTarget,
+    extent: f32,
+    request: &mut Option<LayerContextRequest>,
+    locale: &crate::i18n::LocaleManager,
+) {
+    ui.label(egui::RichText::new(locale.tr(crate::i18n::message_id!("layer-units-unverified")))
+        .color(ui_theme::warning()));
+    let suggestion = match occluview_formats::units::recommend_glb_scale(extent) {
+        occluview_formats::units::GlbScaleRecommendation::MetersToMillimeters =>
+            crate::i18n::message_id!("load-units-suggest-meters"),
+        occluview_formats::units::GlbScaleRecommendation::KeepAsMillimeters =>
+            crate::i18n::message_id!("load-units-suggest-millimeters"),
+        occluview_formats::units::GlbScaleRecommendation::Unclear =>
+            crate::i18n::message_id!("load-units-unclear"),
+    };
+    ui.label(locale.tr(suggestion));
+    for (key, action) in [
+        (crate::i18n::message_id!("layer-units-use-mm"), LayerContextAction::ConfirmMillimeters),
+        (crate::i18n::message_id!("layer-units-use-meters"), LayerContextAction::ConfirmMeters),
+    ] {
+        if ui.button(locale.tr(key)).clicked() {
+            *request = Some(LayerContextRequest {
+                index: target.index,
+                layer_id: target.layer_id,
+                action,
+            });
+            ui.close();
+        }
+    }
 }
 
 fn show_material_actions(

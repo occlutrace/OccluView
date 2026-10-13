@@ -761,13 +761,12 @@ impl SceneContext<'_> {
 
     fn ambiguous_units_notice(&self) -> Option<String> {
         let scene = self.document.scene.as_ref()?;
-        let ambiguous = scene.meshes().iter().any(|entry| {
+        let entry = scene.meshes().iter().find(|entry| {
             entry.import_units().confidence == occluview_core::UnitConfidence::Ambiguous
-        });
-        if !ambiguous {
-            return None;
-        }
-        let extent = scene.bbox().size().max_element();
+        })?;
+        // The load notice is advisory. Each layer keeps its own persistent
+        // marker and menu decision, including when several GLBs disagree.
+        let extent = entry.import_bbox().size().max_element();
         let suggestion = match occluview_formats::units::recommend_glb_scale(extent) {
             occluview_formats::units::GlbScaleRecommendation::MetersToMillimeters => self
                 .ui

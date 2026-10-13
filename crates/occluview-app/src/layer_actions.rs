@@ -124,6 +124,9 @@ pub(crate) enum LayerContextAction {
     Contacts,
     /// Take the contact marks off this layer.
     HideContacts,
+    /// Explicit source-unit decisions; never generated from a size heuristic.
+    ConfirmMillimeters,
+    ConfirmMeters,
     Remove,
 }
 
@@ -175,6 +178,9 @@ pub(crate) fn apply_layer_context_action(
         | LayerContextAction::ExportLayer
         | LayerContextAction::Contacts
         | LayerContextAction::HideContacts => LayerContextApply::default(),
+        LayerContextAction::ConfirmMillimeters | LayerContextAction::ConfirmMeters => {
+            LayerContextApply::default()
+        }
         LayerContextAction::Remove => {
             let removed = scene.remove(index).is_some();
             LayerContextApply {

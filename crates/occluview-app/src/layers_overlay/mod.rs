@@ -197,6 +197,9 @@ pub(crate) fn show(
                                             && entry.show_vertex_colors,
                                         has_color_data: entry.mesh.carries_color_data(),
                                         has_texture: entry.mesh.texture().is_some(),
+                                        unverified_units_extent: (entry.import_units().confidence
+                                            == occluview_core::UnitConfidence::Ambiguous)
+                                            .then(|| entry.import_bbox().size().max_element()),
                                         contacts: contacts
                                             .marked
                                             .get(index)

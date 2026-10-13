@@ -1030,3 +1030,9 @@ workspace-import-cancelled = Les imports en attente ont été annulés à la fer
 align-fit-outdated = Les scans ont changé pendant la correspondance — relancez-la
 align-fit-unsure = L’ajustement est incertain — vérifiez-le sur la carte de chaleur
 align-input-nonfinite = Valeur numérique invalide : { $field } à la position { $index }.
+
+layer-units-unverified = Unités non confirmées
+layer-units-use-mm = Confirmer les millimètres (conserver l’échelle)
+layer-units-use-meters = Confirmer les mètres (échelle ×1000)
+layer-units-confirmed = Unités de la couche confirmées. Annuler restaure l’interprétation précédente.
+measure-units-unverified = Unités non confirmées : vérifiez la couche marquée avant d’utiliser les mesures.
