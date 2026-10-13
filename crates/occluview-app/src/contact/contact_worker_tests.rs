@@ -308,15 +308,18 @@ fn dropping_the_worker_stops_it_cleanly() {
     drop(worker);
 }
 
-/// A submit that arrives after dequeue must see the running token before the
-/// worker releases the queue lock. Otherwise it can miss cancellation and leave
-/// the superseded contact calculation running.
+/// A submit paused at its queue-lock boundary must cancel a token published by
+/// the worker after dequeue. The observer runs inside submit after any earlier
+/// actions, so cancellation before the queue lock would necessarily happen
+/// before the worker publishes that token.
 #[test]
 fn a_submission_cancels_the_job_at_the_dequeue_handoff() {
     let (dequeued_tx, dequeued_rx) = mpsc::channel();
     let (release_dequeue_tx, release_dequeue_rx) = mpsc::channel();
     let (registered_tx, registered_rx) = mpsc::channel();
     let (release_execution_tx, release_execution_rx) = mpsc::channel();
+    let (at_queue_lock_tx, at_queue_lock_rx) = mpsc::channel();
+    let (release_submit_tx, release_submit_rx) = mpsc::channel();
     let pause_after_dequeue = Arc::new(AtomicBool::new(true));
     let pause_after_registration = Arc::new(AtomicBool::new(true));
     let worker = ContactWorker::spawn_with(
@@ -352,17 +355,18 @@ fn a_submission_cancels_the_job_at_the_dequeue_handoff() {
         },
     );
 
-    let first_request = worker.submit(job(&worker, 0, -0.1)).expect("first queued job");
+    let first_request = worker.submit(job(&worker, 0, -0.1));
     let dequeue_seen = dequeued_rx.recv_timeout(Duration::from_secs(5));
     let next_job = job(&worker, 7, -0.1);
-    let (attempted_tx, attempted_rx) = mpsc::channel();
     let (submitted_tx, submitted_rx) = mpsc::channel();
 
-    let (attempted, registered, submitted) = thread::scope(|scope| {
+    let (at_queue_lock, registered, submitted) = thread::scope(|scope| {
         let worker_ref = &worker;
         scope.spawn(move || {
-            let _ = attempted_tx.send(());
-            let result = worker_ref.submit(next_job);
+            let result = worker_ref.submit_with_queue_hook(next_job, || {
+                let _ = at_queue_lock_tx.send(());
+                let _ = release_submit_rx.recv();
+            });
             let cancelled = worker_ref
                 .running
                 .lock()
@@ -372,23 +376,29 @@ fn a_submission_cancels_the_job_at_the_dequeue_handoff() {
             let _ = submitted_tx.send((result, cancelled));
         });
 
-        let attempted = attempted_rx.recv_timeout(Duration::from_secs(5));
-        // Always release the test worker before asserting, so a failed
-        // assertion cannot leave its Drop join waiting on this gate.
+        // Observe submit immediately before its queue lock, then let the
+        // dequeued worker publish its token before submit acquires that lock.
+        let at_queue_lock = at_queue_lock_rx.recv_timeout(Duration::from_secs(5));
         let _ = release_dequeue_tx.send(());
         let registered = registered_rx.recv_timeout(Duration::from_secs(5));
+        let _ = release_submit_tx.send(());
         let second_request = submitted_rx.recv_timeout(Duration::from_secs(5));
+        // Open every worker gate before assertions, including on a failed
+        // observer or registration wait, so worker teardown cannot hang.
         let _ = release_execution_tx.send(());
-        (attempted, registered, second_request)
+        (at_queue_lock, registered, second_request)
     });
 
     assert!(dequeue_seen.is_ok(), "the worker must reach the handoff gate");
-    assert!(attempted.is_ok(), "the concurrent submit must start");
+    assert!(
+        at_queue_lock.is_ok(),
+        "the submit must reach its queue-lock boundary"
+    );
     assert!(registered.is_ok(), "the active token must be published");
     assert!(submitted.is_ok(), "the concurrent submit must complete");
     let (second_request, cancelled) = submitted.expect("the submit result");
     assert_ne!(
-        first_request,
+        first_request.expect("first queued job"),
         second_request.expect("queued"),
         "a superseding submission must receive a fresh request identity"
     );
