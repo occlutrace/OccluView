@@ -171,6 +171,8 @@ jobs:
           Copy-Item ./THIRD-PARTY-NOTICES.md $portableDir
           Copy-Item ./THIRD-PARTY-NOTICES-NATIVE.md $portableDir
           Copy-Item ./README.md $portableDir
+          New-Item -ItemType Directory -Path "$portableDir/docs" -Force | Out-Null
+          Copy-Item ./docs/measurements.md "$portableDir/docs"
           Compress-Archive -Path $portableDir -DestinationPath "./dist/OccluView-$version-$target-portable.zip" -CompressionLevel Optimal -Force
       - name: Verify Authenticode signatures
         if: inputs.windows_configuration != 'diagnostic'

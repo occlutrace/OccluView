@@ -147,6 +147,7 @@ mkdir -p \
   "$pkg_root/usr/share/man/man1" \
   "$pkg_root/usr/share/thumbnailers" \
   "$pkg_root/usr/share/doc/occluview"
+mkdir -p "$pkg_root/usr/share/doc/occluview/docs"
 
 install -m 0755 "$release_viewer" "$pkg_root/usr/bin/occluview"
 install -m 0755 "$release_cli" "$pkg_root/usr/bin/occluview-cli"
@@ -182,6 +183,7 @@ install -m 0644 install/linux/occluview-mime.xml \
 install -m 0644 install/linux/ai.occlutrace.OccluView.thumbnailer \
   "$pkg_root/usr/share/thumbnailers/ai.occlutrace.OccluView.thumbnailer"
 install -m 0644 README.md "$pkg_root/usr/share/doc/occluview/README.md"
+install -m 0644 docs/measurements.md "$pkg_root/usr/share/doc/occluview/docs/measurements.md"
 install -m 0644 install/linux/copyright "$pkg_root/usr/share/doc/occluview/copyright"
 # The Apache NOTICE and the generated third-party attributions travel with
 # the statically linked binary; the copyright file points at them.
