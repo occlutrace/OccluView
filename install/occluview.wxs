@@ -13,7 +13,7 @@
 <?define PrivateCandidate23 = "{35DAB6DB-DB83-4A9B-9B43-E3C77FB7A804}" ?>
 <?define IsPrivateCandidate = '(WIX_DOWNGRADE_DETECTED = "$(var.PrivateCandidate22)" OR WIX_DOWNGRADE_DETECTED = "$(var.PrivateCandidate23)")' ?>
 <?ifndef ProductVersion?>
-<?define ProductVersion = "1.2.3" ?>
+<?define ProductVersion = "1.2.4" ?>
 <?endif?>
 <?ifndef BuildDir?>
 <?define BuildDir = "target\x86_64-pc-windows-msvc\release-unwind" ?>

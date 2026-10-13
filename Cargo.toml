@@ -66,7 +66,7 @@ occluview-cli = 5
 
 # Workspace-wide package metadata. Crates override only what they need.
 [workspace.package]
-version = "1.2.3"
+version = "1.2.4"
 edition = "2021"
 rust-version = "1.98"        # MSRV; matches rust-toolchain.toml
 authors = ["Dental Cloud Technologies and contributors"]
