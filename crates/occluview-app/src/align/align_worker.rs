@@ -829,8 +829,10 @@ fn paint(
     // `hidden_displacement_mm`, measured at 0.94-1.007 of the truth on real arch
     // scans), and `has_blind_direction` is the threshold that says "the estimate
     // is doing real work here", not "this measurement is worthless". Refusing on
-    // it would block legitimate full-arch alignments: the sensitivity allowed
-    // for a real arch in `real_scans.rs` extends below it.
+    // it would block legitimate full-arch alignments: real-arch sensitivity can
+    // fall below it. That calibration is exercised only by the opt-in private
+    // acceptance corpus (`tests/private_acceptance.rs`); thresholds from the
+    // removed `real_scans.rs` are historical, not acceptance for this API.
     if stats.summary.is_some() && seen.is_none() {
         return AlignOutcome::Failed {
             rejection: AlignFailure::MeasurementUnobservable,
