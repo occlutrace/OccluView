@@ -167,18 +167,21 @@ pub(crate) fn vertex_fan_clusters(
         run_start = scan;
     }
 
-    let mut roots = Vec::new();
+    // A root is a local face index. Direct lookup preserves first-seen cluster
+    // order without scanning every earlier fan for each disconnected face.
+    let mut cluster_by_root = vec![usize::MAX; faces.len()];
+    let mut cluster_count = 0;
     let mut cluster_of = vec![0; faces.len()];
     for (local, cluster) in cluster_of.iter_mut().enumerate() {
         let root = find(&mut parent, local);
-        *cluster = if let Some(existing) = roots.iter().position(|&seen| seen == root) {
-            existing
-        } else {
-            roots.push(root);
-            roots.len() - 1
-        };
+        let cached = &mut cluster_by_root[root];
+        if *cached == usize::MAX {
+            *cached = cluster_count;
+            cluster_count += 1;
+        }
+        *cluster = *cached;
     }
-    (cluster_of, roots.len())
+    (cluster_of, cluster_count)
 }
 
 fn find(parent: &mut [usize], mut node: usize) -> usize {
@@ -196,5 +199,29 @@ fn union(parent: &mut [usize], first: usize, second: usize) {
         let low = first_root.min(second_root);
         let high = first_root.max(second_root);
         parent[high] = low;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::vertex_fan_clusters;
+
+    #[test]
+    fn point_touching_disconnected_faces_keep_first_seen_fan_order() {
+        let indices: Vec<u32> = (0_u32..1024)
+            .flat_map(|face| [0, face * 2 + 1, face * 2 + 2])
+            .collect();
+        let faces: Vec<usize> = (0..1024).rev().collect();
+        let (clusters, count) = vertex_fan_clusters(&indices, 0, &faces);
+        assert_eq!(count, faces.len());
+        assert_eq!(clusters, (0..faces.len()).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn interleaved_faces_share_their_first_seen_fan_id() {
+        let indices = [0, 1, 2, 0, 3, 4, 0, 2, 5, 0, 4, 6];
+        let (clusters, count) = vertex_fan_clusters(&indices, 0, &[3, 0, 1, 2]);
+        assert_eq!(count, 2);
+        assert_eq!(clusters, vec![0, 1, 0, 1]);
     }
 }
