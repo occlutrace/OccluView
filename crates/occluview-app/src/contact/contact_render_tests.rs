@@ -328,7 +328,7 @@ fn write_renders(
         image
             .save(&png)
             .unwrap_or_else(|error| panic!("{id}: save contact render: {error}"));
-        tracing::info!(case = id, path = %png.display(), "contact render written");
+        tracing::info!("contact render written");
     }
 }
 
@@ -490,7 +490,6 @@ fn check_clinical_sanity(
          none is not a bite fixture"
     );
     tracing::info!(
-        case = id,
         subject_verts = field.diagnostics.subject_verts,
         antagonist_verts = field.diagnostics.antagonist_verts,
         measured = field.diagnostics.subject_measured,
