@@ -444,7 +444,10 @@ impl IInitializeWithStream_Impl for ThumbnailProvider_Impl {
             "thumbnail IInitializeWithStream",
             || Err(e_fail()),
             || {
-                let stream = pstream.ok()?;
+                // Acquire our owned reference before evaluating the
+                // `borrow_mut()` receiver below. `Ref::ok` returns `&IStream`;
+                // AddRef must not run while the handler RefCell is borrowed.
+                let stream = pstream.ok()?.clone();
                 let retired = self
                     .this
                     .source
