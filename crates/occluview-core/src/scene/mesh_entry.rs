@@ -1,7 +1,7 @@
 use super::id::{next_scene_mesh_id, SceneMeshId};
 use super::material::default_mesh_tint;
 use crate::mesh::Mesh;
-use crate::units::UnitInterpretation;
+use crate::units::{SourceUnit, UnitConfidence, UnitInterpretation};
 use glam::Affine3A;
 use std::sync::Arc;
 
@@ -84,9 +84,11 @@ pub struct SceneMesh {
     /// source is split into one or more scene entries.
     source_layer_id: Option<SceneMeshId>,
     /// Import-unit metadata: what the file declared and what scale was
-    /// applied to reach millimeters. Never affects rendering by itself —
-    /// coordinates are normalized once, at import.
+    /// applied to reach millimeters. Metadata alone never changes geometry;
+    /// an explicit decision updates the layer transform and this provenance.
     import_units: UnitInterpretation,
+    /// Bounds of the original file geometry, before scene placement or edits.
+    import_bbox: Option<crate::Aabb>,
 }
 
 impl SceneMesh {
@@ -112,6 +114,7 @@ impl SceneMesh {
             overlay: None,
             source_layer_id: None,
             import_units: UnitInterpretation::assumed_millimeters(),
+            import_bbox: None,
         }
     }
 
@@ -122,6 +125,7 @@ impl SceneMesh {
     #[must_use]
     pub fn with_import_units(mut self, units: UnitInterpretation) -> Self {
         self.import_units = units;
+        self.import_bbox = Some(self.mesh.bbox());
         self
     }
 
@@ -130,6 +134,48 @@ impl SceneMesh {
     #[must_use]
     pub fn import_units(&self) -> UnitInterpretation {
         self.import_units
+    }
+
+    /// Original local-space import bounds, independent of other scene layers.
+    #[must_use]
+    pub fn import_bbox(&self) -> crate::Aabb {
+        self.import_bbox.unwrap_or_else(|| self.mesh.bbox())
+    }
+
+    /// Preserve source-unit provenance when extracting a new layer.
+    #[must_use]
+    pub fn with_import_provenance(mut self, source: &Self) -> Self {
+        self.import_units = source.import_units;
+        self.import_bbox = source.import_bbox;
+        self
+    }
+
+    /// Apply an explicit interpretation to an ambiguous layer once. Scaling
+    /// acts in the mesh's local frame, preserving its authored scene placement.
+    /// The caller records the complete layer in Undo before invoking this.
+    #[must_use]
+    pub fn confirm_import_units(&mut self, interpreted: SourceUnit) -> bool {
+        if self.import_units.confidence != UnitConfidence::Ambiguous {
+            return false;
+        }
+        let scale_to_mm = match interpreted {
+            SourceUnit::Meters => 1000.0,
+            SourceUnit::Millimeters => 1.0,
+            SourceUnit::Unitless => return false,
+        };
+        let previous = self.import_units.scale_to_mm;
+        if !previous.is_finite() || previous <= 0.0 {
+            return false;
+        }
+        let transform = self.transform
+            * Affine3A::from_scale(glam::Vec3::splat(scale_to_mm / previous));
+        if !transform.is_finite() {
+            return false;
+        }
+        self.transform = transform;
+        self.import_units.scale_to_mm = scale_to_mm;
+        self.import_units.confidence = UnitConfidence::ConfirmedByOperator;
+        true
     }
 
     /// Attach or clear an overlay in place, naming what its colours mean.
@@ -284,6 +330,7 @@ impl SceneMesh {
             source_layer_id: self.source_layer_id,
             // Kept: same layer, same file provenance.
             import_units: self.import_units,
+            import_bbox: self.import_bbox,
         }
     }
 }
