@@ -613,6 +613,18 @@ mod tests {
             (&[6, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 3, 9], 1, 8),
             (&[5, 0, 0, 1, 0, 0, 0, 3, 9], 1, 8),
             (&[5, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0], 1, 8),
+            // Opcode 7 in 16-bit form, then a 32-bit form that must fall back.
+            (&[4, 7, 3, 0], 2, 8),
+            (&[4, 7, 3, 0, 0, 0], 2, 8),
+            // Explicit 32-bit continuation and global-vertex skips.
+            (&[4, 8, 3, 0, 0, 0], 2, 8),
+            (&[10, 4, 10, 0], 2, 8),
+            // Wrapped last/first Remove, followed by advance, extend, merge, remove.
+            (
+                &[6, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 9, 3, 0, 2, 9],
+                3,
+                8,
+            ),
             (&[1], 0, 8),
             (&[2], 0, 8),
             (&[3], 0, 8),
