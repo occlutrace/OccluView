@@ -38,15 +38,21 @@ per case; the manifest has no acceptance defaults.
 - `pose`: provide a known `truth` pose (`rotation_xyzw` and `translation_mm`),
   transform tolerances, at least three independently authored
   `control_landmarks`, a maximum landmark error, and `quality` bounds for
-  minimum confidence, minimum overlap, maximum RMS, and maximum p95. The
-  landmarks are held out: they are checked after the search and never passed
-  into Align as constraints. Truth, landmarks, and bounds must come from an
-  independent reference for that case. Choose bounds for the intended use;
-  do not copy solver-internal confidence cutoffs or invent clinical limits.
+  minimum confidence, minimum overlap, maximum RMS, and maximum p95. These
+  quality checks apply to the selected first-ranked candidate; the receipt
+  also records each returned candidate's stable family/proposal identity,
+  confidence, and reasons. The landmarks are held out: they are checked after
+  the search and never passed into Align as constraints. Truth, landmarks, and
+  bounds must come from an independent reference for that case. Choose bounds
+  for the intended use; do not copy solver-internal confidence cutoffs or
+  invent clinical limits.
 - `not_verified`: provide a confidence ceiling below `verified` and the exact
-  expected evidence reason. This checks a counterexample where the solver
-  must not claim verification. It does not mean the parser rejects the file or
-  that the application has accepted/rejected an operator action.
+  expected evidence reason for the selected first-ranked candidate. Every
+  returned candidate must stay at or below the confidence ceiling; a verified
+  alternative anywhere in the candidate list fails the case. This checks a
+  counterexample where the solver must not claim verification. It does not
+  mean the parser rejects the file or that the application has
+  accepted/rejected an operator action.
 
 Confidence values are `weak`, `ambiguous`, `probable`, and `verified`. Expected
 reasons are `insufficient_support`, `unobservable_motion`, `close_rival`,

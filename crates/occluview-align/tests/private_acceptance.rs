@@ -157,6 +157,7 @@ struct CaseResult {
     reasons: Vec<&'static str>,
     candidate_family: u8,
     candidate_proposal: u32,
+    candidate_evidence: Vec<CandidateOutcome>,
     rotation_error_deg: Option<f64>,
     translation_error_mm: Option<f64>,
     maximum_control_landmark_error_mm: Option<f64>,
@@ -166,6 +167,14 @@ struct CaseResult {
     examined_poses: u64,
     iterations: u64,
     elapsed_ms: f64,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+struct CandidateOutcome {
+    family: u8,
+    proposal: u32,
+    confidence: &'static str,
+    reasons: Vec<&'static str>,
 }
 
 fn confidence_name(confidence: Confidence) -> &'static str {
@@ -184,6 +193,38 @@ fn confidence_rank(confidence: Confidence) -> u8 {
         Confidence::Probable => 2,
         Confidence::Verified => 3,
     }
+}
+
+fn candidate_outcomes(
+    candidates: &[occluview_align::AlignmentCandidate],
+) -> Vec<CandidateOutcome> {
+    candidates
+        .iter()
+        .map(|candidate| CandidateOutcome {
+            family: candidate.id.family,
+            proposal: candidate.id.proposal,
+            confidence: confidence_name(candidate.confidence),
+            reasons: candidate.reasons.iter().map(reason_name).collect(),
+        })
+        .collect()
+}
+
+fn not_verified_candidates_pass(
+    result: &occluview_align::AlignmentSearchResult,
+    maximum_confidence: Confidence,
+    required_selected_reason: &str,
+) -> bool {
+    let Some(selected) = result.candidates.first() else {
+        return false;
+    };
+    let every_candidate_is_below_ceiling = result.candidates.iter().all(|candidate| {
+        confidence_rank(candidate.confidence) <= confidence_rank(maximum_confidence)
+    });
+    let selected_reason_matches = selected
+        .reasons
+        .iter()
+        .any(|reason| reason_name(reason) == required_selected_reason);
+    every_candidate_is_below_ceiling && selected_reason_matches
 }
 
 fn required_confidence(spec: ConfidenceSpec) -> Confidence {
@@ -486,6 +527,7 @@ fn pose_result(case: &Case, result: &occluview_align::AlignmentSearchResult) -> 
         reasons: candidate.reasons.iter().map(reason_name).collect(),
         candidate_family: candidate.id.family,
         candidate_proposal: candidate.id.proposal,
+        candidate_evidence: candidate_outcomes(&result.candidates),
         rotation_error_deg,
         translation_error_mm,
         maximum_control_landmark_error_mm,
@@ -511,8 +553,11 @@ fn rejection_result(case: &Case, result: &occluview_align::AlignmentSearchResult
     let reasons: Vec<_> = candidate.reasons.iter().map(reason_name).collect();
     let passed = result.completion == Completion::Complete
         && result.input_check == InputCheck::Complete
-        && confidence_rank(candidate.confidence) <= confidence_rank(required_confidence(*maximum_confidence))
-        && reasons.contains(&expected_reason);
+        && not_verified_candidates_pass(
+            result,
+            required_confidence(*maximum_confidence),
+            expected_reason,
+        );
     let (rms_mm, p95_mm) = residual_numbers(candidate.evidence.euclidean_mm);
     CaseResult {
         case_id: case.id.clone(),
@@ -529,6 +574,7 @@ fn rejection_result(case: &Case, result: &occluview_align::AlignmentSearchResult
         reasons,
         candidate_family: candidate.id.family,
         candidate_proposal: candidate.id.proposal,
+        candidate_evidence: candidate_outcomes(&result.candidates),
         rotation_error_deg: None,
         translation_error_mm: None,
         maximum_control_landmark_error_mm: None,
@@ -681,4 +727,57 @@ fn changing_asset_bytes_changes_content_identity_at_same_name_and_size() {
         &[("case_0123456789ab".into(), "arch/scan.stl".into(), sha256(after))],
     );
     assert_ne!(left, right);
+}
+
+#[test]
+fn not_verified_rejects_verified_candidate_after_weak_selected_candidate() {
+    use occluview_align::{
+        AlignmentCandidate, AlignmentSearchResult, CandidateId, Completion, EvidenceReason,
+        InputCheck, RefinementTermination, Rigid, SearchProvenance, SearchWork,
+    };
+
+    let result = AlignmentSearchResult {
+        candidates: vec![
+            AlignmentCandidate {
+                id: CandidateId {
+                    family: 0,
+                    proposal: 0,
+                },
+                pose: Rigid::IDENTITY,
+                confidence: Confidence::Weak,
+                evidence: occluview_align::CandidateEvidence::default(),
+                reasons: vec![EvidenceReason::InsufficientSupport],
+                seeds: Vec::new(),
+                refinement: RefinementTermination::NotStarted,
+            },
+            AlignmentCandidate {
+                id: CandidateId {
+                    family: 1,
+                    proposal: 0,
+                },
+                pose: Rigid::IDENTITY,
+                confidence: Confidence::Verified,
+                evidence: occluview_align::CandidateEvidence::default(),
+                reasons: vec![EvidenceReason::CloseRival],
+                seeds: Vec::new(),
+                refinement: RefinementTermination::NotStarted,
+            },
+        ],
+        completion: Completion::Complete,
+        input_check: InputCheck::Complete,
+        work: SearchWork::default(),
+        provenance: SearchProvenance {
+            settings: SearchSettings::for_profile(SearchProfile::Standard),
+            threshold_set_id: "private-acceptance-test",
+            algorithm_version: 1,
+            input_revisions: [0, 0],
+            masked: [false, false],
+        },
+    };
+
+    assert!(!not_verified_candidates_pass(
+        &result,
+        Confidence::Probable,
+        "insufficient_support",
+    ));
 }
