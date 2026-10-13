@@ -3,6 +3,9 @@
 //! This pass walks the JSON with a visitor and never constructs a `Value` tree
 //! or a `GltfDoc`. Its counters follow the typed `Vec` fields in `json.rs` and
 //! recurse through the fields retained as `serde_json::Value`.
+//! glTF structs must use their specified JSON object form; positional arrays
+//! accepted by serde's derived struct deserializer are rejected here before
+//! they can bypass accounting for retained fields.
 //!
 //! The estimate bounds vector growth with four initial slots and two more
 //! slots per later item, and string growth with twice the decoded bytes plus
@@ -527,6 +530,9 @@ impl<'de> Visitor<'de> for ScanVisitor<'_> {
                 }
                 Ok(())
             }
+            Schema::Object(_) => Err(<A::Error as de::Error>::custom(
+                "glTF records must use JSON objects",
+            )),
             Schema::FixedArray => Self::skip_sequence(sequence),
             _ => Self::skip_sequence(sequence),
         }
