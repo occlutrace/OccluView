@@ -5,12 +5,12 @@ use std::collections::HashSet;
 
 use super::journal::{EntryOwner, HistoryEntry, PendingReservation};
 use super::{
-    HistoryCommandId, HistoryDirection, HistorySnapshot, HistoryStepInfo, HistoryStepKind,
+    HistoryCommandId, HistoryDirection, HistoryPayload, HistorySnapshot, HistoryStepInfo, HistoryStepKind,
     SceneKey, WorkspaceHistory,
 };
 
 impl WorkspaceHistory {
-    pub(crate) fn push_pending_edit<T: Any>(
+    pub(crate) fn push_pending_edit<T: HistoryPayload>(
         &mut self,
         scope: Option<SceneKey>,
         kind: HistoryStepKind,
@@ -112,7 +112,7 @@ impl WorkspaceHistory {
     pub(crate) fn payload<T: Any>(&self, id: HistoryCommandId) -> Option<&T> {
         self.entries.get(&id)?.payload.downcast_ref::<T>()
     }
-    pub(crate) fn navigate_edit<T: Any>(
+    pub(crate) fn navigate_edit<T: HistoryPayload>(
         &mut self,
         scope: Option<SceneKey>,
         direction: HistoryDirection,

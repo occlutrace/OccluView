@@ -5,7 +5,9 @@ use occluview_core::{Mesh, Scene, SceneMesh, SceneMeshId};
 
 use super::state::{BusyFinish, EditModeCommand, EditModeState, EditSessionToken, LayerKey};
 use super::EditModeController;
-use crate::app::workspace::history::{HistoryDirection, HistorySnapshot, HistoryStepKind};
+use crate::app::workspace::history::{
+    HistoryDirection, HistoryPayload, HistorySnapshot, HistoryStepKind, MemoryContribution,
+};
 
 #[derive(Clone, Debug)]
 pub(crate) enum MeshEditUndoSnapshot {
@@ -21,6 +23,17 @@ pub(crate) enum MeshEditUndoSnapshot {
         /// or to the restored scene's id-set when a reverse step is pushed.
         guard_ids: Vec<SceneMeshId>,
     },
+}
+
+impl HistoryPayload for MeshEditUndoSnapshot {
+    fn memory_contribution(&self, _declared_bytes: usize) -> MemoryContribution {
+        match self {
+            Self::Layer(layer) => MemoryContribution::layer(layer),
+            Self::Scene { scene, guard_ids } => {
+                MemoryContribution::scene(scene, guard_ids.capacity())
+            }
+        }
+    }
 }
 
 /// Outcome of attempting a structural (whole-scene) undo or redo step.
