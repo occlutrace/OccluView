@@ -42,16 +42,14 @@
 
 use crate::deferred_source::DeferredSource;
 use crate::preview_scene::PreviewSceneState;
-use crate::stream_read::{
-    read_capped_stream, read_capped_stream_until, StreamRead, StreamReadBounds,
-};
+use crate::stream_read::StreamRead;
 use crate::ShellError;
 use glam::Vec2;
 use occluview_render::ThumbnailSpec;
 use occluview_thumbnail::render_thumb::{
     placeholder_for_oversize_input, reserve_thumbnail_stream_job_for_request,
     try_render_thumbnail_file_with_request, try_render_thumbnail_shared_with_reservation,
-    ThumbnailAttempt, ThumbnailRenderRequest, DEFAULT_THUMBNAIL_TIMEOUT, MAX_THUMBNAIL_INPUT_BYTES,
+    ThumbnailAttempt, ThumbnailRenderRequest, DEFAULT_THUMBNAIL_TIMEOUT,
 };
 use std::mem::size_of;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -68,10 +66,7 @@ use windows::Win32::Graphics::Gdi::{
     RedrawWindow, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HBITMAP,
     HGDIOBJ, PAINTSTRUCT, RDW_INVALIDATE, RDW_UPDATENOW, SRCCOPY,
 };
-use windows::Win32::System::Com::STREAM_SEEK_SET;
-use windows::Win32::System::Com::{
-    CoTaskMemFree, IClassFactory, IClassFactory_Impl, IStream, STATFLAG, STATSTG,
-};
+use windows::Win32::System::Com::{CoTaskMemFree, IClassFactory, IClassFactory_Impl, IStream};
 use windows::Win32::System::LibraryLoader::{
     GetModuleHandleExW, GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, GET_MODULE_HANDLE_EX_FLAG_PIN,
 };
@@ -102,6 +97,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_SIZE, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS, WS_VISIBLE,
 };
 
+mod stream;
 mod thumbnail_provider;
 
 pub use thumbnail_provider::ThumbnailProvider;

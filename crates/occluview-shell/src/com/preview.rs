@@ -8,7 +8,7 @@ use super::{
     IObjectWithSite_Impl, IOleWindow, IOleWindow_Impl, IPreviewHandler, IPreviewHandler_Impl,
     IShellItem, IStream, IUnknown, Interface, MoveWindow, Ordering, PathBuf, PreviewSceneState,
     RedrawWindow, Ref, SelectObject, SetKeyboardFocus, SetParent, ShellError, StreamRead,
-    ThumbnailProvider, ThumbnailSpec, Vec2, ACTIVE_COM_OBJECTS, BOOL, GUID, GWLP_USERDATA, HBITMAP,
+    ThumbnailSpec, Vec2, ACTIVE_COM_OBJECTS, BOOL, GUID, GWLP_USERDATA, HBITMAP,
     HGDIOBJ, HINSTANCE, HRESULT, HWND, MAX_OFFSCREEN_EDGE, MSG, PAINTSTRUCT, PCWSTR, POINT,
     PREVIEW_WINDOW_CLASS_NAME, RDW_INVALIDATE, RDW_UPDATENOW, RECT, SIGDN_FILESYSPATH, SRCCOPY,
     WINDOW_EX_STYLE, WS_CHILD, WS_CLIPSIBLINGS, WS_VISIBLE,
@@ -18,6 +18,9 @@ mod context_menu;
 mod theme;
 mod window;
 
+use super::stream;
+#[cfg(test)]
+use super::ThumbnailProvider;
 use theme::preview_theme;
 use window::ensure_preview_window_class;
 
@@ -256,10 +259,10 @@ impl PreviewHandler {
             self.source
                 .borrow_mut()
                 .consume_pending_stream(|stream, extension| {
-                    ThumbnailProvider::rewind_stream(&stream).map_err(|_| {
+                    stream::rewind(&stream).map_err(|_| {
                         ShellError::Win32("rewinding preview stream failed".to_string())
                     })?;
-                    let read = ThumbnailProvider::read_stream(&stream).map_err(|_| {
+                    let read = stream::read(&stream).map_err(|_| {
                         ShellError::Win32("reading preview stream failed".to_string())
                     })?;
                     Ok::<_, ShellError>((read, extension.map(str::to_owned)))
