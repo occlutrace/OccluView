@@ -159,6 +159,7 @@ print("structured results for cases actually invoked:")
 for case in result.get("cases", []):
     print(json.dumps({key: case.get(key) for key in (
         "case_id", "passed", "completion", "confidence", "reasons",
+        "candidate_family", "candidate_proposal", "candidate_evidence",
         "rotation_error_deg", "translation_error_mm",
         "maximum_control_landmark_error_mm", "overlap_smaller",
         "rms_mm", "p95_mm", "examined_poses", "iterations", "elapsed_ms",
@@ -208,6 +209,7 @@ import math
 import os
 import pathlib
 import re
+import stat
 
 manifest_path = pathlib.Path(os.environ["PRIVATE_MANIFEST"])
 try:
@@ -236,6 +238,38 @@ def update_field(digest, value):
     digest.update(len(value).to_bytes(8, "big"))
     digest.update(value)
 
+def resolve_asset(relative):
+    candidate = corpus_root
+    try:
+        for component in relative.parts:
+            candidate = candidate / component
+            if stat.S_ISLNK(candidate.lstat().st_mode):
+                raise ValueError
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(corpus_root)
+        if not resolved.is_file():
+            raise ValueError
+        return candidate, resolved
+    except (OSError, RuntimeError, ValueError):
+        raise SystemExit(
+            "private acceptance asset is unavailable or uses a symlink; no receipt was written"
+        ) from None
+
+def read_checked_asset(relative):
+    candidate, resolved = resolve_asset(relative)
+    try:
+        before = resolved.stat()
+        content = resolved.read_bytes()
+        candidate_after, resolved_after = resolve_asset(relative)
+        after = resolved_after.stat()
+    except (OSError, RuntimeError):
+        raise SystemExit("private acceptance asset changed during receipt validation; no receipt was written") from None
+    before_identity = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+    after_identity = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+    if candidate_after != candidate or resolved_after != resolved or before_identity != after_identity:
+        raise SystemExit("private acceptance asset changed during receipt validation; no receipt was written")
+    return content
+
 corpus_digest = hashlib.sha256()
 update_field(corpus_digest, b"occluview-private-acceptance-corpus-v1")
 update_field(corpus_digest, manifest_sha)
@@ -250,20 +284,7 @@ for case in cases:
             raise SystemExit("private acceptance manifest has an unsafe asset path; no receipt was written")
         if "\\" in asset["file"] or ":" in asset["file"]:
             raise SystemExit("private acceptance manifest has an unsafe asset path; no receipt was written")
-        try:
-            path = (corpus_root / pathlib.Path(*relative.parts)).resolve(strict=True)
-        except (OSError, RuntimeError):
-            raise SystemExit("private acceptance asset changed during receipt validation; no receipt was written") from None
-        try:
-            path.relative_to(corpus_root)
-        except ValueError:
-            raise SystemExit("private acceptance asset escapes the corpus; no receipt was written") from None
-        if not path.is_file():
-            raise SystemExit("private acceptance asset is unavailable; no receipt was written")
-        try:
-            file_sha = hashlib.sha256(path.read_bytes()).digest()
-        except OSError:
-            raise SystemExit("private acceptance asset changed during receipt validation; no receipt was written") from None
+        file_sha = hashlib.sha256(read_checked_asset(relative)).digest()
         update_field(corpus_digest, case_id.encode("utf-8"))
         update_field(corpus_digest, asset["file"].encode("utf-8"))
         update_field(corpus_digest, file_sha)
@@ -276,10 +297,28 @@ if result.get("manifest_sha256") != manifest_sha.hex():
 if result.get("corpus_sha256") != corpus_digest.hexdigest():
     raise SystemExit("private acceptance corpus changed during execution; no receipt was written")
 actual = result.get("cases")
-if not isinstance(actual, list) or [item.get("case_id") for item in actual] != case_ids:
+if (
+    not isinstance(actual, list)
+    or any(not isinstance(item, dict) for item in actual)
+    or [item.get("case_id") for item in actual] != case_ids
+):
     raise SystemExit("private acceptance cases are missing, duplicated, or out of order; no receipt was written")
 
 confidence_rank = {"weak": 0, "ambiguous": 1, "probable": 2, "verified": 3}
+known_reasons = {
+    "insufficient_support",
+    "unobservable_motion",
+    "close_rival",
+    "policy_conflict",
+    "suspected_units_or_deformation",
+    "missing_normals",
+    "unvalidated_input",
+    "budget_exhausted",
+    "invalid_seed",
+    "landmark_rejected",
+    "uniqueness_not_established",
+    "invalid_topology",
+}
 numeric_fields = (
     "rotation_error_deg",
     "translation_error_mm",
@@ -291,14 +330,48 @@ numeric_fields = (
 )
 receipt_cases = []
 for planned, observed in zip(cases, actual, strict=True):
-    if observed.get("passed") is not True or observed.get("completion") != "complete" or observed.get("input_check_complete") is not True:
+    if (
+        observed.get("passed") is not True
+        or observed.get("completion") != "complete"
+        or observed.get("input_check_complete") is not True
+    ):
         raise SystemExit("private acceptance contains an incomplete case; no receipt was written")
     confidence = observed.get("confidence")
-    if confidence not in confidence_rank:
+    if not isinstance(confidence, str) or confidence not in confidence_rank:
         raise SystemExit("private acceptance contains an unknown confidence; no receipt was written")
+    candidates = observed.get("candidate_evidence")
+    if not isinstance(candidates, list) or not candidates:
+        raise SystemExit("private acceptance candidate evidence is missing; no receipt was written")
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            raise SystemExit("private acceptance candidate evidence is malformed; no receipt was written")
+        if (
+            type(candidate.get("family")) is not int
+            or not 0 <= candidate["family"] <= 255
+            or type(candidate.get("proposal")) is not int
+            or not 0 <= candidate["proposal"] <= 0xFFFFFFFF
+            or not isinstance(candidate.get("confidence"), str)
+            or candidate["confidence"] not in confidence_rank
+            or not isinstance(candidate.get("reasons"), list)
+            or any(
+                not isinstance(reason, str) or reason not in known_reasons
+                for reason in candidate["reasons"]
+            )
+        ):
+            raise SystemExit("private acceptance candidate evidence is malformed; no receipt was written")
+    selected = candidates[0]
+    if (
+        type(observed.get("candidate_family")) is not int
+        or type(observed.get("candidate_proposal")) is not int
+        or observed["candidate_family"] != selected["family"]
+        or observed["candidate_proposal"] != selected["proposal"]
+        or confidence != selected["confidence"]
+        or observed.get("reasons") != selected["reasons"]
+    ):
+        raise SystemExit("private acceptance selected candidate does not match its evidence; no receipt was written")
     for field in numeric_fields:
         value = observed.get(field)
-        if value is not None and (not isinstance(value, (int, float)) or not math.isfinite(value)):
+        if value is not None and (type(value) not in (int, float) or not math.isfinite(value)):
             raise SystemExit("private acceptance contains a non-finite result; no receipt was written")
     expectation = planned.get("expectation", {})
     kind = expectation.get("type")
@@ -325,9 +398,19 @@ for planned, observed in zip(cases, actual, strict=True):
     elif kind == "not_verified":
         maximum = expectation.get("maximum_confidence")
         required_reason = expectation.get("required_reason")
-        if maximum not in confidence_rank or maximum == "verified" or confidence_rank[confidence] > confidence_rank[maximum]:
-            raise SystemExit("private acceptance rejection result does not meet its confidence cap; no receipt was written")
-        if required_reason not in observed.get("reasons", []):
+        if (
+            not isinstance(maximum, str)
+            or maximum not in confidence_rank
+            or maximum == "verified"
+            or any(
+                confidence_rank[candidate["confidence"]] > confidence_rank[maximum]
+                for candidate in candidates
+            )
+        ):
+            raise SystemExit(
+                "private acceptance rejection result does not meet the all-candidate confidence cap; no receipt was written"
+            )
+        if not isinstance(required_reason, str) or required_reason not in selected["reasons"]:
             raise SystemExit("private acceptance rejection reason is missing; no receipt was written")
     else:
         raise SystemExit("private acceptance manifest has an unknown expectation; no receipt was written")
@@ -338,6 +421,7 @@ for planned, observed in zip(cases, actual, strict=True):
         "reasons",
         "candidate_family",
         "candidate_proposal",
+        "candidate_evidence",
         *numeric_fields,
         "examined_poses",
         "iterations",
