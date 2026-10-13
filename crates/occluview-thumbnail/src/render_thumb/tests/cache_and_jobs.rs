@@ -236,6 +236,115 @@ fn opened_file_size_recheck_rejects_a_stale_under_cap_preflight() {
 }
 
 #[test]
+fn companion_only_changes_bypass_primary_content_and_path_pixel_reuse() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    let root = std::env::temp_dir().join(format!("occluview-companion-cache-{unique}"));
+    let obj_a = root.join("obj-a");
+    let obj_b = root.join("obj-b");
+    let ply_a = root.join("ply-a");
+    let ply_b = root.join("ply-b");
+    for directory in [&obj_a, &obj_b, &ply_a, &ply_b] {
+        fs::create_dir_all(directory).expect("create companion fixture directory");
+    }
+
+    let obj_primary = b"mtllib material.mtl\nusemtl Dental\nv 0 0 0\nv 1 0 0\nv 0 1 0\nvt 0 0\nvt 1 0\nvt 0 1\nf 1/1 2/2 3/3\n";
+    let obj_a_path = obj_a.join("mesh.obj");
+    let obj_b_path = obj_b.join("mesh.obj");
+    fs::write(&obj_a_path, obj_primary).expect("write first OBJ primary");
+    fs::write(&obj_b_path, obj_primary).expect("write second OBJ primary");
+    fs::write(obj_a.join("material.mtl"), b"newmtl Dental\nmap_Kd image.png\n")
+        .expect("write first OBJ material");
+    fs::write(obj_b.join("material.mtl"), b"newmtl Dental\nmap_Kd image.png\n")
+        .expect("write second OBJ material");
+    fs::write(obj_a.join("image.png"), b"first companion image")
+        .expect("write first OBJ image");
+    fs::write(obj_b.join("image.png"), b"second companion image")
+        .expect("write second OBJ image");
+
+    let ply_primary = b"ply\nformat ascii 1.0\ncomment TextureFile atlas.png\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\nproperty float s\nproperty float t\nelement face 1\nproperty list uchar int vertex_indices\nend_header\n0 0 0 0 1\n1 0 0 1 1\n0 1 0 0 0\n3 0 1 2\n";
+    let ply_a_path = ply_a.join("mesh.ply");
+    let ply_b_path = ply_b.join("mesh.ply");
+    fs::write(&ply_a_path, ply_primary).expect("write first PLY primary");
+    fs::write(&ply_b_path, ply_primary).expect("write second PLY primary");
+    fs::write(ply_a.join("atlas.png"), b"first companion atlas")
+        .expect("write first PLY atlas");
+    fs::write(ply_b.join("atlas.png"), b"second companion atlas")
+        .expect("write second PLY atlas");
+
+    assert_ne!(
+        fs::read(obj_a.join("image.png")).expect("first OBJ image bytes"),
+        fs::read(obj_b.join("image.png")).expect("second OBJ image bytes")
+    );
+    assert_ne!(
+        fs::read(ply_a.join("atlas.png")).expect("first PLY atlas bytes"),
+        fs::read(ply_b.join("atlas.png")).expect("second PLY atlas bytes")
+    );
+    let obj_path_key_before = ThumbnailFileCacheKey::new(
+        &obj_a_path,
+        &cache::thumbnail_file_metadata(&obj_a_path).expect("OBJ primary metadata"),
+    );
+    let obj_content_key_before = thumbnail_file_content_key(&obj_a_path, obj_primary);
+    fs::write(obj_a.join("image.png"), b"updated companion image")
+        .expect("change only the OBJ companion");
+    assert_eq!(
+        obj_path_key_before,
+        ThumbnailFileCacheKey::new(
+            &obj_a_path,
+            &cache::thumbnail_file_metadata(&obj_a_path).expect("unchanged OBJ metadata"),
+        )
+    );
+    assert_eq!(
+        obj_content_key_before,
+        thumbnail_file_content_key(&obj_a_path, obj_primary)
+    );
+
+    let ply_path_key_before = ThumbnailFileCacheKey::new(
+        &ply_a_path,
+        &cache::thumbnail_file_metadata(&ply_a_path).expect("PLY primary metadata"),
+    );
+    let ply_content_key_before = thumbnail_file_content_key(&ply_a_path, ply_primary);
+    fs::write(ply_a.join("atlas.png"), b"updated companion atlas")
+        .expect("change only the PLY companion");
+    assert_eq!(
+        ply_path_key_before,
+        ThumbnailFileCacheKey::new(
+            &ply_a_path,
+            &cache::thumbnail_file_metadata(&ply_a_path).expect("unchanged PLY metadata"),
+        )
+    );
+    assert_eq!(
+        ply_content_key_before,
+        thumbnail_file_content_key(&ply_a_path, ply_primary)
+    );
+    let obj_kind = occluview_formats::probe::probe(Some("obj"), obj_primary)
+        .expect("probe actual OBJ kind");
+    let ply_kind = occluview_formats::probe::probe(Some("ply"), ply_primary)
+        .expect("probe actual PLY kind");
+    assert_eq!(obj_kind, occluview_formats::FormatKind::Obj);
+    assert_eq!(ply_kind, occluview_formats::FormatKind::Ply);
+    assert_eq!(
+        thumbnail_file_content_key(&obj_a_path, obj_primary),
+        thumbnail_file_content_key(&obj_b_path, obj_primary),
+        "primary OBJ bytes alone cannot identify its material texture"
+    );
+    assert_eq!(
+        thumbnail_file_content_key(&ply_a_path, ply_primary),
+        thumbnail_file_content_key(&ply_b_path, ply_primary),
+        "primary PLY bytes alone cannot identify its atlas"
+    );
+    assert!(
+        !file_thumbnail_can_share_primary_bytes(obj_kind)
+            && !file_thumbnail_can_share_primary_bytes(ply_kind),
+        "companion-capable formats must skip content/path pixel caches and inflight joins"
+    );
+    assert!(file_thumbnail_can_share_primary_bytes(occluview_formats::FormatKind::Stl));
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn stream_thumbnail_cache_hits_exact_size_and_downscales_reuse() {
     use occluview_formats::FormatKind;
 
