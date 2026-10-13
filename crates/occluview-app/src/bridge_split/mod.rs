@@ -63,9 +63,9 @@ impl BridgeSplitController {
     }
 
     pub(crate) fn warm_source(&self, wake: Arc<dyn Fn() + Send + Sync>) {
-        if let Some(source) = self.source.as_ref() {
+        if let (Some(source), Some(guard)) = (self.source.as_ref(), self.session.warm_guard()) {
             self.worker
-                .warm_source(Arc::clone(&source.mesh), wake);
+                .warm_source(Arc::clone(&source.mesh), guard, wake);
         }
     }
 
@@ -111,6 +111,13 @@ impl BridgeSplitController {
         let mut changed = false;
         for output in self.worker.poll() {
             changed |= self.session.apply_job_output(live_target, output);
+        }
+        if let Some(failure) = self.worker.poll_warm_failure() {
+            changed |= self.session.apply_warm_failure(
+                live_target,
+                failure.guard,
+                failure.error,
+            );
         }
         changed
     }

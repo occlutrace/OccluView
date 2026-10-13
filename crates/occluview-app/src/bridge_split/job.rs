@@ -1,4 +1,4 @@
-use super::state::{BridgeSplitGuard, BridgeSplitToolError};
+use super::state::{BridgeSplitGuard, BridgeSplitToolError, BridgeSplitWarmGuard};
 #[cfg(test)]
 use super::state::BridgeSplitTarget;
 use glam::Affine3A;
@@ -94,7 +94,12 @@ impl BridgeSplitSourceCache {
 type BridgeSplitCompute = dyn Fn(BridgeSplitJobInput) -> Result<CoreBridgeSplitResult, BridgeSplitToolError>
     + Send
     + Sync;
-type BridgeSplitWarm = dyn Fn(Arc<Mesh>) + Send + Sync;
+type BridgeSplitWarm = dyn Fn(Arc<Mesh>) -> Result<(), BridgeSplitToolError> + Send + Sync;
+
+pub(crate) struct BridgeSplitWarmFailure {
+    pub(crate) guard: BridgeSplitWarmGuard,
+    pub(crate) error: BridgeSplitToolError,
+}
 
 struct PendingPreview {
     token: Arc<()>,
@@ -104,7 +109,8 @@ struct PendingPreview {
 enum PendingWork {
     Preview(PendingPreview),
     Warm {
-        geometry_id: u64,
+        guard: BridgeSplitWarmGuard,
+        token: Arc<()>,
         mesh: Arc<Mesh>,
         after_warm: Option<PendingPreview>,
     },
@@ -126,13 +132,23 @@ enum ActiveWork {
         guard: BridgeSplitGuard,
     },
     Warm {
-        geometry_id: u64,
+        guard: BridgeSplitWarmGuard,
+        token: Arc<()>,
     },
+}
+
+enum WorkCompletion {
+    Preview(Result<CoreBridgeSplitResult, BridgeSplitToolError>),
+    Warm(Result<(), BridgeSplitToolError>),
 }
 
 enum ScheduledWork {
     Preview(PendingPreview),
-    Warm { geometry_id: u64, mesh: Arc<Mesh> },
+    Warm {
+        guard: BridgeSplitWarmGuard,
+        token: Arc<()>,
+        mesh: Arc<Mesh>,
+    },
 }
 
 impl ScheduledWork {
@@ -142,8 +158,9 @@ impl ScheduledWork {
                 token: Arc::clone(&preview.token),
                 guard: preview.input.guard,
             },
-            Self::Warm { geometry_id, .. } => ActiveWork::Warm {
-                geometry_id: *geometry_id,
+            Self::Warm { guard, token, .. } => ActiveWork::Warm {
+                guard: *guard,
+                token: Arc::clone(token),
             },
         }
     }
@@ -154,10 +171,12 @@ struct WorkerMailboxState {
     current_token: Option<Arc<()>>,
     active: Vec<ActiveWork>,
     pending: Option<PendingWork>,
-    warm_target: Option<u64>,
-    warming: BTreeSet<u64>,
-    warmed: Option<u64>,
+    warm_guard: Option<BridgeSplitWarmGuard>,
+    warm_token: Option<Arc<()>>,
+    warmed_token: Option<Arc<()>>,
+    failed_warm_token: Option<Arc<()>>,
     output: Option<BridgeSplitJobOutput>,
+    warm_failure: Option<BridgeSplitWarmFailure>,
     wake: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
@@ -245,7 +264,10 @@ impl BridgeSplitWorker {
     {
         Self::with_parts(
             Arc::new(compute),
-            Arc::new(|mesh| mesh.warm_bvh()),
+            Arc::new(|mesh| {
+                mesh.warm_bvh();
+                Ok(())
+            }),
             injected_compute_scheduler(),
         )
     }
@@ -276,37 +298,59 @@ impl BridgeSplitWorker {
     }
 
     /// Queue picking-tree warming through the same bounded scheduler as previews.
-    pub(crate) fn warm_source(&self, mesh: Arc<Mesh>, wake: Arc<dyn Fn() + Send + Sync>) {
-        let geometry_id = mesh.geometry_id();
+    pub(crate) fn warm_source(
+        &self,
+        mesh: Arc<Mesh>,
+        guard: BridgeSplitWarmGuard,
+        wake: Arc<dyn Fn() + Send + Sync>,
+    ) {
         let mut scheduler = lock_recover(&self.scheduler.state);
-        {
+        let needs_pump = {
             let mut state = lock_recover(&self.mailbox.state);
             state.wake = Some(wake);
-            state.warm_target = Some(geometry_id);
-            let after_warm = state.pending.take().and_then(|pending| match pending {
-                PendingWork::Preview(preview)
-                    if preview.input.mesh.geometry_id() == geometry_id =>
-                {
-                    Some(preview)
-                }
-                PendingWork::Warm {
-                    geometry_id: pending_id,
-                    after_warm,
-                    ..
-                } if pending_id == geometry_id => after_warm,
-                _ => None,
-            });
-            if state.warmed == Some(geometry_id) || state.warming.contains(&geometry_id) {
-                state.pending = after_warm.map(PendingWork::Preview);
+            if state.warm_guard == Some(guard) {
+                false
             } else {
-                state.pending = Some(PendingWork::Warm {
-                    geometry_id,
-                    mesh,
-                    after_warm,
+                let after_warm = state.pending.take().and_then(|pending| match pending {
+                    PendingWork::Preview(preview)
+                        if same_session_target(&preview.input.guard, guard) =>
+                    {
+                        Some(preview)
+                    }
+                    PendingWork::Warm {
+                        guard: pending_guard,
+                        after_warm,
+                        ..
+                    } if pending_guard == guard => after_warm,
+                    _ => None,
                 });
+                let token = Arc::new(());
+                state.current_token = after_warm
+                    .as_ref()
+                    .map(|preview| Arc::clone(&preview.token));
+                state.output = None;
+                state.warm_failure = None;
+                state.warm_guard = Some(guard);
+                state.warm_token = Some(Arc::clone(&token));
+                state.warmed_token = None;
+                state.failed_warm_token = None;
+                if mesh.bvh_is_ready() {
+                    state.warmed_token = Some(token);
+                    state.pending = after_warm.map(PendingWork::Preview);
+                } else {
+                    state.pending = Some(PendingWork::Warm {
+                        guard,
+                        token,
+                        mesh,
+                        after_warm,
+                    });
+                }
+                true
             }
+        };
+        if needs_pump {
+            enqueue_if_ready(&mut scheduler, &self.mailbox);
         }
-        enqueue_if_ready(&mut scheduler, &self.mailbox);
         let mut wakes = Vec::new();
         pump_scheduler(&self.scheduler, &mut scheduler, &mut wakes);
         drop(scheduler);
@@ -326,18 +370,22 @@ impl BridgeSplitWorker {
         let mut scheduler = lock_recover(&self.scheduler.state);
         {
             let mut state = lock_recover(&self.mailbox.state);
+            if warm_failed_for(&state, &input.guard) {
+                return Err(BridgeSplitToolError::WorkerStopped);
+            }
             let token = Arc::new(());
             state.current_token = Some(Arc::clone(&token));
             state.output = None;
-            let geometry_id = input.mesh.geometry_id();
             let preview = PendingPreview { token, input };
             state.pending = match state.pending.take() {
                 Some(PendingWork::Warm {
-                    geometry_id: warm_id,
+                    guard,
+                    token,
                     mesh,
                     ..
-                }) if warm_id == geometry_id => Some(PendingWork::Warm {
-                    geometry_id: warm_id,
+                }) if same_session_target(&preview.input.guard, guard) => Some(PendingWork::Warm {
+                    guard,
+                    token,
                     mesh,
                     after_warm: Some(preview),
                 }),
@@ -360,8 +408,12 @@ impl BridgeSplitWorker {
             let mut state = lock_recover(&self.mailbox.state);
             state.current_token = None;
             state.pending = None;
-            state.warm_target = None;
+            state.warm_guard = None;
+            state.warm_token = None;
+            state.warmed_token = None;
+            state.failed_warm_token = None;
             state.output = None;
+            state.warm_failure = None;
             state.wake = None;
         }
         remove_ready(&mut scheduler, self.mailbox.id);
@@ -377,6 +429,10 @@ impl BridgeSplitWorker {
             .take()
             .into_iter()
             .collect()
+    }
+
+    pub(crate) fn poll_warm_failure(&mut self) -> Option<BridgeSplitWarmFailure> {
+        lock_recover(&self.mailbox.state).warm_failure.take()
     }
 
     #[cfg(test)]
@@ -411,8 +467,12 @@ impl Drop for BridgeSplitWorker {
             let mut state = lock_recover(&mailbox.state);
             state.current_token = None;
             state.pending = None;
-            state.warm_target = None;
+            state.warm_guard = None;
+            state.warm_token = None;
+            state.warmed_token = None;
+            state.failed_warm_token = None;
             state.output = None;
+            state.warm_failure = None;
             state.wake = None;
         }
         remove_ready(&mut scheduler, self.mailbox.id);
@@ -428,7 +488,7 @@ impl BridgeSplitScheduler {
         self: &Arc<Self>,
         worker_id: u64,
         active: ActiveWork,
-        result: Option<Result<CoreBridgeSplitResult, BridgeSplitToolError>>,
+        completion: WorkCompletion,
     ) {
         let mut scheduler = lock_recover(&self.state);
         scheduler.active = scheduler.active.saturating_sub(1);
@@ -438,35 +498,12 @@ impl BridgeSplitScheduler {
             .get(&worker_id)
             .and_then(Weak::upgrade)
         {
-            {
+            let warm_failed = {
                 let mut state = lock_recover(&mailbox.state);
-                state.active.retain(|candidate| !same_active(candidate, &active));
-                match active {
-                    ActiveWork::Preview { token, guard } => {
-                        if state
-                            .current_token
-                            .as_ref()
-                            .is_some_and(|current| Arc::ptr_eq(current, &token))
-                        {
-                            state.output = Some(BridgeSplitJobOutput {
-                                guard,
-                                result: result.unwrap_or(Err(BridgeSplitToolError::WorkerStopped)),
-                            });
-                            if let Some(wake) = state.wake.as_ref() {
-                                wakes.push(Arc::clone(wake));
-                            }
-                        }
-                    }
-                    ActiveWork::Warm { geometry_id } => {
-                        state.warming.remove(&geometry_id);
-                        if state.warm_target == Some(geometry_id) {
-                            state.warmed = Some(geometry_id);
-                        }
-                        if let Some(wake) = state.wake.as_ref() {
-                            wakes.push(Arc::clone(wake));
-                        }
-                    }
-                }
+                complete_mailbox_work(&mut state, active, completion, &mut wakes)
+            };
+            if warm_failed {
+                remove_ready(&mut scheduler, worker_id);
             }
             enqueue_if_ready(&mut scheduler, &mailbox);
         }
@@ -481,10 +518,102 @@ fn same_active(left: &ActiveWork, right: &ActiveWork) -> bool {
         (ActiveWork::Preview { token: left, .. }, ActiveWork::Preview { token: right, .. }) => {
             Arc::ptr_eq(left, right)
         }
-        (ActiveWork::Warm { geometry_id: left }, ActiveWork::Warm { geometry_id: right }) => {
-            left == right
+        (ActiveWork::Warm { token: left, .. }, ActiveWork::Warm { token: right, .. }) => {
+            Arc::ptr_eq(left, right)
         }
         _ => false,
+    }
+}
+
+fn token_is(current: &Option<Arc<()>>, token: &Arc<()>) -> bool {
+    current
+        .as_ref()
+        .is_some_and(|candidate| Arc::ptr_eq(candidate, token))
+}
+
+fn same_session_target(preview: &BridgeSplitGuard, warm: BridgeSplitWarmGuard) -> bool {
+    preview.session_id == warm.session_id && preview.target == warm.target
+}
+
+fn warm_failed_for(state: &WorkerMailboxState, preview: &BridgeSplitGuard) -> bool {
+    let Some(warm_guard) = state.warm_guard else {
+        return false;
+    };
+    if !same_session_target(preview, warm_guard) {
+        return false;
+    }
+    state
+        .warm_token
+        .as_ref()
+        .zip(state.failed_warm_token.as_ref())
+        .is_some_and(|(current, failed)| Arc::ptr_eq(current, failed))
+}
+
+fn warm_is_active(state: &WorkerMailboxState, token: &Arc<()>) -> bool {
+    state.active.iter().any(|work| {
+        matches!(work, ActiveWork::Warm { token: active, .. } if Arc::ptr_eq(active, token))
+    })
+}
+
+fn complete_mailbox_work(
+    state: &mut WorkerMailboxState,
+    active: ActiveWork,
+    completion: WorkCompletion,
+    wakes: &mut Vec<Arc<dyn Fn() + Send + Sync>>,
+) -> bool {
+    state.active.retain(|candidate| !same_active(candidate, &active));
+    match active {
+        ActiveWork::Preview { token, guard } => {
+            if token_is(&state.current_token, &token) {
+                let result = match completion {
+                    WorkCompletion::Preview(result) => result,
+                    WorkCompletion::Warm(_) => Err(BridgeSplitToolError::WorkerStopped),
+                };
+                state.output = Some(BridgeSplitJobOutput { guard, result });
+                if let Some(wake) = state.wake.as_ref() {
+                    wakes.push(Arc::clone(wake));
+                }
+            }
+            false
+        }
+        ActiveWork::Warm { guard, token } => {
+            if state.warm_guard != Some(guard) || !token_is(&state.warm_token, &token) {
+                if let Some(wake) = state.wake.as_ref() {
+                    wakes.push(Arc::clone(wake));
+                }
+                return false;
+            }
+            let failed = !matches!(&completion, WorkCompletion::Warm(Ok(())));
+            match completion {
+                WorkCompletion::Warm(Ok(())) => {
+                    state.warmed_token = Some(Arc::clone(&token));
+                    state.failed_warm_token = None;
+                }
+                WorkCompletion::Warm(Err(error)) => {
+                    state.warmed_token = None;
+                    state.failed_warm_token = Some(Arc::clone(&token));
+                    state.current_token = None;
+                    state.pending = None;
+                    state.output = None;
+                    state.warm_failure = Some(BridgeSplitWarmFailure { guard, error });
+                }
+                WorkCompletion::Preview(_) => {
+                    state.warmed_token = None;
+                    state.failed_warm_token = Some(Arc::clone(&token));
+                    state.current_token = None;
+                    state.pending = None;
+                    state.output = None;
+                    state.warm_failure = Some(BridgeSplitWarmFailure {
+                        guard,
+                        error: BridgeSplitToolError::WorkerStopped,
+                    });
+                }
+            }
+            if let Some(wake) = state.wake.as_ref() {
+                wakes.push(Arc::clone(wake));
+            }
+            failed
+        }
     }
 }
 
@@ -497,8 +626,11 @@ fn remove_ready(scheduler: &mut SchedulerState, worker_id: u64) {
 fn enqueue_if_ready(scheduler: &mut SchedulerState, mailbox: &WorkerMailbox) {
     let state = lock_recover(&mailbox.state);
     let ready = match state.pending.as_ref() {
-        Some(PendingWork::Warm { geometry_id, .. }) => {
-            state.warmed != Some(*geometry_id) && !state.warming.contains(geometry_id)
+        Some(PendingWork::Warm { token, .. }) => {
+            !token_is(&state.warmed_token, token)
+                && !token_is(&state.failed_warm_token, token)
+                && !warm_is_active(&state, token)
+                && token_is(&state.warm_token, token)
         }
         Some(PendingWork::Preview(preview)) => preview_is_ready(&state, preview),
         None => false,
@@ -510,9 +642,13 @@ fn enqueue_if_ready(scheduler: &mut SchedulerState, mailbox: &WorkerMailbox) {
 }
 
 fn preview_is_ready(state: &WorkerMailboxState, preview: &PendingPreview) -> bool {
-    let geometry_id = preview.input.mesh.geometry_id();
-    let waiting_for_warm =
-        state.warm_target == Some(geometry_id) && state.warmed != Some(geometry_id);
+    let waiting_for_warm = state.warm_guard.is_some_and(|guard| {
+        same_session_target(&preview.input.guard, guard)
+            && !state
+                .warm_token
+                .as_ref()
+                .is_some_and(|token| token_is(&state.warmed_token, token))
+    });
     let same_session_active = state.active.iter().any(|work| {
         matches!(
             work,
@@ -520,23 +656,33 @@ fn preview_is_ready(state: &WorkerMailboxState, preview: &PendingPreview) -> boo
                 if guard.session_id == preview.input.guard.session_id
         )
     });
-    !waiting_for_warm && !state.warming.contains(&geometry_id) && !same_session_active
+    !waiting_for_warm && !same_session_active
 }
 
 fn take_ready_work(state: &mut WorkerMailboxState) -> Option<ScheduledWork> {
     match state.pending.take()? {
         PendingWork::Warm {
-            geometry_id,
+            guard,
+            token,
             mesh,
             after_warm,
         } => {
-            if state.warmed == Some(geometry_id) || state.warming.contains(&geometry_id) {
+            if state.warm_guard != Some(guard) || !token_is(&state.warm_token, &token) {
+                return None;
+            }
+            if token_is(&state.warmed_token, &token) || warm_is_active(state, &token) {
                 state.pending = after_warm.map(PendingWork::Preview);
                 return take_ready_work(state);
             }
+            if token_is(&state.failed_warm_token, &token) {
+                return None;
+            }
             state.pending = after_warm.map(PendingWork::Preview);
-            state.warming.insert(geometry_id);
-            Some(ScheduledWork::Warm { geometry_id, mesh })
+            Some(ScheduledWork::Warm {
+                guard,
+                token,
+                mesh,
+            })
         }
         PendingWork::Preview(preview) => {
             if !preview_is_ready(state, &preview) {
@@ -564,11 +710,12 @@ fn launch_work(
             ScheduledWork::Preview(preview) => {
                 let result = catch_unwind(AssertUnwindSafe(|| (compute)(preview.input)))
                     .unwrap_or(Err(BridgeSplitToolError::WorkerStopped));
-                scheduler.finish(worker_id, active, Some(result));
+                scheduler.finish(worker_id, active, WorkCompletion::Preview(result));
             }
             ScheduledWork::Warm { mesh, .. } => {
-                let _ = catch_unwind(AssertUnwindSafe(|| (warm)(mesh)));
-                scheduler.finish(worker_id, active, None);
+                let result = catch_unwind(AssertUnwindSafe(|| (warm)(mesh)))
+                    .unwrap_or(Err(BridgeSplitToolError::WorkerStopped));
+                scheduler.finish(worker_id, active, WorkCompletion::Warm(result));
             }
         })?;
     Ok(())
@@ -597,35 +744,20 @@ fn pump_scheduler(
         scheduler.active += 1;
         if launch_work(scheduler_arc, &mailbox, work).is_err() {
             scheduler.active = scheduler.active.saturating_sub(1);
-            {
-                let mut state = lock_recover(&mailbox.state);
-                state.active.retain(|candidate| !same_active(candidate, &active));
-                match active {
-                    ActiveWork::Preview { token, guard } => {
-                        if state
-                            .current_token
-                            .as_ref()
-                            .is_some_and(|current| Arc::ptr_eq(current, &token))
-                        {
-                            state.output = Some(BridgeSplitJobOutput {
-                                guard,
-                                result: Err(BridgeSplitToolError::WorkerStopped),
-                            });
-                            if let Some(wake) = state.wake.as_ref() {
-                                wakes.push(Arc::clone(wake));
-                            }
-                        }
-                    }
-                    ActiveWork::Warm { geometry_id } => {
-                        state.warming.remove(&geometry_id);
-                        if state.warm_target == Some(geometry_id) {
-                            state.warmed = Some(geometry_id);
-                        }
-                        if let Some(wake) = state.wake.as_ref() {
-                            wakes.push(Arc::clone(wake));
-                        }
-                    }
+            let completion = match &active {
+                ActiveWork::Preview { .. } => {
+                    WorkCompletion::Preview(Err(BridgeSplitToolError::WorkerStopped))
                 }
+                ActiveWork::Warm { .. } => {
+                    WorkCompletion::Warm(Err(BridgeSplitToolError::WorkerStopped))
+                }
+            };
+            let warm_failed = {
+                let mut state = lock_recover(&mailbox.state);
+                complete_mailbox_work(&mut state, active, completion, wakes)
+            };
+            if warm_failed {
+                remove_ready(scheduler, worker_id);
             }
         }
         enqueue_if_ready(scheduler, &mailbox);
@@ -702,7 +834,11 @@ mod tests {
             }
             Err(BridgeSplitToolError::WorkerStopped)
         };
-        BridgeSplitWorker::with_parts(Arc::new(compute), Arc::new(|_mesh| {}), scheduler)
+        BridgeSplitWorker::with_parts(
+            Arc::new(compute),
+            Arc::new(|_mesh| Ok(())),
+            scheduler,
+        )
     }
 
     #[allow(clippy::expect_used)]
@@ -1026,6 +1162,7 @@ mod tests {
                     if let Ok(receiver) = warm_release_rx.lock() {
                         let _ = receiver.recv();
                     }
+                    Ok(())
                 }
             }),
             scheduler.clone(),
@@ -1033,6 +1170,10 @@ mod tests {
 
         worker.warm_source(
             Arc::clone(&mesh),
+            BridgeSplitWarmGuard {
+                session_id: 20,
+                target: BridgeSplitTarget::capture(&entry),
+            },
             Arc::new(move || {
                 let _ = wake_tx.send(());
             }),
@@ -1056,12 +1197,115 @@ mod tests {
     }
 
     #[test]
+    fn stale_warm_failure_is_fenced_and_current_failure_reaches_the_session() {
+        let timeout = Duration::from_secs(5);
+        let scheduler = isolated_scheduler();
+        let warm_calls = Arc::new(AtomicUsize::new(0));
+        let compute_calls = Arc::new(AtomicUsize::new(0));
+        let (warm_started_tx, warm_started_rx) = mpsc::channel();
+        let (warm_release_tx, warm_release_rx) = mpsc::channel();
+        let warm_release_rx = Arc::new(Mutex::new(warm_release_rx));
+        let worker = BridgeSplitWorker::with_parts(
+            Arc::new({
+                let compute_calls = Arc::clone(&compute_calls);
+                move |_input| {
+                    compute_calls.fetch_add(1, Ordering::SeqCst);
+                    Err(BridgeSplitToolError::WorkerStopped)
+                }
+            }),
+            Arc::new({
+                let warm_calls = Arc::clone(&warm_calls);
+                let warm_release_rx = Arc::clone(&warm_release_rx);
+                move |_mesh| {
+                    let call = warm_calls.fetch_add(1, Ordering::SeqCst);
+                    let _ = warm_started_tx.send(call);
+                    if let Ok(receiver) = warm_release_rx.lock() {
+                        let _ = receiver.recv();
+                    }
+                    Err(BridgeSplitToolError::WorkerStopped)
+                }
+            }),
+            Arc::clone(&scheduler),
+        );
+        let mut controller = super::super::BridgeSplitController::with_worker(worker);
+        let entry = occluview_core::SceneMesh::new(Mesh::empty());
+        let target = BridgeSplitTarget::capture(&entry);
+        let (wake_tx, wake_rx) = mpsc::channel();
+        let wake: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+            let _ = wake_tx.send(());
+        });
+
+        controller.start(&entry);
+        let old_guard = controller.session().warm_guard();
+        controller.warm_source(Arc::clone(&wake));
+        let old_started = warm_started_rx.recv_timeout(timeout);
+
+        controller.cancel();
+        controller.start(&entry);
+        let current_guard = controller.session().warm_guard();
+        controller.warm_source(Arc::clone(&wake));
+        let current_started = warm_started_rx.recv_timeout(timeout);
+        let queued = current_guard.is_some_and(|guard| {
+            controller
+                .worker
+                .submit(test_input(guard.session_id, 1, &entry))
+                .is_ok()
+        });
+
+        let _ = warm_release_tx.send(());
+        let stale_woke = wake_rx.recv_timeout(timeout).is_ok();
+        let stale_poll_changed = controller.poll(Some(target));
+        let stale_failure_visible = controller.session().failure().is_some();
+
+        let _ = warm_release_tx.send(());
+        let current_woke = wake_rx.recv_timeout(timeout).is_ok();
+        let current_poll_changed = controller.poll(Some(target));
+        controller.warm_source(Arc::clone(&wake));
+        let no_retry_started = matches!(
+            warm_started_rx.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        );
+        let current_failure_visible = matches!(
+            controller.session().failure(),
+            Some(BridgeSplitToolError::WorkerStopped)
+        );
+        let current_mode = controller.session().mode();
+        let no_pose = controller.session().pose().is_none();
+        let pending_cleared = controller.worker.queued_guard().is_none();
+        let source_mesh_released = Arc::strong_count(&entry.mesh) == 2;
+        let active_slots = lock_recover(&scheduler.state).active;
+        let warm_count = warm_calls.load(Ordering::SeqCst);
+        let compute_count = compute_calls.load(Ordering::SeqCst);
+        drop(controller);
+
+        assert_eq!(old_guard.map(|guard| guard.session_id), Some(1));
+        assert_eq!(current_guard.map(|guard| guard.session_id), Some(2));
+        assert_eq!(old_started, Ok(0));
+        assert_eq!(current_started, Ok(1));
+        assert!(queued);
+        assert!(stale_woke);
+        assert!(!stale_poll_changed);
+        assert!(!stale_failure_visible);
+        assert!(current_woke);
+        assert!(current_poll_changed);
+        assert!(current_failure_visible);
+        assert_eq!(current_mode, super::super::BridgeSplitMode::Failed);
+        assert!(no_pose);
+        assert!(pending_cleared);
+        assert!(source_mesh_released);
+        assert!(no_retry_started);
+        assert_eq!(active_slots, 0);
+        assert_eq!(warm_count, 2);
+        assert_eq!(compute_count, 0);
+    }
+
+    #[test]
     fn dropping_workers_removes_registry_and_scheduler_queue_entries() {
         let scheduler = isolated_scheduler();
         for _ in 0..100 {
             let worker = BridgeSplitWorker::with_parts(
                 Arc::new(|_input| Err(BridgeSplitToolError::WorkerStopped)),
-                Arc::new(|_mesh| {}),
+                Arc::new(|_mesh| Ok(())),
                 Arc::clone(&scheduler),
             );
             drop(worker);
