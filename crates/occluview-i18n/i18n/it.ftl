@@ -1036,3 +1036,5 @@ layer-units-use-mm = Conferma millimetri (mantieni scala)
 layer-units-use-meters = Conferma metri (scala ×1000)
 layer-units-confirmed = Unità del livello confermate. Annulla ripristina l’interpretazione precedente.
 measure-units-unverified = Unità non confermate: controlla il livello contrassegnato prima di utilizzare le misure.
+layer-units-source-scope = Si applica a tutte le parti di questa sorgente nella scena attuale. Le altre scene mantengono le proprie scelte di unità.
+load-units-multiple = Le unità di più livelli non sono confermate. Controlla il menu di ogni livello contrassegnato.

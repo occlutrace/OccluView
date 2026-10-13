@@ -1038,3 +1038,5 @@ layer-units-use-mm = Confirmar milímetros (manter escala)
 layer-units-use-meters = Confirmar metros (escala ×1000)
 layer-units-confirmed = Unidades da camada confirmadas. Desfazer restaura a interpretação anterior.
 measure-units-unverified = Unidades não confirmadas: confira a camada marcada antes de usar as medições.
+layer-units-source-scope = Aplica-se a todas as partes desta origem nesta cena. As outras cenas mantêm suas próprias decisões de unidades.
+load-units-multiple = As unidades de várias camadas não estão confirmadas. Confira o menu de cada camada marcada.

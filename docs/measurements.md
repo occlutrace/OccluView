@@ -8,7 +8,9 @@ its coordinates and carries a persistent unit warning.
 Use the layer's context menu to confirm millimeters or meters. The size
 recommendation belongs to that layer's original import bounds and is advisory.
 Only the explicit decision changes scale; confirming meters applies ×1000 in
-the layer's local frame. Placement is preserved. Undo restores the previous
+the layer's local frame. The decision also updates pieces of that same source
+in the current scene, with one Undo step; other scenes remain independent.
+Placement is preserved. Undo restores the previous
 interpretation and scale, and repeating a confirmation does not apply it twice.
 An operator decision is recorded separately from format-declared certainty.
 The warning beside measurements remains while a visible layer has unresolved

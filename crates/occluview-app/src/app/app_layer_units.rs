@@ -23,6 +23,7 @@ impl SceneContext<'_> {
         {
             return LayerContextApply::default();
         }
+        let source = layer.export_source_layer_id();
         // An open editing or placement transaction owns its baseline. Resolve
         // it first so a unit decision cannot be undone by that transaction.
         if self.document.edit_mode.has_active_session()
@@ -34,6 +35,36 @@ impl SceneContext<'_> {
                 &self.ui.locale,
             );
         }
+        // A split preserves one import interpretation. Plan every same-source
+        // piece before taking history, so a bad scale cannot leave half the
+        // source converted. Other documents retain their independent decision.
+        let desired_scale: f32 = match interpretation {
+            SourceUnit::Meters => 1000.0,
+            SourceUnit::Millimeters => 1.0,
+            SourceUnit::Unitless => return LayerContextApply::default(),
+        };
+        let mut updates = Vec::new();
+        for (index, entry) in scene.meshes().iter().enumerate() {
+            if entry.export_source_layer_id() != source {
+                continue;
+            }
+            let units = entry.import_units();
+            if units.confidence == UnitConfidence::ConfirmedByOperator
+                && units.scale_to_mm.to_bits() == desired_scale.to_bits()
+            {
+                continue;
+            }
+            if !matches!(units.confidence,
+                UnitConfidence::Ambiguous | UnitConfidence::ConfirmedByOperator)
+            {
+                continue;
+            }
+            let mut updated = entry.clone();
+            if !updated.confirm_import_units(interpretation) {
+                return LayerContextApply::default();
+            }
+            updates.push((index, updated));
+        }
         let Some(token) = self.document.edit_mode.begin_scene_edit(
             scene,
             request.layer_id,
@@ -41,12 +72,11 @@ impl SceneContext<'_> {
         ) else {
             return LayerContextApply::default();
         };
-        if !scene.meshes_mut()[request.index].confirm_import_units(interpretation) {
-            let _ = self.document.edit_mode.finish_layer_edit_noop(token);
-            return LayerContextApply::default();
+        for (index, updated) in updates {
+            self.document.mark_mesh_edits_unsaved(updated.id());
+            scene.meshes_mut()[index] = updated;
         }
         let _ = self.document.edit_mode.finish_scene_edit_success(token, scene);
-        self.document.mark_mesh_edits_unsaved(request.layer_id);
         self.scene_ui.status_message = Some(
             self.ui.locale.tr(crate::i18n::message_id!("layer-units-confirmed")),
         );
@@ -87,7 +117,12 @@ mod tests {
         let id = layer.id();
         let original_pose = layer.transform;
         let original_bounds = layer.import_bbox();
+        let sibling = super::super::app_layer_edits::clone_layer_with_mesh(
+            &layer, layer.mesh.as_ref().clone());
+        let sibling_id = sibling.id();
         scene.add(layer);
+        scene.add(sibling);
+        scene.add(ambiguous_layer());
         app.workspace.scenes[0].document.scene = Some(std::sync::Arc::new(scene.clone()));
         let mut context = app.active_context().expect("scene");
         let request = LayerContextRequest { index: 0, layer_id: id,
@@ -97,15 +132,21 @@ mod tests {
         assert_eq!(confirmed.transform.translation, original_pose.translation);
         assert_eq!(confirmed.import_bbox(), original_bounds);
         assert_eq!(confirmed.import_units().confidence, UnitConfidence::ConfirmedByOperator);
+        assert_eq!(scene.meshes()[1].transform, confirmed.transform);
+        assert_eq!(scene.meshes()[1].import_units(), confirmed.import_units());
+        assert_eq!(scene.meshes()[2].import_units().confidence, UnitConfidence::Ambiguous);
         let pose = confirmed.transform;
         assert!(!context.confirm_layer_units(&mut scene, request).scene_changed);
         assert_eq!(scene.meshes()[0].transform, pose);
         assert!(context.document.unsaved_edit_layer_ids.contains(&id));
+        assert!(context.document.unsaved_edit_layer_ids.contains(&sibling_id));
         let StructuralHistoryStep::Restored(restored) =
             context.document.edit_mode.undo_last_scene_edit(&scene, id)
         else { panic!("unit decision must be undoable"); };
         assert_eq!(restored.meshes()[0].transform, original_pose);
         assert_eq!(restored.meshes()[0].import_units().confidence, UnitConfidence::Ambiguous);
+        assert_eq!(restored.meshes()[1].transform, original_pose);
+        assert_eq!(restored.meshes()[1].import_units().confidence, UnitConfidence::Ambiguous);
         let StructuralHistoryStep::Restored(redone) =
             context.document.edit_mode.redo_last_scene_edit(&restored, id)
         else { panic!("unit decision must be redoable"); };

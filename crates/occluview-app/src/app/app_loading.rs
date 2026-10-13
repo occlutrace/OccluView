@@ -761,9 +761,13 @@ impl SceneContext<'_> {
 
     fn ambiguous_units_notice(&self) -> Option<String> {
         let scene = self.document.scene.as_ref()?;
-        let entry = scene.meshes().iter().find(|entry| {
+        let mut ambiguous = scene.meshes().iter().filter(|entry| {
             entry.import_units().confidence == occluview_core::UnitConfidence::Ambiguous
-        })?;
+        });
+        let entry = ambiguous.next()?;
+        if ambiguous.next().is_some() {
+            return Some(self.ui.locale.tr(crate::i18n::message_id!("load-units-multiple")));
+        }
         // The load notice is advisory. Each layer keeps its own persistent
         // marker and menu decision, including when several GLBs disagree.
         let extent = entry.import_bbox().size().max_element();

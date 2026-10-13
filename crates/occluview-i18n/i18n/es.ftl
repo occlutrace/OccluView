@@ -1036,3 +1036,5 @@ layer-units-use-mm = Confirmar milímetros (mantener escala)
 layer-units-use-meters = Confirmar metros (escala ×1000)
 layer-units-confirmed = Unidades de la capa confirmadas. Deshacer restaura la interpretación anterior.
 measure-units-unverified = Unidades sin confirmar: revise la capa marcada antes de utilizar las mediciones.
+layer-units-source-scope = Se aplica a todas las piezas de esta fuente en esta escena. Las otras escenas conservan sus propias decisiones de unidades.
+load-units-multiple = Las unidades de varias capas no están confirmadas. Revise el menú de cada capa marcada.

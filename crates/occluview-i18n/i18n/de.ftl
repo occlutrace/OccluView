@@ -1034,3 +1034,5 @@ layer-units-use-mm = Millimeter bestätigen (Maßstab beibehalten)
 layer-units-use-meters = Meter bestätigen (Maßstab ×1000)
 layer-units-confirmed = Schichteinheiten bestätigt. Rückgängig stellt die vorherige Interpretation wieder her.
 measure-units-unverified = Einheiten nicht bestätigt: Prüfen Sie die markierte Schicht vor der Verwendung von Messungen.
+layer-units-source-scope = Gilt für alle Teile dieser Quelle in dieser Szene. Andere Szenen behalten ihre eigenen Einheitenentscheidungen.
+load-units-multiple = Die Einheiten mehrerer Schichten sind nicht bestätigt. Prüfen Sie das Menü jeder markierten Schicht.
