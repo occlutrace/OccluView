@@ -144,8 +144,7 @@ pub fn resolve_overwrite_destination(path: &Path) -> std::io::Result<PathBuf> {
     Err(std::io::Error::new(
         std::io::ErrorKind::InvalidInput,
         format!(
-            "destination {} is a symbolic-link chain that does not resolve to a file after {MAX_DESTINATION_LINKS} steps",
-            path.display()
+            "destination is a symbolic-link chain that does not resolve to a file after {MAX_DESTINATION_LINKS} steps"
         ),
     ))
 }
