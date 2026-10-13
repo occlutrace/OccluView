@@ -931,3 +931,53 @@ fn node_records_are_admitted_before_typed_document_deserialization() {
         "expected typed metadata admission to refuse the document: {error}"
     );
 }
+
+/// Serde accepts a struct's fields as a positional array. Reject that
+/// nonstandard glTF form before its first typed Vec<String> can be allocated.
+#[test]
+fn positional_root_record_is_rejected_before_typed_document_deserialization() {
+    const TEST_BUDGET: u64 = 48 * 1024;
+    let strings = (0..32)
+        .map(|_| format!("\"{}\"", "x".repeat(256)))
+        .collect::<Vec<_>>()
+        .join(",");
+    let json = format!("[[{strings}],[],[],[],[],[],[],[],[],[],[],[],null,{{}}]");
+    let glb = glb::build_glb(json.as_bytes(), &[]);
+    let (json_chunk, _) = glb::split(&glb).expect("valid GLB fixture");
+    let existing_base = u64::try_from(glb.len())
+        .unwrap_or(u64::MAX)
+        .saturating_add(u64::try_from(json_chunk.len()).unwrap_or(u64::MAX).saturating_mul(4));
+    assert!(existing_base < TEST_BUDGET, "the byte-based estimate fits");
+
+    let error = estimate_peak_bytes_with_limit(&glb, 0, TEST_BUDGET)
+        .expect_err("positional root records must be rejected before typed parsing");
+    assert!(
+        matches!(error, FormatError::Malformed { .. }),
+        "expected positional glTF records to be malformed: {error}"
+    );
+}
+
+/// Nested serde structs accept positional arrays too. This node carries a
+/// large child-index vector that the metadata scan must not skip.
+#[test]
+fn positional_nested_node_is_rejected_before_typed_document_deserialization() {
+    const TEST_BUDGET: u64 = 12 * 1024;
+    let children = (0..512)
+        .map(|index| index.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let json = format!("{{\"nodes\":[[null,null,[{children}],null,null,null,null,null]]}}");
+    let glb = glb::build_glb(json.as_bytes(), &[]);
+    let (json_chunk, _) = glb::split(&glb).expect("valid GLB fixture");
+    let existing_base = u64::try_from(glb.len())
+        .unwrap_or(u64::MAX)
+        .saturating_add(u64::try_from(json_chunk.len()).unwrap_or(u64::MAX).saturating_mul(4));
+    assert!(existing_base < TEST_BUDGET, "the byte-based estimate fits");
+
+    let error = estimate_peak_bytes_with_limit(&glb, 0, TEST_BUDGET)
+        .expect_err("positional node records must be rejected before typed parsing");
+    assert!(
+        matches!(error, FormatError::Malformed { .. }),
+        "expected positional glTF records to be malformed: {error}"
+    );
+}
