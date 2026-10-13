@@ -12,7 +12,6 @@ use occluview_core::SceneMeshId;
 use super::super::SceneContext;
 use super::display::AlignOverlay;
 use crate::align::align_worker::{AlignCompletion, AlignFailure, AlignOutcome, AlignWorker};
-use crate::edit_mode::EditModeCommand;
 
 fn change_affects_pair(
     moving: Option<SceneMeshId>,
@@ -406,34 +405,16 @@ impl SceneContext<'_> {
         let Some(moving_id) = self.tools.align.tool.moving_layer() else {
             return false;
         };
-        if scene
-            .meshes()
-            .iter()
-            .any(|entry| entry.id() == moving_id && entry.transform == pose)
-        {
-            return true;
-        }
-        let mut next = scene.as_ref().clone();
-        if !next.meshes().iter().any(|entry| entry.id() == moving_id) {
-            return false;
-        }
-        let Some(token) =
-            self.document
-                .edit_mode
-                .begin_scene_edit(&next, moving_id, EditModeCommand::MoveLayer)
-        else {
-            return false;
+        let next = match super::mutation::stage_layer_pose(
+            scene.as_ref(),
+            &mut self.document.edit_mode,
+            moving_id,
+            pose,
+        ) {
+            super::mutation::PoseMutation::Refused => return false,
+            super::mutation::PoseMutation::Unchanged => return true,
+            super::mutation::PoseMutation::Changed(next) => next,
         };
-        if let Some(entry) = next
-            .meshes_mut()
-            .iter_mut()
-            .find(|entry| entry.id() == moving_id)
-        {
-            entry.transform = pose;
-        }
-        self.document
-            .edit_mode
-            .finish_scene_edit_success(token, &next);
         self.set_scene(next, false);
         // An aligned scan is unsaved work, as a hand-dragged one is. The viewer
         // has no project file, so the pose is the work product, and the close
