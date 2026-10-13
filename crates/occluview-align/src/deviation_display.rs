@@ -18,9 +18,8 @@ use crate::{CancelFlag, DeviationMap, Soup, Validity};
 
 /// Neighbour-averaging passes applied to the displayed map.
 ///
-/// An intraoral scan has a vertex every tenth of a millimetre or so, so three
-/// passes reach about a third of a millimetre: enough to calm single-vertex
-/// noise while keeping narrow transitions in the measurement visible.
+/// Passes operate on triangle-edge neighbourhoods. Their physical radius
+/// depends on local tessellation; this is not a fixed millimetre radius.
 pub const DISPLAY_PASSES: usize = 3;
 
 /// A copy of `map` with each measured value averaged with its measured

@@ -53,6 +53,9 @@ Open STL, PLY, OBJ, GLB, OFF, and HPS files. Export meshes as STL, PLY, or OBJ. 
 
 - `.hps` and `.dcm` are supported HPS dental containers; medical DICOM is not supported.
 
+See [measurement definitions and unit decisions](docs/measurements.md) before
+comparing readings from differently sampled meshes or ambiguous GLB exports.
+
 ## Project
 
 - [Releases and downloads](https://github.com/occlutrace/OccluView/releases)

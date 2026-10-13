@@ -2,7 +2,10 @@
 
 Small, focused changes are easiest to review.
 
-## Before opening a pull request
+## Manual verification
+
+The following commands are available for an explicitly requested verification
+run. They are not automatic pull-request or release prerequisites.
 
 ```bash
 cargo fmt --all --check
@@ -42,9 +45,9 @@ The workspace contains these crates:
 
 New crate names follow `occluview-<noun>`; do not introduce names ending in `-kernel`, `-math`, `-core`, `-index`, `-csg`, `-query`, or `-session`.
 An optional part of a crate belongs in a module behind a Cargo feature, not in a new crate.
-A new crate needs a reason. Keep the README workspace summary current when the
-crate changes the documented workspace structure; that summary is not an
-automatically enforced contract.
+A new crate needs a reason and an entry in the workspace list above. Crate
+boundaries are reviewed from the manifests; no repository-contract test
+automatically enforces this list.
 
 ## Repository hygiene
 
