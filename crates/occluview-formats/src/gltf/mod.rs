@@ -21,6 +21,7 @@ pub mod json;
 
 mod accessor;
 mod error;
+mod metadata_admission;
 mod primitive;
 mod reader;
 mod scene;
@@ -87,13 +88,24 @@ fn decoded_element_bytes(channel: DecodedChannel) -> usize {
     }
 }
 
-/// Peak bytes the GLB reader may hold while it builds its mesh.
+/// Estimate peak bytes for GLB source, metadata, and one decoded primitive.
 ///
-/// The model is the source bytes, slack for the JSON and BIN views, and the
-/// decoded footprint of the largest single primitive. It is the number
-/// `check_estimate` weighs against the import budget, so it must not under-count
-/// what the reader materialises; see [`decoded_element_bytes`].
+/// The metadata pass counts typed record arrays and nested owned fields before
+/// `GltfDoc` deserialization. This is an admission estimate, not an exact RSS
+/// bound; allocator overhead and parser scratch remain outside the model.
 pub(crate) fn estimate_peak_bytes(bytes: &[u8], reserved_bytes: u64) -> Result<u64, FormatError> {
+    estimate_peak_bytes_with_limit(
+        bytes,
+        reserved_bytes,
+        crate::memory::SCENE_IMPORT_MEMORY_BUDGET_BYTES,
+    )
+}
+
+fn estimate_peak_bytes_with_limit(
+    bytes: &[u8],
+    reserved_bytes: u64,
+    budget_limit: u64,
+) -> Result<u64, FormatError> {
     if !bytes.starts_with(b"glTF") {
         return Ok(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
     }
@@ -104,7 +116,41 @@ pub(crate) fn estimate_peak_bytes(bytes: &[u8], reserved_bytes: u64) -> Result<u
     let base_estimate = source_bytes
         .saturating_add(json_bytes.saturating_mul(4))
         .saturating_add(bin_bytes.saturating_mul(12));
-    crate::memory::check_estimate(reserved_bytes.saturating_add(base_estimate))?;
+    check_estimate_with_limit(reserved_bytes.saturating_add(base_estimate), budget_limit)?;
+
+    // `serde_json::from_slice::<GltfDoc>` below allocates every typed Vec in
+    // the document. Walk the JSON first so compact record arrays such as
+    // `nodes: [{}, ...]` have to fit before that allocation begins.
+    let available_metadata_bytes = budget_limit.saturating_sub(
+        reserved_bytes.saturating_add(base_estimate),
+    );
+    let metadata_bytes = match metadata_admission::estimate_heap_bytes(
+        &json_chunk,
+        available_metadata_bytes,
+    ) {
+        Ok(bytes) => bytes,
+        Err(metadata_admission::MetadataAdmissionError::BudgetExceeded(metadata_bytes)) => {
+            return Err(FormatError::MemoryBudgetExceeded {
+                estimated_bytes: reserved_bytes
+                    .saturating_add(base_estimate)
+                    .saturating_add(metadata_bytes),
+                limit: budget_limit,
+            });
+        }
+        Err(metadata_admission::MetadataAdmissionError::Json(error)) => {
+            return Err(FormatError::Malformed {
+                format: "glTF",
+                offset: 0,
+                reason: format!("invalid JSON: {error}"),
+            });
+        }
+    };
+    check_estimate_with_limit(
+        reserved_bytes
+            .saturating_add(base_estimate)
+            .saturating_add(metadata_bytes),
+        budget_limit,
+    )?;
 
     let doc: json::GltfDoc =
         serde_json::from_slice(&json_chunk).map_err(|error| FormatError::Malformed {
@@ -141,5 +187,17 @@ pub(crate) fn estimate_peak_bytes(bytes: &[u8], reserved_bytes: u64) -> Result<u
                 });
                 largest.max(stream_bytes)
             });
-    Ok(base_estimate.saturating_add(largest_primitive))
+    Ok(base_estimate
+        .saturating_add(metadata_bytes)
+        .saturating_add(largest_primitive))
+}
+
+fn check_estimate_with_limit(estimated_bytes: u64, limit: u64) -> Result<(), FormatError> {
+    if estimated_bytes > limit {
+        return Err(FormatError::MemoryBudgetExceeded {
+            estimated_bytes,
+            limit,
+        });
+    }
+    Ok(())
 }
