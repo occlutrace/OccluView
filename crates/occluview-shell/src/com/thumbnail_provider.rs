@@ -24,6 +24,7 @@ use crate::shell_diagnostics::{
     ShellDiagnosticAdapter, ShellDiagnosticComponent, ShellDiagnosticErrorClass,
     ShellDiagnosticOutcome, ShellDiagnosticStage,
 };
+use crate::deferred_source::SourceToken;
 use std::os::windows::ffi::OsStringExt;
 use std::panic::catch_unwind;
 #[cfg(feature = "diagnostic-logs")]
@@ -54,16 +55,36 @@ pub struct ThumbnailProvider {
 
 struct ThumbnailStreamBytesGuard<'a> {
     bytes: &'a std::cell::RefCell<Arc<[u8]>>,
+    source: &'a std::cell::RefCell<DeferredSource<IStream>>,
+    activation: SourceToken,
 }
 
 impl<'a> ThumbnailStreamBytesGuard<'a> {
-    fn new(bytes: &'a std::cell::RefCell<Arc<[u8]>>) -> Self {
-        Self { bytes }
+    fn new(
+        bytes: &'a std::cell::RefCell<Arc<[u8]>>,
+        source: &'a std::cell::RefCell<DeferredSource<IStream>>,
+        activation: SourceToken,
+    ) -> Self {
+        Self {
+            bytes,
+            source,
+            activation,
+        }
     }
 }
 
 impl Drop for ThumbnailStreamBytesGuard<'_> {
     fn drop(&mut self) {
+        // A custom `IStream` can reenter this handler on the same apartment.
+        // If that happened, this guard belongs to the old activation and must
+        // not erase bytes installed by the newer one.
+        let still_current = self
+            .source
+            .try_borrow()
+            .is_ok_and(|source| source.is_current(self.activation));
+        if !still_current {
+            return;
+        }
         if let Ok(mut bytes) = self.bytes.try_borrow_mut() {
             *bytes = Arc::<[u8]>::from([]);
         } else {
@@ -211,7 +232,12 @@ impl ThumbnailProvider {
         if let Some(path) = source_path {
             return try_render_thumbnail_file_with_request(&path, spec, request);
         }
-        let _stream_bytes_guard = ThumbnailStreamBytesGuard::new(&self.bytes);
+        // The guard and the loader share this activation token. A reentrant
+        // Initialize/Unload revokes it, so the old request cannot install its
+        // bytes over the newer activation.
+        let activation = self.source.borrow().token();
+        let _stream_bytes_guard =
+            ThumbnailStreamBytesGuard::new(&self.bytes, &self.source, activation);
         let Some(reservation) = reserve_thumbnail_stream_job_for_request(request) else {
             tracing::warn!(
                 "thumbnail stream budget was busy; reporting transient failure instead of overcommitting dllhost"
@@ -219,11 +245,12 @@ impl ThumbnailProvider {
             return ThumbnailAttempt::TransientFailure;
         };
         let ext = self.source.borrow().extension().map(str::to_owned);
-        let bytes = match self.ensure_stream_bytes(request) {
+        let bytes = match self.ensure_stream_bytes(request, activation) {
             Ok(Some(bytes)) => bytes,
             Ok(None) => {
                 // The stream was already consumed (a repeat GetThumbnail on an
-                // exhausted instance) or it failed mid-read. Neither says
+                // exhausted instance), it failed mid-read, or this activation
+                // was revoked while the external stream call ran. None says
                 // anything about the file's content, so fail rather than hand
                 // the cache a stand-in bitmap.
                 tracing::warn!(
@@ -239,36 +266,71 @@ impl ThumbnailProvider {
                 return ThumbnailAttempt::TransientFailure;
             }
         };
-        if let Some(byte_len) = self.oversize_stream_len.get() {
+
+        // The owned stream is retired when `ensure_stream_bytes` returns. A
+        // custom `IStream::Release` can reenter Initialize/Unload there, so
+        // fence again before consuming oversize state or rendering the old
+        // activation's bytes.
+        if !self.source.borrow().is_current(activation) {
+            return ThumbnailAttempt::TransientFailure;
+        }
+        let attempt = if let Some(byte_len) = self.oversize_stream_len.get() {
             ThumbnailAttempt::Bitmap(placeholder_for_oversize_input(spec, byte_len))
         } else {
             try_render_thumbnail_shared_with_reservation(ext, bytes, spec, reservation)
+        };
+
+        // No shell stream reference is dropped after this point, but keep the
+        // fence explicit before returning a cacheable bitmap to the caller.
+        if !self.source.borrow().is_current(activation) {
+            return ThumbnailAttempt::TransientFailure;
         }
+        attempt
     }
 
     /// Read the pending shell stream into shared bytes.
     ///
     /// `Ok(Some(bytes))` is a complete copy; `Ok(None)` means no bytes are
-    /// available and no deterministic verdict applies (stream consumed, or the
-    /// read failed partway) — except the over-cap case, which sets
+    /// available and no deterministic verdict applies (stream consumed, the
+    /// read failed partway, or the activation was revoked before the result
+    /// could be installed) — except the over-cap case, which sets
     /// `oversize_stream_len` and returns empty bytes for the caller's
-    /// deterministic oversize placeholder.
+    /// deterministic oversize placeholder. The caller must recheck the
+    /// activation token after this returns: the local stream's final COM
+    /// `Release` can reenter Initialize/Unload.
     fn ensure_stream_bytes(
         &self,
         request: ThumbnailRenderRequest,
+        activation: SourceToken,
     ) -> windows::core::Result<Option<Arc<[u8]>>> {
-        if !self.bytes.borrow().is_empty() {
-            return Ok(Some(self.bytes.borrow().clone()));
+        if !self.source.borrow().is_current(activation) {
+            return Ok(None);
+        }
+        let cached = self.bytes.borrow().clone();
+        if !cached.is_empty() {
+            return Ok(Some(cached));
         }
 
-        let Some(stream_result) = self.source.borrow_mut().consume_pending_stream(
-            |stream, _extension| -> windows::core::Result<StreamRead> {
-                stream::rewind(&stream)?;
-                stream::read_until(&stream, request.response_deadline())
-            },
-        ) else {
+        // Move the stream and its extension out under a short borrow, then let
+        // that borrow end before any external COM Seek/Stat/Read. Releasing
+        // the handler borrow is what lets a custom stream reenter Initialize
+        // or Unload without a RefCell panic.
+        let pending = self.source.borrow_mut().take_pending_stream();
+        let Some((stream, _extension, taken_activation)) = pending else {
             return Ok(None);
         };
+        if taken_activation != activation {
+            return Ok(None);
+        }
+
+        let stream_result = stream::rewind_and_read_until(&stream, request.response_deadline());
+
+        // A reentrant activation may have completed while the external calls
+        // were running. Check the fence before installing bytes or oversize
+        // state for the old activation.
+        if !self.source.borrow().is_current(activation) {
+            return Ok(None);
+        }
 
         match stream_result? {
             StreamRead::Complete(bytes) => {
@@ -291,10 +353,14 @@ impl ThumbnailProvider {
 
     fn initialize_path(&self, path: PathBuf) {
         *self.bytes.borrow_mut() = Arc::<[u8]>::from([]);
-        self.source
+        let retired = self
+            .source
             .borrow_mut()
             .initialize_path(path.clone(), path_extension(&path));
         self.oversize_stream_len.set(None);
+        // Drop the retired COM reference only after the source borrow is gone;
+        // its Release can reenter Initialize/Unload.
+        drop(retired);
     }
 }
 
@@ -379,12 +445,16 @@ impl IInitializeWithStream_Impl for ThumbnailProvider_Impl {
             || Err(e_fail()),
             || {
                 let stream = pstream.ok()?;
-                self.this
+                let retired = self
+                    .this
                     .source
                     .borrow_mut()
-                    .initialize_stream(stream.clone());
+                    .initialize_stream(stream);
                 *self.this.bytes.borrow_mut() = Arc::<[u8]>::from([]);
                 self.this.oversize_stream_len.set(None);
+                // Drop the retired COM reference only after the source borrow
+                // is gone; its Release can reenter Initialize/Unload.
+                drop(retired);
                 Ok(())
             },
         )

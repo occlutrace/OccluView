@@ -29,15 +29,33 @@ pub(super) fn read(stream: &IStream) -> windows::core::Result<StreamRead> {
 }
 
 /// Reads the stream into a byte buffer under the caller's absolute budget.
+///
 /// The budget is checked before `Stat` and between read chunks; it cannot
-/// interrupt a synchronous `Stat` or `Read` already in progress. The
-/// caller's preceding `Seek` consumes time before this helper checks the
-/// deadline and likewise cannot be interrupted here.
+/// interrupt a synchronous `Stat` or `Read` already in progress. Use
+/// [`rewind_and_read_until`] when the caller also needs a deadline check
+/// before the preceding `Seek`.
 pub(super) fn read_until(stream: &IStream, deadline: Instant) -> windows::core::Result<StreamRead> {
     if Instant::now() >= deadline {
         return Ok(StreamRead::TimedOut);
     }
     read_inner(stream, Some(deadline))
+}
+
+/// Rewinds and reads a stream under the caller's absolute request budget.
+///
+/// The budget is checked before `Seek` here, again before `Stat` through
+/// [`read_until`], and between read chunks. A synchronous `Seek`, `Stat`, or
+/// `Read` already in progress is not cancelled: an arbitrary `IStream` can
+/// still block this apartment inside any one of those COM calls.
+pub(super) fn rewind_and_read_until(
+    stream: &IStream,
+    deadline: Instant,
+) -> windows::core::Result<StreamRead> {
+    if Instant::now() >= deadline {
+        return Ok(StreamRead::TimedOut);
+    }
+    rewind(stream)?;
+    read_until(stream, deadline)
 }
 
 fn read_inner(stream: &IStream, deadline: Option<Instant>) -> windows::core::Result<StreamRead> {
