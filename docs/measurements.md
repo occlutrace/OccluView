@@ -43,9 +43,9 @@ the tessellation. A smooth image does not establish measurement accuracy.
 Contact area is approximate: each triangle contributes its area multiplied by
 the fraction of its three corners marked as touching. This does not clip an
 exact contact contour through every triangle. The reported negative-X and
-positive-X portions use the subject's raw coordinate X relative to its vertex
-mean, rather than an anatomical left/right reference. Rotating or mirroring a
-scan can change that split.
+positive-X portions use the subject's raw coordinate X relative to the mean of
+its finite vertex positions, rather than an anatomical left/right reference.
+Rotating or mirroring a scan can change that split.
 
 Positive gaps use Euclidean closest-point distance. Negative penetration uses
 the displacement projected onto the closest triangle's normal; near an edge,
