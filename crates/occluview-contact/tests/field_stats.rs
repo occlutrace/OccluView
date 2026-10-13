@@ -108,6 +108,69 @@ fn nonfinite_vertex_positions_are_excluded_from_x_balance_center() {
     assert_eq!(measured.stats.plus_x_area_mm2, 0.0);
 }
 
+/// Triangle-corner area follows sampling; the X split follows raw coordinates,
+/// not an anatomical or force-balance axis.
+#[test]
+fn corner_area_and_x_split_follow_sampling_and_raw_orientation() {
+    // A flat 10 x 10 mm subject and a 2 x 2 mm opposing plate define the same
+    // geometric contact region in both runs. Its exact projection area is
+    // 4 mm²; the plate sits at the documented inclusive 0.02 mm touch cutoff,
+    // so the threshold does not extend the region beyond the plate's edges.
+    let coarse_subject = plate(5.0, 5.0, 1, 1, 0.0, false);
+    let refined_subject = plate(5.0, 5.0, 10, 10, 0.0, false);
+    let antagonist = quad(2.0, 4.0, 2.0, 4.0, -0.02, false);
+
+    let coarse = field(&coarse_subject, &antagonist);
+    let refined = field(&refined_subject, &antagonist);
+    let center_vertex = (0..refined_subject.vertex_count())
+        .find(|&vertex| {
+            let point = refined_subject.vertex(vertex);
+            point[0] == 3.0 && point[1] == 3.0
+        })
+        .expect("the refined grid samples the center of the opposing plate");
+    assert!(
+        (f64::from(refined.subject_signed_mm[center_vertex]) - 0.02).abs() < 1e-5,
+        "the same physical gap is sampled at the refined center"
+    );
+    assert_eq!(coarse.stats.contact_area_mm2, 0.0);
+    assert!(
+        refined.stats.contact_area_mm2 > 4.0,
+        "corner credit from triangles around the 4 mm² patch gives {}, not an exact clipped contour",
+        refined.stats.contact_area_mm2
+    );
+
+    // The refined patch lies wholly at positive raw X relative to the subject
+    // vertex mean. Rotating both meshes preserves the field and area but moves
+    // that same patch to negative raw X, so these columns are neither anatomy
+    // nor force.
+    assert_eq!(refined.stats.minus_x_area_mm2, 0.0);
+    assert!(
+        (refined.stats.plus_x_area_mm2 - refined.stats.contact_area_mm2).abs() < 1e-9
+    );
+    let rotate_90_ccw = |mesh: &Mesh| {
+        let points: Vec<[f64; 3]> = mesh
+            .positions
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|point| {
+                [
+                    -f64::from(point[1]),
+                    f64::from(point[0]),
+                    f64::from(point[2]),
+                ]
+            })
+            .collect();
+        Mesh::new(&points, &mesh.indices)
+    };
+    let rotated_subject = rotate_90_ccw(&refined_subject);
+    let rotated_antagonist = rotate_90_ccw(&antagonist);
+    let rotated = field(&rotated_subject, &rotated_antagonist);
+    assert!((rotated.stats.contact_area_mm2 - refined.stats.contact_area_mm2).abs() < 1e-9);
+    assert_eq!(rotated.stats.plus_x_area_mm2, 0.0);
+    assert!((rotated.stats.minus_x_area_mm2 - rotated.stats.contact_area_mm2).abs() < 1e-9);
+}
+
 /// Flattening a patch collapses it to its peak depth, and leaves a lone vertex
 /// alone.
 #[test]

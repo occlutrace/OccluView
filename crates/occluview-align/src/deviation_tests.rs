@@ -7,7 +7,7 @@ use super::{
     Validity, MIN_MEASURED, NO_DATA_COLOR,
 };
 use crate::Orientation;
-use crate::{CancelFlag, Rigid, Soup, SurfaceIndex};
+use crate::{display_map, CancelFlag, Rigid, Soup, SurfaceIndex};
 
 /// The magnitude ramp's zero colour, written out rather than read back from
 /// `MAGNITUDE_RAMP`: a test that reads the table it checks cannot catch a
@@ -27,6 +27,32 @@ fn sheet() -> (Vec<f32>, Vec<u32>) {
         ],
         vec![0, 1, 2, 0, 2, 3],
     )
+}
+
+/// The same piecewise-planar offset field on x = 0..10 and y = 0..10.
+/// The offset rises linearly from 0 to 0.2 mm by x = 5, then stays flat;
+/// adding x samples in the flat half changes sampling density, not geometry.
+fn offset_profile_grid(x_coordinates: &[f32]) -> (Vec<f32>, Vec<u32>) {
+    let mut positions = Vec::new();
+    for y in 0_u16..=10 {
+        for &x in x_coordinates {
+            let z = if x < 5.0 { x * 0.04 } else { 0.2 };
+            positions.extend_from_slice(&[x, f32::from(y), z]);
+        }
+    }
+
+    let stride = u32::try_from(x_coordinates.len()).expect("small test grid");
+    let mut indices = Vec::new();
+    for row in 0_u32..10 {
+        for column in 0..(stride - 1) {
+            let a = row * stride + column;
+            let b = a + 1;
+            let c = a + stride;
+            let d = c + 1;
+            indices.extend_from_slice(&[a, b, c, b, d, c]);
+        }
+    }
+    (positions, indices)
 }
 
 fn settings() -> DeviationSettings {
@@ -172,6 +198,90 @@ fn statistics_count_only_measured_vertices() {
         .expect("39 measured vertices clears MIN_MEASURED");
     assert!((summary.within_tolerance - 1.0).abs() < 1e-9);
     assert!((summary.mean_abs - 0.1).abs() < 1e-4);
+}
+
+/// The same piecewise-planar scan gets a different vertex-weighted summary
+/// when the flat, higher-deviation half is sampled more densely. The actual
+/// readings, raw map, display copy and no-data entry stay distinct.
+#[test]
+fn remeshing_sampling_density_changes_vertex_summary_not_raw_readings() {
+    let (mut coarse_positions, coarse_indices) = offset_profile_grid(&[0.0, 5.0, 10.0]);
+    let mut dense_x = vec![0.0];
+    dense_x.extend((0_u16..=32).map(|step| 5.0 + f32::from(step) * (5.0 / 32.0)));
+    let (mut dense_positions, dense_indices) = offset_profile_grid(&dense_x);
+
+    // The same detached point in both inputs is deliberately beyond the fixed
+    // sheet's influence radius, so it remains no-data rather than entering
+    // either vertex-weighted population.
+    coarse_positions.extend_from_slice(&[5.0, 5.0, 50.0]);
+    dense_positions.extend_from_slice(&[5.0, 5.0, 50.0]);
+
+    let coarse_map = map_of(&coarse_positions, &coarse_indices, &settings());
+    let dense_map = map_of(&dense_positions, &dense_indices, &settings());
+    let coarse_grid_vertices = coarse_positions.len() / 3 - 1;
+    let dense_grid_vertices = dense_positions.len() / 3 - 1;
+    for (positions, map, count) in [
+        (&coarse_positions, &coarse_map, coarse_grid_vertices),
+        (&dense_positions, &dense_map, dense_grid_vertices),
+    ] {
+        for (vertex, point) in positions.as_chunks::<3>().0.iter().take(count).enumerate() {
+            assert_eq!(map.validity[vertex], Validity::Measured);
+            let expected = if point[0] == 0.0 { 0.0 } else { 0.2 };
+            assert!(
+                (map.signed_mm[vertex] - expected).abs() < 1e-6,
+                "x={} reads {}, expected the exact planar offset {expected}",
+                point[0],
+                map.signed_mm[vertex]
+            );
+        }
+        assert_eq!(map.validity[count], Validity::OutOfReach);
+    }
+
+    let raw_before_display = coarse_map.clone();
+    // This midpoint only separates the two exact fixture readings; it is not
+    // an alignment or clinical acceptance threshold.
+    let coarse_stats = deviation_stats(&coarse_map, 0.1);
+    let dense_stats = deviation_stats(&dense_map, 0.1);
+    assert_eq!(
+        coarse_stats.measured,
+        u32::try_from(coarse_grid_vertices).unwrap()
+    );
+    assert_eq!(
+        dense_stats.measured,
+        u32::try_from(dense_grid_vertices).unwrap()
+    );
+    assert_eq!(coarse_stats.unmeasured.out_of_reach, 1);
+    assert_eq!(dense_stats.unmeasured.out_of_reach, 1);
+    let coarse_summary = coarse_stats.summary.unwrap();
+    let dense_summary = dense_stats.summary.unwrap();
+    assert!(
+        (coarse_summary.mean_abs - (0.2 * 2.0 / 3.0)).abs() < 1e-6,
+        "three x columns with two elevated columns: {coarse_summary:?}"
+    );
+    assert!(
+        (dense_summary.mean_abs - (0.2 * 33.0 / 34.0)).abs() < 1e-6,
+        "34 x columns with 33 elevated columns: {dense_summary:?}"
+    );
+    assert!((coarse_summary.within_tolerance - (1.0 / 3.0)).abs() < 1e-9);
+    assert!((dense_summary.within_tolerance - (1.0 / 34.0)).abs() < 1e-9);
+
+    let shown = display_map(
+        &coarse_map,
+        Soup {
+            positions: &coarse_positions,
+            indices: &coarse_indices,
+            mask: None,
+        },
+    );
+    assert_eq!(coarse_map, raw_before_display, "display smoothing must copy");
+    assert_eq!(shown.validity, coarse_map.validity);
+    assert_eq!(shown.signed_mm.last(), coarse_map.signed_mm.last());
+    assert_eq!(deviation_stats(&coarse_map, 0.1), coarse_stats);
+    assert_eq!(
+        deviation_colors(&shown, &RampSettings::default()).last().copied(),
+        Some(NO_DATA_COLOR),
+        "the unmeasured vertex remains grey in the display copy"
+    );
 }
 
 #[test]
