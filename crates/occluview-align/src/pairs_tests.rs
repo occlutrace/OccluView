@@ -11,6 +11,17 @@ fn pose() -> Rigid {
     )
 }
 
+#[test]
+fn oversized_normal_arrays_are_rejected_before_numeric_scans() {
+    let points = [DVec3::ZERO, DVec3::X];
+    let normals = vec![DVec3::splat(f64::NAN); MAX_PAIRS + 1];
+    assert!(matches!(
+        fit(&points, &points, Some((&normals, &[DVec3::Z; 2])), 10.0),
+        Err(FitRejection::TooManyPairs { have, max })
+            if have == MAX_PAIRS + 1 && max == MAX_PAIRS
+    ));
+}
+
 /// Four well-spread points: not collinear, not coincident, and far enough
 /// apart that a fit is fully determined.
 fn spread() -> Vec<DVec3> {

@@ -16,7 +16,8 @@ const MIN_PAIRS: usize = 2;
 
 /// Maximum pair count admitted to manual fitting.
 ///
-/// Pairwise distances allocate quadratic work, and outlier trimming refits
+/// All supplied point and normal arrays share this bound. Pairwise distances
+/// allocate quadratic work, and outlier trimming refits
 /// successively smaller sets. The cap matches the search landmark allowance
 /// and is a resource limit, not a geometric threshold.
 pub const MAX_PAIRS: usize = 128;
@@ -86,7 +87,7 @@ pub struct PairFit {
 pub enum FitRejection {
     /// More pairs were supplied than the bounded manual fit admits.
     TooManyPairs {
-        /// The larger of the moving and fixed pair counts.
+        /// Largest supplied point or normal array.
         have: usize,
         /// Maximum pair count admitted by this fit.
         max: usize,
@@ -201,7 +202,8 @@ pub fn fit_pairs(
     normals: Option<(&[DVec3], &[DVec3])>,
     bounds: &FitBounds,
 ) -> Result<PairFit, FitRejection> {
-    let have = moving.len().max(fixed.len());
+    let normal_count = normals.map_or(0, |(moving, fixed)| moving.len().max(fixed.len()));
+    let have = moving.len().max(fixed.len()).max(normal_count);
     if have > MAX_PAIRS {
         return Err(FitRejection::TooManyPairs {
             have,
