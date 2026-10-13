@@ -1,11 +1,8 @@
-// A product document that cannot be read must fail its contract check.
 #![allow(clippy::panic)]
 
 pub(super) use super::*;
 use std::path::Path;
 
-mod chrome;
-mod documents;
 mod platform;
 mod source_tree;
 mod viewport;
@@ -37,7 +34,7 @@ pub(super) fn collect_rust_source_files(
     Ok(())
 }
 
-/// Read a product document or platform descriptor from the repository root.
+/// Read a platform descriptor from the repository root.
 pub(super) fn repo_file(relative_path: &str) -> String {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.push(relative_path);

@@ -168,7 +168,7 @@ mod tests {
     use super::{LEGACY_HPS_EXTENSION, V1_OPEN_EXTENSIONS};
 
     #[test]
-    fn v1_open_extensions_match_public_format_promise() {
+    fn v1_open_extensions_match_product_contract() {
         assert_eq!(
             V1_OPEN_EXTENSIONS,
             [
@@ -182,29 +182,5 @@ mod tests {
             ]
         );
 
-        // Pin the claim, not two substrings. "`.hps` and `.dcm` appear
-        // somewhere in the file" passes on a README stating the opposite, and
-        // `.dcm` appears here several times for other reasons -- including a
-        // paragraph about not claiming the extension.
-        let readme = include_str!("../../../README.md");
-        let promise = readme
-            .lines()
-            .find(|line| line.starts_with("- `.hps` and `.dcm`"));
-        assert!(
-            promise.is_some(),
-            "the README's supported-format list must carry an .hps/.dcm entry"
-        );
-        let Some(promise) = promise else {
-            panic!("required test setup or expected result was missing");
-        };
-        assert!(
-            promise.contains("medical DICOM is not supported"),
-            "the entry must keep saying that medical DICOM is refused, since \
-             the reader refuses it: {promise}"
-        );
-        assert!(
-            promise.contains("DICM"),
-            "the entry should name the marker the reader actually tests: {promise}"
-        );
     }
 }

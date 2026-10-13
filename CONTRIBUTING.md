@@ -11,7 +11,9 @@ cargo test --workspace --all-targets --locked
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features --locked
 ```
 
-CI also runs Windows checks, dependency policy checks, parser fuzz smoke tests,
+The `Manual verification` GitHub Actions workflow is started on demand; it does
+not run automatically for pull requests or pushes and is not a release gate.
+It includes Windows checks, dependency policy checks, parser fuzz smoke tests,
 and a Debian package build. The minimum supported Rust version is pinned in
 `rust-toolchain.toml`.
 
@@ -40,7 +42,9 @@ The workspace contains these crates:
 
 New crate names follow `occluview-<noun>`; do not introduce names ending in `-kernel`, `-math`, `-core`, `-index`, `-csg`, `-query`, or `-session`.
 An optional part of a crate belongs in a module behind a Cargo feature, not in a new crate.
-A new crate needs a reason and a row in the README workspace table; the repository-contract test enforces that table.
+A new crate needs a reason. Keep the README workspace summary current when the
+crate changes the documented workspace structure; that summary is not an
+automatically enforced contract.
 
 ## Repository hygiene
 
@@ -61,8 +65,9 @@ Every crate is `#![forbid(unsafe_code)]`. A crate that needs FFI or another
 `unsafe` boundary opts out with `#![deny(unsafe_code)]` and a module-level
 `#![allow(unsafe_code)]` in the boundary module only, with a comment naming the
 boundary. Every `unsafe` block carries a `SAFETY:` comment on the line above it
-that states the invariant that makes the call sound. The repository-contract
-tests enforce the crate gate and the `SAFETY:` comment.
+that states the invariant that makes the call sound. Treat these as review
+requirements; the current workspace does not automatically check every crate
+gate or `SAFETY:` comment.
 
 ## Logging
 
