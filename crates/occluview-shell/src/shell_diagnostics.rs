@@ -357,9 +357,7 @@ fn record_event(event: ShellDiagnosticEvent) {
 
 #[cfg(all(windows, feature = "diagnostic-logs"))]
 fn diagnostic_sender() -> Option<&'static mpsc::SyncSender<ShellDiagnosticEvent>> {
-    let opt_in = diagnostic_switch_enabled(shell_diagnostic_switch_value())
-        || diagnostic_switch_enabled(legacy_preview_diagnostic_switch_value());
-    if !opt_in {
+    if !diagnostics_opt_in() {
         return None;
     }
     if let Some(sender) = DIAGNOSTIC_SENDER.get() {
@@ -394,6 +392,12 @@ fn diagnostic_writer_init_mutex() -> &'static Mutex<()> {
 
 #[cfg(all(windows, feature = "diagnostic-logs"))]
 fn write_shell_event(event: ShellDiagnosticEvent) {
+    // The transport outlives registry changes in a running Explorer host.
+    // Recheck on the writer so disabling diagnostics also discards queued
+    // events without adding registry I/O to COM callbacks.
+    if !diagnostics_opt_in() {
+        return;
+    }
     let Some(root) = local_app_data_low_directory() else {
         return;
     };
@@ -402,6 +406,12 @@ fn write_shell_event(event: ShellDiagnosticEvent) {
         .join("diagnostics")
         .join("shell-events.jsonl");
     let _ = append_diagnostic_line(&log, &event.json_line_inner());
+}
+
+#[cfg(all(windows, feature = "diagnostic-logs"))]
+fn diagnostics_opt_in() -> bool {
+    diagnostic_switch_enabled(shell_diagnostic_switch_value())
+        || diagnostic_switch_enabled(legacy_preview_diagnostic_switch_value())
 }
 
 #[cfg(all(windows, feature = "diagnostic-logs"))]
