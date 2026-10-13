@@ -1,10 +1,11 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use glam::DVec3;
 
 use super::attributes::{interpolate_vertex, VertexAttributeKey};
 use super::validate::{normalize_request, prepare_bridge_split, NormalizedBridgeSplitRequest};
 use crate::topology::{canonical_topology, CanonicalTopology, TopologyWeldPolicy};
+use crate::topology_analysis::{edge_faces, edge_incidence, vertex_fan_clusters};
 use crate::{
     validate_face_edit_buffers, BridgeSplitError, BridgeSplitReport, BridgeSplitRequest,
     EditVertex, MeshEditBuffers, MeshEditError, MeshTopology,
@@ -34,7 +35,33 @@ struct ClipVertex {
     value: EditVertex,
     position: DVec3,
     origin: VertexOrigin,
+    lineage: VertexLineage,
     on_plane: bool,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum LineageKey {
+    SourceCorner { vertex: u32, fan: usize },
+    SourceEdge { edge: (u32, u32), fan: usize },
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct VertexLineage {
+    pub(crate) key: LineageKey,
+    pub(crate) ambiguous: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ClipProvenance {
+    /// Source-fan lineage for each emitted triangle corner, parallel to mesh indices.
+    pub(crate) corner_lineages: Vec<VertexLineage>,
+    /// Source-fan lineage for each emitted cut edge endpoint, parallel to cut edges.
+    pub(crate) cut_edge_lineages: Vec<[VertexLineage; 2]>,
+}
+
+struct SourceLineage {
+    corners: Vec<VertexLineage>,
+    edges: Vec<VertexLineage>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -59,6 +86,8 @@ pub(crate) struct OpenBridgeSplit {
     pub(crate) part_b: MeshEditBuffers,
     pub(crate) part_a_cut_edges: Vec<[u32; 2]>,
     pub(crate) part_b_cut_edges: Vec<[u32; 2]>,
+    pub(crate) part_a_provenance: ClipProvenance,
+    pub(crate) part_b_provenance: ClipProvenance,
     pub(crate) report: BridgeSplitReport,
 }
 
@@ -66,6 +95,8 @@ struct MeshBuilder {
     vertices: Vec<EditVertex>,
     indices: Vec<u32>,
     cut_edges: Vec<[u32; 2]>,
+    corner_lineages: Vec<VertexLineage>,
+    cut_edge_lineages: Vec<[VertexLineage; 2]>,
     source_vertices: Vec<Option<u32>>,
     intersections: HashMap<IntersectionKey, u32>,
     area_epsilon: f64,
@@ -77,6 +108,8 @@ impl MeshBuilder {
             vertices: Vec::new(),
             indices: Vec::new(),
             cut_edges: Vec::new(),
+            corner_lineages: Vec::new(),
+            cut_edge_lineages: Vec::new(),
             source_vertices: vec![None; source_vertex_count],
             intersections: HashMap::new(),
             area_epsilon,
@@ -100,6 +133,8 @@ impl MeshBuilder {
             {
                 self.cut_edges
                     .push([output_indices[local], output_indices[next]]);
+                self.cut_edge_lineages
+                    .push([polygon[local].lineage, polygon[next].lineage]);
             }
         }
 
@@ -127,6 +162,11 @@ impl MeshBuilder {
                 continue;
             }
             self.indices.extend(triangle);
+            self.corner_lineages.extend([
+                polygon[0].lineage,
+                polygon[local].lineage,
+                polygon[local + 1].lineage,
+            ]);
         }
         Ok(())
     }
@@ -158,7 +198,7 @@ impl MeshBuilder {
         }
     }
 
-    fn finish(self) -> (MeshEditBuffers, Vec<[u32; 2]>) {
+    fn finish(self) -> (MeshEditBuffers, Vec<[u32; 2]>, ClipProvenance) {
         (
             MeshEditBuffers {
                 vertices: self.vertices,
@@ -166,8 +206,165 @@ impl MeshBuilder {
                 topology: MeshTopology::TriangleMesh,
             },
             self.cut_edges,
+            ClipProvenance {
+                corner_lineages: self.corner_lineages,
+                cut_edge_lineages: self.cut_edge_lineages,
+            },
         )
     }
+}
+
+fn source_lineage(topology: &CanonicalTopology) -> Result<SourceLineage, BridgeSplitError> {
+    let indices = topology.indices();
+    let face_count = indices.len() / 3;
+    let incidence = edge_incidence(indices);
+    let mut duplicate_faces = vec![false; face_count];
+    let mut face_keys: Vec<((u32, u32, u32), usize)> = indices
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .enumerate()
+        .map(|(face, triangle)| {
+            let mut key = *triangle;
+            key.sort_unstable();
+            (key, face)
+        })
+        .collect();
+    face_keys.sort_unstable();
+    let mut run_start = 0;
+    while run_start < face_keys.len() {
+        let mut run_end = run_start + 1;
+        while run_end < face_keys.len() && face_keys[run_end].0 == face_keys[run_start].0 {
+            run_end += 1;
+        }
+        if run_end - run_start > 1 {
+            for &(_, face) in &face_keys[run_start..run_end] {
+                duplicate_faces[face] = true;
+            }
+        }
+        run_start = run_end;
+    }
+
+    let mut vertex_faces = BTreeMap::<u32, Vec<usize>>::new();
+    for (face, triangle) in indices.as_chunks::<3>().0.iter().enumerate() {
+        for &vertex in triangle {
+            vertex_faces.entry(vertex).or_default().push(face);
+        }
+    }
+
+    let mut corners = vec![None; indices.len()];
+    for (vertex, faces) in &mut vertex_faces {
+        faces.sort_unstable();
+        faces.dedup();
+        let (fan_for_face, _) = vertex_fan_clusters(indices, *vertex, faces);
+        for (local_face, &face) in faces.iter().enumerate() {
+            for corner in 0..3 {
+                if indices[face * 3 + corner] == *vertex {
+                    corners[face * 3 + corner] = Some(VertexLineage {
+                        key: LineageKey::SourceCorner {
+                            vertex: *vertex,
+                            fan: fan_for_face[local_face],
+                        },
+                        ambiguous: duplicate_faces[face],
+                    });
+                }
+            }
+        }
+    }
+
+    let mut ambiguous_corner_fans = BTreeSet::new();
+    for (face, &duplicate) in duplicate_faces.iter().enumerate() {
+        if duplicate {
+            for corner in 0..3 {
+                if let Some(lineage) = corners[face * 3 + corner] {
+                    ambiguous_corner_fans.insert(lineage.key);
+                }
+            }
+        }
+    }
+
+    let mut ambiguous_edges = BTreeSet::new();
+    let mut incidence_start = 0;
+    while incidence_start < incidence.len() {
+        let edge = incidence[incidence_start].0;
+        let mut incidence_end = incidence_start + 1;
+        while incidence_end < incidence.len() && incidence[incidence_end].0 == edge {
+            incidence_end += 1;
+        }
+        let incident_faces = &incidence[incidence_start..incidence_end];
+        if incident_faces.len() > 2
+            || incident_faces
+                .iter()
+                .any(|&(_, face)| duplicate_faces[face])
+        {
+            ambiguous_edges.insert(edge);
+        }
+        // `vertex_fan_clusters` connects faces sharing an edge even when that
+        // edge has more than two incidences. Such a cluster is not proof that
+        // corner aliases are safe, so make every incident corner fan ambiguous.
+        if incident_faces.len() > 2 {
+            for &(_, face) in incident_faces {
+                for corner in 0..3 {
+                    let lineage = corners[face * 3 + corner].ok_or_else(|| {
+                        MeshEditError::MalformedMesh {
+                            reason: "bridge split source corner lost its fan lineage".to_string(),
+                        }
+                    })?;
+                    if edge.0 == indices[face * 3 + corner]
+                        || edge.1 == indices[face * 3 + corner]
+                    {
+                        ambiguous_corner_fans.insert(lineage.key);
+                    }
+                }
+            }
+        }
+        incidence_start = incidence_end;
+    }
+
+    let corners = corners
+        .into_iter()
+        .map(|lineage| {
+            let mut lineage = lineage.ok_or_else(|| MeshEditError::MalformedMesh {
+                reason: "bridge split source corner has no fan lineage".to_string(),
+            })?;
+            lineage.ambiguous |= ambiguous_corner_fans.contains(&lineage.key);
+            Ok(lineage)
+        })
+        .collect::<Result<Vec<_>, MeshEditError>>()?;
+
+    let mut edges = vec![None; indices.len()];
+    for (face, triangle) in indices.as_chunks::<3>().0.iter().enumerate() {
+        for local_edge in 0..3 {
+            let first = triangle[local_edge];
+            let second = triangle[(local_edge + 1) % 3];
+            let edge = if first < second {
+                (first, second)
+            } else {
+                (second, first)
+            };
+            let incident_faces = edge_faces(&incidence, edge);
+            let fan = if incident_faces.len() == 2 {
+                0
+            } else {
+                face
+            };
+            edges[face * 3 + local_edge] = Some(VertexLineage {
+                key: LineageKey::SourceEdge { edge, fan },
+                ambiguous: ambiguous_edges.contains(&edge),
+            });
+        }
+    }
+
+    let edges = edges
+        .into_iter()
+        .map(|lineage| {
+            lineage.ok_or_else(|| MeshEditError::MalformedMesh {
+                reason: "bridge split source edge has no fan lineage".to_string(),
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(SourceLineage { corners, edges })
 }
 
 pub(crate) fn clip_bridge_open(
@@ -230,14 +427,19 @@ fn clip_bridge_open_with_topology(
     }
 
     let area_epsilon = epsilon.max(f64::EPSILON * 64.0);
+    let source_lineage = source_lineage(&topology)?;
     let mut part_a = MeshBuilder::new(mesh.vertices.len(), area_epsilon);
     let mut part_b = MeshBuilder::new(mesh.vertices.len(), area_epsilon);
     for (triangle, source_face) in mesh.indices.as_chunks::<3>().0.iter().enumerate() {
         let canonical_face = &topology.indices()[triangle * 3..triangle * 3 + 3];
+        let corner_lineages = &source_lineage.corners[triangle * 3..triangle * 3 + 3];
+        let edge_lineages = &source_lineage.edges[triangle * 3..triangle * 3 + 3];
         let positive = clip_triangle(
             mesh,
             source_face,
             canonical_face,
+            corner_lineages,
+            edge_lineages,
             ClipPlaneSpec {
                 request: normalized,
                 offset: half_kerf,
@@ -250,6 +452,8 @@ fn clip_bridge_open_with_topology(
             mesh,
             source_face,
             canonical_face,
+            corner_lineages,
+            edge_lineages,
             ClipPlaneSpec {
                 request: normalized,
                 offset: -half_kerf,
@@ -262,8 +466,8 @@ fn clip_bridge_open_with_topology(
         part_b.emit_polygon(&negative)?;
     }
 
-    let (positive_mesh, positive_cut_edges) = part_a.finish();
-    let (negative_mesh, negative_cut_edges) = part_b.finish();
+    let (positive_mesh, positive_cut_edges, positive_provenance) = part_a.finish();
+    let (negative_mesh, negative_cut_edges, negative_provenance) = part_b.finish();
     if positive_mesh.indices.is_empty()
         || negative_mesh.indices.is_empty()
         || positive_cut_edges.is_empty()
@@ -287,6 +491,8 @@ fn clip_bridge_open_with_topology(
         part_b: negative_mesh,
         part_a_cut_edges: positive_cut_edges,
         part_b_cut_edges: negative_cut_edges,
+        part_a_provenance: positive_provenance,
+        part_b_provenance: negative_provenance,
         report,
     })
 }
@@ -295,6 +501,8 @@ fn clip_triangle(
     mesh: &MeshEditBuffers,
     source_face: &[u32],
     canonical_face: &[u32],
+    corner_lineages: &[VertexLineage],
+    edge_lineages: &[VertexLineage],
     plane: ClipPlaneSpec,
 ) -> Result<Vec<ClipVertex>, BridgeSplitError> {
     let mut input = Vec::with_capacity(3);
@@ -312,6 +520,7 @@ fn clip_triangle(
                 value,
                 position: DVec3::from_array(value.position.map(f64::from)),
                 origin: VertexOrigin::Source(source),
+                lineage: corner_lineages[corner],
                 on_plane: false,
             },
             canonical_face[corner],
@@ -358,6 +567,7 @@ fn clip_triangle(
                     value: interpolate_vertex(first.value, second.value, t, position),
                     position,
                     origin: VertexOrigin::Intersection(key),
+                    lineage: edge_lineages[edge],
                     on_plane: true,
                 },
                 plane.epsilon,

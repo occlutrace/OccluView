@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::clip::{ClipProvenance, LineageKey};
 use crate::topology::canonical_position_key;
 use crate::{BridgeSplitError, MeshEditBuffers, MeshEditError};
 
@@ -11,6 +12,10 @@ struct CutGraph {
     representative: BTreeMap<PositionKey, usize>,
     adjacency: CutAdjacency,
     edges: BTreeSet<CutEdge>,
+    lineage_representatives: BTreeMap<PositionKey, BTreeMap<LineageKey, usize>>,
+    ambiguous_positions: BTreeSet<PositionKey>,
+    ambiguous_edges: BTreeSet<CutEdge>,
+    has_lineage: bool,
 }
 
 /// Which reading of a cut rim the caller wants.
@@ -33,6 +38,16 @@ struct CutScan {
     /// Segments as generated, in the direction the caller listed them. The
     /// recovery path canonicalises this set afterwards.
     directed: BTreeSet<CutEdge>,
+    lineage_representatives: BTreeMap<PositionKey, BTreeMap<LineageKey, usize>>,
+    ambiguous_positions: BTreeSet<PositionKey>,
+    ambiguous_edges: BTreeSet<CutEdge>,
+    has_lineage: bool,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CutLoop {
+    pub(crate) vertices: Vec<usize>,
+    pub(crate) lineages: Vec<Option<LineageKey>>,
 }
 
 /// Read the cut edges against the mesh once.
@@ -44,6 +59,7 @@ struct CutScan {
 fn collect_cut_scan(
     mesh: &MeshEditBuffers,
     cut_edges: &[[u32; 2]],
+    provenance: Option<&ClipProvenance>,
     policy: CutPolicy,
 ) -> Result<CutScan, BridgeSplitError> {
     if cut_edges.is_empty() {
@@ -52,7 +68,17 @@ fn collect_cut_scan(
 
     let mut representative: BTreeMap<PositionKey, usize> = BTreeMap::new();
     let mut directed = BTreeSet::new();
-    for &[from, to] in cut_edges {
+    let mut lineage_representatives = BTreeMap::new();
+    let mut ambiguous_positions = BTreeSet::new();
+    let mut ambiguous_edges = BTreeSet::new();
+    let mut edge_occurrences = BTreeMap::<CutEdge, usize>::new();
+    if provenance.is_some_and(|provenance| provenance.cut_edge_lineages.len() != cut_edges.len()) {
+        return Err(MeshEditError::MalformedMesh {
+            reason: "cut edge lineage count does not match generated cut edges".to_string(),
+        }
+        .into());
+    }
+    for (edge_index, &[from, to]) in cut_edges.iter().enumerate() {
         let from_vertex =
             mesh.vertices
                 .get(from as usize)
@@ -82,22 +108,77 @@ fn collect_cut_scan(
             .and_modify(|index| *index = (*index).min(to as usize))
             .or_insert(to as usize);
         directed.insert((from_key, to_key));
+        if let Some(provenance) = provenance {
+            let [from_lineage, to_lineage] = provenance.cut_edge_lineages[edge_index];
+            for (position, vertex_index, lineage) in [
+                (from_key, from as usize, from_lineage),
+                (to_key, to as usize, to_lineage),
+            ] {
+                if lineage.ambiguous {
+                    ambiguous_positions.insert(position);
+                }
+                lineage_representatives
+                    .entry(position)
+                    .or_insert_with(BTreeMap::new)
+                    .entry(lineage.key)
+                    .and_modify(|representative| {
+                        *representative = (*representative).min(vertex_index)
+                    })
+                    .or_insert(vertex_index);
+            }
+            let edge = ordered_edge(from_key, to_key);
+            let occurrences = edge_occurrences.entry(edge).or_default();
+            *occurrences += 1;
+            if *occurrences > 1 {
+                ambiguous_edges.insert(edge);
+            }
+        }
     }
 
     Ok(CutScan {
         representative,
         directed,
+        lineage_representatives,
+        ambiguous_positions,
+        ambiguous_edges,
+        has_lineage: provenance.is_some(),
     })
 }
 
+#[cfg(test)]
 pub(crate) fn build_cut_loops(
     mesh: &MeshEditBuffers,
     cut_edges: &[[u32; 2]],
 ) -> Result<Vec<Vec<usize>>, BridgeSplitError> {
+    build_cut_loops_internal(mesh, cut_edges, None)
+        .map(|loops| loops.into_iter().map(|ring| ring.vertices).collect())
+}
+
+pub(crate) fn build_cut_loops_with_provenance(
+    mesh: &MeshEditBuffers,
+    cut_edges: &[[u32; 2]],
+    provenance: &ClipProvenance,
+) -> Result<Vec<CutLoop>, BridgeSplitError> {
+    build_cut_loops_internal(mesh, cut_edges, Some(provenance))
+}
+
+fn build_cut_loops_internal(
+    mesh: &MeshEditBuffers,
+    cut_edges: &[[u32; 2]],
+    provenance: Option<&ClipProvenance>,
+) -> Result<Vec<CutLoop>, BridgeSplitError> {
     let CutScan {
         representative,
         directed,
-    } = collect_cut_scan(mesh, cut_edges, CutPolicy::Strict)?;
+        lineage_representatives,
+        ambiguous_positions,
+        ambiguous_edges,
+        has_lineage,
+    } = collect_cut_scan(mesh, cut_edges, provenance, CutPolicy::Strict)?;
+
+    if has_lineage && !ambiguous_edges.is_empty() {
+        return Err(damaged("cut rim contains an ambiguous source edge"));
+    }
 
     for &(from, to) in &directed {
         if directed.contains(&(to, from)) {
@@ -158,6 +239,15 @@ pub(crate) fn build_cut_loops(
         if ring.len() < 3 {
             return Err(damaged("cut rim has fewer than three vertices"));
         }
+        let ring = finish_lineage_loop(
+            mesh,
+            ring,
+            has_lineage,
+            &lineage_representatives,
+            &ambiguous_positions,
+            true,
+        )?
+        .ok_or_else(|| damaged("cut rim has ambiguous source lineage"))?;
         loops.push(ring);
     }
     if visited.len() != directed.len() {
@@ -178,15 +268,37 @@ pub(crate) fn build_cut_loops(
 /// two at every vertex. The strict [`build_cut_loops`] path remains in use for
 /// closed-solid splitting, where silently dropping any generated edge would
 /// hide a topology defect.
+#[cfg(test)]
 pub(crate) fn build_closed_cut_loops(
     mesh: &MeshEditBuffers,
     cut_edges: &[[u32; 2]],
 ) -> Result<Vec<Vec<usize>>, BridgeSplitError> {
-    let graph = build_surface_cut_graph(mesh, cut_edges)?;
+    build_closed_cut_loops_internal(mesh, cut_edges, None)
+        .map(|loops| loops.into_iter().map(|ring| ring.vertices).collect())
+}
+
+pub(crate) fn build_closed_cut_loops_with_provenance(
+    mesh: &MeshEditBuffers,
+    cut_edges: &[[u32; 2]],
+    provenance: &ClipProvenance,
+) -> Result<Vec<CutLoop>, BridgeSplitError> {
+    build_closed_cut_loops_internal(mesh, cut_edges, Some(provenance))
+}
+
+fn build_closed_cut_loops_internal(
+    mesh: &MeshEditBuffers,
+    cut_edges: &[[u32; 2]],
+    provenance: Option<&ClipProvenance>,
+) -> Result<Vec<CutLoop>, BridgeSplitError> {
+    let graph = build_surface_cut_graph(mesh, cut_edges, provenance)?;
     let CutGraph {
         representative,
         adjacency,
         edges,
+        lineage_representatives,
+        ambiguous_positions,
+        ambiguous_edges,
+        has_lineage,
     } = graph;
     let mut remaining = edges;
 
@@ -201,11 +313,27 @@ pub(crate) fn build_closed_cut_loops(
         if !is_simple_cycle(&component_vertices, &component_edges, &adjacency) {
             continue;
         }
-        loops.push(walk_closed_component(
+        if component_edges
+            .iter()
+            .any(|edge| ambiguous_edges.contains(edge))
+        {
+            continue;
+        }
+        let vertices = walk_closed_component(
             &component_vertices,
             &adjacency,
             &representative,
-        )?);
+        )?;
+        if let Some(ring) = finish_lineage_loop(
+            mesh,
+            vertices,
+            has_lineage,
+            &lineage_representatives,
+            &ambiguous_positions,
+            false,
+        )? {
+            loops.push(ring);
+        }
     }
 
     if loops.is_empty() {
@@ -217,11 +345,16 @@ pub(crate) fn build_closed_cut_loops(
 fn build_surface_cut_graph(
     mesh: &MeshEditBuffers,
     cut_edges: &[[u32; 2]],
+    provenance: Option<&ClipProvenance>,
 ) -> Result<CutGraph, BridgeSplitError> {
     let CutScan {
         representative,
         directed,
-    } = collect_cut_scan(mesh, cut_edges, CutPolicy::Lenient)?;
+        lineage_representatives,
+        ambiguous_positions,
+        ambiguous_edges,
+        has_lineage,
+    } = collect_cut_scan(mesh, cut_edges, provenance, CutPolicy::Lenient)?;
     let edges: BTreeSet<CutEdge> = directed
         .into_iter()
         .map(|(from, to)| ordered_edge(from, to))
@@ -241,7 +374,57 @@ fn build_surface_cut_graph(
         representative,
         adjacency,
         edges,
+        lineage_representatives,
+        ambiguous_positions,
+        ambiguous_edges,
+        has_lineage,
     })
+}
+
+fn finish_lineage_loop(
+    mesh: &MeshEditBuffers,
+    mut vertices: Vec<usize>,
+    has_lineage: bool,
+    lineage_representatives: &BTreeMap<PositionKey, BTreeMap<LineageKey, usize>>,
+    ambiguous_positions: &BTreeSet<PositionKey>,
+    strict: bool,
+) -> Result<Option<CutLoop>, BridgeSplitError> {
+    let mut lineages = Vec::with_capacity(vertices.len());
+    if !has_lineage {
+        lineages.resize(vertices.len(), None);
+        return Ok(Some(CutLoop { vertices, lineages }));
+    }
+
+    for vertex in &mut vertices {
+        let point = mesh
+            .vertices
+            .get(*vertex)
+            .ok_or_else(|| MeshEditError::MalformedMesh {
+                reason: "cut rim vertex is out of range while reading lineage".to_string(),
+            })?;
+        let position = canonical_position_key(point.position);
+        let Some(candidates) = lineage_representatives.get(&position) else {
+            if strict {
+                return Err(damaged("cut rim lost source lineage at a vertex"));
+            }
+            return Ok(None);
+        };
+        if ambiguous_positions.contains(&position) || candidates.len() != 1 {
+            if strict {
+                return Err(damaged("cut rim has ambiguous source lineage at a vertex"));
+            }
+            return Ok(None);
+        }
+        let Some((&lineage, &representative)) = candidates.iter().next() else {
+            if strict {
+                return Err(damaged("cut rim has no source lineage at a vertex"));
+            }
+            return Ok(None);
+        };
+        *vertex = representative;
+        lineages.push(Some(lineage));
+    }
+    Ok(Some(CutLoop { vertices, lineages }))
 }
 
 fn ordered_edge(first: PositionKey, second: PositionKey) -> CutEdge {

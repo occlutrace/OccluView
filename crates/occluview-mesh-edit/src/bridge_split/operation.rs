@@ -1,6 +1,8 @@
 use glam::DVec3;
 
-use super::cap::{cap_open_part, cap_surface_part_best_effort};
+use super::cap::{
+    cap_open_part_with_provenance, cap_surface_part_best_effort_with_provenance,
+};
 use super::clip::{clip_bridge_open, clip_bridge_surface_open};
 use super::validate::{validate_vertex_geometry_payloads, validate_vertex_payloads};
 use super::{BridgeSplitRequest, BridgeSplitResult, SurfaceSplitResult};
@@ -21,9 +23,19 @@ pub fn split_bridge(
     let open = clip_bridge_open(&prepared, request)?;
     let normal = request.normal.as_dvec3().normalize();
     let (positive_mesh, positive_loop_count) =
-        cap_open_part(open.part_a, &open.part_a_cut_edges, -normal)?;
+        cap_open_part_with_provenance(
+            open.part_a,
+            &open.part_a_cut_edges,
+            &open.part_a_provenance,
+            -normal,
+        )?;
     let (negative_mesh, negative_loop_count) =
-        cap_open_part(open.part_b, &open.part_b_cut_edges, normal)?;
+        cap_open_part_with_provenance(
+            open.part_b,
+            &open.part_b_cut_edges,
+            &open.part_b_provenance,
+            normal,
+        )?;
 
     validate_output("Part A", &positive_mesh)?;
     validate_output("Part B", &negative_mesh)?;
@@ -60,8 +72,18 @@ pub fn split_bridge_surface(
     let prepared = prepare_split_mesh(mesh)?;
     let open = clip_bridge_surface_open(&prepared, request)?;
     let normal = request.normal.as_dvec3().normalize();
-    let (part_a, a_cut_loops) = cap_surface_cut(open.part_a, &open.part_a_cut_edges, -normal);
-    let (part_b, b_cut_loops) = cap_surface_cut(open.part_b, &open.part_b_cut_edges, normal);
+    let (part_a, a_cut_loops) = cap_surface_cut(
+        open.part_a,
+        &open.part_a_cut_edges,
+        &open.part_a_provenance,
+        -normal,
+    );
+    let (part_b, b_cut_loops) = cap_surface_cut(
+        open.part_b,
+        &open.part_b_cut_edges,
+        &open.part_b_provenance,
+        normal,
+    );
     validate_vertex_payloads(&part_a)?;
     validate_vertex_payloads(&part_b)?;
     validate_separation(&part_a, &part_b, request)?;
@@ -94,11 +116,22 @@ fn prepare_split_mesh(mesh: &MeshEditBuffers) -> Result<MeshEditBuffers, BridgeS
 fn cap_surface_cut(
     mesh: MeshEditBuffers,
     cut_edges: &[[u32; 2]],
+    provenance: &super::clip::ClipProvenance,
     expected_normal: DVec3,
 ) -> (MeshEditBuffers, usize) {
-    match cap_surface_part_best_effort(mesh.clone(), cut_edges, expected_normal) {
+    match cap_surface_part_best_effort_with_provenance(
+        mesh.clone(),
+        cut_edges,
+        provenance,
+        expected_normal,
+    ) {
         Ok((capped, loops)) => (capped, loops),
-        Err(_) => match cap_open_part(mesh.clone(), cut_edges, expected_normal) {
+        Err(_) => match cap_open_part_with_provenance(
+            mesh.clone(),
+            cut_edges,
+            provenance,
+            expected_normal,
+        ) {
             Ok((capped, loops)) => (capped, loops),
             // An open source can make some cut paths terminate at a natural
             // border or contain a genuinely ambiguous branch. Preserve those
