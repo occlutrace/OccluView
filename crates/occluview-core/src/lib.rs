@@ -7,8 +7,9 @@
 //!
 //! ## Invariants
 //!
-//! - **Panic-free.** Every public function returns a `Result` or is total. There
-//!   is no `unwrap`/`expect`/`panic!` in this crate (clippy-enforced).
+//! - Fallible operations return typed errors. Runtime lints restrict explicit
+//!   `unwrap`/`expect`/`panic!`; they do not prove that indexing, assertions, or
+//!   dependency calls cannot panic.
 //! - **`Send + Sync`.** All public types are shareable across threads; the
 //!   renderer and the file loaders rely on this.
 //! - **Millimeter units** internally ([`units::Millimeters`]).
