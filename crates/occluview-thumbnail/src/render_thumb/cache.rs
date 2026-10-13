@@ -17,11 +17,6 @@ pub(super) const LARGE_CONTENT_FIXTURE_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(super) enum ThumbnailRequestKey {
-    File {
-        cache_key: ThumbnailFileCacheKey,
-        size_px: u16,
-        background: [u64; 4],
-    },
     FileContent {
         cache_key: ThumbnailFileContentKey,
         size_px: u16,
