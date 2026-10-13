@@ -622,6 +622,13 @@ jobs:
           trap 'rm -f "$signing_key"' EXIT
           printf '%s\n' "$release_signing_secret" > "$signing_key"
           unset release_signing_secret
+          pubkey=$(sed -n 's/^pub const UPDATE_PUBKEY: &str = "\(.*\)";$/\1/p' \
+            crates/occluview-update/src/lib.rs)
+          bundle_pubkey=$(sed -n '2p' occluview.pub)
+          if [[ -z "$pubkey" || "$bundle_pubkey" != "$pubkey" ]]; then
+            echo "The bundled public key differs from the shipped update key." >&2
+            exit 1
+          fi
           cp ./occluview.pub ./dist/occluview.pub
           (
             cd ./dist
@@ -636,12 +643,6 @@ jobs:
           )
           bundle="./dist/OccluView-${version}-verification.zip"
           minisign -S -s "$signing_key" -m "$bundle"
-          pubkey=$(sed -n 's/^pub const UPDATE_PUBKEY: &str = "\(.*\)";$/\1/p' \
-            crates/occluview-update/src/lib.rs)
-          if [[ -z "$pubkey" ]]; then
-            echo "Could not read the shipped update public key." >&2
-            exit 1
-          fi
           minisign -V -P "$pubkey" -m "$bundle"
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
