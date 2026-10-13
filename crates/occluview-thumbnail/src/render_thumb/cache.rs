@@ -286,7 +286,7 @@ pub(super) fn thumbnail_file_metadata(
 pub(super) fn thumbnail_file_metadata_checked(
     path: &Path,
 ) -> Result<(ThumbnailFileMetadata, bool), ThumbnailError> {
-    let metadata = std::fs::metadata(path).map_err(|e| file_io_error(path, e))?;
+    let metadata = std::fs::metadata(path).map_err(file_io_error)?;
     let is_regular_file = metadata.is_file();
     let modified_nanos = metadata
         .modified()
@@ -325,14 +325,14 @@ pub(super) fn thumbnail_file_content_key(
     path: &Path,
     metadata: &ThumbnailFileMetadata,
 ) -> Result<ThumbnailFileContentKey, ThumbnailError> {
-    let mut file = std::fs::File::open(path).map_err(|e| file_io_error(path, e))?;
+    let mut file = std::fs::File::open(path).map_err(file_io_error)?;
     let mut hasher = Sha256::new();
     let format_tag = thumbnail_file_format_tag(path);
     hasher.update([format_tag]);
     hasher.update(metadata.byte_len.to_le_bytes());
 
     hash_file_range(&mut file, &mut hasher, 0, metadata.byte_len)
-        .map_err(|e| file_io_error(path, e))?;
+        .map_err(file_io_error)?;
 
     Ok(ThumbnailFileContentKey {
         format_tag,
@@ -386,11 +386,8 @@ fn thumbnail_file_format_tag(path: &Path) -> u8 {
     }
 }
 
-fn file_io_error(path: &Path, error: std::io::Error) -> ThumbnailError {
-    ThumbnailError::Format(FormatError::Io(std::io::Error::new(
-        error.kind(),
-        format!("{}: {error}", path.display()),
-    )))
+fn file_io_error(error: std::io::Error) -> ThumbnailError {
+    ThumbnailError::Format(FormatError::Io(error))
 }
 
 pub(super) fn oversize_input_error(byte_len: usize) -> ThumbnailError {
