@@ -24,8 +24,8 @@ updates:
           - "major"
     ignore:
       - dependency-name: "image"
-        # Keep image below 0.25.10: decoder-graph changes require malformed-input,
-        # golden-thumbnail, and allocation-bound coverage.
+        # Hold automatic upgrades below 0.25.10 until decoder-graph changes have
+        # malformed-input, golden-thumbnail, and allocation-bound coverage.
         versions: [">=0.25.10"]
 
   # The excluded fuzz crate has its own lockfile.
