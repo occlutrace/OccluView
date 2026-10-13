@@ -3,4 +3,5 @@
 
 pub(super) mod commit;
 pub(super) mod export;
+pub(super) mod lifecycle;
 pub(super) mod menu;

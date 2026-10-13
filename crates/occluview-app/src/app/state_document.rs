@@ -216,6 +216,71 @@ impl DocumentState {
             )
     }
 
+    /// Begin a scene install before any cross-owner teardown runs.
+    pub(super) fn begin_scene_install(&mut self) {
+        self.content_revision = self.content_revision.wrapping_add(1);
+    }
+
+    /// Point edit-mode selection and history at an incoming scene.
+    pub(super) fn sync_edit_mode_to_scene(&mut self, scene: &Scene) {
+        self.edit_mode.sync_to_scene(scene);
+    }
+
+    /// Replace the document's scene content after the structural owners have
+    /// dropped their claims on the outgoing scene.
+    pub(super) fn install_scene_content(&mut self, mut scene: Scene) {
+        self.unsaved_sculpt_stroke = false;
+        // A measured map describes one pose. The incoming scene install clears
+        // the alignment result, so its restored overlay must not survive.
+        for entry in scene.meshes_mut() {
+            if entry.overlay_kind() == Some(occluview_core::OverlayKind::Measured) {
+                entry.clear_overlay();
+            }
+        }
+        self.scene = Some(Arc::new(scene));
+    }
+
+    /// Replace the scene handle for a material-only update.
+    pub(super) fn replace_scene_handle(&mut self, scene: Scene) {
+        self.scene = Some(Arc::new(scene));
+    }
+
+    /// Detach an interaction that indexes the scene mesh list.
+    pub(super) fn clear_mesh_selection_drag(&mut self) {
+        self.mesh_selection_drag = None;
+    }
+
+    /// Begin clearing a scene. The caller keeps the returned handle alive until
+    /// align/worker owners revoke their claims for this generation.
+    pub(super) fn take_scene_for_clear(&mut self) -> Option<Arc<Scene>> {
+        self.content_revision = self.content_revision.wrapping_add(1);
+        self.scene.take()
+    }
+
+    /// Drop scene content and its per-layer unsaved tracking after the
+    /// departing handle has been released.
+    pub(super) fn clear_scene_content(&mut self) {
+        self.unsaved_sculpt_stroke = false;
+        self.clear_unsaved_mesh_edits();
+        self.hidden_layer_stack.clear();
+        self.translucent_layer_restore.clear();
+        self.scene = None;
+    }
+
+    /// Drop paths that belonged to the cleared scene.
+    pub(super) fn clear_scene_paths(&mut self) {
+        self.current_paths.clear();
+        self.departed_layer_paths.clear();
+    }
+
+    /// Finish document-side clear bookkeeping after render mirrors are gone.
+    pub(super) fn finish_scene_clear(&mut self) {
+        self.mesh_selection_drag = None;
+        self.load_queue_camera_reset = LoadQueueCameraReset::Idle;
+        self.camera_modified_during_load = false;
+        self.edit_mode.clear();
+    }
+
     /// Forget the unsaved-edit tracking for the layers just written to disk.
     ///
     /// Clear only layers included in the save operation.
