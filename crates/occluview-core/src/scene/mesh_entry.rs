@@ -181,6 +181,20 @@ impl SceneMesh {
         if !transform.is_finite() {
             return false;
         }
+        // A finite matrix can still overflow finite source coordinates. Check
+        // the mesh bounds before accepting an interpretation into the scene.
+        if !self.mesh.vertices().is_empty() {
+            let bounds = self.mesh.bbox();
+            for x in [bounds.min.x, bounds.max.x] {
+                for y in [bounds.min.y, bounds.max.y] {
+                    for z in [bounds.min.z, bounds.max.z] {
+                        if !transform.transform_point3(glam::Vec3::new(x, y, z)).is_finite() {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
         self.transform = transform;
         self.import_units.scale_to_mm = scale_to_mm;
         self.import_units.confidence = UnitConfidence::ConfirmedByOperator;
