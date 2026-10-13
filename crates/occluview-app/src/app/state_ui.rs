@@ -79,6 +79,16 @@ pub(super) struct UiState {
     /// top of the frame, before anything can close it, the answer describes the
     /// frame the operator actually saw.
     pub(super) popup_open_at_frame_start: bool,
+    /// Whether the toolbar's axis menu owned the popup slot before this
+    /// frame's toolbar widgets ran. Workspace pointer routing needs this exact
+    /// owner after a menu click closes the popup earlier in the same frame.
+    pub(super) camera_view_popup_open_at_frame_start: bool,
+    /// The axis popup area's hit bounds for this frame, captured from the
+    /// response returned by egui's Popup::show.
+    pub(super) camera_view_popup_area: Option<(egui::Rect, egui::LayerId)>,
+    /// The exact primary UI capture started by the axis popup route, so an
+    /// unrelated active-scene UI control cannot inherit this popup exception.
+    pub(super) camera_view_popup_capture: Option<GestureOwner>,
 
     pub(super) app_logo: Option<egui::TextureHandle>,
     pub(super) foreground_pulse_until: Option<Instant>,
@@ -221,6 +231,9 @@ impl UiState {
             app_error: None,
             information_dialog: InformationDialog::default(),
             popup_open_at_frame_start: false,
+            camera_view_popup_open_at_frame_start: false,
+            camera_view_popup_area: None,
+            camera_view_popup_capture: None,
             app_logo: None,
             foreground_pulse_until: None,
             viewport_orbit_cursor_grabbed: false,
@@ -251,10 +264,8 @@ impl UiState {
         if self.workspace_modal_open {
             return true;
         }
-        let camera_view_popup_open = egui::Popup::is_id_open(
-            ctx,
-            super::app_dialogs::axis_view_popup_id(),
-        );
+        let camera_view_popup_open = self.camera_view_popup_open_at_frame_start
+            || egui::Popup::is_id_open(ctx, super::app_dialogs::axis_view_popup_id());
         self.open_dialogs(camera_view_popup_open).any()
     }
 
