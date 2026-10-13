@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::placeholder::PlaceholderKind;
+use std::sync::mpsc;
 use std::thread;
 
 fn spec_64() -> ThumbnailSpec {
@@ -154,6 +155,65 @@ fn expired_stream_request_does_not_return_a_stream_cache_hit() {
     );
 
     assert_eq!(attempt, ThumbnailAttempt::TransientFailure);
+}
+
+#[test]
+fn blocked_stream_preflight_stays_bounded_and_a_late_cache_hit_is_fenced() {
+    let spec = spec_64();
+    let mut bytes = fixtures::binary_stl_cube();
+    bytes[..8].copy_from_slice(b"lateprep");
+    let plan = prepare_stream_thumbnail_render(Some("stl"), &bytes)
+        .expect("fixture stream preflight");
+    let cached_pixels = vec![53_u8; usize::from(spec.size_px).pow(2) * 4];
+    thumbnail_stream_cache()
+        .lock()
+        .expect("stream cache lock")
+        .insert_with_background(
+            plan.cache_key,
+            spec.size_px,
+            thumbnail_background_key(spec.background),
+            &cached_pixels,
+        );
+
+    let gate = concurrency::ThumbnailJobGate::new(1);
+    let permit = gate
+        .acquire_timeout(Duration::from_secs(1))
+        .expect("private gate hands out one permit");
+    let request = ThumbnailRenderRequest::from_started_at(
+        expired_request_start(),
+        Duration::from_millis(1),
+        AdapterPolicy::HardwareThenFallback,
+    );
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let (progress_tx, progress_rx) = mpsc::sync_channel(2);
+    let worker = thread::spawn(move || {
+        let _permit = permit;
+        render_stream_thumbnail_worker(
+            Some("stl".to_string()),
+            Arc::<[u8]>::from(bytes),
+            spec,
+            request,
+            progress_tx,
+            move |extension, bytes| {
+                entered_tx.send(()).expect("signal preflight entry");
+                release_rx.recv().expect("release bounded preflight");
+                prepare_stream_thumbnail_render(extension, bytes)
+            },
+        );
+    });
+
+    entered_rx.recv().expect("worker entered preflight");
+    assert_eq!(gate.active_jobs(), 1, "preflight retains its worker permit");
+    release_tx.send(()).expect("release preflight");
+    match progress_rx.recv().expect("worker completion") {
+        ThumbnailJobProgress::Finished(attempt) => {
+            assert_eq!(attempt, ThumbnailAttempt::TransientFailure)
+        }
+        ThumbnailJobProgress::Prepared => panic!("expired cache hit must not start rendering"),
+    }
+    worker.join().expect("preflight worker exits");
+    assert_eq!(gate.active_jobs(), 0, "worker releases its permit on exit");
 }
 
 #[test]

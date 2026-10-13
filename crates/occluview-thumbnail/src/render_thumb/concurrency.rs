@@ -291,6 +291,11 @@ impl ThumbnailJobGate {
         }
     }
 
+    #[cfg(test)]
+    pub(super) fn active_jobs(&self) -> usize {
+        lock_recover(&self.inner.state).active_jobs
+    }
+
     /// Acquire a job permit, waiting up to `timeout`. Returns `None` on timeout.
     ///
     /// Infallible with respect to lock poisoning: the gate counter is recovered
