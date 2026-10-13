@@ -391,17 +391,17 @@ struct ScanVisitor<'a> {
 }
 
 impl ScanVisitor<'_> {
-    fn skip_sequence<A>(mut sequence: A) -> Result<(), A::Error>
+    fn skip_sequence<'de, A>(mut sequence: A) -> Result<(), A::Error>
     where
-        A: SeqAccess<'_>,
+        A: SeqAccess<'de>,
     {
         while sequence.next_element::<IgnoredAny>()?.is_some() {}
         Ok(())
     }
 
-    fn skip_map<A>(mut map: A) -> Result<(), A::Error>
+    fn skip_map<'de, A>(mut map: A) -> Result<(), A::Error>
     where
-        A: MapAccess<'_>,
+        A: MapAccess<'de>,
     {
         while map.next_key::<IgnoredAny>()?.is_some() {
             map.next_value::<IgnoredAny>()?;
