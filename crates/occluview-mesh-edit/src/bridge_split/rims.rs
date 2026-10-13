@@ -74,7 +74,8 @@ fn collect_cut_scan(
 
     let mut representative: BTreeMap<PositionKey, usize> = BTreeMap::new();
     let mut directed = BTreeSet::new();
-    let mut lineage_representatives = BTreeMap::new();
+    let mut lineage_representatives =
+        BTreeMap::<PositionKey, BTreeMap<LineageKey, usize>>::new();
     let mut ambiguous_positions = BTreeSet::new();
     let mut ambiguous_edges = BTreeSet::new();
     let mut edge_lineages = BTreeMap::<CutEdge, (LineageKey, LineageKey)>::new();
