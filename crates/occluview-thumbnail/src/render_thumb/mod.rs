@@ -539,10 +539,12 @@ fn render_file_thumbnail_worker(
             return;
         }
     };
-    let content_key = thumbnail_file_content_key(&path, source.file_bytes().as_slice());
+    let cacheable_by_primary_bytes = file_thumbnail_can_share_primary_bytes(kind);
+    let content_key = cacheable_by_primary_bytes
+        .then(|| thumbnail_file_content_key(&path, source.file_bytes().as_slice()));
 
-    // The preflight was path based; verify both the held source handle and the
-    // current path after hashing, before a cache hit can return any pixels.
+    // The preflight was path based; verify the held source handle and current
+    // path after preparation, before cached pixels can be returned.
     if !thumbnail_file_source_matches(&path, &source, &plan.metadata) {
         tracing::warn!(
             extension = ?path.extension(),
@@ -554,32 +556,61 @@ fn render_file_thumbnail_worker(
         return;
     }
 
-    if let Some(pixels) = file_content_cache_lookup(&content_key, spec) {
-        if !thumbnail_file_source_matches(&path, &source, &plan.metadata) {
-            let _ = progress.send(ThumbnailJobProgress::Finished(
-                ThumbnailAttempt::TransientFailure,
-            ));
+    if let Some(content_key) = content_key.as_ref() {
+        if let Some(pixels) = file_content_cache_lookup(content_key, spec) {
+            if !thumbnail_file_source_matches(&path, &source, &plan.metadata) {
+                let _ = progress.send(ThumbnailJobProgress::Finished(
+                    ThumbnailAttempt::TransientFailure,
+                ));
+                return;
+            }
+            if let Ok(mut path_cache) = thumbnail_file_cache().lock() {
+                path_cache.insert_with_background(
+                    plan.cache_key.clone(),
+                    spec.size_px,
+                    thumbnail_background_key(spec.background),
+                    &pixels,
+                );
+            }
+            let _ = progress.send(ThumbnailJobProgress::Finished(ThumbnailAttempt::Bitmap(
+                pixels,
+            )));
             return;
         }
-        if let Ok(mut path_cache) = thumbnail_file_cache().lock() {
-            path_cache.insert_with_background(
-                plan.cache_key.clone(),
-                spec.size_px,
-                thumbnail_background_key(spec.background),
-                &pixels,
-            );
-        }
-        let _ = progress.send(ThumbnailJobProgress::Finished(ThumbnailAttempt::Bitmap(
-            pixels,
-        )));
-        return;
     }
 
-    let cache_keys = FileThumbnailCacheKeys {
-        path: Some(plan.cache_key.clone()),
-        content: Some(content_key.clone()),
+    let cache_keys = if cacheable_by_primary_bytes {
+        FileThumbnailCacheKeys {
+            path: Some(plan.cache_key.clone()),
+            content: content_key.clone(),
+        }
+    } else {
+        FileThumbnailCacheKeys {
+            path: None,
+            content: None,
+        }
     };
     let metadata = plan.metadata;
+    if !cacheable_by_primary_bytes {
+        let attempt = render_file_thumbnail_mesh_job(
+            path,
+            source,
+            kind,
+            metadata,
+            cache_keys,
+            spec,
+            request,
+            Some(progress.clone()),
+        );
+        let _ = progress.send(ThumbnailJobProgress::Finished(attempt));
+        return;
+    }
+    let Some(content_key) = content_key else {
+        let _ = progress.send(ThumbnailJobProgress::Finished(
+            ThumbnailAttempt::TransientFailure,
+        ));
+        return;
+    };
     let inflight_key = ThumbnailRequestKey::FileContent {
         cache_key: content_key,
         size_px: spec.size_px,
@@ -603,6 +634,13 @@ fn render_file_thumbnail_worker(
         },
     );
     let _ = progress.send(ThumbnailJobProgress::Finished(attempt));
+}
+
+fn file_thumbnail_can_share_primary_bytes(kind: occluview_formats::FormatKind) -> bool {
+    !matches!(
+        kind,
+        occluview_formats::FormatKind::Obj | occluview_formats::FormatKind::Ply
+    )
 }
 
 fn thumbnail_file_source_matches(
@@ -686,6 +724,10 @@ fn render_file_thumbnail_mesh_job(
     request: ThumbnailRenderRequest,
     progress: Option<std::sync::mpsc::SyncSender<ThumbnailJobProgress<ThumbnailAttempt>>>,
 ) -> ThumbnailAttempt {
+    let may_warm_cache = cache_keys.path.is_some() || cache_keys.content.is_some();
+    if !may_warm_cache && Instant::now() >= request.response_deadline() {
+        return ThumbnailAttempt::TransientFailure;
+    }
     if !thumbnail_file_source_matches(&path, &source, &metadata) {
         tracing::warn!(
             extension = ?path.extension(),
@@ -714,6 +756,9 @@ fn render_file_thumbnail_mesh_job(
         );
         return ThumbnailAttempt::TransientFailure;
     }
+    if !may_warm_cache && Instant::now() >= request.response_deadline() {
+        return ThumbnailAttempt::TransientFailure;
+    }
     if let Some(progress) = &progress {
         let _ = progress.send(ThumbnailJobProgress::Prepared);
     }
@@ -723,7 +768,11 @@ fn render_file_thumbnail_mesh_job(
     let result = rendering::render_mesh_thumbnail_with_adapter_policy(
         mesh,
         spec,
-        RenderDeadline::at(request.cache_warm_deadline()),
+        RenderDeadline::at(if may_warm_cache {
+            request.cache_warm_deadline()
+        } else {
+            request.response_deadline()
+        }),
         request.adapter_policy(),
     );
     if cache::thumbnail_file_changed_since(&path, &metadata) {
