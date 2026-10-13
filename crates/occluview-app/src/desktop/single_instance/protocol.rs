@@ -184,6 +184,9 @@ pub(super) fn is_fallback_ack(bytes: &[u8], kind: &[u8; 8], nonce: &str) -> bool
 }
 
 pub(super) fn parse_request(bytes: &[u8]) -> Result<OpenRequest> {
+    if bytes.len() > MAX_REQUEST_BYTES {
+        bail!("single-instance request exceeds the byte limit");
+    }
     if bytes.starts_with(REQUEST_MAGIC) {
         parse_enveloped_request(bytes)
     } else {
@@ -333,15 +336,18 @@ fn parse_token(bytes: &[u8], cursor: &mut usize) -> Result<String> {
 
 fn parse_legacy_request(bytes: &[u8]) -> Result<OpenRequest> {
     let text = std::str::from_utf8(bytes).context("legacy single-instance request is not utf-8")?;
-    let paths = text
+    let mut paths = Vec::new();
+    for line in text
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
-        .map(|line| {
-            validate_request_text(line, "path")?;
-            Ok(PathBuf::from(line))
-        })
-        .collect::<Result<Vec<_>>>()?;
+    {
+        if paths.len() >= MAX_REQUEST_PATHS {
+            bail!("legacy single-instance request exceeds the path limit");
+        }
+        validate_request_text(line, "path")?;
+        paths.push(PathBuf::from(line));
+    }
     Ok(OpenRequest {
         paths,
         activation_token: None,
@@ -511,6 +517,21 @@ mod tests {
             vec![PathBuf::from("/tmp/a.stl"), PathBuf::from("/tmp/b.obj")]
         );
         assert_eq!(parsed.activation_token, None);
+    }
+
+    #[test]
+    fn legacy_requests_obey_the_same_path_and_byte_limits() {
+        let at_limit = "scan.stl\n".repeat(MAX_REQUEST_PATHS);
+        let parsed = parse_request(at_limit.as_bytes());
+        assert!(parsed.is_ok());
+        let Ok(parsed) = parsed else {
+            panic!("a legacy request at the path limit must be accepted");
+        };
+        assert_eq!(parsed.paths.len(), MAX_REQUEST_PATHS);
+
+        let too_many = "scan.stl\n".repeat(MAX_REQUEST_PATHS + 1);
+        assert!(parse_request(too_many.as_bytes()).is_err());
+        assert!(parse_request(&vec![b'x'; MAX_REQUEST_BYTES + 1]).is_err());
     }
 
     #[test]
