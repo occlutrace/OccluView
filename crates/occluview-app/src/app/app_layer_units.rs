@@ -1,8 +1,11 @@
 //! Explicit layer-unit decisions with the document's existing Undo boundary.
 
-use super::{LayerContextAction, LayerContextApply, LayerContextRequest, Scene, SceneContext};
+use super::{
+    state_document::DocumentState, LayerContextAction, LayerContextApply, LayerContextRequest,
+    Scene, SceneContext,
+};
 use crate::edit_mode::EditModeCommand;
-use occluview_core::{SourceUnit, UnitConfidence};
+use occluview_core::{SceneMeshId, SourceUnit, UnitConfidence};
 
 impl SceneContext<'_> {
     pub(super) fn confirm_layer_units(
@@ -35,48 +38,9 @@ impl SceneContext<'_> {
                 &self.ui.locale,
             );
         }
-        // A split preserves one import interpretation. Plan every same-source
-        // piece before taking history, so a bad scale cannot leave half the
-        // source converted. Other documents retain their independent decision.
-        let desired_scale: f32 = match interpretation {
-            SourceUnit::Meters => 1000.0,
-            SourceUnit::Millimeters => 1.0,
-            SourceUnit::Unitless => return LayerContextApply::default(),
-        };
-        let mut updates = Vec::new();
-        for (index, entry) in scene.meshes().iter().enumerate() {
-            if entry.export_source_layer_id() != source {
-                continue;
-            }
-            let units = entry.import_units();
-            if units.confidence == UnitConfidence::ConfirmedByOperator
-                && units.scale_to_mm.to_bits() == desired_scale.to_bits()
-            {
-                continue;
-            }
-            if !matches!(units.confidence,
-                UnitConfidence::Ambiguous | UnitConfidence::ConfirmedByOperator)
-            {
-                continue;
-            }
-            let mut updated = entry.clone();
-            if !updated.confirm_import_units(interpretation) {
-                return LayerContextApply::default();
-            }
-            updates.push((index, updated));
-        }
-        let Some(token) = self.document.edit_mode.begin_scene_edit(
-            scene,
-            request.layer_id,
-            EditModeCommand::MoveLayer,
-        ) else {
+        if !confirm_source_units(self.document, scene, source, request.layer_id, interpretation) {
             return LayerContextApply::default();
-        };
-        for (index, updated) in updates {
-            self.document.mark_mesh_edits_unsaved(updated.id());
-            scene.meshes_mut()[index] = updated;
         }
-        let _ = self.document.edit_mode.finish_scene_edit_success(token, scene);
         self.scene_ui.status_message = Some(
             self.ui.locale.tr(crate::i18n::message_id!("layer-units-confirmed")),
         );
@@ -86,6 +50,60 @@ impl SceneContext<'_> {
             removed: false,
         }
     }
+}
+
+/// Apply one source's unit decision as a single history step. No application
+/// services, worker submission, or presentation state are available here.
+fn confirm_source_units(
+    document: &mut DocumentState,
+    scene: &mut Scene,
+    source: SceneMeshId,
+    layer_id: SceneMeshId,
+    interpretation: SourceUnit,
+) -> bool {
+    // A split preserves one import interpretation. Plan every same-source
+    // piece before taking history, so a bad scale cannot leave half the
+    // source converted. Other documents retain their independent decision.
+    let desired_scale: f32 = match interpretation {
+        SourceUnit::Meters => 1000.0,
+        SourceUnit::Millimeters => 1.0,
+        SourceUnit::Unitless => return false,
+    };
+    let mut updates = Vec::new();
+    for (index, entry) in scene.meshes().iter().enumerate() {
+        if entry.export_source_layer_id() != source {
+            continue;
+        }
+        let units = entry.import_units();
+        if units.confidence == UnitConfidence::ConfirmedByOperator
+            && units.scale_to_mm.to_bits() == desired_scale.to_bits()
+        {
+            continue;
+        }
+        if !matches!(units.confidence,
+            UnitConfidence::Ambiguous | UnitConfidence::ConfirmedByOperator)
+        {
+            continue;
+        }
+        let mut updated = entry.clone();
+        if !updated.confirm_import_units(interpretation) {
+            return false;
+        }
+        updates.push((index, updated));
+    }
+    let Some(token) = document.edit_mode.begin_scene_edit(
+        scene,
+        layer_id,
+        EditModeCommand::MoveLayer,
+    ) else {
+        return false;
+    };
+    for (index, updated) in updates {
+        document.mark_mesh_edits_unsaved(updated.id());
+        scene.meshes_mut()[index] = updated;
+    }
+    let _ = document.edit_mode.finish_scene_edit_success(token, scene);
+    true
 }
 
 #[cfg(test)]
@@ -158,6 +176,48 @@ mod tests {
         else { panic!("unit decision must be redoable"); };
         assert_eq!(redone.meshes()[0].transform, pose);
         assert_eq!(redone.meshes()[0].import_units().confidence, UnitConfidence::ConfirmedByOperator);
+    }
+
+    #[test]
+    fn invalid_sibling_units_refuse_the_entire_source_before_history() {
+        let mut app = test_app("source-units-atomic-refusal");
+        let source = ambiguous_layer();
+        let source_id = source.id();
+        let invalid = ambiguous_layer()
+            .with_source_layer_id(source_id)
+            .with_import_units(UnitInterpretation {
+                scale_to_mm: 0.0,
+                ..UnitInterpretation::ambiguous_gltf()
+            });
+        let mut scene = Scene::new();
+        scene.add(source);
+        scene.add(invalid);
+        let original: Vec<_> = scene
+            .meshes()
+            .iter()
+            .map(|entry| (entry.transform, entry.import_units()))
+            .collect();
+        let mut context = app.active_context().expect("scene");
+        let revision = context.document.content_revision;
+        let history_len = context.document.edit_mode.undo_len();
+        let request = LayerContextRequest {
+            index: 0,
+            layer_id: source_id,
+            action: LayerContextAction::ConfirmMeters,
+        };
+
+        assert!(!context.confirm_layer_units(&mut scene, request).scene_changed);
+
+        let after: Vec<_> = scene
+            .meshes()
+            .iter()
+            .map(|entry| (entry.transform, entry.import_units()))
+            .collect();
+        assert_eq!(after, original);
+        assert_eq!(context.document.content_revision, revision);
+        assert!(context.document.unsaved_edit_layer_ids.is_empty());
+        assert_eq!(context.document.edit_mode.undo_len(), history_len);
+        assert!(!context.document.edit_mode.is_busy());
     }
 
     #[test]
