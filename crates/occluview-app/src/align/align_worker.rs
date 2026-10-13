@@ -742,9 +742,13 @@ fn execute(job: &AlignJob, cancel: &CancelFlag, cached: &mut WorkerCache) -> Ali
         return recolor(job, cached);
     }
 
-    let Some(index) = surface_index(&mut cached.surface, job) else {
+    let Some(index) = surface_index(&mut cached.surface, job, cancel) else {
         return AlignOutcome::Failed {
-            rejection: AlignFailure::FixedSurfaceMissing,
+            rejection: if cancel.is_cancelled() {
+                AlignFailure::MeasurementDropped
+            } else {
+                AlignFailure::FixedSurfaceMissing
+            },
         };
     };
 
@@ -867,13 +871,30 @@ fn color_map(map: &DeviationMap, ramp: &RampSettings) -> Vec<[u8; 4]> {
 fn surface_index<'a>(
     cached: &'a mut Option<(SurfaceKey, SurfaceIndex)>,
     job: &AlignJob,
+    cancel: &CancelFlag,
 ) -> Option<&'a SurfaceIndex> {
+    if cancel.is_cancelled() {
+        return None;
+    }
     if cached.as_ref().is_none_or(|(key, _)| *key != job.fixed_key) {
-        let built = SurfaceIndex::build(Soup {
-            positions: &job.fixed_world_positions,
-            indices: &job.fixed_indices,
-            mask: job.fixed_mask.as_ref().map(|mask| mask.as_slice()),
-        })?;
+        use occluview_geometry::surface::{BuildOutcome, GeometryControl};
+        let built = match SurfaceIndex::build_controlled(
+            Soup {
+                positions: &job.fixed_world_positions,
+                indices: &job.fixed_indices,
+                mask: job.fixed_mask.as_ref().map(|mask| mask.as_slice()),
+            },
+            glam::DAffine3::IDENTITY,
+            &GeometryControl::cancellable(cancel.clone()),
+        ) {
+            BuildOutcome::Complete(index) => index,
+            BuildOutcome::Partial { .. } | BuildOutcome::Empty => return None,
+        };
+        // A completed index is reusable by later requests. Only complete,
+        // uncancelled construction may replace the previous cache entry.
+        if cancel.is_cancelled() {
+            return None;
+        }
         *cached = Some((job.fixed_key, built));
     }
     cached.as_ref().map(|(_, index)| index)

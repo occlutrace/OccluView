@@ -18,6 +18,26 @@ use occluview_align::{
     deviation_colors, DeviationMap, Orientation, RampMode, RampSettings, Validity,
 };
 
+#[test]
+fn cancelled_index_build_does_not_publish_and_retry_can_reuse_it() {
+    let job = line_measure_job(0);
+    let cancelled = occluview_align::CancelFlag::new();
+    cancelled.cancel();
+    let mut cache = None;
+    assert!(super::surface_index(&mut cache, &job, &cancelled).is_none());
+    assert!(cache.is_none());
+
+    let first = occluview_align::CancelFlag::new();
+    let index = super::surface_index(&mut cache, &job, &first).expect("fixed surface");
+    assert!(index.query_control().is_none());
+    let retained = index.resident_size_bytes();
+    first.cancel();
+    let next = occluview_align::CancelFlag::new();
+    let reused = super::surface_index(&mut cache, &job, &next).expect("fresh lifetime");
+    assert_eq!(reused.resident_size_bytes(), retained);
+    assert!(reused.query_control().is_none());
+}
+
 /// Best fit must run the full search, not a local-only refinement.
 ///
 /// `local_only: true` drops the global feature seed and the radius ladder, so a
