@@ -226,10 +226,11 @@ impl BrushSession {
         self.kernel.prime_wall_region(center, radius_mm, budget)
     }
 
-    /// Cancellable worker form of [`Self::apply_ray_step`]. A canceled owner
-    /// discards the entire session and its display mirror together. `None`
-    /// means a cooperative checkpoint inside the kernel ray/path work observed
-    /// the stop; the caller publishes nothing from this step.
+    /// Cancellable worker ray-step application. A cancellation can be observed
+    /// before entry, inside the kernel ray/path checkpoints, or in the outer
+    /// post-apply check. `None` therefore means cancellation was observed and
+    /// the owner must discard the potentially partial session and display
+    /// mirror; no outcome from this step may be published.
     pub(crate) fn apply_ray_step_cancellable(
         &mut self,
         step: &BrushRayStep,
