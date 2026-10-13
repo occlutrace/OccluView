@@ -280,10 +280,20 @@ impl ContactWorker {
 
     /// Queue a job, replacing any queued job and cancelling the current run.
     #[must_use]
-    pub(crate) fn submit(&self, mut job: ContactJob) -> Option<u64> {
+    pub(crate) fn submit(&self, job: ContactJob) -> Option<u64> {
+        self.submit_with_queue_hook(job, || {})
+    }
+
+    fn submit_with_queue_hook<F>(&self, mut job: ContactJob, before_queue_lock: F) -> Option<u64>
+    where
+        F: FnOnce(),
+    {
         if self.has_failed() {
             return None;
         }
+        // Tests can pause at the queue-lock boundary after every earlier
+        // submission action has run. Production submits use an empty hook.
+        before_queue_lock();
         let Ok(mut state) = self.queue.state.lock() else {
             mark_unusable(&self.unusable, "contact queue lock poisoned");
             return None;
