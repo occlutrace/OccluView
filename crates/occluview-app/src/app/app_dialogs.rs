@@ -172,7 +172,9 @@ impl SceneContext<'_> {
                         do_open = true;
                     }
                     // Recent files use a chevron popup attached to Open.
-                    ui.add_enabled_ui(!self.persistence.recent_files.is_empty(), |ui| {
+                    let can_show_recent = !self.persistence.recent_files.is_empty()
+                        || !self.persistence.may_write_recent;
+                    ui.add_enabled_ui(can_show_recent, |ui| {
                         let (rect, response) =
                             ui.allocate_exact_size(egui::vec2(18.0, 22.0), egui::Sense::click());
                         crate::ui::icons::paint(
@@ -191,7 +193,7 @@ impl SceneContext<'_> {
                                 .ui
                                 .locale
                                 .tr(crate::i18n::message_id!("toolbar-recent-hint")),
-                            !self.persistence.recent_files.is_empty(),
+                            can_show_recent,
                             Some(egui::Popup::is_id_open(ui.ctx(), recent_files_popup_id())),
                         );
                         let response = response.on_hover_text(
@@ -476,8 +478,7 @@ impl SceneContext<'_> {
             }
         }
         if clear_recent {
-            self.persistence.recent_files.clear();
-            self.persistence.save_recent_files();
+            self.persistence.clear_recent_files();
         }
         if let Some(paths) = recent_to_open {
             self.replace_paths(&paths, "recent");

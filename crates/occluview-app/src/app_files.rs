@@ -1,26 +1,58 @@
-use crate::desktop::recent_files::{RecentEntry, RecentFiles};
+use crate::desktop::recent_files::{RecentEntry, RecentFiles, RecentFilesDecode};
 use std::path::{Path, PathBuf};
 
 const RECENT_FILES_FILE: &str = "recent-files.txt";
 
-pub(crate) fn load_recent_files(limit: usize) -> RecentFiles {
+pub(crate) struct LoadedRecentFiles {
+    pub(crate) recent_files: RecentFiles,
+    pub(crate) may_write_recent: bool,
+}
+
+pub(crate) fn load_recent_files(limit: usize) -> LoadedRecentFiles {
     let Some(path) = recent_files_path() else {
-        return RecentFiles::new(limit);
+        return LoadedRecentFiles {
+            recent_files: RecentFiles::new(limit),
+            may_write_recent: true,
+        };
     };
     match std::fs::read_to_string(&path) {
-        Ok(stored) => RecentFiles::deserialize(limit, &stored),
+        Ok(stored) => decode_recent_files(limit, &stored),
         // A first run has no file, which is not a failure. Anything else is:
-        // the operator's list disappears from the menu, and a log line is the
-        // only trace of why.
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => RecentFiles::new(limit),
+        // a failed read must not be replaced by an empty list on the next save.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => LoadedRecentFiles {
+            recent_files: RecentFiles::new(limit),
+            may_write_recent: true,
+        },
         Err(error) => {
             // The kind, never the path: a scan's name must not reach the crash
-            // report, and the recent list is nothing but scan paths.
+            // report, and the recent list is nothing but scan paths. Keep the
+            // file read-only until Clear Recent makes replacement explicit.
             tracing::warn!(
                 kind = ?error.kind(),
                 "could not read the recent files list"
             );
-            RecentFiles::new(limit)
+            LoadedRecentFiles {
+                recent_files: RecentFiles::new(limit),
+                may_write_recent: false,
+            }
+        }
+    }
+}
+
+fn decode_recent_files(limit: usize, stored: &str) -> LoadedRecentFiles {
+    match RecentFiles::deserialize_storage(limit, stored) {
+        RecentFilesDecode::Supported(recent_files) => LoadedRecentFiles {
+            recent_files,
+            may_write_recent: true,
+        },
+        RecentFilesDecode::Unsupported => {
+            tracing::warn!(
+                "stored recent files format is unsupported; preserving it until Clear Recent"
+            );
+            LoadedRecentFiles {
+                recent_files: RecentFiles::new(limit),
+                may_write_recent: false,
+            }
         }
     }
 }
@@ -29,7 +61,10 @@ pub(crate) fn recent_files_path() -> Option<PathBuf> {
     crate::desktop::app_paths::app_state_dir().map(|base| base.join(RECENT_FILES_FILE))
 }
 
-pub(crate) fn save_recent_files(recent_files: &RecentFiles) {
+pub(crate) fn save_recent_files(recent_files: &RecentFiles, may_write_recent: bool) {
+    if !may_write_recent {
+        return;
+    }
     let Some(path) = recent_files_path() else {
         return;
     };
@@ -85,6 +120,14 @@ pub(crate) fn path_display_name(path: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unknown_future_format_stays_read_only_until_explicit_clear() {
+        let loaded = decode_recent_files(4, "\0occluview-recent-v3:abcd");
+
+        assert!(loaded.recent_files.is_empty());
+        assert!(!loaded.may_write_recent);
+    }
 
     #[test]
     fn recent_scene_label_uses_primary_file_and_extra_count() {
