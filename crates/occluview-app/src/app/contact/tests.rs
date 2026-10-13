@@ -6,9 +6,9 @@ use crate::app::app_test_support::test_app;
 use crate::contact::contact_worker::{
     ContactCompletion, ContactFailure, ContactOutcome, ContactWorker,
 };
-use crate::contact::state::{ContactLayerField, ContactRequest};
+use crate::contact::state::{ContactLayerField, ContactRequest, ContactStatus};
 use glam::Vec3;
-use occluview_contact::ContactStats;
+use occluview_contact::{ContactDiagnostics, ContactStats};
 use occluview_core::{Mesh, Scene, SceneMesh, SceneMeshId, Vertex};
 use occluview_render::ContactFieldTexels;
 use std::sync::Arc;
@@ -75,6 +75,31 @@ fn deliver_answer(app: &OccluViewApp, request: ContactRequest, failure: ContactF
         request_id: request.id,
         keys: request.keys,
         outcome: ContactOutcome::Failed(failure),
+    });
+}
+
+fn deliver_measured_answer(app: &OccluViewApp, request: ContactRequest) {
+    let worker = app.workspace.scenes[0]
+        .tools
+        .contacts
+        .worker()
+        .expect("a worker");
+    worker.publish_for_tests(ContactCompletion {
+        generation: worker.generation(),
+        request_id: request.id,
+        keys: request.keys,
+        outcome: ContactOutcome::Measured {
+            subject_signed_mm: vec![-0.05; 3],
+            antagonist_signed_mm: vec![0.05; 3],
+            stats: ContactStats::default(),
+            diagnostics: ContactDiagnostics {
+                subject_verts: 3,
+                antagonist_verts: 3,
+                subject_measured: 3,
+                antagonist_measured: 3,
+                ..ContactDiagnostics::default()
+            },
+        },
     });
 }
 
@@ -410,6 +435,52 @@ fn a_dropped_answer_releases_the_request_so_the_scene_can_be_measured_again() {
         resubmitted.id, request.id,
         "and it is a new measurement, not the request whose answer was dropped"
     );
+}
+
+#[test]
+fn a_matching_measurement_completed_during_a_drag_is_dropped_and_retried() {
+    let mut app = test_app("contact-held-answer-resubmits");
+    let ctx = app.ui.repaint_ctx.clone();
+    let (scene, first, _second, _third) = three_layer_scene();
+    app.workspace.scenes[0].document.scene = Some(Arc::new(scene));
+
+    assert!(open_contacts_on(&mut app, first));
+    let request = pending(&app);
+    let keys = request.keys;
+
+    // The live keys still describe the original pose, as they can when the
+    // drag is active but has not changed a transform yet.
+    app.workspace.scenes[0].tools.contacts.hold_for_drag();
+    deliver_measured_answer(&app, request);
+    app.active_context()
+        .expect("live test scene")
+        .drain_contacts_worker(&ctx);
+
+    let state = &app.workspace.scenes[0].tools.contacts;
+    assert!(state.fields().is_empty(), "held fields must stay off the scans");
+    assert!(state.measured_keys().is_none());
+    assert!(
+        state.pending_request().is_none(),
+        "the rejected answer must release its in-flight request"
+    );
+    assert_eq!(
+        state.status(),
+        Some(ContactStatus::Remeasuring),
+        "a rejected reading keeps the drag explanation"
+    );
+    assert!(
+        !state.needs_measurement(keys),
+        "a held pair must not submit another measurement during the drag"
+    );
+
+    app.workspace.scenes[0].tools.contacts.resume_after_drag();
+    assert!(app.workspace.scenes[0].tools.contacts.needs_measurement(keys));
+    app.active_context()
+        .expect("live test scene")
+        .sync_contacts_with_scene(&ctx);
+    let retry = pending(&app);
+    assert_eq!(retry.keys, keys);
+    assert_ne!(retry.id, request.id);
 }
 
 /// The same rule for the Align worker: a dead one is replaced, not latched.

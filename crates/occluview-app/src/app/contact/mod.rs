@@ -335,6 +335,14 @@ impl SceneContext<'_> {
                         antagonist_field,
                         stats,
                     ) {
+                        // The state refuses a matching measurement while a
+                        // hand drag is active. Release this answer explicitly:
+                        // otherwise its request would remain in flight and no
+                        // settled-scene measurement could be submitted later.
+                        self.tools
+                            .contacts
+                            .mark_answer_dropped(request.id, request.keys);
+                        accepted = true;
                         continue;
                     }
                     accepted = true;

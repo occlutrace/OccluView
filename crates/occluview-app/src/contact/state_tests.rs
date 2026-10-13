@@ -677,6 +677,46 @@ fn a_hand_drag_holds_the_reading_back_and_takes_the_marks_down() {
     );
 }
 
+#[test]
+fn a_held_completion_is_refused_and_can_be_retried_after_the_drag() {
+    let scene = scene_of(vec![slab(0.0, 0.0), slab(0.2, 0.0)]);
+    let ids: Vec<SceneMeshId> = scene.meshes().iter().map(SceneMesh::id).collect();
+    let pair = ContactPair {
+        subject: ids[0],
+        antagonist: ids[1],
+    };
+    let keys = contact_job_keys(&scene, pair, false).expect("a pair in the scene");
+    let request = request(1, keys, pair);
+    let mut state = ContactState::default();
+    state.open(pair);
+    state.mark_submitted(request, ContactStatus::Measuring);
+
+    state.hold_for_drag();
+    assert!(
+        !state.store_measured(
+            request,
+            field(pair.subject, -0.05),
+            field(pair.antagonist, 0.05),
+            ContactStats::default(),
+        ),
+        "a matching late answer must not restore fields during a drag"
+    );
+    assert!(state.fields().is_empty());
+    assert_eq!(state.pending_request(), Some(request));
+
+    state.mark_answer_dropped(request.id, request.keys);
+    assert!(state.pending_request().is_none());
+    assert!(
+        !state.needs_measurement(keys),
+        "held state still blocks retries until the drag ends"
+    );
+    state.resume_after_drag();
+    assert!(
+        state.needs_measurement(keys),
+        "dropping the held answer must leave the settled scene eligible for retry"
+    );
+}
+
 /// A field texture must fit the device the scan is drawn on.
 ///
 /// The packed field is `ceil(n / width)` rows tall. At the preferred 1024-wide
