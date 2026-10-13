@@ -342,39 +342,14 @@ fn read_context() -> BenchContext {
     context
 }
 
-/// Manual, opt-in whole-scan benchmark on the same synthetic corpora as the
-/// correctness case.
-///
-/// Run it deliberately on the target machine, in the profile being reported:
-///
-/// ```text
-/// OCCLUVIEW_BENCH_CONTEXT='{"machine":{"cpu":"AMD Ryzen 9 5950X","ram_bytes":17179869184},"build":{"profile":"release","toolchain":"1.98.0","features":[]},"source_sha":"0123456789abcdef0123456789abcdef01234567","target":{"arch":"x86_64","os":"linux"}}' \
-/// cargo test -p occluview-align --release --test search_large \
-///     -- --ignored --nocapture large_scan_search_benchmark
-/// ```
-///
-/// The context is caller-declared and reported under `declared`: the machine
-/// CPU and RAM, the build profile, toolchain and features, the source SHA, and
-/// the target arch/os. The run fails closed before building any fixture when a
-/// field is missing, the source SHA is not a full lowercase 40-character
-/// revision, or the target arch/os disagree with the actual compile target.
-/// `debug_assertions`, the actual target, the backend, the available
-/// parallelism and the actual Rayon pool size are reported separately under
-/// `derived`; `debug_assertions` is not presented as the build profile.
-///
-/// The header also declares the corpus, the fixed [`BENCH_WARMUP_RUNS`] warmup
-/// and [`BENCH_REPETITIONS`] repetitions. Each repetition records raw wall time,
-/// work counters, the effective numerical settings and wall allowance, the
-/// algorithm version, threshold set and input revisions, and the independent
-/// probe quality. No speed budget is asserted: a threshold needs a recorded
-/// baseline, which this harness does not claim to have.
-#[test]
-#[ignore = "manual perf benchmark: set OCCLUVIEW_BENCH_CONTEXT, then run with --ignored --nocapture"]
-fn large_scan_search_benchmark() {
-    let context = read_context();
-    let available_parallelism =
-        std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
-    let rayon_current_num_threads = rayon::current_num_threads();
+/// Print the declared, derived and method header for one benchmark run. The
+/// parallelism values are passed in so the caller controls when they are
+/// sampled.
+fn print_benchmark_header(
+    context: &BenchContext,
+    available_parallelism: usize,
+    rayon_current_num_threads: usize,
+) {
     let triangle_targets = LARGE_SCAN_CASES.map(|(least, _)| least);
     println!(
         "{}",
@@ -412,6 +387,42 @@ fn large_scan_search_benchmark() {
             },
         })
     );
+}
+
+/// Manual, opt-in whole-scan benchmark on the same synthetic corpora as the
+/// correctness case.
+///
+/// Run it deliberately on the target machine, in the profile being reported:
+///
+/// ```text
+/// OCCLUVIEW_BENCH_CONTEXT='{"machine":{"cpu":"AMD Ryzen 9 5950X","ram_bytes":17179869184},"build":{"profile":"release","toolchain":"1.98.0","features":[]},"source_sha":"0123456789abcdef0123456789abcdef01234567","target":{"arch":"x86_64","os":"linux"}}' \
+/// cargo test -p occluview-align --release --test search_large \
+///     -- --ignored --nocapture large_scan_search_benchmark
+/// ```
+///
+/// The context is caller-declared and reported under `declared`: the machine
+/// CPU and RAM, the build profile, toolchain and features, the source SHA, and
+/// the target arch/os. The run fails closed before building any fixture when a
+/// field is missing, the source SHA is not a full lowercase 40-character
+/// revision, or the target arch/os disagree with the actual compile target.
+/// `debug_assertions`, the actual target, the backend, the available
+/// parallelism and the actual Rayon pool size are reported separately under
+/// `derived`; `debug_assertions` is not presented as the build profile.
+///
+/// The header also declares the corpus, the fixed [`BENCH_WARMUP_RUNS`] warmup
+/// and [`BENCH_REPETITIONS`] repetitions. Each repetition records raw wall time,
+/// work counters, the effective numerical settings and wall allowance, the
+/// algorithm version, threshold set and input revisions, and the independent
+/// probe quality. No speed budget is asserted: a threshold needs a recorded
+/// baseline, which this harness does not claim to have.
+#[test]
+#[ignore = "manual perf benchmark: set OCCLUVIEW_BENCH_CONTEXT, then run with --ignored --nocapture"]
+fn large_scan_search_benchmark() {
+    let context = read_context();
+    let available_parallelism =
+        std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+    let rayon_current_num_threads = rayon::current_num_threads();
+    print_benchmark_header(&context, available_parallelism, rayon_current_num_threads);
     let mut fixed = arch::dental_arch(&arch::ArchSpec::default());
     for (least, _) in LARGE_SCAN_CASES {
         let (moving, truth, probes) = large_scan(least, &mut fixed);
