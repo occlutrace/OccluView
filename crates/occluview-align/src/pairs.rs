@@ -14,6 +14,13 @@ use crate::Rigid;
 /// The smallest number of pairs any fit accepts.
 const MIN_PAIRS: usize = 2;
 
+/// Maximum pair count admitted to manual fitting.
+///
+/// Pairwise distances allocate quadratic work, and outlier trimming refits
+/// successively smaller sets. The cap matches the search landmark allowance
+/// and is a resource limit, not a geometric threshold.
+pub const MAX_PAIRS: usize = 128;
+
 /// Below this fraction of the total spread, the points lie on a line and the
 /// rotation about that line is free.
 const COLLINEAR_FRACTION: f64 = 1e-6;
@@ -77,6 +84,13 @@ pub struct PairFit {
 /// Why a fit is refused. Each variant carries what the operator needs to act.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FitRejection {
+    /// More pairs were supplied than the bounded manual fit admits.
+    TooManyPairs {
+        /// The larger of the moving and fixed pair counts.
+        have: usize,
+        /// Maximum pair count admitted by this fit.
+        max: usize,
+    },
     /// Fewer complete pairs than any fit can use.
     TooFewPairs {
         /// Complete pairs supplied.
@@ -187,6 +201,13 @@ pub fn fit_pairs(
     normals: Option<(&[DVec3], &[DVec3])>,
     bounds: &FitBounds,
 ) -> Result<PairFit, FitRejection> {
+    let have = moving.len().max(fixed.len());
+    if have > MAX_PAIRS {
+        return Err(FitRejection::TooManyPairs {
+            have,
+            max: MAX_PAIRS,
+        });
+    }
     if moving.len() != fixed.len() {
         return Err(FitRejection::Unpaired {
             moving: moving.len(),
