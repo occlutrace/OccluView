@@ -485,6 +485,14 @@ fn a_texture_buffer_of_the_wrong_size_is_rejected() {
     drop(MeshTexture::new(2, 2, vec![0; 15]));
 }
 
+#[test]
+#[should_panic(expected = "texture dimensions overflow RGBA8 byte length")]
+fn a_texture_with_overflowing_dimensions_is_rejected() {
+    // On 64-bit release, this product wraps to zero and used to accept the
+    // empty buffer. On 32-bit targets, the overflow occurs one multiply earlier.
+    drop(MeshTexture::new(1_u32 << 31, 1_u32 << 31, Vec::new()));
+}
+
 /// A mesh with enough spread for a principal frame to exist: a flat strip
 /// longer than it is wide, which is the shape a dental arch reduces to.
 fn arch_like_mesh() -> Mesh {

@@ -20,12 +20,19 @@ impl MeshTexture {
     ///
     /// # Panics
     ///
-    /// Panics when `rgba.len()` differs from `width * height * 4`. The renderer
-    /// indexes the buffer by these dimensions, so a shorter buffer would read
-    /// past its end.
+    /// Panics when the RGBA byte count overflows `usize` or `rgba.len()` differs
+    /// from `width * height * 4`. The renderer indexes the buffer by these
+    /// dimensions, so a shorter buffer would read past its end.
     #[must_use]
     pub fn new(width: u32, height: u32, rgba: Vec<u8>) -> Self {
-        assert_eq!(rgba.len(), (width as usize) * (height as usize) * 4);
+        let expected_len = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|pixels| pixels.checked_mul(4));
+        assert_eq!(
+            expected_len,
+            Some(rgba.len()),
+            "texture dimensions overflow RGBA8 byte length or buffer length does not match"
+        );
         Self {
             width,
             height,
