@@ -1,6 +1,6 @@
 use super::{
     closed_cube, closed_l_prism, closed_torus, exploded_cube_with_payload_seams,
-    exploded_cube_with_uniform_payload, hollow_cube_with_payload, request,
+    exploded_cube_with_uniform_payload, hollow_cube_with_payload, request, translated_cube,
 };
 use crate::bridge_split::clip::clip_bridge_surface_open;
 use crate::topology::{canonical_topology, TopologyWeldPolicy};
