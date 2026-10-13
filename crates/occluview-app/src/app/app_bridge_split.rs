@@ -79,24 +79,13 @@ impl SceneContext<'_> {
         self.document.mesh_selection_drag = None;
         self.tools.bridge_split.start(entry);
         self.tools.bridge_split_disc.arm_with_radius(object_radius);
-        // Build the picking BVH off-thread now (shared via Arc<OnceLock>) so the
-        // first hover/plant doesn't freeze the UI building it on a big scan.
-        //
-        // The thread takes the one mesh it warms, not the case it came from: an
-        // `Arc<Scene>` held here would keep a second handle alive for as long as
-        // the warm ran, so an edit on the UI thread would copy the container
-        // instead of landing in the scene the operator sees. The mesh is shared,
-        // so this costs a pointer and the thread warms the very cell the scene
-        // will read.
-        let target_mesh = self
-            .document
-            .scene
-            .as_ref()
-            .and_then(|scene| scene.meshes().iter().find(|e| e.id() == layer_id))
-            .map(|entry| entry.mesh.clone());
-        if let Some(mesh) = target_mesh {
-            std::thread::spawn(move || mesh.warm_bvh());
-        }
+        // Warm the shared mesh BVH through the Bridge scheduler before the first
+        // preview is submitted. Completion requests a frame so the app polls any
+        // preview admitted after warming.
+        let repaint = self.ui.repaint_ctx.clone();
+        self.tools
+            .bridge_split
+            .warm_source(std::sync::Arc::new(move || repaint.request_repaint()));
         self.tools.bridge_split_section.reset();
         self.render.invalidation.overlay_tools_changed();
         self.scene_ui.status_message = Some(

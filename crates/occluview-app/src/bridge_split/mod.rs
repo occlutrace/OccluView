@@ -53,13 +53,20 @@ impl BridgeSplitController {
 
     pub(crate) fn start(&mut self, entry: &SceneMesh) {
         let target = BridgeSplitTarget::capture(entry);
-        self.worker.clear_queued();
+        self.worker.cancel();
         self.source = Some(BridgeSplitSourceSnapshot {
             mesh: entry.mesh.clone(),
             transform: entry.transform,
             target,
         });
         self.session.start(target);
+    }
+
+    pub(crate) fn warm_source(&self, wake: Arc<dyn Fn() + Send + Sync>) {
+        if let Some(source) = self.source.as_ref() {
+            self.worker
+                .warm_source(Arc::clone(&source.mesh), wake);
+        }
     }
 
     pub(crate) fn submit_current_request(&mut self, entry: &SceneMesh) -> bool {
@@ -108,23 +115,14 @@ impl BridgeSplitController {
         changed
     }
 
-    /// Abandon the session and everything it has in flight.
-    ///
-    /// `clear_queued` drops only what has not started. The running `compute` has
-    /// no cancellation flag and no way to be stopped, and the worker's `active`
-    /// guard stays set until its output arrives, so a kept worker would queue the
-    /// next request behind an abandoned job, show "Calculating…" for the
-    /// abandoned layer and keep that layer's mesh alive, all to produce an output
-    /// the guard/session-id check then discards.
-    ///
-    /// Dropping the worker ends the thread and it is respawned lazily on the
-    /// next submit, so an abandoned compute cannot serialize the next one. Its
-    /// output becomes unreachable, which is correct: cancelling ends the session
-    /// it belonged to.
+    /// Invalidate the current session and release its pending preview and source.
+    /// A running native job cannot be interrupted, so it retains its bounded
+    /// scheduler slot and input until it returns; its per-job token prevents the
+    /// canceled result from reaching the new session.
     pub(crate) fn cancel(&mut self) {
         self.source = None;
         self.session.cancel();
-        self.worker.abandon();
+        self.worker.cancel();
     }
 }
 
