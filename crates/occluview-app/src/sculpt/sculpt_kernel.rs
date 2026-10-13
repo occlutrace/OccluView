@@ -227,7 +227,9 @@ impl BrushSession {
     }
 
     /// Cancellable worker form of [`Self::apply_ray_step`]. A canceled owner
-    /// discards the entire session and its display mirror together.
+    /// discards the entire session and its display mirror together. `None`
+    /// means a cooperative checkpoint inside the kernel ray/path work observed
+    /// the stop; the caller publishes nothing from this step.
     pub(crate) fn apply_ray_step_cancellable(
         &mut self,
         step: &BrushRayStep,
@@ -237,7 +239,7 @@ impl BrushSession {
         if cancel.load(Ordering::Relaxed) {
             return None;
         }
-        let outcome = self.apply_ray(step, elapsed_ms);
+        let outcome = self.apply_ray(step, elapsed_ms, cancel)?;
         if cancel.load(Ordering::Relaxed) {
             return None;
         }
@@ -363,7 +365,15 @@ impl BrushSession {
         })
     }
 
-    fn apply_ray(&mut self, step: &BrushRayStep, elapsed_ms: f64) -> BrushStrokeOutcome {
+    fn apply_ray(
+        &mut self,
+        step: &BrushRayStep,
+        elapsed_ms: f64,
+        cancel: &AtomicBool,
+    ) -> Option<BrushStrokeOutcome> {
+        if cancel.load(Ordering::Relaxed) {
+            return None;
+        }
         if !self.stroke_open {
             self.kernel.start_stroke();
             self.stroke_open = true;
@@ -394,7 +404,7 @@ impl BrushSession {
             far: f64::from(step.far_mm),
             clip_planes: &clips,
         };
-        let result = self.kernel.dab_at_ray_visible(
+        let result = self.kernel.dab_at_ray_visible_cancellable(
             origin,
             direction,
             f64::from(step.radius_mm),
@@ -402,7 +412,11 @@ impl BrushSession {
             kernel_mode(step.mode),
             step.hold,
             constraints,
-        );
+            cancel,
+        )?;
+        if cancel.load(Ordering::Relaxed) {
+            return None;
+        }
         // One ray step traces an entire swept path and calls `dab` exactly
         // once, so these per-dab parent and dirty-face rows cover the whole
         // returned movement/topology slice.
@@ -424,14 +438,14 @@ impl BrushSession {
         } else {
             Vec::new()
         };
-        self.finish_kernel_step(KernelStepRows {
+        Some(self.finish_kernel_step(KernelStepRows {
             touched: result.moved,
             added,
             dirty,
             topology_changed: applied && !result.topo.is_empty(),
             base_vertex_count,
             base_index_count,
-        })
+        }))
     }
 
     fn finish_kernel_step(&mut self, rows: KernelStepRows) -> BrushStrokeOutcome {
