@@ -67,6 +67,11 @@ fn cap_open_part_from_loops(
     provenance: Option<&ClipProvenance>,
     expected_normal: DVec3,
 ) -> Result<(MeshEditBuffers, usize), BridgeSplitError> {
+    if loops.iter().any(|ring| !ring.cap_eligible) {
+        return Err(BridgeSplitError::DamagedCutRim {
+            reason: "strict cut rim has ambiguous source lineage".to_string(),
+        });
+    }
     let rings = loop_vertices(&loops);
     let plan = triangulate_regions(&mesh, &rings, expected_normal)?;
     apply_cut_rim_aliases(&mut mesh, &loops, &plan.accepted_loop_indices, provenance)?;
@@ -83,7 +88,13 @@ fn cap_open_part_from_loops_best_effort(
     expected_normal: DVec3,
 ) -> Result<(MeshEditBuffers, usize), BridgeSplitError> {
     let rings = loop_vertices(&loops);
-    let plan = triangulate_regions_best_effort(&mesh, &rings, expected_normal)?;
+    let rejected_loops: Vec<_> = loops.iter().map(|ring| !ring.cap_eligible).collect();
+    let plan = triangulate_regions_best_effort(
+        &mesh,
+        &rings,
+        &rejected_loops,
+        expected_normal,
+    )?;
     apply_cut_rim_aliases(&mut mesh, &loops, &plan.accepted_loop_indices, provenance)?;
     mesh.indices.extend(plan.indices);
     compact_unreferenced_vertices(&mut mesh)?;
@@ -98,6 +109,7 @@ fn untagged_loops(loops: Vec<Vec<usize>>) -> Vec<CutLoop> {
         .map(|vertices| CutLoop {
             lineages: vec![None; vertices.len()],
             vertices,
+            cap_eligible: true,
         })
         .collect()
 }
@@ -132,6 +144,9 @@ fn apply_cut_rim_aliases(
             .ok_or_else(|| MeshEditError::MalformedMesh {
                 reason: "accepted cap loop index is out of range".to_string(),
             })?;
+        if !ring.cap_eligible {
+            continue;
+        }
         if ring.vertices.len() != ring.lineages.len() {
             return Err(MeshEditError::MalformedMesh {
                 reason: "cap loop lineage count does not match its vertices".to_string(),
@@ -323,15 +338,135 @@ mod tests {
             "an invalid inner contour cannot disappear into an outer lid"
         );
         assert_eq!(result.triangle_count(), source_faces + 2);
-        let alias_after = result
+        let alias_after_index = result
             .vertices
             .iter()
             .position(|vertex| vertex.color == ALIAS_COLOR && vertex.position == [0.0, 0.0, 0.0])
             .expect("the alias payload survives compaction");
-        let alias_after = u32::try_from(alias_after).expect("small output");
+        let alias_after = u32::try_from(alias_after_index).expect("small output");
         assert!(result.indices.contains(&alias_after));
         assert!(result.vertices.iter().enumerate().any(|(index, vertex)| {
-            index != alias_after && vertex.position == [0.0, 0.0, 0.0]
+            index != alias_after_index && vertex.position == [0.0, 0.0, 0.0]
         }));
+    }
+
+    #[test]
+    fn ambiguous_nested_rim_keeps_its_lumen_open_and_caps_a_distant_region() {
+        const TANGENT_COLOR: [u8; 4] = [27, 91, 203, 255];
+        let rings = [
+            [[0.0, 0.0], [4.0, 0.0], [4.0, 4.0], [0.0, 4.0]],
+            [[1.0, 1.0], [3.0, 1.0], [3.0, 3.0], [1.0, 3.0]],
+            [[8.0, 0.0], [10.0, 0.0], [10.0, 2.0], [8.0, 2.0]],
+        ];
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        let mut cut_edges = Vec::new();
+        for ring in rings {
+            let base = u32::try_from(vertices.len()).expect("small fixture");
+            for z in [0.0, 1.0] {
+                vertices.extend(
+                    ring.iter()
+                        .map(|point| crate::EditVertex::at([point[0], point[1], z])),
+                );
+            }
+            for edge in 0..4 {
+                let first = base + edge;
+                let second = base + (edge + 1) % 4;
+                indices.extend_from_slice(&[
+                    first,
+                    second,
+                    second + 4,
+                    first,
+                    second + 4,
+                    first + 4,
+                ]);
+                cut_edges.push([first, second]);
+            }
+        }
+
+        // A tangent face repeats one inner-rim segment at distinct payload
+        // vertices. Its geometric cycle stays closed, but its lineage is
+        // ambiguous and must block the enclosing outer lid.
+        let tangent = u32::try_from(vertices.len()).expect("small fixture");
+        for position in [[1.0, 1.0, 0.0], [3.0, 1.0, 0.0], [3.2, 1.4, 0.0]] {
+            let mut vertex = crate::EditVertex::at(position);
+            vertex.color = TANGENT_COLOR;
+            vertices.push(vertex);
+        }
+        indices.extend_from_slice(&[tangent, tangent + 1, tangent + 2]);
+        cut_edges.push([tangent, tangent + 1]);
+        let mesh = MeshEditBuffers {
+            vertices,
+            indices,
+            topology: crate::MeshTopology::TriangleMesh,
+        };
+
+        let lineage = |vertex| VertexLineage {
+            key: LineageKey::SourceCorner { vertex, fan: 0 },
+            ambiguous: false,
+        };
+        let provenance = ClipProvenance {
+            corner_lineages: mesh.indices.iter().map(|&vertex| lineage(vertex)).collect(),
+            cut_edge_lineages: cut_edges
+                .iter()
+                .map(|&[first, second]| [lineage(first), lineage(second)])
+                .collect(),
+        };
+        let source_faces = mesh.triangle_count();
+        assert!(matches!(
+            cap_open_part_with_provenance(
+                mesh.clone(),
+                &cut_edges,
+                &provenance,
+                DVec3::Z,
+            ),
+            Err(BridgeSplitError::DamagedCutRim { .. })
+        ));
+        let (result, capped) = cap_surface_part_best_effort_with_provenance(
+            mesh,
+            &cut_edges,
+            &provenance,
+            DVec3::Z,
+        )
+        .expect("the distant independent region remains cap-able");
+
+        assert_eq!(capped, 1);
+        assert_eq!(result.triangle_count(), source_faces + 2);
+        let new_cap_faces = &result.indices.as_chunks::<3>().0[source_faces..];
+        assert!(new_cap_faces.iter().flatten().all(|&index| {
+            result.vertices[index as usize].position[0] >= 8.0
+        }));
+
+        let tangent_face = result
+            .indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .find(|face| {
+                face.iter()
+                    .all(|&index| result.vertices[index as usize].color == TANGENT_COLOR)
+            })
+            .expect("the tangent face remains in the output");
+        for position in [[1.0, 1.0, 0.0], [3.0, 1.0, 0.0]] {
+            let tangent_index = tangent_face
+                .iter()
+                .copied()
+                .find(|&index| result.vertices[index as usize].position == position)
+                .expect("the tangent endpoint remains referenced");
+            let shell_index = result
+                .indices
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .filter(|face| {
+                    !face.iter().all(|&index| {
+                        result.vertices[index as usize].color == TANGENT_COLOR
+                    })
+                })
+                .flat_map(|face| face.iter().copied())
+                .find(|&index| result.vertices[index as usize].position == position)
+                .expect("the inner shell keeps its separate rim endpoint");
+            assert_ne!(tangent_index, shell_index);
+        }
     }
 }
