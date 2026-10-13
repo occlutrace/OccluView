@@ -2,6 +2,12 @@ name: Manual verification
 
 on:
   workflow_dispatch:
+    inputs:
+      run_deep_fuzz:
+        description: Run five additional fuzz targets for 300 seconds each.
+        type: boolean
+        required: false
+        default: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -418,9 +424,9 @@ jobs:
       - name: Fuzz GLB 60s
         run: ./scripts/run-fuzz.sh glb 60 65536
 
-  fuzz-weekly:
-    name: fuzz weekly (300s deep)
-    if: github.event_name == 'schedule'
+  fuzz-deep:
+    name: fuzz deep (manual opt-in)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_deep_fuzz }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
