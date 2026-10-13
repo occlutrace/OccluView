@@ -44,20 +44,28 @@ pub(crate) fn triangulate_regions(
     loops: &[Vec<usize>],
     expected_normal: DVec3,
 ) -> Result<CapPlan, BridgeSplitError> {
-    triangulate_regions_with_policy(mesh, loops, expected_normal, false)
+    triangulate_regions_with_policy(mesh, loops, None, expected_normal, false)
 }
 
 pub(crate) fn triangulate_regions_best_effort(
     mesh: &MeshEditBuffers,
     loops: &[Vec<usize>],
+    rejected_loop_flags: &[bool],
     expected_normal: DVec3,
 ) -> Result<CapPlan, BridgeSplitError> {
-    triangulate_regions_with_policy(mesh, loops, expected_normal, true)
+    triangulate_regions_with_policy(
+        mesh,
+        loops,
+        Some(rejected_loop_flags),
+        expected_normal,
+        true,
+    )
 }
 
 fn triangulate_regions_with_policy(
     mesh: &MeshEditBuffers,
     loops: &[Vec<usize>],
+    rejected_loop_flags: Option<&[bool]>,
     expected_normal: DVec3,
     best_effort: bool,
 ) -> Result<CapPlan, BridgeSplitError> {
@@ -67,7 +75,16 @@ fn triangulate_regions_with_policy(
     let expected_normal = expected_normal
         .try_normalize()
         .ok_or_else(|| cap_failed("separator normal is not normalizable"))?;
-    let projection = project_loops(mesh, loops, expected_normal, best_effort)?;
+    if rejected_loop_flags.is_some_and(|flags| flags.len() != loops.len()) {
+        return Err(cap_failed("rejected cut rim flags do not match loop count"));
+    }
+    let projection = project_loops(
+        mesh,
+        loops,
+        rejected_loop_flags,
+        expected_normal,
+        best_effort,
+    )?;
     let projected = projection.valid;
     let parents = containment_parents(&projected)?;
     let depths = containment_depths(&parents)?;
@@ -129,6 +146,7 @@ fn triangulate_regions_with_policy(
 fn project_loops(
     mesh: &MeshEditBuffers,
     loops: &[Vec<usize>],
+    rejected_loop_flags: Option<&[bool]>,
     normal: DVec3,
     best_effort: bool,
 ) -> Result<ProjectedLoops, BridgeSplitError> {
@@ -158,6 +176,12 @@ fn project_loops(
     let mut projected = Vec::with_capacity(loops.len());
     let mut rejected_bounds = Vec::new();
     for (source_loop_index, ring) in loops.iter().enumerate() {
+        if rejected_loop_flags.is_some_and(|flags| flags[source_loop_index]) {
+            // Rejected closed rims still constrain containment even though
+            // their own geometry cannot be triangulated safely.
+            rejected_bounds.push(rejected_loop_bounds(mesh, ring, basis)?);
+            continue;
+        }
         match project_loop(mesh, ring, source_loop_index, basis) {
             Ok(loop_data) => projected.push(loop_data),
             Err(error) if best_effort => {

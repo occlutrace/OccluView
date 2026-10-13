@@ -48,6 +48,8 @@ struct CutScan {
 pub(crate) struct CutLoop {
     pub(crate) vertices: Vec<usize>,
     pub(crate) lineages: Vec<Option<LineageKey>>,
+    /// False when the geometric cycle is closed but cannot safely be capped.
+    pub(crate) cap_eligible: bool,
 }
 
 /// Read the cut edges against the mesh once.
@@ -71,7 +73,7 @@ fn collect_cut_scan(
     let mut lineage_representatives = BTreeMap::new();
     let mut ambiguous_positions = BTreeSet::new();
     let mut ambiguous_edges = BTreeSet::new();
-    let mut edge_occurrences = BTreeMap::<CutEdge, usize>::new();
+    let mut edge_lineages = BTreeMap::<CutEdge, (LineageKey, LineageKey)>::new();
     if provenance.is_some_and(|provenance| provenance.cut_edge_lineages.len() != cut_edges.len()) {
         return Err(MeshEditError::MalformedMesh {
             reason: "cut edge lineage count does not match generated cut edges".to_string(),
@@ -127,11 +129,20 @@ fn collect_cut_scan(
                     .or_insert(vertex_index);
             }
             let edge = ordered_edge(from_key, to_key);
-            let occurrences = edge_occurrences.entry(edge).or_default();
-            *occurrences += 1;
-            if *occurrences > 1 {
+            let lineage_pair = if from_key < to_key {
+                (from_lineage.key, to_lineage.key)
+            } else {
+                (to_lineage.key, from_lineage.key)
+            };
+            if from_lineage.ambiguous
+                || to_lineage.ambiguous
+                || edge_lineages
+                    .get(&edge)
+                    .is_some_and(|existing| *existing != lineage_pair)
+            {
                 ambiguous_edges.insert(edge);
             }
+            edge_lineages.entry(edge).or_insert(lineage_pair);
         }
     }
 
@@ -246,8 +257,7 @@ fn build_cut_loops_internal(
             &lineage_representatives,
             &ambiguous_positions,
             true,
-        )?
-        .ok_or_else(|| damaged("cut rim has ambiguous source lineage"))?;
+        )?;
         loops.push(ring);
     }
     if visited.len() != directed.len() {
@@ -313,27 +323,27 @@ fn build_closed_cut_loops_internal(
         if !is_simple_cycle(&component_vertices, &component_edges, &adjacency) {
             continue;
         }
-        if component_edges
+        let ambiguous_edge = component_edges
             .iter()
-            .any(|edge| ambiguous_edges.contains(edge))
-        {
-            continue;
-        }
+            .any(|edge| ambiguous_edges.contains(edge));
         let vertices = walk_closed_component(
             &component_vertices,
             &adjacency,
             &representative,
         )?;
-        if let Some(ring) = finish_lineage_loop(
+        if ambiguous_edge {
+            loops.push(rejected_cut_loop(vertices));
+            continue;
+        }
+        let ring = finish_lineage_loop(
             mesh,
             vertices,
             has_lineage,
             &lineage_representatives,
             &ambiguous_positions,
             false,
-        )? {
-            loops.push(ring);
-        }
+        )?;
+        loops.push(ring);
     }
 
     if loops.is_empty() {
@@ -383,48 +393,80 @@ fn build_surface_cut_graph(
 
 fn finish_lineage_loop(
     mesh: &MeshEditBuffers,
-    mut vertices: Vec<usize>,
+    vertices: Vec<usize>,
     has_lineage: bool,
     lineage_representatives: &BTreeMap<PositionKey, BTreeMap<LineageKey, usize>>,
     ambiguous_positions: &BTreeSet<PositionKey>,
     strict: bool,
-) -> Result<Option<CutLoop>, BridgeSplitError> {
-    let mut lineages = Vec::with_capacity(vertices.len());
+) -> Result<CutLoop, BridgeSplitError> {
     if !has_lineage {
-        lineages.resize(vertices.len(), None);
-        return Ok(Some(CutLoop { vertices, lineages }));
+        return Ok(CutLoop {
+            lineages: vec![None; vertices.len()],
+            vertices,
+            cap_eligible: true,
+        });
     }
 
-    for vertex in &mut vertices {
+    let mut representative_vertices = Vec::with_capacity(vertices.len());
+    let mut lineages = Vec::with_capacity(vertices.len());
+    for &vertex in &vertices {
         let point = mesh
             .vertices
-            .get(*vertex)
+            .get(vertex)
             .ok_or_else(|| MeshEditError::MalformedMesh {
                 reason: "cut rim vertex is out of range while reading lineage".to_string(),
             })?;
         let position = canonical_position_key(point.position);
         let Some(candidates) = lineage_representatives.get(&position) else {
-            if strict {
-                return Err(damaged("cut rim lost source lineage at a vertex"));
-            }
-            return Ok(None);
+            return reject_lineage_loop(
+                &vertices,
+                strict,
+                "cut rim lost source lineage at a vertex",
+            );
         };
         if ambiguous_positions.contains(&position) || candidates.len() != 1 {
-            if strict {
-                return Err(damaged("cut rim has ambiguous source lineage at a vertex"));
-            }
-            return Ok(None);
+            return reject_lineage_loop(
+                &vertices,
+                strict,
+                "cut rim has ambiguous source lineage at a vertex",
+            );
         }
         let Some((&lineage, &representative)) = candidates.iter().next() else {
-            if strict {
-                return Err(damaged("cut rim has no source lineage at a vertex"));
-            }
-            return Ok(None);
+            return reject_lineage_loop(
+                &vertices,
+                strict,
+                "cut rim has no source lineage at a vertex",
+            );
         };
-        *vertex = representative;
+        representative_vertices.push(representative);
         lineages.push(Some(lineage));
     }
-    Ok(Some(CutLoop { vertices, lineages }))
+    Ok(CutLoop {
+        vertices: representative_vertices,
+        lineages,
+        cap_eligible: true,
+    })
+}
+
+fn reject_lineage_loop(
+    vertices: &[usize],
+    strict: bool,
+    reason: &str,
+) -> Result<CutLoop, BridgeSplitError> {
+    if strict {
+        return Err(damaged(reason));
+    }
+    Ok(rejected_cut_loop(vertices.to_vec()))
+}
+
+fn rejected_cut_loop(vertices: Vec<usize>) -> CutLoop {
+    // Keep a closed cycle's coordinates so containment can still protect any
+    // enclosing region from being filled across an unknown lumen.
+    CutLoop {
+        lineages: vec![None; vertices.len()],
+        vertices,
+        cap_eligible: false,
+    }
 }
 
 fn ordered_edge(first: PositionKey, second: PositionKey) -> CutEdge {
