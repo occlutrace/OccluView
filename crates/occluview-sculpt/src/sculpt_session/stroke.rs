@@ -4,6 +4,61 @@
 //! hit. This bounds the work and footprint of each call.
 
 use super::*;
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
+
+/// A cooperative cancellation checkpoint on the ray/path work. The production
+/// token is the worker's permanent stopping flag; tests can supply a
+/// deterministic fixture without changing the production call path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CancelPoint {
+    Entry,
+    Raycast,
+    PathRaycast,
+    BeforeDab,
+    AfterDab,
+    ExactFallback,
+    Finish,
+}
+
+trait Cancellation {
+    type Error;
+
+    fn is_cancelled(&self, point: CancelPoint) -> Option<Self::Error>;
+}
+
+/// The non-cancellable public API passes this token so its implementation is
+/// the same shared path as the cancellable one. `Infallible` makes its
+/// error-free result statically explicit, without a panic branch.
+struct NeverCancel;
+
+impl Cancellation for NeverCancel {
+    type Error = std::convert::Infallible;
+
+    fn is_cancelled(&self, _point: CancelPoint) -> Option<Self::Error> {
+        None
+    }
+}
+
+impl Cancellation for AtomicBool {
+    type Error = Cancelled;
+
+    fn is_cancelled(&self, _point: CancelPoint) -> Option<Self::Error> {
+        self.load(AtomicOrdering::Relaxed).then_some(Cancelled)
+    }
+}
+
+#[derive(Debug)]
+struct Cancelled;
+
+fn ensure_not_cancelled<C: Cancellation>(
+    cancel: &C,
+    point: CancelPoint,
+) -> Result<(), C::Error> {
+    match cancel.is_cancelled(point) {
+        Some(cancelled) => Err(cancelled),
+        None => Ok(()),
+    }
+}
 
 fn consider_ray_triangle(
     triangle: u32,
@@ -188,6 +243,63 @@ impl SculptSession {
         hold: bool,
         constraints: SculptRayConstraints<'_>,
     ) -> StrokePathResult {
+        match self.dab_at_ray_visible_with_cancel(
+            origin,
+            dir,
+            radius,
+            strength,
+            mode,
+            hold,
+            constraints,
+            &NeverCancel,
+        ) {
+            Ok(result) => result,
+            Err(never) => match never {},
+        }
+    }
+
+    /// Cancellable form of [`Self::dab_at_ray_visible`]. `None` means the
+    /// owner stopped before this ray call committed a publishable result; the
+    /// caller must discard the session and its display mirror. A true ray
+    /// miss remains `Some` with `hit == None`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn dab_at_ray_visible_cancellable(
+        &mut self,
+        origin: DVec3,
+        dir: DVec3,
+        radius: f64,
+        strength: f64,
+        mode: BrushMode,
+        hold: bool,
+        constraints: SculptRayConstraints<'_>,
+        cancel: &AtomicBool,
+    ) -> Option<StrokePathResult> {
+        self.dab_at_ray_visible_with_cancel(
+            origin,
+            dir,
+            radius,
+            strength,
+            mode,
+            hold,
+            constraints,
+            cancel,
+        )
+        .ok()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn dab_at_ray_visible_with_cancel<C: Cancellation>(
+        &mut self,
+        origin: DVec3,
+        dir: DVec3,
+        radius: f64,
+        strength: f64,
+        mode: BrushMode,
+        hold: bool,
+        constraints: SculptRayConstraints<'_>,
+        cancel: &C,
+    ) -> Result<StrokePathResult, C::Error> {
+        ensure_not_cancelled(cancel, CancelPoint::Entry)?;
         if self.stroke_clip_planes != constraints.clip_planes {
             self.stroke_path = None;
             self.stroke_clip_planes.clear();
@@ -195,6 +307,7 @@ impl SculptSession {
                 .extend_from_slice(constraints.clip_planes);
         }
         let dir = dir.normalize_or_zero();
+        ensure_not_cancelled(cancel, CancelPoint::Entry)?;
         // Everything this call commits publishes as one journal slice, in
         // order.
         let (slice_mark, slice_base) = self.topo_slice_point();
@@ -210,7 +323,9 @@ impl SculptSession {
             hold,
             spacing,
             constraints,
-        );
+            cancel,
+        )?;
+        ensure_not_cancelled(cancel, CancelPoint::AfterDab)?;
         moved.sort_unstable();
         moved.dedup();
         let live = self.capture_live_trace(
@@ -236,13 +351,14 @@ impl SculptSession {
                 .len()
                 .saturating_sub(slice_mark.collapsed) as u32,
         );
-        StrokePathResult {
+        ensure_not_cancelled(cancel, CancelPoint::Finish)?;
+        Ok(StrokePathResult {
             hit,
             moved,
             complete: true,
             topo: self.publish_topology_slice(&slice_mark, &slice_base),
             live,
-        }
+        })
     }
 
     /// Break ray-path continuity without closing the active stroke or its
@@ -265,7 +381,7 @@ impl SculptSession {
     #[allow(clippy::too_many_arguments)]
     // one pointer segment: trace, deform and remesh.
     #[allow(clippy::too_many_lines)]
-    fn stroke_step(
+    fn stroke_step<C: Cancellation>(
         &mut self,
         origin: DVec3,
         dir: DVec3,
@@ -275,19 +391,22 @@ impl SculptSession {
         hold: bool,
         spacing: f64,
         constraints: SculptRayConstraints<'_>,
-    ) -> (Vec<u32>, Option<(DVec3, DVec3)>, bool) {
-        let Some((endpoint, endpoint_normal)) =
-            self.raycast_visible_for_brush(origin, dir, constraints)
-        else {
+        cancel: &C,
+    ) -> Result<(Vec<u32>, Option<(DVec3, DVec3)>, bool), C::Error> {
+        ensure_not_cancelled(cancel, CancelPoint::Entry)?;
+        let endpoint_hit =
+            self.raycast_visible_for_brush_with_cancel(origin, dir, constraints, cancel)?;
+        ensure_not_cancelled(cancel, CancelPoint::Entry)?;
+        let Some((endpoint, endpoint_normal)) = endpoint_hit else {
             // A miss is "the pointer left the surface": the cursor must
             // clear, not stay on the last applied dab.
             self.stroke_path = None;
             self.dab_axis = None;
-            return (Vec::new(), None, false);
+            return Ok((Vec::new(), None, false));
         };
         let Some(endpoint_triangle) = self.hit_triangle else {
             self.stroke_path = None;
-            return (Vec::new(), None, false);
+            return Ok((Vec::new(), None, false));
         };
         // A camera interval that changed without both ends finite cannot be
         // interpolated across: the step restarts from this ray.
@@ -310,7 +429,8 @@ impl SculptSession {
                 (endpoint, endpoint_normal, endpoint_triangle),
                 radius,
                 spacing,
-            ),
+                cancel,
+            )?,
         };
         let (previous, continuous) = match traced {
             PathTrace::Continuous => (previous, true),
@@ -323,11 +443,12 @@ impl SculptSession {
         };
         let swept = self.dab_path.len() >= 2 && self.path_length() > 1e-9;
         if previous.is_some() && !swept {
+            ensure_not_cancelled(cancel, CancelPoint::Entry)?;
             self.dab_path.clear();
             if !continuous {
                 self.stroke_path = None;
                 self.dab_axis = None;
-                return (Vec::new(), None, false);
+                return Ok((Vec::new(), None, false));
             }
             // The pointer did not move along the surface: nothing to sweep.
             // A still hand doses through the caller's hold command.
@@ -341,7 +462,7 @@ impl SculptSession {
                 near: constraints.near,
                 far: constraints.far,
             });
-            return (Vec::new(), Some((endpoint, endpoint_normal)), false);
+            return Ok((Vec::new(), Some((endpoint, endpoint_normal)), false));
         }
         let (center, triangle) = match self.dab_path.last() {
             Some(sample) if swept => (sample.point, sample.triangle),
@@ -365,6 +486,7 @@ impl SculptSession {
                 (along_view.length() > 1e-9).then(|| along_view * (1.0 / along_view.length()))
             });
         }
+        ensure_not_cancelled(cancel, CancelPoint::BeforeDab)?;
         let moved = self.dab(&Dab {
             center,
             radius,
@@ -372,15 +494,18 @@ impl SculptSession {
             view: dir,
             mode,
         });
+        ensure_not_cancelled(cancel, CancelPoint::AfterDab)?;
         self.dab_path.clear();
         if !continuous {
             // The swept prefix is applied; the break itself starts a new
             // stroke segment on the next call.
             self.stroke_path = None;
             self.dab_axis = None;
-            return (moved, None, true);
+            return Ok((moved, None, true));
         }
-        let current_hit = self.raycast_visible_for_brush(origin, dir, constraints);
+        let current_hit =
+            self.raycast_visible_for_brush_with_cancel(origin, dir, constraints, cancel)?;
+        ensure_not_cancelled(cancel, CancelPoint::Finish)?;
         self.stroke_path = match (current_hit, self.hit_triangle) {
             (Some((hit, normal)), Some(triangle)) => Some(StrokePathState {
                 origin,
@@ -394,11 +519,11 @@ impl SculptSession {
             }),
             _ => None,
         };
-        (
+        Ok((
             moved,
             Some(current_hit.unwrap_or((endpoint, endpoint_normal))),
             true,
-        )
+        ))
     }
 
     /// Sample the pointer's path on the current surface into `dab_path`, from
@@ -407,20 +532,22 @@ impl SculptSession {
     /// surface the operator sees. Long jumps start at a bounded recent tail.
     // the segment's endpoints and sampling controls are one trace.
     #[allow(clippy::too_many_arguments)]
-    fn trace_path(
+    fn trace_path<C: Cancellation>(
         &mut self,
         previous: StrokePathState,
         ray: (DVec3, DVec3, SculptRayConstraints<'_>),
         end: (DVec3, DVec3, u32),
         radius: f64,
         spacing: f64,
-    ) -> PathTrace {
+        cancel: &C,
+    ) -> Result<PathTrace, C::Error> {
+        ensure_not_cancelled(cancel, CancelPoint::Entry)?;
         let (endpoint, endpoint_normal, endpoint_triangle) = end;
         let sample_step = (radius * PATH_SAMPLE_SHARE).max(MIN_SPACING_MM);
         let reach = Self::step_reach(radius).max(sample_step);
         let travel = (endpoint - previous.hit).length();
         if !travel.is_finite() {
-            return PathTrace::TooFar;
+            return Ok(PathTrace::TooFar);
         }
         let mut last = (0.0, previous.hit, previous.normal);
         let mut start_triangle = previous.triangle;
@@ -429,7 +556,10 @@ impl SculptSession {
             let mut amount = 1.0 - reach / travel;
             let mut start = None;
             for _ in 0..STRETCH_START_TRIES {
-                let Some((hit, normal, triangle)) = self.path_ray_hit(previous, ray, amount) else {
+                ensure_not_cancelled(cancel, CancelPoint::Entry)?;
+                let Some((hit, normal, triangle)) =
+                    self.path_ray_hit(previous, ray, amount, cancel)?
+                else {
                     break;
                 };
                 let span = (endpoint - hit).length();
@@ -440,7 +570,7 @@ impl SculptSession {
                 amount = 1.0 - (1.0 - amount) * reach / span;
             }
             let Some((from, triangle, span)) = start else {
-                return PathTrace::TooFar;
+                return Ok(PathTrace::TooFar);
             };
             last = from;
             start_triangle = triangle;
@@ -453,12 +583,15 @@ impl SculptSession {
         let first = last.0;
         let count = ((stretch / sample_step).ceil() as usize).max(1);
         for index in 1..=count {
+            ensure_not_cancelled(cancel, CancelPoint::Entry)?;
             let amount = first + (1.0 - first) * index as f64 / count as f64;
             let next = if index == count {
                 (amount, endpoint, endpoint_normal, endpoint_triangle)
             } else {
-                let Some((hit, normal, triangle)) = self.path_ray_hit(previous, ray, amount) else {
-                    return PathTrace::Broken;
+                let Some((hit, normal, triangle)) =
+                    self.path_ray_hit(previous, ray, amount, cancel)?
+                else {
+                    return Ok(PathTrace::Broken);
                 };
                 (amount, hit, normal, triangle)
             };
@@ -469,22 +602,26 @@ impl SculptSession {
                 next,
                 (radius, spacing),
                 PATH_REFINE_DEPTH,
-            ) {
-                return PathTrace::Broken;
+                cancel,
+            )? {
+                return Ok(PathTrace::Broken);
             }
             last = (next.0, next.1, next.2);
         }
-        PathTrace::Continuous
+        ensure_not_cancelled(cancel, CancelPoint::Finish)?;
+        Ok(PathTrace::Continuous)
     }
 
     /// The surface under the pointer ray `amount` of the way from the
     /// previous step's ray to this call's, with the face it hit.
-    fn path_ray_hit(
+    fn path_ray_hit<C: Cancellation>(
         &mut self,
         previous: StrokePathState,
         ray: (DVec3, DVec3, SculptRayConstraints<'_>),
         amount: f64,
-    ) -> Option<(DVec3, DVec3, u32)> {
+        cancel: &C,
+    ) -> Result<Option<(DVec3, DVec3, u32)>, C::Error> {
+        ensure_not_cancelled(cancel, CancelPoint::PathRaycast)?;
         let (origin, dir, constraints) = ray;
         let (mut ray_origin, mut ray_dir) = Self::interpolated_ray(previous, origin, dir, amount);
         let mut used = constraints;
@@ -499,8 +636,16 @@ impl SculptSession {
             used.near = 0.0;
             used.far = narrowed.2;
         }
-        let (hit, normal) = self.raycast_visible_for_brush(ray_origin, ray_dir, used)?;
-        Some((hit, normal, self.hit_triangle?))
+        let Some((hit, normal)) =
+            self.raycast_visible_for_brush_with_cancel(ray_origin, ray_dir, used, cancel)?
+        else {
+            return Ok(None);
+        };
+        ensure_not_cancelled(cancel, CancelPoint::PathRaycast)?;
+        let Some(triangle) = self.hit_triangle else {
+            return Ok(None);
+        };
+        Ok(Some((hit, normal, triangle)))
     }
 
     /// Append `to` after `from`. While the two hits are too far apart for one
@@ -508,7 +653,7 @@ impl SculptSession {
     /// steep flank or a ridge crossing keeps its path instead of breaking it.
     // the segment, its bisection depth and the scale are one continuity test.
     #[allow(clippy::too_many_arguments)]
-    fn join_path(
+    fn join_path<C: Cancellation>(
         &mut self,
         previous: StrokePathState,
         ray: (DVec3, DVec3, SculptRayConstraints<'_>),
@@ -516,30 +661,44 @@ impl SculptSession {
         to: (f64, DVec3, DVec3, u32),
         scale: (f64, f64),
         depth: u32,
-    ) -> bool {
+        cancel: &C,
+    ) -> Result<bool, C::Error> {
+        ensure_not_cancelled(cancel, CancelPoint::Entry)?;
         let (radius, spacing) = scale;
         if Self::continuous_hit((from.1, from.2), to.1, to.2, radius, spacing) {
             self.dab_path.push(PathSample {
                 point: to.1,
                 triangle: to.3,
             });
-            return true;
+            return Ok(true);
         }
         if depth == 0 {
-            return false;
+            return Ok(false);
         }
         let amount = f64::midpoint(from.0, to.0);
-        let Some((hit, normal, triangle)) = self.path_ray_hit(previous, ray, amount) else {
-            return false;
+        let Some((hit, normal, triangle)) = self.path_ray_hit(previous, ray, amount, cancel)? else {
+            return Ok(false);
         };
-        self.join_path(
+        if !self.join_path(
             previous,
             ray,
             from,
             (amount, hit, normal, triangle),
             scale,
             depth - 1,
-        ) && self.join_path(previous, ray, (amount, hit, normal), to, scale, depth - 1)
+            cancel,
+        )? {
+            return Ok(false);
+        }
+        self.join_path(
+            previous,
+            ray,
+            (amount, hit, normal),
+            to,
+            scale,
+            depth - 1,
+            cancel,
+        )
     }
 
     /// Raycast the current deformed surface (3D-DDA through the triangle
@@ -571,8 +730,6 @@ impl SculptSession {
         self.raycast_visible_with_normal(orig, dir, constraints, true)
     }
 
-    // the 3D-DDA walk is one loop.
-    #[allow(clippy::too_many_lines)]
     fn raycast_visible_with_normal(
         &mut self,
         orig: DVec3,
@@ -580,9 +737,42 @@ impl SculptSession {
         constraints: SculptRayConstraints<'_>,
         brush_normal: bool,
     ) -> Option<(DVec3, DVec3)> {
+        match self.raycast_visible_with_normal_inner(
+            orig,
+            dir,
+            constraints,
+            brush_normal,
+            &NeverCancel,
+        ) {
+            Ok(hit) => hit,
+            Err(never) => match never {},
+        }
+    }
+
+    fn raycast_visible_for_brush_with_cancel<C: Cancellation>(
+        &mut self,
+        orig: DVec3,
+        dir: DVec3,
+        constraints: SculptRayConstraints<'_>,
+        cancel: &C,
+    ) -> Result<Option<(DVec3, DVec3)>, C::Error> {
+        self.raycast_visible_with_normal_inner(orig, dir, constraints, true, cancel)
+    }
+
+    // the 3D-DDA walk is one loop.
+    #[allow(clippy::too_many_lines)]
+    fn raycast_visible_with_normal_inner<C: Cancellation>(
+        &mut self,
+        orig: DVec3,
+        dir: DVec3,
+        constraints: SculptRayConstraints<'_>,
+        brush_normal: bool,
+        cancel: &C,
+    ) -> Result<Option<(DVec3, DVec3)>, C::Error> {
+        ensure_not_cancelled(cancel, CancelPoint::Entry)?;
         self.hit_triangle = None;
         if !constraints.valid(orig, dir) {
-            return None;
+            return Ok(None);
         }
         let dir = dir.normalize_or_zero();
         let cell = self.rays.cell;
@@ -611,6 +801,7 @@ impl SculptSession {
         // regular-grid slab misses. All tests share the same ray, camera and
         // clipping predicates and use a dense id tie-break below.
         for &triangle in &self.rays.spilled_triangles {
+            ensure_not_cancelled(cancel, CancelPoint::Raycast)?;
             consider_ray_triangle(
                 triangle,
                 verts,
@@ -700,6 +891,7 @@ impl SculptSession {
                 let mut guard = 0i64;
                 loop {
                     guard += 1;
+                    ensure_not_cancelled(cancel, CancelPoint::Raycast)?;
                     if guard > guard_limit {
                         exact_fallback = true;
                         break;
@@ -719,6 +911,7 @@ impl SculptSession {
                     };
                     if let Some(list) = list {
                         for &triangle in list {
+                            ensure_not_cancelled(cancel, CancelPoint::Raycast)?;
                             consider_ray_triangle(
                                 triangle,
                                 verts,
@@ -764,6 +957,7 @@ impl SculptSession {
         }
         if exact_fallback {
             for triangle in 0..self.rays.triangle_cells.len() {
+                ensure_not_cancelled(cancel, CancelPoint::ExactFallback)?;
                 consider_ray_triangle(
                     triangle as u32,
                     verts,
@@ -785,7 +979,10 @@ impl SculptSession {
                 verts[offset + 2] as f64,
             )
         };
-        let (t, ti) = best?;
+        let Some((t, ti)) = best else {
+            ensure_not_cancelled(cancel, CancelPoint::Finish)?;
+            return Ok(None);
+        };
         let k = ti as usize * 3;
         let (a, b, c) = (v(tris[k]), v(tris[k + 1]), v(tris[k + 2]));
         let face = (b - a).cross(c - a);
@@ -819,14 +1016,161 @@ impl SculptSession {
         } else {
             face_normal
         };
+        ensure_not_cancelled(cancel, CancelPoint::Finish)?;
         self.hit_triangle = Some(ti);
-        Some((hit, normal))
+        Ok(Some((hit, normal)))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+
+    struct CancelAfterPathRaycasts {
+        seen: Cell<usize>,
+        cancel_on: usize,
+    }
+
+    impl Cancellation for CancelAfterPathRaycasts {
+        type Error = Cancelled;
+
+        fn is_cancelled(&self, point: CancelPoint) -> Option<Self::Error> {
+            if point != CancelPoint::PathRaycast {
+                return None;
+            }
+            let seen = self.seen.get();
+            self.seen.set(seen + 1);
+            (seen >= self.cancel_on).then_some(Cancelled)
+        }
+    }
+
+    fn cancellable_path_grid() -> SculptSession {
+        let side = 5usize;
+        let spacing = 1.0f64;
+        let half = (side - 1) as f64 * spacing * 0.5;
+        let mut verts = Vec::with_capacity(side * side * 3);
+        for y in 0..side {
+            for x in 0..side {
+                verts.extend_from_slice(&[
+                    (x as f64 * spacing - half) as f32,
+                    (y as f64 * spacing - half) as f32,
+                    0.0,
+                ]);
+            }
+        }
+        let index = |x: usize, y: usize| (y * side + x) as u32;
+        let mut tris = Vec::with_capacity((side - 1) * (side - 1) * 6);
+        for y in 0..side - 1 {
+            for x in 0..side - 1 {
+                let (a, b, c, d) = (
+                    index(x, y),
+                    index(x + 1, y),
+                    index(x, y + 1),
+                    index(x + 1, y + 1),
+                );
+                tris.extend_from_slice(&[a, b, d, a, d, c]);
+            }
+        }
+        SculptSession::new(verts, tris).expect("valid grid fixture")
+    }
+
+    #[test]
+    fn cancellable_path_cancels_between_path_raycasts_without_a_returned_journal() {
+        let mut session = cancellable_path_grid();
+        session.start_stroke();
+        session.remesh_armed = false;
+        session.set_dab_elapsed_ms(crate::DWELL_FULL_DOSE_MS);
+        session
+            .dab_at_ray_visible_with_cancel(
+                DVec3::new(0.0, 0.0, 5.0),
+                -DVec3::Z,
+                1.0,
+                0.0,
+                BrushMode::Deposit,
+                false,
+                SculptRayConstraints::default(),
+                &NeverCancel,
+            )
+            .expect("the first ray establishes a path");
+        let journal_before = (
+            session.topo_journal.added_verts.len(),
+            session.topo_journal.added_tris.len(),
+            session.topo_journal.rewired.len(),
+            session.topo_journal.collapsed.len(),
+        );
+        let cancel = CancelAfterPathRaycasts {
+            seen: Cell::new(0),
+            cancel_on: 2,
+        };
+        let outcome = session.dab_at_ray_visible_with_cancel(
+            DVec3::new(1.5, 0.0, 5.0),
+            -DVec3::Z,
+            1.0,
+            0.5,
+            BrushMode::Deposit,
+            false,
+            SculptRayConstraints::default(),
+            &cancel,
+        );
+        assert!(
+            outcome.is_err(),
+            "cancellation between path raycasts must be reported, not a miss"
+        );
+        assert!(
+            cancel.seen.get() >= 3,
+            "the fixture must reach the second path raycast before cancellation"
+        );
+        let journal_after = (
+            session.topo_journal.added_verts.len(),
+            session.topo_journal.added_tris.len(),
+            session.topo_journal.rewired.len(),
+            session.topo_journal.collapsed.len(),
+        );
+        assert_eq!(
+            journal_before, journal_after,
+            "a cancelled path step must not publish a topology journal slice"
+        );
+    }
+
+    #[test]
+    fn cancellable_ray_call_separates_cancellation_from_a_true_miss() {
+        let mut session = cancellable_path_grid();
+        let cancelled = std::sync::atomic::AtomicBool::new(true);
+        let outcome = session.dab_at_ray_visible_cancellable(
+            DVec3::new(0.0, 0.0, 5.0),
+            -DVec3::Z,
+            1.0,
+            0.5,
+            BrushMode::Deposit,
+            false,
+            SculptRayConstraints::default(),
+            &cancelled,
+        );
+        assert!(
+            outcome.is_none(),
+            "a cancellation must not look like a successful empty ray miss"
+        );
+
+        let mut session = cancellable_path_grid();
+        let live = std::sync::atomic::AtomicBool::new(false);
+        let outcome = session
+            .dab_at_ray_visible_cancellable(
+                DVec3::new(0.0, 0.0, 5.0),
+                DVec3::Z,
+                1.0,
+                0.5,
+                BrushMode::Deposit,
+                false,
+                SculptRayConstraints::default(),
+                &live,
+            )
+            .expect("an uncancelled ray call returns a result");
+        assert!(
+            outcome.hit.is_none(),
+            "a true miss stays a completed empty result"
+        );
+    }
 
     #[test]
     fn ray_grid_walk_does_not_overflow_at_the_cell_index_limit() {
