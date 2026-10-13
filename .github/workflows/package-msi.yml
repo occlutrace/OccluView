@@ -661,11 +661,26 @@ jobs:
           tag="$RELEASE_TAG"
           source_sha="$RELEASE_SOURCE_SHA"
           source_link="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${source_sha})"
-          mapfile -d '' assets < <(find ./dist -maxdepth 1 -type f \( -name 'OccluView-Windows-Setup.msi' -o -name 'OccluView-Windows-Portable.zip' -o -name 'OccluView-Linux.deb' -o -name 'OccluView-macOS-AppleSilicon.dmg' -o -name 'OccluView-macOS-AppleSilicon.pkg' -o -name '*-verification.zip' -o -name 'latest.json' -o -name '*.minisig' -o -name '*.sha256' \) -print0 | sort -z)
+          mapfile -d '' assets < <(find ./dist -maxdepth 1 -type f \( -name 'OccluView-Windows-Setup.msi' -o -name 'OccluView-Windows-Portable.zip' -o -name 'OccluView-Linux.deb' -o -name 'OccluView-macOS-AppleSilicon.dmg' -o -name 'OccluView-macOS-AppleSilicon.pkg' -o -name '*-verification.zip' -o -name 'latest.json' \) -print0 | sort -z)
           if [[ "${#assets[@]}" -eq 0 ]]; then
             echo "No release assets found." >&2
             exit 1
           fi
+          for asset in "${assets[@]}"; do
+            if [[ "$(basename "$asset")" == latest.json ]]; then
+              suffixes=(minisig)
+            else
+              suffixes=(sha256 minisig)
+            fi
+            for suffix in "${suffixes[@]}"; do
+              sidecar="$asset.$suffix"
+              if [[ ! -f "$sidecar" ]]; then
+                echo "Missing verification sidecar for a release artifact." >&2
+                exit 1
+              fi
+              assets+=("$sidecar")
+            done
+          done
 
           remote_tag_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$tag" --jq .sha)
           if [[ "$remote_tag_sha" != "$source_sha" ]]; then
