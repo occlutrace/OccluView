@@ -3,6 +3,16 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 
 #[test]
+fn missing_file_errors_do_not_include_case_paths() {
+    let path = fixtures::write_temp_fixture("case-identifier.stl", b"");
+    fs::remove_file(&path).expect("remove fixture before metadata lookup");
+    let error = cache::thumbnail_file_metadata_checked(&path).expect_err("missing file");
+    let diagnostic = format!("{error:?}");
+    assert!(!diagnostic.contains("case-identifier"));
+    assert!(!diagnostic.contains(&path.to_string_lossy().to_string()));
+}
+
+#[test]
 fn file_thumbnail_cache_hits_exact_size_without_rerender() {
     let mut cache = cache::ThumbnailFileCache::default();
     let key = ThumbnailFileCacheKey {
