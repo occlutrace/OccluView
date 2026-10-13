@@ -151,6 +151,7 @@ impl SceneUiState {
         }
         self.tool_gate_logged = true;
         tracing::debug!(
+            event = "viewport_tool_input_skipped",
             scene_id = state.scene_key.id.get(),
             scene_epoch = state.scene_key.epoch.get(),
             active_scene_id = state.active_scene_key.id.get(),
