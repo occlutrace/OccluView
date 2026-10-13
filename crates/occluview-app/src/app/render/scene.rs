@@ -1244,7 +1244,7 @@ mod input_tests {
             assert_eq!(skipped[0].field("scene_id"), Some("1"));
             assert_eq!(skipped[0].field("modal_dialog_open"), Some("false"));
             assert_eq!(skipped[0].field("input_route"), Some("Suppressed"));
-            assert_eq!(skipped[0].field("capture_owner"), Some("None"));
+            assert_eq!(skipped[0].field("capture_present"), Some("false"));
             app.ui.information_dialog = crate::app::information_dialog::InformationDialog::About;
             for pressed in [true, false] {
                 focused_frame(
@@ -1300,9 +1300,8 @@ mod input_tests {
                         && event.field("active_scene_id") == Some("2")
                         && event.field("is_active") == Some("false")
                         && event.field("input_route") == Some("Captured")
-                        && event
-                            .field("capture_owner")
-                            .is_some_and(|owner| owner.starts_with("Some"))
+                        && event.field("capture_present") == Some("true")
+                        && event.field("capture_scene_id") == Some("2")
                 }),
                 "a blocked peer press must identify the captured scene in structured fields"
             );
