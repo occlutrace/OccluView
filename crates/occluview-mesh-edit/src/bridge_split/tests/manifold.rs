@@ -2,9 +2,13 @@ use super::{
     closed_cube, closed_l_prism, closed_torus, exploded_cube_with_payload_seams,
     exploded_cube_with_uniform_payload, hollow_cube_with_payload, request,
 };
+use crate::bridge_split::clip::clip_bridge_surface_open;
 use crate::topology::{canonical_topology, TopologyWeldPolicy};
 use crate::topology_analysis::{connected_components, edge_incidence, topology_defects};
-use crate::{split_bridge, split_bridge_surface, BridgeSplitResult, EditVertex, MeshEditBuffers};
+use crate::{
+    split_bridge, split_bridge_surface, BridgeSplitRequest, BridgeSplitResult, EditVertex,
+    MeshEditBuffers,
+};
 use glam::Vec3;
 
 fn assert_closed_manifold(mesh: &MeshEditBuffers) {
@@ -132,6 +136,126 @@ fn surface_split_caps_nested_connector_surfaces_as_a_planar_ring() {
     }
     assert_eq!(result.report.part_a_cut_loops, 2);
     assert_eq!(result.report.part_b_cut_loops, 2);
+}
+
+#[test]
+fn surface_split_keeps_lumen_open_for_coplanar_branch_and_caps_far_region() {
+    const TANGENT_COLOR: [u8; 4] = [23, 101, 219, 255];
+    let request = BridgeSplitRequest {
+        center: Vec3::ZERO,
+        normal: Vec3::Z,
+        kerf_mm: 0.05,
+        disc_radius_mm: 60.0,
+        max_disc_radius_mm: 60.0,
+    };
+    let mut source = hollow_cube_with_payload();
+    let far_region = translated_cube(Vec3::new(4.0, 0.0, 0.0));
+    let far_offset = u32::try_from(source.vertices.len()).expect("small fixture");
+    source.vertices.extend(far_region.vertices);
+    source
+        .indices
+        .extend(far_region.indices.into_iter().map(|index| index + far_offset));
+
+    // Read an actual inner-rim segment from the clipper so this fixture follows
+    // any source-triangle subdivision of the generated cut line.
+    let baseline = clip_bridge_surface_open(&source, request)
+        .expect("baseline surface clip exposes the inner rim");
+    let inner_segment = baseline
+        .part_a_cut_edges
+        .iter()
+        .find_map(|&[first, second]| {
+            let first = baseline.part_a.vertices[first as usize].position;
+            let second = baseline.part_a.vertices[second as usize].position;
+            let on_inner_rim = |point: [f32; 3]| {
+                (point[1] + 0.5).abs() <= 1.0e-6
+                    && (point[2] - 0.025).abs() <= 1.0e-6
+                    && point[0].abs() <= 0.5 + 1.0e-6
+            };
+            (on_inner_rim(first)
+                && on_inner_rim(second)
+                && (first[0] - second[0]).abs() > 1.0e-6)
+            .then_some([first, second])
+        })
+        .expect("the clipper emits a horizontal inner-rim segment at +kerf/2");
+    let plane_z = (inner_segment[0][2] + inner_segment[1][2]) * 0.5;
+    assert!((plane_z - 0.025).abs() <= 1.0e-6);
+    let tangent_start = u32::try_from(source.vertices.len()).expect("small fixture");
+    for position in [
+        inner_segment[0],
+        inner_segment[1],
+        [
+            (inner_segment[0][0] + inner_segment[1][0]) * 0.5,
+            0.0,
+            plane_z,
+        ],
+    ] {
+        let mut vertex = EditVertex::at(position);
+        vertex.color = TANGENT_COLOR;
+        source.vertices.push(vertex);
+    }
+    source
+        .indices
+        .extend([tangent_start, tangent_start + 1, tangent_start + 2]);
+
+    let result = split_bridge_surface(&source, request)
+        .expect("branched inner cut preserves the useful surface split");
+    assert_eq!(result.report.part_a_cut_loops, 1);
+    assert_eq!(result.report.part_b_cut_loops, 3);
+
+    let tangent_face = result
+        .part_a
+        .indices
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .find(|face| {
+            face.iter()
+                .all(|&index| result.part_a.vertices[index as usize].color == TANGENT_COLOR)
+        })
+        .expect("the coplanar source triangle remains in Part A");
+    for position in [inner_segment[0], inner_segment[1]] {
+        let tangent_index = tangent_face
+            .iter()
+            .copied()
+            .find(|&index| result.part_a.vertices[index as usize].position == position)
+            .expect("the tangent face retains its generated-rim endpoint");
+        let shell_index = result
+            .part_a
+            .indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .filter(|face| {
+                !face.iter().all(|&index| {
+                    result.part_a.vertices[index as usize].color == TANGENT_COLOR
+                })
+            })
+            .flat_map(|face| face.iter().copied())
+            .find(|&index| result.part_a.vertices[index as usize].position == position)
+            .expect("the inner shell retains its own rim endpoint");
+        assert_ne!(tangent_index, shell_index);
+    }
+
+    let planar_non_tangent_faces: Vec<_> = result
+        .part_a
+        .indices
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .filter(|face| {
+            face.iter().all(|&index| {
+                (result.part_a.vertices[index as usize].position[2] - plane_z).abs() <= 1.0e-6
+            }) && !face.iter().all(|&index| {
+                result.part_a.vertices[index as usize].color == TANGENT_COLOR
+            })
+        })
+        .collect();
+    assert!(!planar_non_tangent_faces.is_empty());
+    assert!(planar_non_tangent_faces.iter().all(|face| {
+        face.iter().all(|index| {
+            result.part_a.vertices[*index as usize].position[0] >= 3.0
+        })
+    }));
 }
 
 #[test]

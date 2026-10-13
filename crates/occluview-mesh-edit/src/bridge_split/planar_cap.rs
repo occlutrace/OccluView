@@ -50,13 +50,13 @@ pub(crate) fn triangulate_regions(
 pub(crate) fn triangulate_regions_best_effort(
     mesh: &MeshEditBuffers,
     loops: &[Vec<usize>],
-    rejected_loop_flags: &[bool],
+    rejected_geometry_flags: &[bool],
     expected_normal: DVec3,
 ) -> Result<CapPlan, BridgeSplitError> {
     triangulate_regions_with_policy(
         mesh,
         loops,
-        Some(rejected_loop_flags),
+        Some(rejected_geometry_flags),
         expected_normal,
         true,
     )
@@ -65,7 +65,7 @@ pub(crate) fn triangulate_regions_best_effort(
 fn triangulate_regions_with_policy(
     mesh: &MeshEditBuffers,
     loops: &[Vec<usize>],
-    rejected_loop_flags: Option<&[bool]>,
+    rejected_geometry_flags: Option<&[bool]>,
     expected_normal: DVec3,
     best_effort: bool,
 ) -> Result<CapPlan, BridgeSplitError> {
@@ -75,13 +75,13 @@ fn triangulate_regions_with_policy(
     let expected_normal = expected_normal
         .try_normalize()
         .ok_or_else(|| cap_failed("separator normal is not normalizable"))?;
-    if rejected_loop_flags.is_some_and(|flags| flags.len() != loops.len()) {
-        return Err(cap_failed("rejected cut rim flags do not match loop count"));
+    if rejected_geometry_flags.is_some_and(|flags| flags.len() != loops.len()) {
+        return Err(cap_failed("rejected cut bounds flags do not match geometry count"));
     }
     let projection = project_loops(
         mesh,
         loops,
-        rejected_loop_flags,
+        rejected_geometry_flags,
         expected_normal,
         best_effort,
     )?;
@@ -146,7 +146,7 @@ fn triangulate_regions_with_policy(
 fn project_loops(
     mesh: &MeshEditBuffers,
     loops: &[Vec<usize>],
-    rejected_loop_flags: Option<&[bool]>,
+    rejected_geometry_flags: Option<&[bool]>,
     normal: DVec3,
     best_effort: bool,
 ) -> Result<ProjectedLoops, BridgeSplitError> {
@@ -176,9 +176,10 @@ fn project_loops(
     let mut projected = Vec::with_capacity(loops.len());
     let mut rejected_bounds = Vec::new();
     for (source_loop_index, ring) in loops.iter().enumerate() {
-        if rejected_loop_flags.is_some_and(|flags| flags[source_loop_index]) {
-            // Rejected closed rims still constrain containment even though
-            // their own geometry cannot be triangulated safely.
+        if rejected_geometry_flags.is_some_and(|flags| flags[source_loop_index]) {
+            // Rejected cycles and unordered bounds-only components constrain
+            // containment by their projected point bounds; neither is
+            // triangulated as a loop.
             rejected_bounds.push(rejected_loop_bounds(mesh, ring, basis)?);
             continue;
         }

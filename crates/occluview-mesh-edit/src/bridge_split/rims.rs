@@ -46,10 +46,14 @@ struct CutScan {
 
 #[derive(Clone, Debug)]
 pub(crate) struct CutLoop {
+    /// Ordered rim vertices unless `bounds_only` is true, in which case these
+    /// are the unordered positions of one rejected cut-graph component.
     pub(crate) vertices: Vec<usize>,
     pub(crate) lineages: Vec<Option<LineageKey>>,
-    /// False when the geometric cycle is closed but cannot safely be capped.
+    /// False for an ambiguous closed rim or any bounds-only component.
     pub(crate) cap_eligible: bool,
+    /// Such vertices only constrain projected bounds; they are never a rim.
+    pub(crate) bounds_only: bool,
 }
 
 /// Read the cut edges against the mesh once.
@@ -268,14 +272,14 @@ fn build_cut_loops_internal(
     Ok(loops)
 }
 
-/// Recover only complete closed components from a surface cut graph.
+/// Recover complete closed components and conservative bounds for rejected ones.
 ///
 /// An open scan can legitimately produce a cut path that terminates at its
-/// natural border. That path is not safe to cap, but an unrelated closed cut
-/// loop must not be discarded because of it. This recovery path therefore
-/// splits the graph into connected components, ignores open/branching
-/// components, and returns only components whose geometric degree is exactly
-/// two at every vertex. The strict [`build_cut_loops`] path remains in use for
+/// natural border. That path is not safe to cap, but its bounds must remain
+/// available so a containing rim is not filled across an unknown void. This
+/// recovery path therefore splits the graph into connected components and
+/// returns simple cycles alongside bounds-only records for open or branching
+/// components. The strict [`build_cut_loops`] path remains in use for
 /// closed-solid splitting, where silently dropping any generated edge would
 /// hide a topology defect.
 #[cfg(test)]
@@ -284,7 +288,13 @@ pub(crate) fn build_closed_cut_loops(
     cut_edges: &[[u32; 2]],
 ) -> Result<Vec<Vec<usize>>, BridgeSplitError> {
     build_closed_cut_loops_internal(mesh, cut_edges, None)
-        .map(|loops| loops.into_iter().map(|ring| ring.vertices).collect())
+        .map(|loops| {
+            loops
+                .into_iter()
+                .filter(|component| !component.bounds_only)
+                .map(|ring| ring.vertices)
+                .collect()
+        })
 }
 
 pub(crate) fn build_closed_cut_loops_with_provenance(
@@ -321,6 +331,16 @@ fn build_closed_cut_loops_internal(
         }
 
         if !is_simple_cycle(&component_vertices, &component_edges, &adjacency) {
+            let vertices = component_vertices
+                .iter()
+                .map(|position| {
+                    representative
+                        .get(position)
+                        .copied()
+                        .ok_or_else(|| damaged("cut component lost a vertex representative"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            loops.push(rejected_bounds_component(vertices));
             continue;
         }
         let ambiguous_edge = component_edges
@@ -346,7 +366,7 @@ fn build_closed_cut_loops_internal(
         loops.push(ring);
     }
 
-    if loops.is_empty() {
+    if loops.iter().all(|component| component.bounds_only) {
         return Err(damaged("no complete closed cut rim could be recovered"));
     }
     Ok(loops)
@@ -404,6 +424,7 @@ fn finish_lineage_loop(
             lineages: vec![None; vertices.len()],
             vertices,
             cap_eligible: true,
+            bounds_only: false,
         });
     }
 
@@ -445,6 +466,7 @@ fn finish_lineage_loop(
         vertices: representative_vertices,
         lineages,
         cap_eligible: true,
+        bounds_only: false,
     })
 }
 
@@ -466,6 +488,16 @@ fn rejected_cut_loop(vertices: Vec<usize>) -> CutLoop {
         lineages: vec![None; vertices.len()],
         vertices,
         cap_eligible: false,
+        bounds_only: false,
+    }
+}
+
+fn rejected_bounds_component(vertices: Vec<usize>) -> CutLoop {
+    CutLoop {
+        lineages: vec![None; vertices.len()],
+        vertices,
+        cap_eligible: false,
+        bounds_only: true,
     }
 }
 
