@@ -6,7 +6,7 @@
 // behind `#![deny(unsafe_code)]`.
 #![allow(unsafe_code)]
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use eframe::egui;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
@@ -54,6 +54,10 @@ pub(crate) struct OpenRequest {
 
 const REQUEST_DIR: &str = "open-requests";
 const FALLBACK_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const NATIVE_PATH_PEER_UNSUPPORTED: &str =
+    "The running OccluView copy cannot accept native file paths. Close it and reopen the updated copy.";
+const NATIVE_PATH_HANDOFF_UNCONFIRMED: &str =
+    "OccluView did not confirm the native file request. It may already be queued; check the running copy before closing it and reopening the updated copy.";
 #[cfg(not(windows))]
 const OPEN_REQUEST_WAKE_BURST_INTERVAL: Duration = Duration::from_millis(25);
 #[cfg(not(windows))]
@@ -106,6 +110,10 @@ impl Drop for SingleInstance {
 }
 
 pub(crate) fn write_open_request(request: &OpenRequest) -> Result<()> {
+    if protocol::request_needs_native_encoding(request) {
+        return write_native_path_open_request(request);
+    }
+
     #[cfg(windows)]
     if windows::send_pipe_open_request(request).is_ok() {
         return Ok(());
@@ -117,6 +125,33 @@ pub(crate) fn write_open_request(request: &OpenRequest) -> Result<()> {
     }
 
     fallback::write_disk_open_request(request)
+}
+
+fn write_native_path_open_request(request: &OpenRequest) -> Result<()> {
+    let payload = protocol::serialize_request(request)
+        .context("encoding native file paths for the single-instance handoff")?;
+
+    // The named-pipe protocol has no acceptance reply. Native paths use the
+    // acknowledged disk queue on Windows rather than reporting a successful
+    // write to a receiver that may not understand v3/v4.
+    #[cfg(all(not(windows), not(target_os = "macos")))]
+    match unix::send_native_socket_open_request(&payload) {
+        unix::NativeSocketOutcome::Accepted => return Ok(()),
+        unix::NativeSocketOutcome::Unconfirmed => {
+            anyhow::bail!("{NATIVE_PATH_HANDOFF_UNCONFIRMED}");
+        }
+        unix::NativeSocketOutcome::Unavailable => {}
+    }
+
+    match fallback::write_native_disk_open_request(&payload)? {
+        fallback::NativeDiskOutcome::Accepted => Ok(()),
+        fallback::NativeDiskOutcome::Unsupported => {
+            anyhow::bail!("{NATIVE_PATH_PEER_UNSUPPORTED}");
+        }
+        fallback::NativeDiskOutcome::Unconfirmed => {
+            anyhow::bail!("{NATIVE_PATH_HANDOFF_UNCONFIRMED}");
+        }
+    }
 }
 
 pub(crate) struct OpenRequestListener {
