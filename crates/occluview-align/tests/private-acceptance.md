@@ -60,10 +60,11 @@ Confidence values are `weak`, `ambiguous`, `probable`, and `verified`. A
 `policy_conflict`, `suspected_units_or_deformation`, `missing_normals`,
 `uniqueness_not_established`, and `invalid_topology`. A returned candidate's
 evidence can additionally carry `unvalidated_input`, `budget_exhausted`,
-`invalid_seed`, or `landmark_rejected`; those explain why a candidate was not
-selected and cannot be demanded by a manifest. The manifest parser accepts only
-the eight reasons a case can require; the receipt records every returned
-candidate's reasons from the full result vocabulary.
+`invalid_seed`, or `landmark_rejected`; those are evidence, rejection or
+interruption explanations that any candidate, including the selected one, may
+yield, and a manifest cannot demand them. The manifest parser accepts only the
+eight reasons a case can require; the receipt records every returned candidate's
+reasons from the full result vocabulary.
 
 The manifest is strict: unknown fields, duplicate IDs, invalid bounds,
 unsupported schema, absent inputs, zero cases, incomplete search, missing

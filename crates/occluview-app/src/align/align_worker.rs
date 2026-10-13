@@ -825,14 +825,16 @@ fn paint(
     //
     // `None` is the degenerate end of that: too little surface, or samples that
     // do not span six degrees of freedom. It is not extended to a *weak* blind
-    // direction. `observability()` exists to report those (see
-    // `hidden_displacement_mm`, measured at 0.94-1.007 of the truth on real arch
-    // scans), and `has_blind_direction` is the threshold that says "the estimate
-    // is doing real work here", not "this measurement is worthless". Refusing on
-    // it would block legitimate full-arch alignments: real-arch sensitivity can
-    // fall below it. That calibration is exercised only by the opt-in private
-    // acceptance corpus (`tests/private_acceptance.rs`); thresholds from the
-    // removed `real_scans.rs` are historical, not acceptance for this API.
+    // direction. `observability()` reports those in `hidden_displacement_mm`, and
+    // `has_blind_direction` is the threshold that says "the estimate is doing
+    // real work here", not "this measurement is worthless". Refusing on it would
+    // block legitimate full-arch alignments: a weak but present observability
+    // estimate is a warning about the measurement, not a reason to discard an
+    // otherwise valid raw/display map. The synthetic cylinder test
+    // `a_weakly_observable_surface_still_produces_its_map` holds that separation.
+    // Real-scan acceptance requires independently authored manifest case bounds
+    // in the opt-in private acceptance target; no earlier threshold carries over
+    // automatically.
     if stats.summary.is_some() && seen.is_none() {
         return AlignOutcome::Failed {
             rejection: AlignFailure::MeasurementUnobservable,
