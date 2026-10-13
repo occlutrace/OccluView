@@ -1,7 +1,12 @@
 use glam::DVec3;
 use std::collections::BTreeMap;
 
+use super::clip::{ClipProvenance, LineageKey};
 use super::planar_cap::{triangulate_regions, triangulate_regions_best_effort};
+use super::rims::{
+    build_closed_cut_loops_with_provenance, build_cut_loops_with_provenance, CutLoop,
+};
+#[cfg(test)]
 use super::rims::{build_closed_cut_loops, build_cut_loops};
 use crate::topology::canonical_position_key;
 use crate::{
@@ -9,13 +14,24 @@ use crate::{
     MeshEditBuffers, MeshEditError,
 };
 
+#[cfg(test)]
 pub(crate) fn cap_open_part(
     mesh: MeshEditBuffers,
     cut_edges: &[[u32; 2]],
     expected_normal: DVec3,
 ) -> Result<(MeshEditBuffers, usize), BridgeSplitError> {
     let loops = build_cut_loops(&mesh, cut_edges)?;
-    cap_open_part_from_loops(mesh, loops, expected_normal)
+    cap_open_part_from_loops(mesh, untagged_loops(loops), None, expected_normal)
+}
+
+pub(crate) fn cap_open_part_with_provenance(
+    mesh: MeshEditBuffers,
+    cut_edges: &[[u32; 2]],
+    provenance: &ClipProvenance,
+    expected_normal: DVec3,
+) -> Result<(MeshEditBuffers, usize), BridgeSplitError> {
+    let loops = build_cut_loops_with_provenance(&mesh, cut_edges, provenance)?;
+    cap_open_part_from_loops(mesh, loops, Some(provenance), expected_normal)
 }
 
 /// Cap every recoverable closed cut rim from a surface split.
@@ -25,93 +41,139 @@ pub(crate) fn cap_open_part(
 /// independent closed cut loop on another connected surface from being capped.
 /// A failed loop is isolated so one bad component cannot discard caps that were
 /// already valid on the same output part.
+#[cfg(test)]
 pub(crate) fn cap_surface_part_best_effort(
     mesh: MeshEditBuffers,
     cut_edges: &[[u32; 2]],
     expected_normal: DVec3,
 ) -> Result<(MeshEditBuffers, usize), BridgeSplitError> {
     let loops = build_closed_cut_loops(&mesh, cut_edges)?;
-    cap_open_part_from_loops_best_effort(mesh, loops, expected_normal)
+    cap_open_part_from_loops_best_effort(mesh, untagged_loops(loops), None, expected_normal)
+}
+
+pub(crate) fn cap_surface_part_best_effort_with_provenance(
+    mesh: MeshEditBuffers,
+    cut_edges: &[[u32; 2]],
+    provenance: &ClipProvenance,
+    expected_normal: DVec3,
+) -> Result<(MeshEditBuffers, usize), BridgeSplitError> {
+    let loops = build_closed_cut_loops_with_provenance(&mesh, cut_edges, provenance)?;
+    cap_open_part_from_loops_best_effort(mesh, loops, Some(provenance), expected_normal)
 }
 
 fn cap_open_part_from_loops(
     mut mesh: MeshEditBuffers,
-    loops: Vec<Vec<usize>>,
+    loops: Vec<CutLoop>,
+    provenance: Option<&ClipProvenance>,
     expected_normal: DVec3,
 ) -> Result<(MeshEditBuffers, usize), BridgeSplitError> {
-    // STL and payload-seamed exports can carry several indices at one cut
-    // position. Join only the generated cut-rim aliases; source borders and
-    // unrelated attribute seams remain untouched.
-    weld_cut_rim_aliases(&mut mesh, &loops)?;
-    let (cap_indices, capped_loops) = triangulate_regions(&mesh, &loops, expected_normal)?;
-    mesh.indices.extend(cap_indices);
+    let rings = loop_vertices(&loops);
+    let plan = triangulate_regions(&mesh, &rings, expected_normal)?;
+    apply_cut_rim_aliases(&mut mesh, &loops, &plan.accepted_loop_indices, provenance)?;
+    mesh.indices.extend(plan.indices);
     compact_unreferenced_vertices(&mut mesh)?;
     recompute_all_normals(&mut mesh.vertices, &mesh.indices)?;
-    Ok((mesh, capped_loops))
+    Ok((mesh, plan.accepted_loop_indices.len()))
 }
 
 fn cap_open_part_from_loops_best_effort(
     mut mesh: MeshEditBuffers,
-    loops: Vec<Vec<usize>>,
+    loops: Vec<CutLoop>,
+    provenance: Option<&ClipProvenance>,
     expected_normal: DVec3,
 ) -> Result<(MeshEditBuffers, usize), BridgeSplitError> {
-    weld_cut_rim_aliases(&mut mesh, &loops)?;
-    let (cap_indices, capped_loops) =
-        triangulate_regions_best_effort(&mesh, &loops, expected_normal)?;
-    mesh.indices.extend(cap_indices);
+    let rings = loop_vertices(&loops);
+    let plan = triangulate_regions_best_effort(&mesh, &rings, expected_normal)?;
+    apply_cut_rim_aliases(&mut mesh, &loops, &plan.accepted_loop_indices, provenance)?;
+    mesh.indices.extend(plan.indices);
     compact_unreferenced_vertices(&mut mesh)?;
     recompute_all_normals(&mut mesh.vertices, &mesh.indices)?;
-    Ok((mesh, capped_loops))
+    Ok((mesh, plan.accepted_loop_indices.len()))
 }
 
-fn weld_cut_rim_aliases(
+#[cfg(test)]
+fn untagged_loops(loops: Vec<Vec<usize>>) -> Vec<CutLoop> {
+    loops
+        .into_iter()
+        .map(|vertices| CutLoop {
+            lineages: vec![None; vertices.len()],
+            vertices,
+        })
+        .collect()
+}
+
+fn loop_vertices(loops: &[CutLoop]) -> Vec<Vec<usize>> {
+    loops.iter().map(|ring| ring.vertices.clone()).collect()
+}
+
+fn apply_cut_rim_aliases(
     mesh: &mut MeshEditBuffers,
-    loops: &[Vec<usize>],
+    loops: &[CutLoop],
+    accepted_loop_indices: &[usize],
+    provenance: Option<&ClipProvenance>,
 ) -> Result<(), MeshEditError> {
-    let mut representative_by_position: BTreeMap<[u32; 3], usize> = BTreeMap::new();
-    for &vertex_index in loops.iter().flatten() {
-        let vertex =
-            mesh.vertices
-                .get(vertex_index)
-                .ok_or_else(|| MeshEditError::MalformedMesh {
-                    reason: "cut rim vertex is out of range while welding aliases".to_string(),
-                })?;
-        let key = canonical_position_key(vertex.position);
-        representative_by_position
-            .entry(key)
-            .and_modify(|representative| *representative = (*representative).min(vertex_index))
-            .or_insert(vertex_index);
-    }
-    if representative_by_position.is_empty() {
+    // Only corners belonging to a cap region that actually triangulated may
+    // follow its rim representative. The sidecar is per triangle corner so a
+    // shared output row used by another fan keeps that fan's original index.
+    let Some(provenance) = provenance else {
         return Ok(());
+    };
+    if provenance.corner_lineages.len() != mesh.indices.len() {
+        return Err(MeshEditError::MalformedMesh {
+            reason: "triangle corner lineage count does not match clipped indices".to_string(),
+        });
     }
 
-    let mut remap: Vec<u32> = (0..mesh.vertices.len())
-        .map(|index| {
-            u32::try_from(index).map_err(|_| MeshEditError::MalformedMesh {
-                reason: "cut rim vertex count exceeds u32::MAX".to_string(),
-            })
-        })
-        .collect::<Result<_, _>>()?;
-    for (index, vertex) in mesh.vertices.iter().enumerate() {
-        if let Some(&representative) =
-            representative_by_position.get(&canonical_position_key(vertex.position))
-        {
-            remap[index] =
-                u32::try_from(representative).map_err(|_| MeshEditError::MalformedMesh {
-                    reason: "cut rim representative exceeds u32::MAX".to_string(),
+    let mut representative_by_lineage_position =
+        BTreeMap::<([u32; 3], LineageKey), u32>::new();
+    for &loop_index in accepted_loop_indices {
+        let ring = loops
+            .get(loop_index)
+            .ok_or_else(|| MeshEditError::MalformedMesh {
+                reason: "accepted cap loop index is out of range".to_string(),
+            })?;
+        if ring.vertices.len() != ring.lineages.len() {
+            return Err(MeshEditError::MalformedMesh {
+                reason: "cap loop lineage count does not match its vertices".to_string(),
+            });
+        }
+        for (&vertex_index, lineage) in ring.vertices.iter().zip(&ring.lineages) {
+            let Some(lineage) = lineage else {
+                continue;
+            };
+            let vertex = mesh
+                .vertices
+                .get(vertex_index)
+                .ok_or_else(|| MeshEditError::MalformedMesh {
+                    reason: "cut rim vertex is out of range while matching lineage".to_string(),
                 })?;
+            let representative = u32::try_from(vertex_index).map_err(|_| {
+                MeshEditError::MalformedMesh {
+                    reason: "cut rim representative exceeds u32::MAX".to_string(),
+                }
+            })?;
+            representative_by_lineage_position
+                .entry((canonical_position_key(vertex.position), *lineage))
+                .or_insert(representative);
         }
     }
-    for index in &mut mesh.indices {
-        let remapped =
-            remap
-                .get(*index as usize)
-                .copied()
-                .ok_or_else(|| MeshEditError::MalformedMesh {
-                    reason: "cut rim alias references an out-of-range index".to_string(),
-                })?;
-        *index = remapped;
+
+    for (corner, index) in mesh.indices.iter_mut().enumerate() {
+        let lineage = provenance.corner_lineages[corner];
+        if lineage.ambiguous {
+            continue;
+        }
+        let vertex = mesh
+            .vertices
+            .get(*index as usize)
+            .ok_or_else(|| MeshEditError::MalformedMesh {
+                reason: "cut rim alias references an out-of-range index".to_string(),
+            })?;
+        if let Some(&representative) = representative_by_lineage_position
+            .get(&(canonical_position_key(vertex.position), lineage.key))
+        {
+            *index = representative;
+        }
     }
     Ok(())
 }
@@ -140,6 +202,7 @@ fn compact_unreferenced_vertices(mesh: &mut MeshEditBuffers) -> Result<(), MeshE
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bridge_split::clip::{LineageKey, VertexLineage};
     use glam::Vec3;
 
     #[test]
@@ -216,18 +279,59 @@ mod tests {
                 cut_edges.push([a, b]);
             }
         }
-        let mesh = MeshEditBuffers {
+        let mut mesh = MeshEditBuffers {
             vertices,
             indices,
             topology: crate::MeshTopology::TriangleMesh,
         };
+        const ALIAS_COLOR: [u8; 4] = [19, 81, 207, 255];
+        let alias = u32::try_from(mesh.vertices.len()).expect("small fixture");
+        for position in [[0.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [-1.0, 1.0, 0.0]] {
+            let mut vertex = crate::EditVertex::at(position);
+            vertex.color = ALIAS_COLOR;
+            mesh.vertices.push(vertex);
+        }
+        mesh.indices.extend_from_slice(&[alias, alias + 1, alias + 2]);
+
+        let lineage = |vertex| VertexLineage {
+            key: LineageKey::SourceCorner { vertex, fan: 0 },
+            ambiguous: false,
+        };
+        let mut corner_lineages: Vec<_> = mesh.indices[..mesh.indices.len() - 3]
+            .iter()
+            .map(|&vertex| lineage(vertex))
+            .collect();
+        corner_lineages.extend([lineage(0), lineage(alias + 1), lineage(alias + 2)]);
+        let cut_edge_lineages = cut_edges
+            .iter()
+            .map(|&[first, second]| [lineage(first), lineage(second)])
+            .collect();
+        let provenance = ClipProvenance {
+            corner_lineages,
+            cut_edge_lineages,
+        };
         let source_faces = mesh.triangle_count();
-        let (result, capped) = cap_surface_part_best_effort(mesh, &cut_edges, DVec3::Z)
+        let (result, capped) = cap_surface_part_best_effort_with_provenance(
+            mesh,
+            &cut_edges,
+            &provenance,
+            DVec3::Z,
+        )
             .expect("the independent valid region remains usable");
         assert_eq!(
             capped, 1,
             "an invalid inner contour cannot disappear into an outer lid"
         );
         assert_eq!(result.triangle_count(), source_faces + 2);
+        let alias_after = result
+            .vertices
+            .iter()
+            .position(|vertex| vertex.color == ALIAS_COLOR && vertex.position == [0.0, 0.0, 0.0])
+            .expect("the alias payload survives compaction");
+        let alias_after = u32::try_from(alias_after).expect("small output");
+        assert!(result.indices.contains(&alias_after));
+        assert!(result.vertices.iter().enumerate().any(|(index, vertex)| {
+            index != alias_after && vertex.position == [0.0, 0.0, 0.0]
+        }));
     }
 }

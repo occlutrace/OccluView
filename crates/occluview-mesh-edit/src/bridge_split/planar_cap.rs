@@ -14,6 +14,7 @@ use crate::{BridgeSplitError, MeshEditBuffers, MeshEditError};
 type Point2 = [f64; 2];
 
 struct ProjectedLoop {
+    source_loop_index: usize,
     vertices: Vec<usize>,
     points: Vec<Point2>,
     signed_area: f64,
@@ -22,6 +23,11 @@ struct ProjectedLoop {
 struct ProjectedLoops {
     valid: Vec<ProjectedLoop>,
     rejected_bounds: Vec<[Point2; 2]>,
+}
+
+pub(crate) struct CapPlan {
+    pub(crate) indices: Vec<u32>,
+    pub(crate) accepted_loop_indices: Vec<usize>,
 }
 
 #[derive(Clone, Copy)]
@@ -37,7 +43,7 @@ pub(crate) fn triangulate_regions(
     mesh: &MeshEditBuffers,
     loops: &[Vec<usize>],
     expected_normal: DVec3,
-) -> Result<(Vec<u32>, usize), BridgeSplitError> {
+) -> Result<CapPlan, BridgeSplitError> {
     triangulate_regions_with_policy(mesh, loops, expected_normal, false)
 }
 
@@ -45,7 +51,7 @@ pub(crate) fn triangulate_regions_best_effort(
     mesh: &MeshEditBuffers,
     loops: &[Vec<usize>],
     expected_normal: DVec3,
-) -> Result<(Vec<u32>, usize), BridgeSplitError> {
+) -> Result<CapPlan, BridgeSplitError> {
     triangulate_regions_with_policy(mesh, loops, expected_normal, true)
 }
 
@@ -54,7 +60,7 @@ fn triangulate_regions_with_policy(
     loops: &[Vec<usize>],
     expected_normal: DVec3,
     best_effort: bool,
-) -> Result<(Vec<u32>, usize), BridgeSplitError> {
+) -> Result<CapPlan, BridgeSplitError> {
     if loops.is_empty() {
         return Err(cap_failed("no planar cut loops were provided"));
     }
@@ -66,7 +72,7 @@ fn triangulate_regions_with_policy(
     let parents = containment_parents(&projected)?;
     let depths = containment_depths(&parents)?;
     let mut cap_indices = Vec::new();
-    let mut capped_loops = 0;
+    let mut accepted_loop_indices = Vec::new();
 
     for (outer_index, depth) in depths.iter().copied().enumerate() {
         if depth % 2 != 0 {
@@ -90,7 +96,12 @@ fn triangulate_regions_with_policy(
         match triangulate_region(mesh, &projected, outer_index, &holes, expected_normal) {
             Ok(indices) => {
                 cap_indices.extend(indices);
-                capped_loops += 1 + holes.len();
+                accepted_loop_indices.push(projected[outer_index].source_loop_index);
+                accepted_loop_indices.extend(
+                    holes
+                        .iter()
+                        .map(|&hole_index| projected[hole_index].source_loop_index),
+                );
             }
             Err(error) if best_effort => {
                 // A natural surface border or a damaged nested contour must
@@ -102,12 +113,17 @@ fn triangulate_regions_with_policy(
         }
     }
 
-    if capped_loops == 0 || (!best_effort && capped_loops != loops.len()) {
+    if accepted_loop_indices.is_empty()
+        || (!best_effort && accepted_loop_indices.len() != loops.len())
+    {
         return Err(cap_failed(
             "no complete planar cap region could be triangulated",
         ));
     }
-    Ok((cap_indices, capped_loops))
+    Ok(CapPlan {
+        indices: cap_indices,
+        accepted_loop_indices,
+    })
 }
 
 fn project_loops(
@@ -141,8 +157,8 @@ fn project_loops(
     };
     let mut projected = Vec::with_capacity(loops.len());
     let mut rejected_bounds = Vec::new();
-    for ring in loops {
-        match project_loop(mesh, ring, basis) {
+    for (source_loop_index, ring) in loops.iter().enumerate() {
+        match project_loop(mesh, ring, source_loop_index, basis) {
             Ok(loop_data) => projected.push(loop_data),
             Err(error) if best_effort => {
                 let _ = error;
@@ -201,6 +217,7 @@ fn bounds_overlap(left: [Point2; 2], right: [Point2; 2]) -> bool {
 fn project_loop(
     mesh: &MeshEditBuffers,
     ring: &[usize],
+    source_loop_index: usize,
     basis: ProjectionBasis,
 ) -> Result<ProjectedLoop, BridgeSplitError> {
     if ring.len() < 3 {
@@ -229,6 +246,7 @@ fn project_loop(
         return Err(cap_failed("planar cut loop is self-crossing"));
     }
     Ok(ProjectedLoop {
+        source_loop_index,
         vertices: ring.to_vec(),
         points,
         signed_area,

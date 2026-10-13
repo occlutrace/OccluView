@@ -4,7 +4,7 @@ use super::{
 };
 use crate::topology::{canonical_topology, TopologyWeldPolicy};
 use crate::topology_analysis::{connected_components, edge_incidence, topology_defects};
-use crate::{split_bridge, split_bridge_surface, BridgeSplitResult, MeshEditBuffers};
+use crate::{split_bridge, split_bridge_surface, BridgeSplitResult, EditVertex, MeshEditBuffers};
 use glam::Vec3;
 
 fn assert_closed_manifold(mesh: &MeshEditBuffers) {
@@ -132,6 +132,132 @@ fn surface_split_caps_nested_connector_surfaces_as_a_planar_ring() {
     }
     assert_eq!(result.report.part_a_cut_loops, 2);
     assert_eq!(result.report.part_b_cut_loops, 2);
+}
+
+#[test]
+fn surface_split_keeps_a_one_point_payload_touch_separate_from_the_cap() {
+    const TANGENT_COLOR: [u8; 4] = [17, 93, 211, 255];
+    let mut source = closed_cube();
+    let tangent = u32::try_from(source.vertices.len()).expect("small fixture");
+    for position in [
+        [0.025, -1.0, -1.0],
+        [1.0, -0.8, -1.0],
+        [1.0, -1.0, -0.8],
+    ] {
+        let mut vertex = EditVertex::at(position);
+        vertex.color = TANGENT_COLOR;
+        source.vertices.push(vertex);
+    }
+    source.indices.extend([tangent, tangent + 1, tangent + 2]);
+
+    let result = split_bridge_surface(&source, request()).expect("surface split succeeds");
+    assert_eq!(result.report.part_a_cut_loops, 1);
+    let tangent_face = result
+        .part_a
+        .indices
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .find(|face| {
+            face.iter()
+                .all(|&index| result.part_a.vertices[index as usize].color == TANGENT_COLOR)
+        })
+        .expect("the one-point triangle remains in Part A");
+    let tangent_corner = tangent_face
+        .iter()
+        .copied()
+        .find(|&index| result.part_a.vertices[index as usize].position == [0.025, -1.0, -1.0])
+        .expect("tangent corner lies on the cap rim");
+    let shell_corner = result
+        .part_a
+        .indices
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .filter(|face| !face.iter().all(|&index| {
+            result.part_a.vertices[index as usize].color == TANGENT_COLOR
+        }))
+        .flat_map(|face| face.iter().copied())
+        .find(|&index| {
+            result.part_a.vertices[index as usize].position == [0.025, -1.0, -1.0]
+        })
+        .expect("the shell still uses its own rim vertex");
+
+    assert_ne!(tangent_corner, shell_corner);
+}
+
+#[test]
+fn surface_split_leaves_a_rim_coincident_tangent_edge_uncapped() {
+    const TANGENT_COLOR: [u8; 4] = [19, 97, 213, 255];
+    let mut source = closed_cube();
+    let tangent = u32::try_from(source.vertices.len()).expect("small fixture");
+    for position in [
+        [0.025, -1.0, -1.0],
+        [0.025, -1.0, 0.025],
+        [1.0, -0.8, -0.4],
+    ] {
+        let mut vertex = EditVertex::at(position);
+        vertex.color = TANGENT_COLOR;
+        source.vertices.push(vertex);
+    }
+    source.indices.extend([tangent, tangent + 1, tangent + 2]);
+
+    let result = split_bridge_surface(&source, request()).expect("surface split succeeds");
+    assert_eq!(result.report.part_a_cut_loops, 0);
+    let tangent_face = result
+        .part_a
+        .indices
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .find(|face| {
+            face.iter()
+                .all(|&index| result.part_a.vertices[index as usize].color == TANGENT_COLOR)
+        })
+        .expect("the ambiguous tangent face remains");
+    for &tangent_corner in tangent_face {
+        let position = result.part_a.vertices[tangent_corner as usize].position;
+        if position[0] != 0.025 || position[1] != -1.0 {
+            continue;
+        }
+        let shell_corner = result
+            .part_a
+            .indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .filter(|face| !face.iter().all(|&index| {
+                result.part_a.vertices[index as usize].color == TANGENT_COLOR
+            }))
+            .flat_map(|face| face.iter().copied())
+            .find(|&index| result.part_a.vertices[index as usize].position == position)
+            .expect("the cube retains its own rim vertex");
+        assert_ne!(tangent_corner, shell_corner);
+    }
+}
+
+#[test]
+fn exact_original_stl_vertex_fan_closes_through_source_corner_aliases() {
+    let mut source = exploded_cube_with_uniform_payload();
+    for vertex in &mut source.vertices {
+        if vertex.position == [1.0, 1.0, 1.0] {
+            vertex.position[0] = 0.025;
+        }
+    }
+    assert!(source.indices.as_chunks::<3>().0.iter().any(|face| {
+        face.iter()
+            .filter(|&&index| source.vertices[index as usize].position[0] == 0.025)
+            .count()
+            == 1
+            && face
+                .iter()
+                .all(|&index| source.vertices[index as usize].position[0] >= 0.025)
+    }));
+
+    let result = split_bridge(&source, request()).expect("source-corner soup closes");
+
+    assert_result_manufacturable(&result);
+    assert_eq!(result.report.part_a_cut_loops, 1);
 }
 
 #[test]
