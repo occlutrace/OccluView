@@ -214,25 +214,37 @@ impl ContactWorker {
         }
     }
 
-    /// Ask a running job to stop.
-    pub(crate) fn cancel_running(&self) {
-        if let Ok(running) = self.running.lock() {
-            if let Some(flag) = running.as_ref() {
-                flag.cancel();
-            }
-        }
-    }
-
     /// Move to a new generation, so every result still in flight is discarded.
     pub(crate) fn bump_generation(&self) -> u64 {
-        self.cancel_running();
-        if let Ok(mut state) = self.queue.state.lock() {
+        let Ok(mut state) = self.queue.state.lock() else {
+            mark_unusable(&self.unusable, "contact queue lock poisoned");
+            let next = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+            self.clear_completions();
+            return next;
+        };
+        let Ok(running) = self.running.lock() else {
+            mark_unusable(&self.unusable, "contact running-job lock poisoned");
             state.jobs.clear();
-        }
+            let next = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+            drop(state);
+            self.clear_completions();
+            return next;
+        };
+        cancel_running(&running);
+        state.jobs.clear();
+        let next = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        drop(running);
+        drop(state);
+        self.clear_completions();
+        next
+    }
+
+    fn clear_completions(&self) {
         if let Ok(mut completions) = self.completions.lock() {
             completions.clear();
+        } else {
+            mark_unusable(&self.unusable, "contact completion lock poisoned");
         }
-        self.generation.fetch_add(1, Ordering::SeqCst) + 1
     }
 
     #[cfg(test)]
@@ -258,12 +270,12 @@ impl ContactWorker {
         if self.has_failed() {
             return false;
         }
-        self.busy.load(Ordering::SeqCst) > 0
-            || self
-                .queue
-                .state
-                .lock()
-                .is_ok_and(|state| !state.jobs.is_empty())
+        let queued = self
+            .queue
+            .state
+            .lock()
+            .is_ok_and(|state| !state.jobs.is_empty());
+        queued || self.busy.load(Ordering::SeqCst) > 0
     }
 
     /// Queue a job, replacing any queued job and cancelling the current run.
@@ -272,15 +284,24 @@ impl ContactWorker {
         if self.has_failed() {
             return None;
         }
-        self.cancel_running();
-        let request_id = self.request_sequence.fetch_add(1, Ordering::SeqCst) + 1;
         let Ok(mut state) = self.queue.state.lock() else {
             mark_unusable(&self.unusable, "contact queue lock poisoned");
             return None;
         };
+        let Ok(running) = self.running.lock() else {
+            mark_unusable(&self.unusable, "contact running-job lock poisoned");
+            return None;
+        };
+        // The worker takes these locks in the same queue -> running order when
+        // it removes a job and publishes its cancellation token. Keeping the
+        // queue locked closes the handoff interval: a submitter either cancels
+        // the registered job or replaces it before the worker can take it.
+        cancel_running(&running);
+        let request_id = self.request_sequence.fetch_add(1, Ordering::SeqCst) + 1;
         job.request_id = request_id;
         state.jobs.clear();
         state.jobs.push_back(job);
+        drop(running);
         drop(state);
         self.queue.wake.notify_one();
         Some(request_id)
@@ -307,10 +328,19 @@ impl ContactWorker {
 
 impl Drop for ContactWorker {
     fn drop(&mut self) {
-        self.cancel_running();
         if let Ok(mut state) = self.queue.state.lock() {
+            if let Ok(running) = self.running.lock() {
+                cancel_running(&running);
+            } else {
+                mark_unusable(&self.unusable, "contact running-job lock poisoned");
+            }
             state.shutdown = true;
             state.jobs.clear();
+        } else {
+            mark_unusable(&self.unusable, "contact queue lock poisoned");
+            if let Ok(running) = self.running.lock() {
+                cancel_running(&running);
+            }
         }
         self.queue.wake.notify_all();
         if let Some(handle) = self.handle.take() {
@@ -362,8 +392,24 @@ fn run_worker(
     busy: &Arc<AtomicU64>,
     unusable: &Arc<AtomicBool>,
 ) {
+    run_worker_with_hooks(queue, completions, running, busy, unusable, || {}, || {});
+}
+
+fn run_worker_with_hooks<AfterDequeue, AfterRunning>(
+    queue: &Arc<JobQueue>,
+    completions: &Arc<Mutex<Vec<ContactCompletion>>>,
+    running: &Arc<Mutex<Option<CancelFlag>>>,
+    busy: &Arc<AtomicU64>,
+    unusable: &Arc<AtomicBool>,
+    mut after_dequeue: AfterDequeue,
+    mut after_running: AfterRunning,
+)
+where
+    AfterDequeue: FnMut(),
+    AfterRunning: FnMut(),
+{
     loop {
-        let job = {
+        let (job, cancel, _busy) = {
             let Ok(mut state) = queue.state.lock() else {
                 mark_unusable(unusable, "contact queue lock poisoned");
                 return;
@@ -378,24 +424,31 @@ fn run_worker(
             if state.shutdown {
                 return;
             }
-            match state.jobs.pop_front() {
-                Some(job) => job,
-                None => continue,
-            }
-        };
-
-        let cancel = CancelFlag::new();
-        if let Ok(mut slot) = running.lock() {
+            let Some(job) = state.jobs.pop_front() else {
+                continue;
+            };
+            // The hook is a deterministic test seam for the dequeue handoff.
+            // In production it is an empty closure. The queue stays locked
+            // until the running token and busy hold are both visible.
+            after_dequeue();
+            let cancel = CancelFlag::new();
+            let Ok(mut slot) = running.lock() else {
+                mark_unusable(unusable, "contact running-job lock poisoned");
+                return;
+            };
             *slot = Some(cancel.clone());
-        }
-        let outcome = {
-            let _busy = Busy::new(busy);
-            execute(&job, &cancel)
+            drop(slot);
+            (job, cancel, Busy::new(busy))
         };
+        after_running();
+        let outcome = execute(&job, &cancel);
         let abandoned = cancel.is_cancelled();
-        if let Ok(mut slot) = running.lock() {
-            *slot = None;
-        }
+        let Ok(mut slot) = running.lock() else {
+            mark_unusable(unusable, "contact running-job lock poisoned");
+            return;
+        };
+        *slot = None;
+        drop(slot);
         if abandoned {
             continue;
         }
@@ -409,6 +462,14 @@ fn run_worker(
         }
         #[cfg(test)]
         signal_waiters(queue);
+    }
+}
+
+/// Cancel a token while its mutex is held. Callers that also touch the queue
+/// acquire queue state before the running-token mutex.
+fn cancel_running(running: &Option<CancelFlag>) {
+    if let Some(flag) = running {
+        flag.cancel();
     }
 }
 
