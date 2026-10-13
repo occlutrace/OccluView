@@ -199,6 +199,13 @@ fn validate_material_properties(lines: &[&str]) -> Result<(), FormatError> {
                 return Err(unsupported_material("Kd"));
             }
             Some("map_Kd") => validate_map_properties(&tokens[1..])?,
+            Some("d") if tokens.len() != 2 || tokens[1].parse::<f64>().ok() != Some(1.0) => {
+                return Err(unsupported_material("d"));
+            }
+            Some("Tr") if tokens.len() != 2 || tokens[1].parse::<f64>().ok() != Some(0.0) => {
+                return Err(unsupported_material("Tr"));
+            }
+            Some("map_d") => return Err(unsupported_material("map_d")),
             _ => {}
         }
     }
@@ -486,6 +493,11 @@ mod tests {
             "map_Kd scan.png\nKd 0.5 1 1",
             "map_Kd -o 0.25 scan.png",
             "map_Kd -clamp on scan.png",
+            "map_Kd scan.png\nd 0.5",
+            "map_Kd scan.png\nTr 0.5",
+            "map_Kd scan.png\nd NaN",
+            "map_Kd scan.png\nd -halo 1",
+            "map_Kd scan.png\nmap_d scan.png",
         ] {
             std::fs::write(
                 directory.path().join("scan.mtl"),
@@ -497,7 +509,7 @@ mod tests {
                 "silently discarded {properties}"
             );
         }
-        std::fs::write(directory.path().join("scan.mtl"), "newmtl unused\nmap_Kd -s 9 unused.png\nnewmtl used\nmap_Kd -s 1 1 1 -o 0 0 0 -t 0 -mm 0 1 scan.png\nKd 1 1 1\n").expect("identity MTL");
+        std::fs::write(directory.path().join("scan.mtl"), "newmtl unused\nmap_Kd -s 9 unused.png\nnewmtl used\nmap_Kd -s 1 1 1 -o 0 0 0 -t 0 -mm 0 1 scan.png\nKd 1 1 1\nd 1\nTr 0\n").expect("identity MTL");
         let mesh = crate::read_file(&path).expect("identity appearance");
         assert!(mesh.texture().is_some());
     }
