@@ -1,5 +1,4 @@
-//! The Third-party licenses modal: the generated THIRD-PARTY-NOTICES.md,
-//! readable in place from the About dialog.
+//! Third-party Rust, native code and asset licenses, readable from About.
 
 use super::information_dialog::InformationDialog;
 use super::settings::window::show_information_modal;
@@ -11,13 +10,20 @@ use std::sync::OnceLock;
 /// ties the app's rebuild to regeneration, so this window and the installed
 /// file cannot disagree, and a missing file is a compile error.
 const THIRD_PARTY_NOTICES: &str = include_str!("../../../../THIRD-PARTY-NOTICES.md");
+const NATIVE_NOTICES: &str = include_str!("../../../../THIRD-PARTY-NOTICES-NATIVE.md");
 
 /// The notices split once into lines. A quarter-megabyte in one label would
 /// re-lay-out every frame; `show_rows` over pre-split lines paints only the
 /// visible slice.
 fn notice_lines() -> &'static [&'static str] {
     static LINES: OnceLock<Vec<&'static str>> = OnceLock::new();
-    LINES.get_or_init(|| THIRD_PARTY_NOTICES.lines().collect())
+    LINES.get_or_init(|| {
+        THIRD_PARTY_NOTICES
+            .lines()
+            .chain(std::iter::once(""))
+            .chain(NATIVE_NOTICES.lines())
+            .collect()
+    })
 }
 
 impl SceneContext<'_> {
@@ -131,6 +137,15 @@ mod tests {
                 .any(|line| line.starts_with("- occluview")),
             "a first-party crate leaked into the third-party notices"
         );
+    }
+
+    #[test]
+    fn license_view_includes_vendored_icon_attribution() {
+        let visible_text = notice_lines().join("\n");
+        assert!(visible_text.contains("Lucide Contributors 2025"));
+        assert!(visible_text.contains("Copyright (c) 2013-2023 Cole Bemis"));
+        assert!(visible_text.contains("ISC License"));
+        assert!(visible_text.contains("The MIT License (MIT) (for portions derived from Feather)"));
     }
 
     #[test]
