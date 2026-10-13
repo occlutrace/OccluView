@@ -20,6 +20,21 @@ pub(crate) struct LoadCoordinator {
     pub(crate) queued: VecDeque<SceneLoadRequest>,
 }
 
+/// One poll of the single active decoder for an explicit scene lifetime.
+///
+/// The coordinator owns the receiver and the active slot, so the caller cannot
+/// observe a half-handed-off result or take another scene's work.
+pub(crate) enum DecoderPoll {
+    /// No active decoder belongs to the requested scene.
+    Idle,
+    /// The requested scene's decoder is still running.
+    Pending,
+    /// The decoder returned, but a newer Replace retired its result.
+    Superseded,
+    /// A result (including a disconnected receiver) is ready to hand off.
+    Decoded(DecodedSceneLoad),
+}
+
 impl LoadCoordinator {
     /// Queue an accepted request. Replace invalidates only earlier work for
     /// its own scene lifetime; requests belonging to the other scene retain
@@ -145,6 +160,44 @@ impl LoadCoordinator {
             .is_some_and(|active| active.scene_key == scene_key)
             .then(|| self.active.take())
             .flatten()
+    }
+
+    /// Poll the active decoder only when it belongs to `scene_key`. A completed
+    /// superseded result releases the slot but is not handed to the caller; the
+    /// next eligible request can start after the caller advances the queue.
+    pub(crate) fn poll_decoder(&mut self, scene_key: SceneKey) -> DecoderPoll {
+        if !self.active_for(scene_key) {
+            return DecoderPoll::Idle;
+        }
+        match self.active.as_ref().map(|active| active.receiver.try_recv()) {
+            Some(Err(TryRecvError::Empty)) => DecoderPoll::Pending,
+            Some(Ok(result)) => {
+                let Some(pending) = self.take_active_for(scene_key) else {
+                    return DecoderPoll::Idle;
+                };
+                if pending.superseded {
+                    DecoderPoll::Superseded
+                } else {
+                    DecoderPoll::Decoded(DecodedSceneLoad { pending, result })
+                }
+            }
+            Some(Err(TryRecvError::Disconnected)) => {
+                let Some(pending) = self.take_active_for(scene_key) else {
+                    return DecoderPoll::Idle;
+                };
+                if pending.superseded {
+                    DecoderPoll::Superseded
+                } else {
+                    DecoderPoll::Decoded(DecodedSceneLoad {
+                        pending,
+                        result: Err(anyhow::anyhow!(
+                            "scene loader stopped before returning a result"
+                        )),
+                    })
+                }
+            }
+            None => DecoderPoll::Idle,
+        }
     }
 
     pub(crate) fn decoded_for(&self, scene_key: SceneKey) -> bool {

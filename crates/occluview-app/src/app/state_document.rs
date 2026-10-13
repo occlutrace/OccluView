@@ -26,7 +26,7 @@
 
 use super::egui;
 use crate::edit_mode::EditModeController;
-use crate::scene_loading::LoadQueueCameraReset;
+use crate::scene_loading::{replace_result_requires_guard, LoadQueueCameraReset};
 use occluview_core::{Scene, SceneMeshId};
 use std::sync::Arc;
 
@@ -185,6 +185,35 @@ impl DocumentState {
         !self.unsaved_edit_layer_ids.is_empty()
             || self.unsaved_drag_pose
             || self.unsaved_sculpt_stroke
+    }
+
+    /// Whether replacing the scene now would discard work that is still only
+    /// in memory. This is the dirty side of the replacement guard: an active
+    /// edit session, an edit that has not been saved, or an unsaved drag or
+    /// sculpt stroke all count.
+    pub(super) fn replacement_needs_guard(&self) -> bool {
+        self.edit_mode.has_active_session()
+            || self.edit_mode.is_dirty()
+            || self.has_unsaved_mesh_edits()
+    }
+
+    /// Recheck a Replace against the authorisation captured when the operator
+    /// accepted it. `replace_result_requires_guard` stays the pure revision
+    /// contract; this owns the document-side active-session and dirty checks
+    /// that are the same at dispatch and completion.
+    pub(super) fn replace_requires_guard(
+        &self,
+        content_revision_at_request: u64,
+        dirty_at_request: bool,
+    ) -> bool {
+        (!dirty_at_request && self.edit_mode.has_active_session())
+            || replace_result_requires_guard(
+                content_revision_at_request,
+                self.content_revision,
+                dirty_at_request,
+                self.replacement_needs_guard(),
+                self.edit_mode.is_busy(),
+            )
     }
 
     /// Forget the unsaved-edit tracking for the layers just written to disk.
