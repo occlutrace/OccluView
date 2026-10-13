@@ -13,6 +13,26 @@ fn spec_256() -> ThumbnailSpec {
 }
 
 #[test]
+fn canonical_file_reader_rechecks_thumbnail_cap_after_preflight() {
+    let path = fixtures::write_temp_fixture("stl", b"");
+    let metadata = cache::thumbnail_file_metadata(&path).expect("empty preflight");
+    let grown_size = MAX_THUMBNAIL_FILE_BYTES as u64 + 1;
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .expect("open fixture")
+        .set_len(grown_size)
+        .expect("grow sparse file after preflight");
+    let result = load_thumbnail_mesh_from_file(&path, metadata);
+    fs::remove_file(path).expect("remove fixture");
+    assert!(matches!(
+        result,
+        Err(ThumbnailError::Format(FormatError::TooLarge { bytes, limit }))
+            if bytes == grown_size && limit == MAX_THUMBNAIL_FILE_BYTES as u64
+    ));
+}
+
+#[test]
 fn non_renderable_file_errors_name_the_detected_format() {
     let path = fixtures::write_temp_fixture(
         "obj",
