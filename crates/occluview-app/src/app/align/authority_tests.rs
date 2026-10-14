@@ -911,6 +911,27 @@ fn a_pose_equal_to_the_current_one_records_nothing() {
     );
 }
 
+#[test]
+fn exported_align_pose_keeps_undo_without_an_unsaved_guard() {
+    let (mut app, moving_id, _fixed_id) = app_with_a_landed_fit("align-export-guard");
+    let mut scene = app.active_context().expect("live test scene");
+    assert!(scene.commit_align_affine(glam::Affine3A::from_translation(Vec3::Y)));
+    assert!(!scene.document.edit_mode.has_active_session());
+    assert!(scene.document.edit_mode.is_dirty());
+    assert!(scene.document.close_needs_guard());
+    assert!(scene.document.replacement_needs_guard());
+
+    // This is the document transition made only after a successful export.
+    scene.document.forget_unsaved_edits(&[moving_id]);
+    assert_eq!(scene.document.edit_mode.undo_len(), 1);
+    assert!(!scene.document.close_needs_guard());
+    assert!(!scene.document.replacement_needs_guard());
+
+    scene.document.unsaved_drag_pose = true;
+    assert!(scene.document.close_needs_guard());
+    assert!(scene.document.replacement_needs_guard());
+}
+
 /// A job can outlive the layer it was computed from. The boundary has to refuse
 /// the pose instead of installing a scene that no longer contains the layer, and
 /// the caller has to see the refusal.
