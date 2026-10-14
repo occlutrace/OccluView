@@ -192,9 +192,15 @@ impl DocumentState {
     /// edit session, an edit that has not been saved, or an unsaved drag or
     /// sculpt stroke all count.
     pub(super) fn replacement_needs_guard(&self) -> bool {
-        self.edit_mode.has_active_session()
-            || self.edit_mode.is_dirty()
-            || self.has_unsaved_mesh_edits()
+        self.edit_mode.has_active_session() || self.has_unsaved_mesh_edits()
+    }
+
+    /// Committed edits use the per-layer save state. Edit-mode dirtiness
+    /// only represents additional unsaved work while its checkpoint is live.
+    pub(super) fn close_needs_guard(&self) -> bool {
+        self.has_unsaved_mesh_edits()
+            || (self.edit_mode.has_active_session() && self.edit_mode.is_dirty())
+            || self.edit_mode.is_busy()
     }
 
     /// Recheck a Replace against the authorisation captured when the operator
