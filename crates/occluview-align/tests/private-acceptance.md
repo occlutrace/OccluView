@@ -77,3 +77,9 @@ manifest SHA-256, content-byte corpus SHA-256, executed case IDs, and measured
 numeric results. It contains no asset paths or patient names. Hashes identify
 bytes; they do not anonymize a corpus that someone already possesses. Keep the
 manifest and any mapping from random IDs to case files private.
+
+The source fingerprint includes the Git diff and untracked files. Regular
+untracked files are read in bounded chunks; symlinks contribute their link text
+without reading the destination. A file that changes during the snapshot, or
+an unsupported file type, prevents a receipt. The receipt names this encoding
+as `git-diff-and-untracked-v2` so it can be distinguished from earlier receipts.
