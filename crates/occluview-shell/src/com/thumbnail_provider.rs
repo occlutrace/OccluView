@@ -447,7 +447,12 @@ impl IInitializeWithStream_Impl for ThumbnailProvider_Impl {
                 // Acquire our owned reference before evaluating the
                 // `borrow_mut()` receiver below. `Ref::ok` returns `&IStream`;
                 // AddRef must not run while the handler RefCell is borrowed.
+                let activation = self.this.source.borrow().token();
                 let stream = pstream.ok()?.clone();
+                let still_current = self.this.source.borrow().is_current(activation);
+                if !still_current {
+                    return Err(e_fail());
+                }
                 let retired = self
                     .this
                     .source
@@ -494,6 +499,7 @@ impl IInitializeWithItem_Impl for ThumbnailProvider_Impl {
             "thumbnail IInitializeWithItem",
             || Err(e_fail()),
             || {
+                let activation = self.this.source.borrow().token();
                 let item = psi.ok()?;
                 // SAFETY: `GetDisplayName(SIGDN_FILESYSPATH)` returns a CoTaskMem
                 // allocated null-terminated UTF-16 path. We copy it into a Rust
@@ -504,6 +510,10 @@ impl IInitializeWithItem_Impl for ThumbnailProvider_Impl {
                 let path = std::ffi::OsString::from_wide(unsafe { path_ptr.as_wide() });
                 // SAFETY: freeing the COM-owned pointer returned by GetDisplayName.
                 unsafe { CoTaskMemFree(Some(path_ptr.as_ptr().cast())) };
+                let still_current = self.this.source.borrow().is_current(activation);
+                if !still_current {
+                    return Err(e_fail());
+                }
                 self.this.initialize_path(PathBuf::from(path));
                 Ok(())
             },
