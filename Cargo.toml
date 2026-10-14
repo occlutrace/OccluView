@@ -127,8 +127,8 @@ pollster   = "1.0.1"
 
 # Image encode/decode: PNG for golden tests + thumbnail output, JPEG for glTF
 # texture images (dental GLBs commonly embed JPEG textures). The manifest allows
-# versions below 0.25.11; Dependabot separately holds automatic upgrades below
-# 0.25.10 until decoder-graph coverage supports that change.
+# versions below 0.25.11; Dependabot separately excludes automatic upgrades to
+# 0.25.10 and newer until decoder-graph coverage supports that change.
 image      = { version = ">=0.25.5, <0.25.11", default-features = false, features = ["png", "jpeg"] }
 
 # ZIP package container support for HPS archives. Keep features
