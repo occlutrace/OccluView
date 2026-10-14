@@ -85,6 +85,8 @@ trap cleanup EXIT
 tree_snapshot() {
   python3 - <<'PYTHON'
 import hashlib
+import os
+import stat
 import subprocess
 
 diff = subprocess.run(
@@ -103,16 +105,46 @@ untracked = subprocess.run(
     stdout=subprocess.PIPE,
 ).stdout.split(b"\0")
 digest = hashlib.sha256()
-digest.update(b"occluview-worktree-diff-v1\0")
+digest.update(b"occluview-worktree-diff-v2\0")
 digest.update(len(diff).to_bytes(8, "big"))
 digest.update(diff)
-for raw_path in sorted(path for path in untracked if path):
-    with open(raw_path, "rb") as source:
-        content = source.read()
-    digest.update(len(raw_path).to_bytes(8, "big"))
-    digest.update(raw_path)
-    digest.update(len(content).to_bytes(8, "big"))
-    digest.update(content)
+
+def identity(metadata):
+    return (metadata.st_dev, metadata.st_ino, metadata.st_mode,
+            metadata.st_size, metadata.st_mtime_ns, metadata.st_ctime_ns)
+
+try:
+    for raw_path in sorted(path for path in untracked if path):
+        before = os.lstat(raw_path)
+        digest.update(len(raw_path).to_bytes(8, "big"))
+        digest.update(raw_path)
+        if stat.S_ISLNK(before.st_mode):
+            # Git retains the link text, not the contents of its destination.
+            content = os.readlink(raw_path)
+            digest.update(b"L")
+            digest.update(len(content).to_bytes(8, "big"))
+            digest.update(content)
+        elif stat.S_ISREG(before.st_mode):
+            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+            with os.fdopen(os.open(raw_path, flags), "rb") as source:
+                if identity(os.fstat(source.fileno())) != identity(before):
+                    raise ValueError
+                digest.update(b"F")
+                digest.update(before.st_size.to_bytes(8, "big"))
+                read_size = 0
+                while chunk := source.read(1024 * 1024):
+                    read_size += len(chunk)
+                    if read_size > before.st_size:
+                        raise ValueError
+                    digest.update(chunk)
+                if read_size != before.st_size or identity(os.fstat(source.fileno())) != identity(before):
+                    raise ValueError
+        else:
+            raise ValueError
+        if identity(os.lstat(raw_path)) != identity(before):
+            raise ValueError
+except (OSError, ValueError, OverflowError):
+    raise SystemExit("source snapshot is unavailable or changed; no receipt was written") from None
 print(("clean" if not status else "dirty") + " " + digest.hexdigest())
 PYTHON
 }
@@ -445,6 +477,7 @@ receipt = {
         "git_sha": os.environ["PRIVATE_REVISION"],
         "worktree": tree_state,
         "worktree_diff_sha256": tree_digest,
+        "worktree_diff_identity": "git-diff-and-untracked-v2",
     },
     "toolchain": {
         "rustc_version_verbose": os.environ["PRIVATE_RUSTC"],
