@@ -27,9 +27,6 @@ pub(super) struct WorkspaceInputFrame<'a> {
     pub(super) workspace_rect: Rect,
     pub(super) divider_rect: Option<Rect>,
     pub(super) modal_open: bool,
-    /// The camera popup was the only modal owner at the start of this frame.
-    /// Its item click may close it before workspace routing sees the release.
-    pub(super) camera_view_popup_is_only_modal: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,51 +43,31 @@ impl OccluViewApp {
         ctx: &egui::Context,
         frame: &WorkspaceInputFrame<'_>,
     ) {
-        let (
-            focused,
-            buttons,
-            primary_pressed,
-            primary_released,
-            secondary_pressed,
-            middle_pressed,
-            wheel,
-        ) = ctx.input(|input| {
-            (
-                input.focused,
-                pointer_buttons(input),
-                input.pointer.button_pressed(egui::PointerButton::Primary),
-                input.pointer.button_released(egui::PointerButton::Primary),
-                input.pointer.button_pressed(egui::PointerButton::Secondary),
-                input.pointer.button_pressed(egui::PointerButton::Middle),
-                input.raw.events.iter().any(|event| {
-                    matches!(event, egui::Event::MouseWheel { .. } | egui::Event::Zoom(_))
-                }),
-            )
-        });
+        let (focused, buttons, primary_pressed, secondary_pressed, middle_pressed, wheel) = ctx
+            .input(|input| {
+                (
+                    input.focused,
+                    pointer_buttons(input),
+                    input.pointer.button_pressed(egui::PointerButton::Primary),
+                    input.pointer.button_pressed(egui::PointerButton::Secondary),
+                    input.pointer.button_pressed(egui::PointerButton::Middle),
+                    input.raw.events.iter().any(|event| {
+                        matches!(event, egui::Event::MouseWheel { .. } | egui::Event::Zoom(_))
+                    }),
+                )
+            });
         if !focused {
             if let Some(owner) = self.workspace.input.focus_lost(buttons) {
                 self.cancel_captured_gesture(owner, ctx, GestureCancelReason::FocusLost);
             }
-            self.ui.camera_view_popup_capture = None;
             self.workspace.layer_drag = None;
             return;
         }
         self.workspace.input.focus_gained(buttons);
         if frame.modal_open || self.ui.modal_dialog_open() {
-            if frame.camera_view_popup_is_only_modal
-                && self.route_camera_view_popup_pointer(
-                    ctx,
-                    buttons,
-                    primary_pressed,
-                    primary_released,
-                )
-            {
-                return;
-            }
             if let Some(owner) = self.workspace.input.escape(buttons) {
                 self.cancel_captured_gesture(owner, ctx, GestureCancelReason::Escape);
             }
-            self.ui.camera_view_popup_capture = None;
             self.workspace.layer_drag = None;
             return;
         }
@@ -205,58 +182,6 @@ impl OccluViewApp {
             }
         }
     }
-
-    /// Route only a primary press/release that egui hit-tested onto the exact
-    /// camera popup. The global modal path still owns viewport input, focus
-    /// loss, explicit dialogs, and every pointer location outside this popup.
-    fn route_camera_view_popup_pointer(
-        &mut self,
-        ctx: &egui::Context,
-        buttons: PointerButtons,
-        primary_pressed: bool,
-        primary_released: bool,
-    ) -> bool {
-        let Some(pointer) = ctx.input(|input| input.pointer.hover_pos()) else {
-            return false;
-        };
-        let Some((popup_rect, popup_layer)) = self.ui.camera_view_popup_area else {
-            return false;
-        };
-        if !popup_rect.contains(pointer) || ctx.layer_id_at(pointer) != Some(popup_layer) {
-            return false;
-        }
-
-        let active = self.workspace.input.active();
-        if let Some(owner) = self.workspace.input.capture() {
-            return self.ui.camera_view_popup_capture == Some(owner)
-                && owner.target == active
-                && owner.kind == GestureKind::UiControl
-                && self.workspace.input.route_pointer(None)
-                    == super::super::workspace::input::PointerRoute::Captured(owner)
-                && (buttons.primary || primary_released);
-        }
-
-        if !primary_pressed
-            || self.workspace.input.route_pointer(Some(active))
-                != super::super::workspace::input::PointerRoute::Target(active)
-        {
-            return false;
-        }
-        match self
-            .workspace
-            .input
-            .primary_pressed(active, GestureKind::UiControl, None)
-        {
-            PressResult::Begin(owner)
-                if owner.target == active && owner.kind == GestureKind::UiControl =>
-            {
-                self.ui.camera_view_popup_capture = Some(owner);
-                true
-            }
-            _ => false,
-        }
-    }
-
     pub(super) fn pointer_over_workspace_chrome(
         &self,
         pointer: egui::Pos2,
@@ -320,9 +245,6 @@ impl OccluViewApp {
         ctx: &egui::Context,
         reason: GestureCancelReason,
     ) {
-        if self.ui.camera_view_popup_capture == Some(owner) {
-            self.ui.camera_view_popup_capture = None;
-        }
         match owner.kind {
             GestureKind::DividerResize => {
                 if restore_divider_ratio(&mut self.workspace.layout, owner)
@@ -424,7 +346,6 @@ impl OccluViewApp {
         });
         if primary_released {
             let _ = self.workspace.input.primary_released();
-            self.ui.camera_view_popup_capture = None;
         }
         if secondary_released {
             let _ = self
@@ -458,7 +379,6 @@ impl OccluViewApp {
         if let Some(owner) = self.workspace.input.escape(buttons) {
             self.cancel_captured_gesture(owner, ctx, GestureCancelReason::Escape);
         }
-        self.ui.camera_view_popup_capture = None;
     }
 }
 

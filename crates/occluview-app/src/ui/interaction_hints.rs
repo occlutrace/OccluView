@@ -91,12 +91,6 @@ const NAVIGATION: &[HintRow] = &[
             "help-hint-navigation-open-the-layer-or-scene-menu-when-stationary"
         ),
     },
-    HintRow {
-        gesture: "Tab → Enter / Space",
-        key: crate::i18n::message_id!(
-            "help-hint-navigation-choose-an-axis-aligned-camera-view"
-        ),
-    },
 ];
 
 const TOOLS: &[HintRow] = &[

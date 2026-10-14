@@ -5,39 +5,6 @@ use super::super::{
 use occluview_core::Aabb;
 
 impl SceneContext<'_> {
-    /// Shared authority for camera-axis controls that act on this viewport.
-    /// Pointer gizmo input adds its existing viewport-route gate separately;
-    /// toolbar actions may also arrive through this pane's own UI capture.
-    pub(in crate::app) fn camera_axis_controls_visible(&self, ctx: &egui::Context) -> bool {
-        self.is_active
-            && ctx.input(|input| input.focused)
-            && self.render.camera.is_some()
-            && !self.axis_gizmo_is_hidden()
-    }
-
-    /// Keyboard routes may target the active scene directly. While the menu
-    /// was already open at frame start, a captured route is accepted only if
-    /// that exact capture came from the camera popup itself.
-    pub(in crate::app) fn camera_axis_menu_enabled(&self, ctx: &egui::Context) -> bool {
-        if !self.camera_axis_controls_visible(ctx)
-            || self.ui.modal_dialog_open_except_axis_view_menu(ctx)
-        {
-            return false;
-        }
-        match self.input_route {
-            super::super::workspace::input::PointerRoute::Target(target) => {
-                target.scene == self.scene_key
-            }
-            super::super::workspace::input::PointerRoute::Captured(owner) => {
-                owner.target.scene == self.scene_key
-                    && owner.kind == super::super::workspace::input::GestureKind::UiControl
-                    && (!self.ui.camera_view_popup_open_at_frame_start
-                        || self.ui.camera_view_popup_capture == Some(owner))
-            }
-            super::super::workspace::input::PointerRoute::Suppressed => false,
-        }
-    }
-
     /// Draw one scene into its assigned canvas. The workspace root owns the
     /// shared `CentralPanel`, so scene rendering never changes global layout.
     pub(in crate::app) fn show_pane(
@@ -203,14 +170,7 @@ impl SceneContext<'_> {
             self.show_measure_tool_overlay(ui, response, axis_snap.is_some(), ctx);
         self.handle_contact_escape(ctx);
         if let Some(axis) = axis_snap {
-            let camera_controls_visible = self.camera_axis_controls_visible(ctx);
-            let viewport_modal_clear = !self.ui.modal_dialog_open();
-            if let Some(camera) = self
-                .render
-                .camera
-                .as_mut()
-                .filter(|_| input_allowed && viewport_modal_clear && camera_controls_visible)
-            {
+            if let Some(camera) = self.render.camera.as_mut().filter(|_| input_allowed) {
                 camera.snap_to_axis(axis);
                 self.request_camera_repaint(ctx);
             }
