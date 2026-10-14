@@ -93,7 +93,7 @@ occluview-shell   = { path = "crates/occluview-shell" }
 occluview-update  = { path = "crates/occluview-update" }
 
 # Math / numerics.
-glam    = "0.33.11"         # permissive (MIT OR Apache-2.0)
+glam    = "0.34.1"         # permissive (MIT OR Apache-2.0)
 bytemuck = { version = "1.25.2", features = ["derive"] }
 
 # HPS package compatibility. Parser dependencies are
@@ -133,7 +133,7 @@ image      = { version = ">=0.25.5, <0.25.11", default-features = false, feature
 
 # ZIP package container support for HPS archives. Keep features
 # narrow: ordinary scanner packages use stored/deflated entries.
-zip        = { version = "8.6.0", default-features = false, features = ["deflate"] }
+zip        = { version = "9.0.1", default-features = false, features = ["deflate"] }
 
 # Logging.
 tracing            = "0.1"
