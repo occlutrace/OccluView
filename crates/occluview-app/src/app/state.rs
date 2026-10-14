@@ -398,9 +398,7 @@ impl eframe::App for OccluViewApp {
         let mut can_install = true;
         for key in self.workspace.keys() {
             if let Some(scene) = self.scene_context(key) {
-                can_install &= !scene.document.has_unsaved_mesh_edits()
-                    && !scene.document.edit_mode.is_dirty()
-                    && !scene.document.edit_mode.is_busy()
+                can_install &= !scene.document.close_needs_guard()
                     && !scene.sculpt_has_live_work();
             }
         }
