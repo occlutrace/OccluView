@@ -78,5 +78,10 @@ roxmltree = { workspace = true }
 serde_yaml_ng = { workspace = true }
 serde_json = { workspace = true }
 
+[target.'cfg(windows)'.dev-dependencies.windows]
+version = "0.62.2"
+# IShellItem_Impl's attribute signature is needed by the reentrant test item.
+features = ["Win32_System_SystemServices"]
+
 [package.metadata.cargo-machete]
 ignored = ["windows-core"] # referenced by generated windows-rs macro code

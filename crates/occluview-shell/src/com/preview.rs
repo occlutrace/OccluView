@@ -101,6 +101,7 @@ pub struct PreviewHandler {
     // across a reentrant `QueryInterface`, while keeping the COM reference
     // alive until the last snapshot is dropped.
     site: std::cell::RefCell<Option<Rc<IUnknown>>>,
+    site_generation: std::cell::Cell<u64>,
     drag_mode: std::cell::Cell<PreviewDragMode>,
     last_pointer: std::cell::Cell<POINT>,
     drag_moved: std::cell::Cell<bool>,
@@ -119,6 +120,7 @@ impl PreviewHandler {
             preview_scene: std::cell::RefCell::new(None),
             rect: std::cell::RefCell::new(RECT::default()),
             site: std::cell::RefCell::new(None),
+            site_generation: std::cell::Cell::new(0),
             drag_mode: std::cell::Cell::new(PreviewDragMode::None),
             last_pointer: std::cell::Cell::new(POINT::default()),
             drag_moved: std::cell::Cell::new(false),
@@ -736,7 +738,13 @@ impl IObjectWithSite_Impl for PreviewHandler_Impl {
             || {
                 // Take the incoming COM reference before the RefCell
                 // replacement. Null clears the site.
+                let generation = self.this.site_generation.get().wrapping_add(1);
+                self.this.site_generation.set(generation);
                 let site = punksite.as_ref().cloned().map(Rc::new);
+                // AddRef may have installed a newer site through SetSite.
+                if self.this.site_generation.get() != generation {
+                    return Err(e_fail());
+                }
                 let retired = self.this.site.replace(site);
                 // RefCell::replace released its internal borrow before
                 // returning; drop the retired Rc outside the borrow because
@@ -787,7 +795,12 @@ impl IInitializeWithStream_Impl for PreviewHandler_Impl {
                 // Acquire our owned reference before evaluating the
                 // `borrow_mut()` receiver below. `Ref::ok` returns `&IStream`;
                 // AddRef must not run while the handler RefCell is borrowed.
+                let activation = self.this.source.borrow().token();
                 let stream = pstream.ok()?.clone();
+                let still_current = self.this.source.borrow().is_current(activation);
+                if !still_current {
+                    return Err(e_fail());
+                }
                 let retired = self
                     .this
                     .source
@@ -829,6 +842,7 @@ impl IInitializeWithItem_Impl for PreviewHandler_Impl {
             "preview IInitializeWithItem",
             || Err(e_fail()),
             || {
+                let activation = self.this.source.borrow().token();
                 let item = psi.ok()?;
                 // SAFETY: `GetDisplayName(SIGDN_FILESYSPATH)` returns a CoTaskMem
                 // path.
@@ -838,6 +852,10 @@ impl IInitializeWithItem_Impl for PreviewHandler_Impl {
                 let path = std::ffi::OsString::from_wide(unsafe { path_ptr.as_wide() });
                 // SAFETY: freeing the COM-owned pointer returned by GetDisplayName.
                 unsafe { CoTaskMemFree(Some(path_ptr.as_ptr().cast())) };
+                let still_current = self.this.source.borrow().is_current(activation);
+                if !still_current {
+                    return Err(e_fail());
+                }
                 self.this.initialize_path(PathBuf::from(path));
                 Ok(())
             },
@@ -853,8 +871,74 @@ fn shell_error_to_hresult(error: ShellError) -> windows::core::Error {
 mod item_tests {
     use super::*;
     use std::os::windows::ffi::OsStrExt;
-    use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
-    use windows::Win32::UI::Shell::SHCreateItemFromParsingName;
+    use windows::core::{ComObject, PWSTR};
+    use windows::Win32::System::Com::{
+        CoInitializeEx, CoTaskMemAlloc, CoUninitialize, IBindCtx, COINIT_APARTMENTTHREADED,
+    };
+    use windows::Win32::System::SystemServices::SFGAO_FLAGS;
+    use windows::Win32::UI::Shell::{IShellItem_Impl, SHCreateItemFromParsingName, SIGDN};
+
+    #[implement(IShellItem, Agile = false)]
+    struct ReentrantItem {
+        initialize_new_source: Rc<dyn Fn()>,
+    }
+
+    impl IShellItem_Impl for ReentrantItem_Impl {
+        fn BindToHandler(
+            &self,
+            _pbc: Ref<'_, IBindCtx>,
+            _bhid: *const GUID,
+            _riid: *const GUID,
+            _ppv: *mut *mut std::ffi::c_void,
+        ) -> windows::core::Result<()> {
+            Err(e_notimpl())
+        }
+
+        fn GetParent(&self) -> windows::core::Result<IShellItem> {
+            Err(e_notimpl())
+        }
+
+        fn GetDisplayName(&self, _name: SIGDN) -> windows::core::Result<PWSTR> {
+            (self.this.initialize_new_source)();
+            let path = [111_u16, 108, 100, 46, 111, 98, 106, 0];
+            // SAFETY: COM allocation holds all UTF-16 units, including NUL.
+            let allocation = unsafe { CoTaskMemAlloc(std::mem::size_of_val(&path)) }.cast::<u16>();
+            if allocation.is_null() {
+                return Err(e_fail());
+            }
+            // SAFETY: the allocation is writable and disjoint from the stack path.
+            unsafe { std::ptr::copy_nonoverlapping(path.as_ptr(), allocation, path.len()) };
+            Ok(PWSTR(allocation))
+        }
+
+        fn GetAttributes(&self, _mask: SFGAO_FLAGS) -> windows::core::Result<SFGAO_FLAGS> {
+            Err(e_notimpl())
+        }
+
+        fn Compare(&self, _item: Ref<'_, IShellItem>, _hint: u32) -> windows::core::Result<i32> {
+            Err(e_notimpl())
+        }
+    }
+
+    #[test]
+    fn reentrant_item_initialization_preserves_the_newer_source() {
+        let handler = ComObject::new(PreviewHandler::new());
+        let file: IInitializeWithFile = handler.to_interface();
+        let item: IShellItem = ReentrantItem {
+            initialize_new_source: Rc::new(move || {
+                // SAFETY: the interface and NUL-terminated literal remain live.
+                unsafe { file.Initialize(w!("new.obj"), 0) }.expect("nested initialization");
+            }),
+        }
+        .into();
+        let initialize: IInitializeWithItem = handler.to_interface();
+        // SAFETY: both interfaces stay live during the synchronous callback.
+        assert!(unsafe { initialize.Initialize(&item, 0) }.is_err());
+        assert_eq!(
+            handler.source.borrow().path(),
+            Some(std::path::Path::new("new.obj"))
+        );
+    }
 
     struct Apartment;
     impl Drop for Apartment {
