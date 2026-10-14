@@ -71,7 +71,6 @@ help-hint-navigation-zoom-toward-the-pointer = Zoom verso il puntatore
 help-hint-navigation-recenter-on-the-surface = Ricentra sulla superficie
 help-hint-navigation-recenter-on-the-surface-when-enabled = Ricentra se attivo
 help-hint-navigation-open-the-layer-or-scene-menu-when-stationary = Apri il menu livello/scena da fermo
-help-hint-navigation-choose-an-axis-aligned-camera-view = Usa Tab per raggiungere Vista, Invio o Spazio per aprire il menu, Tab per scegliere una direzione e Invio o Spazio per attivarla
 help-hint-tools-open-a-file = Apri un file
 help-hint-tools-open-cut-view = Apri vista in sezione
 help-hint-tools-arm-the-ruler = Attiva il righello
@@ -138,9 +137,6 @@ toolbar-align-hint = Unisci due scansioni: un punto per una ({ $shortcut })
 toolbar-edit-label = Modifica
 toolbar-edit-open = Editing delle mesh aperto
 toolbar-edit-hint = Editing delle mesh: selezione e scultura ({ $shortcut })
-toolbar-view-label = Vista
-toolbar-view-hint = Scegli una vista della camera allineata agli assi
-toolbar-view-from-axis = Vista da { $axis }
 toolbar-settings-label = Impostazioni
 toolbar-settings-hint = Apri le preferenze
 

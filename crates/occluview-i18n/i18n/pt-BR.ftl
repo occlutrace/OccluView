@@ -72,7 +72,6 @@ help-hint-navigation-zoom-toward-the-pointer = Zoom no ponteiro
 help-hint-navigation-recenter-on-the-surface = Recentralizar na superfície
 help-hint-navigation-recenter-on-the-surface-when-enabled = Recentralizar se ativado
 help-hint-navigation-open-the-layer-or-scene-menu-when-stationary = Abrir o menu da camada ou cena com clique parado
-help-hint-navigation-choose-an-axis-aligned-camera-view = Vá até Vista com Tab, abra com Enter ou Espaço, use Tab para escolher uma direção e ative-a com Enter ou Espaço
 help-hint-tools-open-a-file = Abrir um arquivo
 help-hint-tools-open-cut-view = Abrir vista de corte
 help-hint-tools-arm-the-ruler = Ativar a régua
@@ -139,9 +138,6 @@ toolbar-align-hint = Juntar dois escaneamentos: um ponto em cada ({ $shortcut })
 toolbar-edit-label = Editar
 toolbar-edit-open = Edição de malhas aberta
 toolbar-edit-hint = Edição de malhas: seleção e escultura ({ $shortcut })
-toolbar-view-label = Vista
-toolbar-view-hint = Escolher uma vista da câmera alinhada aos eixos
-toolbar-view-from-axis = Vista de { $axis }
 toolbar-settings-label = Ajustes
 toolbar-settings-hint = Abrir preferências
 

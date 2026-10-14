@@ -74,7 +74,6 @@ help-hint-navigation-zoom-toward-the-pointer = Zoom toward the pointer
 help-hint-navigation-recenter-on-the-surface = Recenter on the surface
 help-hint-navigation-recenter-on-the-surface-when-enabled = Recenter on the surface when enabled
 help-hint-navigation-open-the-layer-or-scene-menu-when-stationary = Open the layer or scene menu when stationary
-help-hint-navigation-choose-an-axis-aligned-camera-view = Tab to View, press Enter or Space to open, Tab to a direction, then press Enter or Space again
 help-hint-tools-open-a-file = Open a file
 help-hint-tools-open-cut-view = Open Cut View
 help-hint-tools-arm-the-ruler = Arm the Ruler
@@ -141,9 +140,6 @@ toolbar-align-hint = Bring two scans together: click a point on each ({ $shortcu
 toolbar-edit-label = Edit
 toolbar-edit-open = Mesh Editing is open
 toolbar-edit-hint = Mesh Editing: selection and sculpting ({ $shortcut })
-toolbar-view-label = View
-toolbar-view-hint = Choose an axis-aligned camera view
-toolbar-view-from-axis = View from { $axis }
 toolbar-settings-label = Settings
 toolbar-settings-hint = Open preferences
 

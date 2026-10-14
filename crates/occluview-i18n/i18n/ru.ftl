@@ -71,7 +71,6 @@ help-hint-navigation-zoom-toward-the-pointer = Масштаб к указате�
 help-hint-navigation-recenter-on-the-surface = Центрировать на поверхности
 help-hint-navigation-recenter-on-the-surface-when-enabled = Центрировать на поверхности, если включено
 help-hint-navigation-open-the-layer-or-scene-menu-when-stationary = Открыть меню слоя или сцены неподвижным кликом
-help-hint-navigation-choose-an-axis-aligned-camera-view = Перейдите к пункту «Вид» клавишей Tab, откройте клавишей Enter или пробелом, затем выберите направление клавишей Tab и подтвердите клавишей Enter или пробелом
 help-hint-tools-open-a-file = Открыть файл
 help-hint-tools-open-cut-view = Открыть сечение
 help-hint-tools-arm-the-ruler = Включить линейку
@@ -138,9 +137,6 @@ toolbar-align-hint = Совместить два скана: по точке н�
 toolbar-edit-label = Правка
 toolbar-edit-open = Редактирование сетки открыто
 toolbar-edit-hint = Редактирование сетки: выбор и скульптинг ({ $shortcut })
-toolbar-view-label = Вид
-toolbar-view-hint = Выбрать вид камеры вдоль оси
-toolbar-view-from-axis = Вид со стороны { $axis }
 toolbar-settings-label = Настройки
 toolbar-settings-hint = Открыть настройки
 
