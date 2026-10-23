@@ -1,7 +1,7 @@
 {
-  "revision": "1600c040a2f739d738149fae78e70df55be2d957",
+  "revision": "07bec7b7a3bdf8915eb5d7f0a328ef6e19e77dbc",
   "tag": "",
-  "why": "Explorer thumbnails, interactive preview, file association and MSI uninstall were exercised on the Windows 11 VM on 2026-10-12. Keep this reviewed shell revision while application-only changes continue.",
+  "why": "Withdraw encrypted HPS support from the Explorer DLL as well as the viewer. This revision removes decryption and all embedded/environment key loading. Explorer validation of this revision is pending; the previous pin must not be shipped because it retains the removed functionality.",
   "shell_crates": [
     "occluview-shell",
     "occluview-thumbnail",
@@ -16,6 +16,6 @@
     "occluview-geometry"
   ],
   "retire_when": "The shell built from the current tree has been used in Explorer on a real machine through the thumbnail, preview-pane, file-association and uninstall paths, and nothing in the pin-to-HEAD delta for the crates above is still wanted.",
-  "backport": "A fix that matters to Explorer (a parser, thumbnail, or COM defect) is cherry-picked onto the pinned revision and the pin moves forward to the new commit; the pin never moves to a revision that has not been exercised in Explorer.",
+  "backport": "Any future shell pin must retain the removal of encrypted HPS decryption and all embedded/environment key loading. Exercise thumbnail, preview-pane, file-association and uninstall paths in Explorer before recording a revision as verified.",
   "check": "scripts/report-shell-pin.sh writes the delta between this revision and the tree being released; the release records it as dist/occluview-shell-revision.json."
 }
