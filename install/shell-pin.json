@@ -1,7 +1,7 @@
 {
-  "revision": "07bec7b7a3bdf8915eb5d7f0a328ef6e19e77dbc",
+  "revision": "5acabf4c3c4b98aa9fdde158bc2aa6387996acc2",
   "tag": "",
-  "why": "Withdraw encrypted HPS support from the Explorer DLL as well as the viewer. This revision removes decryption and all embedded/environment key loading. Explorer validation of this revision is pending; the previous pin must not be shipped because it retains the removed functionality.",
+  "why": "Public v1.2.2 removes DCM opening and registration from the viewer and Explorer DLL, in addition to encrypted HPS decryption and all embedded/environment key loading. This source revision includes all removals. Explorer lifecycle validation is pending; do not ship the previous pin.",
   "shell_crates": [
     "occluview-shell",
     "occluview-thumbnail",
@@ -16,6 +16,6 @@
     "occluview-geometry"
   ],
   "retire_when": "The shell built from the current tree has been used in Explorer on a real machine through the thumbnail, preview-pane, file-association and uninstall paths, and nothing in the pin-to-HEAD delta for the crates above is still wanted.",
-  "backport": "Any future shell pin must retain the removal of encrypted HPS decryption and all embedded/environment key loading. Exercise thumbnail, preview-pane, file-association and uninstall paths in Explorer before recording a revision as verified.",
+  "backport": "Any future shell pin must retain the removal of DCM support, encrypted HPS decryption, and all embedded/environment key loading. Exercise thumbnail, preview-pane, file-association and uninstall paths in Explorer before recording a revision as verified.",
   "check": "scripts/report-shell-pin.sh writes the delta between this revision and the tree being released; the release records it as dist/occluview-shell-revision.json."
 }
