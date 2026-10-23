@@ -2,7 +2,7 @@
 //!
 //! `regsvr32 occluview_shell.dll` runs `DllRegisterServer`, which writes the
 //! registry entries that make Windows Explorer activate our thumbnail provider
-//! for each supported extension, AND registers the "Open with" ProgID so the
+//! for each supported extension, and registers the "Open with" ProgID so the
 //! shell offers OccluView in the context menu. `DllUnregisterServer` (via
 //! `regsvr32 /u`) removes them.
 //!
@@ -34,11 +34,11 @@ mod paths;
 mod registry;
 
 use associations::{
-    register_extension, register_extension_fallback, register_open_with,
+    LEGACY_OCCLUVIEW_PROGID, register_extension, register_extension_fallback, register_open_with,
     register_preview_extension, register_progid, register_system_extension,
     register_system_preview_extension, unregister_extension, unregister_extension_fallback,
     unregister_open_with, unregister_preview_extension, unregister_progid,
-    unregister_system_extension, unregister_system_preview_extension, LEGACY_OCCLUVIEW_PROGID,
+    unregister_system_extension, unregister_system_preview_extension,
 };
 use clsid::{
     register_approved_shell_extension, register_clsid, register_preview_handler_clsid,
@@ -49,40 +49,48 @@ use paths::app_exe_path;
 use registry::delete_tree;
 
 use crate::com::{OCCLUVIEW_PREVIEW_CLSID, OCCLUVIEW_THUMBNAIL_CLSID};
-use crate::{APP_EXE_NAME, SUPPORTED_EXTENSIONS};
-use windows::core::{HRESULT, HSTRING, PCWSTR};
-use windows::Win32::Foundation::HMODULE;
+use crate::{APP_EXE_NAME, SUPPORTED_EXTENSIONS, owns_extension};
+use windows::Win32::Foundation::{E_FAIL, HMODULE, S_OK};
 use windows::Win32::System::LibraryLoader::{
-    GetModuleFileNameW, GetModuleHandleExW, GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
-    GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+    GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+    GetModuleFileNameW, GetModuleHandleExW,
 };
-use windows::Win32::UI::Shell::{SHChangeNotify, SHCNE_ASSOCCHANGED, SHCNF_IDLIST};
-
-const S_OK: HRESULT = HRESULT(0);
-const E_FAIL: HRESULT = HRESULT(-2_147_418_235);
+use windows::Win32::UI::Shell::{SHCNE_ASSOCCHANGED, SHCNF_IDLIST, SHChangeNotify};
+use windows::core::{HRESULT, HSTRING, PCWSTR};
 
 /// `regsvr32 occluview_shell.dll` calls this. Creates all registry entries.
+///
+/// Wrapped in `com_entry` like every other exported COM boundary: a panic
+/// unwinding out of an `extern "system"` fn aborts the calling process.
 #[no_mangle]
 pub extern "system" fn DllRegisterServer() -> HRESULT {
-    match register_all() {
-        Ok(()) => S_OK,
-        Err(e) => {
-            tracing::error!(error = ?e, "DllRegisterServer failed");
-            E_FAIL
-        }
-    }
+    crate::com::com_entry(
+        "DllRegisterServer",
+        || E_FAIL,
+        || match register_all() {
+            Ok(()) => S_OK,
+            Err(e) => {
+                tracing::error!(error = ?e, "DllRegisterServer failed");
+                E_FAIL
+            }
+        },
+    )
 }
 
 /// `regsvr32 /u occluview_shell.dll` calls this. Removes all entries.
 #[no_mangle]
 pub extern "system" fn DllUnregisterServer() -> HRESULT {
-    match unregister_all() {
-        Ok(()) => S_OK,
-        Err(e) => {
-            tracing::error!(error = ?e, "DllUnregisterServer failed");
-            E_FAIL
-        }
-    }
+    crate::com::com_entry(
+        "DllUnregisterServer",
+        || E_FAIL,
+        || match unregister_all() {
+            Ok(()) => S_OK,
+            Err(e) => {
+                tracing::error!(error = ?e, "DllUnregisterServer failed");
+                E_FAIL
+            }
+        },
+    )
 }
 
 /// Write every registry entry. Idempotent — re-running over existing entries
@@ -101,6 +109,10 @@ fn register_all() -> windows::core::Result<()> {
     let our_clsid = HSTRING::from(OCCLUVIEW_THUMBNAIL_CLSID);
     let preview_clsid = HSTRING::from(OCCLUVIEW_PREVIEW_CLSID);
     for &ext in SUPPORTED_EXTENSIONS {
+        // Register handlers only for currently supported, owned extensions.
+        if !owns_extension(ext) {
+            continue;
+        }
         register_extension(ext, &our_clsid)?;
         register_preview_extension(ext, &preview_clsid)?;
         register_system_extension(ext, &our_clsid)?;
@@ -108,8 +120,15 @@ fn register_all() -> windows::core::Result<()> {
     }
     if let Some(app_path) = app_exe_path(&dll_path) {
         for &ext in SUPPORTED_EXTENSIONS {
+            // The ProgID and the Open-with entries are opt-in surfaces: they
+            // put OccluView in the "Open with" list and give it the icon,
+            // thumbnail and preview once a user picks it. Those are safe for
+            // every supported extension. The extension fallback writes the
+            // machine-wide default ProgID, so it is not.
             register_progid(ext, &app_path)?;
-            register_extension_fallback(ext, &app_path)?;
+            if owns_extension(ext) {
+                register_extension_fallback(ext, &app_path)?;
+            }
             register_open_with(ext)?;
         }
     } else {
@@ -131,18 +150,22 @@ fn unregister_all() -> windows::core::Result<()> {
     let _ = unregister_approved_shell_extension();
     let _ = unregister_preview_handlers_list();
     for &ext in SUPPORTED_EXTENSIONS {
-        // Missing entry is fine (user may have deleted it); ignore not-found.
-        let _ = unregister_extension(ext);
-        let _ = unregister_preview_extension(ext);
-        let _ = unregister_system_extension(ext);
-        let _ = unregister_system_preview_extension(ext);
-        let _ = unregister_open_with(ext);
-        let _ = unregister_extension_fallback(ext, app_path.as_ref());
-        let _ = unregister_progid(ext);
+        unregister_extension_entries(ext, app_path.as_ref());
     }
     let _ = delete_tree(&HSTRING::from(LEGACY_OCCLUVIEW_PROGID));
     notify_shell_associations_changed();
     Ok(())
+}
+
+/// Each removal checks ownership before touching an existing handler.
+fn unregister_extension_entries(ext: &str, app_path: Option<&HSTRING>) {
+    let _ = unregister_extension(ext);
+    let _ = unregister_preview_extension(ext);
+    let _ = unregister_system_extension(ext);
+    let _ = unregister_system_preview_extension(ext);
+    let _ = unregister_open_with(ext);
+    let _ = unregister_extension_fallback(ext, app_path);
+    let _ = unregister_progid(ext);
 }
 
 /// Tell Explorer that file associations and shell handlers changed.
@@ -157,11 +180,19 @@ fn own_dll_path() -> windows::core::Result<HSTRING> {
     let mut buf = [0u16; 1024];
     // SAFETY: GetModuleFileNameW writes up to `buf.len()` wide chars into our
     // stack array. `module` is resolved from an address inside this DLL.
-    let n = unsafe { GetModuleFileNameW(module, buf.as_mut_slice()) };
+    let n = unsafe { GetModuleFileNameW(Some(module), buf.as_mut_slice()) };
     if n == 0 {
-        return Err(windows::core::Error::from_win32());
+        return Err(windows::core::Error::from_thread());
     }
-    HSTRING::from_wide(&buf[..n as usize])
+    // `GetModuleFileNameW` truncates and returns `buf.len()` when the path does
+    // not fit, rather than failing. Treating that as success would write a
+    // truncated path into `InprocServer32`, and the class would then fail to
+    // load with no clue why. The context-menu helper already checks this; this
+    // is the same check at the registration entry point.
+    if n as usize >= buf.len() {
+        return Err(windows::core::Error::from_thread());
+    }
+    Ok(HSTRING::from_wide(&buf[..n as usize]))
 }
 
 fn own_module_handle() -> windows::core::Result<HMODULE> {

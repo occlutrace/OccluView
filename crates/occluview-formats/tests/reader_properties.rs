@@ -1,0 +1,720 @@
+//! Properties every reader has to hold, over inputs that actually parse.
+//!
+//! The fuzz targets look for crashes; these look for a mesh that is internally
+//! inconsistent, which a fuzzer has no oracle for. An index past the end of the
+//! vertex array is not a crash in the reader -- it is a crash, or a silently
+//! wrong picture, somewhere downstream: the GPU upload, the BVH build, the
+//! duplicate-normal pass, all of which trust what the reader returned.
+//!
+//! The generators build well-formed containers with arbitrary contents, so the
+//! success path is exercised rather than the reject-everything path a stream of
+//! random bytes takes.
+
+// The determinism property is bit-for-bit: two reads of the same bytes must
+// produce the same floats, not merely close ones.
+#![allow(clippy::expect_used, clippy::float_cmp)]
+
+use occluview_formats::dispatch::dispatch_by_extension;
+use proptest::prelude::*;
+
+mod non_finite_positions {
+    use super::dispatch_by_extension;
+
+    fn reject(extension: &str, bytes: &[u8]) {
+        assert!(
+            dispatch_by_extension(extension, bytes).is_err(),
+            "accepted non-finite {extension} position"
+        );
+    }
+
+    #[test]
+    fn ascii_stl() {
+        reject("stl", b"solid scan\nfacet normal 0 0 1\nouter loop\nvertex NaN 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid scan\n");
+    }
+
+    #[test]
+    fn binary_stl() {
+        reject(
+            "stl",
+            &occluview_core::test_support::binary_stl(&[[
+                0.0,
+                0.0,
+                1.0,
+                f32::NAN,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+            ]]),
+        );
+    }
+
+    #[test]
+    fn obj() {
+        reject("obj", b"v NaN 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n");
+    }
+
+    #[test]
+    fn ascii_off() {
+        reject("off", b"OFF\n3 1 0\nNaN 0 0\n1 0 0\n0 1 0\n3 0 1 2\n");
+    }
+
+    #[test]
+    fn binary_off() {
+        for bad in [f64::NAN, f64::INFINITY, f64::MAX] {
+            let mut bytes = b"OFF BINARY\n".to_vec();
+            for n in [3i32, 1, 0] {
+                bytes.extend_from_slice(&n.to_le_bytes());
+            }
+            for f in [bad, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0] {
+                bytes.extend_from_slice(&f.to_le_bytes());
+            }
+            for n in [3i32, 0, 1, 2] {
+                bytes.extend_from_slice(&n.to_le_bytes());
+            }
+            reject("off", &bytes);
+        }
+    }
+
+    #[test]
+    fn ascii_ply() {
+        reject("ply", b"ply\nformat ascii 1.0\nelement vertex 1\nproperty float x\nproperty float y\nproperty float z\nend_header\nNaN 0 0\n");
+    }
+
+    #[test]
+    fn binary_ply() {
+        for big in [false, true] {
+            let format = if big {
+                "binary_big_endian"
+            } else {
+                "binary_little_endian"
+            };
+            let mut bytes = format!("ply\nformat {format} 1.0\nelement vertex 1\nproperty float x\nproperty float y\nproperty float z\nend_header\n").into_bytes();
+            for f in [f32::NAN, 0.0, 0.0] {
+                bytes.extend_from_slice(&if big {
+                    f.to_be_bytes()
+                } else {
+                    f.to_le_bytes()
+                });
+            }
+            reject("ply", &bytes);
+        }
+    }
+
+    #[test]
+    fn glb() {
+        let (json, mut bin) = occluview_core::test_support::minimal_triangle_glb_chunks();
+        bin[..4].copy_from_slice(&f32::NAN.to_le_bytes());
+        reject("glb", &glb_bytes(json.to_vec(), &bin));
+    }
+
+    #[test]
+    fn glb_transform_overflow() {
+        let (json, mut bin) = occluview_core::test_support::minimal_triangle_glb_chunks();
+        bin[..4].copy_from_slice(&f32::MAX.to_le_bytes());
+        let mut doc: serde_json::Value = serde_json::from_slice(json).expect("JSON");
+        doc["nodes"][0]["scale"] = serde_json::json!([2.0, 2.0, 2.0]);
+        reject(
+            "glb",
+            &glb_bytes(serde_json::to_vec(&doc).expect("JSON"), &bin),
+        );
+    }
+
+    fn glb_bytes(mut json: Vec<u8>, bin: &[u8]) -> Vec<u8> {
+        while !json.len().is_multiple_of(4) {
+            json.push(b' ');
+        }
+        let mut bytes = b"glTF".to_vec();
+        bytes.extend_from_slice(&2u32.to_le_bytes());
+        bytes.extend_from_slice(
+            &u32::try_from(28 + json.len() + bin.len())
+                .expect("length")
+                .to_le_bytes(),
+        );
+        bytes.extend_from_slice(&u32::try_from(json.len()).expect("length").to_le_bytes());
+        bytes.extend_from_slice(b"JSON");
+        bytes.extend_from_slice(&json);
+        bytes.extend_from_slice(&u32::try_from(bin.len()).expect("length").to_le_bytes());
+        bytes.extend_from_slice(b"BIN\0");
+        bytes.extend_from_slice(bin);
+        bytes
+    }
+}
+
+/// A binary STL of `triangles` triangles with the given coordinates.
+fn binary_stl(coordinates: &[f32]) -> Vec<u8> {
+    let triangles = coordinates.len() / 12;
+    let mut bytes = vec![0u8; 80];
+    bytes.extend_from_slice(&u32::try_from(triangles).unwrap_or(0).to_le_bytes());
+    for triangle in coordinates.as_chunks::<12>().0 {
+        occluview_core::test_support::append_binary_stl_triangle(&mut bytes, triangle);
+    }
+    bytes
+}
+
+/// An OBJ with `vertices` positions and faces built from `face_indices`, which
+/// are allowed to point anywhere.
+fn obj(vertices: &[f32], face_indices: &[u32]) -> String {
+    use std::fmt::Write as _;
+    let mut text = String::new();
+    for position in vertices.as_chunks::<3>().0 {
+        let _ = writeln!(text, "v {} {} {}", position[0], position[1], position[2]);
+    }
+    for face in face_indices.as_chunks::<3>().0 {
+        let _ = writeln!(text, "f {} {} {}", face[0], face[1], face[2]);
+    }
+    text
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(128))]
+
+    /// A binary STL always parses, and what comes back has to be consistent.
+    #[test]
+    fn a_binary_stl_reads_into_a_mesh_that_indexes_only_its_own_vertices(
+        coordinates in proptest::collection::vec(-1.0e3_f32..1.0e3, 12..=120),
+    ) {
+        let usable = coordinates.len() / 12 * 12;
+        let bytes = binary_stl(&coordinates[..usable]);
+        let mesh = dispatch_by_extension("stl", &bytes).expect("a well-formed binary STL");
+
+        let vertices = mesh.vertices().len();
+        for index in mesh.indices() {
+            prop_assert!(
+                (*index as usize) < vertices,
+                "index {index} against {vertices} vertices"
+            );
+        }
+        prop_assert_eq!(mesh.indices().len() % 3, 0);
+        prop_assert_eq!(mesh.triangle_count() * 3, mesh.indices().len());
+        for vertex in mesh.vertices() {
+            let normal = vertex.normal;
+            prop_assert!(
+                normal.iter().all(|component| component.is_finite()),
+                "a normal came back as {normal:?}"
+            );
+        }
+    }
+
+    /// An OBJ whose faces point anywhere must be refused or clamped, never
+    /// returned with an index past the end.
+    #[test]
+    fn an_obj_with_arbitrary_face_indices_is_refused_or_consistent(
+        vertices in proptest::collection::vec(-1.0e3_f32..1.0e3, 3..=60),
+        faces in proptest::collection::vec(1_u32..40, 3..=30),
+    ) {
+        let usable_vertices = vertices.len() / 3 * 3;
+        let usable_faces = faces.len() / 3 * 3;
+        let text = obj(&vertices[..usable_vertices], &faces[..usable_faces]);
+
+        if let Ok(mesh) = dispatch_by_extension("obj", text.as_bytes()) {
+            let count = mesh.vertices().len();
+            for index in mesh.indices() {
+                prop_assert!(
+                    (*index as usize) < count,
+                    "index {index} against {count} vertices"
+                );
+            }
+            prop_assert_eq!(mesh.indices().len() % 3, 0);
+        }
+    }
+
+    /// The same bytes read twice give the same mesh.
+    ///
+    /// The readers parallelise over triangles, and a parse that depends on
+    /// thread scheduling is a scan that changes between opening it and
+    /// exporting it.
+    #[test]
+    fn reading_the_same_bytes_twice_gives_the_same_mesh(
+        coordinates in proptest::collection::vec(-1.0e3_f32..1.0e3, 12..=240),
+    ) {
+        let usable = coordinates.len() / 12 * 12;
+        let bytes = binary_stl(&coordinates[..usable]);
+        let first = dispatch_by_extension("stl", &bytes).expect("a well-formed binary STL");
+        let second = dispatch_by_extension("stl", &bytes).expect("a well-formed binary STL");
+
+        prop_assert_eq!(first.vertices().len(), second.vertices().len());
+        prop_assert_eq!(first.indices(), second.indices());
+        for (a, b) in first.vertices().iter().zip(second.vertices()) {
+            prop_assert_eq!(a.position, b.position);
+            prop_assert_eq!(a.normal, b.normal);
+        }
+    }
+
+    /// And arbitrary bytes under any supported or retired extension must not panic.
+    #[test]
+    fn arbitrary_bytes_under_any_extension_are_answered_not_survived(
+        extension_choice in 0_usize..5,
+        bytes in proptest::collection::vec(any::<u8>(), 0..512),
+    ) {
+        let extension = ["stl", "ply", "obj", "glb", "off"][extension_choice];
+        let _ = dispatch_by_extension(extension, &bytes);
+    }
+}
+
+/// A UTF-8 BOM is metadata a Windows tool writes in front of an otherwise
+/// valid file. It must not hide the signature from the probe or the reader:
+/// a good PLY would become "not a PLY file" and an ASCII STL would be
+/// misrouted into the binary reader and reported as malformed.
+mod byte_order_mark {
+    const BOM: [u8; 3] = [0xEF, 0xBB, 0xBF];
+    const PLY: &str = "ply\nformat ascii 1.0\nelement vertex 3\n\
+        property float x\nproperty float y\nproperty float z\n\
+        element face 1\nproperty list uchar int vertex_indices\n\
+        end_header\n0 0 0\n1 0 0\n0 1 0\n3 0 1 2\n";
+    const STL: &str = "solid bom\nfacet normal 0 0 1\nouter loop\n\
+        vertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid bom\n";
+
+    fn with_bom(text: &str) -> Vec<u8> {
+        let mut bytes = BOM.to_vec();
+        bytes.extend_from_slice(text.as_bytes());
+        bytes
+    }
+
+    #[test]
+    fn a_bom_prefixed_ply_is_probed_and_read() {
+        let bytes = with_bom(PLY);
+        let kind = occluview_formats::probe::probe(Some("ply"), &bytes)
+            .expect("the probe must see through the BOM");
+        assert_eq!(kind, occluview_formats::probe::FormatKind::Ply);
+        let mesh = occluview_formats::ply::read(&bytes).expect("the reader must too");
+        assert_eq!(mesh.triangle_count(), 1);
+    }
+
+    #[test]
+    fn a_bom_prefixed_ascii_stl_is_read_as_ascii_not_binary() {
+        let bytes = with_bom(STL);
+        let mesh = occluview_formats::stl::read(&bytes).expect("an ASCII STL with a BOM");
+        assert_eq!(
+            mesh.triangle_count(),
+            1,
+            "it must not fall into the binary reader"
+        );
+    }
+
+    #[test]
+    fn a_bom_prefixed_file_still_dispatches_by_extension_when_the_magic_is_silent() {
+        // The one path where the extension decides: a binary STL with a
+        // free-form 80-byte header. A BOM in front must not defeat it.
+        let mut bytes = BOM.to_vec();
+        bytes.extend_from_slice(&[0u8; 80]);
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        let triangle = [
+            0.0f32, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+        ];
+        occluview_core::test_support::append_binary_stl_triangle(&mut bytes, &triangle);
+        let mesh = occluview_formats::dispatch_by_extension("stl", &bytes)
+            .expect("a BOM-prefixed binary STL by extension");
+        assert_eq!(mesh.triangle_count(), 1);
+    }
+}
+
+/// A header that declares an enormous element count must still return.
+///
+/// A reader that consumes no input per row turns a 68-byte file into an
+/// unbounded loop. That is worse than a crash for the Explorer thumbnail host:
+/// the process is not killed, it never finishes, and the preview never
+/// appears. The property is pinned as its own test rather than left to the
+/// fuzz lane's timeout.
+#[test]
+fn a_pathological_element_count_terminates_for_every_ply_variant() {
+    let huge = "18446744073709551615";
+    for bytes in [
+        format!("ply\nformat ascii 1.0\nelement face {huge}\nend_header\n"),
+        format!("ply\nformat binary_little_endian 1.0\nelement face {huge}\nend_header\n"),
+        format!("ply\nformat binary_big_endian 1.0\nelement face {huge}\nend_header\n"),
+        format!("ply\nformat ascii 1.0\nelement vertex {huge}\nend_header\n"),
+        format!("ply\nformat binary_little_endian 1.0\nelement vertex {huge}\nend_header\n"),
+        format!("ply\nformat binary_big_endian 1.0\nelement vertex {huge}\nend_header\n"),
+        format!(
+            "ply\nformat binary_little_endian 1.0\nelement edge {huge}\n\
+             property float x\nend_header\n"
+        ),
+        format!(
+            "ply\nformat ascii 1.0\nelement edge {huge}\n\
+             property float x\nend_header\n"
+        ),
+    ] {
+        // The assertion is the return itself: a reader that spins never
+        // completes, which the harness reports as a hang, not a pass.
+        let _ = occluview_formats::ply::read(bytes.as_bytes());
+    }
+}
+
+mod seeded_round_trips {
+    use occluview_core::{Mesh, MeshTexture, Vertex};
+    use occluview_formats::{MeshShading, MeshWriteFormat, MeshWriteOptions};
+    use std::fmt::Write as _;
+    use std::io::Write as _;
+
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> [u8; 8] {
+            self.0 = self
+                .0
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1);
+            self.0.to_le_bytes()
+        }
+
+        fn fraction(&mut self) -> f32 {
+            let bytes = self.next();
+            f32::from(u16::from_le_bytes([bytes[4], bytes[5]]) & 0x7fff) / 32767.0
+        }
+    }
+
+    fn mesh(seed: u64) -> Mesh {
+        let mut rng = Rng(seed);
+        let scale = [1e-8, 1.0, 1e6][usize::from(rng.next()[4] % 3)];
+        let triangles = usize::from(rng.next()[4] % 4) + 1;
+        let mut vertices = Vec::new();
+        for _ in 0..triangles {
+            let origin = glam::Vec3::new(rng.fraction(), rng.fraction(), rng.fraction()) * scale;
+            for offset in [glam::Vec3::ZERO, glam::Vec3::X, glam::Vec3::Y] {
+                let color = rng.next();
+                vertices.push(
+                    Vertex::at(origin + offset * scale)
+                        .with_normal(glam::Vec3::Z)
+                        .with_color([color[3], color[4], color[5], 255])
+                        .with_uv([rng.fraction(), rng.fraction()]),
+                );
+            }
+        }
+        let indices = (0..u32::try_from(vertices.len()).expect("bounded vertices")).collect();
+        Mesh::new_for_preview(None, vertices, indices).expect("valid triangle soup")
+    }
+
+    fn ply(mesh: &Mesh, binary_big_endian: bool) -> Vec<u8> {
+        let encoding = if binary_big_endian {
+            "binary_big_endian"
+        } else {
+            "ascii"
+        };
+        let mut bytes = format!(
+            "ply\nformat {encoding} 1.0\nelement vertex {}\n\
+             property float x\nproperty float y\nproperty float z\n\
+             property float nx\nproperty float ny\nproperty float nz\n\
+             property uchar red\nproperty uchar green\nproperty uchar blue\nproperty uchar alpha\n\
+             property float s\nproperty float t\nelement face {}\n\
+             property list uchar int vertex_indices\nend_header\n",
+            mesh.vertices().len(),
+            mesh.triangle_count(),
+        )
+        .into_bytes();
+        for vertex in mesh.vertices() {
+            let mut text = String::new();
+            for value in vertex.position.into_iter().chain(vertex.normal) {
+                if binary_big_endian {
+                    bytes.extend_from_slice(&value.to_be_bytes());
+                } else {
+                    write!(text, "{value} ").expect("text");
+                }
+            }
+            if binary_big_endian {
+                bytes.extend_from_slice(&vertex.color);
+            } else {
+                for value in vertex.color {
+                    write!(text, "{value} ").expect("text");
+                }
+            }
+            for value in vertex.uv {
+                if binary_big_endian {
+                    bytes.extend_from_slice(&value.to_be_bytes());
+                } else {
+                    write!(text, "{value} ").expect("text");
+                }
+            }
+            if !binary_big_endian {
+                text.push('\n');
+                bytes.extend_from_slice(text.as_bytes());
+            }
+        }
+        for triangle in mesh.indices().as_chunks::<3>().0 {
+            if binary_big_endian {
+                bytes.push(3);
+                for index in triangle {
+                    bytes.extend_from_slice(&index.to_be_bytes());
+                }
+            } else {
+                bytes.extend_from_slice(
+                    format!("3 {} {} {}\n", triangle[0], triangle[1], triangle[2]).as_bytes(),
+                );
+            }
+        }
+        bytes
+    }
+
+    fn off(mesh: &Mesh, binary: bool) -> Vec<u8> {
+        let mut bytes = if binary {
+            b"OFF BINARY\n".to_vec()
+        } else {
+            b"OFF\n".to_vec()
+        };
+        if binary {
+            for count in [mesh.vertices().len(), mesh.triangle_count(), 0] {
+                bytes
+                    .extend_from_slice(&i32::try_from(count).expect("bounded count").to_le_bytes());
+            }
+        } else {
+            bytes.extend_from_slice(
+                format!("{} {} 0\n", mesh.vertices().len(), mesh.triangle_count()).as_bytes(),
+            );
+        }
+        for vertex in mesh.vertices() {
+            if binary {
+                for coordinate in vertex.position {
+                    bytes.extend_from_slice(&f64::from(coordinate).to_le_bytes());
+                }
+            } else {
+                bytes.extend_from_slice(
+                    format!(
+                        "{} {} {}\n",
+                        vertex.position[0], vertex.position[1], vertex.position[2]
+                    )
+                    .as_bytes(),
+                );
+            }
+        }
+        for triangle in mesh.indices().as_chunks::<3>().0 {
+            if binary {
+                bytes.extend_from_slice(&3_i32.to_le_bytes());
+                for index in triangle {
+                    bytes.extend_from_slice(&index.to_le_bytes());
+                }
+            } else {
+                bytes.extend_from_slice(
+                    format!("3 {} {} {}\n", triangle[0], triangle[1], triangle[2]).as_bytes(),
+                );
+            }
+        }
+        bytes
+    }
+
+    fn ascii_stl(mesh: &Mesh) -> Vec<u8> {
+        let mut text = String::from("solid mesh\n");
+        for triangle in mesh.indices().as_chunks::<3>().0 {
+            text.push_str("facet normal 0 0 1\nouter loop\n");
+            for index in triangle {
+                let p = mesh.vertices()[usize::try_from(*index).expect("index")].position;
+                writeln!(text, "vertex {} {} {}", p[0], p[1], p[2]).expect("text");
+            }
+            text.push_str("endloop\nendfacet\n");
+        }
+        text.push_str("endsolid mesh\n");
+        text.into_bytes()
+    }
+
+    fn files(mesh: &Mesh) -> Vec<(&'static str, Vec<u8>, bool)> {
+        let mut files = Vec::new();
+        for (extension, format) in [
+            ("stl", MeshWriteFormat::StlBinary),
+            ("ply", MeshWriteFormat::PlyBinaryLittleEndian),
+            ("obj", MeshWriteFormat::Obj),
+        ] {
+            let mut bytes = Vec::new();
+            occluview_formats::write_mesh(&mut bytes, mesh, format, MeshWriteOptions::default())
+                .expect("write mesh");
+            files.push((extension, bytes, extension != "stl"));
+        }
+        let mut textured = mesh.clone();
+        textured.set_texture(MeshTexture::white_1x1());
+        files.push((
+            "glb",
+            occluview_formats::write_textured_glb(&textured).expect("write GLB"),
+            true,
+        ));
+        files.extend([
+            ("stl", ascii_stl(mesh), false),
+            ("ply", ply(mesh, false), true),
+            ("ply", ply(mesh, true), true),
+            ("off", off(mesh, false), false),
+            ("off", off(mesh, true), false),
+        ]);
+        files
+    }
+
+    fn read(extension: &str, bytes: &[u8]) -> Result<Mesh, occluview_formats::FormatError> {
+        occluview_formats::dispatch::dispatch_by_extension_shaded(
+            extension,
+            bytes,
+            MeshShading::AsWritten,
+        )
+    }
+
+    #[test]
+    fn seeded_meshes_round_trip_through_every_writer_and_reader() {
+        for seed in 1..=48 {
+            let source = mesh(seed);
+            for (extension, bytes, attributes) in files(&source) {
+                let restored = read(extension, &bytes).expect("read encoded mesh");
+                assert_eq!(
+                    restored.indices(),
+                    source.indices(),
+                    "{extension}, seed {seed}"
+                );
+                assert_eq!(restored.vertices().len(), source.vertices().len());
+                for (a, b) in restored.vertices().iter().zip(source.vertices()) {
+                    assert_eq!(a.position, b.position, "{extension}, seed {seed}");
+                    assert!(
+                        a.normal
+                            .iter()
+                            .zip(b.normal)
+                            .all(|(a, b)| (*a - b).abs() <= 1e-6),
+                        "{extension}, seed {seed}"
+                    );
+                    if attributes {
+                        assert_eq!(a.color, b.color, "{extension}, seed {seed}");
+                        assert!(
+                            a.uv.iter()
+                                .zip(b.uv)
+                                .all(|(a, b)| (*a - b).abs() <= 1.0 / 32767.0),
+                            "{extension}, seed {seed}"
+                        );
+                    }
+                }
+                if extension == "glb" {
+                    assert_eq!(restored.texture().expect("GLB texture").rgba, [255; 4]);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn seeded_textures_survive_obj_materials_and_glb() {
+        use image::ImageEncoder as _;
+        for seed in 1..=16 {
+            let source = mesh(seed);
+            let mut rng = Rng(seed);
+            let rgba: Vec<u8> = (0..4)
+                .flat_map(|_| {
+                    let color = rng.next();
+                    [color[2], color[4], color[6], 255]
+                })
+                .collect();
+            let mut png = Vec::new();
+            image::codecs::png::PngEncoder::new(&mut png)
+                .write_image(&rgba, 2, 2, image::ExtendedColorType::Rgba8)
+                .expect("texture PNG");
+            let directory = tempfile::tempdir().expect("texture directory");
+            let obj_path = directory.path().join("scan.obj");
+            let mut obj = Vec::from(b"mtllib scan.mtl\nusemtl scan\n".as_slice());
+            occluview_formats::write_mesh(
+                &mut obj,
+                &source,
+                MeshWriteFormat::Obj,
+                MeshWriteOptions::default(),
+            )
+            .expect("OBJ export");
+            std::fs::write(&obj_path, obj).expect("OBJ file");
+            std::fs::write(
+                directory.path().join("scan.mtl"),
+                b"newmtl scan\nKd 1 1 1\nmap_Kd atlas.png\n",
+            )
+            .expect("MTL file");
+            std::fs::write(directory.path().join("atlas.png"), png).expect("PNG file");
+            let restored = occluview_formats::read_file(&obj_path).expect("textured OBJ");
+            assert_eq!(restored.texture().expect("OBJ atlas").rgba, rgba);
+            for (actual, expected) in restored.vertices().iter().zip(source.vertices()) {
+                assert_eq!(actual.position, expected.position);
+                assert_eq!(actual.uv, expected.uv);
+            }
+
+            let mut textured = source.clone();
+            textured.set_texture(MeshTexture::new(2, 2, rgba.clone()));
+            let glb = occluview_formats::write_textured_glb(&textured).expect("textured GLB");
+            assert_eq!(
+                read("glb", &glb)
+                    .expect("GLB")
+                    .texture()
+                    .expect("atlas")
+                    .rgba,
+                rgba
+            );
+        }
+    }
+
+    #[test]
+    fn seeded_file_mutations_return_errors_or_consistent_meshes() {
+        for seed in 1..=8 {
+            let source = mesh(seed);
+            let mut rng = Rng(seed);
+            for (extension, bytes, _) in files(&source) {
+                let mut mutations = Vec::new();
+                let mut cuts = vec![
+                    0,
+                    1,
+                    3,
+                    4,
+                    7,
+                    11,
+                    12,
+                    27,
+                    80,
+                    83,
+                    84,
+                    bytes.len() / 2,
+                    bytes.len() - 1,
+                ];
+                cuts.extend((0..bytes.len()).step_by(17));
+                for cut in cuts.into_iter().filter(|cut| *cut < bytes.len()) {
+                    mutations.push(bytes[..cut].to_vec());
+                }
+                for _ in 0..24 {
+                    let mut changed = bytes.clone();
+                    let random = rng.next();
+                    let index =
+                        usize::from(u16::from_le_bytes([random[3], random[4]])) % bytes.len();
+                    changed[index] ^= 1 << (random[5] % 8);
+                    mutations.push(changed);
+                }
+                if extension == "stl" && !bytes.starts_with(b"solid") {
+                    let mut changed = bytes.clone();
+                    changed[80..84].copy_from_slice(&u32::MAX.to_le_bytes());
+                    mutations.push(changed);
+                }
+                if let Ok(text) = std::str::from_utf8(&bytes) {
+                    for needle in [
+                        "element vertex ",
+                        "element face ",
+                        "vertex_count=\"",
+                        "facet_count=\"",
+                    ] {
+                        if let Some(start) = text.find(needle).map(|at| at + needle.len()) {
+                            let count_len =
+                                text[start..].bytes().take_while(u8::is_ascii_digit).count();
+                            let mut changed = text.to_owned();
+                            changed.replace_range(start..start + count_len, "18446744073709551615");
+                            mutations.push(changed.into_bytes());
+                        }
+                    }
+                }
+                for changed in mutations {
+                    let result = std::panic::catch_unwind(|| read(extension, &changed));
+                    assert!(result.is_ok(), "panic reading {extension}, seed {seed}");
+                    if let Ok(Ok(mesh)) = result {
+                        assert!(mesh.indices().len().is_multiple_of(3));
+                        assert!(mesh.indices().iter().all(|index| {
+                            usize::try_from(*index).is_ok_and(|i| i < mesh.vertices().len())
+                        }));
+                        for vertex in mesh.vertices() {
+                            assert!(
+                                vertex
+                                    .position
+                                    .iter()
+                                    .chain(&vertex.normal)
+                                    .chain(&vertex.uv)
+                                    .all(|v| v.is_finite())
+                            );
+                        }
+                        assert!(mesh.vertices().len() <= changed.len().saturating_mul(3));
+                    }
+                }
+            }
+        }
+    }
+}

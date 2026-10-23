@@ -1,0 +1,17 @@
+[Desktop Entry]
+Type=Application
+Name=OccluView
+GenericName=Advanced Dental CAD Mesh Editor
+Comment=Mesh Repair and Mesh Editing for dental scans
+Exec=occluview %F
+Icon=occluview
+Terminal=false
+Categories=Graphics;3DGraphics;Viewer;
+# What a user types when they are looking for this: the work, not the product
+# name. Without it the launcher finds the viewer only by its own name.
+Keywords=dental;dentistry;scan;intraoral;occlusion;mesh;model;STL;PLY;OBJ;GLB;3D;CAD;
+# The app forwards the launch token to its existing X11/Wayland surface after
+# the window is created, so file-manager launches can activate the viewer.
+StartupNotify=true
+StartupWMClass=ai.occlutrace.OccluView
+MimeType=model/stl;model/obj;model/gltf-binary;application/x-ply;application/x-off;

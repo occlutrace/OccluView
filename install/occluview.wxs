@@ -1,0 +1,542 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?define ProductName = "OccluView 3D Viewer" ?>
+<?define Manufacturer = "Dental Cloud Technologies" ?>
+<?define UpgradeCode = "{9DA29242-E8A8-4A71-BEEB-04EEAB667157}" ?>
+<?define ThumbnailProviderCategory = "{E357FCCD-A995-4576-B01F-234630154E96}" ?>
+<?define PreviewHandlerCategory = "{8895B1C6-B41F-4C1C-A562-0D564250836F}" ?>
+<?define ShellClsid = "{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}" ?>
+<?define PreviewClsid = "{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}" ?>
+<?define PrevhostAppId = "{6D2B5079-2F0B-48DD-AB7F-97CEC514D30B}" ?>
+<!-- Two private installers were numbered ahead of the first public 1.2.1.
+     Recognize only their exact ProductCodes, never future public versions. -->
+<?define PrivateCandidate22 = "{B72A1528-296D-48B1-86C5-CC53C4092BC9}" ?>
+<?define PrivateCandidate23 = "{35DAB6DB-DB83-4A9B-9B43-E3C77FB7A804}" ?>
+<?define IsPrivateCandidate = '(WIX_DOWNGRADE_DETECTED = "$(var.PrivateCandidate22)" OR WIX_DOWNGRADE_DETECTED = "$(var.PrivateCandidate23)")' ?>
+<?ifndef ProductVersion?>
+<?define ProductVersion = "1.2.1" ?>
+<?endif?>
+<?ifndef BuildDir?>
+<?define BuildDir = "target\x86_64-pc-windows-msvc\release-unwind" ?>
+<?endif?>
+<?ifndef IncludeDiagnostics?>
+<?define IncludeDiagnostics = "0" ?>
+<?endif?>
+
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product
+    Id="*"
+    Name="$(var.ProductName)"
+    Language="1033"
+    Version="$(var.ProductVersion)"
+    Manufacturer="$(var.Manufacturer)"
+    UpgradeCode="$(var.UpgradeCode)">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" Platform="x64" />
+    <!--
+      ProductVersion is passed in from build-msi.ps1 (-dProductVersion) and
+      defaults to the value defined at the top of this file. MSI ProductVersion
+      is X.Y.Z only; each released build increments one of those fields.
+      Product/@Id is "*" so every package gets a fresh ProductCode while the
+      fixed UpgradeCode below drives a monotonic MajorUpgrade.
+    -->
+    <Upgrade Id="$(var.UpgradeCode)">
+      <UpgradeVersion Maximum="$(var.ProductVersion)" IncludeMaximum="yes" MigrateFeatures="yes" Property="WIX_UPGRADE_DETECTED" />
+      <UpgradeVersion Minimum="$(var.ProductVersion)" IncludeMinimum="no" OnlyDetect="yes" Property="WIX_DOWNGRADE_DETECTED" />
+    </Upgrade>
+    <Condition Message="A newer version of OccluView is already installed.">NOT WIX_DOWNGRADE_DETECTED OR $(var.IsPrivateCandidate)</Condition>
+    <Property Id="OCCLUVIEW_PRIVATE_CANDIDATE_ACCEPTED" Secure="yes" />
+    <CustomAction Id="AppendPrivateVersionCandidate" Property="WIX_UPGRADE_DETECTED" Value="[WIX_UPGRADE_DETECTED];[WIX_DOWNGRADE_DETECTED]" />
+    <CustomAction Id="AcceptPrivateVersionCandidate" Property="WIX_UPGRADE_DETECTED" Value="[WIX_DOWNGRADE_DETECTED]" />
+    <CustomAction Id="MarkPrivateVersionCandidate" Property="OCCLUVIEW_PRIVATE_CANDIDATE_ACCEPTED" Value="1" />
+    <InstallUISequence>
+      <Custom Action="AppendPrivateVersionCandidate" After="FindRelatedProducts">$(var.IsPrivateCandidate) AND WIX_UPGRADE_DETECTED AND NOT OCCLUVIEW_PRIVATE_CANDIDATE_ACCEPTED</Custom>
+      <Custom Action="AcceptPrivateVersionCandidate" After="AppendPrivateVersionCandidate">$(var.IsPrivateCandidate) AND NOT WIX_UPGRADE_DETECTED AND NOT OCCLUVIEW_PRIVATE_CANDIDATE_ACCEPTED</Custom>
+      <Custom Action="MarkPrivateVersionCandidate" After="AcceptPrivateVersionCandidate">$(var.IsPrivateCandidate)</Custom>
+    </InstallUISequence>
+    <MediaTemplate EmbedCab="yes" />
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+    <!--
+      Product icon shown in Add/Remove Programs and on shortcuts. Sourced from
+      the packaged multi-resolution .ico (16/24/32/48/64/128/256) so it stays
+      crisp at every DPI. Id keeps the .ico extension per WiX icon convention.
+    -->
+    <Icon Id="OccluViewIcon.ico" SourceFile="$(sys.SOURCEFILEDIR)..\crates\occluview-app\assets\windows\occluview.ico" />
+    <Property Id="ARPPRODUCTICON" Value="OccluViewIcon.ico" />
+    <Property Id="ARPCOMMENTS" Value="Advanced Mesh Repair and Mesh Editing for dental CAD scans." />
+    <Property Id="ARPCONTACT" Value="$(var.Manufacturer)" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/occlutrace/OccluView" />
+    <Property Id="ARPURLUPDATEINFO" Value="https://github.com/occlutrace/OccluView/releases" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/occlutrace/OccluView/issues" />
+    <!-- Single-feature product: no user-selectable features and repair is a
+         no-op, so hide the Modify and Repair buttons in Add/Remove Programs.
+         Only ARPNOREPAIR is authored here: the WixUI_InstallDir set injects
+         ARPNOMODIFY=1 itself, and authoring it again is a duplicate-symbol
+         light.exe error (LGHT0091) - the shell crate's contract test pins
+         that. -->
+    <Property Id="ARPNOREPAIR" Value="1" />
+    <!-- Branded WixUI_InstallDir flow: Welcome -> License -> InstallDir ->
+         Verify -> Progress -> Exit. Banner/dialog artwork is generated by
+         install/assets/gen-installer-art.py. -->
+    <UIRef Id="WixUI_InstallDir" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(sys.SOURCEFILEDIR)license.rtf" />
+    <WixVariable Id="WixUIBannerBmp" Value="$(sys.SOURCEFILEDIR)assets\WixUIBannerBmp.bmp" />
+    <WixVariable Id="WixUIDialogBmp" Value="$(sys.SOURCEFILEDIR)assets\WixUIDialogBmp.bmp" />
+    <CustomAction
+      Id="RefreshShellAssociationsInstall"
+      FileKey="filOccluViewExe"
+      ExeCommand="--shell-refresh"
+      Execute="deferred"
+      Return="check"
+      Impersonate="yes"
+      TerminalServerAware="yes" />
+    <CustomAction
+      Id="RefreshShellAssociationsUninstall"
+      FileKey="filOccluViewExe"
+      ExeCommand="--shell-refresh"
+      Execute="deferred"
+      Return="check"
+      Impersonate="yes"
+      TerminalServerAware="yes" />
+    <InstallExecuteSequence>
+      <RemoveExistingProducts After="InstallInitialize" />
+      <Custom Action="AppendPrivateVersionCandidate" After="FindRelatedProducts">$(var.IsPrivateCandidate) AND WIX_UPGRADE_DETECTED AND NOT OCCLUVIEW_PRIVATE_CANDIDATE_ACCEPTED</Custom>
+      <Custom Action="AcceptPrivateVersionCandidate" After="AppendPrivateVersionCandidate">$(var.IsPrivateCandidate) AND NOT WIX_UPGRADE_DETECTED AND NOT OCCLUVIEW_PRIVATE_CANDIDATE_ACCEPTED</Custom>
+      <Custom Action="MarkPrivateVersionCandidate" After="AcceptPrivateVersionCandidate">$(var.IsPrivateCandidate)</Custom>
+      <Custom Action="RefreshShellAssociationsInstall" After="WriteRegistryValues">NOT REMOVE</Custom>
+      <Custom Action="RefreshShellAssociationsUninstall" After="RemoveRegistryValues">REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE</Custom>
+    </InstallExecuteSequence>
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLFOLDER" Name="OccluView">
+          <Component Id="cmpOccluViewExe" Guid="{EB8EF0C2-A3F3-4A1E-AEC2-76346B975D89}" Win64="yes" Location="local">
+            <File Id="filOccluViewExe" Source="$(var.BuildDir)\occluview.exe" KeyPath="yes" />
+          </Component>
+          <Component Id="cmpOccluViewShellDll" Guid="{5F834B2B-71E8-444D-82F7-4F683AAF70DB}" Win64="yes">
+            <File
+              Id="filOccluViewShellDll"
+              Source="$(var.BuildDir)\occluview_shell.dll"
+              KeyPath="yes" />
+          </Component>
+          <?if $(var.IncludeDiagnostics) = 1 ?>
+          <!-- Non-release diagnostic packages carry symbols and two per-user
+               helpers. No installer action enables diagnostics or changes a
+               preview-host policy; the operator opts in after installation. -->
+          <Directory Id="DIAGNOSTICSFOLDER" Name="Diagnostics">
+            <Component Id="cmpDiagnosticAppSymbols" Guid="{E5A1E369-9B65-46E0-94D3-9E23D1FB3844}" Win64="yes">
+              <File
+                Id="filDiagnosticAppPdb"
+                Source="$(var.BuildDir)\occluview.pdb"
+                KeyPath="yes" />
+            </Component>
+            <Component Id="cmpDiagnosticShellSymbols" Guid="{7CA22B5F-5DC1-4CBE-95CB-B2543BFB0C34}" Win64="yes">
+              <File
+                Id="filDiagnosticShellPdb"
+                Source="$(var.BuildDir)\occluview_shell.pdb"
+                KeyPath="yes" />
+            </Component>
+            <Component Id="cmpEnablePreviewDiagnostics" Guid="{BFAE8A05-1146-4B16-B2BB-6726B9339721}" Win64="yes">
+              <File
+                Id="filEnablePreviewDiagnostics"
+                Source="$(sys.SOURCEFILEDIR)diagnostics\Enable-PreviewDiagnostics.ps1"
+                KeyPath="yes" />
+            </Component>
+            <Component Id="cmpCollectPreviewDiagnostics" Guid="{82A415B2-A31E-4EA0-B2C1-3A5B18B1E5DA}" Win64="yes">
+              <File
+                Id="filCollectPreviewDiagnostics"
+                Source="$(sys.SOURCEFILEDIR)diagnostics\Collect-PreviewDiagnostics.ps1"
+                KeyPath="yes" />
+            </Component>
+            <Component Id="cmpDiagnosticReadme" Guid="{9D0C8B25-6DE3-4B1C-B092-E50706B0D30E}" Win64="yes">
+              <File
+                Id="filDiagnosticReadme"
+                Source="$(sys.SOURCEFILEDIR)diagnostics\README.txt"
+                KeyPath="yes" />
+            </Component>
+          </Directory>
+          <?endif?>
+          <Component Id="cmpFormatIcon3d" Guid="{4B39EB44-2AA6-4908-9A69-94361855695C}" Win64="yes">
+            <File
+              Id="filFormatIcon3d"
+              Source="$(sys.SOURCEFILEDIR)assets\file-icons\occluview-3d.ico"
+              KeyPath="yes" />
+          </Component>
+          <!-- The statically linked dependencies' licenses require their
+               notices to travel with the binaries, so the license set is
+               installed beside them, matching the portable ZIP. -->
+          <Component Id="cmpLicenseFile" Guid="{020E0DE0-6FC0-4D6E-A35A-43D1F2E13E2C}" Win64="yes">
+            <File Id="filLicenseFile" Source="$(sys.SOURCEFILEDIR)..\LICENSE" KeyPath="yes" />
+          </Component>
+          <Component Id="cmpNoticeFile" Guid="{5BDC9478-EB3E-40B3-8807-560E19AB3CF2}" Win64="yes">
+            <File Id="filNoticeFile" Source="$(sys.SOURCEFILEDIR)..\NOTICE" KeyPath="yes" />
+          </Component>
+          <Component Id="cmpThirdPartyNotices" Guid="{9868D894-60AB-4821-8A96-B9FFC3B5CDEA}" Win64="yes">
+            <File
+              Id="filThirdPartyNotices"
+              Source="$(sys.SOURCEFILEDIR)..\THIRD-PARTY-NOTICES.md"
+              KeyPath="yes" />
+          </Component>
+          <!-- The C++ geometry kernel and its own dependencies are statically
+               linked into occluview.exe and are invisible to every Cargo tool,
+               so their notices are a separate, hand-maintained file. -->
+          <Component Id="cmpThirdPartyNoticesNative" Guid="{3A1F6E2D-9C74-4B58-8E0A-16D7C4B9F5E2}" Win64="yes">
+            <File
+              Id="filThirdPartyNoticesNative"
+              Source="$(sys.SOURCEFILEDIR)..\THIRD-PARTY-NOTICES-NATIVE.md"
+              KeyPath="yes" />
+          </Component>
+          <Component Id="cmpShellRegistration" Guid="{2B247A1D-C712-4B12-A4CE-E0AAD092966D}" Win64="yes">
+            <RegistryKey Root="HKLM" Key="Software\Classes\CLSID\$(var.ShellClsid)">
+              <RegistryValue Type="string" Value="OccluView Thumbnail Provider" KeyPath="yes" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\CLSID\$(var.ShellClsid)\InprocServer32">
+              <RegistryValue Type="string" Value="[INSTALLFOLDER]occluview_shell.dll" />
+              <RegistryValue Name="ThreadingModel" Type="string" Value="Apartment" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\CLSID\$(var.PreviewClsid)">
+              <RegistryValue Type="string" Value="OccluView Preview Handler" />
+              <RegistryValue Name="AppID" Type="string" Value="$(var.PrevhostAppId)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\CLSID\$(var.PreviewClsid)\InprocServer32">
+              <RegistryValue Type="string" Value="[INSTALLFOLDER]occluview_shell.dll" />
+              <RegistryValue Name="ThreadingModel" Type="string" Value="Apartment" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Shell Extensions\Approved">
+              <RegistryValue Name="$(var.ShellClsid)" Type="string" Value="OccluView Thumbnail Provider" />
+              <RegistryValue Name="$(var.PreviewClsid)" Type="string" Value="OccluView Preview Handler" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\PreviewHandlers">
+              <RegistryValue Name="$(var.PreviewClsid)" Type="string" Value="OccluView Preview Handler" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.STL">
+              <RegistryValue Type="string" Value="STL File" />
+              <RegistryValue Name="FriendlyTypeName" Type="string" Value="STL File" />
+              <RegistryValue Name="ThumbnailCutoff" Type="integer" Value="1" />
+              <RegistryValue Name="TypeOverlay" Type="string" Value="" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.STL\ShellEx\$(var.ThumbnailProviderCategory)">
+              <RegistryValue Type="string" Value="$(var.ShellClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.STL\ShellEx\$(var.PreviewHandlerCategory)">
+              <RegistryValue Type="string" Value="$(var.PreviewClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.STL\DefaultIcon">
+              <RegistryValue Type="string" Value="[INSTALLFOLDER]occluview-3d.ico" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.STL\shell\open\command">
+              <RegistryValue Type="string" Value="&quot;[INSTALLFOLDER]occluview.exe&quot; &quot;%1&quot;" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.stl\ShellEx\$(var.ThumbnailProviderCategory)">
+              <RegistryValue Type="string" Value="$(var.ShellClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.stl\ShellEx\$(var.PreviewHandlerCategory)">
+              <RegistryValue Type="string" Value="$(var.PreviewClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.stl\shell\OccluView.Edit">
+              <RegistryValue Type="string" Value="Edit in OccluView" />
+              <RegistryValue Name="Icon" Type="string" Value="[INSTALLFOLDER]occluview.exe" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.stl\shell\OccluView.Edit\command">
+              <RegistryValue Type="string" Value="&quot;[INSTALLFOLDER]occluview.exe&quot; &quot;%1&quot;" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.PLY">
+              <RegistryValue Type="string" Value="PLY File" />
+              <RegistryValue Name="FriendlyTypeName" Type="string" Value="PLY File" />
+              <RegistryValue Name="ThumbnailCutoff" Type="integer" Value="1" />
+              <RegistryValue Name="TypeOverlay" Type="string" Value="" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.PLY\ShellEx\$(var.ThumbnailProviderCategory)">
+              <RegistryValue Type="string" Value="$(var.ShellClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.PLY\ShellEx\$(var.PreviewHandlerCategory)">
+              <RegistryValue Type="string" Value="$(var.PreviewClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.PLY\DefaultIcon">
+              <RegistryValue Type="string" Value="[INSTALLFOLDER]occluview-3d.ico" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.PLY\shell\open\command">
+              <RegistryValue Type="string" Value="&quot;[INSTALLFOLDER]occluview.exe&quot; &quot;%1&quot;" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.ply\ShellEx\$(var.ThumbnailProviderCategory)">
+              <RegistryValue Type="string" Value="$(var.ShellClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.ply\ShellEx\$(var.PreviewHandlerCategory)">
+              <RegistryValue Type="string" Value="$(var.PreviewClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.ply\shell\OccluView.Edit">
+              <RegistryValue Type="string" Value="Edit in OccluView" />
+              <RegistryValue Name="Icon" Type="string" Value="[INSTALLFOLDER]occluview.exe" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.ply\shell\OccluView.Edit\command">
+              <RegistryValue Type="string" Value="&quot;[INSTALLFOLDER]occluview.exe&quot; &quot;%1&quot;" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.OBJ">
+              <RegistryValue Type="string" Value="OBJ File" />
+              <RegistryValue Name="FriendlyTypeName" Type="string" Value="OBJ File" />
+              <RegistryValue Name="ThumbnailCutoff" Type="integer" Value="1" />
+              <RegistryValue Name="TypeOverlay" Type="string" Value="" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.OBJ\ShellEx\$(var.ThumbnailProviderCategory)">
+              <RegistryValue Type="string" Value="$(var.ShellClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.OBJ\ShellEx\$(var.PreviewHandlerCategory)">
+              <RegistryValue Type="string" Value="$(var.PreviewClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.OBJ\DefaultIcon">
+              <RegistryValue Type="string" Value="[INSTALLFOLDER]occluview-3d.ico" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.OBJ\shell\open\command">
+              <RegistryValue Type="string" Value="&quot;[INSTALLFOLDER]occluview.exe&quot; &quot;%1&quot;" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.obj\ShellEx\$(var.ThumbnailProviderCategory)">
+              <RegistryValue Type="string" Value="$(var.ShellClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.obj\ShellEx\$(var.PreviewHandlerCategory)">
+              <RegistryValue Type="string" Value="$(var.PreviewClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.obj\shell\OccluView.Edit">
+              <RegistryValue Type="string" Value="Edit in OccluView" />
+              <RegistryValue Name="Icon" Type="string" Value="[INSTALLFOLDER]occluview.exe" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.obj\shell\OccluView.Edit\command">
+              <RegistryValue Type="string" Value="&quot;[INSTALLFOLDER]occluview.exe&quot; &quot;%1&quot;" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.OFF">
+              <RegistryValue Type="string" Value="OFF File" />
+              <RegistryValue Name="FriendlyTypeName" Type="string" Value="OFF File" />
+              <RegistryValue Name="ThumbnailCutoff" Type="integer" Value="1" />
+              <RegistryValue Name="TypeOverlay" Type="string" Value="" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.OFF\ShellEx\$(var.ThumbnailProviderCategory)">
+              <RegistryValue Type="string" Value="$(var.ShellClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.OFF\ShellEx\$(var.PreviewHandlerCategory)">
+              <RegistryValue Type="string" Value="$(var.PreviewClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.OFF\DefaultIcon">
+              <RegistryValue Type="string" Value="[INSTALLFOLDER]occluview-3d.ico" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.OFF\shell\open\command">
+              <RegistryValue Type="string" Value="&quot;[INSTALLFOLDER]occluview.exe&quot; &quot;%1&quot;" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.off\ShellEx\$(var.ThumbnailProviderCategory)">
+              <RegistryValue Type="string" Value="$(var.ShellClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.off\ShellEx\$(var.PreviewHandlerCategory)">
+              <RegistryValue Type="string" Value="$(var.PreviewClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.off\shell\OccluView.Edit">
+              <RegistryValue Type="string" Value="Edit in OccluView" />
+              <RegistryValue Name="Icon" Type="string" Value="[INSTALLFOLDER]occluview.exe" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.off\shell\OccluView.Edit\command">
+              <RegistryValue Type="string" Value="&quot;[INSTALLFOLDER]occluview.exe&quot; &quot;%1&quot;" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.GLB">
+              <RegistryValue Type="string" Value="GLB File" />
+              <RegistryValue Name="FriendlyTypeName" Type="string" Value="GLB File" />
+              <RegistryValue Name="ThumbnailCutoff" Type="integer" Value="1" />
+              <RegistryValue Name="TypeOverlay" Type="string" Value="" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.GLB\ShellEx\$(var.ThumbnailProviderCategory)">
+              <RegistryValue Type="string" Value="$(var.ShellClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.GLB\ShellEx\$(var.PreviewHandlerCategory)">
+              <RegistryValue Type="string" Value="$(var.PreviewClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.GLB\DefaultIcon">
+              <RegistryValue Type="string" Value="[INSTALLFOLDER]occluview-3d.ico" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\MeshFile.GLB\shell\open\command">
+              <RegistryValue Type="string" Value="&quot;[INSTALLFOLDER]occluview.exe&quot; &quot;%1&quot;" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.glb\ShellEx\$(var.ThumbnailProviderCategory)">
+              <RegistryValue Type="string" Value="$(var.ShellClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.glb\ShellEx\$(var.PreviewHandlerCategory)">
+              <RegistryValue Type="string" Value="$(var.PreviewClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.glb\shell\OccluView.Edit">
+              <RegistryValue Type="string" Value="Edit in OccluView" />
+              <RegistryValue Name="Icon" Type="string" Value="[INSTALLFOLDER]occluview.exe" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\SystemFileAssociations\.glb\shell\OccluView.Edit\command">
+              <RegistryValue Type="string" Value="&quot;[INSTALLFOLDER]occluview.exe&quot; &quot;%1&quot;" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\Applications\occluview.exe">
+              <RegistryValue Type="string" Value="$(var.ProductName)" />
+              <RegistryValue Name="FriendlyAppName" Type="string" Value="$(var.ProductName)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\Applications\occluview.exe\shell\open\command">
+              <RegistryValue Type="string" Value="&quot;[INSTALLFOLDER]occluview.exe&quot; &quot;%1&quot;" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\Applications\occluview.exe\SupportedTypes">
+              <RegistryValue Name=".stl" Type="string" Value="" />
+              <RegistryValue Name=".ply" Type="string" Value="" />
+              <RegistryValue Name=".obj" Type="string" Value="" />
+              <RegistryValue Name=".glb" Type="string" Value="" />
+              <RegistryValue Name=".off" Type="string" Value="" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\.stl">
+              <RegistryValue Type="string" Value="MeshFile.STL" />
+              <RegistryValue Name="ThumbnailCutoff" Type="integer" Value="1" />
+              <RegistryValue Name="TypeOverlay" Type="string" Value="" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\.stl\DefaultIcon">
+              <RegistryValue Type="string" Value="[INSTALLFOLDER]occluview-3d.ico" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\.stl\ShellEx\$(var.ThumbnailProviderCategory)">
+              <RegistryValue Type="string" Value="$(var.ShellClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\.stl\ShellEx\$(var.PreviewHandlerCategory)">
+              <RegistryValue Type="string" Value="$(var.PreviewClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\.ply">
+              <RegistryValue Type="string" Value="MeshFile.PLY" />
+              <RegistryValue Name="ThumbnailCutoff" Type="integer" Value="1" />
+              <RegistryValue Name="TypeOverlay" Type="string" Value="" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\.ply\DefaultIcon">
+              <RegistryValue Type="string" Value="[INSTALLFOLDER]occluview-3d.ico" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\.ply\ShellEx\$(var.ThumbnailProviderCategory)">
+              <RegistryValue Type="string" Value="$(var.ShellClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\.ply\ShellEx\$(var.PreviewHandlerCategory)">
+              <RegistryValue Type="string" Value="$(var.PreviewClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\.obj">
+              <RegistryValue Type="string" Value="MeshFile.OBJ" />
+              <RegistryValue Name="ThumbnailCutoff" Type="integer" Value="1" />
+              <RegistryValue Name="TypeOverlay" Type="string" Value="" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\.obj\DefaultIcon">
+              <RegistryValue Type="string" Value="[INSTALLFOLDER]occluview-3d.ico" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\.obj\ShellEx\$(var.ThumbnailProviderCategory)">
+              <RegistryValue Type="string" Value="$(var.ShellClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\.obj\ShellEx\$(var.PreviewHandlerCategory)">
+              <RegistryValue Type="string" Value="$(var.PreviewClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\.off">
+              <RegistryValue Type="string" Value="MeshFile.OFF" />
+              <RegistryValue Name="ThumbnailCutoff" Type="integer" Value="1" />
+              <RegistryValue Name="TypeOverlay" Type="string" Value="" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\.off\DefaultIcon">
+              <RegistryValue Type="string" Value="[INSTALLFOLDER]occluview-3d.ico" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\.off\ShellEx\$(var.ThumbnailProviderCategory)">
+              <RegistryValue Type="string" Value="$(var.ShellClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\.off\ShellEx\$(var.PreviewHandlerCategory)">
+              <RegistryValue Type="string" Value="$(var.PreviewClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\.glb">
+              <RegistryValue Type="string" Value="MeshFile.GLB" />
+              <RegistryValue Name="ThumbnailCutoff" Type="integer" Value="1" />
+              <RegistryValue Name="TypeOverlay" Type="string" Value="" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\.glb\DefaultIcon">
+              <RegistryValue Type="string" Value="[INSTALLFOLDER]occluview-3d.ico" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\.glb\ShellEx\$(var.ThumbnailProviderCategory)">
+              <RegistryValue Type="string" Value="$(var.ShellClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\.glb\ShellEx\$(var.PreviewHandlerCategory)">
+              <RegistryValue Type="string" Value="$(var.PreviewClsid)" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\.stl\OpenWithProgids">
+              <RegistryValue Name="MeshFile.STL" Type="string" Value="" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\.ply\OpenWithProgids">
+              <RegistryValue Name="MeshFile.PLY" Type="string" Value="" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\.obj\OpenWithProgids">
+              <RegistryValue Name="MeshFile.OBJ" Type="string" Value="" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\.glb\OpenWithProgids">
+              <RegistryValue Name="MeshFile.GLB" Type="string" Value="" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\.off\OpenWithProgids">
+              <RegistryValue Name="MeshFile.OFF" Type="string" Value="" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\.stl\OpenWithList\occluview.exe">
+              <RegistryValue Type="string" Value="" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\.ply\OpenWithList\occluview.exe">
+              <RegistryValue Type="string" Value="" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\.obj\OpenWithList\occluview.exe">
+              <RegistryValue Type="string" Value="" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\.glb\OpenWithList\occluview.exe">
+              <RegistryValue Type="string" Value="" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\Classes\.off\OpenWithList\occluview.exe">
+              <RegistryValue Type="string" Value="" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\RegisteredApplications">
+              <RegistryValue Name="OccluView" Type="string" Value="Software\OccluTrace\OccluView\Capabilities" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\OccluTrace\OccluView\Capabilities">
+              <RegistryValue Name="ApplicationName" Type="string" Value="$(var.ProductName)" />
+              <RegistryValue Name="ApplicationDescription" Type="string" Value="Advanced Mesh Repair and Mesh Editing for dental CAD scans." />
+              <RegistryValue Name="ApplicationIcon" Type="string" Value="[INSTALLFOLDER]occluview.exe,0" />
+            </RegistryKey>
+            <RegistryKey Root="HKLM" Key="Software\OccluTrace\OccluView\Capabilities\FileAssociations">
+              <RegistryValue Name=".stl" Type="string" Value="MeshFile.STL" />
+              <RegistryValue Name=".ply" Type="string" Value="MeshFile.PLY" />
+              <RegistryValue Name=".obj" Type="string" Value="MeshFile.OBJ" />
+              <RegistryValue Name=".glb" Type="string" Value="MeshFile.GLB" />
+              <RegistryValue Name=".off" Type="string" Value="MeshFile.OFF" />
+            </RegistryKey>
+          </Component>
+        </Directory>
+      </Directory>
+
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ProgramMenuDir" Name="OccluView">
+          <Component Id="cmpStartMenuShortcut" Guid="{C1CB7607-75E0-4112-9ECC-607B7561A73B}" Win64="yes">
+            <Shortcut
+              Id="shcOccluView"
+              Name="$(var.ProductName)"
+              Description="Open the OccluView 3D scan viewer"
+              Target="[INSTALLFOLDER]occluview.exe"
+              WorkingDirectory="INSTALLFOLDER"
+              Icon="OccluViewIcon.ico">
+              <ShortcutProperty Key="System.AppUserModel.ID" Value="OccluTrace.OccluView" />
+            </Shortcut>
+            <RemoveFolder Id="rmProgramMenuDir" On="uninstall" />
+            <RegistryValue
+              Root="HKCU"
+              Key="Software\OccluTrace\OccluView"
+              Name="StartMenuShortcut"
+              Type="integer"
+              Value="1"
+              KeyPath="yes" />
+          </Component>
+        </Directory>
+      </Directory>
+    </Directory>
+
+    <Feature Id="featOccluView" Title="$(var.ProductName)" Level="1">
+      <ComponentRef Id="cmpOccluViewExe" />
+      <ComponentRef Id="cmpOccluViewShellDll" />
+      <?if $(var.IncludeDiagnostics) = 1 ?>
+      <ComponentRef Id="cmpDiagnosticAppSymbols" />
+      <ComponentRef Id="cmpDiagnosticShellSymbols" />
+      <ComponentRef Id="cmpEnablePreviewDiagnostics" />
+      <ComponentRef Id="cmpCollectPreviewDiagnostics" />
+      <ComponentRef Id="cmpDiagnosticReadme" />
+      <?endif?>
+      <ComponentRef Id="cmpFormatIcon3d" />
+      <ComponentRef Id="cmpLicenseFile" />
+      <ComponentRef Id="cmpNoticeFile" />
+      <ComponentRef Id="cmpThirdPartyNotices" />
+      <ComponentRef Id="cmpThirdPartyNoticesNative" />
+      <ComponentRef Id="cmpShellRegistration" />
+      <ComponentRef Id="cmpStartMenuShortcut" />
+    </Feature>
+  </Product>
+</Wix>

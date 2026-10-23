@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Hand a versioned source commit to the existing hosted Package workflow.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+if [[ "${1:-}" != handoff || "$#" -gt 2 || ( "$#" -eq 2 && "${2:-}" != --resume ) ]]; then
+  echo "Usage: scripts/release handoff [--resume]" >&2
+  exit 2
+fi
+
+release_repo=occlutrace/OccluView
+release_version="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')"
+release_tag="v$release_version"
+release_sha="$(git rev-parse HEAD)"
+
+if [[ -n "$(git status --porcelain)" ]]; then
+  echo "Commit the release source before handing it off." >&2
+  exit 1
+fi
+if [[ "${2:-}" == --resume ]]; then
+  release_sha="$(git rev-parse "refs/tags/$release_tag^{commit}")"
+  exec python3 scripts/publish-release.py --repo "$release_repo" \
+    --tag "$release_tag" --source-sha "$release_sha"
+fi
+if [[ -n "$(git ls-remote --tags origin "refs/tags/$release_tag")" ]]; then
+  echo "Release tag $release_tag already exists; existing releases are never overwritten." >&2
+  exit 1
+fi
+
+# The workflow builds on hosted runners and publishes its signed update
+# manifest. No local build, test, or browser prerequisite is introduced here.
+gh workflow enable package-msi.yml --repo "$release_repo"
+git tag -a "$release_tag" "$release_sha" -m "OccluView $release_version"
+git push origin "refs/tags/$release_tag"
+printf 'Handed off %s (%s) to https://github.com/%s/actions/workflows/package-msi.yml\n' \
+  "$release_tag" "$release_sha" "$release_repo"

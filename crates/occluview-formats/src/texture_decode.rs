@@ -9,21 +9,21 @@ use image::GenericImageView;
 use occluview_core::MeshTexture;
 use std::io::Cursor;
 
-/// A texture may be wide enough for scanner exports without letting one image
-/// dominate the viewer or the Windows thumbnail provider's address space.
+// One definition of the texture budget for every reader in the workspace,
+/// Largest accepted image edge in pixels.
 pub(crate) const MAX_TEXTURE_DIMENSION_PX: u32 = 8_192;
-/// Maximum resulting RGBA buffer (4K square is exactly 64 MiB).
-pub(crate) const MAX_TEXTURE_RGBA_BYTES: u64 = 64 * 1024 * 1024;
+/// Maximum decoded RGBA bytes for a single image.
+pub(crate) const MAX_TEXTURE_RGBA_BYTES: u64 = 256 * 1024 * 1024;
+
+const EMBEDDED_RASTER_FORMAT_POLICY: &str =
+    "embedded texture format is not permitted; only PNG and JPEG are accepted";
 
 pub(crate) fn decode_embedded_raster(
     bytes: &[u8],
     format: &'static str,
 ) -> Result<MeshTexture, FormatError> {
-    let mut reader = image::ImageReader::new(Cursor::new(bytes))
-        .with_guessed_format()
-        .map_err(|error| {
-            texture_error(format, format!("texture format detection failed: {error}"))
-        })?;
+    let image_format = accepted_embedded_raster_format(bytes, format)?;
+    let mut reader = image::ImageReader::with_format(Cursor::new(bytes), image_format);
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(MAX_TEXTURE_DIMENSION_PX);
     limits.max_image_height = Some(MAX_TEXTURE_DIMENSION_PX);
@@ -39,6 +39,25 @@ pub(crate) fn decode_embedded_raster(
         height,
         decoded.to_rgba8().into_raw(),
     ))
+}
+
+fn accepted_embedded_raster_format(
+    bytes: &[u8],
+    container_format: &'static str,
+) -> Result<image::ImageFormat, FormatError> {
+    let image_format = image::guess_format(bytes).map_err(|error| {
+        texture_error(
+            container_format,
+            format!("texture format detection failed: {error}"),
+        )
+    })?;
+    match image_format {
+        image::ImageFormat::Png | image::ImageFormat::Jpeg => Ok(image_format),
+        unsupported => Err(texture_error(
+            container_format,
+            format!("{EMBEDDED_RASTER_FORMAT_POLICY}: {unsupported:?}"),
+        )),
+    }
 }
 
 pub(crate) fn validate_texture_dimensions(
@@ -82,10 +101,65 @@ fn texture_error(format: &'static str, reason: impl Into<String>) -> FormatError
 mod tests {
     use super::*;
 
+    /// A compact PNG whose decoded width exceeds the allocation limit.
+    fn over_wide_png(width: u32) -> Vec<u8> {
+        use image::ImageEncoder as _;
+        let mut bytes = Vec::new();
+        let row = vec![0_u8; width as usize];
+        let encoded = image::codecs::png::PngEncoder::new(&mut bytes).write_image(
+            &row,
+            width,
+            1,
+            image::ExtendedColorType::L8,
+        );
+        assert!(encoded.is_ok(), "fixture encode failed: {encoded:?}");
+        bytes
+    }
+
     #[test]
-    fn dimensions_accept_a_4k_square_but_reject_larger_rgba_surfaces() {
+    fn a_header_claiming_more_than_the_pixel_limit_is_refused_before_decoding() {
+        // `validate_texture_dimensions` runs on an image that has already been
+        // decoded, so by the time it can complain the allocation has happened.
+        // The line that prevents the bomb is `reader.limits(limits)`, and this
+        // test fails without it.
+        let bomb = over_wide_png(MAX_TEXTURE_DIMENSION_PX + 808);
+        assert!(
+            bomb.len() < 4096,
+            "the fixture must stay small to be a bomb at all: {} bytes",
+            bomb.len()
+        );
+
+        let decoded = decode_embedded_raster(&bomb, "test");
+        let Err(FormatError::Malformed { reason, .. }) = decoded else {
+            unreachable!("an over-wide texture must be rejected, got {decoded:?}");
+        };
+        assert!(
+            reason.contains("decode failed"),
+            "rejection should come from the bounded decoder, not from a \
+             post-decode dimension check: {reason}"
+        );
+    }
+
+    #[test]
+    fn a_texture_inside_the_limits_still_decodes() {
+        let ordinary = over_wide_png(64);
+        let decoded = decode_embedded_raster(&ordinary, "test");
+        assert!(decoded.is_ok(), "a 64x1 texture should decode: {decoded:?}");
+    }
+
+    #[test]
+    fn the_edge_and_byte_limits_bound_the_same_decoded_surface() {
+        // 8192 x 8192 x 4 is exactly MAX_TEXTURE_RGBA_BYTES, so the two limits
+        // meet at the same image: the largest square that passes the edge test
+        // is also the largest surface the byte test allows.
         assert!(validate_texture_dimensions(4_096, 4_096, "test").is_ok());
-        assert!(validate_texture_dimensions(8_192, 8_192, "test").is_err());
+        assert!(validate_texture_dimensions(8_192, 8_192, "test").is_ok());
+        assert_eq!(
+            u64::from(MAX_TEXTURE_DIMENSION_PX) * u64::from(MAX_TEXTURE_DIMENSION_PX) * 4,
+            MAX_TEXTURE_RGBA_BYTES
+        );
+        // A lopsided atlas inside the edge limit is what the byte limit is for.
+        assert!(validate_texture_dimensions(8_192, 4_096, "test").is_ok());
         assert!(validate_texture_dimensions(0, 256, "test").is_err());
     }
 

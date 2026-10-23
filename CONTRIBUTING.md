@@ -2,7 +2,10 @@
 
 Small, focused changes are easiest to review.
 
-## Before opening a pull request
+## Manual verification
+
+The following commands are available for an explicitly requested verification
+run. They are not automatic pull-request or release prerequisites.
 
 ```bash
 cargo fmt --all --check
@@ -11,7 +14,9 @@ cargo test --workspace --all-targets --locked
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features --locked
 ```
 
-CI also runs Windows checks, dependency policy checks, parser fuzz smoke tests,
+The `Manual verification` GitHub Actions workflow is started on demand; it does
+not run automatically for pull requests or pushes and is not a release gate.
+It includes Windows checks, dependency policy checks, parser fuzz smoke tests,
 and a Debian package build. The minimum supported Rust version is pinned in
 `rust-toolchain.toml`.
 
@@ -19,14 +24,37 @@ The render tests use a software rasteriser (Lavapipe on Linux, WARP on
 Windows), so `cargo test` needs no GPU. They are slower than the rest; that is
 expected.
 
+## Workspace
+
+The workspace contains these crates:
+
+- `occluview-geometry` — Shared geometry constants, pure math, and triangle-surface queries; the bottom leaf, importing no other workspace crate.
+- `occluview-i18n` — Fluent catalogs and locale resolution shared by the app and the shell.
+- `occluview-update` — Signed update-manifest checks; the only crate carrying HTTP and signature verification.
+- `occluview-sculpt` — Surface sculpting kernel with its own `parallel` feature.
+- `occluview-core` — Pure data model: math, units, mesh, scene and camera, with no I/O, GPU or platform code.
+- `occluview-mesh-edit` — Product-neutral mesh-editing kernel plus the adapter to core meshes; the `robust` module owns the optional native CSG fallback (feature `robust-csg`).
+- `occluview-align` — Scan registration and signed deviation metrology.
+- `occluview-contact` — Occlusal contact metrology and the clinical colour law.
+- `occluview-formats` — Import and export readers and writers for the supported scan formats.
+- `occluview-render` — wgpu renderer for the live viewer and the offscreen thumbnail path.
+- `occluview-thumbnail` — Platform-neutral thumbnail loading, rendering and fallback.
+- `occluview-shell` — Windows COM shell extension: Explorer thumbnails and the preview pane.
+- `occluview-app` — Desktop viewer binary (`occluview`), built with egui and wgpu.
+- `occluview-cli` — Headless `occluview-cli` helper.
+
+New crate names follow `occluview-<noun>`; do not introduce names ending in `-kernel`, `-math`, `-core`, `-index`, `-csg`, `-query`, or `-session`.
+An optional part of a crate belongs in a module behind a Cargo feature, not in a new crate.
+A new crate needs a reason and an entry in the workspace list above. Crate
+boundaries are reviewed from the manifests; no repository-contract test
+automatically enforces this list.
+
 ## Repository hygiene
 
-Keep process material outside the repository. Do not commit prompts, exported
-agent sessions, handoffs, audit dumps, scratch plans, generated process
-documents, agent instruction files such as `AGENTS.md`, or files whose only
-purpose is to direct an automated tool. Add a file only when it is product
-documentation or an explicit build, release, security, or contribution
-contract.
+Keep process material outside the repository. Do not commit working notes,
+plans, review logs, generated reports, or configuration for a personal
+workflow. Add a file only when it is product documentation or an explicit
+build, release, security, or contribution contract.
 
 Comments and doc comments describe current behaviour: an invariant, ownership
 rule, format contract, or reproducible measurement. Do not use them as a work
@@ -40,8 +68,9 @@ Every crate is `#![forbid(unsafe_code)]`. A crate that needs FFI or another
 `unsafe` boundary opts out with `#![deny(unsafe_code)]` and a module-level
 `#![allow(unsafe_code)]` in the boundary module only, with a comment naming the
 boundary. Every `unsafe` block carries a `SAFETY:` comment on the line above it
-that states the invariant that makes the call sound. The repository-contract
-tests enforce the crate gate and the `SAFETY:` comment.
+that states the invariant that makes the call sound. Treat these as review
+requirements; the current workspace does not automatically check every crate
+gate or `SAFETY:` comment.
 
 ## Logging
 
@@ -114,12 +143,6 @@ Remove cosmetic wording pins, deleted-feature negative checks, and tests that
 only duplicate the implementation's current string layout. Report-only
 inventory counts are preferred to arbitrary repository-wide test caps.
 
-The repository-contract tests live in `crates/occluview-repo-contracts`. They
-run with `cargo test --workspace` and assert what the repository says about
-itself: the CI workflows, the packaging reports, the release version that
-`Cargo.toml`, `Cargo.lock` and the installer share, and the MSRV that
-`rust-toolchain.toml`, `Cargo.toml` and `clippy.toml` share.
-
 ## Commits
 
 Use conventional commits (`fix(scope): ...`) with an imperative subject. Keep
@@ -128,15 +151,12 @@ comments and commit bodies factual: explain an invariant, boundary, or user
 visible contract, and omit process narration, filler, and claims not backed by
 the implementation or its checks.
 
-For visible changes, add a short note to `CHANGELOG.md` under `## Unreleased`,
-creating that section above the newest version when it is missing. A release
-publishes only the section matching its version tag; draft notes stay out of
-the published release until they move into a versioned section.
-
 ## Releases
 
-Bump the workspace version, update `CHANGELOG.md`, and tag `vX.Y.Z`. The release
-workflow builds and verifies the distributable packages. Signing-key rotation is
+Bump the workspace version and tag `vX.Y.Z`. The release workflow builds and
+signs the distributable packages and publishes a short download list. Manual
+verification workflows are separate from packaging and are not release gates.
+Signing-key rotation is
 described in `SECURITY.md`.
 
 Every crate is `publish = false`, so the workspace carries no semver obligation
@@ -148,7 +168,8 @@ older clients ignore what they do not know — but do not rename, remove, or
 repurpose one without bumping the `schema` the reader checks.
 `scripts/write-latest-json.py` writes the manifest and must agree with the
 platform keys in `crates/occluview-update`; the installers it names are the
-Windows MSI, the Linux `.deb`, and the notarized macOS `.pkg`.
+Windows MSI and Linux `.deb`. A notarized macOS `.pkg` is included only when
+that package is explicitly requested.
 
 Regenerate a lockfile in the same commit as any manifest change it resolves:
 `Cargo.lock` for the workspace and `fuzz/Cargo.lock` for the fuzz crate. CI
@@ -156,31 +177,22 @@ builds with `--locked`, so a manifest edit committed with a stale lockfile stops
 the build instead of silently re-resolving it, and neither lockfile drifts from
 the manifests it reads.
 
-Two checks are local and cannot run in CI, because CI has no patient scans and
-no Explorer session. Both fail rather than skip: a gate that passes without
-checking anything is worse than no gate.
+Alignment quality needs review on real scans in the application. A successful
+package build does not establish clinical accuracy or operator acceptance.
+Patient scans stay out of the public repository.
 
-```sh
-OCCLUVIEW_ALIGN_FIXTURES=/path/to/corpus scripts/release-check.sh
-```
+Every change to published runtime bytes requires a new patch version and tag;
+published releases are not replaced in place. The package workflow runs for a
+tag push or a manual run started from that tag, and requires the tag to point at
+the exact source commit being packaged. It stages and checks the release assets
+as an unpublished draft before publishing. A failed upload remains a draft
+until that same source can be retried.
 
-1. **The private scan corpus.** Alignment acceptance is defined on real scans
-   (0.05 mm residual, 85% measured, 90% inside the clinical band), and real
-   scans are patient data that stay off GitHub. The gate writes
-   `dist/private-acceptance.json`: which corpus was used (by fingerprint, never
-   by name), which revision, and what it proved. Without
-   `OCCLUVIEW_ALIGN_FIXTURES` it exits 2 and the release stops.
-
-2. **The shipped Explorer shell revision.** The MSI builds
-   `occluview_shell.dll` from the revision in `install/shell-pin.json` while the
-   viewer builds from the tagged tree. The pin is deliberate (Explorer loads the
-   DLL in its own process), so the release states it in
-   `dist/occluview-shell-revision.json`: the revision, its tag, and every commit
-   since that touched a crate the shell links.
-
-   Read that list before tagging. A fix that matters to Explorer — a parser, a
-   thumbnail, or a COM defect — has to be cherry-picked onto the pinned
-   revision, and the pin moves to that new commit. The pin never moves to a
-   revision that has not been exercised in Explorer, and it retires when the
-   shell built from the current tree has been through the thumbnail,
-   preview-pane, file-association and uninstall paths on a real machine.
+The MSI builds `occluview_shell.dll` from the revision in
+`install/shell-pin.json` while the viewer builds from the tagged tree. Explorer
+loads this DLL in its own process, so its pin names a revision exercised through
+thumbnails, interactive preview, file association, and uninstall on Windows.
+`scripts/report-shell-pin.sh` records that revision and any linked-crate changes
+in `dist/occluview-shell-revision.json`. Move the pin when a new shell revision
+has been reviewed and used in Explorer; include parser, rendering, and COM
+fixes rather than leaving them behind in the viewer.

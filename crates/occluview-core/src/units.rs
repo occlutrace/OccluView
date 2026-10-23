@@ -1,8 +1,10 @@
 //! Units of measure.
 //!
-//! OccluView works in **millimeters** internally. All public APIs use
-//! a unit newtype rather than a bare `f32`, so units cannot be silently
-//! confused. Conversion from format-native units lives in `occluview-formats`.
+//! OccluView works in **millimeters** internally. Most public APIs carry
+//! plain `f32` values in millimeters (e.g. `radius_mm`), with the unit
+//! carried in the name, not in the type. [`Millimeters`] is available where
+//! callers want the newtype, but it is not threaded through the codebase.
+//! Conversion from format-native units lives in `occluview-formats`.
 
 use core::fmt;
 use core::ops::{Add, Sub};
@@ -13,7 +15,7 @@ use core::ops::{Add, Sub};
 /// area is intentionally not provided (no dimension errors hiding in `f32`).
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(transparent)]
-pub struct Millimeters(pub f32);
+pub struct Millimeters(pub(crate) f32);
 
 impl Millimeters {
     /// The zero length.
@@ -71,6 +73,101 @@ impl fmt::Display for Millimeters {
     }
 }
 
+/// Unit semantics a source format declares (or fails to declare) for its
+/// coordinates. OccluView renders everything in [`Millimeters`]; this type
+/// records what the file *meant* so the import scale is explicit metadata
+/// instead of tribal knowledge.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum SourceUnit {
+    /// Coordinates are already millimeters.
+    Millimeters,
+    /// Coordinates are meters (glTF 2.0 declares meters).
+    Meters,
+    /// The format declares no unit (STL, OBJ, PLY, OFF).
+    Unitless,
+}
+
+/// How much the [`UnitInterpretation::scale_to_mm`] factor can be trusted.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum UnitConfidence {
+    /// The file declares its unit and we honor it.
+    Certain,
+    /// The format declares nothing; millimeters are assumed (v1 policy for
+    /// STL/OBJ/PLY/OFF — scanner exports in the wild are millimeter
+    /// numbers, and guessing otherwise would corrupt real cases).
+    AssumedMillimeters,
+    /// The declaration and the observed data disagree in practice (glTF
+    /// declares meters, but scanner exporters write millimeter numbers), so
+    /// no scale is applied and the operator must confirm the interpretation.
+    Ambiguous,
+    /// The operator explicitly selected the source interpretation. This is
+    /// provenance of a decision, not independent verification of the file.
+    ConfirmedByOperator,
+}
+
+/// Import-unit metadata carried per layer: what the file declared, what
+/// scale brings it to millimeters, and whether that scale is trustworthy.
+/// Coordinates are normalized at import or by an explicit layer decision; a
+/// factor of `1.0` with anything but `Certain` confidence means "kept as-is,
+/// flagged", never "verified".
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct UnitInterpretation {
+    /// What the source format declares.
+    pub declared: SourceUnit,
+    /// Multiply file coordinates by this to get millimeters.
+    pub scale_to_mm: f32,
+    /// Whether the factor above is trustworthy.
+    pub confidence: UnitConfidence,
+}
+
+impl UnitInterpretation {
+    /// Unitless formats read as millimeter numbers (v1 policy).
+    #[inline]
+    #[must_use]
+    pub const fn assumed_millimeters() -> Self {
+        Self {
+            declared: SourceUnit::Unitless,
+            scale_to_mm: 1.0,
+            confidence: UnitConfidence::AssumedMillimeters,
+        }
+    }
+
+    /// glTF declares meters, but scanner GLBs in practice carry millimeter
+    /// numbers, so v1 keeps coordinates unchanged and flags the layer
+    /// ambiguous instead of silently scaling either way.
+    #[inline]
+    #[must_use]
+    pub const fn ambiguous_gltf() -> Self {
+        Self {
+            declared: SourceUnit::Meters,
+            scale_to_mm: 1.0,
+            confidence: UnitConfidence::Ambiguous,
+        }
+    }
+}
+
+impl fmt::Display for UnitInterpretation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match (self.declared, self.confidence) {
+            (SourceUnit::Millimeters, UnitConfidence::Certain) => write!(f, "millimeters"),
+            (_, UnitConfidence::AssumedMillimeters) => {
+                write!(f, "millimeters (assumed; unitless format)")
+            }
+            (_, UnitConfidence::Ambiguous) => write!(
+                f,
+                "ambiguous: declares {:?}, coordinates kept as-is",
+                self.declared
+            ),
+            (_, UnitConfidence::ConfirmedByOperator) => {
+                write!(f, "operator confirmed (x{} to mm)", self.scale_to_mm)
+            }
+            (declared, UnitConfidence::Certain) => {
+                write!(f, "{:?} (x{} to mm)", declared, self.scale_to_mm)
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -106,5 +203,25 @@ mod tests {
     #[test]
     fn display_is_millimetric() {
         assert_eq!(format!("{}", Millimeters::new(0.5)), "0.500 mm");
+    }
+
+    #[test]
+    fn assumed_millimeters_keeps_coordinates() {
+        let policy = UnitInterpretation::assumed_millimeters();
+        assert_eq!(policy.scale_to_mm, 1.0);
+        assert_eq!(policy.confidence, UnitConfidence::AssumedMillimeters);
+        assert_eq!(
+            format!("{policy}"),
+            "millimeters (assumed; unitless format)"
+        );
+    }
+
+    #[test]
+    fn ambiguous_gltf_keeps_coordinates_and_says_so() {
+        let policy = UnitInterpretation::ambiguous_gltf();
+        assert_eq!(policy.declared, SourceUnit::Meters);
+        assert_eq!(policy.scale_to_mm, 1.0);
+        assert_eq!(policy.confidence, UnitConfidence::Ambiguous);
+        assert!(format!("{policy}").starts_with("ambiguous:"));
     }
 }

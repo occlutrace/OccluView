@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleExecutable</key>
+  <string>occluview</string>
+  <key>CFBundleIconFile</key>
+  <string>occluview.icns</string>
+  <key>CFBundleIdentifier</key>
+  <string>ai.occlutrace.OccluView</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>OccluView</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>@VERSION@</string>
+  <key>CFBundleVersion</key>
+  <string>@VERSION@</string>
+  <key>LSApplicationCategoryType</key>
+  <string>public.app-category.utilities</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>14.0</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>NSPrincipalClass</key>
+  <string>NSApplication</string>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>3D Mesh</string>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <!-- The system's own identifiers: macOS already declares these
+             extensions, so a type of our own for them is never chosen and
+             the app would not be offered for the files. -->
+        <string>public.standard-tesselated-geometry-format</string>
+        <string>public.polygon-file-format</string>
+        <string>public.geometry-definition-format</string>
+        <string>org.khronos.glb</string>
+      </array>
+    </dict>
+    <dict>
+      <!-- macOS declares no system type for OFF, so the viewer declares its
+           own and claims the extension through it. -->
+      <key>CFBundleTypeName</key>
+      <string>OFF Mesh</string>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+      <key>LSHandlerRank</key>
+      <string>Default</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>ai.occlutrace.occluview.off</string>
+      </array>
+    </dict>
+  </array>
+  <key>UTImportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeConformsTo</key>
+      <array><string>public.data</string></array>
+      <key>UTTypeDescription</key>
+      <string>OFF Mesh</string>
+      <key>UTTypeIdentifier</key>
+      <string>ai.occlutrace.occluview.off</string>
+      <key>UTTypeTagSpecification</key>
+      <dict><key>public.filename-extension</key><array><string>off</string></array></dict>
+    </dict>
+  </array>
+</dict>
+</plist>
