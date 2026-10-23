@@ -39,7 +39,7 @@ Windows Registry Editor Version 5.00
 ;       TypeOverlay = "" (no app-brand overlay on the rendered thumbnail)
 ;   HKCR\Applications\occluview.exe          (Open With / Default Apps discovery)
 ;       shell\open\command = "<APP_EXE_PATH>" "%1"
-;       SupportedTypes = .stl/.ply/.obj/.glb/.off/.dcm/.hps
+;       SupportedTypes = .stl/.ply/.obj/.glb/.off/.hps
 ;   HKCR\<ext>
 ;       (default) = MeshFile.<EXT> (fallback only; user defaults can override)
 ;       ThumbnailCutoff = 1
@@ -49,11 +49,6 @@ Windows Registry Editor Version 5.00
 ;       MeshFile.<EXT> = ""
 ;   HKCR\<ext>\OpenWithList\occluview.exe
 ;
-;   .dcm is the one exception to <ext> above: OccluView is offered for it and
-;   never owns it. No HKCR\.dcm default ProgID, no DefaultIcon, and no ShellEx
-;   under either the bare key or SystemFileAssociations\.dcm, because that
-;   extension also belongs to medical DICOM, which this reader rejects. Only
-;   OpenWithProgids, OpenWithList, SupportedTypes and Capabilities name it.
 ;
 ; Replace <DLL_PATH> with the absolute path to occluview_shell.dll and
 ; <APP_EXE_PATH> with the absolute path to occluview.exe before importing.
@@ -184,20 +179,6 @@ Windows Registry Editor Version 5.00
 
 [HKEY_CLASSES_ROOT\SystemFileAssociations\.glb\ShellEx\{8895B1C6-B41F-4C1C-A562-0D564250836F}]
 @="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}"
-
-; --- .dcm is offered, never owned ---
-;
-; 3Shape writes HPS containers under the .dcm extension, which is why OccluView
-; reads it, but on a dental workstation .dcm belongs to medical DICOM, and this
-; reader rejects DICOM by design. There is deliberately no HKCR\.dcm
-; default ProgId here, no DefaultIcon, and no ShellEx -- not under the bare key
-; and not under SystemFileAssociations\.dcm, which Explorer falls back to when the
-; owning ProgId has no provider of its own. Any of those would put OccluView's
-; failing thumbnail and preview handlers on every CBCT file on the machine.
-;
-; OccluView still reaches .dcm through OpenWithProgids, OpenWithList,
-; SupportedTypes and Capabilities\FileAssociations further down; a user who picks
-; it gets icon, thumbnail, preview and open verb from the MeshFile.DCM ProgId.
 
 [HKEY_CLASSES_ROOT\.hps]
 @="MeshFile.HPS"
@@ -353,28 +334,6 @@ Windows Registry Editor Version 5.00
 [HKEY_CLASSES_ROOT\MeshFile.HPS\shell\open\command]
 @="\"<APP_EXE_PATH>\" \"%1\""
 
-[HKEY_CLASSES_ROOT\MeshFile.DCM]
-@="DCM File"
-"FriendlyTypeName"="DCM File"
-"ThumbnailCutoff"=dword:00000001
-"TypeOverlay"=""
-
-[HKEY_CLASSES_ROOT\MeshFile.DCM\ShellEx\{E357FCCD-A995-4576-B01F-234630154E96}]
-@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}"
-
-[HKEY_CLASSES_ROOT\MeshFile.DCM\ShellEx\{8895B1C6-B41F-4C1C-A562-0D564250836F}]
-@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}"
-
-[HKEY_CLASSES_ROOT\MeshFile.DCM\DefaultIcon]
-@="<APP_DIR>\\occluview-3d.ico"
-
-[HKEY_CLASSES_ROOT\MeshFile.DCM\shell]
-
-[HKEY_CLASSES_ROOT\MeshFile.DCM\shell\open]
-
-[HKEY_CLASSES_ROOT\MeshFile.DCM\shell\open\command]
-@="\"<APP_EXE_PATH>\" \"%1\""
-
 [HKEY_CLASSES_ROOT\Applications\occluview.exe]
 @="OccluView 3D Viewer"
 "FriendlyAppName"="OccluView 3D Viewer"
@@ -392,7 +351,6 @@ Windows Registry Editor Version 5.00
 ".obj"=""
 ".glb"=""
 ".off"=""
-".dcm"=""
 ".hps"=""
 
 [HKEY_CLASSES_ROOT\.stl\OpenWithProgids]
@@ -410,9 +368,6 @@ Windows Registry Editor Version 5.00
 [HKEY_CLASSES_ROOT\.off\OpenWithProgids]
 "MeshFile.OFF"=""
 
-[HKEY_CLASSES_ROOT\.dcm\OpenWithProgids]
-"MeshFile.DCM"=""
-
 [HKEY_CLASSES_ROOT\.hps\OpenWithProgids]
 "MeshFile.HPS"=""
 
@@ -429,9 +384,6 @@ Windows Registry Editor Version 5.00
 @=""
 
 [HKEY_CLASSES_ROOT\.off\OpenWithList\occluview.exe]
-@=""
-
-[HKEY_CLASSES_ROOT\.dcm\OpenWithList\occluview.exe]
 @=""
 
 [HKEY_CLASSES_ROOT\.hps\OpenWithList\occluview.exe]
@@ -453,5 +405,4 @@ Windows Registry Editor Version 5.00
 ".obj"="MeshFile.OBJ"
 ".glb"="MeshFile.GLB"
 ".off"="MeshFile.OFF"
-".dcm"="MeshFile.DCM"
 ".hps"="MeshFile.HPS"

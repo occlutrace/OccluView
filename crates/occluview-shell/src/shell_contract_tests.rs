@@ -1,6 +1,6 @@
 use super::{
-    owns_extension, APP_EXE_NAME, DEDICATED_FILE_ICON_EXTENSIONS, OFFERED_ONLY_EXTENSIONS,
-    PREVIEW_HANDLER_CATEGORY, SUPPORTED_EXTENSIONS, THUMBNAIL_PROVIDER_CATEGORY,
+    APP_EXE_NAME, DEDICATED_FILE_ICON_EXTENSIONS, OFFERED_ONLY_EXTENSIONS,
+    PREVIEW_HANDLER_CATEGORY, SUPPORTED_EXTENSIONS, THUMBNAIL_PROVIDER_CATEGORY, owns_extension,
 };
 use roxmltree::{Document, Node};
 use std::collections::BTreeSet;
@@ -193,10 +193,7 @@ fn explorer_open_with_and_icon_entries_match_the_reader_set() {
         assert_supported_registry_entry(&wix, extension);
     }
 
-    assert_eq!(
-        OFFERED_ONLY_EXTENSIONS,
-        [occluview_formats::LEGACY_HPS_EXTENSION]
-    );
+    assert!(OFFERED_ONLY_EXTENSIONS.is_empty());
     assert!(!owns_extension("dcm"));
     for extension in ["stl", "ply", "obj", "glb", "hps"] {
         assert!(owns_extension(extension));
@@ -212,11 +209,13 @@ fn explorer_open_with_and_icon_entries_match_the_reader_set() {
             "the installer must not claim medical DICOM files through {forbidden}"
         );
     }
-    assert!(registry_key(
-        &wix,
-        "Software\\Classes\\SystemFileAssociations\\.dcm\\shell\\OccluView.Edit"
-    )
-    .is_some());
+    assert!(
+        registry_key(
+            &wix,
+            "Software\\Classes\\SystemFileAssociations\\.dcm\\shell\\OccluView.Edit"
+        )
+        .is_none()
+    );
     assert!(
         registry_key(
             &wix,
@@ -283,8 +282,8 @@ fn assert_manual_registry_contract(wix: &Document<'_>) {
             "HKEY_CLASSES_ROOT\\.dcm\\OpenWithProgids",
             "MeshFile.DCM"
         ),
-        Some(String::new()),
-        ".dcm remains available through the explicit Open With menu"
+        None,
+        ".dcm must not be offered in Open With"
     );
     assert_eq!(
         registry_string_value(
@@ -292,8 +291,8 @@ fn assert_manual_registry_contract(wix: &Document<'_>) {
             "HKEY_CLASSES_ROOT\\Applications\\occluview.exe\\SupportedTypes",
             ".dcm"
         ),
-        Some(String::new()),
-        ".dcm remains visible in Windows app discovery"
+        None,
+        ".dcm must not be offered in Windows app discovery"
     );
 }
 
@@ -349,7 +348,7 @@ fn wix_variable(document: &Document<'_>, name: &str) -> Option<String> {
 }
 
 #[test]
-fn linux_mime_metadata_distinguishes_hps_dcm_from_medical_dicom() {
+fn linux_mime_metadata_offers_hps_without_dcm() {
     let source = repo_file("install/linux/occluview-mime.xml");
     let mime = Document::parse(&source).expect("shared MIME metadata is well-formed XML");
     let hps = mime
@@ -361,32 +360,16 @@ fn linux_mime_metadata_distinguishes_hps_dcm_from_medical_dicom() {
         })
         .expect("the HPS MIME type is declared");
 
-    for pattern in ["*.dcm", "*.DCM"] {
-        assert!(hps.children().any(|node| {
-            node.is_element()
-                && node.tag_name().name() == "glob"
-                && node.attribute("pattern") == Some(pattern)
-                && node.attribute("weight") == Some("40")
-        }));
-    }
-    for pattern in ["*.hps", "*.HPS"] {
-        assert!(hps.children().any(|node| {
-            node.is_element()
-                && node.tag_name().name() == "glob"
-                && node.attribute("pattern") == Some(pattern)
-        }));
-    }
-    assert!(hps.descendants().any(|node| {
-        node.is_element()
-            && node.tag_name().name() == "magic"
-            && node.attribute("priority") == Some("60")
-            && node.children().any(|matcher| {
-                matcher.is_element()
-                    && matcher.tag_name().name() == "match"
-                    && matcher.attribute("value") == Some("<HPS")
-                    && matcher.attribute("offset") == Some("0:256")
-            })
-    }));
+    let patterns: Vec<_> = hps
+        .children()
+        .filter(|node| node.is_element() && node.tag_name().name() == "glob")
+        .filter_map(|node| node.attribute("pattern"))
+        .collect();
+    assert_eq!(patterns, ["*.hps", "*.HPS"]);
+    assert!(
+        !hps.descendants()
+            .any(|node| { node.is_element() && node.tag_name().name() == "magic" })
+    );
 
     let wavefront = mime
         .descendants()

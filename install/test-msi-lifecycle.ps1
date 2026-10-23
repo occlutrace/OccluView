@@ -10,21 +10,17 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$supportedExtensions = @("stl", "ply", "obj", "glb", "dcm", "hps", "off")
+$supportedExtensions = @("stl", "ply", "obj", "glb", "hps", "off")
 # Extensions the installer may claim machine-wide: default ProgID, DefaultIcon
 # and the ShellEx handlers under both the bare key and SystemFileAssociations.
 $ownedExtensions = @("stl", "ply", "obj", "glb", "hps", "off")
-# Read, offered in "Open with", never claimed. .dcm belongs to medical DICOM as
-# much as it does to 3Shape's HPS container, and this reader rejects DICOM, so
-# owning it would put a failing thumbnail on every CBCT file on the workstation.
-$offeredOnlyExtensions = @("dcm")
-$deferredExtensions = @("gltf", "3mf")
+$offeredOnlyExtensions = @()
+$deferredExtensions = @("gltf", "3mf", "dcm")
 $formatProgIds = @{
     stl = "MeshFile.STL"
     ply = "MeshFile.PLY"
     obj = "MeshFile.OBJ"
     glb = "MeshFile.GLB"
-    dcm = "MeshFile.DCM"
     hps = "MeshFile.HPS"
     off = "MeshFile.OFF"
 }
@@ -34,7 +30,6 @@ $formatFriendlyNames = @{
     "MeshFile.OBJ" = "OBJ File"
     "MeshFile.GLB" = "GLB File"
     "MeshFile.HPS" = "HPS File"
-    "MeshFile.DCM" = "DCM File"
     "MeshFile.OFF" = "OFF File"
 }
 $legacyFormatProgIds = @{
@@ -42,7 +37,6 @@ $legacyFormatProgIds = @{
     ply = "OccluView.Mesh.PLY"
     obj = "OccluView.Mesh.OBJ"
     glb = "OccluView.Mesh.GLB"
-    dcm = "OccluView.Mesh.HPS"
     hps = "OccluView.Mesh.HPS"
 }
 $thumbnailCategory = "{E357FCCD-A995-4576-B01F-234630154E96}"
@@ -67,7 +61,6 @@ $formatIconFiles = @{
     ply = Join-Path $installDir "occluview-3d.ico"
     obj = Join-Path $installDir "occluview-3d.ico"
     glb = Join-Path $installDir "occluview-3d.ico"
-    dcm = Join-Path $installDir "occluview-3d.ico"
     hps = Join-Path $installDir "occluview-3d.ico"
     off = Join-Path $installDir "occluview-3d.ico"
 }
@@ -76,7 +69,6 @@ $formatDefaultIcons = @{
     ply = Join-Path $installDir "occluview-3d.ico"
     obj = Join-Path $installDir "occluview-3d.ico"
     glb = Join-Path $installDir "occluview-3d.ico"
-    dcm = Join-Path $installDir "occluview-3d.ico"
     hps = Join-Path $installDir "occluview-3d.ico"
     off = Join-Path $installDir "occluview-3d.ico"
 }

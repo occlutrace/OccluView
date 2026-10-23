@@ -31,7 +31,7 @@ pub fn by_extension(ext: &str) -> Option<FormatKind> {
         "gltf" | "glb" => Some(FormatKind::Gltf),
         "3mf" => Some(FormatKind::Threemf),
         "off" => Some(FormatKind::Off),
-        ext if ext == crate::LEGACY_HPS_EXTENSION || ext == "hps" => Some(FormatKind::Hps),
+        "hps" => Some(FormatKind::Hps),
         _ => None,
     }
 }
@@ -50,7 +50,13 @@ pub fn by_extension(ext: &str) -> Option<FormatKind> {
 /// # Errors
 /// - [`FormatError::Unsupported`] if neither extension nor magic match.
 pub fn probe(extension: Option<&str>, magic: &[u8]) -> Result<FormatKind, FormatError> {
-    if extension.is_some_and(|ext| ext == crate::LEGACY_HPS_EXTENSION || ext == "hps") {
+    // Retired DCM input is rejected before magic can reinterpret its contents.
+    if extension.is_some_and(|ext| ext.eq_ignore_ascii_case(crate::LEGACY_HPS_EXTENSION)) {
+        return Err(FormatError::Unsupported {
+            extension: extension.unwrap_or_default().to_string(),
+        });
+    }
+    if extension == Some("hps") {
         return Ok(FormatKind::Hps);
     }
 
@@ -181,7 +187,7 @@ mod tests {
         assert_eq!(by_extension("gltf"), Some(FormatKind::Gltf));
         assert_eq!(by_extension("glb"), Some(FormatKind::Gltf));
         assert_eq!(by_extension("3mf"), Some(FormatKind::Threemf));
-        assert_eq!(by_extension("dcm"), Some(FormatKind::Hps));
+        assert_eq!(by_extension("dcm"), None);
         assert_eq!(by_extension("hps"), Some(FormatKind::Hps));
         assert_eq!(by_extension("foo"), None);
     }
@@ -223,9 +229,16 @@ mod tests {
     }
 
     #[test]
-    fn legacy_hps_extension_wins_over_generic_zip_magic() {
+    fn retired_dcm_extension_is_rejected_before_magic() {
         let magic = [0x50, 0x4B, 0x03, 0x04, 0x00, 0x00];
-        assert_eq!(probe(Some("dcm"), &magic).unwrap(), FormatKind::Hps);
+        for extension in ["dcm", "DCM"] {
+            for bytes in [&magic[..], b"<HPS><Schema>CC</Schema></HPS>", b"glTF"] {
+                assert!(matches!(
+                    probe(Some(extension), bytes),
+                    Err(FormatError::Unsupported { .. })
+                ));
+            }
+        }
     }
 
     #[test]

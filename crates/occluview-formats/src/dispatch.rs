@@ -10,13 +10,13 @@ use crate::probe::FormatKind;
 #[cfg(test)]
 pub(crate) use crate::read::import_batches;
 pub use crate::read::{
+    FileBytes, IMPORT_BATCH_BUDGET_BYTES, IMPORT_PARALLELISM, MAX_IMPORT_BYTES, OpenedFileBytes,
     read_file, read_file_bytes, read_file_bytes_with_limit, read_file_loaded_shaded,
-    read_file_loaded_shaded_with_limit, read_file_loaded_with_key_provider,
-    read_opened_file_bytes_with_limit, read_file_shaded, read_file_with_key_provider, read_files,
-    read_files_with_key_provider, read_files_with_memory_budget, FileBytes,
-    OpenedFileBytes, IMPORT_BATCH_BUDGET_BYTES, IMPORT_PARALLELISM, MAX_IMPORT_BYTES,
+    read_file_loaded_shaded_with_limit, read_file_loaded_with_key_provider, read_file_shaded,
+    read_file_with_key_provider, read_files, read_files_with_key_provider,
+    read_files_with_memory_budget, read_opened_file_bytes_with_limit,
 };
-use crate::units::{policy_for, UnitInterpretation};
+use crate::units::{UnitInterpretation, policy_for};
 
 use occluview_core::Mesh;
 use std::path::Path;
@@ -510,7 +510,7 @@ mod tests {
     }
 
     #[test]
-    fn ce_hps_sources_remain_deferred_until_key_provider_exists() {
+    fn ce_hps_sources_are_unsupported() {
         let hps = br"<HPS><Schema>CE</Schema></HPS>";
         let res = dispatch_by_extension("hps", hps);
         assert!(matches!(
@@ -519,14 +519,14 @@ mod tests {
         ));
 
         let zip_hps = zip_with_file("scan/geometry.hps", hps);
-        let res = dispatch_by_extension(crate::LEGACY_HPS_EXTENSION, &zip_hps);
+        let res = dispatch_by_extension("hps", &zip_hps);
         assert!(matches!(
             res,
             Err(FormatError::Deferred { format, .. }) if format == "HPS"
         ));
 
         let invalid_zip_hps = [0x50, 0x4B, 0x03, 0x04, 0x00, 0x00];
-        let res = dispatch_by_extension(crate::LEGACY_HPS_EXTENSION, &invalid_zip_hps);
+        let res = dispatch_by_extension("hps", &invalid_zip_hps);
         assert!(matches!(res, Err(FormatError::Malformed { .. })));
     }
 

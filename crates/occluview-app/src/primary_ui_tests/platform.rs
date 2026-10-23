@@ -4,14 +4,13 @@ use super::*;
 use roxmltree::{Document, Node};
 use std::collections::BTreeSet;
 
-const MACOS_CONTENT_TYPES: [(&str, &str); 7] = [
+const MACOS_CONTENT_TYPES: [(&str, &str); 6] = [
     ("stl", "public.standard-tesselated-geometry-format"),
     ("ply", "public.polygon-file-format"),
     ("obj", "public.geometry-definition-format"),
     ("glb", "org.khronos.glb"),
     ("off", "ai.occlutrace.occluview.off"),
     ("hps", "ai.occlutrace.occluview.hps"),
-    ("dcm", "org.nema.dicom"),
 ];
 
 fn plist_value<'a, 'input>(dictionary: Node<'a, 'input>, key: &str) -> Option<Node<'a, 'input>> {
@@ -129,13 +128,7 @@ fn assert_document_type_ranks(document_types: Node<'_, '_>, entries: &[Node<'_, 
         Some("Default")
     );
 
-    let dicom = plist_document_type(document_types, "org.nema.dicom")
-        .expect("the .dcm type is offered to Finder");
-    assert_eq!(
-        plist_value(dicom, "LSHandlerRank").and_then(|node| node.text()),
-        Some("Alternate"),
-        "medical DICOM files must remain opt-in"
-    );
+    assert!(plist_document_type(document_types, "org.nema.dicom").is_none());
 }
 
 fn assert_document_type_mappings(document_types: Node<'_, '_>, entries: &[Node<'_, '_>]) {

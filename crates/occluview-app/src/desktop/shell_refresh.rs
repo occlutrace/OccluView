@@ -12,7 +12,7 @@
 /// Tell Explorer that file associations and shell handlers changed.
 #[cfg(windows)]
 pub(crate) fn notify_shell_associations_changed() {
-    use windows::Win32::UI::Shell::{SHChangeNotify, SHCNE_ASSOCCHANGED, SHCNF_IDLIST};
+    use windows::Win32::UI::Shell::{SHCNE_ASSOCCHANGED, SHCNF_IDLIST, SHChangeNotify};
 
     refresh_owned_type_names();
     // SAFETY: SHChangeNotify accepts null item pointers for SHCNE_ASSOCCHANGED.
@@ -24,13 +24,13 @@ pub(crate) fn notify_shell_associations_changed() {
 /// creating registrations during uninstall.
 #[cfg(windows)]
 fn refresh_owned_type_names() {
-    use windows::core::{h, HSTRING, PCWSTR};
     use windows::Win32::System::Registry::{
-        RegCloseKey, RegOpenKeyExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE,
-        KEY_SET_VALUE, REG_SZ,
+        HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_SET_VALUE, REG_SZ, RegCloseKey,
+        RegOpenKeyExW, RegSetValueExW,
     };
+    use windows::core::{HSTRING, PCWSTR, h};
     for root in [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE] {
-        let formats = ["STL", "PLY", "OBJ", "OFF", "GLB", "HPS", "DCM"];
+        let formats = ["STL", "PLY", "OBJ", "OFF", "GLB", "HPS"];
         let mut labels = Vec::new();
         for format in formats {
             for prefix in ["MeshFile", "OccluView.Mesh"] {

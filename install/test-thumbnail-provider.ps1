@@ -228,10 +228,10 @@ function New-SmokeHps {
     return $path
 }
 
-function New-SmokeLegacyHps {
+function New-SmokePackagedHps {
     param([Parameter(Mandatory = $true)][string]$Directory)
 
-    $path = Join-Path $Directory "occluview-thumbnail-smoke.dcm"
+    $path = Join-Path $Directory "occluview-thumbnail-packaged.hps"
     $hps = @'
 <?xml version="1.0" encoding="UTF-8"?>
 <HPS>
@@ -1198,8 +1198,8 @@ function New-SmokeCases {
             Sizes = @(96, 256)
         }
         [pscustomobject]@{
-            Label = "hps-legacy"
-            Path = New-SmokeLegacyHps -Directory $Directory
+            Label = "hps-package"
+            Path = New-SmokePackagedHps -Directory $Directory
             Sizes = @(96, 256)
         }
     )
@@ -1217,7 +1217,7 @@ function Assert-MixedFolderBurst {
         New-SmokeObj -Directory $burstDirectory
         New-NoisyObj -Directory $burstDirectory -Name "occluview-thumbnail-noisy-800kb.obj"
         New-SmokeHps -Directory $burstDirectory
-        New-SmokeLegacyHps -Directory $burstDirectory
+        New-SmokePackagedHps -Directory $burstDirectory
     )
 
     $requests = New-Object System.Collections.Generic.List[object]

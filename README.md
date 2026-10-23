@@ -51,7 +51,7 @@
 
 Open STL, PLY, OBJ, GLB, OFF, and HPS files. Export meshes as STL, PLY, or OBJ. Textured PLY and OBJ files can use image textures stored alongside the model.
 
-- `.hps` and `.dcm` are supported only when they contain unencrypted HPS dental geometry. Encrypted HPS and medical DICOM are not supported. Export encrypted scans as unencrypted STL, PLY, or OBJ from the source software.
+- `.hps` is supported only for unencrypted HPS dental geometry. `.dcm` files, encrypted HPS, and medical DICOM are not supported. Export encrypted scans as unencrypted STL, PLY, or OBJ from the source software.
 
 See [measurement definitions and unit decisions](docs/measurements.md) before
 comparing readings from differently sampled meshes or ambiguous GLB exports.

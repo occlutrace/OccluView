@@ -57,7 +57,7 @@ mod texture_decode;
 pub mod units;
 pub mod write;
 
-/// Legacy file extension accepted as an alias for HPS packages.
+/// Retired HPS alias, retained only for compatibility and registration cleanup.
 pub const LEGACY_HPS_EXTENSION: &str = "dcm";
 
 /// File extensions OccluView intentionally exposes in the v1 user-facing
@@ -73,15 +73,7 @@ pub const LEGACY_HPS_EXTENSION: &str = "dcm";
 /// magic but has no reader. [`FormatKind::Gltf`] covers both glTF
 /// extensions, so `glb` is the one listed; [`FormatKind::Threemf`] is the
 /// container recognized but not read.
-pub const V1_OPEN_EXTENSIONS: &[&str] = &[
-    "stl",
-    "ply",
-    "obj",
-    "glb",
-    "off",
-    "hps",
-    LEGACY_HPS_EXTENSION,
-];
+pub const V1_OPEN_EXTENSIONS: &[&str] = &["stl", "ply", "obj", "glb", "off", "hps"];
 
 /// The common interface every format reader implements.
 ///
@@ -134,16 +126,16 @@ impl MeshShading {
 }
 
 pub use dispatch::{
-    dispatch_by_extension, read_file, read_file_loaded_with_key_provider, read_files,
-    read_files_with_key_provider, read_files_with_memory_budget, LoadedMesh,
+    LoadedMesh, dispatch_by_extension, read_file, read_file_loaded_with_key_provider, read_files,
+    read_files_with_key_provider, read_files_with_memory_budget,
 };
 pub use error::FormatError;
 pub use glb_writer::write_textured_glb;
 pub use memory::SCENE_IMPORT_MEMORY_BUDGET_BYTES;
-pub use probe::{probe, FormatKind};
+pub use probe::{FormatKind, probe};
 pub use write::{
-    resolve_overwrite_destination, write_mesh, write_mesh_overwrite, write_mesh_to_new_file,
     MeshWriteFormat, MeshWriteOptions, MeshWriteReport, MeshWriteWarning,
+    resolve_overwrite_destination, write_mesh, write_mesh_overwrite, write_mesh_to_new_file,
 };
 
 /// Keep invalid numeric input out of geometry construction and its caches.
@@ -165,22 +157,13 @@ pub(crate) fn finite_coordinate(
 
 #[cfg(test)]
 mod tests {
-    use super::{LEGACY_HPS_EXTENSION, V1_OPEN_EXTENSIONS};
+    use super::V1_OPEN_EXTENSIONS;
 
     #[test]
     fn v1_open_extensions_match_product_contract() {
         assert_eq!(
             V1_OPEN_EXTENSIONS,
-            [
-                "stl",
-                "ply",
-                "obj",
-                "glb",
-                "off",
-                "hps",
-                LEGACY_HPS_EXTENSION
-            ]
+            ["stl", "ply", "obj", "glb", "off", "hps"]
         );
-
     }
 }

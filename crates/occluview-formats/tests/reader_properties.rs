@@ -245,7 +245,7 @@ proptest! {
         }
     }
 
-    /// And arbitrary bytes under any offered extension must not panic.
+    /// And arbitrary bytes under any supported or retired extension must not panic.
     #[test]
     fn arbitrary_bytes_under_any_extension_are_answered_not_survived(
         extension_choice in 0_usize..7,
@@ -603,7 +603,7 @@ mod seeded_round_trips {
             ("off", off(mesh, false), false),
             ("off", off(mesh, true), false),
             ("hps", hps(mesh), true),
-            ("dcm", package.into_inner(), true),
+            ("hps", package.into_inner(), true),
         ]);
         files
     }
@@ -784,15 +784,18 @@ mod seeded_round_trips {
                     assert!(result.is_ok(), "panic reading {extension}, seed {seed}");
                     if let Ok(Ok(mesh)) = result {
                         assert!(mesh.indices().len().is_multiple_of(3));
-                        assert!(mesh.indices().iter().all(|index| usize::try_from(*index)
-                            .is_ok_and(|i| i < mesh.vertices().len())));
+                        assert!(mesh.indices().iter().all(|index| {
+                            usize::try_from(*index).is_ok_and(|i| i < mesh.vertices().len())
+                        }));
                         for vertex in mesh.vertices() {
-                            assert!(vertex
-                                .position
-                                .iter()
-                                .chain(&vertex.normal)
-                                .chain(&vertex.uv)
-                                .all(|v| v.is_finite()));
+                            assert!(
+                                vertex
+                                    .position
+                                    .iter()
+                                    .chain(&vertex.normal)
+                                    .chain(&vertex.uv)
+                                    .all(|v| v.is_finite())
+                            );
                         }
                         assert!(mesh.vertices().len() <= changed.len().saturating_mul(3));
                     }

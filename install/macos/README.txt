@@ -3,11 +3,9 @@ OccluView for Apple Silicon
 
 This local package targets arm64 Macs running macOS 14 or later. Drag
 OccluView.app to Applications, then launch it from Finder. Finder document-open
-integration covers STL, PLY, OBJ, GLB, and HPS files, plus the legacy .dcm HPS
-container. OccluView registers .dcm as an alternate handler only: it appears in
-"Open With" but never becomes the default for the suffix, so medical DICOM files
-stay with their own software. A real DICOM file is refused by its DICM
-signature. Files can also be opened explicitly or dragged onto the viewer.
+integration covers STL, PLY, OBJ, GLB, OFF, and unencrypted HPS files. DCM and
+encrypted HPS files are not supported. Files can also be opened explicitly or
+dragged onto the viewer.
 
 The command-line companion is bundled at:
   OccluView.app/Contents/Helpers/occluview-cli

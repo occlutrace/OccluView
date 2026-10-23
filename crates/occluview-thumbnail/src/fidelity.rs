@@ -8,8 +8,8 @@
 //! full in the preview and decimated in the thumbnail.
 //!
 //! The table is keyed by [`FormatKind`], never by an extension string: two
-//! spellings of one format must not answer differently, and `.dcm` is a name
-//! whose correct kind comes from the probe rather than from the text.
+//! spellings of one supported format must not answer differently. Retired DCM
+//! inputs are rejected by the shared probe.
 //! [`full_fidelity_file_bytes_for_extension`] is the single place an extension
 //! becomes a kind for this policy.
 //!
@@ -22,7 +22,7 @@
 //! 40 MiB — and every other format equal. The difference is a recorded decision,
 //! not the residue of two tables.
 
-use occluview_formats::{probe, FormatKind};
+use occluview_formats::{FormatKind, probe};
 
 /// The largest STL the preview reads with the canonical reader: about 2.7
 /// million triangles, one file at a time.

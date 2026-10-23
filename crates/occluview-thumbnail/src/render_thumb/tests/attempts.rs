@@ -466,7 +466,7 @@ fn burst_round(
         (
             "hps zip stream",
             Box::new(move || {
-                try_render_thumbnail_shared(Some("dcm".to_string()), hps_stream, spec, budget)
+                try_render_thumbnail_shared(Some("hps".to_string()), hps_stream, spec, budget)
             }),
             BurstExpectation::RealBitmap,
         ),

@@ -1,6 +1,6 @@
 //! Thumbnail-specific format inference.
 
-use occluview_formats::{probe, FormatError, FormatKind, LEGACY_HPS_EXTENSION};
+use occluview_formats::{FormatError, FormatKind, LEGACY_HPS_EXTENSION, probe};
 
 /// Infer the format a thumbnail render should use.
 ///
@@ -20,6 +20,9 @@ pub fn infer_thumbnail_format(
     let extension = extension
         .map(normalize_extension)
         .filter(|ext| !ext.is_empty());
+    if extension.as_deref() == Some(LEGACY_HPS_EXTENSION) {
+        return deferred(LEGACY_HPS_EXTENSION);
+    }
 
     if bytes.starts_with(b"glTF") {
         return Ok(FormatKind::Gltf);
@@ -27,7 +30,7 @@ pub fn infer_thumbnail_format(
     if is_zip_magic(bytes) {
         match extension.as_deref() {
             Some("3mf") => return deferred("3mf"),
-            Some(extension) if extension == LEGACY_HPS_EXTENSION || extension == "hps" => {
+            Some("hps") => {
                 return Ok(FormatKind::Hps);
             }
             None => return Ok(FormatKind::Hps),
@@ -263,7 +266,7 @@ mod tests {
     fn hps_reaches_parser_for_thumbnails() {
         assert!(matches!(
             infer_thumbnail_format(Some("dcm"), &[0x50, 0x4B, 0x03, 0x04]),
-            Ok(FormatKind::Hps)
+            Err(FormatError::Unsupported { extension }) if extension == "dcm"
         ));
         assert!(matches!(
             infer_thumbnail_format(None, &[0x50, 0x4B, 0x03, 0x04]),
@@ -291,7 +294,7 @@ mod tests {
 #[cfg(test)]
 mod agreement_tests {
     use super::infer_thumbnail_format;
-    use occluview_formats::{probe, FormatKind};
+    use occluview_formats::{FormatKind, probe};
 
     /// A binary STL's 80-byte header is free-form text, and exporters put
     /// words in it. Words that read like an OBJ record must not make the

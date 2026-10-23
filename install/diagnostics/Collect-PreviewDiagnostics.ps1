@@ -23,7 +23,7 @@ $thumbnailClsid = "{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}"
 $previewClsid = "{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}"
 $thumbnailCategory = "{E357FCCD-A995-4576-B01F-234630154E96}"
 $previewCategory = "{8895B1C6-B41F-4C1C-A562-0D564250836F}"
-$extensions = @(".stl", ".ply", ".obj", ".glb", ".hps", ".dcm")
+$extensions = @(".stl", ".ply", ".obj", ".glb", ".hps")
 
 New-Item -ItemType Directory -Path $DestinationDirectory -Force | Out-Null
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"

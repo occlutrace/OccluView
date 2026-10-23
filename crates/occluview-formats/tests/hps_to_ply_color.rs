@@ -1,6 +1,6 @@
-//! A coloured `.dcm` scan saved as PLY keeps its colour inside the single file.
+//! A coloured `.hps` scan saved as PLY keeps its colour inside the single file.
 //!
-//! `.dcm` is the legacy extension of the 3Shape HPS container. This walks the
+//! Unencrypted HPS containers can hold colour data. This walks the
 //! whole chain the operator takes — a textured HPS opened as the scan the
 //! viewer shows, written out as one `.ply` — and checks that the colour the
 //! viewer displayed comes back on the vertices, that nothing was written beside
@@ -17,8 +17,8 @@
     clippy::panic
 )]
 
-use occluview_formats::write::{write_mesh_to_new_file, MeshWriteFormat, MeshWriteOptions};
-use occluview_formats::{dispatch_by_extension, MeshWriteWarning};
+use occluview_formats::write::{MeshWriteFormat, MeshWriteOptions, write_mesh_to_new_file};
+use occluview_formats::{MeshWriteWarning, dispatch_by_extension};
 
 fn encode_base64(bytes: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -150,7 +150,7 @@ fn vertex_colored_hps() -> Vec<u8> {
 
 fn export_directory(name: &str) -> std::path::PathBuf {
     let path =
-        std::env::temp_dir().join(format!("occluview-dcm-ply-{name}-{}", std::process::id()));
+        std::env::temp_dir().join(format!("occluview-hps-ply-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&path);
     std::fs::create_dir_all(&path).expect("a temporary directory");
     path
@@ -166,17 +166,17 @@ fn only_entry(directory: &std::path::Path) -> String {
     entries.into_iter().next().expect("one entry")
 }
 
-/// The operator's case: a `.dcm` scan with an atlas, saved as a PLY, carries
+/// The operator's case: a `.hps` scan with an atlas, saved as a PLY, carries
 /// its colour on the vertices and nothing beside it.
 #[test]
-fn a_textured_dcm_saved_as_ply_keeps_its_colour_inside_the_file(
-) -> Result<(), Box<dyn std::error::Error>> {
+fn a_textured_hps_saved_as_ply_keeps_its_colour_inside_the_file()
+-> Result<(), Box<dyn std::error::Error>> {
     // Opened through the same dispatch the viewer uses, under the legacy
     // extension, so the probe has to recognise the HPS content.
-    let mesh = dispatch_by_extension("dcm", &textured_hps())?;
+    let mesh = dispatch_by_extension("hps", &textured_hps())?;
     assert!(
         mesh.texture().is_some(),
-        "the .dcm scan must show its colour before the export"
+        "the .hps scan must show its colour before the export"
     );
     assert!(mesh.has_uvs(), "and carry the mapping for it");
 
@@ -238,12 +238,12 @@ fn a_textured_dcm_saved_as_ply_keeps_its_colour_inside_the_file(
 /// An HPS scan with no atlas but per-vertex colour keeps that colour through a
 /// PLY export, so "saved in colour" does not depend on the image path alone.
 #[test]
-fn a_vertex_coloured_dcm_saved_as_ply_keeps_its_vertex_colour(
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mesh = dispatch_by_extension("dcm", &vertex_colored_hps())?;
+fn a_vertex_coloured_hps_saved_as_ply_keeps_its_vertex_colour()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mesh = dispatch_by_extension("hps", &vertex_colored_hps())?;
     assert!(
         mesh.has_vertex_colors(),
-        "the .dcm scan must show its vertex colour before the export"
+        "the .hps scan must show its vertex colour before the export"
     );
 
     let directory = export_directory("vertex");

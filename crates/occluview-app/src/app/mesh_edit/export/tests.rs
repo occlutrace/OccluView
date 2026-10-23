@@ -3,7 +3,7 @@ use crate::layer_actions::{LayerContextAction, LayerContextRequest};
 use glam::{Affine3A, Vec3};
 use occluview_core::{Mesh, Scene, SceneMesh, Vertex};
 use occluview_formats::write::MeshWriteFormat;
-use occluview_mesh_edit::{delete_selected_faces_in_mesh, FaceSelection, MeshEditOptions};
+use occluview_mesh_edit::{FaceSelection, MeshEditOptions, delete_selected_faces_in_mesh};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -118,7 +118,7 @@ fn a_forced_stl_falls_back_to_ply_for_a_point_cloud() {
 }
 
 /// STL carries geometry only, so proposing it for a colour scan discards
-/// the colour. This is the `.dcm` case: the format has no writer, so the
+/// the colour. This is the `.hps` case: the format has no writer, so the
 /// proposed format comes from what the scan holds, never from a fallback
 /// that could be a colourless STL.
 #[test]
@@ -184,9 +184,9 @@ fn a_forced_stl_falls_back_to_ply_so_colour_is_not_thrown_away() {
     );
 }
 
-/// A `.dcm` opened and saved.
+/// A `.hps` opened and saved.
 ///
-/// A `.dcm`/HPS has no writer, so there is no source format to keep. The
+/// A `.hps`/HPS has no writer, so there is no source format to keep. The
 /// format follows what the scan holds: a colour scan is offered as PLY,
 /// and a geometry-only scan as STL. There is no preference that can turn a
 /// colour scan into a colourless `.stl`.
@@ -194,7 +194,7 @@ fn a_forced_stl_falls_back_to_ply_so_colour_is_not_thrown_away() {
 fn a_dcm_is_offered_the_format_that_carries_what_it_holds() {
     use occluview_core::MeshTexture;
 
-    let paths = vec![PathBuf::from("/scans/upper.dcm")];
+    let paths = vec![PathBuf::from("/scans/upper.hps")];
 
     // A textured scan must come out PLY.
     let Ok(scene) = exportable_scene() else {
@@ -207,7 +207,7 @@ fn a_dcm_is_offered_the_format_that_carries_what_it_holds() {
     assert_eq!(
         proposed,
         MeshWriteFormat::PlyBinaryLittleEndian,
-        "a textured .dcm must be offered PLY, not a colourless STL"
+        "a textured .hps must be offered PLY, not a colourless STL"
     );
     assert_eq!(mesh_write_extension(proposed), "ply");
 
@@ -243,7 +243,7 @@ fn a_dcm_is_offered_the_format_that_carries_what_it_holds() {
         MeshWriteFormat::PlyBinaryLittleEndian
     );
 
-    // A geometry-only .dcm loses nothing as STL, so STL is what it gets.
+    // A geometry-only .hps loses nothing as STL, so STL is what it gets.
     let Ok(plain) = exportable_scene().map(|scene| (*scene.meshes()[0].mesh).clone()) else {
         panic!("required test setup or expected result was missing");
     };
@@ -552,9 +552,11 @@ fn write_layer_export_rejects_stale_layer_identity() -> Result<()> {
         Err(error) => error,
     };
 
-    assert!(error
-        .to_string()
-        .contains("layer identity changed before export"));
+    assert!(
+        error
+            .to_string()
+            .contains("layer identity changed before export")
+    );
     assert!(!path.exists());
     Ok(())
 }

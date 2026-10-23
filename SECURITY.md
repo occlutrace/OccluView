@@ -43,9 +43,10 @@ Linux, or `~/Library/Application Support/OccluView/` on macOS. It contains
 recent-file paths, crash reports, the skipped-update marker, and short-lived
 hand-off files. Crash reports deliberately omit scan paths.
 
-## Encrypted HPS files
+## Retired DCM and encrypted HPS support
 
-Encrypted HPS inputs are rejected before decoding or consulting a key provider.
+DCM inputs are rejected before format detection. Encrypted HPS inputs are
+rejected before decoding or consulting a key provider.
 No decryption keys are embedded, read from the environment, or used from
 caller-supplied providers. Unencrypted HPS inputs remain supported. Export
 protected scans through the source software to unencrypted STL, PLY, or OBJ.

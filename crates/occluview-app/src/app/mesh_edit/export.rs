@@ -3,9 +3,9 @@ use super::super::{
     AppErrorAction, AppErrorDialog, LayerContextAction, LayerContextRequest, PathBuf, Scene,
     SceneContext,
 };
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use occluview_formats::write::{
-    write_mesh_overwrite, MeshWriteFormat, MeshWriteOptions, MeshWriteReport, MeshWriteWarning,
+    MeshWriteFormat, MeshWriteOptions, MeshWriteReport, MeshWriteWarning, write_mesh_overwrite,
 };
 use std::ffi::OsStr;
 use std::path::Path;
@@ -366,7 +366,7 @@ fn mesh_export_format_from_source_path(path: &Path) -> Option<MeshWriteFormat> {
         "ply" => Some(MeshWriteFormat::PlyBinaryLittleEndian),
         "stl" => Some(MeshWriteFormat::StlBinary),
         "obj" => Some(MeshWriteFormat::Obj),
-        // HPS/DCM and GLB are readable but do not have a matching writer in
+        // HPS and GLB are readable but do not have a matching writer in
         // the public export contract. Keep the fallback explicit.
         _ => None,
     }
@@ -375,7 +375,7 @@ fn mesh_export_format_from_source_path(path: &Path) -> Option<MeshWriteFormat> {
 /// The format a layer is saved in, decided from the scan itself.
 ///
 /// A scan keeps the format of the file it came from when the viewer can write
-/// that format. When it cannot — `.dcm`/HPS, GLB, OFF, or a layer with no file
+/// that format. When it cannot — HPS, GLB, OFF, or a layer with no file
 /// of its own — the format follows what the scan actually holds: PLY carries a
 /// texture atlas, vertex colours and a mapping in one file, so a scan that has
 /// any of them is saved as PLY, and a scan that is geometry alone is saved as
@@ -447,7 +447,7 @@ fn source_format_that_carries(
 ///   the atlas, the vertex colours and the mapping in one file, so a layer that
 ///   has any of them opens its save dialog on PLY instead.
 ///
-/// The colour rule is what a `.dcm`/HPS scan needs: those formats have no
+/// The colour rule is what a HPS scan needs: those formats have no
 /// writer, so without it a fallback of STL would propose a colourless file for
 /// a colour scan.
 pub(in crate::app) fn representable_export_format(

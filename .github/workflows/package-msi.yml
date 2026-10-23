@@ -431,6 +431,8 @@ jobs:
           {
             printf '# OccluView %s\n\n' "$RELEASE_TAG"
             printf '%s\n\n' 'A native desktop viewer for dental 3D scans.'
+            printf '%s\n\n' 'DCM files and encrypted HPS files are not supported. This release contains no HPS decryption key or decryption implementation.'
+            printf '%s\n\n' 'Supported inputs: STL, PLY, OBJ, GLB, OFF, and unencrypted HPS. Export protected scans to an unencrypted supported format using the source software.'
             printf 'Source SHA: [%s](%s/%s/commit/%s)\n\n' "$RELEASE_SOURCE_SHA" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$RELEASE_SOURCE_SHA"
             printf '%s\n' '## Downloads'
             printf '%s\n' '- **OccluView-Windows-Setup.msi** — installs the viewer and Explorer integration.'
