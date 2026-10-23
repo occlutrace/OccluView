@@ -3,8 +3,8 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-if [[ "${1:-}" != handoff || "$#" -ne 1 ]]; then
-  echo "Usage: scripts/release handoff" >&2
+if [[ "${1:-}" != handoff || "$#" -gt 2 || ( "$#" -eq 2 && "${2:-}" != --resume ) ]]; then
+  echo "Usage: scripts/release handoff [--resume]" >&2
   exit 2
 fi
 
@@ -16,6 +16,11 @@ release_sha="$(git rev-parse HEAD)"
 if [[ -n "$(git status --porcelain)" ]]; then
   echo "Commit the release source before handing it off." >&2
   exit 1
+fi
+if [[ "${2:-}" == --resume ]]; then
+  release_sha="$(git rev-parse "refs/tags/$release_tag^{commit}")"
+  exec python3 scripts/publish-release.py --repo "$release_repo" \
+    --tag "$release_tag" --source-sha "$release_sha"
 fi
 if [[ -n "$(git ls-remote --tags origin "refs/tags/$release_tag")" ]]; then
   echo "Release tag $release_tag already exists; existing releases are never overwritten." >&2
