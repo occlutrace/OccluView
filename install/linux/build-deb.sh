@@ -40,9 +40,6 @@ release_viewer="target/$release_profile_dir/occluview"
 release_cli="target/$release_profile_dir/occluview-cli"
 provenance_file="target/$release_profile_dir/.occluview-build-provenance"
 feature_profile=default
-if [[ -n "${OCCLUVIEW_HPS_EMBEDDED_KEY:-}" ]]; then
-  feature_profile=private-hps-key
-fi
 
 source_revision="$(git rev-parse HEAD 2>/dev/null || true)"
 source_diff_hash=unavailable
@@ -111,12 +108,7 @@ validate_release_provenance() {
 }
 
 if [[ "$build_release" -eq 1 ]]; then
-  feature_args=()
-  if [[ -n "${OCCLUVIEW_HPS_EMBEDDED_KEY:-}" ]]; then
-    echo "Private HPS key embedding enabled for this build."
-    feature_args=(--features occluview-formats/private-hps-key)
-  fi
-  cargo build --locked --profile release-unwind -p occluview-app -p occluview-cli "${feature_args[@]}"
+  cargo build --locked --profile release-unwind -p occluview-app -p occluview-cli
   if [[ ! -x "$release_viewer" || ! -x "$release_cli" ]]; then
     echo "Cargo release build did not produce both OccluView binaries" >&2
     exit 1

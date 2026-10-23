@@ -28,7 +28,7 @@ pub enum HpsReadFailure {
     MalformedInput,
     /// The payload uses an unsupported encoding.
     UnsupportedEncoding,
-    /// The encrypted payload has no configured key.
+    /// The encrypted payload is unsupported.
     KeyMissing,
     /// The configured key is invalid.
     InvalidKey,
@@ -53,7 +53,7 @@ pub enum HpsDecodedReadError {
     KeyProvider(HpsReadFailure),
 }
 
-/// Secret bytes used to decrypt encrypted HPS `CE` blocks.
+/// Legacy key container retained for source compatibility; readers do not use it.
 ///
 /// This compatibility wrapper preserves the original formats API while the
 /// neutral parser owns key storage, redaction, and zeroization.
@@ -93,7 +93,7 @@ impl fmt::Debug for HpsSecretKey {
     }
 }
 
-/// Supplies the base HPS key for encrypted `CE` files.
+/// Legacy provider interface. Readers never consult it.
 pub trait HpsKeyProvider: Sync {
     /// Return the base secret key, or `None` when this build/user has no key.
     ///
@@ -146,7 +146,7 @@ impl parser::HpsKeyProvider for ProviderAdapter<'_> {
 /// Read raw HPS XML or a dental HPS package into an OccluView mesh.
 ///
 /// # Errors
-/// Returns [`FormatError::Deferred`] for encrypted `CE` without a key provider,
+/// Returns [`FormatError::Deferred`] for encrypted `CE` inputs,
 /// [`FormatError::Unsupported`] for medical DICOM, and typed malformed format
 /// errors for invalid dental HPS data.
 pub fn read(bytes: &[u8]) -> Result<Mesh, FormatError> {
@@ -166,11 +166,11 @@ pub fn read_decoded_surface(bytes: &[u8]) -> Result<parser::DecodedSurface, Form
     parser::read(bytes).map_err(map_parser_error)
 }
 
-/// Read raw HPS XML or a dental HPS package with an explicit key provider.
+/// Read unencrypted HPS input; the provider is retained for compatibility.
 ///
 /// # Errors
-/// Parser failures map to the existing [`FormatError`] contract. Errors returned
-/// by `key_provider` are propagated unchanged.
+/// Encrypted input is rejected without consulting `key_provider`. Parser
+/// failures map to the existing [`FormatError`] contract.
 pub fn read_with_key_provider(
     bytes: &[u8],
     key_provider: &dyn HpsKeyProvider,
@@ -182,8 +182,8 @@ pub fn read_with_key_provider(
 /// topology and corner-indexed texture coordinates.
 ///
 /// # Errors
-/// Returns [`FormatError`] when parsing fails or the key provider rejects the
-/// encrypted payload.
+/// Returns [`FormatError`] for encrypted or invalid input. The provider is
+/// never consulted.
 pub fn read_decoded_surface_with_key_provider(
     bytes: &[u8],
     key_provider: &dyn HpsKeyProvider,
@@ -258,9 +258,7 @@ fn map_parser_error(error: parser::HpsError) -> FormatError {
         }
         HpsError::KeyMissing => FormatError::Deferred {
             format: "HPS",
-            reason: "the package is encrypted and no decryption key is configured \
-                     (official builds embed one; a build from source reads \
-                     OCCLUVIEW_HPS_ENCRYPTION_KEY)"
+            reason: "Encrypted HPS files are not supported. Export an unencrypted STL, PLY, or OBJ file from the source software."
                 .to_string(),
         },
         HpsError::BadContainer { reason }

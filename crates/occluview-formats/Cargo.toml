@@ -14,16 +14,6 @@ publish.workspace = true
 [lints]
 workspace = true
 
-[package.metadata.cargo-machete]
-ignored = ["md-5"] # imported under its Rust crate name, `md5`
-
-[features]
-default = []
-# Private/offline builds may embed an obfuscated HPS key from
-# OCCLUVIEW_HPS_EMBEDDED_KEY at compile time. Release packaging may enable this
-# only from CI secrets; the key must never be stored in source or logs.
-private-hps-key = []
-
 [dependencies]
 occluview-core = { workspace = true }
 occluview-geometry = { workspace = true }
@@ -35,11 +25,8 @@ serde_json     = { workspace = true }
 # PNG + JPEG decode for glTF texture images (GLB embeds them in bufferViews).
 image          = { workspace = true }
 # HPS package compatibility. The `hps::parser` module owns the archive,
-# cipher and image dependencies directly, plus one debug event on the
+# image dependencies directly, plus one debug event on the
 # texture path.
-adler2   = { workspace = true }
-blowfish = { workspace = true }
-md-5     = { workspace = true }
 zeroize  = { workspace = true }
 zip      = { workspace = true }
 tracing  = { workspace = true }

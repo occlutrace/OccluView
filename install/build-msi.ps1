@@ -425,13 +425,6 @@ if (-not $SkipBuild) {
         $cargoArgs += @("--profile", "release-diagnostic-unwind")
         $shellCargoArgs += @("--profile", "release-diagnostic-unwind")
     }
-    if (Test-HasText $env:OCCLUVIEW_HPS_EMBEDDED_KEY) {
-        Write-Host "Private HPS key embedding enabled for this build."
-        # The app and Explorer shell DLL both need the key to decode encrypted
-        # HPS scans for the viewer, thumbnails, and the preview pane.
-        $cargoArgs += @("--features", "occluview-formats/private-hps-key")
-        $shellCargoArgs += @("--features", "occluview-formats/private-hps-key")
-    }
     if ($isDiagnosticPackage) {
         $shellCargoArgs += @("--features", "diagnostic-logs")
     }
@@ -525,9 +518,6 @@ if (-not $SkipBuild) {
                 "--target", $Target,
                 "--profile", "release-unwind"
             )
-            if (Test-HasText $env:OCCLUVIEW_HPS_EMBEDDED_KEY) {
-                $referenceShellCargoArgs += @("--features", "occluview-formats/private-hps-key")
-            }
             Push-Location $referenceShellRoot
             try {
                 & cargo @referenceShellCargoArgs

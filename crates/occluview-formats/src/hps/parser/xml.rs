@@ -126,12 +126,6 @@ pub(super) fn parse_usize_attr(value: &str, attr: &str) -> Result<usize, HpsErro
         .map_err(|_| super::malformed(format!("XML invalid integer attribute {attr}")))
 }
 
-pub(super) fn optional_usize_attr(open_tag: &str, attr: &str) -> Result<Option<usize>, HpsError> {
-    attr_value(open_tag, attr)?
-        .map(|value| parse_usize_attr(value, attr))
-        .transpose()
-}
-
 pub(super) fn parse_u32_attr(value: &str, attr: &str) -> Result<u32, HpsError> {
     value
         .parse::<u32>()

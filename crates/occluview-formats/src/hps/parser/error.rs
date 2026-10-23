@@ -27,8 +27,10 @@ pub enum HpsError {
         reason: String,
     },
 
-    /// Encrypted `CE` data was encountered without a usable key.
-    #[error("encrypted CE schema needs a configured key provider")]
+    /// Encrypted `CE` data is unsupported; the variant is retained for compatibility.
+    #[error(
+        "Encrypted HPS files are not supported. Export an unencrypted STL, PLY, or OBJ file from the source software."
+    )]
     KeyMissing,
 
     /// Configured key bytes cannot be used by the HPS cipher.

@@ -136,21 +136,7 @@ fn zip_hps_fixture(path: &str, hps: &[u8]) -> Vec<u8> {
 }
 
 fn minimal_ce_hps_fixture() -> &'static [u8] {
-    br#"<?xml version="1.0" encoding="UTF-8"?>
-<HPS>
-  <Packed_geometry>
-    <Schema>CE</Schema>
-    <Binary_data>
-      <CE version="1.0">
-        <Facets facet_count="1" base64_encoded_bytes="1">BA==</Facets>
-        <Vertices vertex_count="3" base64_encoded_bytes="36" check_value="2130807316">zCbrd0TcI4bOxhSDOGslNswm63dE3COGzsYUgzhrJTbMJut3RNwjhg==</Vertices>
-      </CE>
-    </Binary_data>
-  </Packed_geometry>
-  <Properties>
-    <Property name="EKID" value="1"/>
-  </Properties>
-</HPS>"#
+    br"<HPS><Schema>CE</Schema></HPS>"
 }
 
 fn test_key_provider() -> StaticProvider {
@@ -214,10 +200,12 @@ fn incomplete_optional_elements_do_not_silently_remove_surface_attributes() {
         &format!("<TextureImage>{png}</TextureImage>"),
     ))
     .expect("XML");
-    assert!(read(text.as_bytes())
-        .expect("textured surface")
-        .texture()
-        .is_some());
+    assert!(
+        read(text.as_bytes())
+            .expect("textured surface")
+            .texture()
+            .is_some()
+    );
     for damaged in [
         text[..text.find("</TextureImage>").expect("closing texture tag")].to_string(),
         text.replace("</TextureImage>", ""),
@@ -260,7 +248,7 @@ fn parses_unencrypted_ca_and_cb_hps_schemas() {
 }
 
 #[test]
-fn ce_schema_is_deferred_until_key_provider_exists() {
+fn ce_schema_is_unsupported() {
     let xml = br"<HPS><Schema>CE</Schema></HPS>";
     assert!(matches!(read(xml), Err(HpsError::KeyMissing)));
 }
@@ -273,25 +261,18 @@ fn medical_dicom_is_not_treated_as_hps() {
 }
 
 #[test]
-fn parses_minimal_ce_hps_with_key_provider() {
-    let mesh = read_with_key_provider(minimal_ce_hps_fixture(), &test_key_provider())
-        .expect("CE HPS should decrypt with test key");
-    assert_eq!(mesh.indices().len() / 3, 1);
-    assert_eq!(mesh.indices(), &[0, 1, 2]);
-    assert_eq!(mesh.positions()[1], [1.0, 0.0, 0.0]);
-    assert_eq!(mesh.positions()[2], [0.0, 1.0, 0.0]);
+fn rejects_ce_hps_even_with_a_key_provider() {
+    let error = read_with_key_provider(minimal_ce_hps_fixture(), &test_key_provider())
+        .expect_err("encrypted HPS is unsupported even with a key");
+    assert!(matches!(error, ReadError::Parser(HpsError::KeyMissing)));
 }
 
 #[test]
-fn rejects_ce_hps_when_key_fails_integrity_check() {
-    let bad_provider = StaticProvider((2_u8..=17).collect());
-    let err = read_with_key_provider(minimal_ce_hps_fixture(), &bad_provider)
-        .expect_err("wrong key must fail integrity check");
-    assert!(matches!(
-        err,
-        ReadError::Parser(HpsError::IntegrityFailure { reason })
-            if reason.contains("integrity")
-    ));
+fn rejects_packaged_ce_hps_even_with_a_key_provider() {
+    let package = zip_hps_fixture("scan.hps", minimal_ce_hps_fixture());
+    let error = read_with_key_provider(&package, &test_key_provider())
+        .expect_err("packaged encrypted HPS is unsupported even with a key");
+    assert!(matches!(error, ReadError::Parser(HpsError::KeyMissing)));
 }
 
 #[test]

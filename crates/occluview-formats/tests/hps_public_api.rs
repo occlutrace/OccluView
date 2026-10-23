@@ -5,11 +5,11 @@
 use occluview_core::Mesh;
 use occluview_formats::hps::parser::DecodedSurface;
 use occluview_formats::{
-    hps::{
-        mesh_from_decoded_surface, read, read_with_key_provider, HpsKeyProvider, HpsSecretKey,
-        NoHpsKeyProvider,
-    },
     FormatError,
+    hps::{
+        HpsKeyProvider, HpsSecretKey, NoHpsKeyProvider, mesh_from_decoded_surface, read,
+        read_with_key_provider,
+    },
 };
 
 struct ExternalProvider;
@@ -64,21 +64,24 @@ fn neutral_surface_adapter_is_the_minimal_public_mesh_bridge() {
     let mesh = adapter(surface).expect("neutral surface should adapt");
 
     assert_eq!(mesh.indices(), &[0, 1, 2]);
-    assert!(mesh.vertices()[1]
-        .position
-        .into_iter()
-        .zip([1.0, 0.0, 0.0])
-        .all(|(actual, expected)| (actual - expected).abs() < f32::EPSILON));
+    assert!(
+        mesh.vertices()[1]
+            .position
+            .into_iter()
+            .zip([1.0, 0.0, 0.0])
+            .all(|(actual, expected)| (actual - expected).abs() < f32::EPSILON)
+    );
 }
 
 #[test]
-fn hps_custom_provider_errors_propagate_unchanged() {
+fn hps_encrypted_input_is_rejected_before_consulting_a_provider() {
     let error = read_with_key_provider(b"<HPS><Schema>CE</Schema></HPS>", &FailingProvider)
-        .expect_err("custom provider error should propagate");
+        .expect_err("encrypted input must be rejected without invoking the provider");
     assert!(matches!(
         error,
-        FormatError::UnsafePath { format, path }
-            if format == "provider-test" && path == "sentinel"
+        FormatError::Deferred { format: "HPS", reason }
+            if reason.contains("Encrypted HPS files are not supported")
+                && reason.contains("STL, PLY, or OBJ")
     ));
 }
 

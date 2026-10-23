@@ -1,8 +1,4 @@
-use super::{
-    base64, crypto,
-    package::{encrypted_element_uses_scrambled_key, original_size_attr},
-    xml, DecodedTexture, HpsError,
-};
+use super::{DecodedTexture, HpsError, base64, xml};
 use image::GenericImageView;
 use std::io::Cursor;
 use std::mem::size_of;
@@ -38,12 +34,10 @@ enum RawTextureLayout {
 
 pub(super) fn parse_texture_data(
     text: &str,
-    schema: &str,
-    key: Option<&[u8]>,
     vertex_count: usize,
     indices: &[u32],
 ) -> Result<Option<SurfaceTexture>, HpsError> {
-    let corner_uvs = parse_texture_coordinates(text, schema, key, vertex_count, indices)?;
+    let corner_uvs = parse_texture_coordinates(text, vertex_count, indices)?;
     let texture = parse_texture_image(text)?;
     if corner_uvs.is_none() && texture.is_none() {
         return Ok(None);
@@ -56,8 +50,6 @@ pub(super) fn parse_texture_data(
 
 fn parse_texture_coordinates(
     text: &str,
-    schema: &str,
-    key: Option<&[u8]>,
     vertex_count: usize,
     indices: &[u32],
 ) -> Result<Option<Vec<Option<[f32; 2]>>>, HpsError> {
@@ -67,16 +59,7 @@ fn parse_texture_coordinates(
         return Ok(None);
     };
 
-    let mut raw = Zeroizing::new(base64::decode(element.body)?);
-    if schema == "CE" {
-        let key = key.ok_or(HpsError::KeyMissing)?;
-        raw = crypto::decrypt_hps_data(
-            &raw,
-            key,
-            original_size_attr(element.open_tag)?,
-            encrypted_element_uses_scrambled_key(element.open_tag)?,
-        )?;
-    }
+    let raw = Zeroizing::new(base64::decode(element.body)?);
 
     decode_per_vertex_texture_coordinates(&raw, vertex_count, indices).map(Some)
 }

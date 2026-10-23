@@ -128,8 +128,8 @@ fn expired_stream_request_does_not_return_a_stream_cache_hit() {
     let spec = spec_64();
     let mut bytes = fixtures::binary_stl_cube();
     bytes[..8].copy_from_slice(b"latstm01");
-    let plan = prepare_stream_thumbnail_render(Some("stl"), &bytes)
-        .expect("fixture stream preflight");
+    let plan =
+        prepare_stream_thumbnail_render(Some("stl"), &bytes).expect("fixture stream preflight");
     let cached_pixels = vec![47_u8; usize::from(spec.size_px).pow(2) * 4];
     thumbnail_stream_cache()
         .lock()
@@ -161,8 +161,8 @@ fn blocked_stream_preflight_stays_bounded_and_a_late_cache_hit_is_fenced() {
     let spec = spec_64();
     let mut bytes = fixtures::binary_stl_cube();
     bytes[..8].copy_from_slice(b"lateprep");
-    let plan = prepare_stream_thumbnail_render(Some("stl"), &bytes)
-        .expect("fixture stream preflight");
+    let plan =
+        prepare_stream_thumbnail_render(Some("stl"), &bytes).expect("fixture stream preflight");
     let cached_pixels = vec![53_u8; usize::from(spec.size_px).pow(2) * 4];
     thumbnail_stream_cache()
         .lock()
@@ -523,15 +523,9 @@ fn assert_burst_verdict(
     }
 }
 
-/// An encrypted package with no key is a fact about the process, not the file.
-///
-/// The shell keeps whatever bitmap it is handed against the file's timestamp,
-/// and a key appearing -- an official build replacing a build from source, an
-/// environment variable set for the session -- does not move that timestamp.
-/// A cacheable placeholder would therefore outlive the reason for it, and
-/// every encrypted scan on the machine would keep the grey cube.
+/// Deferred format support uses the existing transient thumbnail contract.
 #[test]
-fn a_package_that_needs_a_key_this_process_lacks_is_transient() {
+fn an_unsupported_encrypted_package_is_transient() {
     let spec = ThumbnailSpec {
         size_px: 32,
         ..Default::default()
@@ -539,11 +533,11 @@ fn a_package_that_needs_a_key_this_process_lacks_is_transient() {
     let outcome =
         ThumbnailJobOutcome::Finished(Err(ThumbnailError::Format(FormatError::Deferred {
             format: "HPS",
-            reason: "the package is encrypted and no decryption key is configured".to_string(),
+            reason: "Encrypted HPS files are not supported.".to_string(),
         })));
     let attempt = thumbnail_attempt_for_job_outcome(outcome, spec, Duration::from_secs(6), "file");
     assert!(
         matches!(attempt, ThumbnailAttempt::TransientFailure),
-        "a missing key must be asked about again, not cached as a verdict"
+        "unsupported format support follows the deferred thumbnail contract"
     );
 }

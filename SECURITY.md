@@ -43,6 +43,13 @@ Linux, or `~/Library/Application Support/OccluView/` on macOS. It contains
 recent-file paths, crash reports, the skipped-update marker, and short-lived
 hand-off files. Crash reports deliberately omit scan paths.
 
+## Encrypted HPS files
+
+Encrypted HPS inputs are rejected before decoding or consulting a key provider.
+No decryption keys are embedded, read from the environment, or used from
+caller-supplied providers. Unencrypted HPS inputs remain supported. Export
+protected scans through the source software to unencrypted STL, PLY, or OBJ.
+
 ## Signing keys
 
 Release secrets are stored only in the release system, never in this
@@ -52,8 +59,7 @@ old key only after installed versions can verify the replacement.
 
 ## macOS distribution gate
 
-The Package workflow builds the Apple Silicon `.app`, `.dmg`, and `.pkg` with
-the embedded HPS key. A macOS asset is published, and advertised by the update
+The Package workflow builds the Apple Silicon `.app`, `.dmg`, and `.pkg`. A macOS asset is published, and advertised by the update
 manifest, only when the build was signed with Developer ID Application (app and
 disk image) and Developer ID Installer (package), notarized, and stapled; the
 update assets still carry minisign signatures like every other platform. The

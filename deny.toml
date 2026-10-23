@@ -92,7 +92,7 @@ reason = "winit 0.30's macOS core-graphics stack requires bitflags 1 beside curr
 [[bans.skip]]
 name = "block-buffer"
 version = "=0.10.4"
-reason = "minisign's scrypt stack requires digest 0.10; sha2 and md-5 use digest 0.11"
+reason = "minisign's scrypt stack requires digest 0.10; sha2 uses digest 0.11"
 
 [[bans.skip]]
 name = "block2"
@@ -110,11 +110,6 @@ version = "=0.3.0"
 reason = "winit 0.30 requires 0.3 beside the 0.4 source used by egui's Wayland stack"
 
 [[bans.skip]]
-name = "cipher"
-version = "=0.4.4"
-reason = "minisign's scrypt stack requires cipher 0.4 while blowfish requires 0.5"
-
-[[bans.skip]]
 name = "cpufeatures"
 version = "=0.2.17"
 reason = "minisign's scrypt stack retains sha2 0.10 and cpufeatures 0.2 beside workspace sha2 0.11"
@@ -122,7 +117,7 @@ reason = "minisign's scrypt stack retains sha2 0.10 and cpufeatures 0.2 beside w
 [[bans.skip]]
 name = "crypto-common"
 version = "=0.1.7"
-reason = "minisign's scrypt stack uses crypto-common 0.1 while blowfish and sha2 use 0.2"
+reason = "minisign's scrypt stack uses crypto-common 0.1 while sha2 uses 0.2"
 
 [[bans.skip]]
 name = "digest"
@@ -143,11 +138,6 @@ reason = "ahash and proptest require getrandom 0.3 beside signing and tempfile u
 name = "hashbrown"
 version = "=0.16.1"
 reason = "gpu-allocator 0.28, selected by pinned wgpu 30, requires hashbrown 0.16 beside indexmap 0.17"
-
-[[bans.skip]]
-name = "inout"
-version = "=0.1.4"
-reason = "minisign's scrypt cipher stack requires inout 0.1 while blowfish requires 0.2"
 
 [[bans.skip]]
 name = "itertools"

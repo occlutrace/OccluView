@@ -3,7 +3,6 @@
 #![forbid(unsafe_code)]
 
 mod base64;
-mod crypto;
 mod error;
 mod faces;
 mod key;

@@ -117,28 +117,9 @@ jobs:
             }
           }
           "OCCLUVIEW_SIGN_PFX_PATH=$pfxPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-      - name: Verify embedded HPS key build path
-        shell: pwsh
-        env:
-          OCCLUVIEW_HPS_EMBEDDED_KEY: ${{ secrets.OCCLUVIEW_HPS_EMBEDDED_KEY }}
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:OCCLUVIEW_HPS_EMBEDDED_KEY)) {
-            throw "OCCLUVIEW_HPS_EMBEDDED_KEY is required for Package MSI so encrypted HPS files work in the shipped installer."
-          }
-          git grep --quiet --fixed-strings -e "$env:OCCLUVIEW_HPS_EMBEDDED_KEY" --
-          $sourceExit = $LASTEXITCODE
-          if ($sourceExit -eq 0) {
-            throw "Embedded HPS key material must not appear in tracked source."
-          }
-          if ($sourceExit -gt 1) {
-            throw "Could not scan tracked source for embedded HPS key material."
-          }
-          # grep's expected no-match status must not escape the pwsh wrapper.
-          exit 0
       - name: Build MSI
         shell: pwsh
         env:
-          OCCLUVIEW_HPS_EMBEDDED_KEY: ${{ secrets.OCCLUVIEW_HPS_EMBEDDED_KEY }}
           OCCLUVIEW_WINDOWS_CONFIGURATION: ${{ inputs.windows_configuration }}
         run: |
           $configuration = "release"
@@ -271,29 +252,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y appstream desktop-file-utils libxml2-utils shared-mime-info
-      - name: Verify embedded HPS key build path
-        env:
-          OCCLUVIEW_HPS_EMBEDDED_KEY: ${{ secrets.OCCLUVIEW_HPS_EMBEDDED_KEY }}
-        run: |
-          if [[ -z "${OCCLUVIEW_HPS_EMBEDDED_KEY:-}" ]]; then
-            echo "OCCLUVIEW_HPS_EMBEDDED_KEY is required for Package Linux so encrypted HPS files work in the shipped package." >&2
-            exit 1
-          fi
-          set +e
-          git grep --quiet --fixed-strings -e "$OCCLUVIEW_HPS_EMBEDDED_KEY" --
-          source_status=$?
-          set -e
-          if [[ "$source_status" -eq 0 ]]; then
-            echo "Embedded HPS key material must not appear in tracked source." >&2
-            exit 1
-          fi
-          if [[ "$source_status" -gt 1 ]]; then
-            echo "Could not scan tracked source for embedded HPS key material." >&2
-            exit 1
-          fi
       - name: Build Debian package
-        env:
-          OCCLUVIEW_HPS_EMBEDDED_KEY: ${{ secrets.OCCLUVIEW_HPS_EMBEDDED_KEY }}
         run: bash install/linux/build-deb.sh
       - name: Write Linux checksums
         run: |
@@ -347,29 +306,7 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: Require a native Apple Silicon runner
         run: test "$(uname -m)" = "arm64"
-      - name: Verify embedded HPS key build path
-        env:
-          OCCLUVIEW_HPS_EMBEDDED_KEY: ${{ secrets.OCCLUVIEW_HPS_EMBEDDED_KEY }}
-        run: |
-          if [[ -z "${OCCLUVIEW_HPS_EMBEDDED_KEY:-}" ]]; then
-            echo "OCCLUVIEW_HPS_EMBEDDED_KEY is required for Package macOS so encrypted HPS files work in the shipped app." >&2
-            exit 1
-          fi
-          set +e
-          git grep --quiet --fixed-strings -e "$OCCLUVIEW_HPS_EMBEDDED_KEY" --
-          source_status=$?
-          set -e
-          if [[ "$source_status" -eq 0 ]]; then
-            echo "Embedded HPS key material must not appear in tracked source." >&2
-            exit 1
-          fi
-          if [[ "$source_status" -gt 1 ]]; then
-            echo "Could not scan tracked source for embedded HPS key material." >&2
-            exit 1
-          fi
-      - name: Build the app with the embedded HPS key
-        env:
-          OCCLUVIEW_HPS_EMBEDDED_KEY: ${{ secrets.OCCLUVIEW_HPS_EMBEDDED_KEY }}
+      - name: Build the app
         run: bash install/macos/build-app.sh
       - name: Import Developer ID identities when configured
         id: signing

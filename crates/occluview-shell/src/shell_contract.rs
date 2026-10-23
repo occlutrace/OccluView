@@ -16,9 +16,8 @@ pub const PREVIEW_HANDLER_CATEGORY: &str = "{8895B1C6-B41F-4C1C-A562-0D564250836
 /// `ProgID` for.
 ///
 /// JSON `.gltf` and `.3mf` are absent: they have no stream-safe readers. HPS
-/// are included because private builds can provide the HPS key at runtime
-/// while public builds safely fall back to placeholders for encrypted CE
-/// sources.
+/// is included for unencrypted geometry. Encrypted CE sources are unsupported
+/// and fall back to placeholders in every build.
 pub const SUPPORTED_EXTENSIONS: &[&str] = occluview_formats::V1_OPEN_EXTENSIONS;
 
 /// Extensions whose MSI registration names the shipped `occluview-3d` icon.

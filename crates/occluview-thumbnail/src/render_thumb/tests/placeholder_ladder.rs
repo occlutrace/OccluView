@@ -6,7 +6,7 @@
 //! healthy mesh still renders a real thumbnail (not a placeholder).
 
 use super::*;
-use crate::placeholder::{placeholder_thumbnail_kind, PlaceholderKind};
+use crate::placeholder::{PlaceholderKind, placeholder_thumbnail_kind};
 use occluview_core::CoreError;
 use occluview_formats::FormatError;
 use occluview_render::RenderError;
@@ -51,10 +51,10 @@ fn broken_recognized_formats_get_the_corrupt_badge() {
 #[test]
 fn deferred_unsupported_and_infra_failures_stay_plain() {
     let plain = [
-        // No-key / encrypted HPS surfaces as Deferred.
+        // Unsupported encrypted HPS surfaces as Deferred.
         ThumbnailError::Format(FormatError::Deferred {
             format: "HPS CE",
-            reason: "encrypted CE schema needs a configured key provider".to_string(),
+            reason: "Encrypted HPS files are not supported.".to_string(),
         }),
         ThumbnailError::Format(FormatError::Unsupported {
             extension: "xyz".to_string(),

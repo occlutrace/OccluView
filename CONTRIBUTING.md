@@ -36,7 +36,7 @@ The workspace contains these crates:
 - `occluview-mesh-edit` — Product-neutral mesh-editing kernel plus the adapter to core meshes; the `robust` module owns the optional native CSG fallback (feature `robust-csg`).
 - `occluview-align` — Scan registration and signed deviation metrology.
 - `occluview-contact` — Occlusal contact metrology and the clinical colour law.
-- `occluview-formats` — Import and export readers and writers for the supported scan formats; the `hps` module owns the HPS parser (feature `private-hps-key`).
+- `occluview-formats` — Import and export readers and writers for the supported scan formats; the `hps` module owns the HPS parser (unencrypted inputs only).
 - `occluview-render` — wgpu renderer for the live viewer and the offscreen thumbnail path.
 - `occluview-thumbnail` — Platform-neutral thumbnail loading, rendering and fallback.
 - `occluview-shell` — Windows COM shell extension: Explorer thumbnails and the preview pane.
