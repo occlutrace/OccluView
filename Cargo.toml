@@ -93,7 +93,7 @@ occluview-shell   = { path = "crates/occluview-shell" }
 occluview-update  = { path = "crates/occluview-update" }
 
 # Math / numerics.
-glam    = "0.33.11"         # permissive (MIT OR Apache-2.0)
+glam    = "0.34.1"         # permissive (MIT OR Apache-2.0)
 bytemuck = { version = "1.25.2", features = ["derive"] }
 
 sha2     = "0.11.0"
@@ -126,7 +126,7 @@ pollster   = "1.0.1"
 image      = { version = ">=0.25.5, <0.25.11", default-features = false, features = ["png", "jpeg"] }
 
 # ZIP fixtures for recognized archive containers.
-zip        = { version = "8.6.0", default-features = false, features = ["deflate"] }
+zip        = { version = "9.0.5", default-features = false, features = ["deflate"] }
 
 # Logging.
 tracing            = "0.1"
@@ -136,8 +136,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 wgpu = "=30.0.1"             # pinned; bumps need tests
 
 # Windowing / GUI.
-egui    = "=0.36.1"
-eframe  = { version = "=0.36.1", default-features = false, features = ["accesskit", "wgpu", "default_fonts", "links"] }
+egui    = "=0.36.2"
+eframe  = { version = "=0.36.2", default-features = false, features = ["accesskit", "wgpu", "default_fonts", "links"] }
 
 # Localization (OccluView i18n foundation). Pure-Rust Fluent stack:
 # named variables, per-locale plural/select, build-time validatable catalogs.
@@ -149,7 +149,7 @@ sys-locale     = "0.3"
 # probing, headless UI wireframes. Same crates already in the tree.
 fluent-syntax        = "0.12"
 epaint_default_fonts = "0.36"
-skrifa               = "0.44"
+skrifa               = "0.46"
 rfd     = { version = "0.17.2", default-features = false, features = ["xdg-portal", "wayland"] }
 
 # Linux window activation. The app uses the system Wayland connection exposed
