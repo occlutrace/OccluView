@@ -1,0 +1,29 @@
+# Third-Party Notices
+
+OccluView is distributed with the third-party Rust crates and font assets
+listed below. Each license text appears once, followed by the crates
+distributed under it. This file is generated from Cargo.lock by cargo-about;
+edit about.toml or about.hbs and run scripts/gen-third-party.sh to update it.
+
+## Licenses used
+
+{{#each overview}}
+- {{{name}}} ({{count}})
+{{/each}}
+
+## License texts
+
+{{#each licenses}}
+### {{{name}}}
+
+Used by:
+
+{{#each used_by}}
+- {{crate.name}} {{crate.version}}{{#if crate.repository}} ({{{crate.repository}}}){{/if}}
+{{/each}}
+
+```
+{{{text}}}
+```
+
+{{/each}}

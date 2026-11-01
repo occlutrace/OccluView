@@ -1,0 +1,685 @@
+//! Embedded Fluent catalogs, per-message English fallback, contract
+//! validation, and pseudo-localization.
+//!
+//! Catalogs live in `crates/occluview-i18n/i18n/*.ftl`, are compiled by the
+//! shared i18n crate, and are validated against `en` at test time:
+//! parse errors, junk, duplicate keys, key/attribute/variable drift, and
+//! unused keys all fail. At runtime a missing message, attribute, variable,
+//! or whole catalog degrades atomically to English for that message —
+//! never panic, never blank. A frame may mix languages on a partial
+//! catalog; the fallback is per message, and the impossible case (the
+//! key missing even in `en`) renders the diagnostic ⟦id⟧ marker.
+
+#[cfg(test)]
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+
+#[cfg(test)]
+use fluent_bundle::{FluentArgs, FluentBundle, FluentResource, FluentValue};
+#[cfg(test)]
+use fluent_syntax::ast;
+#[cfg(test)]
+use unic_langid::LanguageIdentifier;
+
+#[cfg(test)]
+use super::tags::FALLBACK_TAG;
+pub(crate) use occluview_i18n::{args, plural_args, Catalog, NumberFormat, EMBEDDED_TAGS};
+
+/// Pseudo-locale tag for layout testing. Never user-selectable.
+#[cfg(test)]
+pub(crate) const PSEUDO_TAG: &str = "qps-ploc";
+
+#[cfg(test)]
+const SOURCES: &[(&str, &str)] = occluview_i18n::EMBEDDED_SOURCES;
+
+#[cfg(test)]
+pub(super) fn pseudo_catalog() -> Result<Catalog, String> {
+    let source = occluview_i18n::embedded_source(FALLBACK_TAG)
+        .ok_or_else(|| "no embedded English source".to_owned())?;
+    Catalog::from_source(PSEUDO_TAG, &pseudo_source(source))
+}
+
+/// Pseudo-localize an FTL source: expand plain-text runs, keep syntax
+/// (message keys, variant keys, `{...}`, comments) byte-identical.
+#[cfg(test)]
+fn pseudo_source(source: &str) -> String {
+    let mut out = String::with_capacity(source.len() + source.len() / 2);
+    let mut in_placeable = 0_usize;
+    for line in source.lines() {
+        if line.trim_start().starts_with('#') {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+        let (prefix, body) = split_pseudo_prefix(line, in_placeable);
+        out.push_str(prefix);
+        // `opened` restarts every line: text expands unless a placeable was
+        // opened (and not yet closed) on this line. The carried depth only
+        // tells whether we are inside a multiline select; it must not send
+        // a freshly reopened `{ $var }` down the expansion path.
+        let mut opened = false;
+        let mut chunk = String::new();
+        for ch in body.chars() {
+            match ch {
+                '{' => {
+                    in_placeable += 1;
+                    opened = true;
+                    flush_pseudo_value(&mut out, &mut chunk);
+                    out.push(ch);
+                }
+                '}' => {
+                    in_placeable = in_placeable.saturating_sub(1);
+                    opened = false;
+                    out.push(ch);
+                }
+                _ if opened => out.push(ch),
+                _ => chunk.push(ch),
+            }
+        }
+        flush_pseudo_value(&mut out, &mut chunk);
+        out.push('\n');
+    }
+    out
+}
+
+/// Split a line into (syntax prefix to keep, body to expand): `key = value`
+/// keeps `key =`, select-variant lines (`[one]`/`*[other]`) keep the variant
+/// key. Continuation lines inside a placeable expand whole.
+#[cfg(test)]
+fn split_pseudo_prefix(line: &str, in_placeable: usize) -> (&str, &str) {
+    if in_placeable == 0 {
+        if let Some(eq) = line.find('=') {
+            let (key, rest) = line.split_at(eq + 1);
+            return (key, rest);
+        }
+    }
+    // Select-variant keys stay byte-identical at any depth; without this
+    // the expansion would corrupt `[one]`/`*[other]` and break parsing.
+    let trimmed = line.trim_start();
+    if trimmed.starts_with('[') || trimmed.starts_with("*[") {
+        if let Some(end) = trimmed.find(']') {
+            let key_len = line.len() - trimmed.len() + end + 1;
+            return line.split_at(key_len);
+        }
+    }
+    ("", line)
+}
+
+#[cfg(test)]
+fn flush_pseudo_value(out: &mut String, chunk: &mut String) {
+    if chunk.trim().is_empty() {
+        // Blank runs (indentation, empty values) pass through unbracketed.
+        out.push_str(chunk);
+        chunk.clear();
+        return;
+    }
+    let expanded: String = chunk.chars().map(pseudo_char).collect();
+    let padding = "〜".repeat(chunk.chars().filter(|ch| ch.is_alphabetic()).count() / 3);
+    out.push('⟦');
+    out.push_str(&expanded);
+    out.push_str(&padding);
+    out.push('⟧');
+    chunk.clear();
+}
+
+#[cfg(test)]
+fn pseudo_char(ch: char) -> char {
+    match ch {
+        'a' => 'á',
+        'e' => 'é',
+        'i' => 'í',
+        'o' => 'ó',
+        'u' => 'ú',
+        'A' => 'Á',
+        'E' => 'É',
+        'O' => 'Ó',
+        's' => 'š',
+        'n' => 'ñ',
+        _ => ch,
+    }
+}
+
+/// Message contract: which attributes and variables each key exposes.
+#[cfg(test)]
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct Contract {
+    entries: BTreeMap<String, ContractEntry>,
+}
+
+#[cfg(test)]
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ContractEntry {
+    has_value: bool,
+    attributes: BTreeSet<String>,
+    variables: BTreeSet<String>,
+    /// One sorted variant-name set per select expression, in source
+    /// order, across the value and attributes. Non-`ru` catalogs must
+    /// mirror `en` exactly; `ru` must additionally carry one/few/many
+    /// wherever `en` selects on a count. A flat string where `en`
+    /// selects would silently drop pluralization.
+    select_shapes: Vec<BTreeSet<String>>,
+}
+
+#[cfg(test)]
+pub(crate) fn contract_of(source: &str) -> Result<Contract, Vec<String>> {
+    let resource = match fluent_syntax::parser::parse(source) {
+        Ok(resource) => resource,
+        Err((_, errors)) => {
+            return Err(errors.iter().map(ToString::to_string).collect());
+        }
+    };
+    let mut contract = Contract::default();
+    let mut problems = Vec::new();
+    for entry in &resource.body {
+        match entry {
+            ast::Entry::Message(message) => {
+                let id = message.id.name.to_owned();
+                if contract.entries.contains_key(&id) {
+                    problems.push(format!("duplicate key '{id}'"));
+                    continue;
+                }
+                let mut variables = BTreeSet::new();
+                let mut select_shapes = Vec::new();
+                if let Some(pattern) = &message.value {
+                    collect_pattern_vars(pattern, &mut variables);
+                    collect_select_shapes_in_pattern(pattern, &mut select_shapes);
+                }
+                let mut attributes = BTreeSet::new();
+                for attribute in &message.attributes {
+                    attributes.insert(attribute.id.name.to_owned());
+                    collect_pattern_vars(&attribute.value, &mut variables);
+                    collect_select_shapes_in_pattern(&attribute.value, &mut select_shapes);
+                }
+                contract.entries.insert(
+                    id,
+                    ContractEntry {
+                        has_value: message.value.is_some(),
+                        attributes,
+                        variables,
+                        select_shapes,
+                    },
+                );
+            }
+            ast::Entry::Term(_) => {
+                problems.push("terms are not part of the contract; use messages".to_owned());
+            }
+            ast::Entry::Junk { content } => {
+                problems.push(format!("unparseable content: '{content}'"));
+            }
+            ast::Entry::Comment(_)
+            | ast::Entry::GroupComment(_)
+            | ast::Entry::ResourceComment(_) => {}
+        }
+    }
+    if problems.is_empty() {
+        Ok(contract)
+    } else {
+        Err(problems)
+    }
+}
+
+#[cfg(test)]
+fn collect_pattern_vars(pattern: &ast::Pattern<&str>, out: &mut BTreeSet<String>) {
+    for element in &pattern.elements {
+        if let ast::PatternElement::Placeable { expression } = element {
+            collect_expression_vars(expression, out);
+        }
+    }
+}
+
+#[cfg(test)]
+fn collect_expression_vars(expression: &ast::Expression<&str>, out: &mut BTreeSet<String>) {
+    match expression {
+        ast::Expression::Inline(inline) => collect_inline_vars(inline, out),
+        ast::Expression::Select { selector, variants } => {
+            collect_inline_vars(selector, out);
+            for variant in variants {
+                collect_pattern_vars(&variant.value, out);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+fn collect_select_shapes_in_pattern(pattern: &ast::Pattern<&str>, out: &mut Vec<BTreeSet<String>>) {
+    for element in &pattern.elements {
+        if let ast::PatternElement::Placeable { expression } = element {
+            collect_select_shapes_in_expression(expression, out);
+        }
+    }
+}
+
+#[cfg(test)]
+fn collect_select_shapes_in_expression(
+    expression: &ast::Expression<&str>,
+    out: &mut Vec<BTreeSet<String>>,
+) {
+    match expression {
+        ast::Expression::Inline(inline) => collect_select_shapes_in_inline(inline, out),
+        ast::Expression::Select { selector, variants } => {
+            let mut names = BTreeSet::new();
+            for variant in variants {
+                match &variant.key {
+                    ast::VariantKey::Identifier { name } => {
+                        names.insert((*name).to_owned());
+                    }
+                    ast::VariantKey::NumberLiteral { value } => {
+                        names.insert((*value).to_owned());
+                    }
+                }
+            }
+            out.push(names);
+            collect_select_shapes_in_inline(selector, out);
+            for variant in variants {
+                collect_select_shapes_in_pattern(&variant.value, out);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+fn collect_select_shapes_in_inline(
+    inline: &ast::InlineExpression<&str>,
+    out: &mut Vec<BTreeSet<String>>,
+) {
+    match inline {
+        ast::InlineExpression::FunctionReference { arguments, .. } => {
+            for positional in &arguments.positional {
+                collect_select_shapes_in_inline(positional, out);
+            }
+        }
+        ast::InlineExpression::Placeable { expression } => {
+            collect_select_shapes_in_expression(expression, out);
+        }
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+fn collect_inline_vars(inline: &ast::InlineExpression<&str>, out: &mut BTreeSet<String>) {
+    match inline {
+        ast::InlineExpression::VariableReference { id } => {
+            out.insert(id.name.to_owned());
+        }
+        ast::InlineExpression::FunctionReference { arguments, .. } => {
+            for positional in &arguments.positional {
+                collect_inline_vars(positional, out);
+            }
+        }
+        ast::InlineExpression::Placeable { expression } => {
+            collect_expression_vars(expression, out);
+        }
+        ast::InlineExpression::StringLiteral { .. }
+        | ast::InlineExpression::NumberLiteral { .. }
+        | ast::InlineExpression::MessageReference { .. }
+        | ast::InlineExpression::TermReference { .. } => {}
+    }
+}
+
+/// Russian must carry the full one/few/many set wherever English
+/// selects on a count; every other locale must mirror `en` exactly.
+#[cfg(test)]
+fn select_shapes_match(tag: &str, base: &[BTreeSet<String>], entry: &[BTreeSet<String>]) -> bool {
+    if base.len() != entry.len() {
+        return false;
+    }
+    base.iter()
+        .zip(entry.iter())
+        .all(|(base_shape, entry_shape)| {
+            if tag == "ru" && base_shape.contains("one") {
+                ["one", "few", "many", "other"]
+                    .into_iter()
+                    .all(|required| entry_shape.contains(required))
+            } else {
+                entry_shape == base_shape
+            }
+        })
+}
+
+/// English key set for the tests that check every id the UI resolves
+/// exists in `en` (a missing one renders the ⟦id⟧ marker instead of
+/// failing loudly, so the test fails first).
+///
+/// Test-only helper: `expect` marks fixture bugs (a missing `en`
+/// baseline), the same convention as the `mod tests` allows below.
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+pub(crate) fn embedded_en_keys() -> BTreeSet<String> {
+    let (_, source) = SOURCES
+        .iter()
+        .find(|(tag, _)| *tag == FALLBACK_TAG)
+        .expect("en source");
+    contract_of(source)
+        .expect("en parses")
+        .entries
+        .keys()
+        .cloned()
+        .collect()
+}
+
+/// Validate every embedded catalog against `en`. Returns human-readable
+/// problems; empty means the contract holds. Fails on: parse errors, junk,
+/// duplicate keys, missing/extra keys, attribute drift, variable drift.
+#[cfg(test)]
+pub(crate) fn validate_embedded() -> Vec<String> {
+    let mut contracts: HashMap<&str, Contract> = HashMap::new();
+    let mut problems = Vec::new();
+    for (tag, source) in SOURCES {
+        match contract_of(source) {
+            Ok(contract) => {
+                contracts.insert(tag, contract);
+            }
+            Err(errors) => {
+                for error in errors {
+                    problems.push(format!("{tag}: {error}"));
+                }
+            }
+        }
+    }
+    let Some(baseline) = contracts.get(FALLBACK_TAG) else {
+        problems.push("missing English baseline catalog".to_owned());
+        return problems;
+    };
+    for (tag, contract) in &contracts {
+        if *tag == FALLBACK_TAG {
+            continue;
+        }
+        for key in baseline.entries.keys() {
+            match contract.entries.get(key) {
+                None => problems.push(format!("{tag}: missing key '{key}'")),
+                Some(entry) => {
+                    let base = &baseline.entries[key];
+                    if entry.has_value != base.has_value {
+                        problems.push(format!("{tag}: value presence drift on '{key}'"));
+                    }
+                    for attribute in base.attributes.difference(&entry.attributes) {
+                        problems.push(format!("{tag}: missing attribute '{key}.{attribute}'"));
+                    }
+                    for attribute in entry.attributes.difference(&base.attributes) {
+                        problems.push(format!("{tag}: unused attribute '{key}.{attribute}'"));
+                    }
+                    for variable in base.variables.difference(&entry.variables) {
+                        problems.push(format!("{tag}: missing variable '${variable}' in '{key}'"));
+                    }
+                    for variable in entry.variables.difference(&base.variables) {
+                        problems.push(format!("{tag}: unused variable '${variable}' in '{key}'"));
+                    }
+                    if !select_shapes_match(tag, &base.select_shapes, &entry.select_shapes) {
+                        problems.push(format!(
+                            "{tag}: select-shape drift on '{key}' (en {:?}, {tag} {:?})",
+                            base.select_shapes, entry.select_shapes
+                        ));
+                    }
+                }
+            }
+        }
+        for key in contract.entries.keys() {
+            if !baseline.entries.contains_key(key) {
+                problems.push(format!("{tag}: unused key '{key}'"));
+            }
+        }
+    }
+    problems.sort();
+    problems
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
+
+    use super::*;
+
+    #[test]
+    fn embedded_catalogs_satisfy_the_contract() {
+        assert_eq!(validate_embedded(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn keys_never_contain_dots() {
+        // `Catalog::format` splits ids on the first `.` for `key.attribute`
+        // lookup, so a dotted key could never resolve at runtime. The
+        // contract validator compares keys opaquely and would not catch it.
+        for (tag, source) in SOURCES {
+            let contract = contract_of(source).expect("parses");
+            for key in contract.entries.keys() {
+                assert!(
+                    !key.contains('.'),
+                    "{tag}: dotted key '{key}' would never resolve"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn validator_catches_drift() {
+        let base = "hello = Hello { $name }\n";
+        let missing_var = "hello = Hallo\n";
+        let extra_key = "hello = Hallo { $name }\nextra = Extra\n";
+        let base_contract = contract_of(base).expect("base parses");
+        let missing_contract = contract_of(missing_var).expect("parses");
+        let extra_contract = contract_of(extra_key).expect("parses");
+        // Dropped variable is visible as a set difference ...
+        assert!(!base_contract.entries["hello"]
+            .variables
+            .difference(&missing_contract.entries["hello"].variables)
+            .collect::<Vec<_>>()
+            .is_empty());
+        // ... and an unknown key is absent from the baseline.
+        assert!(!base_contract.entries.contains_key("extra"));
+        assert!(extra_contract.entries.contains_key("extra"));
+    }
+
+    #[test]
+    fn validator_rejects_broken_sources() {
+        assert!(contract_of("hello = Hello { $name \n").is_err());
+        assert!(contract_of("dup = A\ndup = B\n").is_err());
+    }
+
+    #[test]
+    fn validator_catches_flat_string_where_en_selects() {
+        // A flat string where `en` selects on a count has the same
+        // variable set, so only the select count catches it.
+        let base = contract_of(
+            "n = { $count ->\n    [one] { $count } thing\n   *[other] { $count } things\n}\n",
+        )
+        .expect("parses");
+        let flat = contract_of("n = Stuff: { $count }\n").expect("parses");
+        assert_eq!(base.entries["n"].select_shapes.len(), 1);
+        assert_eq!(flat.entries["n"].select_shapes.len(), 0);
+        assert_eq!(base.entries["n"].variables, flat.entries["n"].variables);
+    }
+
+    #[test]
+    fn validator_catches_variant_name_drift() {
+        // Shape compares variant names, not just the select count: a `ru`
+        // catalog missing `[many]` must fail even though counts match.
+        let base = contract_of(
+            "n = { $count ->\n    [one] { $count } thing\n   *[other] { $count } things\n}\n",
+        )
+        .expect("parses");
+        let missing_many = contract_of(
+            "n = { $count ->\n    [one] { $count } штука\n    [few] { $count } штуки\n   *[other] { $count } штук\n}\n",
+        )
+        .expect("parses");
+        let full = contract_of(
+            "n = { $count ->\n    [one] { $count } штука\n    [few] { $count } штуки\n    [many] { $count } штук\n   *[other] { $count } штук\n}\n",
+        )
+        .expect("parses");
+        let base_shapes = &base.entries["n"].select_shapes;
+        assert!(!select_shapes_match(
+            "ru",
+            base_shapes,
+            &missing_many.entries["n"].select_shapes
+        ));
+        assert!(select_shapes_match(
+            "ru",
+            base_shapes,
+            &full.entries["n"].select_shapes
+        ));
+        assert!(select_shapes_match(
+            "de",
+            base_shapes,
+            &base.entries["n"].select_shapes
+        ));
+    }
+
+    #[test]
+    fn english_seed_formats_with_variables() {
+        let catalog = Catalog::build("en").expect("en builds");
+        assert_eq!(catalog.tag(), "en");
+        assert_eq!(
+            catalog.text("app-window-title").as_deref(),
+            Some("OccluView 3D Viewer")
+        );
+        let rendered = catalog
+            .format("about-version", Some(&args(&[("version", "1.1.1")])))
+            .expect("formats");
+        // Fluent isolates interpolated variables with bidi marks
+        // (U+2068/U+2069) by design — see the locale policy on RTL deferral.
+        assert_eq!(rendered, "Version \u{2068}1.1.1\u{2069}");
+    }
+
+    #[test]
+    fn missing_variable_yields_none_for_fallback() {
+        let catalog = Catalog::build("en").expect("en builds");
+        assert_eq!(catalog.format("about-version", None), None);
+        assert_eq!(catalog.text("no-such-key"), None);
+    }
+
+    #[test]
+    fn russian_plural_contract_is_expressible() {
+        // Russian one/few/many/other via select on a numeric variable.
+        let source = "found = { $count ->\n    [one] Найден { $count } контакт\n    [few] Найдено { $count } контакта\n    [many] Найдено { $count } контактов\n   *[other] Найдено { $count } контактов\n}\n";
+        let contract = contract_of(source).expect("parses");
+        assert!(contract.entries["found"].variables.contains("count"));
+        assert_eq!(contract.entries["found"].select_shapes.len(), 1);
+        assert!(contract.entries["found"].select_shapes[0].contains("many"));
+        let resource = FluentResource::try_new(source.to_owned()).expect("resource");
+        let langid: LanguageIdentifier = "ru".parse().expect("langid");
+        let mut bundle = FluentBundle::new(vec![langid]);
+        bundle.add_resource(resource).expect("add");
+        let message = bundle.get_message("found").expect("message");
+        let pattern = message.value().expect("value");
+        // Interpolated numbers carry bidi isolation marks, so assert on
+        // the surrounding word forms, not the digits.
+        for (count, expected) in [
+            // Trailing space: "Найден " is not a substring of "Найдено ".
+            (1.0, "Найден "),
+            (2.0, "контакта"),
+            (5.0, "контактов"),
+            (1.5, "контактов"),
+        ] {
+            let mut errors = Vec::new();
+            let mut format_args = FluentArgs::new();
+            format_args.set("count", FluentValue::from(count));
+            let rendered = bundle.format_pattern(pattern, Some(&format_args), &mut errors);
+            assert!(errors.is_empty());
+            assert!(rendered.contains(expected), "{count} rendered {rendered}");
+        }
+    }
+
+    #[test]
+    fn pseudo_locale_expands_and_brackets() {
+        let pseudo = pseudo_catalog().expect("pseudo builds");
+        let rendered = pseudo.text("settings-language-label").expect("renders");
+        assert!(rendered.starts_with('⟦'));
+        assert!(rendered.ends_with('⟧'));
+        let plain = Catalog::build("en")
+            .expect("en builds")
+            .text("settings-language-label")
+            .expect("renders");
+        assert!(rendered.len() > plain.len());
+        // Syntax survives: variables still format.
+        let version = pseudo
+            .format("about-version", Some(&args(&[("version", "9.9")])))
+            .expect("formats");
+        assert!(version.contains("9.9"));
+    }
+
+    /// Every English key renders in the pseudo-locale: bracketed, expanded,
+    /// with all variables substituted. A key missing here means a surface
+    /// that layout tests cannot exercise.
+    #[test]
+    fn pseudo_locale_covers_every_embedded_key() {
+        let (_, source) = SOURCES
+            .iter()
+            .find(|(tag, _)| *tag == FALLBACK_TAG)
+            .expect("en source");
+        let contract = contract_of(source).expect("en parses");
+        let pseudo = pseudo_catalog().expect("pseudo builds");
+        assert!(
+            !contract.entries.is_empty(),
+            "English catalog must contain messages"
+        );
+        let mut failures = Vec::new();
+        for (key, entry) in &contract.entries {
+            let mut format_args = FluentArgs::new();
+            for variable in &entry.variables {
+                format_args.set(variable.as_str(), FluentValue::from("0"));
+            }
+            // Multiline selects bracket per variant line, so membership —
+            // not a leading bracket — proves expansion happened.
+            match pseudo.format(key, Some(&format_args)) {
+                Some(rendered) if rendered.contains('⟦') => {}
+                other => failures.push(format!("{key}: {other:?}")),
+            }
+        }
+        assert!(failures.is_empty(), "pseudo gaps:\n{}", failures.join("\n"));
+    }
+
+    /// The `en` keys no tracked Rust source names as a quoted literal.
+    ///
+    /// `message_id!` only rejects a key a source actually writes; a key no
+    /// source mentions is never resolved and never missed.
+    fn unreferenced_english_keys(keys: &BTreeSet<String>, sources: &[String]) -> Vec<String> {
+        let sources = sources.join("\n");
+        keys.iter()
+            .filter(|key| !sources.contains(&format!("\"{key}\"")))
+            .cloned()
+            .collect()
+    }
+
+    /// Walk the tracked workspace sources so a dead `en` key fails the suite.
+    #[test]
+    fn every_english_key_is_referenced_by_a_tracked_source() {
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let workspace_root = manifest_dir.parent().and_then(std::path::Path::parent);
+        assert!(
+            workspace_root.is_some(),
+            "app crate should live under the workspace crates directory"
+        );
+        let Some(workspace_root) = workspace_root else {
+            return;
+        };
+        let mut files = Vec::new();
+        let walked = crate::primary_ui_tests::collect_rust_source_files(
+            &workspace_root.join("crates"),
+            &mut files,
+        );
+        assert!(walked.is_ok(), "source scan failed: {walked:?}");
+        assert!(
+            files.len() > 100,
+            "walked only {} files; the scan is not seeing the workspace",
+            files.len()
+        );
+        let sources: Vec<String> = files
+            .iter()
+            .filter_map(|path| std::fs::read_to_string(path).ok())
+            .collect();
+        let unused = unreferenced_english_keys(&embedded_en_keys(), &sources);
+        assert!(
+            unused.is_empty(),
+            "English catalog keys no source references:\n{}",
+            unused.join("\n")
+        );
+    }
+
+    #[test]
+    fn the_unused_key_check_flags_a_key_no_source_names() {
+        let keys = BTreeSet::from(["only-in-the-catalog".to_owned()]);
+        let sources = vec!["message_id!(\"some-other-key\")".to_owned()];
+        assert_eq!(
+            unreferenced_english_keys(&keys, &sources),
+            vec!["only-in-the-catalog".to_owned()]
+        );
+    }
+}

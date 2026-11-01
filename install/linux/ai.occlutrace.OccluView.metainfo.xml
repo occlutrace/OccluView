@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>ai.occlutrace.OccluView</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>Apache-2.0</project_license>
+  <name>OccluView</name>
+  <developer id="ai.occlutrace">
+    <name>Dental Cloud Technologies</name>
+  </developer>
+  <summary>Advanced Mesh Repair and Mesh Editing for dental CAD</summary>
+  <description>
+    <p>
+      OccluView is an advanced dental CAD workspace for Mesh Repair and Mesh
+      Editing. It opens dental scans and common mesh files in a native desktop
+      viewport with orthographic orbit and pan, a cut view, a surface ruler,
+      and a thickness analyser.
+    </p>
+    <p>
+      Scans load as layers with their own visibility, opacity, tint, and
+      wireframe. Selections are made by click, rectangle, or lasso, and Mesh
+      Editing can delete, crop, cut, separate, close holes, and smooth, with
+      undo and redo throughout. Mesh Repair removes damaged topology and
+      reports its changes. Two scans can be aligned against each other and
+      compared through a discrepancy heatmap. Edited layers export back to
+      STL, PLY, or OBJ.
+    </p>
+    <p>
+      STL, PLY, OBJ, GLB, and OFF meshes are supported. The package
+      registers the file types with the desktop and installs a thumbnailer, so
+      scans get real previews in the file manager, along with occluview-cli for
+      headless thumbnails and conversion.
+    </p>
+  </description>
+  <launchable type="desktop-id">ai.occlutrace.OccluView.desktop</launchable>
+  <provides>
+    <binary>occluview</binary>
+    <binary>occluview-cli</binary>
+  </provides>
+  <releases>
+    <release version="1.2.1" date="2026-09-27"/>
+    <release version="1.2.0" date="2026-09-14"/>
+    <release version="1.1.1" date="2026-09-03"/>
+    <release version="1.1.0" date="2026-08-24"/>
+  </releases>
+  <url type="homepage">https://occlutrace.ai</url>
+  <url type="vcs-browser">https://github.com/occlutrace/OccluView</url>
+  <content_rating type="oars-1.1" />
+</component>

@@ -1,0 +1,442 @@
+//! Scene-level section assembly and caching.
+//!
+//! [`SceneSection::compute`] runs the plane–mesh section kernel over every
+//! included triangle layer and maps each layer's contour into world space
+//! using that layer's `Affine3A` transform in `f64`. Point-cloud layers carry no
+//! faces and contribute no contour. [`SectionCache`] memoizes the result so
+//! camera motion never recomputes it; only geometry, transform, visibility, or
+//! plane changes invalidate it.
+
+use crate::section::plane_section_f64;
+use crate::{SectionPlane, SectionPolyline};
+use glam::{Affine3A, DAffine3, DMat3, DVec3};
+use occluview_core::{Scene, SceneMesh, SceneMeshId};
+use std::sync::Arc;
+
+/// Whether `entry` contributes a contour. Never true for point clouds.
+fn contributes_contour(entry: &SceneMesh) -> bool {
+    !entry.mesh.is_point_cloud() && entry.visible
+}
+
+/// The section contour of one scene layer, in world space (`f64`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct LayerSection {
+    /// Stable identity of the source layer.
+    pub layer_id: SceneMeshId,
+    /// World-space contour polylines for this layer.
+    pub polylines: Vec<SectionPolyline>,
+}
+
+/// Section contours for every intersected, included layer of a scene.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SceneSection {
+    /// Per-layer contours in scene draw order; layers with no contour omitted.
+    pub per_layer: Vec<LayerSection>,
+}
+
+impl SceneSection {
+    /// Compute world-space section contours for every included layer.
+    #[must_use]
+    pub fn compute(scene: &Scene, plane: SectionPlane) -> Self {
+        let mut per_layer = Vec::new();
+        for entry in scene.meshes() {
+            if !contributes_contour(entry) {
+                continue;
+            }
+            let Some(local) = world_plane_to_local(plane, &entry.transform) else {
+                continue;
+            };
+            let positions = layer_positions(entry);
+            let result = plane_section_f64(&positions, entry.mesh.indices(), local.0, local.1);
+            if result.polylines.is_empty() {
+                continue;
+            }
+            per_layer.push(LayerSection {
+                layer_id: entry.id(),
+                polylines: to_world(result.polylines, &entry.transform),
+            });
+        }
+        Self { per_layer }
+    }
+}
+
+/// Collect a layer's vertex positions for the kernel.
+fn layer_positions(entry: &SceneMesh) -> Vec<[f32; 3]> {
+    entry.mesh.vertices().iter().map(|v| v.position).collect()
+}
+
+/// Map the world plane `n·x = d` into `transform`'s local space.
+///
+/// For `x = M·p + t`, `n·x = d` becomes `(Mᵀn)·p = d - n·t`; the local normal
+/// is renormalized so the result stays a valid unit-normal plane under scaled
+/// transforms. Returns `None` for a degenerate (zero-scale) transform.
+///
+/// The pull-back is computed in `f64`: `d - n·t` cancels catastrophically when
+/// the layer sits far from the origin (both terms grow with the translation),
+/// and an `f32` subtraction there would shift the local plane by a visible
+/// amount (~0.1 unit at a 1e6 offset). This matches the module's `f64`
+/// arithmetic contract and the `f64` forward map in [`to_world`].
+fn world_plane_to_local(plane: SectionPlane, transform: &Affine3A) -> Option<(DVec3, f64)> {
+    let normal = plane.normal.as_dvec3();
+    let m = transform.matrix3;
+    let matrix = DMat3::from_cols(
+        m.x_axis.as_dvec3(),
+        m.y_axis.as_dvec3(),
+        m.z_axis.as_dvec3(),
+    );
+    let local_normal = matrix.transpose() * normal;
+    let local_distance = f64::from(plane.distance) - normal.dot(transform.translation.as_dvec3());
+    let length = local_normal.length();
+    if !length.is_finite() || length <= 0.0 {
+        return None;
+    }
+    let offset = local_distance / length;
+    offset
+        .is_finite()
+        .then_some((local_normal / length, offset))
+}
+
+/// Apply a layer transform to its contour polylines in `f64`.
+fn to_world(polylines: Vec<SectionPolyline>, transform: &Affine3A) -> Vec<SectionPolyline> {
+    let affine = daffine3(transform);
+    polylines
+        .into_iter()
+        .map(|mut line| {
+            for point in &mut line.points {
+                *point = affine.transform_point3(*point);
+            }
+            line
+        })
+        .collect()
+}
+
+/// Promote an `Affine3A` to a double-precision affine transform.
+fn daffine3(transform: &Affine3A) -> DAffine3 {
+    let m = transform.matrix3;
+    let matrix = DMat3::from_cols(
+        m.x_axis.as_dvec3(),
+        m.y_axis.as_dvec3(),
+        m.z_axis.as_dvec3(),
+    );
+    DAffine3::from_mat3_translation(matrix, transform.translation.as_dvec3())
+}
+
+/// Content fingerprint of the inputs `SceneSection::compute` consumes.
+///
+/// Keyed on the plane bits and, per included layer, the stable layer id, the
+/// mesh `geometry_id` (geometry identity), and the transform bits. This is a
+/// sound value key: it recomputes on geometry/transform/visibility changes and
+/// reuses on material-only changes (which preserve `geometry_id`).
+#[derive(Clone, PartialEq, Eq)]
+struct SectionKey {
+    plane: [u32; 4],
+    layers: Vec<LayerFingerprint>,
+}
+
+/// Per-layer fingerprint: identity, geometry id, and transform.
+#[derive(Clone, PartialEq, Eq)]
+struct LayerFingerprint {
+    id: u64,
+    geometry: u64,
+    transform: [u32; 12],
+}
+
+/// Build the content fingerprint for these inputs.
+fn section_key(scene: &Scene, plane: SectionPlane) -> SectionKey {
+    let plane = [
+        plane.normal.x.to_bits(),
+        plane.normal.y.to_bits(),
+        plane.normal.z.to_bits(),
+        plane.distance.to_bits(),
+    ];
+    let layers = scene
+        .meshes()
+        .iter()
+        .filter(|entry| contributes_contour(entry))
+        .map(|entry| LayerFingerprint {
+            id: entry.id().get(),
+            geometry: entry.mesh.geometry_id(),
+            transform: affine_bits(&entry.transform),
+        })
+        .collect();
+    SectionKey { plane, layers }
+}
+
+/// Raw bit patterns of an `Affine3A` (three matrix columns + translation).
+fn affine_bits(transform: &Affine3A) -> [u32; 12] {
+    let m = transform.matrix3;
+    let cols = [
+        m.x_axis.to_array(),
+        m.y_axis.to_array(),
+        m.z_axis.to_array(),
+        transform.translation.to_array(),
+    ];
+    let mut bits = [0u32; 12];
+    for (col, chunk) in cols.iter().zip(bits.as_chunks_mut::<3>().0.iter_mut()) {
+        for (value, slot) in col.iter().zip(chunk) {
+            *slot = value.to_bits();
+        }
+    }
+    bits
+}
+
+/// Memoizes the last computed [`SceneSection`] keyed on its content fingerprint.
+#[derive(Default)]
+pub struct SectionCache {
+    cached: Option<(SectionKey, Arc<SceneSection>)>,
+}
+
+impl SectionCache {
+    /// Construct an empty cache.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Return the cached section for these inputs, computing it on a miss.
+    pub fn get_or_compute(&mut self, scene: &Scene, plane: SectionPlane) -> Arc<SceneSection> {
+        let key = section_key(scene, plane);
+        if let Some((cached_key, cached)) = &self.cached {
+            if *cached_key == key {
+                return Arc::clone(cached);
+            }
+        }
+        let section = Arc::new(SceneSection::compute(scene, plane));
+        self.cached = Some((key, Arc::clone(&section)));
+        section
+    }
+
+    /// Drop any cached section (e.g. on scene clear).
+    pub fn clear(&mut self) {
+        self.cached = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use glam::Vec3;
+    use occluview_core::{Mesh, Scene, SceneMesh, Vertex};
+
+    /// Closed unit cube [0,1]^3 with two triangles per face.
+    fn cube() -> Mesh {
+        let corner = |x: f32, y: f32, z: f32| Vertex::at(Vec3::new(x, y, z));
+        let vertices = vec![
+            corner(0.0, 0.0, 0.0),
+            corner(1.0, 0.0, 0.0),
+            corner(1.0, 1.0, 0.0),
+            corner(0.0, 1.0, 0.0),
+            corner(0.0, 0.0, 1.0),
+            corner(1.0, 0.0, 1.0),
+            corner(1.0, 1.0, 1.0),
+            corner(0.0, 1.0, 1.0),
+        ];
+        let indices = vec![
+            0, 1, 2, 0, 2, 3, 4, 6, 5, 4, 7, 6, 0, 5, 1, 0, 4, 5, 3, 2, 6, 3, 6, 7, 0, 3, 7, 0, 7,
+            4, 1, 5, 6, 1, 6, 2,
+        ];
+        Mesh::new(None, vertices, indices).expect("valid cube")
+    }
+
+    fn xplane(distance: f32) -> SectionPlane {
+        SectionPlane::new(Vec3::X, distance).expect("unit normal")
+    }
+
+    fn scene_with(mesh: Mesh) -> Scene {
+        let mut scene = Scene::new();
+        scene.add(SceneMesh::new(mesh));
+        scene
+    }
+
+    #[test]
+    fn cube_layer_yields_one_closed_contour() {
+        let scene = scene_with(cube());
+        let section = SceneSection::compute(&scene, xplane(0.5));
+        assert_eq!(section.per_layer.len(), 1);
+        let layer = &section.per_layer[0];
+        assert_eq!(layer.polylines.len(), 1);
+        assert!(layer.polylines[0].closed);
+        assert!(layer.polylines[0].points.iter().all(|p| p.x == 0.5));
+    }
+
+    #[test]
+    fn small_layer_scale_contract_regression() {
+        let mut scene = Scene::new();
+        let scale = 1.0e-7;
+        scene.add(SceneMesh::new(cube()).with_transform(Affine3A::from_scale(Vec3::splat(scale))));
+        let section = SceneSection::compute(&scene, xplane(0.5 * scale));
+        assert_eq!(section.per_layer.len(), 1, "nonzero scale has a contour");
+        let lines = &section.per_layer[0].polylines;
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].closed);
+        for point in &lines[0].points {
+            assert!((point.x - f64::from(0.5 * scale)).abs() < 1.0e-12);
+        }
+    }
+
+    #[test]
+    fn translated_layer_translates_the_contour() {
+        let base = SceneSection::compute(&scene_with(cube()), xplane(0.5));
+
+        let shift = Vec3::new(3.0, -2.0, 1.5);
+        let mut scene = Scene::new();
+        scene.add(SceneMesh::new(cube()).with_transform(Affine3A::from_translation(shift)));
+        // Translate the plane by n·shift so the contour rides along with it.
+        let moved = SceneSection::compute(&scene, xplane(0.5 + Vec3::X.dot(shift)));
+
+        assert_eq!(base.per_layer.len(), 1);
+        assert_eq!(moved.per_layer.len(), 1);
+        let delta = DVec3::new(f64::from(shift.x), f64::from(shift.y), f64::from(shift.z));
+        let base_lines = &base.per_layer[0].polylines;
+        let moved_lines = &moved.per_layer[0].polylines;
+        assert_eq!(base_lines.len(), moved_lines.len());
+        for (b, m) in base_lines.iter().zip(moved_lines) {
+            assert_eq!(b.points.len(), m.points.len());
+            for (bp, mp) in b.points.iter().zip(&m.points) {
+                assert_eq!(*mp, *bp + delta);
+            }
+        }
+    }
+
+    #[test]
+    fn point_cloud_layers_are_skipped() {
+        let cloud = Mesh::point_cloud(None, vec![Vertex::at(Vec3::ZERO), Vertex::at(Vec3::X)]);
+        let section = SceneSection::compute(&scene_with(cloud), xplane(0.5));
+        assert!(section.per_layer.is_empty());
+    }
+
+    #[test]
+    fn cache_reuses_until_geometry_transform_or_plane_changes() {
+        let scene = scene_with(cube());
+        let mut cache = SectionCache::new();
+        let first = cache.get_or_compute(&scene, xplane(0.5));
+        let second = cache.get_or_compute(&scene, xplane(0.5));
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "unchanged inputs reuse the cache"
+        );
+
+        // Transform change invalidates.
+        let mut moved = scene.clone();
+        moved.meshes_mut()[0].transform = Affine3A::from_translation(Vec3::X);
+        let third = cache.get_or_compute(&moved, xplane(0.5));
+        assert!(!Arc::ptr_eq(&first, &third));
+
+        // Plane change invalidates.
+        let fourth = cache.get_or_compute(&scene, xplane(0.6));
+        assert!(!Arc::ptr_eq(&third, &fourth));
+    }
+
+    #[test]
+    fn cache_reuses_across_material_only_change() {
+        let scene = scene_with(cube());
+        let mut cache = SectionCache::new();
+        let first = cache.get_or_compute(&scene, xplane(0.5));
+        // Re-tint the layer (clones the mesh, preserving geometry_id).
+        let mut retinted = scene.clone();
+        retinted.meshes_mut()[0].tint = [0.1, 0.2, 0.3, 1.0];
+        let second = cache.get_or_compute(&retinted, xplane(0.5));
+        assert!(Arc::ptr_eq(&first, &second), "material-only change reuses");
+    }
+
+    #[test]
+    fn cache_invalidates_on_sculpted_vertices() {
+        let scene = scene_with(cube());
+        let mut cache = SectionCache::new();
+        let first = cache.get_or_compute(&scene, xplane(0.5));
+
+        // A sculpt commit keeps `topology_id` frozen and mints a fresh
+        // `geometry_id`; the cache must key on the latter.
+        let mut sculpted = scene.clone();
+        let mesh = Arc::clone(&sculpted.meshes()[0].mesh);
+        let mut vertices = mesh.vertices().to_vec();
+        vertices[0].position[1] += 0.3;
+        let new_mesh = mesh
+            .with_sculpted_vertices(vertices)
+            .expect("same vertex count");
+        assert_eq!(new_mesh.topology_id(), mesh.topology_id());
+        assert_ne!(new_mesh.geometry_id(), mesh.geometry_id());
+        sculpted.meshes_mut()[0].mesh = Arc::new(new_mesh);
+
+        let second = cache.get_or_compute(&sculpted, xplane(0.5));
+        assert!(
+            !Arc::ptr_eq(&first, &second),
+            "sculpt commit invalidates the cache"
+        );
+        assert_ne!(
+            first.per_layer[0].polylines, second.per_layer[0].polylines,
+            "section contour changes after a sculpt"
+        );
+    }
+
+    #[test]
+    fn far_affine_layer_contour_stays_on_the_world_plane() {
+        // Covers the f64 world→local plane pull-back. A rotated, non-uniformly
+        // scaled, far-translated layer must still yield a contour that lies on
+        // the world section plane. Computed in f32, the `d - n·t` term cancels
+        // catastrophically and the contour drifts ~0.1 unit off-plane; in f64
+        // it stays exact.
+        use glam::Quat;
+        let scale = Vec3::new(3.0, 7.0, 2.0);
+        let rot = Quat::from_axis_angle(Vec3::new(0.3, 0.8, 0.5).normalize(), 0.9);
+        let trans = Vec3::new(1.0e6, -2.0e6, 3.0e6);
+        let transform = Affine3A::from_scale_rotation_translation(scale, rot, trans);
+        let mut scene = Scene::new();
+        scene.add(SceneMesh::new(cube()).with_transform(transform));
+
+        let n = Vec3::new(0.4, 0.5, 0.768_221).normalize();
+        // Cut through the transformed cube centroid (local (0.5, 0.5, 0.5)).
+        let world_centroid = transform.transform_point3(Vec3::splat(0.5));
+        let d = n.dot(world_centroid);
+        let section = SceneSection::compute(&scene, SectionPlane::new(n, d).expect("unit normal"));
+        assert_eq!(section.per_layer.len(), 1);
+        let nd = n.as_dvec3();
+        let dd = f64::from(d);
+        let mut max_off = 0.0_f64;
+        for line in &section.per_layer[0].polylines {
+            assert!(!line.points.is_empty());
+            for p in &line.points {
+                max_off = max_off.max((nd.dot(*p) - dd).abs());
+            }
+        }
+        assert!(
+            max_off < 1.0e-3,
+            "contour drifted {max_off} off the world plane (f32 cancellation)"
+        );
+    }
+    #[test]
+    fn intersecting_section_keeps_a_local_offset_beyond_f32_range() {
+        let source = cube();
+        let mut vertices = source.vertices().to_vec();
+        for vertex in &mut vertices {
+            vertex.position = vertex.position.map(|lane| (0.8 + 0.15 * lane) * f32::MAX);
+        }
+        let mesh = Mesh::new(None, vertices, source.indices().to_vec()).expect("finite corners");
+        let transform = Affine3A::from_scale_rotation_translation(
+            Vec3::splat(1.0e-30),
+            glam::Quat::IDENTITY,
+            Vec3::new(1.0e8, 2.0e8, -3.0e8),
+        );
+        let normal = Vec3::ONE.normalize();
+        let center =
+            daffine3(&transform).transform_point3(DVec3::splat(f64::from(f32::MAX) * 0.875));
+        let plane =
+            SectionPlane::new(normal, normal.dot(center.as_vec3())).expect("finite world plane");
+        let mut scene = Scene::new();
+        scene.add(SceneMesh::new(mesh).with_transform(transform));
+        let result = SceneSection::compute(&scene, plane);
+        assert_eq!(
+            result.per_layer.len(),
+            1,
+            "the plane intersects the finite transformed cube"
+        );
+        assert!(result.per_layer[0].polylines.iter().any(|line| line.closed));
+        for point in result.per_layer[0]
+            .polylines
+            .iter()
+            .flat_map(|line| &line.points)
+        {
+            assert!((normal.as_dvec3().dot(*point) - f64::from(plane.distance)).abs() < 1.0);
+        }
+    }
+}

@@ -1,0 +1,677 @@
+//! Offscreen render-to-texture: used by the thumbnail worker and golden-image
+//! tests. One render target + depth, one draw, read back as RGBA8.
+
+use crate::contact_texture::{ContactFieldTexels, GpuContactMaterial};
+use crate::error::RenderError;
+use crate::gpu::GpuMesh;
+use crate::mesh_uniform::GpuMeshUniform;
+use crate::pipeline::Renderer;
+use crate::texture::GpuTexture;
+use occluview_core::{Mesh, MeshKind, Vertex};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+mod helpers;
+mod prepared_scene;
+mod scene_render;
+mod single_mesh;
+
+pub use prepared_scene::SculptSurfaceFeedbackRequest;
+
+/// Adapter-selection policy for one headless offscreen renderer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AdapterPolicy {
+    /// Verify a hardware device with a known-pixel probe, then fall back if it
+    /// cannot provide a complete frame inside the caller's deadline.
+    HardwareThenFallback,
+    /// Use only the deterministic software adapter.
+    FallbackOnly,
+}
+
+/// The adapter class that produced an offscreen renderer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AdapterResult {
+    /// A verified hardware adapter supplied the renderer.
+    Hardware,
+    /// The deterministic software fallback supplied the renderer.
+    Fallback,
+}
+
+pub(crate) const fn adapter_result_for_device_type(device_type: wgpu::DeviceType) -> AdapterResult {
+    match device_type {
+        wgpu::DeviceType::IntegratedGpu | wgpu::DeviceType::DiscreteGpu => AdapterResult::Hardware,
+        wgpu::DeviceType::Other | wgpu::DeviceType::VirtualGpu | wgpu::DeviceType::Cpu => {
+            AdapterResult::Fallback
+        }
+    }
+}
+
+#[cfg(test)]
+mod adapter_policy_tests {
+    use super::*;
+
+    #[test]
+    fn cpu_and_virtual_adapters_are_not_accepted_as_verified_hardware() {
+        assert_eq!(
+            adapter_result_for_device_type(wgpu::DeviceType::Cpu),
+            AdapterResult::Fallback
+        );
+        assert_eq!(
+            adapter_result_for_device_type(wgpu::DeviceType::VirtualGpu),
+            AdapterResult::Fallback
+        );
+    }
+
+    #[test]
+    fn fallback_policy_records_the_renderer_class_without_driver_metadata() {
+        let result = pollster::block_on(Offscreen::new_with_adapter_policy(
+            AdapterPolicy::FallbackOnly,
+            RenderDeadline::after(Duration::from_secs(5)),
+        ));
+        let error = result.as_ref().err();
+        assert!(
+            error.is_none(),
+            "the GPU test environment provides a fallback adapter: {error:?}"
+        );
+        let Some(offscreen) = result.ok() else { return };
+
+        assert_eq!(offscreen.adapter_result(), AdapterResult::Fallback);
+    }
+
+    #[test]
+    fn unbounded_deadline_has_no_poll_timeout() {
+        assert!(matches!(
+            RenderDeadline::unbounded().poll_timeout(),
+            Ok(None)
+        ));
+    }
+
+    #[test]
+    fn unrepresentable_render_timeout_is_refused_without_panicking() {
+        let deadline = RenderDeadline::after(Duration::MAX);
+        assert!(matches!(
+            deadline.remaining(),
+            Err(RenderError::ReadbackTimeout { timeout }) if timeout == Duration::MAX
+        ));
+        assert!(deadline.poll_timeout().is_err());
+    }
+}
+
+/// Absolute deadline supplied by the caller that owns an offscreen render.
+///
+/// Renderer consumers have different liveness contracts: an Explorer
+/// thumbnail request has a small end-to-end budget, while a preview pane and
+/// a desktop export have their own bounded operation. Keeping this deadline
+/// explicit prevents one consumer from imposing its timeout on all
+/// others.
+#[derive(Clone, Copy, Debug)]
+pub struct RenderDeadline {
+    deadline: Instant,
+    requested_timeout: Duration,
+    unbounded: bool,
+}
+
+impl RenderDeadline {
+    /// Create a deadline relative to the current instant.
+    /// An interval outside the platform clock's range expires immediately;
+    /// the request stays bounded and returns its normal timeout error.
+    #[must_use]
+    pub fn after(timeout: Duration) -> Self {
+        let now = Instant::now();
+        Self {
+            deadline: now.checked_add(timeout).unwrap_or(now),
+            requested_timeout: timeout,
+            unbounded: false,
+        }
+    }
+
+    /// Wrap an existing absolute deadline.
+    #[must_use]
+    pub const fn at(deadline: Instant) -> Self {
+        Self {
+            deadline,
+            requested_timeout: Duration::ZERO,
+            unbounded: false,
+        }
+    }
+
+    /// Create an operation with no elapsed-time budget.
+    ///
+    /// A Preview Pane first frame is a synchronous COM contract: its caller
+    /// must receive either the painted bitmap or the render error, never a
+    /// timer-derived substitute. This variant keeps that contract explicit
+    /// while thumbnail and batch callers retain their bounded API.
+    #[must_use]
+    pub(crate) fn unbounded() -> Self {
+        Self {
+            deadline: Instant::now(),
+            requested_timeout: Duration::ZERO,
+            unbounded: true,
+        }
+    }
+
+    /// Return the absolute instant at which this render request expires.
+    ///
+    /// Shell stream copies use this to share the render request's original
+    /// budget instead of starting a separate I/O timeout.
+    #[must_use]
+    pub const fn expires_at(self) -> Instant {
+        self.deadline
+    }
+
+    /// Return the remaining budget, or a structured timeout once it expires.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError::ReadbackTimeout`] when this request's absolute
+    /// deadline has elapsed.
+    pub fn remaining(self) -> Result<Duration, RenderError> {
+        if self.unbounded {
+            Ok(Duration::MAX)
+        } else {
+            // A deadline reached exactly has no budget left either; clocks
+            // with a coarse tick report that instant as a zero remainder.
+            self.deadline
+                .checked_duration_since(Instant::now())
+                .filter(|left| !left.is_zero())
+                .ok_or_else(|| self.timeout_error())
+        }
+    }
+
+    pub(crate) fn poll_timeout(self) -> Result<Option<Duration>, RenderError> {
+        if self.unbounded {
+            Ok(None)
+        } else {
+            self.remaining().map(Some)
+        }
+    }
+
+    pub(crate) fn timeout_error(self) -> RenderError {
+        RenderError::ReadbackTimeout {
+            timeout: self.requested_timeout,
+        }
+    }
+}
+
+use helpers::make_fallback_texture_bind_group;
+
+/// One entry in a multi-mesh offscreen scene draw: the mesh, its per-mesh
+/// uniform, and an optional texture.
+pub struct SceneDrawEntry<'a> {
+    /// The CPU mesh to upload + draw.
+    pub mesh: &'a Mesh,
+    /// Per-mesh uniform (model, tint, opacity, `has_texture` flag).
+    pub uniform: &'a GpuMeshUniform,
+    /// Texture to sample; if `None`, the fallback 1×1 white texture is used.
+    pub texture: Option<&'a GpuTexture>,
+}
+
+/// CPU-side source for a prepared multi-mesh scene.
+pub struct PreparedSceneSource<'a> {
+    /// The CPU mesh to upload once into GPU buffers.
+    pub mesh: &'a Mesh,
+    /// Initial per-mesh uniform.
+    pub uniform: GpuMeshUniform,
+    /// Whether this layer should draw.
+    pub visible: bool,
+    /// Whether to draw a technical wireframe overlay for this layer.
+    pub wireframe: bool,
+    /// The packed contact field this layer paints, when it paints one.
+    pub contact: Option<ContactPaintSource>,
+}
+
+/// One layer's packed contact field, with the revision it belongs to.
+///
+/// The field is shared behind an `Arc` rather than borrowed so
+/// [`PreparedSceneUpdate`] stays free of a lifetime parameter — it is built
+/// once per frame per layer on the hot path, and a borrowed field would push a
+/// lifetime through every caller that holds a `Vec<PreparedSceneUpdate>`.
+///
+/// The revision is the caller's promise about the bytes: an update carrying the
+/// same revision as the field already on the GPU is treated as unchanged, so a
+/// per-frame re-derivation of the same `Vec<u8>` cannot quietly re-upload
+/// megabytes every frame. Bump it whenever the field changes.
+#[derive(Clone, Debug)]
+pub struct ContactPaintSource {
+    /// The packed signed field, one `f32` per vertex.
+    pub field: Arc<ContactFieldTexels>,
+    /// Caller's version token for `field`.
+    pub revision: u64,
+}
+
+impl ContactPaintSource {
+    /// A field at a known revision.
+    #[must_use]
+    pub fn new(field: Arc<ContactFieldTexels>, revision: u64) -> Self {
+        Self { field, revision }
+    }
+
+    /// The packed field.
+    #[must_use]
+    pub fn field(&self) -> &ContactFieldTexels {
+        &self.field
+    }
+
+    /// The revision token this field was published under.
+    #[must_use]
+    pub const fn revision(&self) -> u64 {
+        self.revision
+    }
+}
+
+/// Per-frame material/visibility update for a prepared scene.
+///
+/// Not `Copy`: it may carry a shared contact field, and cloning that is a
+/// refcount bump rather than the per-frame byte copy `Copy` would imply.
+#[derive(Clone, Debug)]
+pub struct PreparedSceneUpdate {
+    /// Topology identity expected for this prepared entry.
+    pub topology: PreparedSceneTopology,
+    /// Updated per-mesh uniform.
+    pub uniform: GpuMeshUniform,
+    /// Whether this layer should draw.
+    pub visible: bool,
+    /// Whether to draw a technical wireframe overlay for this layer.
+    pub wireframe: bool,
+    /// The contact field this layer paints, or `None` to stop painting one.
+    /// Uploaded only when its revision differs from the one already bound.
+    pub contact: Option<ContactPaintSource>,
+}
+
+/// GPU-uploaded topology identity for one prepared scene entry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PreparedSceneTopology {
+    mesh_topology_id: u64,
+    kind: MeshKind,
+    vertex_count: usize,
+    index_count: usize,
+    has_texture: bool,
+}
+
+/// One live face row changed by a sculpt remesh.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SculptFaceUpdate {
+    /// Dense triangle slot in the live index prefix.
+    pub triangle: u32,
+    /// The three vertex ids at that slot.
+    pub indices: [u32; 3],
+}
+
+/// One existing vertex row changed by a sculpt remesh.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SculptVertexUpdate {
+    /// Existing vertex id in the live mesh.
+    pub vertex: u32,
+    /// Updated position, normal and material attributes.
+    pub value: Vertex,
+}
+
+/// Local geometry changes for one sculpt topology publication.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SculptTopologyDelta {
+    /// Vertex count before this publication.
+    pub base_vertex_count: usize,
+    /// New vertex rows, in append order.
+    pub appended_vertices: Vec<Vertex>,
+    /// Changed rows below `base_vertex_count`, sorted by vertex id.
+    pub updated_vertices: Vec<SculptVertexUpdate>,
+    /// Index count before this publication, measured in `u32` elements.
+    pub base_index_count: usize,
+    /// Current live index prefix length, measured in `u32` elements.
+    pub live_index_count: usize,
+    /// Changed face rows, sorted by triangle id.
+    pub face_updates: Vec<SculptFaceUpdate>,
+    /// Face slots whose bounds no longer match the cached pick tree.
+    pub dirty_triangles: Vec<usize>,
+}
+
+/// Work performed while applying one sculpt delta to a prepared GPU entry.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SculptBufferUpdateStats {
+    /// Bytes staged through queue writes.
+    pub bytes_written: u64,
+    /// Existing GPU bytes copied when a buffer grows.
+    pub bytes_copied: u64,
+    /// Number of GPU buffers that grew.
+    pub buffers_grown: u8,
+    /// Number of changed face rows submitted.
+    pub faces_written: u32,
+}
+
+impl PreparedSceneTopology {
+    /// Build a topology token from the CPU mesh payload.
+    #[must_use]
+    pub fn from_mesh(mesh: &Mesh) -> Self {
+        Self {
+            mesh_topology_id: mesh.topology_id(),
+            kind: mesh.kind(),
+            vertex_count: mesh.vertices().len(),
+            index_count: mesh.indices().len(),
+            has_texture: mesh.texture().is_some(),
+        }
+    }
+}
+
+/// A multi-mesh scene uploaded once to GPU memory.
+pub struct PreparedScene {
+    entries: Vec<PreparedSceneEntry>,
+}
+
+struct PreparedSceneEntry {
+    mesh: GpuMesh,
+    uniform_buffer: wgpu::Buffer,
+    mesh_bind_group: wgpu::BindGroup,
+    texture: Option<GpuTexture>,
+    /// The layer's contact field material, with the revision of the field
+    /// currently on the GPU.
+    contact: Option<EntryContact>,
+    kind: MeshKind,
+    topology: PreparedSceneTopology,
+    opacity: f32,
+    visible: bool,
+    wireframe: bool,
+}
+
+/// A prepared entry's bound contact field and the revision it was uploaded at.
+struct EntryContact {
+    material: GpuContactMaterial,
+    revision: u64,
+}
+
+/// Parameters for an offscreen render.
+#[derive(Clone, Copy, Debug)]
+pub struct ThumbnailSpec {
+    /// Square output dimension in pixels.
+    pub size_px: u16,
+    /// Background color (linear RGBA). Default is transparent.
+    pub background: [f64; 4],
+}
+
+impl Default for ThumbnailSpec {
+    fn default() -> Self {
+        Self {
+            size_px: 256,
+            background: [0.0, 0.0, 0.0, 0.0],
+        }
+    }
+}
+
+/// Parameters for an interactive rectangular viewport render.
+#[derive(Clone, Copy, Debug)]
+pub struct ViewportSpec {
+    /// Output dimensions in pixels: `[width, height]`.
+    pub size_px: [u16; 2],
+    /// Background color (linear RGBA).
+    pub background: [f64; 4],
+}
+
+/// Inputs for a prepared-scene render with one hard clipping plane.
+#[derive(Clone, Copy)]
+pub struct PreparedSceneClipRequest<'a> {
+    /// GPU scene prepared by this [`Offscreen`] instance.
+    pub scene: &'a PreparedScene,
+    /// Frame camera.
+    pub camera: &'a crate::camera::GpuCamera,
+    /// Hard clipping plane for the frame.
+    pub clip: &'a crate::clipping::ClipPlane,
+    /// Square target size and background.
+    pub spec: ThumbnailSpec,
+    /// Caller-owned budget for the entire render and readback.
+    pub deadline: RenderDeadline,
+}
+
+/// Inputs for a prepared scene rendered into an app viewport.
+#[derive(Clone, Copy)]
+pub struct PreparedViewportRequest<'a> {
+    /// GPU scene prepared by this [`Offscreen`] instance.
+    pub scene: &'a PreparedScene,
+    /// Optional prepared selection overlay.
+    pub overlay: Option<&'a PreparedScene>,
+    /// Frame camera.
+    pub camera: &'a crate::camera::GpuCamera,
+    /// Rectangular target size and background.
+    pub spec: ViewportSpec,
+    /// Caller-owned budget for the entire render and readback.
+    pub deadline: RenderDeadline,
+}
+
+/// Inputs for a prepared viewport render that also draws the cut-away ghost.
+#[derive(Clone, Copy)]
+pub struct PreparedViewportClipRequest<'a> {
+    /// GPU scene prepared by this [`Offscreen`] instance.
+    pub scene: &'a PreparedScene,
+    /// Optional prepared selection overlay.
+    pub overlay: Option<&'a PreparedScene>,
+    /// Frame camera.
+    pub camera: &'a crate::camera::GpuCamera,
+    /// Clip plane shared with the interactive viewport.
+    pub clip: &'a crate::clipping::ClipPlane,
+    /// Rectangular target size and background.
+    pub spec: ViewportSpec,
+    /// Whether the cut-away ghost pass may draw (the operator's preference;
+    /// the clip plane itself stays authoritative for when a section exists).
+    pub show_ghost: bool,
+    /// Caller-owned budget for the entire render and readback.
+    pub deadline: RenderDeadline,
+}
+
+/// Inputs for rendering one mesh with a hard clipping plane.
+#[derive(Clone, Copy)]
+pub struct ClippedMeshRequest<'a> {
+    /// CPU mesh uploaded for this frame.
+    pub mesh: &'a Mesh,
+    /// Frame camera.
+    pub camera: &'a crate::camera::GpuCamera,
+    /// Hard clipping plane for the frame.
+    pub clip: &'a crate::clipping::ClipPlane,
+    /// Square target size and background.
+    pub spec: ThumbnailSpec,
+    /// Caller-owned budget for the entire render and readback.
+    pub deadline: RenderDeadline,
+}
+
+/// Inputs for rendering one mesh with a solid cross-section cut.
+#[derive(Clone, Copy)]
+pub struct CutMeshRequest<'a> {
+    /// CPU mesh uploaded for this frame.
+    pub mesh: &'a Mesh,
+    /// Frame camera.
+    pub camera: &'a crate::camera::GpuCamera,
+    /// Cut plane and cap policy.
+    pub cut: &'a crate::clipping::CutViewSpec,
+    /// Half extent of the generated cap quad in mesh coordinates.
+    pub half_extent: f32,
+    /// Square target size and background.
+    pub spec: ThumbnailSpec,
+    /// Caller-owned budget for the entire render and readback.
+    pub deadline: RenderDeadline,
+}
+
+/// Offscreen renderer. Wraps a headless [`Renderer`].
+pub struct Offscreen {
+    renderer: Renderer,
+    adapter_result: AdapterResult,
+    /// Cached identity mesh bind group (group 1). The thumbnail path renders
+    /// one mesh at the origin, so the model matrix is identity. The uniform
+    /// buffer behind it is owned by the bind group and never read back.
+    mesh_bind_group: wgpu::BindGroup,
+    /// Cached 1x1 white fallback texture + bind group (group 2). The thumbnail
+    /// path uses vertex colors (no texture), but the pipeline requires a bound
+    /// group-2 resource.
+    texture_bind_group: wgpu::BindGroup,
+}
+
+impl Offscreen {
+    /// Refuse new work after the device has reported a fault. The live app
+    /// disables its callback at the same boundary; offscreen callers need the
+    /// equivalent guard so a thumbnail, cut preview, or export cannot submit a
+    /// second command stream to a device that is already known to be invalid.
+    fn ensure_gpu_ready(&self) -> Result<(), RenderError> {
+        if !self.renderer.is_gpu_faulted() {
+            return Ok(());
+        }
+        let message = self.renderer.take_gpu_error().unwrap_or_else(|| {
+            "offscreen GPU renderer is unavailable after a previous device fault".to_owned()
+        });
+        Err(RenderError::Surface(message))
+    }
+
+    /// Create a headless renderer at any reasonable output format.
+    ///
+    /// # Errors
+    /// Returns [`RenderError::NoAdapter`] if no GPU/adapter is available
+    /// (including under WARP-less sandboxes).
+    #[allow(clippy::unused_async)]
+    pub async fn new() -> Result<Self, RenderError> {
+        let renderer = Renderer::new_headless(wgpu::TextureFormat::Rgba8Unorm).await?;
+        Ok(Self::from_renderer(renderer, AdapterResult::Fallback))
+    }
+
+    /// Create and verify the preferred adapter without a caller timeout.
+    ///
+    /// This is the synchronous Preview Pane path. It shares the
+    /// same hardware-then-fallback policy as bounded callers, but never turns
+    /// an unfinished first frame into a timer-derived result.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RenderError::NoAdapter` when neither a verified hardware adapter
+    /// nor the fallback adapter can be created.
+    pub async fn new_prefer_hardware() -> Result<Self, RenderError> {
+        Self::new_with_adapter_policy(
+            AdapterPolicy::HardwareThenFallback,
+            RenderDeadline::unbounded(),
+        )
+        .await
+    }
+
+    /// Create an offscreen renderer with a verified, caller-selected policy.
+    ///
+    /// # Errors
+    /// Returns the fallback error when no verified adapter can produce a
+    /// renderer inside `deadline`.
+    pub async fn new_with_adapter_policy(
+        policy: AdapterPolicy,
+        deadline: RenderDeadline,
+    ) -> Result<Self, RenderError> {
+        match policy {
+            AdapterPolicy::FallbackOnly => {
+                Self::new_on_adapter(AdapterResult::Fallback, deadline).await
+            }
+            AdapterPolicy::HardwareThenFallback => {
+                if let Ok(hardware) = Self::new_on_adapter(AdapterResult::Hardware, deadline).await
+                {
+                    if hardware.can_draw_with_deadline(deadline).await
+                        && deadline.remaining().is_ok()
+                    {
+                        return Ok(hardware);
+                    }
+                }
+                tracing::warn!(
+                    "hardware offscreen renderer could not provide a verified frame; using fallback"
+                );
+                Self::new_on_adapter(AdapterResult::Fallback, deadline).await
+            }
+        }
+    }
+
+    async fn new_on_adapter(
+        adapter_result: AdapterResult,
+        deadline: RenderDeadline,
+    ) -> Result<Self, RenderError> {
+        let _ = deadline.remaining()?;
+        let renderer =
+            Renderer::new_headless_on_adapter(wgpu::TextureFormat::Rgba8Unorm, adapter_result)
+                .await?;
+        let _ = deadline.remaining()?;
+        Ok(Self::from_renderer(renderer, adapter_result))
+    }
+
+    fn from_renderer(renderer: Renderer, adapter_result: AdapterResult) -> Self {
+        let device = renderer.device();
+        let queue = renderer.queue();
+
+        let mesh_uniform_buffer = renderer.mesh_uniform_buffer();
+        queue.write_buffer(
+            &mesh_uniform_buffer,
+            0,
+            bytemuck::bytes_of(&GpuMeshUniform::identity()),
+        );
+        let mesh_bind_group = renderer.mesh_bind_group(&mesh_uniform_buffer);
+        let texture_bind_group = make_fallback_texture_bind_group(device, queue, &renderer);
+
+        Self {
+            renderer,
+            adapter_result,
+            mesh_bind_group,
+            texture_bind_group,
+        }
+    }
+
+    /// Draw one known triangle and report whether any of it arrived.
+    ///
+    /// An adapter can accept every command and then produce an empty target:
+    /// a virtual display driver, a headless server's stub, a runner's nominal
+    /// GPU. Nothing reports an error, so the only way to tell is to draw
+    /// something and look. Callers that prefer hardware use this to demote a
+    /// device that cannot draw, before it is handed a scan and answers with a
+    /// blank picture.
+    #[must_use]
+    pub async fn can_draw_with_deadline(&self, deadline: RenderDeadline) -> bool {
+        use glam::Vec3;
+        use occluview_core::{MeshBuilder, Vertex};
+
+        let mut builder = MeshBuilder::new();
+        let a = builder.push_vertex(Vertex::at(Vec3::new(-0.8, -0.8, 0.0)).with_normal(Vec3::Z));
+        let b = builder.push_vertex(Vertex::at(Vec3::new(0.8, -0.8, 0.0)).with_normal(Vec3::Z));
+        let c = builder.push_vertex(Vertex::at(Vec3::new(0.0, 0.8, 0.0)).with_normal(Vec3::Z));
+        builder.push_triangle(a, b, c);
+        let Ok(mesh) = builder.build() else {
+            return false;
+        };
+        let camera = crate::GpuCamera::new(
+            glam::camera::rh::view::look_at_mat4(Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO, Vec3::Y),
+            glam::camera::rh::proj::directx::orthographic(-1.0, 1.0, -1.0, 1.0, 0.1, 10.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(0.0, 0.0, 3.0),
+        );
+        let spec = ThumbnailSpec {
+            size_px: 16,
+            ..ThumbnailSpec::default()
+        };
+        self.render_with_deadline(&mesh, &camera, spec, deadline)
+            .await
+            .is_ok_and(|pixels| pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 0))
+    }
+
+    /// Draw the adapter verification frame without a caller timeout.
+    #[must_use]
+    pub async fn can_draw(&self) -> bool {
+        self.can_draw_with_deadline(RenderDeadline::unbounded())
+            .await
+    }
+
+    /// Access the underlying renderer (for callers that need device/queue).
+    pub fn renderer(&self) -> &Renderer {
+        &self.renderer
+    }
+
+    /// Return the verified adapter class without exposing host driver details.
+    #[must_use]
+    pub const fn adapter_result(&self) -> AdapterResult {
+        self.adapter_result
+    }
+
+    /// Upload a multi-mesh scene once so camera-only redraws can reuse GPU
+    /// buffers instead of re-uploading vertices, indices, and textures.
+    #[must_use]
+    pub fn prepare_scene(&self, sources: &[PreparedSceneSource<'_>]) -> PreparedScene {
+        PreparedScene::upload(&self.renderer, sources)
+    }
+
+    /// The per-mesh uniform bind group layout (group 1). Exposed so callers
+    /// can build per-mesh bind groups for multi-mesh scenes.
+    pub fn mesh_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
+        self.renderer.mesh_bind_group_layout()
+    }
+}

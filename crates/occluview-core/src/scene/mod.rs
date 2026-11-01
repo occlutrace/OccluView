@@ -1,0 +1,32 @@
+//! The scene graph.
+//!
+//! A [`Scene`] holds one or more meshes and the per-mesh transforms/materials
+//! that position and present them. The dental use case is upper + lower arch as
+//! a two-mesh scene, so multi-mesh is first-class, not an afterthought.
+//!
+//! The scene is the bridge between file loading and rendering: loaders produce
+//! meshes, the app composes a scene, the renderer consumes it.
+
+mod bounds;
+mod graph;
+mod id;
+mod material;
+mod mesh_entry;
+mod picking;
+
+#[cfg(test)]
+mod tests;
+
+pub use id::SceneMeshId;
+pub use material::{DEFAULT_COLORED_MESH_TINT, DEFAULT_UNTEXTURED_MESH_TINT};
+pub use mesh_entry::{OverlayKind, SceneMesh};
+pub use picking::ScenePickHit;
+
+/// A scene: a collection of positioned, styled meshes plus a default lighting
+/// and background. The dental "upper+lower" case is a 2-mesh scene.
+#[derive(Clone, Debug)]
+pub struct Scene {
+    meshes: Vec<SceneMesh>,
+    /// Scene-wide background color (linear sRGB). OccluTrace dark by default.
+    pub background: [f32; 4],
+}

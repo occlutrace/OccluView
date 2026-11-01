@@ -1,0 +1,719 @@
+// Poison-recovery tests deliberately panic while holding a lock to poison it,
+// then assert the pool/gate recover; that needs unwrap/expect/panic in test.
+#![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used, clippy::panic))]
+
+#[cfg(test)]
+use super::Duration;
+use super::{
+    Mutex, ThumbnailAttempt, ThumbnailError, ThumbnailRequestKey, THUMBNAIL_INFLIGHT,
+    THUMBNAIL_JOB_GATE, THUMBNAIL_RENDERER_POOL,
+};
+use crate::offscreen_factory::create_thumbnail_offscreen;
+use occluview_render::{AdapterPolicy, Offscreen, RenderDeadline};
+use std::collections::{HashMap, VecDeque};
+use std::panic::{self, AssertUnwindSafe};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc, Condvar, MutexGuard, PoisonError};
+use std::time::Instant;
+
+// Match Explorer's observed twelve-request folder fan-out. These bounded jobs
+// spend part of their lifetime waiting on the single renderer and therefore
+// must not be capped by the machine's logical CPU count.
+const MAX_THUMBNAIL_JOB_LANES: usize = 12;
+// GPU work has a separate, smaller budget: every Offscreen owns a wgpu device,
+// and creating several D3D devices concurrently makes the driver contend.
+const MAX_THUMBNAIL_RENDERERS: usize = 1;
+
+/// Lock a shared thumbnail mutex, recovering the guard even if a previous
+/// holder panicked and poisoned it.
+///
+/// Poison tolerance provides per-request isolation: the thumbnail statics
+/// (renderer pool, job gate, in-flight map) are shared by every concurrent
+/// `IThumbnailProvider` in a `dllhost` surrogate. If one file's render panicked
+/// while one of these locks was held and the resulting poison were fatal,
+/// every other file in the folder would then fail to check out a renderer /
+/// release a permit — a single bad file would blank the whole mixed folder.
+/// The pool/gate/map state is plain bookkeeping (idle renderers, an active-job
+/// counter, a coalescing map); recovering it is always safe and
+/// self-correcting.
+fn lock_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+pub(super) struct ThumbnailRendererPool {
+    state: Mutex<ThumbnailRendererPoolState>,
+    ready: Condvar,
+    max_renderers: usize,
+    /// How a renderer is built. A function pointer rather than a direct call
+    /// so the recovery paths below -- a create that fails, and a create that
+    /// panics -- can be exercised without a GPU.
+    create: fn(RenderDeadline, AdapterPolicy) -> Result<Offscreen, ThumbnailError>,
+}
+
+pub(super) struct ThumbnailJobGate {
+    inner: Arc<ThumbnailJobGateInner>,
+}
+
+struct ThumbnailJobGateInner {
+    state: Mutex<ThumbnailJobGateState>,
+    ready: Condvar,
+    max_jobs: usize,
+}
+
+#[derive(Default)]
+struct ThumbnailJobGateState {
+    active_jobs: usize,
+    next_ticket: u64,
+    waiters: VecDeque<u64>,
+}
+
+impl ThumbnailJobGateState {
+    fn remove_waiter(&mut self, ticket: u64) {
+        if let Some(position) = self.waiters.iter().position(|queued| *queued == ticket) {
+            let _ = self.waiters.remove(position);
+        }
+    }
+}
+
+pub(super) struct ThumbnailJobPermit {
+    gate: Arc<ThumbnailJobGateInner>,
+}
+
+pub(super) struct InflightThumbnail {
+    state: Mutex<InflightThumbnailState>,
+    ready: Condvar,
+}
+
+enum InflightThumbnailState {
+    Running,
+    Finished(InflightThumbnailResult),
+}
+
+/// The clonable form of a leader's verdict, published to coalesced followers.
+///
+/// Followers must inherit the leader's transient/deterministic split: handing
+/// a follower a placeholder bitmap while the leader reported a transient
+/// failure would put the cacheable stand-in that the split exists to prevent
+/// into Explorer's thumbcache.
+#[derive(Clone)]
+enum InflightThumbnailResult {
+    Bitmap(Vec<u8>),
+    TransientFailure,
+}
+
+impl From<ThumbnailAttempt> for InflightThumbnailResult {
+    fn from(attempt: ThumbnailAttempt) -> Self {
+        match attempt {
+            ThumbnailAttempt::Bitmap(pixels) => Self::Bitmap(pixels),
+            ThumbnailAttempt::TransientFailure => Self::TransientFailure,
+        }
+    }
+}
+
+impl From<InflightThumbnailResult> for ThumbnailAttempt {
+    fn from(result: InflightThumbnailResult) -> Self {
+        match result {
+            InflightThumbnailResult::Bitmap(pixels) => Self::Bitmap(pixels),
+            InflightThumbnailResult::TransientFailure => Self::TransientFailure,
+        }
+    }
+}
+
+pub(super) enum InflightThumbnailLease {
+    Leader(Arc<InflightThumbnail>),
+    Follower(Arc<InflightThumbnail>),
+}
+
+pub(super) enum ThumbnailJobProgress<T> {
+    Prepared,
+    Finished(T),
+}
+
+pub(super) enum ThumbnailJobOutcome<T> {
+    Finished(T),
+    SetupTimedOut,
+    RenderTimedOut,
+    Failed,
+}
+
+#[derive(Default)]
+struct ThumbnailRendererPoolState {
+    idle: Vec<Offscreen>,
+    total_renderers: usize,
+}
+
+impl ThumbnailRendererPool {
+    pub(super) fn shared() -> &'static Self {
+        THUMBNAIL_RENDERER_POOL.get_or_init(|| Self::new(default_thumbnail_renderer_pool_size()))
+    }
+
+    pub(super) const fn new(max_renderers: usize) -> Self {
+        Self::with_create(max_renderers, create_thumbnail_offscreen)
+    }
+
+    pub(super) const fn with_create(
+        max_renderers: usize,
+        create: fn(RenderDeadline, AdapterPolicy) -> Result<Offscreen, ThumbnailError>,
+    ) -> Self {
+        Self {
+            create,
+            state: Mutex::new(ThumbnailRendererPoolState {
+                idle: Vec::new(),
+                total_renderers: 0,
+            }),
+            ready: Condvar::new(),
+            max_renderers,
+        }
+    }
+
+    pub(super) fn with_renderer<R>(
+        &self,
+        deadline: RenderDeadline,
+        adapter_policy: AdapterPolicy,
+        f: impl FnOnce(&Offscreen) -> Result<R, ThumbnailError>,
+    ) -> Result<R, ThumbnailError> {
+        let renderer = self.checkout_renderer(deadline, adapter_policy)?;
+        let lease = ThumbnailRendererLease::new(self, renderer);
+        let Some(offscreen) = lease.offscreen.as_ref() else {
+            return Err(ThumbnailError::Render(
+                occluview_render::RenderError::Surface(
+                    "thumbnail renderer lease lost its Offscreen".to_string(),
+                ),
+            ));
+        };
+
+        // A panic is the same evidence as an error: whatever the renderer was
+        // doing, it did not finish, and its device may be lost or mid-command.
+        // Unwinding on its own would run the lease's `Drop`, which parks the
+        // renderer back in the pool for the next file in the folder.
+        match panic::catch_unwind(AssertUnwindSafe(|| f(offscreen))) {
+            Ok(Ok(value)) => Ok(value),
+            Ok(Err(error)) => {
+                // A renderer that reported a GPU/readback error may have a
+                // lost device or stale backend state. Never hand it to the
+                // next Explorer request; release the pool capacity instead.
+                lease.discard();
+                Err(error)
+            }
+            Err(payload) => {
+                lease.discard();
+                panic::resume_unwind(payload);
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn checkout_renderer_within(
+        &self,
+        budget: Duration,
+    ) -> Result<Offscreen, ThumbnailError> {
+        self.checkout_renderer(RenderDeadline::after(budget), AdapterPolicy::FallbackOnly)
+    }
+
+    pub(super) fn checkout_renderer(
+        &self,
+        deadline: RenderDeadline,
+        adapter_policy: AdapterPolicy,
+    ) -> Result<Offscreen, ThumbnailError> {
+        loop {
+            let mut state = lock_recover(&self.state);
+            if let Some(offscreen) = state.idle.pop() {
+                return Ok(offscreen);
+            }
+            if state.total_renderers < self.max_renderers {
+                state.total_renderers += 1;
+                drop(state);
+                // The slot is claimed before the device exists, so every way
+                // out of the create has to give it back. An unwind out of wgpu
+                // -- a long-lived surrogate does see driver resets during
+                // device creation -- would otherwise leave the pool believing
+                // its one renderer is in use forever, and every later request
+                // waiting for a renderer that is not coming.
+                match panic::catch_unwind(AssertUnwindSafe(|| {
+                    (self.create)(deadline, adapter_policy)
+                })) {
+                    Ok(Ok(offscreen)) => return Ok(offscreen),
+                    Ok(Err(error)) => {
+                        self.release_reservation();
+                        return Err(error);
+                    }
+                    Err(payload) => {
+                        self.release_reservation();
+                        panic::resume_unwind(payload);
+                    }
+                }
+            }
+            let remaining = deadline.remaining().map_err(ThumbnailError::Render)?;
+            let (_guard, wait) = self
+                .ready
+                .wait_timeout(state, remaining)
+                .unwrap_or_else(PoisonError::into_inner);
+            if wait.timed_out() {
+                if let Err(error) = deadline.remaining() {
+                    return Err(ThumbnailError::Render(error));
+                }
+            }
+        }
+    }
+
+    fn release_reservation(&self) {
+        let mut state = lock_recover(&self.state);
+        state.total_renderers = state.total_renderers.saturating_sub(1);
+        drop(state);
+        self.ready.notify_one();
+    }
+
+    fn return_renderer(&self, offscreen: Offscreen) {
+        let mut state = lock_recover(&self.state);
+        state.idle.push(offscreen);
+        self.ready.notify_one();
+    }
+
+    fn discard_renderer(&self) {
+        let mut state = lock_recover(&self.state);
+        state.total_renderers = state.total_renderers.saturating_sub(1);
+        self.ready.notify_one();
+    }
+}
+
+impl ThumbnailJobGate {
+    pub(super) fn shared() -> &'static Self {
+        THUMBNAIL_JOB_GATE.get_or_init(|| Self::new(default_thumbnail_job_capacity()))
+    }
+
+    pub(super) fn new(max_jobs: usize) -> Self {
+        Self {
+            inner: Arc::new(ThumbnailJobGateInner {
+                state: Mutex::new(ThumbnailJobGateState::default()),
+                ready: Condvar::new(),
+                max_jobs: max_jobs.max(1),
+            }),
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn active_jobs(&self) -> usize {
+        lock_recover(&self.inner.state).active_jobs
+    }
+
+    /// Acquire a job permit, waiting up to `timeout`. Returns `None` on timeout.
+    ///
+    /// Infallible with respect to lock poisoning: the gate counter is recovered
+    /// rather than treated as fatal, so one panicking request cannot wedge the
+    /// gate shut for the rest of a folder's thumbnails.
+    #[cfg(test)]
+    pub(super) fn acquire_timeout(&self, timeout: Duration) -> Option<ThumbnailJobPermit> {
+        self.acquire_by(Instant::now() + timeout)
+    }
+
+    /// Acquires a permit by a caller-provided deadline.
+    pub(super) fn acquire_by(&self, deadline: Instant) -> Option<ThumbnailJobPermit> {
+        let mut state = lock_recover(&self.inner.state);
+        let ticket = state.next_ticket;
+        state.next_ticket = state.next_ticket.wrapping_add(1);
+        state.waiters.push_back(ticket);
+
+        loop {
+            if Instant::now() >= deadline {
+                state.remove_waiter(ticket);
+                self.inner.ready.notify_all();
+                return None;
+            }
+            if state.active_jobs < self.inner.max_jobs
+                && state.waiters.front().copied() == Some(ticket)
+            {
+                let _ = state.waiters.pop_front();
+                state.active_jobs += 1;
+                self.inner.ready.notify_all();
+                return Some(ThumbnailJobPermit {
+                    gate: self.inner.clone(),
+                });
+            }
+
+            let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+                state.remove_waiter(ticket);
+                self.inner.ready.notify_all();
+                return None;
+            };
+
+            let (next_state, _) = self
+                .inner
+                .ready
+                .wait_timeout(state, remaining)
+                .unwrap_or_else(PoisonError::into_inner);
+            state = next_state;
+        }
+    }
+}
+
+impl ThumbnailJobGateInner {
+    fn release(&self) {
+        let mut state = lock_recover(&self.state);
+        state.active_jobs = state.active_jobs.saturating_sub(1);
+        self.ready.notify_all();
+    }
+}
+
+impl Drop for ThumbnailJobPermit {
+    fn drop(&mut self) {
+        self.gate.release();
+    }
+}
+
+impl Drop for ThumbnailRendererPool {
+    fn drop(&mut self) {
+        if let Ok(mut state) = self.state.lock() {
+            for offscreen in state.idle.drain(..) {
+                std::mem::forget(offscreen);
+            }
+        }
+    }
+}
+
+pub(super) struct ThumbnailRendererLease<'a> {
+    pool: &'a ThumbnailRendererPool,
+    pub(super) offscreen: Option<Offscreen>,
+}
+
+impl<'a> ThumbnailRendererLease<'a> {
+    pub(super) fn new(pool: &'a ThumbnailRendererPool, offscreen: Offscreen) -> Self {
+        Self {
+            pool,
+            offscreen: Some(offscreen),
+        }
+    }
+
+    fn discard(mut self) {
+        let _discarded = self.offscreen.take();
+        self.pool.discard_renderer();
+    }
+}
+
+impl Drop for ThumbnailRendererLease<'_> {
+    fn drop(&mut self) {
+        if let Some(offscreen) = self.offscreen.take() {
+            self.pool.return_renderer(offscreen);
+        }
+    }
+}
+
+const fn default_thumbnail_job_capacity() -> usize {
+    MAX_THUMBNAIL_JOB_LANES
+}
+
+const fn default_thumbnail_renderer_pool_size() -> usize {
+    // Keep GPU context ownership independent from shell request fan-out. The
+    // renderer pool serializes device-bound upload/readback while decode jobs
+    // continue to prepare the next mesh in parallel.
+    MAX_THUMBNAIL_RENDERERS
+}
+
+fn thumbnail_inflight() -> &'static Mutex<HashMap<ThumbnailRequestKey, Arc<InflightThumbnail>>> {
+    THUMBNAIL_INFLIGHT.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+impl InflightThumbnail {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(InflightThumbnailState::Running),
+            ready: Condvar::new(),
+        }
+    }
+}
+
+fn acquire_inflight_thumbnail(key: &ThumbnailRequestKey) -> InflightThumbnailLease {
+    let mut inflight = lock_recover(thumbnail_inflight());
+    if let Some(existing) = inflight.get(key) {
+        return InflightThumbnailLease::Follower(existing.clone());
+    }
+    let entry = Arc::new(InflightThumbnail::new());
+    inflight.insert(key.clone(), entry.clone());
+    InflightThumbnailLease::Leader(entry)
+}
+
+fn finish_inflight_thumbnail(
+    key: &ThumbnailRequestKey,
+    entry: &Arc<InflightThumbnail>,
+    result: InflightThumbnailResult,
+) {
+    {
+        let mut state = lock_recover(&entry.state);
+        *state = InflightThumbnailState::Finished(result);
+        entry.ready.notify_all();
+    }
+
+    let mut inflight = lock_recover(thumbnail_inflight());
+    if inflight
+        .get(key)
+        .is_some_and(|current| Arc::ptr_eq(current, entry))
+    {
+        inflight.remove(key);
+    }
+}
+
+fn wait_for_inflight_thumbnail_by(
+    entry: &Arc<InflightThumbnail>,
+    deadline: Instant,
+) -> Option<InflightThumbnailResult> {
+    let mut state = lock_recover(&entry.state);
+
+    loop {
+        match &*state {
+            InflightThumbnailState::Finished(result) => {
+                let result = result.clone();
+                return (Instant::now() < deadline).then_some(result);
+            }
+            InflightThumbnailState::Running => {
+                let remaining = deadline.checked_duration_since(Instant::now())?;
+                let (next_state, wait_result) = entry
+                    .ready
+                    .wait_timeout(state, remaining)
+                    .unwrap_or_else(PoisonError::into_inner);
+                state = next_state;
+                if wait_result.timed_out() && matches!(&*state, InflightThumbnailState::Running) {
+                    return None;
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+pub(super) fn render_coalesced_thumbnail(
+    key: ThumbnailRequestKey,
+    timeout: Duration,
+    render: impl FnOnce() -> ThumbnailAttempt,
+) -> ThumbnailAttempt {
+    render_coalesced_thumbnail_by_inner(key, Instant::now() + timeout, render, || {})
+}
+
+#[cfg(test)]
+pub(super) fn render_coalesced_thumbnail_with_follower_notice(
+    key: ThumbnailRequestKey,
+    timeout: Duration,
+    render: impl FnOnce() -> ThumbnailAttempt,
+    follower_waiting: impl FnOnce(),
+) -> ThumbnailAttempt {
+    render_coalesced_thumbnail_by_inner(key, Instant::now() + timeout, render, follower_waiting)
+}
+
+/// Run or join a coalesced render until a deadline fixed by the caller.
+pub(super) fn render_coalesced_thumbnail_by(
+    key: ThumbnailRequestKey,
+    deadline: Instant,
+    render: impl FnOnce() -> ThumbnailAttempt,
+) -> ThumbnailAttempt {
+    render_coalesced_thumbnail_by_inner(key, deadline, render, || {})
+}
+
+fn render_coalesced_thumbnail_by_inner(
+    key: ThumbnailRequestKey,
+    deadline: Instant,
+    render: impl FnOnce() -> ThumbnailAttempt,
+    follower_waiting: impl FnOnce(),
+) -> ThumbnailAttempt {
+    // `render` is an infallible producer of a verdict: a full-size bitmap (a
+    // real thumbnail or a deterministic placeholder) or an explicit transient
+    // failure. Followers inherit the leader's verdict verbatim; a follower
+    // that outwaits its budget reports transient failure rather than
+    // duplicating the render or inventing a cacheable placeholder.
+    match acquire_inflight_thumbnail(&key) {
+        InflightThumbnailLease::Leader(entry) => {
+            let attempt = panic::catch_unwind(AssertUnwindSafe(render)).unwrap_or_else(|_| {
+                tracing::error!(
+                    "thumbnail leader panicked outside the worker boundary; reporting transient failure"
+                );
+                ThumbnailAttempt::TransientFailure
+            });
+            let result = InflightThumbnailResult::from(attempt);
+            finish_inflight_thumbnail(&key, &entry, result.clone());
+            if Instant::now() < deadline {
+                result.into()
+            } else {
+                ThumbnailAttempt::TransientFailure
+            }
+        }
+        InflightThumbnailLease::Follower(entry) => {
+            // A follower does not use its producer closure. Drop it before
+            // waiting so captured owned source buffers do not stay resident
+            // for the leader's entire render.
+            drop(render);
+            follower_waiting();
+            if let Some(result) = wait_for_inflight_thumbnail_by(&entry, deadline) {
+                if Instant::now() < deadline {
+                    result.into()
+                } else {
+                    ThumbnailAttempt::TransientFailure
+                }
+            } else {
+                tracing::warn!(
+                    ?deadline,
+                    "waiting for an identical in-flight thumbnail timed out; reporting transient failure instead of duplicate render"
+                );
+                ThumbnailAttempt::TransientFailure
+            }
+        }
+    }
+}
+
+/// Run `work` under one deadline fixed at entry, so waiting for setup and
+/// rendering share a single request budget.
+#[cfg(test)]
+pub(super) fn run_thumbnail_job_with_deadline<T, F>(
+    timeout: Duration,
+    work: F,
+) -> ThumbnailJobOutcome<T>
+where
+    T: Send + 'static,
+    F: FnOnce(mpsc::SyncSender<ThumbnailJobProgress<T>>) + Send + 'static,
+{
+    // One budget for the whole request. If waiting for a slot and rendering
+    // each took the full timeout, a file could spend twice what the caller
+    // asked for -- twelve seconds against six -- and under Explorer's
+    // Apartment hosting the rest of the folder queues behind it. The deadline
+    // is fixed here, once, and both halves spend the same one.
+    let deadline = Instant::now() + timeout;
+    run_thumbnail_job_by_deadline(deadline, work)
+}
+
+/// Start a thumbnail worker under an absolute deadline fixed at request entry.
+pub(super) fn run_thumbnail_job_by_deadline<T, F>(
+    deadline: Instant,
+    work: F,
+) -> ThumbnailJobOutcome<T>
+where
+    T: Send + 'static,
+    F: FnOnce(mpsc::SyncSender<ThumbnailJobProgress<T>>) + Send + 'static,
+{
+    let Some(permit) = ThumbnailJobGate::shared().acquire_by(deadline) else {
+        return ThumbnailJobOutcome::SetupTimedOut;
+    };
+    run_thumbnail_job_by(permit, deadline, work)
+}
+
+/// Run `work` on a worker thread against a deadline the caller already fixed,
+/// so that a wait which has already happened is spent, not forgotten.
+///
+/// The permit is the caller's: the shell reserves one before it copies an
+/// `IStream`, and a test hands one from a private gate so that its assertions
+/// do not depend on what the rest of the suite is doing.
+pub(super) fn run_thumbnail_job_by<T, F>(
+    permit: ThumbnailJobPermit,
+    deadline: Instant,
+    work: F,
+) -> ThumbnailJobOutcome<T>
+where
+    T: Send + 'static,
+    F: FnOnce(mpsc::SyncSender<ThumbnailJobProgress<T>>) + Send + 'static,
+{
+    let (tx, rx) = mpsc::sync_channel(2);
+    let timed_out = Arc::new(AtomicBool::new(false));
+    let timed_out_worker = timed_out.clone();
+    let spawn = std::thread::Builder::new()
+        .name("occluview-thumbnail-job".to_string())
+        .spawn(move || {
+            // Keep the permit with the worker after the caller times out. The
+            // decode/readback can not be cancelled safely, and releasing the
+            // slot early would let a large folder create unbounded survivors.
+            let _permit = permit;
+            let _ = panic::catch_unwind(AssertUnwindSafe(|| work(tx)));
+            if timed_out_worker.load(Ordering::Relaxed) {
+                tracing::debug!(
+                    "thumbnail worker completed after caller timed out; releasing its burst slot"
+                );
+            }
+        });
+    if spawn.is_err() {
+        return ThumbnailJobOutcome::Failed;
+    }
+
+    let mut prepared = false;
+    loop {
+        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            timed_out.store(true, Ordering::Relaxed);
+            return if prepared {
+                ThumbnailJobOutcome::RenderTimedOut
+            } else {
+                ThumbnailJobOutcome::SetupTimedOut
+            };
+        };
+        match rx.recv_timeout(remaining) {
+            Ok(ThumbnailJobProgress::Prepared) => prepared = true,
+            Ok(ThumbnailJobProgress::Finished(value)) => {
+                let outcome = finished_message_outcome(deadline, Instant::now(), prepared, value);
+                if !matches!(&outcome, ThumbnailJobOutcome::Finished(_)) {
+                    timed_out.store(true, Ordering::Relaxed);
+                }
+                return outcome;
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                timed_out.store(true, Ordering::Relaxed);
+                return if prepared {
+                    ThumbnailJobOutcome::RenderTimedOut
+                } else {
+                    ThumbnailJobOutcome::SetupTimedOut
+                };
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => return ThumbnailJobOutcome::Failed,
+        }
+    }
+}
+
+fn finished_message_outcome<T>(
+    deadline: Instant,
+    received_at: Instant,
+    prepared: bool,
+    value: T,
+) -> ThumbnailJobOutcome<T> {
+    if received_at < deadline {
+        ThumbnailJobOutcome::Finished(value)
+    } else if prepared {
+        ThumbnailJobOutcome::RenderTimedOut
+    } else {
+        ThumbnailJobOutcome::SetupTimedOut
+    }
+}
+
+#[cfg(test)]
+mod deadline_tests {
+    use super::*;
+
+    #[test]
+    fn a_finished_message_received_at_the_deadline_is_not_a_bitmap() {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let (sent, received) = mpsc::sync_channel(1);
+        sent.send(ThumbnailJobProgress::Finished(ThumbnailAttempt::Bitmap(
+            vec![1, 2, 3, 4],
+        )))
+            .expect("queue the worker response");
+        let ThumbnailJobProgress::Finished(value) =
+            received.recv().expect("receive the queued response")
+        else {
+            panic!("expected a finished response");
+        };
+
+        let outcome = finished_message_outcome(deadline, deadline, false, value);
+        assert!(matches!(outcome, ThumbnailJobOutcome::SetupTimedOut));
+    }
+
+    #[test]
+    fn a_finished_message_after_preparation_is_a_render_timeout() {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let (sent, received) = mpsc::sync_channel(1);
+        sent.send(ThumbnailJobProgress::Finished(ThumbnailAttempt::Bitmap(
+            vec![1, 2, 3, 4],
+        )))
+            .expect("queue the worker response");
+        let ThumbnailJobProgress::Finished(value) =
+            received.recv().expect("receive the queued response")
+        else {
+            panic!("expected a finished response");
+        };
+
+        let outcome = finished_message_outcome(deadline, deadline, true, value);
+        assert!(matches!(outcome, ThumbnailJobOutcome::RenderTimedOut));
+    }
+}
+
+#[cfg(test)]
+mod recovery_tests;

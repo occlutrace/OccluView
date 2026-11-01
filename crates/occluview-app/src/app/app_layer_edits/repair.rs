@@ -1,0 +1,224 @@
+//! One-click Repair mesh executor: runs the full occluview-mesh-edit repair
+//! pipeline (weld / slivers / duplicates / non-manifold / orientation /
+//! debris / pinholes) on a whole layer as one undo step. A content no-op leaves
+//! the mesh untouched, and a per-pass status line reports only what happened.
+
+use super::super::{
+    EditModeCommand, LayerContextApply, LayerContextRequest, PathBuf, Scene, SceneContext,
+};
+use super::resolve_layer;
+use super::structural::structural_scene_apply;
+use occluview_core::CoreError;
+use occluview_mesh_edit::{repair_mesh_in_mesh, RepairOptions, RepairReport};
+use std::sync::Arc;
+
+/// What one repair run did to the requested layer.
+pub(super) enum LayerRepairOutcome {
+    /// The request does not match the live scene; nothing was touched.
+    Stale,
+    /// The pipeline found nothing to fix; the mesh is untouched.
+    Clean(RepairReport),
+    /// The layer's mesh was replaced with the repaired result.
+    Repaired(RepairReport),
+}
+
+pub(super) fn apply_layer_repair_action_with_status(
+    app: &mut SceneContext<'_>,
+    scene: &mut Scene,
+    paths: &[PathBuf],
+    request: LayerContextRequest,
+) -> LayerContextApply {
+    let Some((entry, layer_label)) = resolve_layer(scene, paths, &request, &app.ui.locale) else {
+        return LayerContextApply::default();
+    };
+    let Some(token) = app
+        .document
+        .edit_mode
+        .begin_layer_edit(entry, EditModeCommand::RepairMesh)
+    else {
+        return super::refuse_busy_layer_edit(app.scene_ui, &app.ui.locale);
+    };
+
+    // Repair is a whole-mesh operation by design (like Keep Largest Island):
+    // any live face selection is ignored, the pipeline decides what is damage.
+    match apply_layer_repair_action(scene, request) {
+        Ok(LayerRepairOutcome::Repaired(report)) => {
+            let status = repaired_status(&layer_label, &report, &app.ui.locale);
+            super::commit_layer_edit(
+                app.document,
+                app.scene_ui,
+                &app.ui.locale,
+                &mut app.ui.app_error,
+                token,
+                request.layer_id,
+                super::LayerEditResolution::Applied {
+                    changed: true,
+                    status,
+                },
+            );
+            // The toast above is the summary; the card is the detail: one
+            // readable line per non-zero pass, kept open until the operator
+            // dismisses it.
+            app.scene_ui.repair_report.present(&layer_label, report);
+            structural_scene_apply()
+        }
+        Ok(LayerRepairOutcome::Clean(report)) => {
+            // Content no-op: mesh untouched, snapshot discarded, session not
+            // dirtied, but the operator is still told about open rims left.
+            let status = clean_status(&layer_label, &report, &app.ui.locale);
+            super::commit_layer_edit(
+                app.document,
+                app.scene_ui,
+                &app.ui.locale,
+                &mut app.ui.app_error,
+                token,
+                request.layer_id,
+                super::LayerEditResolution::Applied {
+                    changed: false,
+                    status,
+                },
+            );
+            // Positive confirmation, matching the convention dental CAD
+            // software uses: a clean scan still gets a card ("Nothing to
+            // repair — mesh is clean"), not silence.
+            app.scene_ui.repair_report.present(&layer_label, report);
+            LayerContextApply::default()
+        }
+        Ok(LayerRepairOutcome::Stale) => {
+            let _ = app.document.edit_mode.finish_layer_edit_noop(token);
+            LayerContextApply::default()
+        }
+        Err(error) => {
+            super::commit_layer_edit(
+                app.document,
+                app.scene_ui,
+                &app.ui.locale,
+                &mut app.ui.app_error,
+                token,
+                request.layer_id,
+                super::LayerEditResolution::Failed { error, layer_label },
+            );
+            LayerContextApply::default()
+        }
+    }
+}
+
+/// Run the repair pipeline against the live scene entry. The kernel's
+/// `changed_content` verdict decides between a real edit and a content no-op,
+/// so a clean mesh is never replaced (and never re-uploaded to the GPU).
+pub(super) fn apply_layer_repair_action(
+    scene: &mut Scene,
+    request: LayerContextRequest,
+) -> Result<LayerRepairOutcome, CoreError> {
+    let Some(entry) = scene.meshes_mut().get_mut(request.index) else {
+        return Ok(LayerRepairOutcome::Stale);
+    };
+    if entry.id() != request.layer_id {
+        return Ok(LayerRepairOutcome::Stale);
+    }
+
+    let result = repair_mesh_in_mesh(&entry.mesh, RepairOptions::default())?;
+    if !result.report.changed_content() {
+        return Ok(LayerRepairOutcome::Clean(result.report));
+    }
+    entry.mesh = Arc::new(result.mesh);
+    Ok(LayerRepairOutcome::Repaired(result.report))
+}
+
+/// "Repaired {layer}: ..." listing only the non-zero pass counts, plus the
+/// skipped-rim warning tail when the fill pass refused non-simple rims.
+pub(super) fn repaired_status(
+    layer_label: &str,
+    report: &RepairReport,
+    locale: &crate::i18n::LocaleManager,
+) -> String {
+    let mut parts = repair_parts(report, locale);
+    let skipped = report.warnings.len();
+    if skipped > 0 {
+        parts.push(locale.tr_plural(
+            crate::i18n::message_id!("repair-toast-skipped"),
+            &[],
+            &[("count", skipped)],
+        ));
+    }
+    locale.tr_with(
+        crate::i18n::message_id!("repair-toast-done"),
+        &[("layer", layer_label), ("parts", &parts.join(", "))],
+    )
+}
+
+/// Status for a mesh the pipeline had nothing to fix on. Open rims larger
+/// than the pinhole cap are the scan's natural boundary: informational, but
+/// still reported to the operator.
+pub(super) fn clean_status(
+    layer_label: &str,
+    report: &RepairReport,
+    locale: &crate::i18n::LocaleManager,
+) -> String {
+    let rims = report.open_rims_left;
+    if rims > 0 {
+        locale.tr_plural(
+            crate::i18n::message_id!("repair-toast-clean-rims"),
+            &[("layer", layer_label)],
+            &[("count", rims)],
+        )
+    } else {
+        locale.tr_with(
+            crate::i18n::message_id!("repair-toast-clean"),
+            &[("layer", layer_label)],
+        )
+    }
+}
+
+/// One phrase per non-zero pass count, in pipeline order. Every counter that
+/// can set `changed_content` is covered (debris triangles ride along with
+/// their components), so a repaired status never comes out empty.
+fn repair_parts(report: &RepairReport, locale: &crate::i18n::LocaleManager) -> Vec<String> {
+    let entries: [(usize, crate::i18n::MessageId); 10] = [
+        (
+            report.welded_vertices,
+            crate::i18n::message_id!("repair-toast-welded"),
+        ),
+        (
+            report.removed_degenerate_triangles,
+            crate::i18n::message_id!("repair-toast-slivers"),
+        ),
+        (
+            report.removed_duplicate_triangles,
+            crate::i18n::message_id!("repair-toast-duplicate-faces"),
+        ),
+        (
+            report.split_nonmanifold_edges,
+            crate::i18n::message_id!("repair-toast-nonmanifold"),
+        ),
+        (
+            report.split_bowtie_vertices,
+            crate::i18n::message_id!("repair-toast-bowtie"),
+        ),
+        (
+            report.reoriented_triangles,
+            crate::i18n::message_id!("repair-toast-reoriented"),
+        ),
+        (
+            report.flipped_components,
+            crate::i18n::message_id!("repair-toast-flipped"),
+        ),
+        (
+            report.removed_debris_components,
+            crate::i18n::message_id!("repair-toast-debris"),
+        ),
+        (
+            report.filled_holes,
+            crate::i18n::message_id!("repair-toast-pinholes"),
+        ),
+        (
+            report.removed_unreferenced_vertices,
+            crate::i18n::message_id!("repair-toast-unused"),
+        ),
+    ];
+    entries
+        .iter()
+        .filter(|(count, _)| *count > 0)
+        .map(|&(count, key)| locale.tr_plural(key, &[], &[("count", count)]))
+        .collect()
+}

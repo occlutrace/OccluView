@@ -1,0 +1,49 @@
+.TH OCCLUVIEW-CLI 1 "August 2026" "OccluView" "User Commands"
+.SH NAME
+occluview-cli \- inspect, convert, repair, and thumbnail 3D meshes
+.SH SYNOPSIS
+.B occluview-cli
+.I COMMAND
+.RI [ OPTIONS ]
+.SH COMMANDS
+.TP
+.B thumbnail FILE [-o OUTPUT] [--size PIXELS]
+Render a PNG thumbnail.
+.TP
+.B convert FILE -o OUTPUT
+Convert a mesh to STL, PLY, or OBJ according to the output extension.
+.TP
+.B close-holes FILE -o OUTPUT [--limit-mm MM]
+Close eligible boundary loops and write the repaired mesh.
+.TP
+.B info FILE [FILE ...]
+Print format and geometry information.
+.TP
+.B help
+Show command-line help.
+.SH OPTIONS
+.TP
+.BR \-h , " " \-\-help
+Show command-line help.
+.TP
+.BR \-V , " " \-\-version
+Show the installed version.
+.TP
+.BR \-o " " OUTPUT
+Destination file for
+.B convert
+and
+.BR close-holes .
+.TP
+.BR \-\-size " " PIXELS
+Thumbnail edge length, for
+.BR thumbnail .
+.TP
+.BR \-\-limit-mm " " MM
+Largest boundary loop the hole closer may close, for
+.BR close-holes .
+Omit it to use the tool default.
+.SH SEE ALSO
+.BR occluview (1)
+.SH BUGS
+Report issues at https://github.com/occlutrace/OccluView/issues.

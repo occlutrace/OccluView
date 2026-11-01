@@ -1,0 +1,50 @@
+# occluview-formats — file format readers/writers.
+# Layering: depends on occluview-core and occluview-geometry.
+[package]
+name = "occluview-formats"
+description = "3D file format import and export for OccluView: read STL, PLY, OBJ, OFF, and GLB; write STL, PLY, OBJ, and GLB."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+occluview-core = { workspace = true }
+occluview-geometry = { workspace = true }
+thiserror      = { workspace = true }
+rayon          = { workspace = true }
+glam           = { workspace = true }
+serde          = { workspace = true }
+serde_json     = { workspace = true }
+# PNG + JPEG decode for glTF texture images (GLB embeds them in bufferViews).
+image          = { workspace = true }
+tracing  = { workspace = true }
+
+# `MoveFileExW`, so replacing an existing export is published through one
+# rename and reports its collision codes as themselves.
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.62.2"
+features = ["Win32_Storage_FileSystem"]
+
+[dev-dependencies]
+zip = { workspace = true }
+occluview-core = { workspace = true, features = ["test-support"] }
+proptest = { workspace = true }
+tempfile = "3.27.0"
+# The production reader accepts only PNG/JPEG. Enable BMP in tests solely to
+# prove that the byte-level allowlist still refuses a valid, decodable BMP.
+image = { workspace = true, features = ["bmp"] }
+
+[[example]]
+name = "smoke_real_files"
+path = "examples/smoke_real_files.rs"
+
+# NOTE: glTF/GLB is implemented here in pure Rust (see src/gltf/). 3MF is
+# deliberately deferred and the code says so at the dispatch point --
+# `FormatKind::deferred` in src/dispatch.rs. Each reader ships with tests.

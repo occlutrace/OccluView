@@ -1,0 +1,511 @@
+use super::*;
+use crate::mesh::{Mesh, MeshTexture, Vertex};
+use crate::test_support::{simple_triangle_mesh, two_triangle_mesh};
+use glam::{Affine3A, Vec3};
+use std::sync::Arc;
+
+fn colored_tri() -> Mesh {
+    Mesh::new(
+        None,
+        vec![
+            Vertex::at(Vec3::ZERO).with_color([120, 80, 70, 255]),
+            Vertex::at(Vec3::new(1.0, 0.0, 0.0)).with_color([121, 81, 71, 255]),
+            Vertex::at(Vec3::new(0.0, 1.0, 0.0)).with_color([122, 82, 72, 255]),
+        ],
+        vec![0, 1, 2],
+    )
+    .expect("valid colored mesh")
+}
+
+fn textured_tri() -> Mesh {
+    let mut mesh = Mesh::new(
+        None,
+        vec![
+            Vertex::at(Vec3::ZERO).with_uv([0.0, 0.0]),
+            Vertex::at(Vec3::new(1.0, 0.0, 0.0)).with_uv([1.0, 0.0]),
+            Vertex::at(Vec3::new(0.0, 1.0, 0.0)).with_uv([0.0, 1.0]),
+        ],
+        vec![0, 1, 2],
+    )
+    .expect("valid textured mesh");
+    mesh.set_texture(MeshTexture::new(1, 1, vec![120, 80, 70, 255]));
+    mesh
+}
+
+#[test]
+fn scene_public_surface_stays_reexported_from_core_root_and_scene_module() {
+    use crate::{
+        Scene as RootScene, SceneMesh as RootSceneMesh, SceneMeshId as RootSceneMeshId,
+        DEFAULT_UNTEXTURED_MESH_TINT as ROOT_DEFAULT_UNTEXTURED_MESH_TINT,
+    };
+
+    let mut scene = RootScene::new();
+    let layer = RootSceneMesh::new(Mesh::empty());
+    let layer_id: RootSceneMeshId = layer.id();
+    let _ = layer_id.get();
+
+    scene.add(layer.with_tint(ROOT_DEFAULT_UNTEXTURED_MESH_TINT));
+
+    assert_eq!(scene.meshes().len(), 1);
+    assert_eq!(DEFAULT_COLORED_MESH_TINT, [1.0, 1.0, 1.0, 1.0]);
+}
+
+#[test]
+fn scene_memory_estimate_includes_each_layers_mesh_texture_and_overlay() {
+    let first_mesh = textured_tri();
+    let first_mesh_bytes = first_mesh.estimated_memory_bytes();
+    let second_mesh = simple_triangle_mesh(None).expect("valid mesh");
+    let second_mesh_bytes = second_mesh.estimated_memory_bytes();
+    let mut scene = Scene::new();
+    scene.add(SceneMesh::new(first_mesh).with_overlay(
+        OverlayKind::Paint,
+        Some(Arc::new(vec![[255, 0, 0, 128]; 3])),
+    ));
+    scene.add(SceneMesh::new(second_mesh));
+
+    assert!(
+        scene.estimated_memory_bytes() >= first_mesh_bytes + second_mesh_bytes + 12,
+        "textures, layer overlays, and every retained layer are included"
+    );
+}
+
+#[test]
+fn scene_memory_estimate_includes_render_residency_for_each_layer() {
+    let mesh = Mesh::new(
+        None,
+        vec![
+            Vertex::at(Vec3::ZERO),
+            Vertex::at(Vec3::new(1.0, 0.0, 0.0)),
+            Vertex::at(Vec3::new(0.0, 1.0, 0.0)),
+        ],
+        [0, 1, 2].repeat(64),
+    )
+    .expect("valid mesh");
+    let mesh_bytes = mesh.estimated_memory_bytes();
+    let renderer_bytes = mesh.estimated_gpu_memory_bytes(true);
+    let mut scene = Scene::new();
+    scene.add(SceneMesh::new(mesh));
+
+    assert!(
+        scene.estimated_memory_bytes() >= mesh_bytes + renderer_bytes,
+        "scene admission reserves GPU geometry and the wireframe buffer"
+    );
+}
+
+#[test]
+fn empty_scene_has_no_meshes() {
+    let s = Scene::new();
+    assert_eq!(s.meshes().len(), 0);
+    assert_eq!(s.visible_count(), 0);
+}
+
+#[test]
+fn add_two_meshes_for_upper_lower() {
+    let mut s = Scene::new();
+    s.add(
+        SceneMesh::new(simple_triangle_mesh(None).expect("valid mesh"))
+            .with_tint([0.6, 0.8, 1.0, 1.0]),
+    );
+    s.add(
+        SceneMesh::new(simple_triangle_mesh(None).expect("valid mesh"))
+            .with_tint([1.0, 0.7, 0.6, 1.0]),
+    );
+    assert_eq!(s.meshes().len(), 2);
+    assert_eq!(s.visible_count(), 2);
+}
+
+#[test]
+fn new_scene_mesh_uses_dental_stone_tint() {
+    let entry = SceneMesh::new(simple_triangle_mesh(None).expect("valid mesh"));
+    assert_eq!(entry.tint, DEFAULT_UNTEXTURED_MESH_TINT);
+}
+
+#[test]
+fn colored_scene_mesh_uses_neutral_tint() {
+    let entry = SceneMesh::new(colored_tri());
+    assert_eq!(entry.tint, DEFAULT_COLORED_MESH_TINT);
+}
+
+#[test]
+fn textured_scene_mesh_uses_neutral_tint() {
+    let entry = SceneMesh::new(textured_tri());
+    assert_eq!(entry.tint, DEFAULT_COLORED_MESH_TINT);
+}
+
+#[test]
+fn opacity_is_clamped() {
+    let e = SceneMesh::new(simple_triangle_mesh(None).expect("valid mesh")).with_opacity(5.0);
+    assert_eq!(e.opacity, 1.0);
+    let e = SceneMesh::new(simple_triangle_mesh(None).expect("valid mesh")).with_opacity(-1.0);
+    assert_eq!(e.opacity, 0.0);
+}
+
+#[test]
+fn wireframe_overlay_defaults_off_and_can_be_enabled() {
+    let e = SceneMesh::new(simple_triangle_mesh(None).expect("valid mesh"));
+    assert!(!e.wireframe);
+    let e = e.with_wireframe(true);
+    assert!(e.wireframe);
+}
+
+#[test]
+fn hide_affects_visible_count() {
+    let mut s = Scene::new();
+    let i = s.add(SceneMesh::new(
+        simple_triangle_mesh(None).expect("valid mesh"),
+    ));
+    s.add(SceneMesh::new(
+        simple_triangle_mesh(None).expect("valid mesh"),
+    ));
+    s.meshes_mut()[i].visible = false;
+    assert_eq!(s.visible_count(), 1);
+}
+
+#[test]
+fn scene_bbox_unions_visible_meshes() {
+    let mut s = Scene::new();
+    s.add(SceneMesh::new(
+        simple_triangle_mesh(None).expect("valid mesh"),
+    ));
+    s.add(
+        SceneMesh::new(simple_triangle_mesh(None).expect("valid mesh"))
+            .with_transform(Affine3A::from_translation(Vec3::new(10.0, 0.0, 0.0))),
+    );
+    let b = s.bbox();
+    assert!(!b.is_empty());
+    assert_eq!(b.min.x, 0.0);
+    assert!((b.max.x - 11.0).abs() < 1e-5, "max.x = {}", b.max.x);
+}
+
+#[test]
+fn scene_bbox_skips_hidden_meshes() {
+    let mut s = Scene::new();
+    let i = s.add(SceneMesh::new(
+        simple_triangle_mesh(None).expect("valid mesh"),
+    ));
+    s.add(
+        SceneMesh::new(simple_triangle_mesh(None).expect("valid mesh"))
+            .with_transform(Affine3A::from_translation(Vec3::new(100.0, 0.0, 0.0))),
+    );
+    s.meshes_mut()[i].visible = false;
+    let b = s.bbox();
+    assert!(!b.is_empty());
+    assert!(b.min.x >= 100.0, "min.x = {}", b.min.x);
+}
+
+#[test]
+fn scene_bbox_empty_scene() {
+    let s = Scene::new();
+    assert!(s.bbox().is_empty());
+}
+
+#[test]
+fn pick_ray_hits_visible_triangle_surface() {
+    let mut s = Scene::new();
+    s.add(SceneMesh::new(
+        simple_triangle_mesh(None).expect("valid mesh"),
+    ));
+
+    let hit = s.pick_ray(Vec3::new(0.25, 0.25, 10.0), Vec3::NEG_Z);
+
+    assert!(hit.is_some(), "expected surface hit");
+    let Some(hit) = hit else {
+        panic!("required test setup or expected result was missing");
+    };
+    assert!(
+        (hit - Vec3::new(0.25, 0.25, 0.0)).length() < 1e-5,
+        "hit={hit}"
+    );
+}
+
+#[test]
+fn pick_ray_returns_nearest_visible_hit() {
+    let mut s = Scene::new();
+    s.add(SceneMesh::new(
+        simple_triangle_mesh(None).expect("valid mesh"),
+    ));
+    s.add(
+        SceneMesh::new(simple_triangle_mesh(None).expect("valid mesh"))
+            .with_transform(Affine3A::from_translation(Vec3::Z * 5.0)),
+    );
+
+    let hit = s.pick_ray(Vec3::new(0.25, 0.25, 10.0), Vec3::NEG_Z);
+
+    assert!(hit.is_some(), "expected nearest hit");
+    let Some(hit) = hit else {
+        panic!("required test setup or expected result was missing");
+    };
+    assert!((hit.z - 5.0).abs() < 1e-5, "hit={hit}");
+}
+
+#[test]
+fn pick_ray_hit_reports_layer_identity_and_triangle_index() {
+    let mut s = Scene::new();
+    s.add(SceneMesh::new(
+        simple_triangle_mesh(None).expect("valid mesh"),
+    ));
+    let layer_index = s.add(
+        SceneMesh::new(two_triangle_mesh(None).expect("valid two-triangle mesh"))
+            .with_transform(Affine3A::from_translation(Vec3::Z * 5.0)),
+    );
+    let layer_id = s.meshes()[layer_index].id();
+
+    let hit = s.pick_ray_hit(Vec3::new(2.25, 0.25, 10.0), Vec3::NEG_Z);
+
+    assert!(hit.is_some(), "expected editable face hit");
+    let Some(hit) = hit else {
+        panic!("required test setup or expected result was missing");
+    };
+    assert_eq!(hit.layer_index, layer_index);
+    assert_eq!(hit.layer_id, layer_id);
+    assert_eq!(hit.triangle_index, 1);
+    assert!(
+        (hit.point - Vec3::new(2.25, 0.25, 5.0)).length() < 1e-5,
+        "hit={hit:?}"
+    );
+}
+
+#[test]
+fn pick_layer_ray_hit_ignores_nearer_non_target_layers() {
+    let mut scene = Scene::new();
+    let target_index = scene.add(SceneMesh::new(
+        simple_triangle_mesh(None).expect("valid mesh"),
+    ));
+    let target_id = scene.meshes()[target_index].id();
+    scene.add(
+        SceneMesh::new(simple_triangle_mesh(None).expect("valid mesh"))
+            .with_transform(Affine3A::from_translation(Vec3::Z * 5.0)),
+    );
+
+    let hit = scene.pick_layer_ray_hit(Vec3::new(0.25, 0.25, 10.0), Vec3::NEG_Z, target_id);
+
+    let hit = hit.expect("expected a hit on the requested layer");
+    assert_eq!(hit.layer_index, target_index);
+    assert_eq!(hit.layer_id, target_id);
+    assert!(hit.point.z.abs() < 1e-5, "hit={hit:?}");
+}
+
+#[test]
+fn pick_layer_ray_hit_rejects_hidden_or_stale_targets() {
+    let mut scene = Scene::new();
+    let mut target = SceneMesh::new(simple_triangle_mesh(None).expect("valid mesh"));
+    target.visible = false;
+    let target_id = target.id();
+    scene.add(target);
+    let stale_id = SceneMesh::new(simple_triangle_mesh(None).expect("valid mesh")).id();
+
+    let origin = Vec3::new(0.25, 0.25, 10.0);
+    assert!(scene
+        .pick_layer_ray_hit(origin, Vec3::NEG_Z, target_id)
+        .is_none());
+    assert!(scene
+        .pick_layer_ray_hit(origin, Vec3::NEG_Z, stale_id)
+        .is_none());
+}
+
+#[test]
+fn pick_ray_ignores_hidden_meshes() {
+    let mut s = Scene::new();
+    let mut hidden = SceneMesh::new(simple_triangle_mesh(None).expect("valid mesh"))
+        .with_transform(Affine3A::from_translation(Vec3::Z * 5.0));
+    hidden.visible = false;
+    s.add(hidden);
+    s.add(SceneMesh::new(
+        simple_triangle_mesh(None).expect("valid mesh"),
+    ));
+
+    let hit = s.pick_ray(Vec3::new(0.25, 0.25, 10.0), Vec3::NEG_Z);
+
+    assert!(hit.is_some(), "expected visible hit");
+    let Some(hit) = hit else {
+        panic!("required test setup or expected result was missing");
+    };
+    assert!(hit.z.abs() < 1e-5, "hit={hit}");
+}
+
+#[test]
+fn remove_drops_requested_entry() {
+    let mut s = Scene::new();
+    let first = s.add(SceneMesh::new(
+        simple_triangle_mesh(None).expect("valid mesh"),
+    ));
+    let second = s.add(
+        SceneMesh::new(simple_triangle_mesh(None).expect("valid mesh"))
+            .with_tint([1.0, 0.7, 0.6, 1.0]),
+    );
+    let remaining_id = s.meshes()[second].id();
+
+    let removed = s.remove(first).expect("entry removed");
+
+    assert_eq!(removed.tint, DEFAULT_UNTEXTURED_MESH_TINT);
+    assert_eq!(s.meshes().len(), 1);
+    assert_eq!(s.meshes()[0].tint, [1.0, 0.7, 0.6, 1.0]);
+    assert_eq!(s.meshes()[0].id(), remaining_id);
+    assert!(
+        s.remove(second).is_none(),
+        "index is now out of date after removal"
+    );
+}
+
+#[test]
+fn scene_mesh_ids_are_stable_across_clone_remove_and_append() {
+    let mut first_scene = Scene::new();
+    first_scene.add(SceneMesh::new(
+        simple_triangle_mesh(None).expect("valid mesh"),
+    ));
+    first_scene.add(SceneMesh::new(
+        simple_triangle_mesh(None).expect("valid mesh"),
+    ));
+    let first_id = first_scene.meshes()[0].id();
+    let second_id = first_scene.meshes()[1].id();
+
+    assert_ne!(first_id, second_id);
+    assert_eq!(first_scene.clone().meshes()[0].id(), first_id);
+
+    let removed = first_scene.remove(0).expect("first layer removed");
+    assert_eq!(removed.id(), first_id);
+    assert_eq!(first_scene.meshes()[0].id(), second_id);
+
+    let mut second_scene = Scene::new();
+    second_scene.add(SceneMesh::new(
+        simple_triangle_mesh(None).expect("valid mesh"),
+    ));
+    let appended_id = second_scene.meshes()[0].id();
+    first_scene.append_scene(second_scene);
+
+    assert_eq!(first_scene.meshes()[0].id(), second_id);
+    assert_eq!(first_scene.meshes()[1].id(), appended_id);
+    assert_ne!(first_scene.meshes()[0].id(), first_scene.meshes()[1].id());
+}
+
+#[test]
+fn append_scene_keeps_existing_order_and_appends_new_entries() {
+    let mut s = Scene::new();
+    s.add(
+        SceneMesh::new(simple_triangle_mesh(None).expect("valid mesh"))
+            .with_tint([1.0, 1.0, 1.0, 1.0]),
+    );
+
+    let mut other = Scene::new();
+    other.add(
+        SceneMesh::new(simple_triangle_mesh(None).expect("valid mesh"))
+            .with_tint([0.82, 0.90, 1.0, 1.0]),
+    );
+    other.add(
+        SceneMesh::new(simple_triangle_mesh(None).expect("valid mesh"))
+            .with_tint([1.0, 0.88, 0.78, 1.0]),
+    );
+
+    s.append_scene(other);
+
+    assert_eq!(s.meshes().len(), 3);
+    assert_eq!(s.meshes()[0].tint, [1.0, 1.0, 1.0, 1.0]);
+    assert_eq!(s.meshes()[1].tint, [0.82, 0.90, 1.0, 1.0]);
+    assert_eq!(s.meshes()[2].tint, [1.0, 0.88, 0.78, 1.0]);
+}
+
+#[test]
+fn append_scene_preserves_existing_scene_settings() {
+    let mut s = Scene::new();
+    s.background = [0.1, 0.2, 0.3, 1.0];
+
+    let mut other = Scene::new();
+    other.background = [0.9, 0.8, 0.7, 1.0];
+    other.add(SceneMesh::new(
+        simple_triangle_mesh(None).expect("valid mesh"),
+    ));
+
+    s.append_scene(other);
+
+    assert_eq!(s.background, [0.1, 0.2, 0.3, 1.0]);
+}
+
+#[test]
+fn a_layer_carries_an_optional_deviation_overlay() {
+    let entry = SceneMesh::new(simple_triangle_mesh(None).expect("valid mesh"));
+    assert!(
+        entry.overlay_colors().is_none(),
+        "a plain layer has no overlay"
+    );
+
+    let colors = Arc::new(vec![[1u8, 2, 3, 255]; 3]);
+    let entry = entry.with_overlay(OverlayKind::Measured, Some(colors));
+    assert_eq!(entry.overlay_colors().map(|colors| colors.len()), Some(3));
+    assert_eq!(entry.overlay_kind(), Some(OverlayKind::Measured));
+}
+
+#[test]
+fn an_overlay_remembers_whether_it_is_a_reading_or_paint() {
+    // The renderer draws a measurement and a paint differently, so the meaning
+    // travels with the colours; without it a brush marking would be shaded as
+    // a deviation map.
+    let colors = Arc::new(vec![[1u8, 2, 3, 255]; 3]);
+    let painted = SceneMesh::new(simple_triangle_mesh(None).expect("valid mesh"))
+        .with_overlay(OverlayKind::Paint, Some(colors));
+
+    assert_eq!(painted.overlay_kind(), Some(OverlayKind::Paint));
+    assert_eq!(
+        SceneMesh::new(simple_triangle_mesh(None).expect("valid mesh")).overlay_kind(),
+        None,
+        "a layer with no overlay has no meaning to report"
+    );
+}
+
+#[test]
+fn replacing_the_geometry_drops_a_stale_deviation_overlay() {
+    let colors = Arc::new(vec![[9u8, 9, 9, 255]; 3]);
+    let entry = SceneMesh::new(simple_triangle_mesh(None).expect("valid mesh"))
+        .with_overlay(OverlayKind::Measured, Some(colors));
+
+    let rebuilt = entry.with_mesh(simple_triangle_mesh(None).expect("valid mesh"));
+
+    assert!(
+        rebuilt.overlay_colors().is_none(),
+        "an overlay indexed by the old vertices must not survive new geometry"
+    );
+    assert_eq!(rebuilt.overlay_kind(), None);
+}
+
+/// Cloning a scene shares the mesh buffers but copies layer metadata.
+#[test]
+fn cloning_a_scene_shares_layer_geometry() {
+    let mut scene = Scene::new();
+    let entry = SceneMesh::new(simple_triangle_mesh(None).expect("valid mesh"));
+    let mesh = Arc::clone(&entry.mesh);
+    scene.add(entry);
+
+    let cloned = scene.clone();
+
+    assert!(
+        Arc::ptr_eq(&mesh, &scene.meshes()[0].mesh),
+        "the original entry must still hold the same geometry"
+    );
+    assert!(
+        Arc::ptr_eq(&scene.meshes()[0].mesh, &cloned.meshes()[0].mesh),
+        "a cloned scene must share the geometry, not copy it"
+    );
+    assert_eq!(Arc::strong_count(&mesh), 3, "one handle per owner");
+}
+
+/// The container is copied, and its metadata is independently mutable.
+#[test]
+fn cloning_a_scene_copies_metadata_independently() {
+    let mut scene = Scene::new();
+    scene.add(SceneMesh::new(
+        simple_triangle_mesh(None).expect("valid mesh"),
+    ));
+    scene.meshes_mut()[0].transform = Affine3A::from_translation(Vec3::new(4.0, 0.0, 0.0));
+
+    let mut cloned = scene.clone();
+    cloned.meshes_mut()[0].transform = Affine3A::IDENTITY;
+
+    assert_ne!(
+        scene.meshes()[0].transform,
+        cloned.meshes()[0].transform,
+        "editing the clone's pose must not move the original"
+    );
+    assert!(
+        Arc::ptr_eq(&scene.meshes()[0].mesh, &cloned.meshes()[0].mesh),
+        "and must not have copied the geometry to do it"
+    );
+}

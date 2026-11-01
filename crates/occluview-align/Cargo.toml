@@ -1,0 +1,29 @@
+# occluview-align — scan-to-scan registration and deviation metrology.
+[package]
+name = "occluview-align"
+description = "Rigid scan registration and signed deviation metrology for dental meshes."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# Print the time each stage of a search took; never takes part in a result.
+search-probe = []
+
+[dependencies]
+glam = { workspace = true }
+rayon = { workspace = true }
+occluview-geometry = { workspace = true }
+
+[dev-dependencies]
+occluview-formats = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }

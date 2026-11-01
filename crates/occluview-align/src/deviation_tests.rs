@@ -1,0 +1,999 @@
+//! Tests for [`crate::deviation`].
+#![allow(clippy::expect_used)]
+
+use super::{
+    deviation, deviation_colors, deviation_stats, ramp_color, suggested_scale_mm, DeviationMap,
+    DeviationSettings, DeviationStats, DeviationSummary, RampMode, RampSettings, Unmeasured,
+    Validity, MIN_MEASURED, NO_DATA_COLOR,
+};
+use crate::Orientation;
+use crate::{display_map, CancelFlag, Rigid, Soup, SurfaceIndex};
+
+/// The magnitude ramp's zero colour, written out rather than read back from
+/// `MAGNITUDE_RAMP`: a test that reads the table it checks cannot catch a
+/// table that changed.
+const ZERO_RGBA: [u8; 4] = [49, 111, 216, 255];
+/// At or beyond the display scale.
+const HOT_RGBA: [u8; 4] = [222, 77, 57, 255];
+
+/// Two triangles forming a 10 x 10 sheet on z = 0, outward normal +Z.
+fn sheet() -> (Vec<f32>, Vec<u32>) {
+    (
+        vec![
+            0.0, 0.0, 0.0, //
+            10.0, 0.0, 0.0, //
+            10.0, 10.0, 0.0, //
+            0.0, 10.0, 0.0,
+        ],
+        vec![0, 1, 2, 0, 2, 3],
+    )
+}
+
+/// The same piecewise-planar offset field on x = 0..10 and y = 0..10.
+/// The offset rises linearly from 0 to 0.2 mm by x = 5, then stays flat;
+/// adding x samples in the flat half changes sampling density, not geometry.
+fn offset_profile_grid(x_coordinates: &[f32]) -> (Vec<f32>, Vec<u32>) {
+    let mut positions = Vec::new();
+    for y in 0_u16..=10 {
+        for &x in x_coordinates {
+            let z = if x < 5.0 { x * 0.04 } else { 0.2 };
+            positions.extend_from_slice(&[x, f32::from(y), z]);
+        }
+    }
+
+    let stride = u32::try_from(x_coordinates.len()).expect("small test grid");
+    let mut indices = Vec::new();
+    for row in 0_u32..10 {
+        for column in 0..(stride - 1) {
+            let a = row * stride + column;
+            let b = a + 1;
+            let c = a + stride;
+            let d = c + 1;
+            indices.extend_from_slice(&[a, b, c, b, d, c]);
+        }
+    }
+    (positions, indices)
+}
+
+fn settings() -> DeviationSettings {
+    DeviationSettings {
+        influence_radius_mm: 3.0,
+        orientation: Orientation::Match,
+    }
+}
+
+fn lifted(positions: &[f32], by: f32) -> Vec<f32> {
+    positions
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .flat_map(|point| [point[0], point[1], point[2] + by])
+        .collect()
+}
+
+/// `count` vertices strung along a diagonal inside the fixed `sheet()`, well
+/// clear of its 10 x 10 bounds. Used wherever a test needs enough measured
+/// vertices to clear `MIN_MEASURED` rather than tripping the floor by
+/// accident.
+fn many_positions(count: usize) -> Vec<f32> {
+    (0..count)
+        .flat_map(|index| {
+            #[allow(clippy::cast_precision_loss)]
+            let along = index as f32 / count as f32 * 9.0;
+            [along, along, 0.0]
+        })
+        .collect()
+}
+
+fn map_of(moving: &[f32], indices: &[u32], settings: &DeviationSettings) -> DeviationMap {
+    let (fixed_positions, fixed_indices) = sheet();
+    let index = SurfaceIndex::build(Soup {
+        positions: &fixed_positions,
+        indices: &fixed_indices,
+        mask: None,
+    })
+    .unwrap();
+    deviation(
+        Soup {
+            positions: moving,
+            indices,
+            mask: None,
+        },
+        &index,
+        Rigid::IDENTITY,
+        settings,
+        &CancelFlag::new(),
+    )
+}
+
+#[test]
+fn a_surface_above_the_target_reads_positive() {
+    let (positions, indices) = sheet();
+    let map = map_of(&lifted(&positions, 0.4), &indices, &settings());
+    for (value, state) in map.signed_mm.iter().zip(&map.validity) {
+        assert_eq!(*state, Validity::Measured);
+        assert!((*value - 0.4).abs() < 1e-4, "expected +0.4, got {value}");
+    }
+}
+
+#[test]
+fn a_surface_below_the_target_reads_negative() {
+    let (positions, indices) = sheet();
+    let map = map_of(&lifted(&positions, -0.25), &indices, &settings());
+    assert!(map
+        .signed_mm
+        .iter()
+        .all(|value| (*value + 0.25).abs() < 1e-4));
+}
+
+#[test]
+fn inverted_orientation_flips_every_sign() {
+    let (positions, indices) = sheet();
+    let inverted = DeviationSettings {
+        orientation: Orientation::Inverted,
+        ..settings()
+    };
+    let map = map_of(&lifted(&positions, 0.4), &indices, &inverted);
+    assert!(map
+        .signed_mm
+        .iter()
+        .all(|value| (*value + 0.4).abs() < 1e-4));
+}
+
+#[test]
+fn ignored_orientation_reports_magnitude_only() {
+    let (positions, indices) = sheet();
+    let ignored = DeviationSettings {
+        orientation: Orientation::Ignored,
+        ..settings()
+    };
+    let map = map_of(&lifted(&positions, -0.3), &indices, &ignored);
+    assert!(map
+        .signed_mm
+        .iter()
+        .all(|value| (*value - 0.3).abs() < 1e-4));
+}
+
+#[test]
+fn vertices_beyond_the_radius_are_out_of_reach_and_grey() {
+    let (positions, indices) = sheet();
+    let map = map_of(&lifted(&positions, 50.0), &indices, &settings());
+    assert!(map
+        .validity
+        .iter()
+        .all(|state| *state == Validity::OutOfReach));
+
+    let stats = deviation_stats(&map, 0.2);
+    assert_eq!(stats.measured, 0);
+    assert_eq!(stats.unmeasured.total() as usize, map.validity.len());
+    assert_eq!(
+        stats.unmeasured.out_of_reach as usize,
+        map.validity.len(),
+        "out of reach is not the same answer as unusable data"
+    );
+
+    let colors = deviation_colors(&map, &RampSettings::default());
+    assert!(colors.iter().all(|color| *color == NO_DATA_COLOR));
+}
+
+#[test]
+fn statistics_count_only_measured_vertices() {
+    // 40 vertices, not the 4-vertex `sheet()`: one is about to be pushed out of
+    // reach, and the other 39 must still clear `MIN_MEASURED` so this test
+    // keeps pinning the actual arithmetic (`within_tolerance`, `mean_abs`)
+    // rather than degrading into a check that the summary merely exists.
+    const COUNT: usize = 40;
+    let mut moving = lifted(&many_positions(COUNT), 0.1);
+    moving[2] = 40.0;
+    let map = map_of(&moving, &[], &settings());
+
+    let stats = deviation_stats(&map, 0.2);
+    assert_eq!(stats.unmeasured.total(), 1);
+    assert_eq!(stats.unmeasured.out_of_reach, 1);
+    #[allow(clippy::cast_possible_truncation)]
+    let expected_measured = COUNT as u32 - 1;
+    assert_eq!(stats.measured, expected_measured);
+    let summary = stats
+        .summary
+        .expect("39 measured vertices clears MIN_MEASURED");
+    assert!((summary.within_tolerance - 1.0).abs() < 1e-9);
+    assert!((summary.mean_abs - 0.1).abs() < 1e-4);
+}
+
+/// The same piecewise-planar scan gets a different vertex-weighted summary
+/// when the flat, higher-deviation half is sampled more densely. The actual
+/// readings, raw map, display copy and no-data entry stay distinct.
+#[test]
+fn remeshing_sampling_density_changes_vertex_summary_not_raw_readings() {
+    let (mut coarse_positions, coarse_indices) = offset_profile_grid(&[0.0, 5.0, 10.0]);
+    let mut dense_x = vec![0.0];
+    dense_x.extend((0_u16..=32).map(|step| 5.0 + f32::from(step) * (5.0 / 32.0)));
+    let (mut dense_positions, dense_indices) = offset_profile_grid(&dense_x);
+
+    // The same detached point in both inputs is deliberately beyond the fixed
+    // sheet's influence radius, so it remains no-data rather than entering
+    // either vertex-weighted population.
+    coarse_positions.extend_from_slice(&[5.0, 5.0, 50.0]);
+    dense_positions.extend_from_slice(&[5.0, 5.0, 50.0]);
+
+    let coarse_map = map_of(&coarse_positions, &coarse_indices, &settings());
+    let dense_map = map_of(&dense_positions, &dense_indices, &settings());
+    let coarse_grid_vertices = coarse_positions.len() / 3 - 1;
+    let dense_grid_vertices = dense_positions.len() / 3 - 1;
+    for (positions, map, count) in [
+        (&coarse_positions, &coarse_map, coarse_grid_vertices),
+        (&dense_positions, &dense_map, dense_grid_vertices),
+    ] {
+        for (vertex, point) in positions.as_chunks::<3>().0.iter().take(count).enumerate() {
+            assert_eq!(map.validity[vertex], Validity::Measured);
+            let expected = if point[0] == 0.0 { 0.0 } else { 0.2 };
+            assert!(
+                (map.signed_mm[vertex] - expected).abs() < 1e-6,
+                "x={} reads {}, expected the exact planar offset {expected}",
+                point[0],
+                map.signed_mm[vertex]
+            );
+        }
+        assert_eq!(map.validity[count], Validity::OutOfReach);
+    }
+
+    let raw_before_display = coarse_map.clone();
+    // This midpoint only separates the two exact fixture readings; it is not
+    // an alignment or clinical acceptance threshold.
+    let coarse_stats = deviation_stats(&coarse_map, 0.1);
+    let dense_stats = deviation_stats(&dense_map, 0.1);
+    assert_eq!(
+        coarse_stats.measured,
+        u32::try_from(coarse_grid_vertices).unwrap()
+    );
+    assert_eq!(
+        dense_stats.measured,
+        u32::try_from(dense_grid_vertices).unwrap()
+    );
+    assert_eq!(coarse_stats.unmeasured.out_of_reach, 1);
+    assert_eq!(dense_stats.unmeasured.out_of_reach, 1);
+    let coarse_summary = coarse_stats.summary.unwrap();
+    let dense_summary = dense_stats.summary.unwrap();
+    assert!(
+        (coarse_summary.mean_abs - (0.2 * 2.0 / 3.0)).abs() < 1e-6,
+        "three x columns with two elevated columns: {coarse_summary:?}"
+    );
+    assert!(
+        (dense_summary.mean_abs - (0.2 * 33.0 / 34.0)).abs() < 1e-6,
+        "34 x columns with 33 elevated columns: {dense_summary:?}"
+    );
+    assert!((coarse_summary.within_tolerance - (1.0 / 3.0)).abs() < 1e-9);
+    assert!((dense_summary.within_tolerance - (1.0 / 34.0)).abs() < 1e-9);
+
+    let shown = display_map(
+        &coarse_map,
+        Soup {
+            positions: &coarse_positions,
+            indices: &coarse_indices,
+            mask: None,
+        },
+    );
+    assert_eq!(coarse_map, raw_before_display, "display smoothing must copy");
+    assert!(coarse_map
+        .signed_mm
+        .iter()
+        .zip(&shown.signed_mm)
+        .zip(&coarse_map.validity)
+        .any(|((&raw, &displayed), state)| {
+            *state == Validity::Measured && (raw - displayed).abs() > 1e-6
+        }), "the varying field must change in the display copy");
+    assert_eq!(shown.validity, coarse_map.validity);
+    assert_eq!(shown.signed_mm.last(), coarse_map.signed_mm.last());
+    assert_eq!(deviation_stats(&coarse_map, 0.1), coarse_stats);
+    assert_eq!(
+        deviation_colors(&shown, &RampSettings::default()).last().copied(),
+        Some(NO_DATA_COLOR),
+        "the unmeasured vertex remains grey in the display copy"
+    );
+}
+
+#[test]
+fn a_painted_out_vertex_is_excluded_from_the_map_and_the_numbers() {
+    let (fixed_positions, fixed_indices) = sheet();
+    let index = SurfaceIndex::build(Soup {
+        positions: &fixed_positions,
+        indices: &fixed_indices,
+        mask: None,
+    })
+    .unwrap();
+    let moving = lifted(&fixed_positions, 0.1);
+    let mask = [0u8, 1, 0, 0];
+    let map = deviation(
+        Soup {
+            positions: &moving,
+            indices: &fixed_indices,
+            mask: Some(&mask),
+        },
+        &index,
+        Rigid::IDENTITY,
+        &settings(),
+        &CancelFlag::new(),
+    );
+
+    assert_eq!(map.validity[1], Validity::Excluded);
+    assert_eq!(map.validity[0], Validity::Measured);
+
+    let stats = deviation_stats(&map, 0.2);
+    assert_eq!(stats.measured, 3, "a painted vertex must leave the numbers");
+    let colors = deviation_colors(&map, &RampSettings::default());
+    assert_eq!(colors[1], NO_DATA_COLOR);
+}
+
+#[test]
+fn a_non_finite_vertex_is_named_as_such() {
+    let (positions, indices) = sheet();
+    let mut moving = lifted(&positions, 0.1);
+    moving[0] = f32::NAN;
+    let map = map_of(&moving, &indices, &settings());
+    assert_eq!(map.validity[0], Validity::NonFinite);
+}
+
+#[test]
+fn a_distance_outside_the_map_precision_is_unusable() {
+    let (fixed_positions, fixed_indices) = sheet();
+    let index = SurfaceIndex::build(Soup {
+        positions: &fixed_positions,
+        indices: &fixed_indices,
+        mask: None,
+    })
+    .unwrap();
+    let moving = many_positions(32);
+    let map = deviation(
+        Soup {
+            positions: &moving,
+            indices: &[],
+            mask: None,
+        },
+        &index,
+        Rigid::new(glam::DQuat::IDENTITY, glam::DVec3::Z * 1e40),
+        &DeviationSettings {
+            influence_radius_mm: 2e40,
+            ..settings()
+        },
+        &CancelFlag::new(),
+    );
+    assert!(map.signed_mm.iter().all(|value| value.is_finite()));
+    assert!(map
+        .validity
+        .iter()
+        .all(|state| *state == Validity::NonFinite));
+    assert!(deviation_stats(&map, 0.1).summary.is_none());
+}
+
+#[test]
+fn non_finite_readings_are_excluded_from_statistics() {
+    let mut map = all_measured(MIN_MEASURED);
+    map.signed_mm
+        .extend_from_slice(&[f32::NAN, f32::INFINITY, f32::NEG_INFINITY]);
+    map.validity.extend_from_slice(&[Validity::Measured; 3]);
+    let stats = deviation_stats(&map, 0.1);
+    assert_eq!(stats.measured, MIN_MEASURED);
+    assert_eq!(stats.unmeasured.unusable, 3);
+    let summary = stats.summary.unwrap();
+    assert!((summary.mean_abs - 0.05).abs() < 1e-7);
+    assert!((summary.rms - 0.05).abs() < 1e-7);
+    assert!((summary.within_tolerance - 1.0).abs() < 1e-9);
+}
+
+#[test]
+fn an_even_sized_map_uses_both_middle_values_for_its_median() {
+    let mut map = all_measured(MIN_MEASURED);
+    for (slot, value) in map.signed_mm.iter_mut().enumerate() {
+        *value = if slot < map.validity.len() / 2 {
+            -0.04
+        } else {
+            0.08
+        };
+    }
+    let summary = deviation_stats(&map, 0.1).summary.unwrap();
+    assert!((summary.median - 0.02).abs() < 1e-7, "{summary:?}");
+    map.signed_mm.push(0.12);
+    map.validity.push(Validity::Measured);
+    let summary = deviation_stats(&map, 0.1).summary.unwrap();
+    assert!((summary.median - 0.08).abs() < 1e-7, "{summary:?}");
+}
+
+#[test]
+fn signed_bands_use_the_same_distance_intervals_on_both_sides_of_zero() {
+    let ramp = RampSettings {
+        scale_mm: 1.0,
+        bands: Some(4),
+        mode: RampMode::Signed,
+        ..RampSettings::default()
+    };
+    let zero = ramp_color(0.0, &ramp);
+    for value in [-0.24, -0.01, 0.01, 0.24] {
+        assert_eq!(ramp_color(value, &ramp), zero, "inside zero band: {value}");
+    }
+    for sign in [-1.0, 1.0] {
+        assert_eq!(
+            ramp_color(sign * 0.26, &ramp),
+            ramp_color(sign * 0.49, &ramp)
+        );
+        assert_ne!(ramp_color(sign * 0.26, &ramp), zero);
+    }
+    let continuous = RampSettings {
+        bands: None,
+        ..ramp
+    };
+    for value in [-1.0, 1.0] {
+        assert_eq!(ramp_color(value, &ramp), ramp_color(value, &continuous));
+    }
+}
+
+#[test]
+fn the_magnitude_ramp_is_blue_at_nothing_and_hot_at_the_scale() {
+    let map = DeviationMap {
+        signed_mm: vec![0.0, 0.5, -0.5],
+        validity: vec![Validity::Measured; 3],
+    };
+    let colors = deviation_colors(
+        &map,
+        &RampSettings {
+            mode: RampMode::Magnitude,
+            ..RampSettings::default()
+        },
+    );
+    assert!(
+        colors[0][2] > colors[0][0] && colors[0][2] > colors[0][1],
+        "no deviation must read blue"
+    );
+    assert!(colors[1][0] > colors[1][2], "full scale must read hot");
+    assert_eq!(
+        colors[1], colors[2],
+        "magnitude ignores which side the surface sits on"
+    );
+}
+
+#[test]
+fn the_working_ramp_is_continuous_from_zero_to_tenth_and_clamps_above_it() {
+    let ramp = RampSettings {
+        scale_mm: 0.10,
+        tolerance_mm: 0.01,
+        mode: RampMode::Magnitude,
+        ..RampSettings::default()
+    };
+    let zero = ramp_color(0.0, &ramp);
+    assert_eq!(zero, ZERO_RGBA);
+    assert_ne!(
+        ramp_color(0.005, &ramp),
+        zero,
+        "tolerance must not flatten nonzero measured deviations"
+    );
+    assert_eq!(
+        ramp_color(0.10, &ramp),
+        HOT_RGBA,
+        "0.10 mm is the hot endpoint"
+    );
+    assert_eq!(
+        ramp_color(0.101, &ramp),
+        ramp_color(10.0, &ramp),
+        "everything past the selected maximum must stay red"
+    );
+}
+
+#[test]
+fn a_display_minimum_keeps_subthreshold_differences_cool_and_the_ceiling_hot() {
+    let ramp = RampSettings {
+        min_mm: 0.02,
+        scale_mm: 0.10,
+        ..RampSettings::default()
+    };
+    assert_eq!(ramp_color(0.0, &ramp), ramp_color(0.02, &ramp));
+    assert_ne!(ramp_color(0.06, &ramp), ramp_color(0.02, &ramp));
+    assert_eq!(ramp_color(0.10, &ramp), HOT_RGBA);
+    assert_eq!(ramp_color(-0.10, &ramp), ramp_color(0.10, &ramp));
+}
+
+#[test]
+fn an_absolute_zero_range_keeps_zero_blue_and_marks_any_error_red() {
+    let ramp = RampSettings {
+        scale_mm: 0.0,
+        tolerance_mm: 0.01,
+        mode: RampMode::Magnitude,
+        ..RampSettings::default()
+    };
+    assert_eq!(ramp_color(0.0, &ramp), ZERO_RGBA);
+    assert_eq!(ramp_color(0.000_001, &ramp), HOT_RGBA);
+    assert_eq!(ramp_color(-0.000_001, &ramp), HOT_RGBA);
+}
+
+#[test]
+fn the_shared_ramp_defaults_to_absolute_deviation() {
+    assert_eq!(RampSettings::default().mode, RampMode::Magnitude);
+}
+
+/// A ramp that never leaves its first stop looks like a correct one at the
+/// origin, so checking the ends is not enough: this walks the whole scale and
+/// requires the hue to actually pass through cyan, green and yellow on its
+/// way to red, and requires each 1 % step to move every channel only a little,
+/// so no stop is skipped and no band shows as a hard edge.
+#[test]
+fn the_magnitude_ramp_walks_blue_cyan_green_yellow_red_across_the_scale() {
+    let ramp = RampSettings {
+        mode: RampMode::Magnitude,
+        ..RampSettings::default()
+    };
+    let at = |position: f64| ramp_color(position * ramp.scale_mm, &ramp);
+
+    // The channel bounds are loose because the stops are pulled in from the
+    // pure extremes: a ramp built from 0 and 255 loses its shading as soon as
+    // the shader multiplies it by any light. This checks the walk, not a
+    // particular blue.
+    let (mut cyan, mut green, mut yellow, mut red) = (false, false, false, false);
+    let mut previous = at(0.0);
+    assert!(
+        previous[2] > 180 && previous[0] < 90,
+        "nothing measured must read blue, got {previous:?}"
+    );
+    for step in 1..=100 {
+        let color = at(f64::from(step) / 100.0);
+        // The stops are softened on purpose, so red and blue are not monotonic
+        // across the whole scale. A sudden jump in any channel is what a
+        // skipped or mis-ordered stop would look like on screen.
+        let largest_jump = (0..3)
+            .map(|channel| i16::from(color[channel]).abs_diff(i16::from(previous[channel])))
+            .max()
+            .unwrap_or(0);
+        assert!(
+            largest_jump <= 8,
+            "the ramp jumps {largest_jump} levels at step {step}: {previous:?} then {color:?}"
+        );
+        cyan |= color[0] < 90 && color[1] > 160 && color[2] > 160;
+        green |= color[1] > 180 && color[0] < 120 && color[2] < 120;
+        yellow |= color[0] > 200 && color[1] > 150 && color[2] < 100;
+        red |= color[0] > 200 && color[1] < 90 && color[2] < 60;
+        previous = color;
+    }
+    assert!(cyan, "the ramp never passed through cyan");
+    assert!(green, "the ramp never passed through green");
+    assert!(yellow, "the ramp never passed through yellow");
+    assert!(red, "the ramp never reached red");
+    let [hot_r, hot_g, hot_b] = MAGNITUDE_RAMP[MAGNITUDE_RAMP.len() - 1].1;
+    assert_eq!(
+        at(1.0),
+        [hot_r, hot_g, hot_b, 255],
+        "the display scale must land on the hot stop exactly"
+    );
+}
+
+#[test]
+fn the_signed_ramp_is_blue_below_and_red_above() {
+    let map = DeviationMap {
+        signed_mm: vec![-0.5, 0.0, 0.5],
+        validity: vec![Validity::Measured; 3],
+    };
+    let colors = deviation_colors(
+        &map,
+        &RampSettings {
+            mode: RampMode::Signed,
+            ..RampSettings::default()
+        },
+    );
+    assert!(colors[0][2] > colors[0][0], "the negative end must be blue");
+    assert!(colors[2][0] > colors[2][2], "the positive end must be red");
+    assert!(
+        colors[1][1] > colors[1][0] && colors[1][1] > colors[1][2],
+        "zero must be green"
+    );
+}
+
+#[test]
+fn banded_mode_quantizes_neighbouring_values_to_one_color() {
+    // Outside the 0.20 mm nominal band on purpose: inside it every value is
+    // one colour by design, which would make this test pass for the wrong
+    // reason.
+    let map = DeviationMap {
+        signed_mm: vec![0.30, 0.315],
+        validity: vec![Validity::Measured; 2],
+    };
+    let ramp = RampSettings {
+        scale_mm: 0.5,
+        bands: Some(10),
+        ..RampSettings::default()
+    };
+    let colors = deviation_colors(&map, &ramp);
+    assert_eq!(colors[0], colors[1], "one band must be one colour");
+
+    let continuous = deviation_colors(
+        &map,
+        &RampSettings {
+            scale_mm: 0.5,
+            ..RampSettings::default()
+        },
+    );
+    assert_ne!(
+        continuous[0], continuous[1],
+        "the continuous ramp must still separate them"
+    );
+}
+
+#[test]
+fn tolerance_changes_statistics_not_map_colour() {
+    let narrow = RampSettings {
+        scale_mm: 0.10,
+        tolerance_mm: 0.005,
+        ..RampSettings::default()
+    };
+    let wide = RampSettings {
+        tolerance_mm: 0.20,
+        ..narrow
+    };
+    for value in [0.0, 0.002, 0.01, 0.05, 0.10, 0.25] {
+        assert_eq!(
+            ramp_color(value, &narrow),
+            ramp_color(value, &wide),
+            "tolerance must not change the colour at {value} mm"
+        );
+    }
+}
+
+/// The band is the operator's tolerance, and they can set one wider than
+/// the range they are looking at. Left alone that paints the whole scan
+/// nominal and answers every question with "fine".
+#[test]
+fn a_tolerance_wider_than_the_range_still_leaves_a_ramp() {
+    let ramp = RampSettings {
+        min_mm: 0.0,
+        scale_mm: 0.2,
+        tolerance_mm: 5.0,
+        bands: None,
+        mode: RampMode::Magnitude,
+    };
+    assert_ne!(
+        ramp_color(0.2, &ramp),
+        ramp_color(0.0, &ramp),
+        "the display range must still separate its own ends"
+    );
+}
+
+/// A rough two-point fit really does leave arches millimetres apart. A
+/// suggestion capped at a clinical number pins every vertex to an end stop
+/// and paints a saturated mosaic.
+#[test]
+fn the_suggested_scale_follows_a_badly_aligned_pair_instead_of_capping() {
+    let summary = DeviationSummary {
+        within_tolerance: 0.19,
+        mean_abs: 1.1,
+        rms: 1.378,
+        median: 0.4,
+        p95: 3.24,
+        max_abs: 6.0,
+    };
+    let rough = DeviationStats {
+        measured: 100_000,
+        unmeasured: Unmeasured {
+            out_of_reach: 10_855,
+            ..Unmeasured::default()
+        },
+        summary: Some(summary),
+    };
+    let scale = suggested_scale_mm(&rough);
+    assert!(
+        scale >= summary.p95,
+        "a scale of {scale} mm saturates a p95 of {} mm",
+        summary.p95
+    );
+}
+
+#[test]
+fn the_suggested_scale_reaches_measurements_above_its_last_predefined_step() {
+    let mut stats = deviation_stats(&all_measured(MIN_MEASURED), 0.1);
+    for p95 in [10.01, 12.34, 1_000.01, f64::from(f32::MAX)] {
+        stats.summary.as_mut().unwrap().p95 = p95;
+        let scale = suggested_scale_mm(&stats);
+        assert!(
+            scale.is_finite() && scale >= p95,
+            "scale {scale} cannot display p95 {p95}"
+        );
+    }
+}
+
+#[test]
+fn a_cancelled_run_marks_everything_unmeasured() {
+    let (positions, indices) = sheet();
+    let (fixed_positions, fixed_indices) = sheet();
+    let index = SurfaceIndex::build(Soup {
+        positions: &fixed_positions,
+        indices: &fixed_indices,
+        mask: None,
+    })
+    .unwrap();
+    let cancel = CancelFlag::new();
+    cancel.cancel();
+
+    let map = deviation(
+        Soup {
+            positions: &positions,
+            indices: &indices,
+            mask: None,
+        },
+        &index,
+        Rigid::IDENTITY,
+        &settings(),
+        &cancel,
+    );
+
+    assert!(map
+        .validity
+        .iter()
+        .all(|state| *state != Validity::Measured));
+}
+
+/// A struct of zeroes here would read, in `within_tolerance` — the one field a
+/// clinician looks at first — as a perfect fit even though nothing is measured.
+/// `summary` must be absent instead of quietly all-zero.
+#[test]
+fn a_map_where_nothing_was_measured_reports_no_summary() {
+    let map = DeviationMap {
+        signed_mm: vec![0.0; 4],
+        validity: vec![Validity::OutOfReach; 4],
+    };
+    let stats = deviation_stats(&map, 0.2);
+    assert_eq!(stats.measured, 0);
+    assert_eq!(stats.unmeasured.total(), 4);
+    assert!(
+        stats.summary.is_none(),
+        "zero measured vertices must not produce a summary at all"
+    );
+}
+
+/// `count` measured vertices, each a fixed small deviation — the one shape
+/// shared by both halves of the floor test below, so the count is the only
+/// thing that differs between them.
+fn all_measured(count: u32) -> DeviationMap {
+    let count = usize::try_from(count).unwrap_or(usize::MAX);
+    DeviationMap {
+        signed_mm: vec![0.05; count],
+        validity: vec![Validity::Measured; count],
+    }
+}
+
+/// The exact floor `MIN_MEASURED` promises: one vertex short of it must read
+/// as unsummarized, and the floor itself must read as summarized.
+#[test]
+fn fewer_than_min_measured_yields_none_and_the_floor_itself_yields_some() {
+    let below = deviation_stats(&all_measured(MIN_MEASURED - 1), 0.2);
+    assert!(
+        below.summary.is_none(),
+        "{} measured vertices is one short of MIN_MEASURED",
+        MIN_MEASURED - 1
+    );
+
+    let at_floor = deviation_stats(&all_measured(MIN_MEASURED), 0.2);
+    assert!(
+        at_floor.summary.is_some(),
+        "{MIN_MEASURED} measured vertices clears the floor"
+    );
+}
+
+/// Grey has three meanings and they are counted apart.
+///
+/// One colour on screen, and the operator's next move differs for each: a region
+/// they painted out is what they asked for, a region with nothing opposite it is
+/// anatomy that no reach will fix, and a broken vertex is a defect in the file.
+/// One total such as "4 vertices had nothing to measure" states all three at
+/// once and none of them usefully.
+#[test]
+fn every_reason_a_vertex_is_grey_is_counted_on_its_own() {
+    let map = DeviationMap {
+        signed_mm: vec![0.0; 6],
+        validity: vec![
+            Validity::Measured,
+            Validity::Excluded,
+            Validity::Excluded,
+            Validity::OutOfReach,
+            Validity::NonFinite,
+            Validity::DegenerateNormal,
+        ],
+    };
+    let stats = deviation_stats(&map, 0.2);
+    assert_eq!(stats.measured, 1);
+    assert_eq!(stats.unmeasured.excluded, 2);
+    assert_eq!(stats.unmeasured.out_of_reach, 1);
+    assert_eq!(
+        stats.unmeasured.unusable, 2,
+        "a non-finite vertex and a degenerate normal are both bad data"
+    );
+    assert_eq!(stats.unmeasured.total(), 5, "and they still add up");
+}
+
+/// The count is kept even when there is too little measured surface to summarise
+/// — that is the case where the operator needs to know why.
+#[test]
+fn the_reasons_survive_a_measurement_too_small_to_summarise() {
+    let map = DeviationMap {
+        signed_mm: vec![0.0; 3],
+        validity: vec![Validity::Measured, Validity::Excluded, Validity::OutOfReach],
+    };
+    let stats = deviation_stats(&map, 0.2);
+    assert!(stats.summary.is_none(), "one measured vertex says nothing");
+    assert_eq!(stats.unmeasured.excluded, 1);
+    assert_eq!(stats.unmeasured.out_of_reach, 1);
+}
+
+/// A `nx` x `ny` grid on z = 0 from (`x0`, `y0`), spacing `step`.
+fn grid(x0: f32, y0: f32, nx: u32, ny: u32, step: f32) -> (Vec<f32>, Vec<u32>) {
+    let mut positions = Vec::new();
+    for j in 0..=ny {
+        for i in 0..=nx {
+            #[allow(clippy::cast_precision_loss)]
+            positions.extend_from_slice(&[x0 + i as f32 * step, y0 + j as f32 * step, 0.0]);
+        }
+    }
+    let mut indices = Vec::new();
+    for j in 0..ny {
+        for i in 0..nx {
+            let a = j * (nx + 1) + i;
+            let (b, c, d) = (a + 1, a + nx + 1, a + nx + 2);
+            indices.extend_from_slice(&[a, b, d, a, d, c]);
+        }
+    }
+    (positions, indices)
+}
+
+fn map_against(fixed: (&[f32], &[u32], Option<&[u8]>), moving: (&[f32], &[u32])) -> DeviationMap {
+    let index = SurfaceIndex::build(Soup {
+        positions: fixed.0,
+        indices: fixed.1,
+        mask: fixed.2,
+    })
+    .expect("fixed index");
+    deviation(
+        Soup {
+            positions: moving.0,
+            indices: moving.1,
+            mask: None,
+        },
+        &index,
+        Rigid::IDENTITY,
+        &DeviationSettings {
+            influence_radius_mm: 2.0,
+            orientation: Orientation::Match,
+        },
+        &CancelFlag::new(),
+    )
+}
+
+/// Two coincident sheets, the moving one running 2 mm past the fixed border.
+/// Everywhere they overlap the true deviation is zero; past the border there is
+/// nothing to compare against. Counting the rim distance as deviation would
+/// make p95 1.5 mm.
+#[test]
+fn a_scan_running_past_the_other_border_is_not_measured_there() {
+    let (fixed_p, fixed_i) = grid(0.0, 0.0, 40, 40, 0.25);
+    let (moving_p, moving_i) = grid(-2.0, 0.0, 48, 40, 0.25);
+    let map = map_against((&fixed_p, &fixed_i, None), (&moving_p, &moving_i));
+    for (vertex, state) in map.validity.iter().enumerate() {
+        let x = moving_p[vertex * 3];
+        if x < -0.01 {
+            assert_eq!(*state, Validity::BeyondBorder, "overhang vertex at x = {x}");
+        } else if x > 0.01 {
+            assert_eq!(*state, Validity::Measured, "overlap vertex at x = {x}");
+        }
+    }
+    let stats = deviation_stats(&map, 0.01);
+    let summary = stats.summary.expect("enough measured");
+    assert!(summary.max_abs < 1e-5, "{summary:?}");
+    assert_eq!(
+        stats.unmeasured.out_of_reach,
+        u32::try_from(
+            map.validity
+                .iter()
+                .filter(|s| **s == Validity::BeyondBorder)
+                .count()
+        )
+        .unwrap(),
+        "past the border counts as nothing opposite"
+    );
+}
+
+/// A vertex standing over the rim still reads its deviation there.
+#[test]
+fn a_vertex_over_the_rim_is_still_measured() {
+    let (fixed_p, fixed_i) = grid(0.0, 0.0, 8, 8, 0.5);
+    let moving_p = vec![0.0, 2.0, 0.3, 0.0, 2.5, 0.3, 0.02, 2.0, 0.3];
+    let map = map_against((&fixed_p, &fixed_i, None), (&moving_p, &[0, 1, 2]));
+    for (value, state) in map.signed_mm.iter().zip(&map.validity) {
+        assert_eq!(*state, Validity::Measured);
+        assert!((value - 0.3).abs() < 1e-4, "{value}");
+    }
+}
+
+/// A region painted out of the fixed scan leaves a hole; the moving surface
+/// over it has no counterpart and carries no measurement there.
+#[test]
+fn a_hole_painted_out_of_the_fixed_scan_is_not_measured_as_rim_distance() {
+    let (fixed_p, fixed_i) = grid(0.0, 0.0, 40, 40, 0.25);
+    let hole = |x: f32, y: f32| ((x - 5.0).powi(2) + (y - 5.0).powi(2)).sqrt() <= 1.5;
+    let mask: Vec<u8> = fixed_p
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|p| {
+            if hole(p[0], p[1]) {
+                crate::EXCLUDED
+            } else {
+                crate::INCLUDED
+            }
+        })
+        .collect();
+    let (moving_p, moving_i) = grid(0.0, 0.0, 40, 40, 0.25);
+    let map = map_against((&fixed_p, &fixed_i, Some(&mask)), (&moving_p, &moving_i));
+    let mut inside = 0;
+    for (vertex, state) in map.validity.iter().enumerate() {
+        let (x, y) = (moving_p[vertex * 3], moving_p[vertex * 3 + 1]);
+        if ((x - 5.0).powi(2) + (y - 5.0).powi(2)).sqrt() <= 1.0 {
+            inside += 1;
+            assert_eq!(*state, Validity::BeyondBorder, "({x}, {y}) over the hole");
+        }
+    }
+    assert!(inside > 30);
+    let summary = deviation_stats(&map, 0.01).summary.expect("measured");
+    assert!(summary.max_abs < 1e-5, "{summary:?}");
+}
+
+/// Two faces meeting at a ridge sharper than 90 degrees. Every point above the
+/// ridge is outside the solid and must read positive whichever face the file
+/// lists first; the face normal of the tie-winning triangle got half of them
+/// negative.
+#[test]
+fn outside_a_sharp_ridge_reads_positive_in_either_face_order() {
+    let positions: Vec<f32> = vec![
+        0.0, 0.0, 0.0, //
+        0.0, 4.0, 0.0, //
+        -1.0, 0.0, -3.0, //
+        -1.0, 4.0, -3.0, //
+        1.0, 0.0, -3.0, //
+        1.0, 4.0, -3.0,
+    ];
+    let left = [0, 3, 2, 0, 1, 3];
+    let right = [0, 5, 1, 0, 4, 5];
+    for indices in [[left, right].concat(), [right, left].concat()] {
+        for (x, z) in [(0.5, 0.5), (-0.5, 0.5), (0.0, 0.7), (0.3, 0.9), (-0.3, 0.9)] {
+            let moving_p = vec![x, 2.0, z, x + 0.001, 2.0, z, x, 2.001, z];
+            let map = map_against((&positions, &indices, None), (&moving_p, &[0, 1, 2]));
+            assert_eq!(map.validity[0], Validity::Measured);
+            assert!(
+                map.signed_mm[0] > 0.0,
+                "({x}, {z}) read {}",
+                map.signed_mm[0]
+            );
+        }
+    }
+}
+
+/// STL repeats every corner per facet. Welding by position keeps the ridge an
+/// interior edge shared by both faces; unwelded, every edge would look like
+/// open border and the points above the ridge would read as beyond it.
+#[test]
+fn an_unwelded_soup_still_shares_its_edges() {
+    let welded: Vec<f32> = vec![
+        0.0, 0.0, 0.0, //
+        0.0, 4.0, 0.0, //
+        -1.0, 0.0, -3.0, //
+        -1.0, 4.0, -3.0, //
+        1.0, 0.0, -3.0, //
+        1.0, 4.0, -3.0,
+    ];
+    let mut positions = Vec::new();
+    for vertex in [0usize, 3, 2, 0, 1, 3, 0, 5, 1, 0, 4, 5] {
+        positions.extend_from_slice(&welded[vertex * 3..vertex * 3 + 3]);
+    }
+    let indices: Vec<u32> = (0..12).collect();
+    for (x, z) in [(0.5, 0.5), (-0.5, 0.5), (0.3, 0.9)] {
+        let moving_p = vec![x, 2.0, z, x + 0.001, 2.0, z, x, 2.001, z];
+        let map = map_against((&positions, &indices, None), (&moving_p, &[0, 1, 2]));
+        assert_eq!(map.validity[0], Validity::Measured, "({x}, {z})");
+        assert!(
+            map.signed_mm[0] > 0.0,
+            "({x}, {z}) read {}",
+            map.signed_mm[0]
+        );
+    }
+}

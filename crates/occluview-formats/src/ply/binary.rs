@@ -1,0 +1,678 @@
+//! PLY binary data reader (little- and big-endian).
+//!
+//! PLY indices and polygon-counts are non-negative integers per spec, but the
+//! declared scalar type can be any of int/uint/short/uchar. We centralize the
+//! `i64 -> u32` / `f32 -> u32` narrowing here, so we allow the corresponding
+//! clippy cast lints at module scope rather than at each call site.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss
+)]
+//!
+//! Same vertex/face logic as [`super::ascii`], but reads packed binary records.
+//! Endianness comes from the header's `format` line; we honor it rather than
+//! assuming the host's native order, so a big-endian PLY read correctly on a
+//! little-endian machine.
+
+use super::ascii::FieldPlan;
+use super::header::{Element, ParsedHeader, Property, ScalarType};
+use super::FaceUvs;
+use crate::error::FormatError;
+use glam::Vec3;
+use occluview_core::{Mesh, MeshBuilder, Vertex};
+
+/// Read a little-endian binary PLY.
+///
+/// # Errors
+/// Returns [`FormatError::Truncated`] if the data section ends mid-record, or
+/// [`FormatError::Malformed`] for a structurally invalid element/property.
+pub fn read_le(parsed: &ParsedHeader<'_>) -> Result<Mesh, FormatError> {
+    read_le_shaded(parsed, crate::MeshShading::Reconstructed)
+}
+
+/// As [`read_le`], choosing how vertex normals are produced.
+///
+/// # Errors
+/// See [`read_le`].
+pub fn read_le_shaded(
+    parsed: &ParsedHeader<'_>,
+    shading: crate::MeshShading,
+) -> Result<Mesh, FormatError> {
+    read_with(parsed, Endian::Little, shading)
+}
+
+/// Read a big-endian binary PLY.
+///
+/// # Errors
+/// Same as [`read_le`].
+pub fn read_be(parsed: &ParsedHeader<'_>) -> Result<Mesh, FormatError> {
+    read_be_shaded(parsed, crate::MeshShading::Reconstructed)
+}
+
+/// As [`read_be`], choosing how vertex normals are produced.
+///
+/// # Errors
+/// See [`read_le`].
+pub fn read_be_shaded(
+    parsed: &ParsedHeader<'_>,
+    shading: crate::MeshShading,
+) -> Result<Mesh, FormatError> {
+    read_with(parsed, Endian::Big, shading)
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum Endian {
+    Little,
+    Big,
+}
+
+/// Cursor over the data section, tracking position and endianness.
+struct Cursor<'a> {
+    bytes: &'a [u8],
+    pos: usize,
+    endian: Endian,
+}
+
+impl<'a> Cursor<'a> {
+    fn new(bytes: &'a [u8], endian: Endian) -> Self {
+        Self {
+            bytes,
+            pos: 0,
+            endian,
+        }
+    }
+
+    fn take(&mut self, n: usize, ctx: &str) -> Result<&'a [u8], FormatError> {
+        if self.pos + n > self.bytes.len() {
+            return Err(FormatError::Truncated {
+                format: "PLY (binary)",
+                expected: self.pos + n,
+                got: self.bytes.len(),
+            });
+        }
+        let slice = &self.bytes[self.pos..self.pos + n];
+        self.pos += n;
+        let _ = ctx;
+        Ok(slice)
+    }
+
+    fn read_scalar(&mut self, ty: ScalarType) -> Result<ScalarValue, FormatError> {
+        // `take_array<N>` reads exactly N bytes and returns a fixed-size array,
+        // so the rest of this function is panic-free and `unwrap`-free.
+        Ok(match ty {
+            // 1-byte types: endianness is irrelevant.
+            ScalarType::Char => {
+                // Reinterpret the byte as signed; `from_ne_bytes` is the
+                // standard pattern and avoids a `as i8` cast.
+                ScalarValue::Int(i64::from(i8::from_ne_bytes([self.take_byte()?])))
+            }
+            ScalarType::Uchar => ScalarValue::Int(i64::from(self.take_byte()?)),
+            ScalarType::Short => {
+                let a = self.take_array::<2>()?;
+                ScalarValue::Int(i64::from(self.endian.read_i16(a)))
+            }
+            ScalarType::Ushort => {
+                let a = self.take_array::<2>()?;
+                ScalarValue::Int(i64::from(self.endian.read_u16(a)))
+            }
+            ScalarType::Int => {
+                let a = self.take_array::<4>()?;
+                ScalarValue::Int(i64::from(self.endian.read_i32(a)))
+            }
+            ScalarType::Uint => {
+                let a = self.take_array::<4>()?;
+                ScalarValue::Int(i64::from(self.endian.read_u32(a)))
+            }
+            ScalarType::Float => {
+                let a = self.take_array::<4>()?;
+                ScalarValue::Float(crate::finite_coordinate(
+                    self.endian.read_f32(a),
+                    "PLY (binary)",
+                    self.pos - 4,
+                )?)
+            }
+            // Double -> f32 is a deliberately lossy narrowing; PLY doubles are
+            // vanishingly rare in dental files, and our internal type is f32.
+            ScalarType::Double => {
+                let a = self.take_array::<8>()?;
+                ScalarValue::Float(crate::finite_coordinate(
+                    self.endian.read_f64(a) as f32,
+                    "PLY (binary)",
+                    self.pos - 8,
+                )?)
+            }
+        })
+    }
+
+    /// Read exactly one byte.
+    fn take_byte(&mut self) -> Result<u8, FormatError> {
+        Ok(*self
+            .take(1, "byte")?
+            .first()
+            .ok_or(FormatError::Malformed {
+                format: "PLY (binary)",
+                offset: self.pos,
+                reason: "expected 1 byte, got 0".to_string(),
+            })?)
+    }
+
+    /// Read exactly N bytes as a fixed-size array. Infallible `try_into` because
+    /// `take(N)` already guaranteed the length.
+    fn take_array<const N: usize>(&mut self) -> Result<[u8; N], FormatError> {
+        self.take(N, "array")?
+            .try_into()
+            .map_err(|_| FormatError::Malformed {
+                format: "PLY (binary)",
+                offset: self.pos,
+                reason: format!("expected {N} bytes"),
+            })
+    }
+}
+
+impl Endian {
+    fn read_i16(self, a: [u8; 2]) -> i16 {
+        match self {
+            Endian::Little => i16::from_le_bytes(a),
+            Endian::Big => i16::from_be_bytes(a),
+        }
+    }
+    fn read_u16(self, a: [u8; 2]) -> u16 {
+        match self {
+            Endian::Little => u16::from_le_bytes(a),
+            Endian::Big => u16::from_be_bytes(a),
+        }
+    }
+    fn read_i32(self, a: [u8; 4]) -> i32 {
+        match self {
+            Endian::Little => i32::from_le_bytes(a),
+            Endian::Big => i32::from_be_bytes(a),
+        }
+    }
+    fn read_u32(self, a: [u8; 4]) -> u32 {
+        match self {
+            Endian::Little => u32::from_le_bytes(a),
+            Endian::Big => u32::from_be_bytes(a),
+        }
+    }
+    fn read_f32(self, a: [u8; 4]) -> f32 {
+        match self {
+            Endian::Little => f32::from_le_bytes(a),
+            Endian::Big => f32::from_be_bytes(a),
+        }
+    }
+    fn read_f64(self, a: [u8; 8]) -> f64 {
+        match self {
+            Endian::Little => f64::from_le_bytes(a),
+            Endian::Big => f64::from_be_bytes(a),
+        }
+    }
+}
+
+/// A scalar value tagged as integer-ish or float-ish — lets us route colors
+/// (integers) separately from positions (floats) without knowing the declared
+/// type at the call site.
+#[derive(Clone, Copy, Debug)]
+enum ScalarValue {
+    Int(i64),
+    Float(f32),
+}
+
+fn read_with(
+    parsed: &ParsedHeader<'_>,
+    endian: Endian,
+    shading: crate::MeshShading,
+) -> Result<Mesh, FormatError> {
+    let mut cursor = Cursor::new(parsed.data, endian);
+    let has_face = parsed.elements.iter().any(|e| e.name == "face");
+    let builder_init = MeshBuilder::new()
+        .with_name("PLY")
+        .from_input_of(parsed.data.len());
+    let mut builder = if has_face {
+        builder_init
+    } else {
+        builder_init.as_point_cloud()
+    };
+
+    // Faces carry the texture coordinates, so they are gathered as the face
+    // element is read and applied once every element has been consumed.
+    let mut uvs = FaceUvs::new(parsed.keep_corner_uvs, parsed.flip_uv_v);
+    for element in &parsed.elements {
+        match element.name.as_str() {
+            "vertex" => read_vertices(&mut cursor, element, &mut builder, parsed.flip_uv_v)?,
+            "face" => read_faces(&mut cursor, element, &mut builder, &mut uvs)?,
+            other => {
+                return Err(FormatError::Malformed {
+                    format: "PLY (binary)",
+                    offset: cursor.pos,
+                    reason: format!("cannot skip unknown binary element {other:?}"),
+                })
+            }
+        }
+    }
+
+    if cursor.pos != parsed.data.len() {
+        return Err(FormatError::Malformed {
+            format: "PLY (binary)",
+            offset: cursor.pos,
+            reason: "data remains after the declared elements".to_string(),
+        });
+    }
+    uvs.apply(&mut builder);
+
+    shading.build(builder).map_err(FormatError::Core)
+}
+
+fn read_vertices(
+    cursor: &mut Cursor<'_>,
+    element: &Element,
+    builder: &mut MeshBuilder,
+    flip_v: bool,
+) -> Result<(), FormatError> {
+    let plan = FieldPlan::plan_for_vertices(element, "PLY (binary)")?;
+    let has_uvs = plan
+        .iter()
+        .any(|(field, _)| matches!(field, FieldPlan::Uv(_)));
+    for _ in 0..element.count {
+        let mut position = [0.0_f32; 3];
+        let mut normal = [0.0_f32; 3];
+        let mut color = [255u8; 4];
+        let mut uv = [0.0_f32; 2];
+        for (route, ty) in &plan {
+            if let FieldPlan::List(count_ty) = route {
+                let count = read_index(cursor, *count_ty)?;
+                for _ in 0..count {
+                    let _ = cursor.read_scalar(*ty)?;
+                }
+                continue;
+            }
+            let v = cursor.read_scalar(*ty)?;
+            route_value(v, *route, &mut position, &mut normal, &mut color, &mut uv);
+        }
+        let mut vert = Vertex::at(Vec3::from_array(position));
+        if normal.iter().any(|&n| n != 0.0) {
+            vert = vert.with_normal(Vec3::from_array(normal));
+        }
+        if color != [255, 255, 255, 255] {
+            vert = vert.with_color(color);
+        }
+        if has_uvs {
+            builder.mark_texture_coordinates();
+            let uv = if flip_v {
+                crate::texture_coordinates::flip_vertical(uv)
+            } else {
+                uv
+            };
+            vert = vert.with_uv(uv);
+        }
+        builder.push_vertex(vert);
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn route_value(
+    v: ScalarValue,
+    route: FieldPlan,
+    position: &mut [f32; 3],
+    normal: &mut [f32; 3],
+    color: &mut [u8; 4],
+    uv: &mut [f32; 2],
+) {
+    let numeric = match v {
+        ScalarValue::Float(f) => f,
+        ScalarValue::Int(n) => n as f32,
+    };
+    match (v, route) {
+        (_, FieldPlan::Position(i)) if i < 3 => position[i] = numeric,
+        (_, FieldPlan::Normal(i)) if i < 3 => normal[i] = numeric,
+        (_, FieldPlan::Uv(i)) if i < 2 => uv[i] = numeric,
+        (ScalarValue::Int(n), FieldPlan::Color(i)) if i < 4 => {
+            color[i] = n.clamp(0, 255) as u8;
+        }
+        _ => {}
+    }
+}
+
+fn read_faces(
+    cursor: &mut Cursor<'_>,
+    element: &Element,
+    builder: &mut MeshBuilder,
+    uvs: &mut FaceUvs,
+) -> Result<(), FormatError> {
+    // Locate the vertex_indices list (by name). Faces may carry multiple list
+    // properties (e.g. some intraoral scanners emit `vertex_indices` +
+    // `texcoord`); we must consume every declared list per row so the next
+    // row's bytes line up.
+    // No geometry list means nothing to triangulate — but the element's bytes
+    // still have to be consumed. Returning early would leave the cursor at the
+    // start of the row, so any element declared after this one would be read
+    // from the wrong offset and decoded as garbage; the ASCII reader skips the
+    // whole element in this case. An out-of-range index makes the shared loop
+    // below take its "discard this list" branch for every property, which
+    // consumes exactly the element's bytes and emits nothing.
+    let indices_prop_idx = element
+        .properties
+        .iter()
+        .position(|p| matches!(p, Property::List { name, .. } if name == "vertex_indices"))
+        .unwrap_or(usize::MAX);
+
+    // Every row must consume at least one byte, or the loop below spins forever.
+    // A `face` element with no property at all consumes nothing, and the header
+    // is free to declare one with a count of `u64::MAX`: the cursor never
+    // advances, the same empty state is re-read on every iteration, and the
+    // parser never returns. The ASCII reader closes the same hole from the
+    // other side -- it finds no `vertex_indices` and skips the element, whose
+    // token count is `count * properties.len()`, which is zero here and so
+    // terminates. The shape is rejected outright: a face row with no readable
+    // property carries no geometry.
+    if element.properties.is_empty() {
+        if element.count == 0 {
+            return Ok(());
+        }
+        return Err(FormatError::Malformed {
+            format: "PLY (binary)",
+            offset: cursor.pos,
+            reason: format!(
+                "face element declares {} rows and no property to read them from",
+                element.count
+            ),
+        });
+    }
+
+    // Scratch space reused per row: the corners of this face and, when the row
+    // carries a `texcoord` list, their coordinates.
+    let mut corners: Vec<u32> = Vec::with_capacity(4);
+    let mut coords: Vec<f32> = Vec::with_capacity(8);
+    let texcoord_prop_idx = element
+        .properties
+        .iter()
+        .position(|p| matches!(p, Property::List { name, .. } if name == "texcoord"));
+
+    for _ in 0..element.count {
+        // Walk every declared property in order, consuming bytes. The
+        // vertex_indices list becomes the face; a `texcoord` list becomes the
+        // corners' texture coordinates; every other list is consumed and
+        // discarded.
+        corners.clear();
+        coords.clear();
+        for (i, prop) in element.properties.iter().enumerate() {
+            let Property::List {
+                count_ty, elem_ty, ..
+            } = prop
+            else {
+                let Property::Scalar { ty, .. } = prop else {
+                    continue;
+                };
+                let _ = cursor.read_scalar(*ty)?;
+                continue;
+            };
+            let poly_n = read_index(cursor, *count_ty)?;
+            if i == indices_prop_idx {
+                // The geometry list. Read every corner, then fan-triangulate:
+                // the corners themselves are needed for the texture
+                // coordinates below, whatever the polygon's size.
+                for _ in 0..poly_n {
+                    corners.push(read_index(cursor, *elem_ty)?);
+                }
+                if poly_n >= 3 {
+                    let first = corners[0];
+                    for pair in corners[1..].windows(2) {
+                        builder.push_triangle(first, pair[0], pair[1]);
+                    }
+                }
+            } else if Some(i) == texcoord_prop_idx {
+                for _ in 0..poly_n {
+                    coords.push(match cursor.read_scalar(*elem_ty)? {
+                        ScalarValue::Float(f) => f,
+                        ScalarValue::Int(n) => n as f32,
+                    });
+                }
+            } else {
+                // Non-geometry list (confidence, …) — discard n values.
+                for _ in 0..poly_n {
+                    let _ = cursor.read_scalar(*elem_ty)?;
+                }
+            }
+        }
+        // The coordinate list is `u v` per corner, in the same order as the
+        // corner indices, and may have been declared before or after them.
+        if texcoord_prop_idx.is_some() && indices_prop_idx != usize::MAX {
+            uvs.face(&corners, &coords)?;
+        }
+    }
+    Ok(())
+}
+
+fn read_index(cursor: &mut Cursor<'_>, ty: ScalarType) -> Result<u32, FormatError> {
+    let value = cursor.read_scalar(ty)?;
+    match value {
+        ScalarValue::Int(n) => u32::try_from(n).ok(),
+        ScalarValue::Float(f)
+            if f >= 0.0 && f64::from(f) <= f64::from(u32::MAX) && f.fract() == 0.0 =>
+        {
+            Some(f as u32)
+        }
+        ScalarValue::Float(_) => None,
+    }
+    .ok_or_else(|| FormatError::Malformed {
+        format: "PLY (binary)",
+        offset: cursor.pos,
+        reason: format!("list count or index must be a non-negative u32 integer, got {value:?}"),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ply::header::{self, Format};
+
+    #[test]
+    fn binary_list_indices_reject_negative_and_fractional_values() {
+        for endian in [Endian::Little, Endian::Big] {
+            let bytes = if endian == Endian::Little {
+                (-1i32).to_le_bytes()
+            } else {
+                (-1i32).to_be_bytes()
+            };
+            assert!(read_index(&mut Cursor::new(&bytes, endian), ScalarType::Int).is_err());
+            for value in [-1.0f32, 1.5, 4_294_967_296.0] {
+                let bytes = if endian == Endian::Little {
+                    value.to_le_bytes()
+                } else {
+                    value.to_be_bytes()
+                };
+                assert!(
+                    read_index(&mut Cursor::new(&bytes, endian), ScalarType::Float).is_err(),
+                    "{value}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn binary_list_counts_reject_negative_values() {
+        let original = colored_triangle_le();
+        let header_end = original
+            .windows(b"end_header\n".len())
+            .position(|w| w == b"end_header\n")
+            .expect("header")
+            + b"end_header\n".len();
+        let header = std::str::from_utf8(&original[..header_end])
+            .expect("header")
+            .replace("list uchar int", "list char int");
+        let mut bytes = header.into_bytes();
+        bytes.extend_from_slice(&original[header_end..]);
+        let prefix = bytes.len() - 13;
+        bytes[prefix] = 255;
+        assert!(read_le(&header::parse(&bytes).expect("header")).is_err());
+    }
+
+    fn colored_triangle_le() -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(b"ply\nformat binary_little_endian 1.0\n");
+        out.extend_from_slice(b"element vertex 3\n");
+        out.extend_from_slice(b"property float x\nproperty float y\nproperty float z\n");
+        out.extend_from_slice(b"property uchar red\nproperty uchar green\nproperty uchar blue\n");
+        out.extend_from_slice(b"element face 1\n");
+        out.extend_from_slice(b"property list uchar int vertex_indices\n");
+        out.extend_from_slice(b"end_header\n");
+        // 3 vertices: (0,0,0) red, (1,0,0) green, (0,1,0) blue.
+        out.extend_from_slice(&0.0_f32.to_le_bytes());
+        out.extend_from_slice(&0.0_f32.to_le_bytes());
+        out.extend_from_slice(&0.0_f32.to_le_bytes());
+        out.push(255);
+        out.push(0);
+        out.push(0);
+        out.extend_from_slice(&1.0_f32.to_le_bytes());
+        out.extend_from_slice(&0.0_f32.to_le_bytes());
+        out.extend_from_slice(&0.0_f32.to_le_bytes());
+        out.push(0);
+        out.push(255);
+        out.push(0);
+        out.extend_from_slice(&0.0_f32.to_le_bytes());
+        out.extend_from_slice(&1.0_f32.to_le_bytes());
+        out.extend_from_slice(&0.0_f32.to_le_bytes());
+        out.push(0);
+        out.push(0);
+        out.push(255);
+        // One face: 3 indices.
+        out.push(3);
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&1u32.to_le_bytes());
+        out.extend_from_slice(&2u32.to_le_bytes());
+        out
+    }
+
+    #[test]
+    fn reads_binary_le_colored_triangle() {
+        let bytes = colored_triangle_le();
+        let parsed = header::parse(&bytes).expect("header");
+        assert_eq!(parsed.format, Format::BinaryLittleEndian);
+        let mesh = read_le(&parsed).expect("valid");
+        assert_eq!(mesh.vertices().len(), 3);
+        assert_eq!(mesh.triangle_count(), 1);
+        assert!(mesh.has_vertex_colors());
+        assert_eq!(mesh.vertices()[0].color, [255, 0, 0, 255]);
+        assert_eq!(mesh.vertices()[1].position, [1.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn reads_binary_be_colored_triangle() {
+        // Same data, big-endian, format line changed.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"ply\nformat binary_big_endian 1.0\n");
+        bytes.extend_from_slice(b"element vertex 1\n");
+        bytes.extend_from_slice(b"property float x\nproperty float y\nproperty float z\n");
+        bytes.extend_from_slice(b"end_header\n");
+        bytes.extend_from_slice(&1.0_f32.to_be_bytes());
+        bytes.extend_from_slice(&2.0_f32.to_be_bytes());
+        bytes.extend_from_slice(&3.0_f32.to_be_bytes());
+        let parsed = header::parse(&bytes).expect("header");
+        assert_eq!(parsed.format, Format::BinaryBigEndian);
+        let mesh = read_be(&parsed).expect("valid");
+        assert_eq!(mesh.vertices()[0].position, [1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn detects_truncation_in_vertex_data() {
+        // Header declares 3 vertices but data has only 1.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"ply\nformat binary_little_endian 1.0\n");
+        bytes.extend_from_slice(b"element vertex 3\n");
+        bytes.extend_from_slice(b"property float x\nproperty float y\nproperty float z\n");
+        bytes.extend_from_slice(b"end_header\n");
+        bytes.extend_from_slice(&1.0_f32.to_le_bytes());
+        bytes.extend_from_slice(&2.0_f32.to_le_bytes());
+        bytes.extend_from_slice(&3.0_f32.to_le_bytes());
+        let parsed = header::parse(&bytes).expect("header");
+        let err = read_le(&parsed).unwrap_err();
+        assert!(matches!(err, FormatError::Truncated { .. }));
+    }
+
+    #[test]
+    fn quad_fan_triangulates_in_binary() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"ply\nformat binary_little_endian 1.0\n");
+        bytes.extend_from_slice(b"element vertex 4\n");
+        bytes.extend_from_slice(b"property float x\nproperty float y\nproperty float z\n");
+        bytes.extend_from_slice(b"element face 1\n");
+        bytes.extend_from_slice(b"property list uchar int vertex_indices\n");
+        bytes.extend_from_slice(b"end_header\n");
+        for v in 0..4u32 {
+            bytes.extend_from_slice(&(v as f32).to_le_bytes());
+            bytes.extend_from_slice(&0.0_f32.to_le_bytes());
+            bytes.extend_from_slice(&0.0_f32.to_le_bytes());
+        }
+        bytes.push(4); // polygon count
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(&2u32.to_le_bytes());
+        bytes.extend_from_slice(&3u32.to_le_bytes());
+        let parsed = header::parse(&bytes).expect("header");
+        let mesh = read_le(&parsed).expect("valid");
+        assert_eq!(mesh.triangle_count(), 2);
+    }
+
+    #[test]
+    fn consumes_face_scalar_properties_after_index_lists() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"ply\nformat binary_little_endian 1.0\n");
+        bytes.extend_from_slice(b"element vertex 4\n");
+        bytes.extend_from_slice(b"property float x\nproperty float y\nproperty float z\n");
+        bytes.extend_from_slice(b"element face 2\n");
+        bytes.extend_from_slice(b"property list uchar int vertex_indices\n");
+        bytes.extend_from_slice(b"property uchar confidence\n");
+        bytes.extend_from_slice(b"end_header\n");
+        for v in 0..4u32 {
+            bytes.extend_from_slice(&(v as f32).to_le_bytes());
+            bytes.extend_from_slice(&0.0_f32.to_le_bytes());
+            bytes.extend_from_slice(&0.0_f32.to_le_bytes());
+        }
+        bytes.push(3);
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(&2u32.to_le_bytes());
+        bytes.push(127);
+        bytes.push(3);
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes.extend_from_slice(&2u32.to_le_bytes());
+        bytes.extend_from_slice(&3u32.to_le_bytes());
+        bytes.push(128);
+
+        let parsed = header::parse(&bytes).expect("header");
+        let mesh = read_le(&parsed).expect("valid");
+
+        assert_eq!(mesh.triangle_count(), 2);
+    }
+
+    /// A `face` element with no property consumes no bytes per row, so the row
+    /// loop would re-read the same empty state forever. A header may declare a
+    /// huge count, and the parser must answer rather than spin. The assertion is
+    /// on termination itself, so the test fails by timing out if the reader
+    /// spins.
+    #[test]
+    fn a_face_element_with_no_property_is_refused_instead_of_spinning() {
+        let bytes = b"ply\nformat binary_little_endian 1.0\n\
+                      element face 18446744073709551615\n\
+                      end_header\n";
+        let parsed = header::parse(bytes).expect("header");
+        let error = read_le(&parsed).expect_err("a property-less face element is refused");
+        assert!(
+            error.to_string().contains("no property"),
+            "the reason must name the shape: {error}"
+        );
+    }
+
+    /// A property-less `face` element that declares no rows is harmless: there
+    /// is nothing to read and nothing to reject.
+    #[test]
+    fn a_face_element_with_no_property_and_no_rows_reads_as_empty() {
+        let bytes = b"ply\nformat binary_little_endian 1.0\n\
+                      element face 0\n\
+                      end_header\n";
+        let parsed = header::parse(bytes).expect("header");
+        let mesh = read_le(&parsed).expect("an empty face element is not an error");
+        assert_eq!(mesh.triangle_count(), 0);
+    }
+}

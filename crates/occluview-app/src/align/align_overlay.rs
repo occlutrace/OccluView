@@ -1,0 +1,547 @@
+//! Painting for Align Scans: the clicked pairs and the deviation legend.
+//!
+//! Markers re-project through the live camera every frame from each point's
+//! **local** coordinates, so they stay welded to their surface after a fit
+//! moves a scan underneath them.
+
+use eframe::egui;
+use glam::Affine3A;
+use occluview_align::RampMode;
+use occluview_core::{Camera, Scene, SceneMeshId};
+
+use crate::align::align_tool::AlignTool;
+use crate::align::align_worker::AlignSettings;
+use crate::i18n::catalog::NumberFormat;
+use crate::measure::measure_draw;
+use crate::ui::ui_theme;
+use crate::viewer::project_world_to_viewport;
+
+/// Radius of a numbered pair marker.
+const MARKER_RADIUS_PX: f32 = 6.0;
+
+/// Fill behind a marker's number, so a digit stays legible over any scan.
+/// Paired with the theme-aware ink: the pale light fill would wash out the
+/// pale dark-theme accent.
+fn marker_fill(theme: ui_theme::ThemeTokens) -> egui::Color32 {
+    if theme.is_dark() {
+        egui::Color32::from_rgb(44, 49, 58)
+    } else {
+        egui::Color32::from_rgb(246, 247, 249)
+    }
+}
+
+/// Everything one paint pass needs.
+pub(crate) struct PairPaint<'a> {
+    /// The live camera the markers re-project through.
+    pub(crate) camera: &'a Camera,
+    /// The viewport the markers land in.
+    pub(crate) viewport_rect: egui::Rect,
+    /// The scene, for each layer's current pose.
+    pub(crate) scene: &'a Scene,
+    /// The click model.
+    pub(crate) tool: &'a AlignTool,
+    /// Pairs the last fit threw away.
+    pub(crate) rejected: &'a [u32],
+    /// The cursor, for the rubber band to a half-placed point.
+    pub(crate) hover: Option<egui::Pos2>,
+}
+
+/// Paint every pair, the half-placed point, and the rubber band to the cursor.
+pub(crate) fn paint_pairs(painter: &egui::Painter, view: &PairPaint<'_>) {
+    let theme = ui_theme::ThemeTokens::from_painter(painter);
+    let PairPaint {
+        camera,
+        viewport_rect,
+        scene,
+        tool,
+        rejected,
+        hover,
+    } = *view;
+    let pose_of = |layer: SceneMeshId| -> Option<Affine3A> {
+        scene
+            .meshes()
+            .iter()
+            .find(|entry| entry.id() == layer)
+            .map(|entry| entry.transform)
+    };
+    let project = |layer: SceneMeshId, local: glam::Vec3| -> Option<egui::Pos2> {
+        let pose = pose_of(layer)?;
+        project_world_to_viewport(camera, viewport_rect, pose.transform_point3(local))
+            .map(|(pos, _)| pos)
+    };
+
+    for (index, pair) in tool.pairs().iter().enumerate() {
+        let Some(moving) = project(pair.moving.layer, pair.moving.local) else {
+            continue;
+        };
+        let Some(fixed) = project(pair.fixed.layer, pair.fixed.local) else {
+            continue;
+        };
+        let outlier = u32::try_from(index).is_ok_and(|slot| rejected.contains(&slot));
+        // A rejected pair is drawn in the error colour rather than hidden: the
+        // operator needs to see which click the fit threw away.
+        let ink = if outlier {
+            theme.danger()
+        } else {
+            theme.accent()
+        };
+        // An arrow, not a bare line. Dental CAD software calls each
+        // correspondence an arrow and its Back button undoes one, so the
+        // operator counts arrows; the head sits at the fixed end, which is
+        // where the surface is going.
+        let stroke = egui::Stroke::new(1.1_f32, ink.gamma_multiply(0.7));
+        painter.line_segment([moving, fixed], stroke);
+        arrowhead(painter, moving, fixed, stroke);
+        marker(painter, moving, ink, theme, index + 1);
+        marker(painter, fixed, ink, theme, index + 1);
+    }
+
+    if let Some(pending) = tool.pending() {
+        if let Some(anchor) = project(pending.layer, pending.local) {
+            if let Some(hover) = hover {
+                painter.extend(egui::Shape::dashed_line(
+                    &[anchor, hover],
+                    egui::Stroke::new(1.1_f32, theme.accent()),
+                    5.0,
+                    4.0,
+                ));
+            }
+            measure_draw::anchor_dot(painter, anchor);
+        }
+    }
+}
+
+/// Paint the ball a Ctrl-drag turns a scan on: the centre, which stays put,
+/// and the outline, inside which a drag tilts the scan and at which it rolls.
+pub(crate) fn paint_turn_ball(painter: &egui::Painter, centre: egui::Pos2, radius_px: f32) {
+    painter.circle_stroke(
+        centre,
+        radius_px,
+        egui::Stroke::new(1.1_f32, ui_theme::ThemeTokens::from_painter(painter).accent().gamma_multiply(0.5)),
+    );
+    measure_draw::anchor_dot(painter, centre);
+}
+
+/// A head on the `from`→`to` line, set back far enough to clear the marker
+/// disc at the tip.
+fn arrowhead(painter: &egui::Painter, from: egui::Pos2, to: egui::Pos2, stroke: egui::Stroke) {
+    /// Length of each barb, in pixels.
+    const BARB_PX: f32 = 7.0;
+    /// Half-angle between a barb and the shaft.
+    const SPREAD: f32 = 0.45;
+
+    let along = to - from;
+    let length = along.length();
+    // Too short to carry a head: the two markers already overlap, and a barb
+    // drawn here would just be a smudge between them.
+    if length < MARKER_RADIUS_PX * 3.0 {
+        return;
+    }
+    let direction = along / length;
+    let tip = to - direction * (MARKER_RADIUS_PX + 1.0);
+    let (sin, cos) = SPREAD.sin_cos();
+    for side in [1.0_f32, -1.0] {
+        let barb = egui::vec2(
+            direction.x.mul_add(cos, direction.y * sin * side),
+            direction.y.mul_add(cos, -direction.x * sin * side),
+        );
+        painter.line_segment([tip, tip - barb * BARB_PX], stroke);
+    }
+}
+
+/// One numbered marker.
+fn marker(
+    painter: &egui::Painter,
+    at: egui::Pos2,
+    ink: egui::Color32,
+    theme: ui_theme::ThemeTokens,
+    number: usize,
+) {
+    painter.circle_filled(at, MARKER_RADIUS_PX, marker_fill(theme));
+    painter.circle_stroke(at, MARKER_RADIUS_PX, egui::Stroke::new(1.6_f32, ink));
+    painter.text(
+        at,
+        egui::Align2::CENTER_CENTER,
+        number.to_string(),
+        egui::FontId::proportional(9.0),
+        ink,
+    );
+}
+
+/// Steps the legend bar is drawn in. Enough that a continuous ramp reads
+/// smooth at the bar's width.
+const LEGEND_STEPS: usize = 64;
+
+/// The deviation, in millimetres, the legend bar carries at `step` of `steps`.
+///
+/// The magnitude ramp has **no negative side**: it runs from its exact zero
+/// colour at the left to the selected absolute maximum at the right. The
+/// signed ramp is the diagnostic variant and runs `-scale` to
+/// `+scale`, so only it is swept across both signs.
+pub(crate) fn legend_value_mm(step: usize, steps: usize, mode: RampMode, scale_mm: f64) -> f64 {
+    #[allow(clippy::cast_precision_loss)]
+    let fraction = step as f64 / (steps.max(2) - 1) as f64;
+    match mode {
+        RampMode::Magnitude => fraction * scale_mm,
+        RampMode::Signed => fraction.mul_add(2.0, -1.0) * scale_mm,
+    }
+}
+
+/// The number written under each end of the legend bar, in millimetres.
+fn legend_bounds(mode: RampMode, scale_mm: f64, number_format: NumberFormat) -> (String, String) {
+    match mode {
+        // A zero maximum still has a hot side: everything past exact zero. The
+        // right label says so instead of repeating "0.000 mm", which would
+        // claim the bar has no range at all.
+        RampMode::Magnitude if scale_mm <= 0.0 => (
+            format!("{} mm", number_format.decimal(0.0, 3)),
+            format!("> {} mm", number_format.decimal(0.0, 3)),
+        ),
+        // The ramp clamps every value at the upper stop, so the hot end also
+        // represents all deviations above that stop. Showing the inequality
+        // prevents an operator from reading a saturated red patch as exactly
+        // the endpoint.
+        RampMode::Magnitude => (
+            format!("{} mm", number_format.decimal(0.0, 3)),
+            format!("≥ {} mm", number_format.decimal(scale_mm, 3)),
+        ),
+        RampMode::Signed => (
+            format!("−{} mm", number_format.decimal(scale_mm, 3)),
+            format!("+{} mm", number_format.decimal(scale_mm, 3)),
+        ),
+    }
+}
+
+/// The colour the legend bar carries at `step` of `steps`.
+///
+/// A zero display maximum is a real state of the operator's range control, and
+/// `ramp_color` answers it without dividing by the scale: exact zero keeps its
+/// own stop and every non-zero deviation is past the range. Sweeping a zero
+/// scale linearly would paint the whole bar as exact zero while the measured
+/// surface reads beyond it, so the two stops are painted directly here. The
+/// signed ramp has the same zero argument, with the sign choosing the stop. Any
+/// other scale is a linear sweep of the values the bar labels.
+pub(crate) fn legend_color_at(
+    step: usize,
+    steps: usize,
+    ramp: &occluview_align::RampSettings,
+) -> [u8; 4] {
+    if ramp.scale_mm <= 0.0 {
+        let value = match ramp.mode {
+            RampMode::Magnitude => {
+                if step == 0 {
+                    0.0
+                } else {
+                    f64::INFINITY
+                }
+            }
+            // The signed bar runs cold to hot through nominal zero; with no
+            // range at all, the nominal stop keeps the exact-zero centre and
+            // the ends carry the two saturated sides.
+            RampMode::Signed => {
+                let centre = steps / 2;
+                match step.cmp(&centre) {
+                    std::cmp::Ordering::Less => f64::NEG_INFINITY,
+                    std::cmp::Ordering::Equal => 0.0,
+                    std::cmp::Ordering::Greater => f64::INFINITY,
+                }
+            }
+        };
+        return occluview_align::ramp_color(value, ramp);
+    }
+    let baseline = legend_value_mm(step, steps, ramp.mode, ramp.scale_mm);
+    let value = match ramp.mode {
+        RampMode::Magnitude => {
+            ramp.min_mm + baseline / ramp.scale_mm * (ramp.scale_mm - ramp.min_mm)
+        }
+        RampMode::Signed => baseline,
+    };
+    occluview_align::ramp_color(value, ramp)
+}
+
+/// Paint the deviation legend: the colour ramp with the numeric bounds of the
+/// scale it was measured against, so a colour on screen can always be read as
+/// a number.
+pub(crate) fn paint_legend(
+    ui: &mut egui::Ui,
+    settings: AlignSettings,
+    locale: &crate::i18n::LocaleManager,
+) {
+    const WIDTH: f32 = 200.0;
+    const HEIGHT: f32 = 12.0;
+    const STEPS: usize = LEGEND_STEPS;
+
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(WIDTH, HEIGHT), egui::Sense::hover());
+    let painter = ui.painter();
+    let ramp = occluview_align::RampSettings {
+        min_mm: settings.min_display_mm,
+        scale_mm: settings.scale_mm,
+        tolerance_mm: settings.tolerance_mm,
+        // The legend is continuous like the map; a persisted band count must
+        // not make the two disagree.
+        bands: None,
+        mode: settings.ramp_mode,
+    };
+    for step in 0..STEPS {
+        let color = legend_color_at(step, STEPS, &ramp);
+        #[allow(clippy::cast_precision_loss)]
+        let x0 = rect.left() + rect.width() * (step as f32 / STEPS as f32);
+        #[allow(clippy::cast_precision_loss)]
+        let x1 = rect.left() + rect.width() * ((step + 1) as f32 / STEPS as f32);
+        painter.rect_filled(
+            egui::Rect::from_min_max(
+                egui::pos2(x0, rect.top()),
+                egui::pos2(x1 + 1.0, rect.bottom()),
+            ),
+            0.0,
+            egui::Color32::from_rgba_unmultiplied(color[0], color[1], color[2], 255),
+        );
+    }
+
+    ui.horizontal(|ui| {
+        let label = |ui: &mut egui::Ui, text: String| {
+            ui.label(
+                egui::RichText::new(text)
+                    .size(10.0)
+                    .color(ui_theme::ThemeTokens::from_ui(ui).text_muted()),
+            );
+        };
+        let number_format = locale.number_format();
+        let (mut low, high) = legend_bounds(settings.ramp_mode, settings.scale_mm, number_format);
+        if settings.ramp_mode == RampMode::Magnitude {
+            low = format!("≤ {} mm", number_format.decimal(settings.min_display_mm, 3));
+        }
+        label(ui, low);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            label(ui, high);
+        });
+    });
+    no_data_key(ui, locale);
+}
+
+/// The grey swatch, named.
+///
+/// Grey is the one colour on the surface that the ramp above cannot explain: a
+/// bridge that exists on one arch only is painted grey, and unlabelled it reads
+/// as a fault. The key goes here rather than in the numbers block because this
+/// is where the eye already is when it asks what a colour means.
+fn no_data_key(ui: &mut egui::Ui, locale: &crate::i18n::LocaleManager) {
+    const SWATCH: f32 = 9.0;
+
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(SWATCH, SWATCH), egui::Sense::hover());
+        let grey = occluview_align::NO_DATA_COLOR;
+        ui.painter().rect_filled(
+            rect,
+            1.5,
+            egui::Color32::from_rgb(grey[0], grey[1], grey[2]),
+        );
+        ui.label(
+            egui::RichText::new(locale.tr(crate::i18n::message_id!("align-map-not-measured")))
+                .size(10.0)
+                .color(ui_theme::ThemeTokens::from_ui(ui).text_muted()),
+        )
+        .on_hover_text(locale.tr(crate::i18n::message_id!("align-map-not-measured-hint")));
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{legend_bounds, legend_color_at, legend_value_mm, NumberFormat, LEGEND_STEPS};
+    use occluview_align::{ramp_color, RampMode, RampSettings};
+
+    #[test]
+    fn legend_labels_preserve_the_range_controls_micrometre_precision() {
+        for (tag, expected) in [("en", "0.001"), ("de", "0,001")] {
+            let (_, high) = legend_bounds(RampMode::Magnitude, 0.001, NumberFormat::for_tag(tag));
+            assert_eq!(high, format!("≥ {expected} mm"));
+        }
+    }
+
+    fn ramp(mode: RampMode, scale_mm: f64) -> RampSettings {
+        RampSettings {
+            min_mm: 0.0,
+            scale_mm,
+            tolerance_mm: 0.2,
+            bands: None,
+            mode,
+        }
+    }
+
+    #[test]
+    fn configured_legend_limits_match_the_colors_painted_on_the_scan() {
+        let ramp = RampSettings {
+            min_mm: 0.02,
+            scale_mm: 0.10,
+            ..ramp(RampMode::Magnitude, 0.10)
+        };
+        assert_eq!(
+            legend_color_at(0, LEGEND_STEPS, &ramp),
+            ramp_color(0.02, &ramp)
+        );
+        assert_eq!(
+            legend_color_at(LEGEND_STEPS - 1, LEGEND_STEPS, &ramp),
+            ramp_color(0.10, &ramp)
+        );
+        assert_eq!(ramp_color(0.0, &ramp), ramp_color(0.02, &ramp));
+    }
+
+    fn bar(mode: RampMode, scale_mm: f64) -> Vec<[u8; 4]> {
+        let ramp = ramp(mode, scale_mm);
+        (0..LEGEND_STEPS)
+            .map(|step| legend_color_at(step, LEGEND_STEPS, &ramp))
+            .collect()
+    }
+
+    /// The operator's range control accepts 0.00 mm, and the surface then reads
+    /// hot for every non-zero deviation. The bar has to agree with that instead
+    /// of painting sixty-four cold swatches under a red surface, and its right
+    /// label has to name the open end.
+    #[test]
+    fn a_zero_maximum_legend_still_shows_its_hot_side() {
+        let bar = bar(RampMode::Magnitude, 0.0);
+        let cold = ramp_color(0.0, &ramp(RampMode::Magnitude, 0.0));
+        let hot = ramp_color(0.05, &ramp(RampMode::Magnitude, 0.0));
+        assert_ne!(cold, hot, "the fixture needs two distinct stops");
+
+        assert_eq!(
+            bar[0], cold,
+            "exact zero has to stay the cold stop at a zero maximum"
+        );
+        assert!(
+            bar[1..].iter().all(|swatch| *swatch == hot),
+            "every non-zero deviation is past a zero maximum and must read hot"
+        );
+        assert_eq!(
+            legend_bounds(RampMode::Magnitude, 0.0, NumberFormat::for_tag("en")),
+            ("0.000 mm".to_owned(), "> 0.000 mm".to_owned()),
+            "the open end has to be labelled as such"
+        );
+    }
+
+    /// The signed ramp has the same zero-maximum state, and it needs the input
+    /// the mapping would receive: the nominal stop at exact zero and the two
+    /// saturated sides for the signed ends. A magnitude-only special case would
+    /// leave it a solid nominal green bar under a red/blue surface.
+    #[test]
+    fn a_zero_maximum_signed_legend_still_spans_both_sides() {
+        let signed = ramp(RampMode::Signed, 0.0);
+        let bar = bar(RampMode::Signed, 0.0);
+        let cold = ramp_color(f64::NEG_INFINITY, &signed);
+        let nominal = ramp_color(0.0, &signed);
+        let hot = ramp_color(f64::INFINITY, &signed);
+
+        assert_ne!(cold, nominal, "the fixture needs a cold side");
+        assert_ne!(nominal, hot, "the fixture needs a hot side");
+        assert_eq!(bar[0], cold, "the bar must start cold");
+        assert_eq!(
+            bar[LEGEND_STEPS / 2],
+            nominal,
+            "exact zero keeps its nominal stop in the middle"
+        );
+        assert_eq!(bar[LEGEND_STEPS - 1], hot, "the bar must end hot");
+    }
+
+    /// A bar that disagrees with the surface is worse than no legend. For every
+    /// scale the control allows above the degenerate zero maximum, the swatch
+    /// nearest a measured value must carry that value's colour.
+    #[test]
+    fn every_legend_swatch_carries_the_colour_of_the_value_it_stands_for() {
+        for scale_mm in [0.01, 0.05, 0.10] {
+            let ramp = ramp(RampMode::Magnitude, scale_mm);
+            for value_mm in [0.0, 0.005, 0.02, 0.08] {
+                let painted = ramp_color(value_mm, &ramp);
+                let mut nearest = (f64::INFINITY, painted);
+                for step in 0..LEGEND_STEPS {
+                    let at = legend_value_mm(step, LEGEND_STEPS, ramp.mode, ramp.scale_mm);
+                    let distance = (at - value_mm).abs();
+                    if distance < nearest.0 {
+                        nearest = (distance, legend_color_at(step, LEGEND_STEPS, &ramp));
+                    }
+                }
+                let (distance, nearest) = nearest;
+                assert!(
+                    distance.is_finite(),
+                    "a distance is needed to report a mismatch"
+                );
+                for channel in 0..3 {
+                    let surface = i32::from(painted[channel]);
+                    let bar = i32::from(nearest[channel]);
+                    assert!(
+                        (surface - bar).abs() <= 24,
+                        "at scale {scale_mm} the bar shows {nearest:?} for a surface reading \
+                         {painted:?} at {value_mm} mm"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The magnitude bar must sweep its non-negative domain. A negative half
+    /// would mirror the absolute ramp, put zero in the middle, and label a
+    /// distance that cannot be negative.
+    #[test]
+    fn the_magnitude_legend_runs_cold_to_hot_and_never_mirrors() {
+        let bar = bar(RampMode::Magnitude, 0.5);
+        let first = bar[0];
+        let last = bar[bar.len() - 1];
+        assert!(
+            first[2] > 180 && first[0] < 90,
+            "the bar must start at the cold end, got {first:?}"
+        );
+        assert!(
+            last[0] > 200 && last[2] < 60,
+            "the bar must end at the hot end, got {last:?}"
+        );
+        assert_ne!(
+            first, last,
+            "a mirrored bar has the same colour at both ends"
+        );
+        // The stops are softened, so red and blue are not strictly monotonic
+        // along the bar. Adjacent swatches must still step smoothly: a
+        // mirrored or mis-ordered bar shows up as a hard jump between them.
+        for pair in bar.windows(2) {
+            let largest_jump = (0..3)
+                .map(|channel| i16::from(pair[1][channel]).abs_diff(i16::from(pair[0][channel])))
+                .max()
+                .unwrap_or(0);
+            assert!(
+                largest_jump <= 12,
+                "the bar jumps {largest_jump} levels: {:?} then {:?}",
+                pair[0],
+                pair[1]
+            );
+        }
+    }
+
+    /// The signed ramp has two sides, and its bar must still show
+    /// both: blue below, green at nominal, red above.
+    #[test]
+    fn the_signed_legend_still_spans_both_sides() {
+        let bar = bar(RampMode::Signed, 0.5);
+        let first = bar[0];
+        let middle = bar[bar.len() / 2];
+        let last = bar[bar.len() - 1];
+        assert!(first[2] > first[0], "the cold end must be blue: {first:?}");
+        assert!(
+            middle[1] > middle[0] && middle[1] > middle[2],
+            "nominal must sit in the middle: {middle:?}"
+        );
+        assert!(last[0] > last[2], "the hot end must be red: {last:?}");
+    }
+
+    /// A bar the numbers disagree with is worse than no bar: the operator
+    /// reads the colour through the label.
+    #[test]
+    fn the_bounds_name_the_scale_the_bar_was_drawn_over() {
+        assert_eq!(
+            legend_bounds(RampMode::Magnitude, 0.5, NumberFormat::for_tag("en")),
+            ("0.000 mm".to_owned(), "≥ 0.500 mm".to_owned()),
+            "a magnitude bar starts at nothing, never at a negative distance"
+        );
+        assert_eq!(
+            legend_bounds(RampMode::Signed, 0.5, NumberFormat::for_tag("en")),
+            ("−0.500 mm".to_owned(), "+0.500 mm".to_owned())
+        );
+    }
+}

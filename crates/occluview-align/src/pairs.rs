@@ -1,0 +1,661 @@
+//! Rigid fitting from clicked surface point pairs.
+//!
+//! Three or more pairs use Horn's closed-form quaternion fit. Two pairs use
+//! the clicked surface normals to build a frame; two points alone cannot
+//! determine a rotation.
+//!
+//! Each refusal is a named [`FitRejection`] with the diagnostics needed by the
+//! caller. Underdetermined fits are never returned as valid poses.
+
+use glam::{DMat3, DQuat, DVec3};
+
+use crate::Rigid;
+
+/// The smallest number of pairs any fit accepts.
+const MIN_PAIRS: usize = 2;
+
+/// Maximum pair count admitted to manual fitting.
+///
+/// All supplied point and normal arrays share this bound. Pairwise distances
+/// allocate quadratic work, and outlier trimming refits
+/// successively smaller sets. The cap matches the search landmark allowance
+/// and is a resource limit, not a geometric threshold.
+pub const MAX_PAIRS: usize = 128;
+
+/// Below this fraction of the total spread, the points lie on a line and the
+/// rotation about that line is free.
+const COLLINEAR_FRACTION: f64 = 1e-6;
+
+/// The picks must also stand this far off their best-fit line (RMS, mm). The
+/// turn about that line is set by the click error divided by this spread: an
+/// arrow lands within about 0.3 mm of the intended point, so 2 mm holds the
+/// turn to roughly 8 degrees, inside what a surface refine starting from it
+/// recovers. Three cusps in a row, 0.1 mm off a line, turned the scan 56
+/// degrees on 0.05 mm of click noise while the fit reported 0.004 mm.
+const MIN_OFF_LINE_SPREAD_MM: f64 = 2.0;
+
+/// Accepted ratio of median fixed pair distances to median moving pair
+/// distances. Values outside this band indicate inconsistent units.
+const UNIT_RATIO_LOW: f64 = 0.5;
+/// Upper end of the accepted distance-ratio band.
+const UNIT_RATIO_HIGH: f64 = 2.0;
+
+/// A residual must exceed this many times the median and
+/// [`TRIM_FLOOR_MM`] before trimming drops its pair.
+const TRIM_MEDIAN_FACTOR: f64 = 3.0;
+
+/// Absolute residual floor for trimming, in millimetres.
+const TRIM_FLOOR_MM: f64 = 0.05;
+
+/// How nearly parallel a clicked normal may lie to the two-pair segment before
+/// the frame it would build is meaningless.
+const NORMAL_ALONG_SEGMENT_LIMIT: f64 = 0.99;
+
+/// Minimum overlap allowance for degenerate or very small bounds, in mm.
+const MIN_OVERLAP_MM: f64 = 1.0;
+
+/// A world axis is named in a degeneracy report when the undetermined
+/// direction has at least this much of its length along that axis. A unit
+/// vector always clears it on at least one axis.
+const WEAK_AXIS_SHARE: f64 = 0.5;
+
+/// Fixed cyclic Jacobi sweeps diagonalize the 4x4 Horn matrix; fixed power
+/// iterations find the dominant spread direction. The counts do not depend on
+/// convergence, so a result cannot drift between runs.
+const JACOBI_SWEEPS: usize = 24;
+/// Power iterations for the dominant spread direction.
+const POWER_ITERATIONS: usize = 32;
+
+/// A successful fit and the diagnostics the UI reports alongside it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PairFit {
+    /// The pose carrying the moving points onto the fixed ones.
+    pub rigid: Rigid,
+    /// Root-mean-square residual over the pairs that survived trimming, in mm.
+    pub pair_rms: f64,
+    /// Largest surviving residual, in mm.
+    pub max_pair_err: f64,
+    /// Indices of pairs dropped as outliers, ascending.
+    pub rejected: Vec<u32>,
+    /// Median fixed pairwise distance over median moving pairwise distance.
+    /// One means same units.
+    pub unit_ratio: f64,
+}
+
+/// Why a fit is refused. Each variant carries what the operator needs to act.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum FitRejection {
+    /// More pairs were supplied than the bounded manual fit admits.
+    TooManyPairs {
+        /// Largest supplied point or normal array.
+        have: usize,
+        /// Maximum pair count admitted by this fit.
+        max: usize,
+    },
+    /// Fewer complete pairs than any fit can use.
+    TooFewPairs {
+        /// Complete pairs supplied.
+        have: usize,
+        /// Minimum this fit requires.
+        need: usize,
+    },
+    /// The point lists differ in length, so at least one point has no partner.
+    Unpaired {
+        /// Points supplied on the moving side.
+        moving: usize,
+        /// Points supplied on the fixed side.
+        fixed: usize,
+    },
+    /// The configuration does not determine a rotation.
+    Degenerate {
+        /// Per world axis, whether rotation about it is undetermined.
+        weak_axes: [bool; 3],
+    },
+    /// The two sets are in different units.
+    UnitMismatch {
+        /// Median fixed pairwise distance over median moving pairwise
+        /// distance.
+        ratio: f64,
+    },
+    /// The fit does not leave the two scans on top of each other — a
+    /// mis-click, not a registration.
+    Apart {
+        /// How far apart the two scans end up, centre to centre, in
+        /// millimetres.
+        separation: f64,
+        /// The largest separation at which they still overlap at all, in
+        /// millimetres.
+        allowed: f64,
+    },
+    /// A supplied point or normal is not finite.
+    NonFinite,
+    /// Two clicked normals cannot both face the fixed surface after their roll
+    /// estimates are averaged. `error_mm` converts the worst angular mismatch
+    /// to the lateral displacement it implies over the pair spacing.
+    Inconsistent {
+        /// Equivalent lateral displacement, in millimetres.
+        error_mm: f64,
+    },
+}
+
+/// Every axis undetermined — the report for a configuration that constrains
+/// nothing at all.
+const ALL_AXES_WEAK: FitRejection = FitRejection::Degenerate {
+    weak_axes: [true, true, true],
+};
+
+/// Bounds used by the overlap guard. Centres are stored in each mesh's own
+/// frame so the guard measures the transformed geometry rather than a pose's
+/// translation column.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FitBounds {
+    /// Bounding-box centre of the moving mesh, in the moving layer's local
+    /// frame — the same frame the moving points are in.
+    pub moving_center: DVec3,
+    /// Bounding-box diagonal of the moving mesh, in millimetres.
+    pub moving_extent: f64,
+    /// Bounding-box centre of the fixed mesh, in world.
+    pub fixed_center: DVec3,
+    /// Bounding-box diagonal of the fixed mesh, in millimetres.
+    pub fixed_extent: f64,
+}
+
+impl FitBounds {
+    /// Whether `rigid` leaves the two scans overlapping, and by how far it
+    /// misses when it does not.
+    ///
+    /// Returns the transformed centre separation and the maximum separation
+    /// allowed for the two bounding spheres to overlap.
+    fn miss(&self, rigid: &Rigid) -> Result<Option<(f64, f64)>, FitRejection> {
+        let separation = (rigid.apply(self.moving_center) - self.fixed_center).length();
+        #[expect(
+            clippy::manual_midpoint,
+            reason = "preserve established last-bit overlap threshold"
+        )]
+        let allowed = ((self.moving_extent + self.fixed_extent) * 0.5).max(MIN_OVERLAP_MM);
+        // Finite inputs can still overflow while measuring separation or
+        // adding extents. An uncomputable overlap cannot validate a pose.
+        if !separation.is_finite() || !allowed.is_finite() {
+            return Err(FitRejection::NonFinite);
+        }
+        Ok((separation > allowed).then_some((separation, allowed)))
+    }
+}
+
+/// Fit `moving` onto `fixed`.
+///
+/// `normals`, when supplied, are the clicked surface normals for each side and
+/// are used only in the two-pair case. `bounds` says where the two meshes are
+/// and how big they are; a fit that does not leave them overlapping is refused
+/// as [`FitRejection::Apart`].
+///
+/// A successful result is a placement candidate. Its pair residuals are
+/// diagnostics; surface refinement and its trust gate decide whether a pose
+/// may authorize a deviation map.
+///
+/// # Errors
+///
+/// Returns the [`FitRejection`] describing why no trustworthy pose exists.
+pub fn fit_pairs(
+    moving: &[DVec3],
+    fixed: &[DVec3],
+    normals: Option<(&[DVec3], &[DVec3])>,
+    bounds: &FitBounds,
+) -> Result<PairFit, FitRejection> {
+    let normal_count = normals.map_or(0, |(moving, fixed)| moving.len().max(fixed.len()));
+    let have = moving.len().max(fixed.len()).max(normal_count);
+    if have > MAX_PAIRS {
+        return Err(FitRejection::TooManyPairs {
+            have,
+            max: MAX_PAIRS,
+        });
+    }
+    if moving.len() != fixed.len() {
+        return Err(FitRejection::Unpaired {
+            moving: moving.len(),
+            fixed: fixed.len(),
+        });
+    }
+    if moving.len() < MIN_PAIRS {
+        return Err(FitRejection::TooFewPairs {
+            have: moving.len(),
+            need: MIN_PAIRS,
+        });
+    }
+    if moving.iter().chain(fixed).any(|point| !point.is_finite()) {
+        return Err(FitRejection::NonFinite);
+    }
+    if !bounds.moving_center.is_finite()
+        || !bounds.fixed_center.is_finite()
+        || !bounds.moving_extent.is_finite()
+        || bounds.moving_extent < 0.0
+        || !bounds.fixed_extent.is_finite()
+        || bounds.fixed_extent < 0.0
+    {
+        return Err(FitRejection::NonFinite);
+    }
+
+    let unit_ratio = distance_ratio(moving, fixed);
+    if !(UNIT_RATIO_LOW..=UNIT_RATIO_HIGH).contains(&unit_ratio) {
+        return Err(FitRejection::UnitMismatch { ratio: unit_ratio });
+    }
+
+    if moving.len() == MIN_PAIRS {
+        let rigid = two_pair_frame(moving, fixed, normals)?;
+        let residuals = residuals_of(&rigid, moving, fixed, &[0, 1]);
+        return finish(rigid, &residuals, Vec::new(), unit_ratio, bounds);
+    }
+
+    let mut keep: Vec<usize> = (0..moving.len()).collect();
+    let mut rejected: Vec<u32> = Vec::new();
+    let mut rigid = horn_fit(moving, fixed, &keep)?;
+    while keep.len() > 3 {
+        let Some(worst) = worst_outlier(moving, fixed, &keep) else {
+            break;
+        };
+        let dropped = keep.remove(worst);
+        rejected.push(u32::try_from(dropped).unwrap_or(u32::MAX));
+        rigid = horn_fit(moving, fixed, &keep)?;
+    }
+    rejected.sort_unstable();
+    let residuals = residuals_of(&rigid, moving, fixed, &keep);
+    finish(rigid, &residuals, rejected, unit_ratio, bounds)
+}
+
+/// Apply the overlap guard and package the diagnostics.
+fn finish(
+    rigid: Rigid,
+    residuals: &[f64],
+    rejected: Vec<u32>,
+    unit_ratio: f64,
+    bounds: &FitBounds,
+) -> Result<PairFit, FitRejection> {
+    if !rigid.is_finite() {
+        return Err(FitRejection::NonFinite);
+    }
+    if let Some((separation, allowed)) = bounds.miss(&rigid)? {
+        return Err(FitRejection::Apart {
+            separation,
+            allowed,
+        });
+    }
+    #[allow(clippy::cast_precision_loss)]
+    let count = residuals.len().max(1) as f64;
+    let sum_squares: f64 = residuals.iter().map(|value| value * value).sum();
+    let max_pair_err = residuals.iter().copied().fold(0.0, f64::max);
+    Ok(PairFit {
+        rigid,
+        pair_rms: (sum_squares / count).sqrt(),
+        max_pair_err,
+        rejected,
+        unit_ratio,
+    })
+}
+
+/// Horn's closed-form fit over the pairs named by `keep`.
+///
+/// The quaternion form can only ever produce a proper rotation, so a mirrored
+/// point set yields the best real rotation instead of a reflection that would
+/// silently turn a scan inside out.
+///
+/// Degeneracy is tested on both sides. Collinear clicks leave rotation about
+/// the line undetermined.
+pub(crate) fn horn_fit(
+    moving: &[DVec3],
+    fixed: &[DVec3],
+    keep: &[usize],
+) -> Result<Rigid, FitRejection> {
+    let moving_centroid = centroid(moving, keep);
+    let fixed_centroid = centroid(fixed, keep);
+    if let Some(rejection) = line_degeneracy(moving, keep, moving_centroid) {
+        return Err(rejection);
+    }
+    if let Some(rejection) = line_degeneracy(fixed, keep, fixed_centroid) {
+        return Err(rejection);
+    }
+    let mut covariance = DMat3::ZERO;
+    for &index in keep {
+        covariance += outer(
+            moving[index] - moving_centroid,
+            fixed[index] - fixed_centroid,
+        );
+    }
+    let rotation = horn_quaternion(&covariance);
+    Ok(Rigid::new(
+        rotation,
+        fixed_centroid - rotation * moving_centroid,
+    ))
+}
+
+/// Whether the kept points lie on a line (or coincide), and which world axes
+/// to name if they do.
+///
+/// This is a rank test on the spread itself, not a per-world-axis check: a
+/// diagonal line has spread along every world axis and would sail through the
+/// naive test while determining no rotation at all.
+fn line_degeneracy(points: &[DVec3], keep: &[usize], centroid: DVec3) -> Option<FitRejection> {
+    let mut spread = DMat3::ZERO;
+    let mut total = 0.0f64;
+    for &index in keep {
+        let offset = points[index] - centroid;
+        spread += outer(offset, offset);
+        total += offset.length_squared();
+    }
+    if total <= f64::MIN_POSITIVE {
+        return Some(ALL_AXES_WEAK);
+    }
+    let direction = dominant_direction(&spread);
+    if direction.length_squared() <= 0.0 {
+        return Some(ALL_AXES_WEAK);
+    }
+    let perpendicular: f64 = keep
+        .iter()
+        .map(|&index| {
+            (points[index] - centroid)
+                .reject_from_normalized(direction)
+                .length_squared()
+        })
+        .sum();
+    #[allow(clippy::cast_precision_loss)]
+    let off_line_rms = (perpendicular / keep.len().max(1) as f64).sqrt();
+    if perpendicular > total * COLLINEAR_FRACTION && off_line_rms >= MIN_OFF_LINE_SPREAD_MM {
+        return None;
+    }
+    let weak_axes = [
+        direction.dot(DVec3::X).abs() >= WEAK_AXIS_SHARE,
+        direction.dot(DVec3::Y).abs() >= WEAK_AXIS_SHARE,
+        direction.dot(DVec3::Z).abs() >= WEAK_AXIS_SHARE,
+    ];
+    Some(FitRejection::Degenerate { weak_axes })
+}
+
+/// Unit direction of greatest spread, by power iteration from the strongest
+/// diagonal — deterministic, and enough for a rank test.
+fn dominant_direction(spread: &DMat3) -> DVec3 {
+    let diagonal = [
+        spread.x_axis.x.abs(),
+        spread.y_axis.y.abs(),
+        spread.z_axis.z.abs(),
+    ];
+    let mut best = 0usize;
+    for index in 1..3 {
+        if diagonal[index] > diagonal[best] {
+            best = index;
+        }
+    }
+    let mut vector = [DVec3::X, DVec3::Y, DVec3::Z][best];
+    for _ in 0..POWER_ITERATIONS {
+        let next = *spread * vector;
+        if next.length_squared() <= f64::MIN_POSITIVE {
+            return vector;
+        }
+        vector = next.normalize();
+    }
+    vector
+}
+
+/// The rotation carrying the moving points onto the fixed ones, as the
+/// eigenvector of the largest eigenvalue of Horn's symmetric 4x4 matrix.
+///
+/// The `sxx`/`sxy`/... names are Horn's own published symbols. Renaming them
+/// to satisfy a similarity lint would make the matrix below impossible to
+/// check line-by-line against the paper, which is the only way anyone verifies
+/// it.
+#[allow(clippy::similar_names)]
+pub(crate) fn horn_quaternion(covariance: &DMat3) -> DQuat {
+    let entries = covariance.to_cols_array_2d();
+    let (sxx, sxy, sxz) = (entries[0][0], entries[1][0], entries[2][0]);
+    let (syx, syy, syz) = (entries[0][1], entries[1][1], entries[2][1]);
+    let (szx, szy, szz) = (entries[0][2], entries[1][2], entries[2][2]);
+    let matrix = [
+        [sxx + syy + szz, syz - szy, szx - sxz, sxy - syx],
+        [syz - szy, sxx - syy - szz, sxy + syx, szx + sxz],
+        [szx - sxz, sxy + syx, -sxx + syy - szz, syz + szy],
+        [sxy - syx, szx + sxz, syz + szy, -sxx - syy + szz],
+    ];
+    let [real, i, j, k] = dominant_eigenvector(matrix);
+    let quaternion = DQuat::from_xyzw(i, j, k, real);
+    if quaternion.length_squared() > 0.0 {
+        quaternion.normalize()
+    } else {
+        DQuat::IDENTITY
+    }
+}
+
+/// Eigenvector of the largest eigenvalue of a symmetric 4x4, by cyclic Jacobi.
+///
+/// The sweep is inherently index-paired — each rotation zeroes one specific
+/// off-diagonal entry `(row, column)` and then updates both that row and that
+/// column — so it is written with explicit indices rather than iterators.
+#[allow(clippy::needless_range_loop)]
+fn dominant_eigenvector(mut matrix: [[f64; 4]; 4]) -> [f64; 4] {
+    let mut basis = [[0.0f64; 4]; 4];
+    for (index, row) in basis.iter_mut().enumerate() {
+        row[index] = 1.0;
+    }
+    for _ in 0..JACOBI_SWEEPS {
+        let mut off_diagonal = 0.0;
+        for row in 0..4 {
+            for column in (row + 1)..4 {
+                off_diagonal += matrix[row][column] * matrix[row][column];
+            }
+        }
+        if off_diagonal <= f64::EPSILON {
+            break;
+        }
+        for row in 0..4 {
+            for column in (row + 1)..4 {
+                if matrix[row][column].abs() <= f64::MIN_POSITIVE {
+                    continue;
+                }
+                let theta =
+                    (matrix[column][column] - matrix[row][row]) / (2.0 * matrix[row][column]);
+                let sign = if theta >= 0.0 { 1.0 } else { -1.0 };
+                let tangent = sign / (theta.abs() + theta.mul_add(theta, 1.0).sqrt());
+                let cosine = 1.0 / tangent.mul_add(tangent, 1.0).sqrt();
+                let sine = tangent * cosine;
+                rotate_columns(&mut matrix, row, column, cosine, sine);
+                for index in 0..4 {
+                    let left = matrix[row][index];
+                    let right = matrix[column][index];
+                    matrix[row][index] = cosine * left - sine * right;
+                    matrix[column][index] = sine * left + cosine * right;
+                }
+                rotate_columns(&mut basis, row, column, cosine, sine);
+            }
+        }
+    }
+    let mut best = 0usize;
+    for index in 1..4 {
+        if matrix[index][index] > matrix[best][best] {
+            best = index;
+        }
+    }
+    [
+        basis[0][best],
+        basis[1][best],
+        basis[2][best],
+        basis[3][best],
+    ]
+}
+
+/// Apply one Jacobi rotation to a pair of columns.
+fn rotate_columns(matrix: &mut [[f64; 4]; 4], left: usize, right: usize, cosine: f64, sine: f64) {
+    for row in matrix {
+        let first = row[left];
+        let second = row[right];
+        row[left] = cosine * first - sine * second;
+        row[right] = sine * first + cosine * second;
+    }
+}
+
+/// The two-pair fit: a right-handed frame per side from the segment and the
+/// clicked surface normal.
+fn two_pair_frame(
+    moving: &[DVec3],
+    fixed: &[DVec3],
+    normals: Option<(&[DVec3], &[DVec3])>,
+) -> Result<Rigid, FitRejection> {
+    let Some((moving_normals, fixed_normals)) = normals else {
+        return Err(ALL_AXES_WEAK);
+    };
+    if moving_normals.len() < MIN_PAIRS || fixed_normals.len() < MIN_PAIRS {
+        return Err(ALL_AXES_WEAK);
+    }
+    if moving_normals
+        .iter()
+        .chain(fixed_normals)
+        .any(|normal| !normal.is_finite())
+    {
+        return Err(FitRejection::NonFinite);
+    }
+    if moving_normals
+        .iter()
+        .chain(fixed_normals)
+        .any(|normal| normal.length_squared() <= f64::MIN_POSITIVE)
+    {
+        return Err(ALL_AXES_WEAK);
+    }
+    // Each clicked normal gives the turn about the segment on its own. Both
+    // are measurements of one quantity: a single one carries its click's
+    // error into the pose unchecked, and a normal 2 degrees off turned the
+    // scan 14 degrees where it leant toward the segment.
+    let estimate = |index: usize| -> Option<DQuat> {
+        let moving_frame = frame_from(moving[0], moving[1], moving_normals[index]).ok()?;
+        let fixed_frame = frame_from(fixed[0], fixed[1], fixed_normals[index]).ok()?;
+        Some(DQuat::from_mat3(&(fixed_frame * moving_frame.transpose())).normalize())
+    };
+    let rotation = match (estimate(0), estimate(1)) {
+        (Some(first), Some(second)) => first.slerp(second, 0.5),
+        (Some(only), None) | (None, Some(only)) => only,
+        (None, None) => return Err(ALL_AXES_WEAK),
+    };
+    let moving_centroid = (moving[0] + moving[1]) * 0.5;
+    let fixed_centroid = (fixed[0] + fixed[1]) * 0.5;
+    let rigid = Rigid::new(rotation, fixed_centroid - rotation * moving_centroid);
+    for index in 0..MIN_PAIRS {
+        let alignment = rigid
+            .apply_normal(moving_normals[index].normalize_or_zero())
+            .dot(fixed_normals[index].normalize_or_zero());
+        if alignment <= 0.0 {
+            let angular_error = alignment.clamp(-1.0, 1.0).acos();
+            let segment_length = moving[0].distance(moving[1]);
+            return Err(FitRejection::Inconsistent {
+                error_mm: 2.0 * segment_length * (angular_error * 0.5).sin(),
+            });
+        }
+    }
+    Ok(rigid)
+}
+
+/// A right-handed basis from a segment and a surface normal at its start.
+fn frame_from(start: DVec3, end: DVec3, normal: DVec3) -> Result<DMat3, FitRejection> {
+    let along = (end - start).normalize_or_zero();
+    let unit_normal = normal.normalize_or_zero();
+    if along.length_squared() <= 0.0 || unit_normal.length_squared() <= 0.0 {
+        return Err(ALL_AXES_WEAK);
+    }
+    if along.dot(unit_normal).abs() >= NORMAL_ALONG_SEGMENT_LIMIT {
+        return Err(ALL_AXES_WEAK);
+    }
+    let up = unit_normal
+        .reject_from_normalized(along)
+        .normalize_or_zero();
+    if up.length_squared() <= 0.0 {
+        return Err(ALL_AXES_WEAK);
+    }
+    Ok(DMat3::from_cols(along, up, along.cross(up)))
+}
+
+/// Mean of the points named by `keep`.
+fn centroid(points: &[DVec3], keep: &[usize]) -> DVec3 {
+    if keep.is_empty() {
+        return DVec3::ZERO;
+    }
+    let sum = keep
+        .iter()
+        .fold(DVec3::ZERO, |total, &index| total + points[index]);
+    #[allow(clippy::cast_precision_loss)]
+    let count = keep.len() as f64;
+    sum / count
+}
+
+/// Outer product `left ⊗ right`, the matrix whose entry `(i, j)` is
+/// `left[i] * right[j]`.
+fn outer(left: DVec3, right: DVec3) -> DMat3 {
+    DMat3::from_cols(left * right.x, left * right.y, left * right.z)
+}
+
+/// Residual distance per kept pair, in the order of `keep`.
+fn residuals_of(rigid: &Rigid, moving: &[DVec3], fixed: &[DVec3], keep: &[usize]) -> Vec<f64> {
+    keep.iter()
+        .map(|&index| (rigid.apply(moving[index]) - fixed[index]).length())
+        .collect()
+}
+
+/// Position within `keep` of the pair worth dropping, if any.
+///
+/// Leave-one-out: each pair in turn is left out, the rest are fitted, and the
+/// pair whose removal leaves the most self-consistent set is the candidate.
+/// It is dropped when the pose that set agrees on misses it by more than
+/// [`TRIM_MEDIAN_FACTOR`] times that set's own residual (and more than
+/// [`TRIM_FLOOR_MM`]). Judging the candidate by the fit that contains it
+/// cannot work with few pairs: one wrong arrow among four drags the fit until
+/// every residual looks alike, so the candidate stays in the set.
+fn worst_outlier(moving: &[DVec3], fixed: &[DVec3], keep: &[usize]) -> Option<usize> {
+    let mut best: Option<(usize, f64, f64)> = None;
+    for position in 0..keep.len() {
+        let rest: Vec<usize> = keep
+            .iter()
+            .enumerate()
+            .filter(|(other, _)| *other != position)
+            .map(|(_, &index)| index)
+            .collect();
+        let Ok(rigid) = horn_fit(moving, fixed, &rest) else {
+            continue;
+        };
+        let residuals = residuals_of(&rigid, moving, fixed, &rest);
+        #[allow(clippy::cast_precision_loss)]
+        let rest_rms = (residuals.iter().map(|value| value * value).sum::<f64>()
+            / residuals.len() as f64)
+            .sqrt();
+        let index = keep[position];
+        let miss = (rigid.apply(moving[index]) - fixed[index]).length();
+        if best.is_none_or(|(_, rms, _)| rest_rms < rms) {
+            best = Some((position, rest_rms, miss));
+        }
+    }
+    let (position, rest_rms, miss) = best?;
+    (miss > TRIM_FLOOR_MM && miss > rest_rms * TRIM_MEDIAN_FACTOR).then_some(position)
+}
+
+/// Median fixed pairwise distance over median moving pairwise distance.
+///
+/// Medians, not means: one grossly mis-clicked pair drags every mean it
+/// touches, and the gate then reports a unit problem for what is really one
+/// bad arrow — sending the operator to import scaling while the trimming
+/// loop that exists for exactly that click never runs.
+fn distance_ratio(moving: &[DVec3], fixed: &[DVec3]) -> f64 {
+    let mut moving_gaps = Vec::new();
+    let mut fixed_gaps = Vec::new();
+    for left in 0..moving.len() {
+        for right in (left + 1)..moving.len() {
+            moving_gaps.push(moving[left].distance(moving[right]));
+            fixed_gaps.push(fixed[left].distance(fixed[right]));
+        }
+    }
+    let moving_median = median(&mut moving_gaps);
+    if moving_median <= f64::EPSILON {
+        return 1.0;
+    }
+    median(&mut fixed_gaps) / moving_median
+}
+
+/// Median of `values`, which are sorted in place. Zero when empty.
+fn median(values: &mut [f64]) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    values.sort_by(f64::total_cmp);
+    values[values.len() / 2]
+}

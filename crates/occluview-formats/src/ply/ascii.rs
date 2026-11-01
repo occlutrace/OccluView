@@ -1,0 +1,759 @@
+//! PLY ASCII data reader.
+//!
+//! Consumes the data section of a [`super::header::ParsedHeader`] (format =
+//! Ascii), reading `vertex` and `face` elements in declaration order. We honor
+//! the declared properties rather than hard-coding an order — dental scanners
+//! emit wildly different property sets.
+//!
+//! PLY colors are non-negative integers clamped to `[0, 255]`; the `i32 -> u8`
+//! narrowing is centralized here, so the corresponding clippy cast lint is
+//! allowed at module scope.
+#![allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+
+use super::header::{Element, ParsedHeader, Property, ScalarType};
+use super::FaceUvs;
+use crate::error::FormatError;
+use glam::Vec3;
+use occluview_core::{Mesh, MeshBuilder, Vertex};
+
+/// Plan for how to read one vertex row, derived from the `vertex` element's
+/// declared properties. Each entry says "read a value of this type and route it
+/// to this field of `Vertex`".
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum FieldPlan {
+    /// Route to position component (index 0..3).
+    Position(usize),
+    /// Route to normal component (index 0..3).
+    Normal(usize),
+    /// Route to color channel (index 0..3 for r/g/b/a).
+    Color(usize),
+    /// Route to UV coordinate component (index 0..1).
+    Uv(usize),
+    /// Read but discard (unknown property like `confidence`).
+    Skip,
+    /// Consume a list with this count type; its element type is in the plan.
+    List(ScalarType),
+}
+
+impl FieldPlan {
+    /// Build a plan for a vertex element, refusing one that reads nothing.
+    ///
+    /// A row whose plan is empty consumes no input, so the reader would loop
+    /// `element.count` times without ever reaching the end of the file: a
+    /// header declaring `element vertex 18446744073709551615` and nothing else
+    /// is 68 bytes that ask for 660 GB of vertices, one allocation failure --
+    /// which aborts, uncatchably -- at a time. A vertex element with no scalar
+    /// property carries no coordinates either, so there is nothing to lose by
+    /// rejecting it outright.
+    pub(crate) fn plan_for_vertices(
+        element: &Element,
+        format: &'static str,
+    ) -> Result<Vec<(FieldPlan, ScalarType)>, FormatError> {
+        let plan = Self::plan_for(element);
+        if plan.iter().all(|(field, _)| matches!(field, Self::List(_))) && element.count > 0 {
+            return Err(FormatError::Malformed {
+                format,
+                offset: 0,
+                reason: format!(
+                    "vertex element declares {} rows and no scalar property to read them from",
+                    element.count
+                ),
+            });
+        }
+        Ok(plan)
+    }
+
+    /// Build a plan from a vertex element's property list.
+    pub(crate) fn plan_for(element: &Element) -> Vec<(FieldPlan, ScalarType)> {
+        element
+            .properties
+            .iter()
+            .map(|p| match p {
+                Property::Scalar { name, ty } => (route(name), *ty),
+                Property::List {
+                    count_ty, elem_ty, ..
+                } => (Self::List(*count_ty), *elem_ty),
+            })
+            .collect()
+    }
+}
+
+fn route(name: &str) -> FieldPlan {
+    match name {
+        "x" => FieldPlan::Position(0),
+        "y" => FieldPlan::Position(1),
+        "z" => FieldPlan::Position(2),
+        "nx" => FieldPlan::Normal(0),
+        "ny" => FieldPlan::Normal(1),
+        "nz" => FieldPlan::Normal(2),
+        "red" | "r" => FieldPlan::Color(0),
+        "green" | "g" => FieldPlan::Color(1),
+        "blue" | "b" => FieldPlan::Color(2),
+        "alpha" | "a" => FieldPlan::Color(3),
+        // UV property names. `s`/`t` are the common PLY UV names; `texture_u`/
+        // `texture_v` are used by some scanners. We avoid mapping bare `u`/`v`
+        // because they conflict with vertex-letter conventions in some files.
+        "s" | "texture_u" | "tu" => FieldPlan::Uv(0),
+        "t" | "texture_v" | "tv" => FieldPlan::Uv(1),
+        _ => FieldPlan::Skip,
+    }
+}
+
+/// Read an ASCII PLY into a [`Mesh`].
+///
+/// # Errors
+/// Returns [`FormatError::Malformed`] for an unparseable token, or
+/// [`FormatError::Truncated`] if the data section ends before all declared
+/// rows are read.
+pub fn read(parsed: &ParsedHeader<'_>) -> Result<Mesh, FormatError> {
+    read_shaded(parsed, crate::MeshShading::Reconstructed)
+}
+
+/// As [`read`], choosing how vertex normals are produced.
+///
+/// # Errors
+/// See [`read`].
+pub fn read_shaded(
+    parsed: &ParsedHeader<'_>,
+    shading: crate::MeshShading,
+) -> Result<Mesh, FormatError> {
+    let data_text = std::str::from_utf8(parsed.data).map_err(|_| FormatError::Malformed {
+        format: "PLY (ascii)",
+        offset: 0,
+        reason: "data section is not valid UTF-8".to_string(),
+    })?;
+
+    let mut tokens = data_text.split_ascii_whitespace();
+
+    // Point cloud if the header declares no `element face`.
+    let has_face = parsed.elements.iter().any(|e| e.name == "face");
+    let builder_init = MeshBuilder::new()
+        .with_name("PLY")
+        .from_input_of(parsed.data.len());
+    let mut builder = if has_face {
+        builder_init
+    } else {
+        builder_init.as_point_cloud()
+    };
+
+    // Process elements in declaration order, consuming exactly `count` rows
+    // for each. The vertex element provides positions/normals/colors; the face
+    // element provides triangle indices.
+    // Faces carry the texture coordinates, so they are gathered as the face
+    // element is read and applied once every element has been consumed.
+    let mut uvs = FaceUvs::new(parsed.keep_corner_uvs, parsed.flip_uv_v);
+    for element in &parsed.elements {
+        match element.name.as_str() {
+            "vertex" => read_vertices(&mut tokens, element, &mut builder, parsed.flip_uv_v)?,
+            "face" => read_faces(&mut tokens, element, &mut builder, &mut uvs)?,
+            // Unknown element types (edge, etc.) — skip their tokens.
+            other => skip_element(&mut tokens, element, other)?,
+        }
+    }
+    if tokens.next().is_some() {
+        return Err(FormatError::Malformed {
+            format: "PLY (ascii)",
+            offset: 0,
+            reason: "data remains after the declared elements".to_string(),
+        });
+    }
+    uvs.apply(&mut builder);
+
+    shading.build(builder).map_err(FormatError::Core)
+}
+
+fn read_vertices<'a, I>(
+    tokens: &mut I,
+    element: &Element,
+    builder: &mut MeshBuilder,
+    flip_v: bool,
+) -> Result<(), FormatError>
+where
+    I: Iterator<Item = &'a str>,
+{
+    let plan = FieldPlan::plan_for_vertices(element, "PLY (ascii)")?;
+    let has_uvs = plan
+        .iter()
+        .any(|(field, _)| matches!(field, FieldPlan::Uv(_)));
+    for _ in 0..element.count {
+        let mut fields = VertexFields::default();
+        for (route, ty) in &plan {
+            if matches!(route, FieldPlan::List(_)) {
+                let count = read_face_index(tokens)?;
+                for _ in 0..count {
+                    let tok = tokens.next().ok_or(FormatError::Truncated {
+                        format: "PLY (ascii)",
+                        expected: element.count,
+                        got: 0,
+                    })?;
+                    apply_scalar(tok, *ty, FieldPlan::Skip, &mut fields)?;
+                }
+                continue;
+            }
+            let tok = tokens.next().ok_or(FormatError::Truncated {
+                format: "PLY (ascii)",
+                expected: element.count,
+                got: 0,
+            })?;
+            apply_scalar(tok, *ty, *route, &mut fields)?;
+        }
+        let mut v = Vertex::at(Vec3::from_array(fields.position));
+        if has_nonzero_normal(&fields.normal) {
+            v = v.with_normal(Vec3::from_array(fields.normal));
+        }
+        if fields.color != [255, 255, 255, 255] {
+            v = v.with_color(fields.color);
+        }
+        if has_uvs {
+            builder.mark_texture_coordinates();
+            let uv = if flip_v {
+                crate::texture_coordinates::flip_vertical(fields.uv)
+            } else {
+                fields.uv
+            };
+            v = v.with_uv(uv);
+        }
+        builder.push_vertex(v);
+    }
+    Ok(())
+}
+
+/// Mutable scratch space for routing property values into one vertex row.
+#[derive(Clone, Debug)]
+struct VertexFields {
+    position: [f32; 3],
+    normal: [f32; 3],
+    color: [u8; 4],
+    uv: [f32; 2],
+}
+
+impl Default for VertexFields {
+    fn default() -> Self {
+        Self {
+            position: [0.0; 3],
+            normal: [0.0; 3],
+            // Default color is opaque white — matches Vertex's default.
+            color: [255, 255, 255, 255],
+            uv: [0.0, 0.0],
+        }
+    }
+}
+
+/// True if the normal field carries any non-zero component. We use this instead
+/// of `!= [0.0; 3]` to avoid a strict float-array comparison (`clippy::float_cmp`
+/// in array form) while preserving "no normal declared" detection.
+fn has_nonzero_normal(normal: &[f32; 3]) -> bool {
+    normal.iter().any(|&n| n != 0.0)
+}
+
+fn read_faces<'a, I>(
+    tokens: &mut I,
+    element: &Element,
+    builder: &mut MeshBuilder,
+    uvs: &mut FaceUvs,
+) -> Result<(), FormatError>
+where
+    I: Iterator<Item = &'a str>,
+{
+    // Find the vertex-indices list property (by name). Faces may carry multiple
+    // list properties (real-world case: some intraoral scanners emit
+    // `property list uchar int vertex_indices` plus `property list uchar float
+    // texcoord`). We must consume every declared list per row or the next row's
+    // tokens get misaligned.
+    let Some(indices_prop_idx) = element
+        .properties
+        .iter()
+        .position(|p| matches!(p, Property::List { name, .. } if name == "vertex_indices"))
+    else {
+        // No vertex-indices list on this element — skip its tokens entirely.
+        return skip_element(tokens, element, "face");
+    };
+
+    // Scratch space reused per row: the corners of this face and, when the row
+    // carries a `texcoord` list, their coordinates.
+    let mut corners: Vec<u32> = Vec::with_capacity(4);
+    let mut coords: Vec<f32> = Vec::with_capacity(8);
+    let texcoord_prop_idx = element
+        .properties
+        .iter()
+        .position(|p| matches!(p, Property::List { name, .. } if name == "texcoord"));
+
+    for _ in 0..element.count {
+        // Walk every declared property in order, consuming tokens. The
+        // vertex_indices list becomes the face; a `texcoord` list becomes the
+        // corners' texture coordinates; every other list is consumed and
+        // discarded.
+        corners.clear();
+        coords.clear();
+        for (i, prop) in element.properties.iter().enumerate() {
+            let Property::List { elem_ty, .. } = prop else {
+                // Scalar properties on faces are rare but legal; skip one token.
+                if tokens.next().is_none() {
+                    return Err(FormatError::Truncated {
+                        format: "PLY (ascii)",
+                        expected: element.count,
+                        got: 0,
+                    });
+                }
+                continue;
+            };
+            // Count prefix.
+            let count_tok = tokens.next().ok_or(FormatError::Truncated {
+                format: "PLY (ascii)",
+                expected: element.count,
+                got: 0,
+            })?;
+            let n = parse_index(count_tok)?;
+            if i == indices_prop_idx {
+                // The geometry list. Read every corner, then fan-triangulate:
+                // the corners themselves are needed for the texture
+                // coordinates below, whatever the polygon's size.
+                for _ in 0..n {
+                    corners.push(read_face_index(tokens)?);
+                }
+                if n >= 3 {
+                    let f0 = corners[0];
+                    for pair in corners[1..].windows(2) {
+                        builder.push_triangle(f0, pair[0], pair[1]);
+                    }
+                }
+            } else if Some(i) == texcoord_prop_idx {
+                for _ in 0..n {
+                    coords.push(read_face_float(tokens, *elem_ty)?);
+                }
+            } else {
+                // Non-geometry list (confidence, …) — discard n values.
+                let _ = elem_ty;
+                for _ in 0..n {
+                    if tokens.next().is_none() {
+                        return Err(FormatError::Truncated {
+                            format: "PLY (ascii)",
+                            expected: element.count,
+                            got: 0,
+                        });
+                    }
+                }
+            }
+        }
+        // The coordinate list is `u v` per corner, in the same order as the
+        // corner indices, and may have been declared before or after them.
+        if texcoord_prop_idx.is_some() {
+            uvs.face(&corners, &coords)?;
+        }
+    }
+    Ok(())
+}
+
+/// Read one texture-coordinate token.
+fn read_face_float<'a, I>(tokens: &mut I, ty: ScalarType) -> Result<f32, FormatError>
+where
+    I: Iterator<Item = &'a str>,
+{
+    let tok = tokens.next().ok_or(FormatError::Truncated {
+        format: "PLY (ascii)",
+        expected: 0,
+        got: 0,
+    })?;
+    if !matches!(ty, ScalarType::Float | ScalarType::Double) && tok.parse::<i64>().is_err() {
+        return Err(FormatError::Malformed {
+            format: "PLY (ascii)",
+            offset: 0,
+            reason: format!("texture coordinate {tok:?} is not an integer"),
+        });
+    }
+    tok.parse::<f32>()
+        .map_err(|_| FormatError::Malformed {
+            format: "PLY (ascii)",
+            offset: 0,
+            reason: format!("texture coordinate {tok:?} is not a number"),
+        })
+        .and_then(|value| crate::finite_coordinate(value, "PLY (ascii)", 0))
+}
+
+/// Read one vertex-index token.
+fn read_face_index<'a, I>(tokens: &mut I) -> Result<u32, FormatError>
+where
+    I: Iterator<Item = &'a str>,
+{
+    let tok = tokens.next().ok_or(FormatError::Truncated {
+        format: "PLY (ascii)",
+        expected: 0,
+        got: 0,
+    })?;
+    parse_index(tok)
+}
+
+fn skip_element<'a, I>(tokens: &mut I, element: &Element, name: &str) -> Result<(), FormatError>
+where
+    I: Iterator<Item = &'a str>,
+{
+    // We can't know how many tokens an unknown element consumes without its
+    // property layout. For scalar-only elements, it's count * properties.len();
+    // for list elements, it's variable. We support scalar-only skipping; if a
+    // list appears, we error (rare in practice for non-vertex/face elements).
+    if element
+        .properties
+        .iter()
+        .any(|p| matches!(p, Property::List { .. }))
+    {
+        return Err(FormatError::Malformed {
+            format: "PLY (ascii)",
+            offset: 0,
+            reason: format!("cannot skip unknown list element {name:?}"),
+        });
+    }
+    let tokens_to_skip = element
+        .count
+        .checked_mul(element.properties.len())
+        .ok_or_else(|| FormatError::Malformed {
+            format: "PLY (ascii)",
+            offset: 0,
+            reason: format!("unknown scalar element {name:?} declares too many values"),
+        })?;
+    for _ in 0..tokens_to_skip {
+        if tokens.next().is_none() {
+            return Err(FormatError::Truncated {
+                format: "PLY (ascii)",
+                expected: tokens_to_skip,
+                got: 0,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Route one parsed property value into the right field of a `VertexFields`.
+///
+/// # Errors
+/// Returns [`FormatError::Malformed`] if `tok` is not a valid scalar for `ty`.
+fn apply_scalar(
+    tok: &str,
+    ty: ScalarType,
+    route: FieldPlan,
+    fields: &mut VertexFields,
+) -> Result<(), FormatError> {
+    match ty {
+        ScalarType::Float | ScalarType::Double => {
+            let v: f32 = tok.parse().map_err(|_| FormatError::Malformed {
+                format: "PLY (ascii)",
+                offset: 0,
+                reason: format!("bad float: {tok:?}"),
+            })?;
+            let v = crate::finite_coordinate(v, "PLY (ascii)", 0)?;
+            apply_float(v, route, fields);
+        }
+        ScalarType::Uchar
+        | ScalarType::Char
+        | ScalarType::Ushort
+        | ScalarType::Short
+        | ScalarType::Uint
+        | ScalarType::Int => {
+            let v: i64 = tok.parse().map_err(|_| FormatError::Malformed {
+                format: "PLY (ascii)",
+                offset: 0,
+                reason: format!("bad integer: {tok:?}"),
+            })?;
+            if let FieldPlan::Color(i) = route {
+                if i < 4 {
+                    fields.color[i] = v.clamp(0, 255) as u8;
+                }
+            } else {
+                // Geometry uses f32 internally; the integer parse above keeps
+                // fractional or nonnumeric values from masquerading as integers.
+                let value = tok.parse::<f32>().map_err(|_| FormatError::Malformed {
+                    format: "PLY (ascii)",
+                    offset: 0,
+                    reason: format!("bad integer: {tok:?}"),
+                })?;
+                apply_float(value, route, fields);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn apply_float(value: f32, route: FieldPlan, fields: &mut VertexFields) {
+    match route {
+        FieldPlan::Position(i) if i < 3 => fields.position[i] = value,
+        FieldPlan::Normal(i) if i < 3 => fields.normal[i] = value,
+        FieldPlan::Uv(i) if i < 2 => fields.uv[i] = value,
+        _ => {}
+    }
+}
+
+fn parse_index(tok: &str) -> Result<u32, FormatError> {
+    tok.parse::<u32>().map_err(|_| FormatError::Malformed {
+        format: "PLY (ascii)",
+        offset: 0,
+        reason: format!("bad index: {tok:?}"),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ply::header::{self, Format};
+
+    fn parse_full(text: &str) -> ParsedHeader<'_> {
+        let parsed = header::parse(text.as_bytes()).expect("header parses");
+        assert_eq!(parsed.format, Format::Ascii, "test fixture must be ASCII");
+        parsed
+    }
+
+    const COLORED_TRIANGLE: &str = "ply
+format ascii 1.0
+element vertex 3
+property float x
+property float y
+property float z
+property uchar red
+property uchar green
+property uchar blue
+element face 1
+property list uchar int vertex_indices
+end_header
+0 0 0 255 0 0
+1 0 0 0 255 0
+0 1 0 0 0 255
+3 0 1 2\n";
+    #[test]
+    fn a_face_element_before_the_vertices_keeps_its_coordinates() {
+        // Legal, if unusual: the corner indices arrive before the vertices they
+        // name. The coordinate table is sized from real vertices, so these
+        // corners have to wait rather than be dropped.
+        let text = "ply\nformat ascii 1.0\n\
+             element face 1\n\
+             property list uchar int vertex_indices\n\
+             property list uchar float texcoord\n\
+             element vertex 3\n\
+             property float x\nproperty float y\nproperty float z\n\
+             end_header\n\
+             3 0 1 2 6 0 1 1 1 0 0\n\
+             0 0 0\n1 0 0\n0 1 0\n";
+        let mesh = read_shaded(
+            &header::parse(text.as_bytes()).expect("header"),
+            crate::MeshShading::Reconstructed,
+        )
+        .expect("read");
+
+        assert!(mesh.has_uvs(), "the corners' coordinates were dropped");
+        assert_eq!(mesh.vertices()[0].uv, [0.0, 0.0]);
+        assert_eq!(mesh.vertices()[2].uv, [0.0, 1.0]);
+    }
+
+    #[test]
+    fn reads_colored_triangle() {
+        let parsed = parse_full(COLORED_TRIANGLE);
+        let mesh = read(&parsed).expect("valid");
+        assert_eq!(mesh.vertices().len(), 3);
+        assert_eq!(mesh.triangle_count(), 1);
+        assert!(mesh.has_vertex_colors());
+        assert_eq!(mesh.vertices()[0].color, [255, 0, 0, 255]);
+        assert_eq!(mesh.vertices()[1].color, [0, 255, 0, 255]);
+        assert_eq!(mesh.vertices()[2].color, [0, 0, 255, 255]);
+    }
+
+    #[test]
+    fn fan_triangulates_quads() {
+        let ply = "ply
+format ascii 1.0
+element vertex 4
+property float x
+property float y
+property float z
+element face 1
+property list uchar int vertex_indices
+end_header
+0 0 0
+1 0 0
+1 1 0
+0 1 0
+4 0 1 2 3\n";
+        let parsed = parse_full(ply);
+        let mesh = read(&parsed).expect("valid");
+        assert_eq!(mesh.triangle_count(), 2);
+    }
+
+    #[test]
+    fn skips_unknown_vertex_properties() {
+        // `confidence` is a non-standard property some scanners add.
+        let ply = "ply
+format ascii 1.0
+element vertex 1
+property float x
+property float y
+property float z
+property float confidence
+end_header
+1.0 2.0 3.0 0.9\n";
+        let parsed = parse_full(ply);
+        let mesh = read(&parsed).expect("valid");
+        assert_eq!(mesh.vertices().len(), 1);
+        assert_eq!(mesh.vertices()[0].position, [1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn reads_normals_when_present() {
+        let ply = "ply
+format ascii 1.0
+element vertex 1
+property float x
+property float y
+property float z
+property float nx
+property float ny
+property float nz
+end_header
+0 0 0 0 0 1\n";
+        let parsed = parse_full(ply);
+        let mesh = read(&parsed).expect("valid");
+        assert_eq!(mesh.vertices()[0].normal, [0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn vertices_without_colors_default_white() {
+        let ply = "ply
+format ascii 1.0
+element vertex 1
+property float x
+property float y
+property float z
+end_header
+0 0 0\n";
+        let parsed = parse_full(ply);
+        let mesh = read(&parsed).expect("valid");
+        assert!(!mesh.has_vertex_colors());
+        assert_eq!(mesh.vertices()[0].color, [255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn face_with_texcoord_list_parses() {
+        // Real textured-scan layout: each face has two list properties -
+        // vertex_indices (the geometry) and texcoord (UV pairs). We must
+        // consume the texcoord list so the next face row parses correctly,
+        // instead of reading UV floats as vertex indices.
+        let ply = "ply
+format ascii 1.0
+element vertex 3
+property float x
+property float y
+property float z
+element face 2
+property list uchar int vertex_indices
+property list uchar float texcoord
+end_header
+0 0 0
+1 0 0
+0 1 0
+3 0 1 2 6 0.0 0.0 1.0 0.0 0.0 1.0
+3 0 1 2 6 0.0 0.0 1.0 0.0 0.0 1.0\n";
+        let parsed = parse_full(ply);
+        let mesh = read(&parsed).expect("multi-list face must parse");
+        assert_eq!(mesh.triangle_count(), 2);
+    }
+
+    #[test]
+    fn position_route_works() {
+        let mut fields = VertexFields::default();
+        apply_scalar(
+            "1.0",
+            ScalarType::Float,
+            FieldPlan::Position(0),
+            &mut fields,
+        )
+        .unwrap();
+        assert_eq!(fields.position[0], 1.0);
+    }
+
+    #[test]
+    fn color_clamps_out_of_range() {
+        let mut fields = VertexFields {
+            color: [0; 4],
+            ..VertexFields::default()
+        };
+        apply_scalar("300", ScalarType::Uchar, FieldPlan::Color(0), &mut fields).unwrap();
+        assert_eq!(fields.color[0], 255);
+    }
+
+    #[test]
+    fn uv_route_populates_uv_field() {
+        let mut fields = VertexFields::default();
+        apply_scalar("0.75", ScalarType::Float, FieldPlan::Uv(0), &mut fields).unwrap();
+        apply_scalar("0.25", ScalarType::Float, FieldPlan::Uv(1), &mut fields).unwrap();
+        assert_eq!(fields.uv, [0.75, 0.25]);
+    }
+
+    #[test]
+    fn ply_with_st_vertex_properties_reads_uvs() {
+        // A PLY with `s` and `t` float vertex properties.
+        let ply = b"ply
+format ascii 1.0
+element vertex 3
+property float x
+property float y
+property float z
+property float s
+property float t
+element face 1
+property list uchar uint vertex_indices
+end_header
+0 0 0 0.0 0.0
+1 0 0 1.0 0.0
+0 1 0 0.0 1.0
+3 0 1 2
+";
+        let mesh = crate::ply::read(ply).expect("PLY should parse");
+        assert!(mesh.has_uvs());
+        let vs = mesh.vertices();
+        assert_eq!(vs[0].uv, [0.0, 1.0]);
+        assert_eq!(vs[1].uv, [1.0, 1.0]);
+        assert_eq!(vs[2].uv, [0.0, 0.0]);
+    }
+
+    /// 68 bytes that, without the guard, ask for 660 GB of vertices.
+    ///
+    /// With an empty row plan the reader consumes no input, so the truncation
+    /// backstop -- the only thing between a declared count and the allocator --
+    /// is never reached. An allocation failure aborts the process; inside the
+    /// shell surrogate that takes every other thumbnail in the folder with it.
+    #[test]
+    fn a_vertex_element_with_no_properties_is_refused_not_allocated() {
+        for header in [
+            b"ply\nformat ascii 1.0\nelement vertex 18446744073709551615\nend_header\n".to_vec(),
+            b"ply\nformat binary_little_endian 1.0\nelement vertex 18446744073709551615\nend_header\n"
+                .to_vec(),
+        ] {
+            let started = std::time::Instant::now();
+            let error = crate::ply::read(&header).expect_err("a row that reads nothing is malformed");
+            assert!(
+                started.elapsed() < std::time::Duration::from_millis(250),
+                "the count must be refused, never walked: {error}"
+            );
+            assert!(
+                format!("{error}").contains("no scalar property"),
+                "unexpected refusal: {error}"
+            );
+        }
+    }
+
+    /// The guard must not reject a file that simply has no vertices.
+    #[test]
+    fn an_empty_vertex_element_still_reads() {
+        let ply = b"ply\nformat ascii 1.0\nelement vertex 0\nend_header\n";
+        let mesh = crate::ply::read(ply).expect("an empty scan is empty, not malformed");
+        assert_eq!(mesh.vertices().len(), 0);
+    }
+
+    #[test]
+    fn an_unknown_scalar_element_with_an_overflowing_token_count_is_malformed() {
+        let ply = b"ply\nformat ascii 1.0\nelement edge 18446744073709551615\nproperty float weight\nproperty float confidence\nend_header\n";
+
+        let error = crate::ply::read(ply)
+            .expect_err("an unknown element count must be rejected before it can overflow");
+
+        assert!(
+            format!("{error}").contains("too many values"),
+            "unexpected refusal: {error}"
+        );
+    }
+}

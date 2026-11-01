@@ -1,0 +1,60 @@
+version: 2
+updates:
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels: ["deps", "cargo"]
+    commit-message:
+      prefix: "build(deps)"
+    # Security updates always arrive as separate PRs; these groups cover
+    # version updates only (routine minor/patch flow apart from major bumps).
+    groups:
+      cargo-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+      cargo-major:
+        patterns:
+          - "*"
+        update-types:
+          - "major"
+    ignore:
+      - dependency-name: "image"
+        # Exclude automatic upgrades to 0.25.10 and newer until decoder-graph changes have
+        # malformed-input, golden-thumbnail, and allocation-bound coverage.
+        versions: [">=0.25.10"]
+
+  # The excluded fuzz crate has its own lockfile.
+  - package-ecosystem: "cargo"
+    directory: "/fuzz"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels: ["deps", "cargo"]
+    commit-message:
+      prefix: "build(deps)"
+    groups:
+      cargo-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+      cargo-major:
+        patterns:
+          - "*"
+        update-types:
+          - "major"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 1
+    labels: ["deps", "ci"]
+    commit-message:
+      prefix: "ci(deps)"

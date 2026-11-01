@@ -1,0 +1,156 @@
+use super::{
+    mesh_vertex_position, triangle_normal, write_f32_le, MeshWriteFormat, MeshWriteOptions,
+    MeshWriteReport, MeshWriteWarning,
+};
+use crate::error::FormatError;
+use occluview_core::{Mesh, MeshKind};
+use std::io::Write;
+
+pub(super) fn write_mesh<W: Write>(
+    writer: &mut W,
+    mesh: &Mesh,
+    _options: MeshWriteOptions,
+    report: &mut MeshWriteReport,
+) -> Result<(), FormatError> {
+    // Defence in depth: the public entry points reject a point cloud before
+    // the destination is touched, so a report is never produced for this case.
+    // Reporting a warning here would describe a conversion that did not happen.
+    if mesh.kind() != MeshKind::TriangleMesh {
+        return Err(FormatError::Malformed {
+            format: MeshWriteFormat::StlBinary.label(),
+            offset: 0,
+            reason: "STL export requires a triangle mesh; point clouds are not supported"
+                .to_string(),
+        });
+    }
+
+    if mesh.has_vertex_colors() {
+        report.warn(MeshWriteWarning::VertexColorsNotWritten);
+    }
+    if mesh.has_uvs() {
+        report.warn(MeshWriteWarning::UvsNotWritten);
+    }
+    if mesh.texture().is_some() {
+        report.warn(MeshWriteWarning::TextureImageNotWritten);
+    }
+
+    let triangle_count =
+        u32::try_from(mesh.triangle_count()).map_err(|_| FormatError::Malformed {
+            format: MeshWriteFormat::StlBinary.label(),
+            offset: 0,
+            reason: "triangle count exceeds STL limit".to_string(),
+        })?;
+
+    let mut header = [0_u8; 80];
+    let label = b"OccluView binary STL export";
+    header[..label.len()].copy_from_slice(label);
+    writer.write_all(&header)?;
+    writer.write_all(&triangle_count.to_le_bytes())?;
+
+    for triangle in mesh.indices().as_chunks::<3>().0 {
+        let a = mesh_vertex_position(mesh, triangle[0])?;
+        let b = mesh_vertex_position(mesh, triangle[1])?;
+        let c = mesh_vertex_position(mesh, triangle[2])?;
+        let normal = triangle_normal(a, b, c);
+        for value in normal.to_array() {
+            write_f32_le(writer, value)?;
+        }
+        for value in a.to_array() {
+            write_f32_le(writer, value)?;
+        }
+        for value in b.to_array() {
+            write_f32_le(writer, value)?;
+        }
+        for value in c.to_array() {
+            write_f32_le(writer, value)?;
+        }
+        writer.write_all(&[0, 0])?;
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn writes_unit_normals_at_small_and_large_coordinate_scales() {
+        for scale in [1.0e-6, 1.0e12, f32::MAX] {
+            let mesh = Mesh::new(
+                None,
+                vec![
+                    Vertex::at(glam::Vec3::ZERO),
+                    Vertex::at(glam::Vec3::Y * scale),
+                    Vertex::at(glam::Vec3::Z * scale),
+                ],
+                vec![0, 1, 2],
+            )
+            .expect("a finite triangle");
+            let mut bytes = Vec::new();
+            let mut report = MeshWriteReport::new(MeshWriteFormat::StlBinary, &mesh);
+            write_mesh(&mut bytes, &mesh, MeshWriteOptions::default(), &mut report)
+                .expect("write a finite triangle");
+            let normal: Vec<f32> = bytes[84..96]
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .copied()
+                .map(f32::from_le_bytes)
+                .collect();
+            assert_eq!(normal, [1.0, 0.0, 0.0], "scale {scale}");
+        }
+    }
+    use occluview_core::{Mesh, Vertex};
+
+    #[test]
+    fn rejects_point_clouds() {
+        let mesh = Mesh::point_cloud(
+            Some("cloud".to_string()),
+            vec![
+                Vertex::at(glam::Vec3::new(0.0, 0.0, 0.0)),
+                Vertex::at(glam::Vec3::new(1.0, 0.0, 0.0)),
+                Vertex::at(glam::Vec3::new(0.0, 1.0, 0.0)),
+            ],
+        );
+        let mut bytes = Vec::new();
+        let mut report = MeshWriteReport {
+            format: MeshWriteFormat::StlBinary,
+            vertices: 3,
+            triangles: 0,
+            warnings: Vec::new(),
+        };
+
+        let error = write_mesh(&mut bytes, &mesh, MeshWriteOptions::default(), &mut report)
+            .expect_err("point cloud should be rejected");
+        assert!(error.to_string().contains("triangle mesh"));
+        assert!(
+            bytes.is_empty(),
+            "a rejected export must not write a partial file"
+        );
+        assert!(
+            report.warnings.is_empty(),
+            "a rejected export must not claim a lossy conversion it never performed"
+        );
+    }
+
+    #[test]
+    fn writes_expected_binary_length_for_one_triangle() {
+        let mesh = occluview_core::test_support::simple_triangle_mesh(Some("sample"))
+            .expect("sample mesh");
+        let mut bytes = Vec::new();
+        let report = crate::write::write_mesh(
+            &mut bytes,
+            &mesh,
+            MeshWriteFormat::StlBinary,
+            MeshWriteOptions::default(),
+        )
+        .expect("write stl");
+
+        assert_eq!(report.format, MeshWriteFormat::StlBinary);
+        assert_eq!(report.vertices, 3);
+        assert_eq!(report.triangles, 1);
+        assert_eq!(bytes.len(), 80 + 4 + 50);
+        assert_eq!(&bytes[80..84], &1u32.to_le_bytes());
+    }
+}

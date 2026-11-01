@@ -1,0 +1,547 @@
+//! Signed nearest-surface deviation values and display statistics.
+//!
+//! Values are distances from moving vertices to the nearest fixed surface, not
+//! material correspondences. Unreachable, excluded, degenerate, and non-finite
+//! vertices remain outside the statistics. [`crate::observability()`]
+//! quantifies directions that nearest-surface distance cannot measure well.
+
+use glam::DVec3;
+use occluview_geometry::surface::{QueryOutcome, SurfaceQueryScratch};
+use rayon::prelude::*;
+
+use crate::sample::{surface_query_control, vertex_at};
+use crate::{CancelFlag, Rigid, Soup, SurfaceHit, SurfaceIndex};
+
+/// Which way the two surfaces face each other.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Orientation {
+    /// Accept a correspondence only where the surfaces face the same way.
+    #[default]
+    Match,
+    /// Accept only where they face opposite ways — the escape hatch for a
+    /// fixed mesh whose winding is inverted.
+    Inverted,
+    /// Accept either.
+    Ignored,
+}
+
+/// Colour for a vertex whose deviation could not be measured.
+pub const NO_DATA_COLOR: [u8; 4] = [128, 128, 128, 255];
+
+/// Below this normal length a hit carries no usable direction, so the sign of
+/// the deviation would be arbitrary.
+const MIN_NORMAL_LENGTH: f64 = 1e-9;
+
+/// A vertex whose nearest fixed point is on the fixed scan's border is
+/// measured only when its offset lies within 15 degrees of the surface normal
+/// there (cos 15° ≈ 0.966), i.e. it stands over the rim rather than beside it.
+/// Within that cone the rim distance overstates the normal distance by at most
+/// 3.5 %; outside it the reading is mostly how far the scan runs past the
+/// border.
+const MIN_BORDER_ALIGNMENT: f64 = 0.966;
+
+/// Why a vertex does or does not carry a measurement.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Validity {
+    /// The value is a real measurement.
+    Measured,
+    /// No fixed surface within the influence radius.
+    OutOfReach,
+    /// The nearest fixed surface is its open border (or the rim of a region
+    /// excluded from it) and the vertex lies off to the side of it: its
+    /// counterpart is beyond what the fixed scan covers, and the distance to
+    /// the rim is not a deviation.
+    BeyondBorder,
+    /// The fixed surface there has no usable normal.
+    DegenerateNormal,
+    /// The moving vertex or its measured distance is not a finite f32 value.
+    NonFinite,
+    /// The operator painted this vertex out of the comparison.
+    Excluded,
+}
+
+/// What to measure and how far to look.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DeviationSettings {
+    /// Farthest a moving vertex may look for fixed surface, in millimetres.
+    pub influence_radius_mm: f64,
+    /// How the two surfaces are taken to face each other.
+    pub orientation: Orientation,
+}
+
+impl Default for DeviationSettings {
+    fn default() -> Self {
+        Self {
+            influence_radius_mm: 2.0,
+            orientation: Orientation::Match,
+        }
+    }
+}
+
+/// One signed value and one validity per moving vertex, in vertex order.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DeviationMap {
+    /// Signed distance in millimetres. Positive means the moving surface lies
+    /// outside the fixed one along its outward normal.
+    pub signed_mm: Vec<f32>,
+    /// Whether each entry is a measurement.
+    pub validity: Vec<Validity>,
+}
+
+/// Why the vertices that carry no measurement do not.
+///
+/// They all paint the same grey, and that grey has three different meanings
+/// behind it. Counted apart because the operator's next move differs for each:
+/// the first is what they asked for, the second is anatomy — a bridge on one
+/// arch with nothing opposite it has nothing to measure against, and no reach
+/// will change that — and the third is a defect in the file itself.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Unmeasured {
+    /// Painted out of the comparison by the operator.
+    pub excluded: u32,
+    /// No fixed surface opposite: none within the influence radius, or only
+    /// the fixed scan's open border (see [`Validity::BeyondBorder`]).
+    pub out_of_reach: u32,
+    /// The vertex, or the surface under it, is not usable data.
+    pub unusable: u32,
+}
+
+impl Unmeasured {
+    /// Every vertex that carries no measurement.
+    #[must_use]
+    pub const fn total(self) -> u32 {
+        self.excluded
+            .saturating_add(self.out_of_reach)
+            .saturating_add(self.unusable)
+    }
+}
+
+/// Summary over the measured vertices only.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DeviationStats {
+    /// Vertices that carry a measurement.
+    pub measured: u32,
+    /// Vertices that do not, and why.
+    ///
+    /// Counted by cause: a single total cannot tell "there is no tooth opposite
+    /// this one" from "this file has broken vertices", which is the difference
+    /// between a normal result and a bad scan.
+    pub unmeasured: Unmeasured,
+    /// The numbers themselves — **absent** when there was not enough measured
+    /// surface to characterise, which is a different answer from zero.
+    ///
+    /// This is an `Option` on purpose. A struct of zeroes returned for a
+    /// measurement that never happened reads, in the one field a clinician
+    /// looks at, as a perfect fit. Making the numbers unrepresentable in that
+    /// case keeps a reader from printing one by accident.
+    pub summary: Option<DeviationSummary>,
+}
+
+/// Fewest measured vertices that can characterise a surface.
+///
+/// A p95 taken over a handful of vertices is arithmetically true and clinically
+/// meaningless. The same floor idea guards the ICP correspondence count and the
+/// observability estimate; this is the deviation map's.
+pub const MIN_MEASURED: u32 = 32;
+
+/// What a measurement found, once there was enough of it to say anything.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DeviationSummary {
+    /// Share of measured vertices within the tolerance band, 0 to 1.
+    pub within_tolerance: f64,
+    /// Mean absolute deviation, in millimetres.
+    pub mean_abs: f64,
+    /// Root-mean-square deviation, in millimetres.
+    pub rms: f64,
+    /// Median signed deviation, in millimetres.
+    pub median: f64,
+    /// 95th-percentile absolute deviation, in millimetres.
+    pub p95: f64,
+    /// Largest absolute deviation, in millimetres — the directed Hausdorff
+    /// distance from the measured moving vertices to the fixed surface.
+    pub max_abs: f64,
+}
+
+/// Which colour scheme the map uses.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RampMode {
+    /// Green at zero, red at the display scale: absolute deviation, the primary
+    /// Align Meshes reading.
+    #[default]
+    Magnitude,
+    /// Blue below, green at zero, red above: signed deviation for diagnostics.
+    Signed,
+}
+
+/// How to turn measurements into colour.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RampSettings {
+    /// Absolute deviation at the cool end of the displayed ramp, in mm.
+    pub min_mm: f64,
+    /// Deviation mapped to the ramp ends, in millimetres.
+    pub scale_mm: f64,
+    /// Tolerance band, in millimetres. It is used by statistics only; it must
+    /// not flatten the displayed deviation ramp.
+    pub tolerance_mm: f64,
+    /// Steps per side for a banded ramp; `None` is continuous. A stepped map
+    /// shows where a boundary falls far more sharply than a smooth one.
+    pub bands: Option<u32>,
+    /// Which colour scheme to paint with.
+    pub mode: RampMode,
+}
+
+/// The display scale that actually shows this measurement's structure.
+///
+/// A fixed scale is a guess about data not yet measured: too wide and
+/// every result is one flat colour at the ramp's centre, too narrow and
+/// everything saturates. Derived from the 95th percentile so a handful of
+/// outliers cannot stretch the range and flatten everything else, rounded up to
+/// a readable step, and floored so a perfect fit still gets a sane bar.
+#[must_use]
+pub fn suggested_scale_mm(stats: &DeviationStats) -> f64 {
+    /// Below this a scale stops meaning anything to an operator.
+    const FLOOR_MM: f64 = 0.01;
+    /// Readable steps, in millimetres. The low end is fine enough for the
+    /// clinical 0-0.1 mm window; the range runs well past a clinical tolerance
+    /// on purpose: a scan pair straight off a two-point fit really is
+    /// millimetres apart, and capping the suggestion at a clinical number
+    /// leaves every vertex pinned to an end stop — a saturated mosaic that says
+    /// nothing about where the two actually differ.
+    const STEPS: [f64; 17] = [
+        0.01, 0.02, 0.03, 0.05, 0.075, 0.1, 0.15, 0.2, 0.3, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0,
+        10.0,
+    ];
+
+    let Some(summary) = stats.summary.filter(|summary| summary.p95.is_finite()) else {
+        return FLOOR_MM;
+    };
+    let wanted = summary.p95.max(FLOOR_MM);
+    STEPS
+        .into_iter()
+        .find(|step| *step >= wanted)
+        .unwrap_or_else(|| wanted.ceil())
+}
+
+impl Default for RampSettings {
+    fn default() -> Self {
+        Self {
+            min_mm: 0.0,
+            scale_mm: 0.10,
+            tolerance_mm: 0.01,
+            bands: None,
+            mode: RampMode::Magnitude,
+        }
+    }
+}
+
+/// Absolute deviation uses the original blue, cyan, green, yellow and red
+/// scale. Signed deviation uses the same palette around its zero midpoint.
+const MAGNITUDE_RAMP: [(f64, [u8; 3]); 9] = [
+    (0.0, [49, 111, 216]),
+    (0.12, [70, 159, 223]),
+    (0.25, [88, 204, 229]),
+    (0.37, [97, 220, 177]),
+    (0.5, [109, 226, 108]),
+    (0.62, [188, 229, 99]),
+    (0.75, [233, 205, 91]),
+    (0.87, [226, 139, 70]),
+    (1.0, [222, 77, 57]),
+];
+
+/// Measure every moving vertex against the fixed surface under `pose`.
+#[must_use]
+pub fn deviation(
+    moving: Soup<'_>,
+    fixed: &SurfaceIndex,
+    pose: Rigid,
+    settings: &DeviationSettings,
+    cancel: &CancelFlag,
+) -> DeviationMap {
+    let count = moving.vertex_count();
+    let query_control = surface_query_control(cancel);
+    let measured: Vec<(f32, Validity)> = (0..count)
+        .into_par_iter()
+        .map_init(
+            || SurfaceQueryScratch::new(&query_control).ok(),
+            |scratch, vertex| {
+                // Checked per vertex, not per block: a relaxed atomic load costs a
+                // few nanoseconds against a surface query that costs hundreds, and
+                // a block stride would leave a small mesh finishing a cancelled
+                // job.
+                if cancel.is_cancelled() {
+                    return (0.0, Validity::OutOfReach);
+                }
+                measure_vertex(moving, fixed, pose, settings, vertex, scratch.as_mut())
+            },
+        )
+        .collect();
+
+    let mut signed_mm = Vec::with_capacity(count);
+    let mut validity = Vec::with_capacity(count);
+    for (value, state) in measured {
+        signed_mm.push(value);
+        validity.push(state);
+    }
+    DeviationMap {
+        signed_mm,
+        validity,
+    }
+}
+
+/// One vertex's measurement.
+#[allow(clippy::cast_possible_truncation)]
+fn measure_vertex(
+    moving: Soup<'_>,
+    fixed: &SurfaceIndex,
+    pose: Rigid,
+    settings: &DeviationSettings,
+    vertex: usize,
+    scratch: Option<&mut SurfaceQueryScratch>,
+) -> (f32, Validity) {
+    if moving.is_excluded(vertex) {
+        return (0.0, Validity::Excluded);
+    }
+    let Some(local) = vertex_at(moving.positions, vertex) else {
+        return (0.0, Validity::NonFinite);
+    };
+    let point = pose.apply(local);
+    let hit = match measured_hit_with_scratch(fixed, point, settings.influence_radius_mm, scratch) {
+        Ok(hit) => hit,
+        Err(validity) => return (0.0, validity),
+    };
+    let offset = point - hit.point;
+    let distance = offset.length();
+    // The side comes from the closest feature's pseudonormal: at an edge or a
+    // vertex the face normal of whichever triangle won the tie can point away
+    // from a point that is outside.
+    let signed = match settings.orientation {
+        Orientation::Ignored => distance,
+        Orientation::Match => signed_along(offset, hit.pseudo_normal, distance),
+        Orientation::Inverted => -signed_along(offset, hit.pseudo_normal, distance),
+    };
+    (signed as f32, Validity::Measured)
+}
+
+/// A surface correspondence usable by both the map and its sensitivity estimate.
+/// Reuses one worker's exact-query scratch and recomputed previous-facet upper
+/// bound across nearby samples when scratch is available.
+pub(crate) fn measured_hit_with_scratch(
+    fixed: &SurfaceIndex,
+    point: DVec3,
+    radius_mm: f64,
+    scratch: Option<&mut SurfaceQueryScratch>,
+) -> Result<SurfaceHit, Validity> {
+    let hit = match scratch {
+        Some(scratch) => match fixed.nearest_with_scratch(point, radius_mm, scratch) {
+            QueryOutcome::Complete(hit) => hit,
+            // A partial answer is never a correspondence. Map jobs are
+            // cancelled by the same control and will not publish this prefix.
+            QueryOutcome::Interrupted { .. } => None,
+        },
+        None => fixed.nearest(point, radius_mm),
+    }
+    .ok_or(Validity::OutOfReach)?;
+    if hit.normal.length() < MIN_NORMAL_LENGTH {
+        return Err(Validity::DegenerateNormal);
+    }
+    let offset = point - hit.point;
+    let distance = offset.length();
+    if !distance.is_finite() || distance > f64::from(f32::MAX) {
+        return Err(Validity::NonFinite);
+    }
+    // Where the fixed scan ends, the nearest point slides along its rim and the
+    // distance to it grows with how far this scan runs past the border, up to
+    // the whole influence radius. That is coverage, not deviation. Only a
+    // vertex standing over the rim itself reads a deviation there.
+    if hit.on_border && offset.dot(hit.pseudo_normal).abs() < distance * MIN_BORDER_ALIGNMENT {
+        return Err(Validity::BeyondBorder);
+    }
+    Ok(hit)
+}
+
+/// Distance carrying the sign of which side of the surface the point sits on.
+fn signed_along(offset: DVec3, normal: DVec3, distance: f64) -> f64 {
+    if offset.dot(normal) >= 0.0 {
+        distance
+    } else {
+        -distance
+    }
+}
+
+/// Summarize a map over its measured vertices only.
+///
+/// These are **directed** statistics: moving vertices against fixed surface,
+/// and nothing about fixed surface the moving scan never covered. They are also
+/// a lower bound on the true displacement — see the module documentation for
+/// the measured size of both effects. Report them alongside
+/// [`crate::observability()`] and the [`Unmeasured`] counts, never alone.
+#[must_use]
+pub fn deviation_stats(map: &DeviationMap, tolerance_mm: f64) -> DeviationStats {
+    let mut values: Vec<f64> = map
+        .signed_mm
+        .iter()
+        .zip(&map.validity)
+        .filter(|(value, state)| **state == Validity::Measured && value.is_finite())
+        .map(|(value, _)| f64::from(*value))
+        .collect();
+    let measured = u32::try_from(values.len()).unwrap_or(u32::MAX);
+    let unmeasured = map.validity.iter().enumerate().fold(
+        Unmeasured::default(),
+        |mut count, (vertex, state)| {
+            match state {
+                Validity::Measured => {
+                    if map
+                        .signed_mm
+                        .get(vertex)
+                        .is_some_and(|value| !value.is_finite())
+                    {
+                        count.unusable = count.unusable.saturating_add(1);
+                    }
+                }
+                Validity::Excluded => count.excluded = count.excluded.saturating_add(1),
+                Validity::OutOfReach | Validity::BeyondBorder => {
+                    count.out_of_reach = count.out_of_reach.saturating_add(1);
+                }
+                Validity::DegenerateNormal | Validity::NonFinite => {
+                    count.unusable = count.unusable.saturating_add(1);
+                }
+            }
+            count
+        },
+    );
+    if measured < MIN_MEASURED {
+        return DeviationStats {
+            measured,
+            unmeasured,
+            summary: None,
+        };
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    let count = values.len() as f64;
+    let inside = values
+        .iter()
+        .filter(|value| value.abs() <= tolerance_mm)
+        .count();
+    let mean_abs = values.iter().map(|value| value.abs()).sum::<f64>() / count;
+    let rms = (values.iter().map(|value| value * value).sum::<f64>() / count).sqrt();
+
+    let mut magnitudes: Vec<f64> = values.iter().map(|value| value.abs()).collect();
+    magnitudes.sort_by(f64::total_cmp);
+    values.sort_by(f64::total_cmp);
+    let middle = values.len() / 2;
+    let median = if values.len().is_multiple_of(2) {
+        values[middle - 1].midpoint(values[middle])
+    } else {
+        values[middle]
+    };
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss
+    )]
+    let p95_slot = (count * 0.95).ceil() as usize;
+
+    DeviationStats {
+        measured,
+        unmeasured,
+        summary: Some(DeviationSummary {
+            #[allow(clippy::cast_precision_loss)]
+            within_tolerance: inside as f64 / count,
+            mean_abs,
+            rms,
+            median,
+            p95: magnitudes
+                .get(p95_slot.clamp(1, magnitudes.len()) - 1)
+                .copied()
+                .unwrap_or(0.0),
+            max_abs: magnitudes.last().copied().unwrap_or(0.0),
+        }),
+    }
+}
+
+/// One RGBA colour per map entry, grey wherever there is no measurement.
+#[must_use]
+pub fn deviation_colors(map: &DeviationMap, ramp: &RampSettings) -> Vec<[u8; 4]> {
+    map.signed_mm
+        .iter()
+        .zip(&map.validity)
+        .map(|(value, state)| {
+            // A non-finite reading is not data: `deviation_stats` counts it as
+            // unusable, so the colours must grey it out too instead of letting
+            // NaN fall through `ramp_color` to the hot endpoint.
+            if *state == Validity::Measured && value.is_finite() {
+                ramp_color(f64::from(*value), ramp)
+            } else {
+                NO_DATA_COLOR
+            }
+        })
+        .collect()
+}
+
+/// The colour for one measured deviation.
+///
+/// The tolerance is not part of this mapping. It is a statistics
+/// threshold, while the working heatmap is a continuous absolute-distance
+/// scale from zero to the selected maximum.
+#[must_use]
+pub fn ramp_color(value_mm: f64, ramp: &RampSettings) -> [u8; 4] {
+    let magnitude = value_mm.abs();
+    let beyond = if !value_mm.is_finite() {
+        // A non-finite measured value should never be painted as a harmless
+        // origin colour if a caller bypasses the validity guard.
+        1.0
+    } else if ramp.scale_mm.is_finite() && ramp.scale_mm > 0.0 {
+        let low = ramp.min_mm.max(0.0).min(ramp.scale_mm);
+        ((magnitude - low) / (ramp.scale_mm - low).max(f64::EPSILON)).clamp(0.0, 1.0)
+    } else if magnitude == 0.0 {
+        // A zero display range is intentional: exact zero stays blue, while
+        // every non-zero deviation is beyond that range and reads hot red.
+        0.0
+    } else {
+        1.0
+    };
+    let mut position = beyond;
+    if let Some(bands) = ramp.bands.filter(|count| *count > 0) {
+        let quantum = f64::from(bands);
+        position = ((position * quantum).floor() / quantum).clamp(0.0, 1.0);
+    }
+    let position = match ramp.mode {
+        RampMode::Magnitude => position,
+        // Signed deviation spans the table with zero at its green centre.
+        RampMode::Signed => f64::midpoint(position.copysign(value_mm), 1.0),
+    };
+    let [red, green, blue] = sample_ramp(&MAGNITUDE_RAMP, position);
+    [red, green, blue, 255]
+}
+
+/// Linear interpolation through a stop table.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn sample_ramp(stops: &[(f64, [u8; 3])], position: f64) -> [u8; 3] {
+    let mut low = stops[0];
+    for stop in stops.iter().copied() {
+        if position >= stop.0 {
+            low = stop;
+        }
+    }
+    let Some(high) = stops.iter().copied().find(|stop| stop.0 > low.0) else {
+        return low.1;
+    };
+    let span = high.0 - low.0;
+    let blend = if span.abs() <= f64::EPSILON {
+        0.0
+    } else {
+        ((position - low.0) / span).clamp(0.0, 1.0)
+    };
+    let mut out = [0u8; 3];
+    for (slot, channel) in out.iter_mut().enumerate() {
+        let start = f64::from(low.1[slot]);
+        let end = f64::from(high.1[slot]);
+        *channel = (start + (end - start) * blend).round().clamp(0.0, 255.0) as u8;
+    }
+    out
+}
+
+#[cfg(test)]
+#[path = "deviation_tests.rs"]
+mod tests;

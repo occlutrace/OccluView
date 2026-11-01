@@ -1,0 +1,330 @@
+use super::super::{
+    com_entry, e_fail, own_pinned_dll_module, DefWindowProcW, RegisterClassW, ReleaseCapture,
+    SetCapture, SetKeyboardFocus, CREATESTRUCTW, CS_DBLCLKS, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA,
+    HINSTANCE, HWND, LPARAM, LRESULT, POINT, PREVIEW_WINDOW_CLASS, PREVIEW_WINDOW_CLASS_NAME,
+    WM_CANCELMODE, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP,
+    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP,
+    WM_SIZE, WNDCLASSW, WPARAM,
+};
+
+/// Virtual-key code for the `F` (fit view) shortcut.
+const VK_F: u32 = 0x46;
+/// Virtual-key code for the `W` (wireframe toggle) shortcut.
+const VK_W: u32 = 0x57;
+use super::{PreviewDragMode, PreviewHandler};
+
+pub(super) fn ensure_preview_window_class() -> windows::core::Result<()> {
+    let init = PREVIEW_WINDOW_CLASS.get_or_init(|| {
+        let module = own_pinned_dll_module().map_err(|_| e_fail())?;
+        let class = WNDCLASSW {
+            style: CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS,
+            lpfnWndProc: Some(preview_window_proc),
+            hInstance: HINSTANCE(module.0),
+            lpszClassName: PREVIEW_WINDOW_CLASS_NAME,
+            ..Default::default()
+        };
+        // SAFETY: the class structure is fully initialized for registration.
+        let atom = unsafe { RegisterClassW(&class) };
+        if atom == 0 {
+            return Err(e_fail().code());
+        }
+        Ok(())
+    });
+    init.map_err(windows::core::Error::from_hresult)
+}
+
+/// The preview child wndproc. Every pointer, paint, and resize interaction
+/// funnels through here, so this is a COM-ABI-equivalent boundary: a panic
+/// unwinding out of this `extern "system"` fn aborts the whole `prevhost`
+/// surrogate. `com_entry` converts a panic into a no-op `LRESULT(0)` — a
+/// degraded frame beats taking down every preview the host is serving.
+unsafe extern "system" fn preview_window_proc(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    com_entry(
+        "preview_window_proc",
+        || LRESULT(0),
+        // SAFETY: the closure runs on the same thread inside the same call;
+        // pointer parameters keep their validity contract.
+        || unsafe { preview_window_proc_body(hwnd, message, wparam, lparam) },
+    )
+}
+
+#[allow(clippy::too_many_lines)]
+unsafe fn preview_window_proc_body(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    match message {
+        WM_NCCREATE => {
+            let create = lparam.0 as *const CREATESTRUCTW;
+            if create.is_null() {
+                return LRESULT(0);
+            }
+            // SAFETY: WM_NCCREATE passes a valid CREATESTRUCTW and the pointer
+            // was checked non-null above.
+            let handler = unsafe { (*create).lpCreateParams };
+            if handler.is_null() {
+                return LRESULT(0);
+            }
+            // SAFETY: the create param is a stable pointer to PreviewHandler.
+            unsafe {
+                windows::Win32::UI::WindowsAndMessaging::SetWindowLongPtrW(
+                    hwnd,
+                    GWLP_USERDATA,
+                    handler as isize,
+                )
+            };
+            return LRESULT(1);
+        }
+        WM_ERASEBKGND => return LRESULT(1),
+        WM_PAINT => {
+            if let Some(handler) = preview_handler_from_hwnd(hwnd) {
+                handler.paint_preview(hwnd);
+                return LRESULT(0);
+            }
+        }
+        WM_RBUTTONDOWN => {
+            if let Some(handler) = preview_handler_from_hwnd(hwnd) {
+                let point = point_from_lparam(lparam);
+                handler.begin_drag(PreviewDragMode::Orbit, point);
+                // SAFETY: `hwnd` is the live preview child window; focus and
+                // capture both act on that window only.
+                let _ = unsafe { SetKeyboardFocus(Some(hwnd)) };
+                // SAFETY: the capture is released on the thread that owns it.
+                unsafe { SetCapture(hwnd) };
+                return LRESULT(0);
+            }
+        }
+        WM_MBUTTONDOWN => {
+            if let Some(handler) = preview_handler_from_hwnd(hwnd) {
+                let point = point_from_lparam(lparam);
+                handler.begin_drag(PreviewDragMode::Pan, point);
+                // SAFETY: `hwnd` is the live preview child window; focus and
+                // capture both act on that window only.
+                let _ = unsafe { SetKeyboardFocus(Some(hwnd)) };
+                // SAFETY: the capture is released on the thread that owns it.
+                unsafe { SetCapture(hwnd) };
+                return LRESULT(0);
+            }
+        }
+        WM_MOUSEMOVE => {
+            if let Some(handler) = preview_handler_from_hwnd(hwnd) {
+                if handler.drag_mode.get() != PreviewDragMode::None {
+                    let _ = handler.update_drag(point_from_lparam(lparam));
+                    return LRESULT(0);
+                }
+            }
+        }
+        WM_RBUTTONUP => {
+            if let Some(handler) = preview_handler_from_hwnd(hwnd) {
+                let point = point_from_lparam(lparam);
+                // A right-*drag* was an orbit; only a stationary right-click
+                // opens the context menu, so RMB orbit semantics are preserved.
+                let dragged = handler.drag_moved.get();
+                handler.end_drag();
+                // SAFETY: the capture was set on this thread for this window.
+                let _ = unsafe { ReleaseCapture() };
+                if !dragged {
+                    handler.show_context_menu(hwnd, point);
+                }
+                return LRESULT(0);
+            }
+        }
+        WM_KEYDOWN => {
+            if let Some(handler) = preview_handler_from_hwnd(hwnd) {
+                match wparam.0 as u32 {
+                    VK_F => {
+                        handler.key_fit_view(hwnd);
+                        return LRESULT(0);
+                    }
+                    VK_W => {
+                        handler.key_toggle_wireframe(hwnd);
+                        return LRESULT(0);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        WM_MBUTTONUP => {
+            if let Some(handler) = preview_handler_from_hwnd(hwnd) {
+                let point = point_from_lparam(lparam);
+                let dragged = handler.drag_moved.get();
+                handler.end_drag();
+                // SAFETY: the capture was set on this thread for this window.
+                let _ = unsafe { ReleaseCapture() };
+                if !dragged {
+                    let _ = handler.focus_preview_point(point);
+                }
+                return LRESULT(0);
+            }
+        }
+        WM_LBUTTONDBLCLK => {
+            if let Some(handler) = preview_handler_from_hwnd(hwnd) {
+                let _ = handler.focus_preview_point(point_from_lparam(lparam));
+                return LRESULT(0);
+            }
+        }
+        WM_MOUSEWHEEL => {
+            if let Some(handler) = preview_handler_from_hwnd(hwnd) {
+                let delta = wheel_delta_from_wparam(wparam);
+                let _ = handler.zoom_preview(f32::from(delta));
+                return LRESULT(0);
+            }
+        }
+        WM_SIZE => {
+            if let Some(handler) = preview_handler_from_hwnd(hwnd) {
+                if handler.preview_bitmap.borrow().is_some() {
+                    let _ = handler.render_preview_now();
+                }
+                return LRESULT(0);
+            }
+        }
+        WM_CANCELMODE => {
+            if let Some(handler) = preview_handler_from_hwnd(hwnd) {
+                handler.end_drag();
+                handler.drag_moved.set(false);
+                // SAFETY: the capture was set on this thread for this window.
+                let _ = unsafe { ReleaseCapture() };
+                return LRESULT(0);
+            }
+        }
+        WM_NCDESTROY => {
+            // The other direction: Explorer destroyed the parent, so this child
+            // died with it and the handler is still holding its HWND. Left
+            // stale, a later `Unload` would call `DestroyWindow` on a handle
+            // the system has since reused. Clear both ends here -- the
+            // handler's cell, and the raw pointer this window holds -- so
+            // neither side can reach the other again.
+            if let Some(handler) = preview_handler_from_hwnd(hwnd) {
+                if handler.preview_hwnd.get() == hwnd {
+                    handler.preview_hwnd.set(HWND::default());
+                }
+            }
+            // SAFETY: clearing the slot this wndproc set at WM_NCCREATE.
+            unsafe {
+                windows::Win32::UI::WindowsAndMessaging::SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0)
+            };
+        }
+        _ => {}
+    }
+    // SAFETY: forwarding an unhandled message with this wndproc's own
+    // parameters.
+    unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
+}
+
+/// Whether `hwnd` still carries `handler` as its back-pointer.
+///
+/// The one question that can be answered safely after a modal message pump.
+/// `TrackPopupMenuEx` pumps this apartment, so the host can call `Unload` and
+/// release the handler while the menu is up: the object is freed and the frame
+/// that opened the menu is still on the stack, because `Drop` destroys the
+/// window rather than unwinding its caller. `destroy_preview_window` clears
+/// this slot before destroying the window, so a cleared or reassigned slot
+/// signals that the pointer in hand is not the live handler.
+/// Only the pointer value is compared; nothing is dereferenced.
+pub(super) fn window_owns_handler(hwnd: HWND, handler: *const PreviewHandler) -> bool {
+    // SAFETY: reads the back-pointer slot this module sets at WM_NCCREATE.
+    let stored = unsafe {
+        windows::Win32::UI::WindowsAndMessaging::GetWindowLongPtrW(hwnd, GWLP_USERDATA)
+            as *const PreviewHandler
+    };
+    !stored.is_null() && std::ptr::eq(stored, handler)
+}
+
+fn preview_handler_from_hwnd(hwnd: HWND) -> Option<windows::core::ComObject<PreviewHandler>> {
+    // SAFETY: GWLP_USERDATA stores the raw PreviewHandler pointer set at WM_NCCREATE time.
+    let ptr = unsafe {
+        windows::Win32::UI::WindowsAndMessaging::GetWindowLongPtrW(hwnd, GWLP_USERDATA)
+            as *const PreviewHandler
+    };
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: the slot names a live handler; Drop clears it before freeing
+        // the object. Upgrade before calling any code that can pump messages.
+        let handler = unsafe { &*ptr };
+        let interface = handler.owner.borrow().upgrade()?;
+        windows::core::ComObject::cast_from(&interface).ok()
+    }
+}
+
+#[allow(clippy::cast_sign_loss)]
+fn point_from_lparam(lparam: LPARAM) -> POINT {
+    let bits = lparam.0 as u32;
+    POINT {
+        x: i32::from((bits & 0xFFFF) as i16),
+        y: i32::from(((bits >> 16) & 0xFFFF) as i16),
+    }
+}
+
+fn wheel_delta_from_wparam(wparam: WPARAM) -> i16 {
+    let bits = wparam.0 as u32;
+    ((bits >> 16) & 0xFFFF) as i16
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows::core::{ComObject, Interface};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, SetWindowLongPtrW, WINDOW_EX_STYLE, WINDOW_STYLE,
+    };
+
+    #[test]
+    fn window_callback_survives_the_hosts_final_release() {
+        let object = ComObject::new(PreviewHandler::new());
+        let interface = object.to_interface::<super::super::IPreviewHandler>();
+        let weak = interface.downgrade().expect("weak preview reference");
+        *object.owner.borrow_mut() = weak.clone();
+        // SAFETY: STATIC is a built-in window class; no pointers are passed to it.
+        let hwnd = unsafe {
+            CreateWindowExW(
+                WINDOW_EX_STYLE::default(),
+                windows::core::w!("STATIC"),
+                windows::core::w!("OccluView lifetime test"),
+                WINDOW_STYLE::default(),
+                0,
+                0,
+                1,
+                1,
+                None,
+                None,
+                None,
+                None,
+            )
+        }
+        .expect("window");
+        object.preview_hwnd.set(hwnd);
+        // SAFETY: the slot is owned by this window and points to the live handler.
+        unsafe {
+            SetWindowLongPtrW(
+                hwnd,
+                GWLP_USERDATA,
+                std::ptr::from_ref::<PreviewHandler>(&object) as isize,
+            )
+        };
+        let callback = preview_handler_from_hwnd(hwnd).expect("window's owned callback");
+        drop(interface);
+        drop(object);
+        assert!(
+            weak.upgrade().is_some(),
+            "host release must not free an active callback"
+        );
+        callback.destroy_preview_window();
+        assert!(!window_owns_handler(
+            hwnd,
+            std::ptr::from_ref::<PreviewHandler>(&callback)
+        ));
+        drop(callback);
+        assert!(
+            weak.upgrade().is_none(),
+            "the final callback releases the allocation"
+        );
+    }
+}

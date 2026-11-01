@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-ply">
+    <comment>PLY mesh</comment>
+    <glob pattern="*.ply" />
+    <glob pattern="*.PLY" />
+  </mime-type>
+  <!-- The shared database gives *.obj to both `application/x-tgif` (a 1990s
+       X11 drawing format) and `model/obj`, each at weight 50, so the winner is
+       whichever the database happens to sort first. On the distributions
+       tested that is the drawing format, so every Wavefront scan carries a
+       drawing icon, no thumbnail and no association with the viewer. Weight 60 settles the
+       tie for a workstation that holds dental scans. -->
+  <mime-type type="application/x-off">
+    <comment>OFF mesh</comment>
+    <glob pattern="*.off" />
+    <glob pattern="*.OFF" />
+  </mime-type>
+  <mime-type type="model/obj">
+    <comment>Wavefront OBJ mesh</comment>
+    <glob pattern="*.obj" weight="60" />
+    <glob pattern="*.OBJ" weight="60" />
+  </mime-type>
+</mime-info>

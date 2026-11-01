@@ -1,0 +1,86 @@
+# cargo-about configuration: generates THIRD-PARTY-NOTICES.md.
+# Regenerate with scripts/gen-third-party.sh; CI fails when the committed
+# file is stale.
+#
+# `accepted` mirrors the deny.toml allow-list as a set; the order is a
+# cargo-about priority. MIT first resolves the dominant `MIT OR Apache-2.0`
+# crates to MIT, whose short per-crate texts carry the actual copyright
+# lines we must retain — and keeps the generated file at half the size of
+# an Apache-first ordering.
+accepted = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "BSL-1.0",
+    "Zlib",
+    "Unicode-3.0",
+    "Unlicense",
+    "CDLA-Permissive-2.0",
+]
+# One file covers every shipped platform: the MSI, the portable ZIP, the deb,
+# and the macOS app.
+targets = [
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+]
+# Only code that ships inside the binaries: build-script tooling and
+# dev-only test dependencies are not distributed.
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+ignore-transitive-dependencies = false
+# ring (the rustls backend of the updater's HTTPS) packages its terms in a form
+# cargo-about carries a built-in clarification for.
+workarounds = ["ring"]
+# The first-party workspace crates are publish = false and must not
+# attribute themselves.
+private = { ignore = true }
+
+# eframe's "default_fonts" ships Hack (MIT), Ubuntu-Light (Ubuntu-font-1.0), and
+# Noto Emoji (OFL-1.1); the font licenses require notice retention in
+# binary distributions. The crate keeps the texts under fonts/, where the
+# default LICENSE-file harvesting does not look, so each file is clarified
+# with a checksum pinning the epaint_default_fonts 0.36.1 contents. An egui
+# upgrade that changes them fails generation loudly — that is the drift
+# gate working, not a bug. The clarified expression deliberately picks the
+# MIT arm of the crate's `(MIT OR Apache-2.0)` choice so every license in
+# the expression has a hashed source file.
+[epaint_default_fonts]
+accepted = ["OFL-1.1", "Ubuntu-font-1.0"]
+
+[epaint_default_fonts.clarify]
+license = "MIT AND OFL-1.1 AND Ubuntu-font-1.0"
+
+[[epaint_default_fonts.clarify.files]]
+path = "fonts/Hack-Regular.txt"
+license = "MIT"
+checksum = "47c0cccbeec7e8614548cc485588b28149e7874188df5f41b36efebcee285c87"
+
+[[epaint_default_fonts.clarify.files]]
+path = "fonts/OFL.txt"
+license = "OFL-1.1"
+checksum = "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2"
+
+[[epaint_default_fonts.clarify.files]]
+path = "fonts/UFL.txt"
+license = "Ubuntu-font-1.0"
+checksum = "2f0015108d68627bd788d313f529c21ff4da2c2c42a5e1f3883acc83480f9002"
+
+# rfd includes a separate MIT notice for its Linux desktop portal identifier
+# module. Pin both the crate and module notices so discovery order cannot drop
+# either copyright text from the generated bundle.
+[rfd.clarify]
+license = "MIT"
+
+[[rfd.clarify.files]]
+path = "LICENSE"
+license = "MIT"
+checksum = "65fc947f4bac882a2cd104ef73c246b1b037059df9f2b3a58b7f77f0b9e56071"
+
+[[rfd.clarify.files]]
+path = "src/backend/xdg_desktop_portal/window_identifier/LICENSE"
+license = "MIT"
+checksum = "ae26bc7b1bc91fb8648f6a298decbb1a77090a56c9d04e2c23b8365e5f54acb5"

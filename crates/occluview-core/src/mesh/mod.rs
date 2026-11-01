@@ -1,0 +1,800 @@
+//! The mesh data model.
+//!
+//! A [`Mesh`] is the unit of geometry that flows from a format loader, through
+//! the scene graph, into the renderer. It is GPU-API- and I/O-agnostic: the
+//! renderer owns the GPU buffers, formats owns the readers and writers, and
+//! this model provides byte estimates for the storage layout shared with it.
+//!
+//! ## Layout
+//!
+//! Vertices store position, normal, and an optional RGBA color (dental color /
+//! NIR scans). Indices are 32-bit triangles. Colors are optional so
+//! plain STL (no color) doesn't pay for a zeroed channel.
+
+mod builder;
+mod bvh;
+mod normals;
+pub use occluview_geometry::accumulate_smooth_normals;
+mod principal_axis;
+mod texture;
+mod vertex;
+
+#[cfg(test)]
+mod tests;
+
+use crate::bbox::Aabb;
+use crate::error::CoreError;
+use bvh::{DirtyVertexRay, TriangleBvh};
+use glam::Vec3;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
+
+pub use builder::MeshBuilder;
+pub use principal_axis::PrincipalFrame;
+pub use texture::MeshTexture;
+pub use vertex::Vertex;
+
+static NEXT_MESH_TOPOLOGY_ID: AtomicU64 = AtomicU64::new(1);
+static NEXT_MESH_GEOMETRY_ID: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Clone, Copy)]
+enum MeshNormalPolicy {
+    RepairForEditing,
+    PreserveAuthored,
+}
+
+/// Whether a [`Mesh`] carries triangle connectivity or is just a point cloud.
+///
+/// Dental color scanners frequently emit PLY files with `element vertex` but
+/// no `element face` — a point cloud. The renderer draws these with a
+/// different pipeline (point list, not triangle list); the loader sets the
+/// kind so downstream code can branch.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
+pub enum MeshKind {
+    /// Triangle mesh: `indices` is non-empty and indexes triangle corners.
+    #[default]
+    TriangleMesh,
+    /// Point cloud: `indices` is empty; each vertex is drawn as a point.
+    PointCloud,
+}
+
+/// A mesh-local ray query against a live sculpt snapshot. The cached BVH is
+/// still owned by [`Mesh`]; this value groups the mutable vertex view and the
+/// triangles whose bounds may have moved since that tree was built.
+#[derive(Clone, Copy, Debug)]
+pub struct LiveRayPick<'a> {
+    /// Current vertex positions. The live topology may append rows.
+    pub vertices: &'a [Vertex],
+    /// Triangle indices whose live bounds must be checked directly, sorted
+    /// and deduplicated.
+    pub dirty_triangles: &'a [usize],
+    /// Current dense index prefix when the topology changed during the stroke.
+    /// `None` keeps the mesh's original indices.
+    pub indices: Option<&'a [u32]>,
+    /// Ray origin in mesh-local coordinates.
+    pub origin: Vec3,
+    /// Ray direction in mesh-local coordinates.
+    pub direction: Vec3,
+}
+
+impl<'a> LiveRayPick<'a> {
+    /// Construct a live ray query without copying the sculpt snapshot.
+    #[must_use]
+    pub const fn new(
+        vertices: &'a [Vertex],
+        dirty_triangles: &'a [usize],
+        origin: Vec3,
+        direction: Vec3,
+    ) -> Self {
+        Self {
+            vertices,
+            dirty_triangles,
+            indices: None,
+            origin,
+            direction,
+        }
+    }
+
+    /// Use a live topology while the cached tree continues to cover unchanged
+    /// face slots from the source mesh.
+    #[must_use]
+    pub const fn with_indices(mut self, indices: &'a [u32]) -> Self {
+        self.indices = Some(indices);
+        self
+    }
+}
+
+/// A triangle mesh, the central geometry type.
+#[derive(Clone, Debug)]
+pub struct Mesh {
+    name: Option<String>,
+    vertices: Vec<Vertex>,
+    /// Triangle indices into `vertices`. Length must be a multiple of 3.
+    indices: Vec<u32>,
+    /// True if any vertex carries a non-default color.
+    has_vertex_colors: bool,
+    /// True if any vertex carries non-zero UV coordinates.
+    has_uvs: bool,
+    /// Whether this is a triangle mesh or a point cloud.
+    kind: MeshKind,
+    /// Decoded texture image, if the source file provided one (glTF
+    /// `image`/`texture`). `None` for plain STL / untextured meshes.
+    texture: Option<MeshTexture>,
+    /// Bounding box, computed at most once and shared with every clone.
+    ///
+    /// A cell rather than a field, so filling it takes `&self`. Geometry is
+    /// immutable and the mesh itself is shared behind an `Arc`, so a caller
+    /// that only wants the box must not have to be the sole owner to fill it.
+    /// Geometry-changing constructors mint a fresh empty cell.
+    cached_bbox: Arc<OnceLock<Aabb>>,
+    /// Cached principal-axis frame (centroid + orthonormal axes), computed
+    /// once at construction time — see [`Mesh::principal_frame_cached`].
+    cached_principal_frame: Option<PrincipalFrame>,
+    /// Stable identity for the GPU-uploaded geometry/texture payload. Preserved
+    /// by [`Mesh::with_sculpted_vertices`] so a renderer that streamed new
+    /// positions out-of-band does not re-upload.
+    topology_id: u64,
+    /// Identity of the geometric content (positions/indices). Unlike
+    /// `topology_id`, this changes on [`Mesh::with_sculpted_vertices`], so
+    /// caches that precompute from geometry (e.g. the bridge-split prepared
+    /// solid) can tell a sculpted mesh from its pre-sculpt self even though the
+    /// GPU-buffer token stays frozen.
+    geometry_id: u64,
+    /// Lazily-built ray-pick acceleration structure (see
+    /// [`Mesh::pick_ray_local`]). Shared across clones (same geometry → same
+    /// tree); geometry-changing constructors mint a fresh empty cell. `Arc` so
+    /// a material-only clone reuses the built tree instead of dropping it.
+    bvh: Arc<OnceLock<TriangleBvh>>,
+}
+
+impl Mesh {
+    /// An empty mesh — no vertices, no triangles.
+    ///
+    /// Cheap to construct; used as a placeholder (e.g. for `Default`).
+    #[must_use]
+    #[inline]
+    pub fn empty() -> Self {
+        Self {
+            name: None,
+            vertices: Vec::new(),
+            indices: Vec::new(),
+            has_vertex_colors: false,
+            has_uvs: false,
+            kind: MeshKind::default(),
+            texture: None,
+            cached_bbox: Arc::new(OnceLock::from(Aabb::EMPTY)),
+            cached_principal_frame: None,
+            topology_id: next_mesh_topology_id(),
+            geometry_id: next_mesh_geometry_id(),
+            bvh: Arc::new(OnceLock::new()),
+        }
+    }
+
+    /// Construct a point cloud from vertices only (no indices). Sets
+    /// [`MeshKind::PointCloud`].
+    #[must_use]
+    pub fn point_cloud(name: Option<String>, vertices: Vec<Vertex>) -> Self {
+        let has_vertex_colors = vertices.iter().any(|v| v.color != [255, 255, 255, 255]);
+        let has_uvs = vertices.iter().any(|v| v.uv != [0.0, 0.0]);
+        let cached_bbox = Arc::new(OnceLock::from(Aabb::enclose_points(
+            vertices.iter().map(|v| Vec3::from_array(v.position)),
+        )));
+        let cached_principal_frame =
+            principal_axis::principal_frame(vertices.iter().map(|v| Vec3::from_array(v.position)));
+        Self {
+            name,
+            vertices,
+            indices: Vec::new(),
+            has_vertex_colors,
+            has_uvs,
+            kind: MeshKind::PointCloud,
+            texture: None,
+            cached_bbox,
+            cached_principal_frame,
+            topology_id: next_mesh_topology_id(),
+            geometry_id: next_mesh_geometry_id(),
+            bvh: Arc::new(OnceLock::new()),
+        }
+    }
+
+    /// Construct from parts. Validates the index range.
+    ///
+    /// # Errors
+    /// - [`CoreError::IndexOutOfRange`] if any index exceeds the vertex count.
+    /// - [`CoreError::IndexCountNotMultipleOfThree`] if `indices.len() % 3 != 0`.
+    pub fn new(
+        name: Option<String>,
+        vertices: Vec<Vertex>,
+        indices: Vec<u32>,
+    ) -> Result<Self, CoreError> {
+        Self::new_with_normal_policy(name, vertices, indices, MeshNormalPolicy::RepairForEditing)
+    }
+
+    /// Rebuild a committed sculpt snapshot without rewriting the kernel's
+    /// authored vertex normals. Both paths share shape validation, cache
+    /// construction, and fresh geometry identities; only normal repair differs.
+    ///
+    /// # Errors
+    /// - [`CoreError::IndexOutOfRange`] if any index exceeds the vertex count.
+    /// - [`CoreError::IndexCountNotMultipleOfThree`] if `indices.len() % 3 != 0`.
+    pub fn new_preserving_sculpt_normals(
+        name: Option<String>,
+        vertices: Vec<Vertex>,
+        indices: Vec<u32>,
+    ) -> Result<Self, CoreError> {
+        Self::new_with_normal_policy(name, vertices, indices, MeshNormalPolicy::PreserveAuthored)
+    }
+
+    fn new_with_normal_policy(
+        name: Option<String>,
+        mut vertices: Vec<Vertex>,
+        indices: Vec<u32>,
+        normal_policy: MeshNormalPolicy,
+    ) -> Result<Self, CoreError> {
+        Self::validate_shape(&vertices, &indices)?;
+        if !indices.is_empty() && matches!(normal_policy, MeshNormalPolicy::RepairForEditing) {
+            normals::repair_missing_normals(&mut vertices, &indices);
+        }
+        let has_vertex_colors = vertices.iter().any(|v| v.color != [255, 255, 255, 255]);
+        let has_uvs = vertices.iter().any(|v| v.uv != [0.0, 0.0]);
+        let cached_bbox = Arc::new(OnceLock::from(Aabb::enclose_points(
+            vertices.iter().map(|v| Vec3::from_array(v.position)),
+        )));
+        let cached_principal_frame =
+            principal_axis::principal_frame(vertices.iter().map(|v| Vec3::from_array(v.position)));
+        Ok(Self {
+            name,
+            vertices,
+            indices,
+            has_vertex_colors,
+            has_uvs,
+            kind: MeshKind::TriangleMesh,
+            texture: None,
+            cached_bbox,
+            cached_principal_frame,
+            topology_id: next_mesh_topology_id(),
+            geometry_id: next_mesh_geometry_id(),
+            bvh: Arc::new(OnceLock::new()),
+        })
+    }
+
+    /// Build a mesh for an image, not for work on it.
+    ///
+    /// [`Mesh::new`] reconstructs normals: it welds vertices that share a
+    /// position and averages across the run, so a scan that arrived with one
+    /// flat normal per facet shades smoothly and a scan that arrived with none
+    /// shades at all. That reconstruction is most of the cost of reading a
+    /// file -- measured across a folder of real scans it is roughly half of
+    /// all parse time, and for binary STL, whose facet normals it replaces,
+    /// three quarters -- and at the size a thumbnail or a preview pane is
+    /// drawn it is worth about a quarter of one channel step out of 255,
+    /// because a full arch of 430 000 triangles puts a tenth of a pixel under
+    /// each one.
+    ///
+    /// So: keep the normals the file wrote, fill them in cheaply when it wrote
+    /// none, and derive no principal frame (nothing that draws an image asks
+    /// for one; the cut tools do, and they work on meshes built the other
+    /// way).
+    ///
+    /// # Errors
+    /// The same shape errors as [`Mesh::new`].
+    pub fn new_for_preview(
+        name: Option<String>,
+        mut vertices: Vec<Vertex>,
+        indices: Vec<u32>,
+    ) -> Result<Self, CoreError> {
+        Self::validate_shape(&vertices, &indices)?;
+        if !indices.is_empty() {
+            normals::fill_absent_normals(&mut vertices, &indices);
+        }
+        let has_vertex_colors = vertices.iter().any(|v| v.color != [255, 255, 255, 255]);
+        let has_uvs = vertices.iter().any(|v| v.uv != [0.0, 0.0]);
+        let cached_bbox = Arc::new(OnceLock::from(Aabb::enclose_points(
+            vertices.iter().map(|v| Vec3::from_array(v.position)),
+        )));
+        Ok(Self {
+            name,
+            vertices,
+            indices,
+            has_vertex_colors,
+            has_uvs,
+            kind: MeshKind::TriangleMesh,
+            texture: None,
+            cached_bbox,
+            cached_principal_frame: None,
+            topology_id: next_mesh_topology_id(),
+            geometry_id: next_mesh_geometry_id(),
+            bvh: Arc::new(OnceLock::new()),
+        })
+    }
+
+    fn validate_shape(vertices: &[Vertex], indices: &[u32]) -> Result<(), CoreError> {
+        if !indices.len().is_multiple_of(3) {
+            return Err(CoreError::IndexCountNotMultipleOfThree {
+                index_count: indices.len(),
+            });
+        }
+        let vertex_count = u32::try_from(vertices.len()).unwrap_or(u32::MAX);
+        if let Some((i, bad)) = indices.iter().enumerate().find(|(_, &v)| v >= vertex_count) {
+            return Err(CoreError::IndexOutOfRange {
+                at_index: i,
+                value: *bad,
+                vertex_count,
+            });
+        }
+        Ok(())
+    }
+
+    /// Optional human-readable name (e.g. file stem, "upper arch").
+    #[inline]
+    #[must_use]
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    /// All vertices, in upload order.
+    #[inline]
+    #[must_use]
+    pub fn vertices(&self) -> &[Vertex] {
+        &self.vertices
+    }
+
+    /// Triangle indices (every 3 = one triangle).
+    #[inline]
+    #[must_use]
+    pub fn indices(&self) -> &[u32] {
+        &self.indices
+    }
+
+    /// Number of triangles.
+    #[inline]
+    #[must_use]
+    pub fn triangle_count(&self) -> usize {
+        self.indices.len() / 3
+    }
+
+    /// True if any vertex carries a non-default color.
+    #[inline]
+    #[must_use]
+    pub fn has_vertex_colors(&self) -> bool {
+        self.has_vertex_colors
+    }
+
+    /// True if the mesh carries texture coordinates, including a declared
+    /// all-zero channel. Loaders set UVs
+    /// from `TEXCOORD_0` (glTF), `vt` (OBJ), or `texcoord` (PLY).
+    #[inline]
+    #[must_use]
+    pub fn has_uvs(&self) -> bool {
+        self.has_uvs
+    }
+
+    /// The decoded texture image, if the source file provided one.
+    #[inline]
+    #[must_use]
+    pub fn texture(&self) -> Option<&MeshTexture> {
+        self.texture.as_ref()
+    }
+
+    /// Estimate CPU bytes for this mesh's owned geometry, image, and picking tree.
+    ///
+    /// Vec capacities are used because their unused slots are still allocated.
+    /// The estimate reserves for the picking tree before its lazy build and
+    /// includes the tree builder's live bounds array.
+    #[must_use]
+    pub fn estimated_memory_bytes(&self) -> u64 {
+        let vertex_bytes = self.vertices.capacity().saturating_mul(size_of::<Vertex>());
+        let index_bytes = self.indices.capacity().saturating_mul(size_of::<u32>());
+        let texture_bytes = self
+            .texture
+            .as_ref()
+            .map_or(0, |texture| texture.rgba.capacity());
+        let estimated_bvh_bytes = if self.kind == MeshKind::TriangleMesh && !self.indices.is_empty()
+        {
+            TriangleBvh::estimated_peak_memory_bytes_for_triangle_count(self.triangle_count())
+        } else {
+            0
+        };
+        let actual_bvh_bytes = self
+            .bvh
+            .get()
+            .map_or(0, TriangleBvh::estimated_memory_bytes);
+        let bvh_bytes = estimated_bvh_bytes.max(actual_bvh_bytes);
+        u64::try_from(vertex_bytes)
+            .unwrap_or(u64::MAX)
+            .saturating_add(u64::try_from(index_bytes).unwrap_or(u64::MAX))
+            .saturating_add(u64::try_from(texture_bytes).unwrap_or(u64::MAX))
+            .saturating_add(bvh_bytes)
+    }
+
+    /// Estimate GPU-resident bytes for this mesh's geometry and image.
+    ///
+    /// The optional wireframe allocation is counted when requested. Render
+    /// buffers use the same power-of-two capacity rule as the uploader.
+    #[must_use]
+    pub fn estimated_gpu_memory_bytes(&self, include_wireframe: bool) -> u64 {
+        let vertex_bytes = self.vertices.len().saturating_mul(size_of::<Vertex>());
+        let index_bytes = self.indices.len().saturating_mul(size_of::<u32>());
+        let mut total = Self::gpu_buffer_capacity_bytes(vertex_bytes)
+            .saturating_add(Self::gpu_buffer_capacity_bytes(index_bytes));
+        if include_wireframe && self.kind == MeshKind::TriangleMesh && !self.indices.is_empty() {
+            let wireframe_bytes = index_bytes.saturating_mul(2);
+            total = total.saturating_add(Self::gpu_buffer_capacity_bytes(wireframe_bytes));
+        }
+        if let Some(texture) = &self.texture {
+            total = total.saturating_add(u64::try_from(texture.rgba.len()).unwrap_or(u64::MAX));
+        }
+        total
+    }
+
+    /// Return the capacity used for a renderer geometry buffer of this byte length.
+    #[must_use]
+    pub fn gpu_buffer_capacity_bytes(required: usize) -> u64 {
+        u64::try_from(required.max(4))
+            .unwrap_or(u64::MAX)
+            .checked_next_power_of_two()
+            .unwrap_or(u64::MAX)
+    }
+
+    /// Attach a decoded texture image (e.g. from a glTF `image`). Used by
+    /// loaders after constructing the mesh.
+    #[inline]
+    pub fn set_texture(&mut self, texture: MeshTexture) {
+        self.texture = Some(texture);
+        self.topology_id = next_mesh_topology_id();
+    }
+
+    /// Drop the decoded texture image, keeping the geometry and coordinates.
+    #[inline]
+    pub fn clear_texture(&mut self) {
+        if self.texture.take().is_some() {
+            self.topology_id = next_mesh_topology_id();
+        }
+    }
+
+    /// Stable identity for the GPU-uploaded mesh payload.
+    ///
+    /// Cloning a mesh preserves this value so material-only scene edits can
+    /// reuse prepared GPU buffers. Constructing a new mesh or replacing its
+    /// texture gets a fresh value so renderers know to rebuild uploads.
+    #[inline]
+    #[must_use]
+    pub fn topology_id(&self) -> u64 {
+        self.topology_id
+    }
+
+    /// Stable identity for the geometric content (positions/indices), fresh on
+    /// every construction and on [`Mesh::with_sculpted_vertices`] — unlike
+    /// [`Mesh::topology_id`], which a sculpt commit holds frozen. Content-derived
+    /// caches (the bridge-split prepared solid) key on this so a sculpted mesh is
+    /// never mistaken for its pre-sculpt self.
+    #[inline]
+    #[must_use]
+    pub fn geometry_id(&self) -> u64 {
+        self.geometry_id
+    }
+
+    /// Nearest triangle hit of a mesh-local ray, using a lazily-built (and then
+    /// cached) BVH so a pick is O(log n) instead of O(triangles) — the
+    /// difference between an instant sculpt cursor and a per-frame stall on a
+    /// million-triangle scan. `keep` filters candidate hit points (mesh-local);
+    /// returns the surviving nearest as `(triangle_index, local_point)`. `None`
+    /// for a point cloud, an empty mesh, or a miss.
+    pub fn pick_ray_local<K>(&self, origin: Vec3, direction: Vec3, keep: K) -> Option<(usize, Vec3)>
+    where
+        K: Fn(Vec3) -> bool,
+    {
+        if self.kind != MeshKind::TriangleMesh || self.indices.is_empty() {
+            return None;
+        }
+        let bvh = self
+            .bvh
+            .get_or_init(|| TriangleBvh::build(&self.vertices, &self.indices));
+        bvh.pick(&self.vertices, &self.indices, origin, direction, keep)
+            .map(|hit| (hit.triangle_index, hit.point))
+    }
+
+    /// Pick against a live vertex array from an interactive editor without
+    /// rebuilding the mesh or its BVH on the caller's thread. `dirty_triangles`
+    /// are checked directly because their new bounds are not represented by
+    /// the original tree; all other triangles use the cached logarithmic path.
+    /// The cached tree must already be warm, which keeps this API safe for UI
+    /// hot paths.
+    pub fn pick_ray_local_with_vertices<K>(
+        &self,
+        query: LiveRayPick<'_>,
+        keep: K,
+    ) -> Option<(usize, Vec3)>
+    where
+        K: Fn(Vec3) -> bool,
+    {
+        if self.kind != MeshKind::TriangleMesh
+            || self.indices.is_empty()
+            || query.vertices.len() < self.vertices.len()
+            || query.indices.is_some_and(|indices| indices.len() % 3 != 0)
+        {
+            return None;
+        }
+        let bvh = self.bvh.get()?;
+        let indices = query.indices.unwrap_or(&self.indices);
+        bvh.pick_with_dirty_vertices(
+            DirtyVertexRay {
+                vertices: query.vertices,
+                indices,
+                query,
+            },
+            keep,
+        )
+        .map(|hit| (hit.triangle_index, hit.point))
+    }
+
+    /// Return a triangle's geometric normal from a live vertex array. The
+    /// array must have the same shape as this mesh; malformed indices fail
+    /// closed instead of panicking in a cursor/render helper.
+    #[must_use]
+    pub fn triangle_normal_local_with_vertices(
+        &self,
+        vertices: &[Vertex],
+        triangle: usize,
+    ) -> Option<Vec3> {
+        self.triangle_normal_local_with_geometry(vertices, &self.indices, triangle)
+    }
+
+    /// Return a triangle normal from live vertices and indices whose topology
+    /// may include appended or rewired rows.
+    #[must_use]
+    pub fn triangle_normal_local_with_geometry(
+        &self,
+        vertices: &[Vertex],
+        indices: &[u32],
+        triangle: usize,
+    ) -> Option<Vec3> {
+        if vertices.len() < self.vertices.len() || !indices.len().is_multiple_of(3) {
+            return None;
+        }
+        let base = triangle.checked_mul(3)?;
+        let corners = indices.get(base..base.checked_add(3)?)?;
+        let [a, b, c] = corners else {
+            return None;
+        };
+        let a = vertices.get(usize::try_from(*a).ok()?)?;
+        let b = vertices.get(usize::try_from(*b).ok()?)?;
+        let c = vertices.get(usize::try_from(*c).ok()?)?;
+        let normal = (Vec3::from_array(b.position) - Vec3::from_array(a.position))
+            .cross(Vec3::from_array(c.position) - Vec3::from_array(a.position))
+            .normalize_or_zero();
+        (normal.length_squared() > f32::EPSILON && normal.is_finite()).then_some(normal)
+    }
+
+    /// Build a mesh snapshot from the current sculpt geometry, including a
+    /// changed triangle list. The source supplies the stable name and texture
+    /// policy; the snapshot owns fresh geometry identities and caches.
+    #[must_use]
+    pub fn with_sculpted_geometry(&self, vertices: Vec<Vertex>, indices: Vec<u32>) -> Option<Self> {
+        if indices.is_empty()
+            || !indices.len().is_multiple_of(3)
+            || indices
+                .iter()
+                .any(|&index| index as usize >= vertices.len())
+        {
+            return None;
+        }
+        let mut mesh = Self::new(self.name.clone(), vertices, indices).ok()?;
+        if mesh.has_uvs {
+            if let Some(texture) = self.texture.as_ref() {
+                mesh.set_texture(texture.clone());
+            }
+        }
+        Some(mesh)
+    }
+
+    /// Force the picking BVH to build now (e.g. on a background thread when a
+    /// tool arms), so the first interactive pick doesn't pay the build on the UI
+    /// thread. The BVH is shared via `Arc<OnceLock>`, so warming it here makes
+    /// the first pick on every clone of this mesh instant.
+    pub fn warm_bvh(&self) {
+        if self.kind == MeshKind::TriangleMesh && !self.indices.is_empty() {
+            self.bvh
+                .get_or_init(|| TriangleBvh::build(&self.vertices, &self.indices));
+        }
+    }
+
+    /// Non-blocking readiness check for interactive callers. A cold pick may
+    /// build a scan-sized BVH synchronously, so UI code checks this before
+    /// entering the picking path and lets a worker warm it first.
+    #[inline]
+    #[must_use]
+    pub fn bvh_is_ready(&self) -> bool {
+        self.bvh.get().is_some()
+    }
+
+    /// Whether this is a triangle mesh or a point cloud.
+    #[inline]
+    #[must_use]
+    pub fn kind(&self) -> MeshKind {
+        self.kind
+    }
+
+    /// True if this geometry has no triangle connectivity (point cloud).
+    #[inline]
+    #[must_use]
+    pub fn is_point_cloud(&self) -> bool {
+        self.kind == MeshKind::PointCloud
+    }
+
+    /// Bounding box computed fresh from vertices, **without** touching the
+    /// cache. Used by scene-level composition (which folds many meshes' boxes
+    /// without wanting to mutate each one).
+    #[must_use]
+    pub fn bbox_uncached(&self) -> Aabb {
+        Aabb::enclose_points(self.vertices.iter().map(|v| Vec3::from_array(v.position)))
+    }
+
+    /// Axis-aligned bounding box from the constructor-time cache.
+    ///
+    /// This is the read-only fast path used by scene composition. Mesh geometry
+    /// is immutable after construction, so the cached box remains valid.
+    #[must_use]
+    pub fn bbox_cached(&self) -> Aabb {
+        self.bbox()
+    }
+
+    /// Axis-aligned bounding box, computed at most once.
+    ///
+    /// Takes `&self`: the cell is shared with every clone, so whoever asks
+    /// first pays the walk and everyone after that reads it -- including
+    /// callers holding the mesh behind an `Arc`, which cannot take it
+    /// mutably without copying the geometry.
+    #[inline]
+    #[must_use]
+    pub fn bbox(&self) -> Aabb {
+        *self.cached_bbox.get_or_init(|| self.bbox_uncached())
+    }
+
+    /// True if this mesh carries scan color or texture data (a decoded
+    /// texture image, or non-default per-vertex colors) — the single source
+    /// of truth for whether display logic should defer to that color data
+    /// instead of a neutral/default tint.
+    #[inline]
+    #[must_use]
+    pub fn carries_color_data(&self) -> bool {
+        self.texture.is_some() || self.has_vertex_colors
+    }
+
+    /// Return a copy of this mesh with vertex positions and normals replaced
+    /// by `vertices`, keeping the same [`Mesh::topology_id`] so a renderer that
+    /// already streamed the new positions into its GPU buffers out-of-band
+    /// (an interactive sculpt stroke) does not trigger a full re-upload.
+    ///
+    /// `vertices` must have the same length and order as this mesh's own
+    /// vertex array (it is a sculpted copy of it); a length mismatch would make
+    /// the preserved `topology_id` misstate the GPU buffer size, so it is
+    /// rejected and the caller must rebuild the mesh normally instead. Indices,
+    /// texture, name, and the color/UV flags are unchanged; the bounding box
+    /// and principal frame are recomputed from the new positions so picking,
+    /// cut-view, and the cut disc stay correct.
+    #[must_use]
+    pub fn with_sculpted_vertices(&self, vertices: Vec<Vertex>) -> Option<Self> {
+        if vertices.len() != self.vertices.len() {
+            return None;
+        }
+        let cached_bbox = Arc::new(OnceLock::from(Aabb::enclose_points(
+            vertices.iter().map(|v| Vec3::from_array(v.position)),
+        )));
+        let cached_principal_frame =
+            principal_axis::principal_frame(vertices.iter().map(|v| Vec3::from_array(v.position)));
+        // Sculpt keeps triangle topology fixed. If this mesh is already
+        // pick-warmed (the normal interactive path), refit its tree to the new
+        // positions so the next stroke remains immediate instead of forcing a
+        // full BVH rebuild after every committed stroke.
+        let bvh = Arc::new(OnceLock::new());
+        if let Some(previous) = self.bvh.get() {
+            let mut refit = previous.clone();
+            refit.refit(&vertices, &self.indices);
+            let _ = bvh.set(refit);
+        }
+        Some(Self {
+            name: self.name.clone(),
+            vertices,
+            indices: self.indices.clone(),
+            has_vertex_colors: self.has_vertex_colors,
+            has_uvs: self.has_uvs,
+            kind: self.kind,
+            texture: self.texture.clone(),
+            cached_bbox,
+            cached_principal_frame,
+            topology_id: self.topology_id,
+            geometry_id: next_mesh_geometry_id(),
+            bvh,
+        })
+    }
+
+    /// The same content, with none of the derived caches computed.
+    ///
+    /// [`Self::with_sculpted_vertices`] eagerly rebuilds the bounding box, the
+    /// PCA frame and a refitted BVH, which is right for a mesh that is about to
+    /// go back into the scene and be picked against. It is wrong for a mesh
+    /// that is only kept for a possible undo: most strokes are never undone,
+    /// and the work lands on the stroke's first dab, where the operator is
+    /// waiting.
+    ///
+    /// Measured on a one-million-vertex layer: the full form costs 48 ms, of
+    /// which 24 ms is the vertex copy the snapshot genuinely needs and the rest
+    /// is caches for a mesh that will most likely be dropped.
+    ///
+    /// Two of the three recover on their own: `bbox_cached` falls back to a
+    /// walk, and the BVH is a `OnceLock` the sculpt preparation warms off the
+    /// UI thread. The principal frame does not. `principal_frame_cached` is a
+    /// plain getter with no fallback and nothing recomputes it, so a mesh that
+    /// arrives here without one never gets one, and the cut view and bridge
+    /// split both drop to the view-coupled fallback for that layer without
+    /// reporting it.
+    ///
+    /// So the frame is carried, not recomputed: it is a per-mesh-constant
+    /// global-shape signal, unaffected by local surface bumps, which is what a
+    /// sculpt stroke is. On a 20k-vertex arch a localised dab moves the
+    /// principal axis by 0.02 degrees and a broad one by 0.87, against a
+    /// view-coupled fallback that can be tens of degrees out. Two edges to
+    /// know: a caller handing over a mirrored or rigidly re-oriented vertex set
+    /// gets a frame wrong by that transform where it would otherwise get
+    /// `None`, and a sculpt that drives the geometry degenerate keeps a frame a
+    /// recompute would have refused. Neither is reachable from the sculpt
+    /// session, the only caller.
+    #[must_use]
+    pub fn with_sculpted_vertices_uncached(&self, vertices: Vec<Vertex>) -> Option<Self> {
+        if vertices.len() != self.vertices.len() {
+            return None;
+        }
+        Some(Self {
+            name: self.name.clone(),
+            vertices,
+            indices: self.indices.clone(),
+            has_vertex_colors: self.has_vertex_colors,
+            has_uvs: self.has_uvs,
+            kind: self.kind,
+            texture: self.texture.clone(),
+            cached_bbox: Arc::new(OnceLock::new()),
+            cached_principal_frame: self.cached_principal_frame,
+            topology_id: self.topology_id,
+            geometry_id: next_mesh_geometry_id(),
+            bvh: Arc::new(OnceLock::new()),
+        })
+    }
+
+    /// Whether the bounding box is cached, or a read would walk the vertices.
+    ///
+    /// Non-blocking, like [`Mesh::bvh_is_ready`]: `Scene::bbox` is called twice
+    /// a frame, and on a million-vertex layer a walk is 2.1 ms against 40 ns
+    /// cached, so whoever installs a mesh with a cold box wants to know.
+    #[inline]
+    #[must_use]
+    pub fn bbox_is_cached(&self) -> bool {
+        self.cached_bbox.get().is_some()
+    }
+
+    /// The mesh's own principal-axis frame (PCA centroid + orthonormal
+    /// axes), from the constructor-time cache — a stable, per-mesh-constant
+    /// "global shape" signal: `axes[0]` is a dental arch or bridge span's own
+    /// mesiodistal direction, unaffected by cursor position or local surface
+    /// bumps, and the local direction from `centroid` to any surface point,
+    /// projected onto the `axes[0]`/`axes[1]` plane, rotates smoothly around
+    /// the arch. `None` when the mesh has fewer than 3 distinct vertex
+    /// positions (no well-defined frame — e.g. an empty mesh, or one
+    /// degenerate point).
+    ///
+    /// Mesh geometry is immutable after construction (mirrors
+    /// [`Mesh::bbox_cached`]), so the cached frame remains valid.
+    #[inline]
+    #[must_use]
+    pub fn principal_frame_cached(&self) -> Option<PrincipalFrame> {
+        self.cached_principal_frame
+    }
+}
+
+pub(super) fn next_mesh_topology_id() -> u64 {
+    NEXT_MESH_TOPOLOGY_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+fn next_mesh_geometry_id() -> u64 {
+    NEXT_MESH_GEOMETRY_ID.fetch_add(1, Ordering::Relaxed)
+}

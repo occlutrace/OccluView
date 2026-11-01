@@ -1,0 +1,866 @@
+use super::workspace::commands::{LayerDragPayload, SplitSide, WorkspaceCommand};
+use super::workspace::input::PaneTarget;
+use super::{
+    egui, layers_overlay, pick_scene_hit, Arc, LayerOverlayChanges, MeshSelectionDrag, PathBuf,
+    Scene, SceneContext,
+};
+use crate::layers_overlay::LayerRowChange;
+
+fn discard_lasso_outline(drag: &mut Option<MeshSelectionDrag>) -> bool {
+    if matches!(drag, Some(MeshSelectionDrag::Lasso { .. })) {
+        *drag = None;
+        true
+    } else {
+        false
+    }
+}
+
+const TRANSLUCENT_OPACITY: f32 = 0.35;
+
+/// Ceiling for the automatic window growth, so a pathological layer count on
+/// a small monitor does not ask the platform for an ever-taller window. The
+/// compositor clamps to the monitor anyway; this keeps the request sane.
+const LAYER_WINDOW_MAX_HEIGHT_PX: f32 = 1200.0;
+
+impl SceneContext<'_> {
+    /// The shared Layers panel has one screen-space footprint, including its
+    /// collapsed footer, regardless of which scene is active.
+    pub(super) fn layers_panel_rect(
+        &self,
+        ctx: &egui::Context,
+        viewport_rect: egui::Rect,
+    ) -> egui::Rect {
+        layers_overlay::current_panel_rect(
+            ctx,
+            self.workspace_rect.unwrap_or(viewport_rect),
+            self.active_layer_count,
+        )
+    }
+
+    /// Grow the OS window so the Layers panel fits every layer without
+    /// scrolling.
+    ///
+    /// Fires only when the layer count changes and only ever grows: the panel
+    /// stretches with the viewport for free, so a deficit means the operator
+    /// added more layers than the current window shows. A manual shrink is
+    /// never fought again until the count changes, and the in-panel scrollbar
+    /// stays as the fallback for tiny screens (and Wayland compositors, which
+    /// may ignore the programmatic resize).
+    fn grow_window_for_layers(
+        &mut self,
+        ctx: &egui::Context,
+        viewport_rect: egui::Rect,
+        layer_count: usize,
+    ) {
+        if self.scene_ui.layers_window_layer_count == Some(layer_count) {
+            return;
+        }
+        let wanted = layers_overlay::layer_overlay_desired_height(layer_count)
+            + layers_overlay::LAYER_OVERLAY_TOP_OFFSET_PX
+            + layers_overlay::LAYER_OVERLAY_BOTTOM_RESERVE_PX;
+        let deficit = wanted - viewport_rect.height();
+        if deficit <= 0.0 {
+            self.scene_ui.layers_window_layer_count = Some(layer_count);
+            return;
+        }
+        // A maximized/fullscreen window shrinks back out of its state if a
+        // programmatic size arrives; the operator's window state wins, and the
+        // in-panel scrollbar covers the difference.
+        let viewport_info = ctx.input(|input| input.viewport().clone());
+        if viewport_info.maximized == Some(true) || viewport_info.fullscreen == Some(true) {
+            self.scene_ui.layers_window_layer_count = Some(layer_count);
+            return;
+        }
+        // screen_rect unavailable (first frame): leave the count unrecorded so
+        // the next frame retries instead of dropping the request.
+        let Some(screen) = ctx.input(|input| input.raw.screen_rect) else {
+            return;
+        };
+        self.scene_ui.layers_window_layer_count = Some(layer_count);
+        let target_height = (screen.height() + deficit).min(LAYER_WINDOW_MAX_HEIGHT_PX);
+        if target_height > screen.height() + 1.0 {
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+                screen.width(),
+                target_height,
+            )));
+        }
+    }
+
+    pub(super) fn show_layers_overlay(
+        &mut self,
+        ui: &mut egui::Ui,
+        viewport_rect: egui::Rect,
+        ctx: &egui::Context,
+    ) {
+        // The Layers panel belongs to the workspace, so draw it once from the
+        // active scene and anchor it to the shared workspace bounds.
+        if !self.is_active {
+            return;
+        }
+        let panel_rect = self.workspace_rect.unwrap_or(viewport_rect);
+        let scene = self.document.scene.clone();
+        let empty_scene = Scene::new();
+        let scene_names = self
+            .scene_summaries
+            .iter()
+            .map(|summary| (summary.key.id.get(), summary.name.clone()))
+            .collect::<Vec<_>>();
+        let scene_tab_items = scene_names
+            .iter()
+            .map(|(id, name)| layers_overlay::LayerSceneTab { id: *id, name })
+            .collect::<Vec<_>>();
+        let scene_tabs = layers_overlay::LayerSceneTabs {
+            scenes: &scene_tab_items,
+            active_scene_id: self.scene_key.id.get(),
+            can_create: self.scene_summaries.len() < 2,
+        };
+
+        let paths = self.document.current_paths.clone();
+        let active_layer_id = self.document.edit_mode.selected_layer_id();
+        let focused_layer_id = self.document.focused_layer_id;
+        // The active scene can be in the right pane while this shared panel is
+        // anchored at the workspace's left edge. Widen only this overlay's
+        // clip; the caller's viewport clipping is restored before other tools
+        // are drawn.
+        let viewport_clip = ui.clip_rect();
+        ui.set_clip_rect(viewport_clip.union(panel_rect));
+        let changes = {
+            let scene_ref = scene.as_deref().unwrap_or(&empty_scene);
+            if self.scene_summaries.len() < 2 {
+                self.grow_window_for_layers(ctx, panel_rect, scene_ref.meshes().len());
+            }
+            let (marked, readable) = self.contact_rows(scene_ref);
+            layers_overlay::show(
+                ui,
+                panel_rect,
+                scene_ref,
+                &paths,
+                active_layer_id,
+                focused_layer_id,
+                Some(&scene_tabs),
+                layers_overlay::LayerContactRows {
+                    marked: &marked,
+                    readable: &readable,
+                },
+                &self.ui.locale,
+            )
+        };
+        ui.set_clip_rect(viewport_clip);
+        // Hand over the scene handle before material edits run.
+        self.apply_layer_overlay_changes_for_scene(scene, &paths, changes, ctx);
+    }
+
+    pub(super) fn apply_layer_overlay_changes(
+        &mut self,
+        scene: Arc<Scene>,
+        paths: &[PathBuf],
+        changes: LayerOverlayChanges,
+        ctx: &egui::Context,
+    ) {
+        self.apply_layer_overlay_changes_for_scene(Some(scene), paths, changes, ctx);
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn apply_layer_overlay_changes_for_scene(
+        &mut self,
+        scene: Option<Arc<Scene>>,
+        paths: &[PathBuf],
+        changes: LayerOverlayChanges,
+        ctx: &egui::Context,
+    ) {
+        if let Some(layer_id) = changes.focused_layer_id {
+            if self
+                .document
+                .scene
+                .as_ref()
+                .is_some_and(|scene| scene.meshes().iter().any(|entry| entry.id() == layer_id))
+            {
+                self.document.focused_layer_id = Some(layer_id);
+            }
+        }
+
+        let tab_rects = changes
+            .scene_tab_rects
+            .into_iter()
+            .filter_map(|(scene_id, rect)| {
+                self.scene_summaries
+                    .iter()
+                    .find(|summary| summary.key.id.get() == scene_id)
+                    .map(|summary| (summary.key, rect))
+            })
+            .collect();
+        *self.scene_tab_rects = tab_rects;
+        *self.scene_create_rect = changes.scene_create_rect;
+
+        if self.is_active && !self.ui.modal_dialog_open() {
+            if let Some(source) = changes.drag_started {
+                let layer_is_live = self.document.scene.as_ref().is_some_and(|scene| {
+                    scene
+                        .meshes()
+                        .iter()
+                        .any(|entry| entry.id() == source.layer_id)
+                });
+                if source.scene_id == self.scene_key.id.get()
+                    && self.layer_drag.is_none()
+                    && layer_is_live
+                {
+                    *self.layer_drag = Some(LayerDragPayload {
+                        source: self.scene_key,
+                        layer: source.layer_id,
+                        label: source.label,
+                        tint: source.tint,
+                    });
+                }
+            }
+        }
+
+        // A context-menu item is still a valid direct widget action while its
+        // menu is open, and `modal_dialog_open()` deliberately includes every
+        // popup. Modal windows already own the input layer above these widgets.
+        if self.is_active {
+            if let Some(action) = changes.scene_action {
+                match action {
+                    layers_overlay::LayerOverlaySceneAction::Activate(scene_id) => {
+                        if let Some(summary) = self
+                            .scene_summaries
+                            .iter()
+                            .find(|summary| summary.key.id.get() == scene_id)
+                        {
+                            self.commands
+                                .push_back(WorkspaceCommand::Activate(PaneTarget {
+                                    scene: summary.key,
+                                    pane: summary.pane,
+                                }));
+                        }
+                    }
+                    layers_overlay::LayerOverlaySceneAction::Close(scene_id) => {
+                        if let Some(summary) = self
+                            .scene_summaries
+                            .iter()
+                            .find(|summary| summary.key.id.get() == scene_id)
+                        {
+                            self.commands
+                                .push_back(WorkspaceCommand::CloseScene { scene: summary.key });
+                        }
+                    }
+                    layers_overlay::LayerOverlaySceneAction::Create => {
+                        self.queue_new_scene(SplitSide::Right);
+                    }
+                    layers_overlay::LayerOverlaySceneAction::TransferToNew { layer_id } => {
+                        if self.layer_exists_in_live_scene(layer_id) {
+                            self.queue_transfer(layer_id, None);
+                        }
+                    }
+                    layers_overlay::LayerOverlaySceneAction::Transfer { layer_id, scene_id } => {
+                        let destination = self
+                            .scene_summaries
+                            .iter()
+                            .find(|summary| {
+                                summary.key.id.get() == scene_id && summary.key != self.scene_key
+                            })
+                            .map(|summary| summary.key);
+                        if self.layer_exists_in_live_scene(layer_id) {
+                            if let Some(destination) = destination {
+                                self.queue_transfer(layer_id, Some(destination));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if changes.context_request.is_none() && changes.layer_edits.is_empty() {
+            return;
+        }
+        let Some(scene) = scene else {
+            return;
+        };
+        // Release the cloned scene before an in-place material edit.
+        if changes.context_request.is_none() {
+            drop(scene);
+            self.apply_layer_material_edits(&changes.layer_edits, ctx);
+            return;
+        }
+
+        // Structural edits remain synchronous and may be expensive on large meshes.
+        //
+        // A contact action takes its own path first and never builds a draft: it
+        // measures the scene and may clear an align overlay, and clearing that
+        // overlay edits the document's live scene in place. `live_scene_mut`
+        // asserts in debug that it holds the only `Arc<Scene>`, and `scene` is a
+        // second handle held by the caller (the layer menu and the viewport
+        // right-click menu both pass one), so with that handle alive a normal
+        // gesture — Layers or right-click -> Contacts while a Best-fit heatmap
+        // is up — would trip the assertion in a debug build, and in release the
+        // document would copy the scene and the caller's handle would go stale
+        // for the rest of the action. The draft below must therefore not be
+        // built for this case, and the borrowed scene has to be gone before the
+        // action runs.
+        if let Some(request) = changes.context_request {
+            if matches!(
+                request.action,
+                crate::layer_actions::LayerContextAction::Contacts
+                    | crate::layer_actions::LayerContextAction::HideContacts
+                    | crate::layer_actions::LayerContextAction::EditMesh
+            ) {
+                // The draft is a copy of the scene, so it carries the layers the
+                // action needs while being no handle on the live one. Dropping
+                // `scene` first is what leaves `live_scene_mut` holding the only
+                // `Arc` when the clear runs.
+                let mut draft = scene.as_ref().clone();
+                drop(scene);
+                super::apply_layer_context_action_with_status(self, &mut draft, paths, request);
+                self.apply_layer_material_edits(&changes.layer_edits, ctx);
+                // A reading is app state, not a change to a scene, so nothing
+                // below applies to it.
+                return;
+            }
+        }
+        let mut draft = scene.as_ref().clone();
+        let mut scene_changed = false;
+        let mut structural_scene_change = false;
+        let mut visibility_changed = Vec::new();
+        if let Some(request) = changes.context_request {
+            let apply =
+                super::apply_layer_context_action_with_status(self, &mut draft, paths, request);
+            scene_changed |= apply.scene_changed;
+            structural_scene_change |= apply.structural_scene_change;
+        }
+        if !structural_scene_change {
+            for edit in changes.layer_edits {
+                if let Some(entry) = draft.meshes_mut().get_mut(edit.index) {
+                    if entry.visible != edit.visible {
+                        visibility_changed.push(entry.id());
+                    }
+                    entry.visible = edit.visible;
+                    entry.opacity = edit.opacity;
+                    crate::layer_actions::apply_picked_tint(entry, edit.tint, edit.tint_clicked);
+                    scene_changed = true;
+                }
+            }
+        }
+
+        if scene_changed {
+            *self.preserve_on_transfer_undo = true;
+            self.remember_visibility_changes(scene.as_ref(), &draft);
+            if structural_scene_change {
+                self.commit_structural_scene(Some(scene.as_ref()), draft, ctx);
+            } else {
+                if draft.meshes().is_empty() {
+                    self.clear_scene();
+                } else {
+                    self.update_scene_materials(draft);
+                    self.invalidate_alignment_for_visibility_changes(&visibility_changed);
+                }
+                ctx.request_repaint();
+            }
+            self.retain_focused_layer_if_present();
+        }
+    }
+
+    fn layer_exists_in_live_scene(&self, layer_id: occluview_core::SceneMeshId) -> bool {
+        self.document
+            .scene
+            .as_ref()
+            .is_some_and(|scene| scene.meshes().iter().any(|entry| entry.id() == layer_id))
+    }
+
+    fn retain_focused_layer_if_present(&mut self) {
+        if self
+            .document
+            .focused_layer_id
+            .is_some_and(|focused| !self.layer_exists_in_live_scene(focused))
+        {
+            self.document.focused_layer_id = None;
+        }
+    }
+
+    /// Apply material-only edits while the document holds the sole scene handle.
+    fn apply_layer_material_edits(&mut self, edits: &[LayerRowChange], ctx: &egui::Context) {
+        let Some(live) = self.document.live_scene_mut() else {
+            return;
+        };
+        let mut hidden: Vec<occluview_core::SceneMeshId> = Vec::new();
+        let mut visibility_changed = Vec::new();
+        let mut changed = false;
+        for edit in edits {
+            let Some(entry) = live.meshes_mut().get_mut(edit.index) else {
+                continue;
+            };
+            if entry.visible != edit.visible {
+                visibility_changed.push(entry.id());
+            }
+            if entry.visible && !edit.visible {
+                hidden.push(entry.id());
+            }
+            entry.visible = edit.visible;
+            entry.opacity = edit.opacity;
+            crate::layer_actions::apply_picked_tint(entry, edit.tint, edit.tint_clicked);
+            changed = true;
+        }
+        if !changed {
+            return;
+        }
+        *self.preserve_on_transfer_undo = true;
+        for layer in hidden {
+            self.document.hidden_layer_stack.retain(|id| *id != layer);
+            self.document.hidden_layer_stack.push(layer);
+        }
+        self.mark_scene_materials_changed();
+        self.invalidate_alignment_for_visibility_changes(&visibility_changed);
+        ctx.request_repaint();
+    }
+
+    /// Keep one restore history for every visibility owner, not only the
+    /// Ctrl+Middle shortcut. Layer-row toggles therefore participate in the
+    /// same Shift+Ctrl restore stack.
+    fn remember_visibility_changes(&mut self, before: &Scene, after: &Scene) {
+        for entry in after.meshes() {
+            let previous = before
+                .meshes()
+                .iter()
+                .find(|candidate| candidate.id() == entry.id())
+                .map(|candidate| candidate.visible);
+            match (previous, entry.visible) {
+                (Some(true), false) if !self.document.hidden_layer_stack.contains(&entry.id()) => {
+                    self.document.hidden_layer_stack.push(entry.id());
+                }
+                (Some(false), true) => {
+                    self.document
+                        .hidden_layer_stack
+                        .retain(|id| *id != entry.id());
+                }
+                _ => {}
+            }
+        }
+        self.document
+            .hidden_layer_stack
+            .retain(|id| after.meshes().iter().any(|entry| entry.id() == *id));
+    }
+
+    /// Egui id under which the last right-clicked viewport layer target is
+    /// stashed so the context menu can outlive the single click frame. Scene
+    /// identity is part of the key so two panes never share a latent target.
+    fn viewport_menu_target_id(&self) -> egui::Id {
+        egui::Id::new(("occluview_viewport_layer_menu_target", self.scene_key))
+    }
+
+    /// Layer under the pointer for a viewport right-click, with the state the
+    /// shared context menu needs. Returns `None` over empty space.
+    fn pick_viewport_menu_target(
+        &self,
+        response: &egui::Response,
+    ) -> Option<layers_overlay::LayerContextMenuTarget> {
+        let camera = self.render.camera?;
+        let scene = self.document.scene.as_ref()?;
+        let pointer = response.interact_pointer_pos()?;
+        let hit = pick_scene_hit(&camera, response.rect, pointer, scene)?;
+        let entry = scene.meshes().get(hit.layer_index)?;
+        if entry.id() != hit.layer_id {
+            return None;
+        }
+        Some(layers_overlay::LayerContextMenuTarget {
+            label: layers_overlay::layer_label(
+                &self.document.current_paths,
+                entry,
+                hit.layer_index,
+                &self.ui.locale,
+            ),
+            index: hit.layer_index,
+            layer_id: hit.layer_id,
+            visible: entry.visible,
+            wireframe: entry.wireframe,
+            face_editable: !entry.mesh.is_point_cloud(),
+            can_export: !entry.mesh.vertices().is_empty(),
+            show_vertex_colors: entry.show_vertex_colors,
+            show_texture: entry.show_texture && entry.show_vertex_colors,
+            has_color_data: entry.mesh.carries_color_data(),
+            has_texture: entry.mesh.texture().is_some(),
+            unverified_units_extent: (entry.import_units().confidence
+                == occluview_core::UnitConfidence::Ambiguous)
+                .then(|| entry.import_bbox().size().max_element()),
+            // Both participants wear the marks, so both are where the reading
+            // is: the layer row already offers to close it on either, and the
+            // viewport menu must not disagree with the row beside it.
+            contacts: self.tools.contacts.pair().is_some_and(|pair| {
+                pair.subject == hit.layer_id || pair.antagonist == hit.layer_id
+            }),
+            can_read_contacts: crate::contact::state::can_read_contacts(scene, hit.layer_id),
+        })
+    }
+
+    /// Which layer wears contact marks, and which layers a reading can be opened
+    /// on — the two facts the layer rows and the viewport menu need.
+    ///
+    /// Computed once per frame from the live scene rather than stored beside the
+    /// reading: readability depends on the other layers (a reading needs a
+    /// second visible surface), so a stored copy would go stale the moment a
+    /// scan was hidden or removed.
+    pub(super) fn contact_rows(&self, scene: &Scene) -> (Vec<bool>, Vec<bool>) {
+        // Which layers the menu offers to close on. A reading paints both arches,
+        // so either participant can take the marks down — `HideContacts` closes
+        // the pair whichever row raised it.
+        let pair = self.tools.contacts.pair();
+        let marked = scene
+            .meshes()
+            .iter()
+            .map(|entry| {
+                pair.is_some_and(|pair| entry.id() == pair.subject || entry.id() == pair.antagonist)
+            })
+            .collect();
+        let readable = scene
+            .meshes()
+            .iter()
+            .map(|entry| crate::contact::state::can_read_contacts(scene, entry.id()))
+            .collect();
+        (marked, readable)
+    }
+
+    /// Native right-click on a mesh (a stationary secondary click, so RMB-drag
+    /// still orbits) opens the same shared layer context menu as the layer row.
+    pub(super) fn handle_viewport_context_menu(
+        &mut self,
+        ctx: &egui::Context,
+        response: &egui::Response,
+    ) {
+        if self.tools.bridge_split_active() {
+            return;
+        }
+        // A stationary RMB first abandons an in-progress outline, then opens
+        // the same layer menu. One click therefore never leaves stale lasso
+        // state behind or forces the operator to right-click twice to switch
+        // the editable mesh. RMB-drag orbit remains untouched.
+        if response.secondary_clicked()
+            && discard_lasso_outline(&mut self.document.mesh_selection_drag)
+        {
+            self.scene_ui.status_message =
+                Some(self.ui.locale.tr(crate::i18n::message_id!("lasso-dropped")));
+            ctx.request_repaint();
+        }
+        if response.secondary_clicked() {
+            let menu_id = self.viewport_menu_target_id();
+            let picked = self.pick_viewport_menu_target(response);
+            ctx.data_mut(|data| match picked {
+                Some(target) => {
+                    data.insert_temp(menu_id, target);
+                }
+                None => {
+                    data.remove::<layers_overlay::LayerContextMenuTarget>(menu_id);
+                }
+            });
+            self.scene_ui.viewport_context_menu = Some((response.clone(), true));
+        }
+    }
+
+    /// Draw the menu independently of viewport input: an open popup blocks
+    /// tools, but must continue receiving its own clicks and Escape.
+    pub(super) fn show_viewport_context_menu(&mut self, ctx: &egui::Context) {
+        let Some((response, open_requested)) = self.scene_ui.viewport_context_menu.take() else {
+            return;
+        };
+        let popup_id = egui::Popup::default_response_id(&response);
+        if self.ui.command_dialog_open() || self.tools.bridge_split_active() {
+            egui::Popup::close_id(ctx, popup_id);
+            return;
+        }
+        let menu_id = self.viewport_menu_target_id();
+        // Validate identity each time the menu is drawn, including frames
+        // where popup ownership has blocked viewport input.
+        let stored =
+            ctx.data(|data| data.get_temp::<layers_overlay::LayerContextMenuTarget>(menu_id));
+        if let Some(target) = &stored {
+            let still_valid = self
+                .document
+                .scene
+                .as_ref()
+                .and_then(|scene| scene.meshes().get(target.index))
+                .is_some_and(|entry| entry.id() == target.layer_id);
+            if !still_valid {
+                ctx.data_mut(|data| data.remove::<layers_overlay::LayerContextMenuTarget>(menu_id));
+            }
+        }
+
+        let target =
+            ctx.data(|data| data.get_temp::<layers_overlay::LayerContextMenuTarget>(menu_id));
+        let mut request = None;
+        let mut scene_request = None;
+        // Empty space is not "no menu": the scene itself has actions, and one
+        // of them — saving — is the only way a moved scan survives the session,
+        // because the viewer has no project file.
+        let (has_layers, any_moved) = self.scene_menu_state();
+        egui::Popup::context_menu(&response)
+            .open_memory(open_requested.then_some(egui::SetOpenCommand::Bool(true)))
+            .show(|ui| match target {
+                Some(target) => {
+                    layers_overlay::show_layer_context_menu(
+                        ui,
+                        &target,
+                        &mut request,
+                        &self.ui.locale,
+                    );
+                }
+                None => layers_overlay::show_scene_context_menu(
+                    ui,
+                    has_layers,
+                    any_moved,
+                    &mut scene_request,
+                    &self.ui.locale,
+                ),
+            });
+
+        if egui::Popup::is_id_open(ctx, popup_id) {
+            self.scene_ui.viewport_context_menu = Some((response, false));
+        }
+
+        if let Some(action) = scene_request {
+            self.apply_scene_context_action(action, ctx);
+            return;
+        }
+
+        let Some(request) = request else {
+            return;
+        };
+        let Some(scene) = self.document.scene.clone() else {
+            return;
+        };
+        let paths = self.document.current_paths.clone();
+        self.apply_layer_overlay_changes(
+            scene,
+            &paths,
+            LayerOverlayChanges {
+                context_request: Some(request),
+                layer_edits: Vec::new(),
+                ..LayerOverlayChanges::default()
+            },
+            ctx,
+        );
+    }
+
+    /// Ctrl+MiddleClick: hide the layer under the cursor. The same visibility
+    /// history is also fed by the Layers panel, so Shift+Ctrl restore is not
+    /// tied to one input path.
+    pub(super) fn hide_layer_under_cursor(
+        &mut self,
+        response: &egui::Response,
+        ctx: &egui::Context,
+    ) {
+        if self.tools.bridge_split_active() {
+            return;
+        }
+        let camera = self.render.camera;
+        let scene = self.document.scene.clone();
+        let pointer = response.interact_pointer_pos();
+        let Some(((camera, scene), pointer)) = camera.zip(scene).zip(pointer) else {
+            return;
+        };
+        let Some(hit) = pick_scene_hit(&camera, response.rect, pointer, &scene) else {
+            return;
+        };
+        let mut draft = scene.as_ref().clone();
+        let Some(entry) = draft
+            .meshes_mut()
+            .iter_mut()
+            .find(|entry| entry.id() == hit.layer_id)
+        else {
+            return;
+        };
+        if !entry.visible {
+            return;
+        }
+        entry.visible = false;
+        let label = layers_overlay::layer_label(
+            &self.document.current_paths,
+            entry,
+            hit.layer_index,
+            &self.ui.locale,
+        );
+        self.scene_ui.status_message = Some(self.ui.locale.tr_with(
+            crate::i18n::message_id!("layer-hidden"),
+            &[("label", &label)],
+        ));
+        self.remember_visibility_changes(&scene, &draft);
+        self.update_scene_materials(draft);
+        self.invalidate_alignment_for_visibility_changes(&[hit.layer_id]);
+        ctx.request_repaint();
+    }
+
+    /// Shift+MiddleClick: toggle the layer under the cursor between opaque and
+    /// a translucent inspection state, remembering its previous opacity so a
+    /// second toggle restores what the operator had.
+    pub(super) fn toggle_layer_translucency_under_cursor(
+        &mut self,
+        response: &egui::Response,
+        ctx: &egui::Context,
+    ) {
+        if self.tools.bridge_split_active() {
+            return;
+        }
+        let camera = self.render.camera;
+        let scene = self.document.scene.clone();
+        let pointer = response.interact_pointer_pos();
+        let Some(((camera, scene), pointer)) = camera.zip(scene).zip(pointer) else {
+            return;
+        };
+        let Some(hit) = pick_scene_hit(&camera, response.rect, pointer, &scene) else {
+            return;
+        };
+        let mut draft = scene.as_ref().clone();
+        let Some(entry) = draft
+            .meshes_mut()
+            .iter_mut()
+            .find(|entry| entry.id() == hit.layer_id)
+        else {
+            return;
+        };
+        let label = layers_overlay::layer_label(
+            &self.document.current_paths,
+            entry,
+            hit.layer_index,
+            &self.ui.locale,
+        );
+        if let Some(previous) = self
+            .document
+            .translucent_layer_restore
+            .remove(&hit.layer_id)
+        {
+            entry.opacity = previous;
+            self.scene_ui.status_message = Some(self.ui.locale.tr_with(
+                crate::i18n::message_id!("layer-opaque-again"),
+                &[("label", &label)],
+            ));
+        } else {
+            self.document
+                .translucent_layer_restore
+                .insert(hit.layer_id, entry.opacity);
+            entry.opacity = TRANSLUCENT_OPACITY;
+            self.scene_ui.status_message = Some(self.ui.locale.tr_with(
+                crate::i18n::message_id!("layer-translucent"),
+                &[("label", &label)],
+            ));
+        }
+        self.update_scene_materials(draft);
+        ctx.request_repaint();
+    }
+
+    /// Shift+Ctrl+MiddleClick: unhide the most recently hidden layer from any
+    /// visibility control that is still in the scene and still hidden.
+    pub(super) fn restore_last_hidden_layer(&mut self, ctx: &egui::Context) {
+        if self.tools.bridge_split_active() {
+            return;
+        }
+        let Some(scene) = self.document.scene.clone() else {
+            self.document.hidden_layer_stack.clear();
+            return;
+        };
+        while let Some(layer_id) = self.document.hidden_layer_stack.pop() {
+            let mut draft = scene.as_ref().clone();
+            let Some(entry) = draft
+                .meshes_mut()
+                .iter_mut()
+                .find(|entry| entry.id() == layer_id)
+            else {
+                // Removed from the scene since it was hidden: try the next.
+                continue;
+            };
+            if entry.visible {
+                // Already brought back through the layers panel: skip it.
+                continue;
+            }
+            entry.visible = true;
+            let position = scene
+                .as_ref()
+                .meshes()
+                .iter()
+                .position(|probe| probe.id() == layer_id)
+                .map_or(1, |index| index + 1);
+            let label = layers_overlay::layer_label(
+                &self.document.current_paths,
+                entry,
+                position - 1,
+                &self.ui.locale,
+            );
+            self.scene_ui.status_message = Some(self.ui.locale.tr_with(
+                crate::i18n::message_id!("layer-restored"),
+                &[("label", &label)],
+            ));
+            self.update_scene_materials(draft);
+            self.invalidate_alignment_for_visibility_changes(&[layer_id]);
+            ctx.request_repaint();
+            return;
+        }
+        self.scene_ui.status_message = Some(
+            self.ui
+                .locale
+                .tr(crate::i18n::message_id!("layers-none-hidden")),
+        );
+        ctx.request_repaint();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used)]
+    use super::{discard_lasso_outline, egui, MeshSelectionDrag};
+
+    /// Both arches of a reading must offer to close it.
+    ///
+    /// A reading paints both participants, so a row that wears marks must say
+    /// so or its menu offers to open a *second* reading on the same two scans
+    /// while the first is still up. The rows are built from the pair, not from
+    /// its subject: one "marked index" could only ever name one of the two.
+    #[test]
+    fn a_reading_marks_both_of_its_arches() {
+        use crate::app::app_test_support::{push_named_layer, test_app};
+        use crate::contact::state::ContactPair;
+
+        let mut app = test_app("reading-marks-both-arches");
+        let mut scene = super::Scene::new();
+        let subject = push_named_layer(&mut scene, "lower", 0.0);
+        let antagonist = push_named_layer(&mut scene, "upper", 0.1);
+        let _bystander = push_named_layer(&mut scene, "wax", 5.0);
+        let scene = super::Arc::new(scene);
+        app.workspace.scenes[0].document.scene = Some(super::Arc::clone(&scene));
+        app.workspace.scenes[0].tools.contacts.open(ContactPair {
+            subject,
+            antagonist,
+        });
+
+        let (marked, readable) = app
+            .active_context()
+            .expect("live test scene")
+            .contact_rows(scene.as_ref());
+
+        assert_eq!(marked.len(), 3, "one row per layer");
+        assert!(
+            marked[0] && marked[1],
+            "both scans of the reading wear the marks: {marked:?}"
+        );
+        assert!(
+            !marked[2],
+            "a layer outside the pair is not a participant: {marked:?}"
+        );
+        assert_eq!(
+            readable,
+            vec![true, true, true],
+            "every layer here has a visible antagonist to read against"
+        );
+    }
+
+    /// Opening the context menu abandons an in-progress lasso outline and
+    /// leaves a marquee drag untouched.
+    #[test]
+    fn context_menu_drops_only_an_in_progress_lasso() {
+        let mut lasso = Some(MeshSelectionDrag::Lasso {
+            points: vec![egui::pos2(10.0, 20.0)],
+        });
+        assert!(discard_lasso_outline(&mut lasso));
+        assert!(lasso.is_none());
+
+        let mut marquee = Some(MeshSelectionDrag::Rect {
+            origin: egui::pos2(1.0, 1.0),
+            current: egui::pos2(2.0, 2.0),
+        });
+        assert!(!discard_lasso_outline(&mut marquee));
+        assert!(matches!(marquee, Some(MeshSelectionDrag::Rect { .. })));
+    }
+}

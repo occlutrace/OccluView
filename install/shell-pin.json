@@ -1,0 +1,20 @@
+{
+  "revision": "883d061db5fe89a02a2e0af5bd6f1d18cff19794",
+  "tag": "",
+  "why": "Public release uses the current supported geometry readers. Explorer lifecycle validation is pending.",
+  "shell_crates": [
+    "occluview-shell",
+    "occluview-thumbnail",
+    "occluview-formats",
+    "occluview-render",
+    "occluview-core",
+    "occlu-mesh-edit",
+    "occluview-mesh-edit",
+    "occlu-geometry-math",
+    "occluview-geometry-math",
+    "occluview-geometry"
+  ],
+  "retire_when": "The shell built from the current tree has been used in Explorer on a real machine through the thumbnail, preview-pane, file-association and uninstall paths, and nothing in the pin-to-HEAD delta for the crates above is still wanted.",
+  "backport": "Move the pin only to reviewed source. Exercise thumbnail, preview-pane, file-association and uninstall paths in Explorer before recording a revision as verified.",
+  "check": "scripts/report-shell-pin.sh writes the delta between this revision and the tree being released; the release records it as dist/occluview-shell-revision.json."
+}

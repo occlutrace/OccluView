@@ -1,0 +1,977 @@
+use super::{
+    center_square_on_canvas, com_entry, e_fail, e_notimpl, e_pointer, implement,
+    own_pinned_dll_module, path_extension, pixels_to_hbitmap, placeholder_for_oversize_input,
+    s_false, w, BeginPaint, BitBlt, CoTaskMemFree, CreateCompatibleDC, CreateWindowExW,
+    DeferredSource, DeleteDC, DeleteObject, DestroyWindow, EndPaint, GetKeyboardFocus,
+    IClassFactory, IInitializeWithFile, IInitializeWithFile_Impl, IInitializeWithItem,
+    IInitializeWithItem_Impl, IInitializeWithStream, IInitializeWithStream_Impl, IObjectWithSite,
+    IObjectWithSite_Impl, IOleWindow, IOleWindow_Impl, IPreviewHandler, IPreviewHandler_Impl,
+    IShellItem, IStream, IUnknown, Interface, MoveWindow, Ordering, PathBuf, PreviewSceneState,
+    RedrawWindow, Ref, SelectObject, SetKeyboardFocus, SetParent, ShellError, StreamRead,
+    ThumbnailSpec, Vec2, ACTIVE_COM_OBJECTS, BOOL, GUID, GWLP_USERDATA, HBITMAP,
+    HGDIOBJ, HINSTANCE, HRESULT, HWND, MAX_OFFSCREEN_EDGE, MSG, PAINTSTRUCT, PCWSTR, POINT,
+    PREVIEW_WINDOW_CLASS_NAME, RDW_INVALIDATE, RDW_UPDATENOW, RECT, SIGDN_FILESYSPATH, SRCCOPY,
+    WINDOW_EX_STYLE, WS_CHILD, WS_CLIPSIBLINGS, WS_VISIBLE,
+};
+
+mod context_menu;
+mod theme;
+mod window;
+
+use super::stream;
+#[cfg(test)]
+use super::ThumbnailProvider;
+use theme::preview_theme;
+use window::ensure_preview_window_class;
+
+#[cfg(feature = "diagnostic-logs")]
+use crate::shell_diagnostics::{
+    elapsed_ms_since, prepare_shell_diagnostics, record_shell_error, record_shell_event,
+    ShellDiagnosticAdapter, ShellDiagnosticComponent, ShellDiagnosticOutcome, ShellDiagnosticStage,
+};
+#[cfg(feature = "diagnostic-logs")]
+use occluview_render::AdapterResult;
+use std::os::windows::ffi::OsStringExt;
+use std::rc::Rc;
+#[cfg(feature = "diagnostic-logs")]
+use std::time::Instant;
+use windows::core::IUnknownImpl;
+
+#[cfg(feature = "diagnostic-logs")]
+const fn diagnostic_adapter(result: AdapterResult) -> ShellDiagnosticAdapter {
+    match result {
+        AdapterResult::Hardware => ShellDiagnosticAdapter::Hardware,
+        AdapterResult::Fallback => ShellDiagnosticAdapter::Fallback,
+    }
+}
+
+fn source_changed_error() -> ShellError {
+    ShellError::Win32("preview source changed while loading".to_string())
+}
+
+/// Direct caller for the deliberately unbudgeted Preview Pane stream path.
+/// The caller has already taken the owned `IStream` out of the handler and
+/// released all handler borrows, so these synchronous COM calls cannot
+/// reentrantly hit a `RefCell` borrow panic.
+fn read_preview_stream(stream: &IStream) -> Result<StreamRead, ShellError> {
+    stream::rewind(stream)
+        .map_err(|_| ShellError::Win32("rewinding preview stream failed".to_string()))?;
+    stream::read(stream)
+        .map_err(|_| ShellError::Win32("reading preview stream failed".to_string()))
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum PreviewDragMode {
+    #[default]
+    None,
+    Orbit,
+    Pan,
+}
+
+/// Explorer Preview Pane handler.
+///
+/// Unlike thumbnails, the preview path keeps a GPU-prepared scene resident
+/// after the first load. That allows resizes and pointer interaction to
+/// re-render the same file without reparsing or re-uploading the mesh payload.
+// `Agile = false` because the struct below holds `RefCell`/`Cell` state and is
+// therefore `!Sync`. The default `Agile = true` advertises a free-threaded
+// marshaler, allowing cross-apartment calls to reach the same object directly.
+// This handler's state and preview window are apartment-affine, so it does not
+// support direct free-threaded access.
+#[implement(
+    IPreviewHandler,
+    IOleWindow,
+    IObjectWithSite,
+    IInitializeWithFile,
+    IInitializeWithItem,
+    IInitializeWithStream,
+    IClassFactory,
+    Agile = false
+)]
+pub struct PreviewHandler {
+    owner: std::cell::RefCell<windows::core::Weak<IPreviewHandler>>,
+    source: std::cell::RefCell<DeferredSource<IStream>>,
+    oversize_stream_len: std::cell::Cell<Option<usize>>,
+    parent_hwnd: std::cell::Cell<HWND>,
+    preview_hwnd: std::cell::Cell<HWND>,
+    preview_bitmap: std::cell::RefCell<Option<HBITMAP>>,
+    preview_scene: std::cell::RefCell<Option<PreviewSceneState>>,
+    rect: std::cell::RefCell<RECT>,
+    // An `Rc` snapshot lets a site query run without holding the RefCell
+    // across a reentrant `QueryInterface`, while keeping the COM reference
+    // alive until the last snapshot is dropped.
+    site: std::cell::RefCell<Option<Rc<IUnknown>>>,
+    site_generation: std::cell::Cell<u64>,
+    drag_mode: std::cell::Cell<PreviewDragMode>,
+    last_pointer: std::cell::Cell<POINT>,
+    drag_moved: std::cell::Cell<bool>,
+}
+
+impl PreviewHandler {
+    pub fn new() -> Self {
+        ACTIVE_COM_OBJECTS.fetch_add(1, Ordering::AcqRel);
+        Self {
+            owner: std::cell::RefCell::new(windows::core::Weak::new()),
+            source: std::cell::RefCell::new(DeferredSource::default()),
+            oversize_stream_len: std::cell::Cell::new(None),
+            parent_hwnd: std::cell::Cell::new(HWND::default()),
+            preview_hwnd: std::cell::Cell::new(HWND::default()),
+            preview_bitmap: std::cell::RefCell::new(None),
+            preview_scene: std::cell::RefCell::new(None),
+            rect: std::cell::RefCell::new(RECT::default()),
+            site: std::cell::RefCell::new(None),
+            site_generation: std::cell::Cell::new(0),
+            drag_mode: std::cell::Cell::new(PreviewDragMode::None),
+            last_pointer: std::cell::Cell::new(POINT::default()),
+            drag_moved: std::cell::Cell::new(false),
+        }
+    }
+
+    fn initialize_path(&self, path: PathBuf) {
+        let retired = self
+            .source
+            .borrow_mut()
+            .initialize_path(path.clone(), path_extension(&path));
+        self.oversize_stream_len.set(None);
+        self.preview_scene.borrow_mut().take();
+        // Drop the retired COM reference only after the source borrow is gone;
+        // its Release can reenter Initialize/Unload.
+        drop(retired);
+    }
+
+    fn preview_size(&self) -> (u32, u32) {
+        let rect = *self.rect.borrow();
+        (
+            (rect.right - rect.left).unsigned_abs().max(1),
+            (rect.bottom - rect.top).unsigned_abs().max(1),
+        )
+    }
+
+    fn preview_size_u16(&self) -> [u16; 2] {
+        let (width, height) = self.preview_size();
+        [
+            width.clamp(1, u32::from(u16::MAX)) as u16,
+            height.clamp(1, u32::from(u16::MAX)) as u16,
+        ]
+    }
+
+    fn preview_render_to_hbitmap(&self, width: u32, height: u32) -> windows::core::Result<HBITMAP> {
+        // Capture the activation this render belongs to before touching any
+        // loader. A reentrant Initialize/Unload inside a custom stream call
+        // advances the source token; the old render must not cache a
+        // placeholder or erase the newer activation's resident scene.
+        let activation = self.source.borrow().token();
+        let width = width.clamp(1, MAX_OFFSCREEN_EDGE);
+        let height = height.clamp(1, MAX_OFFSCREEN_EDGE);
+        let theme = preview_theme();
+        let pixels = match self.render_preview_pixels(
+            [width as u16, height as u16],
+            theme.background_linear(),
+            theme.canvas_rgba(),
+        ) {
+            Ok(pixels) => {
+                if !self.source.borrow().is_current(activation) {
+                    tracing::warn!(
+                        "preview render completed after a newer activation; returning failure"
+                    );
+                    return Err(e_fail());
+                }
+                pixels
+            }
+            Err(error) => {
+                if !self.source.borrow().is_current(activation) {
+                    tracing::warn!(
+                        ?error,
+                        "preview render failed after a newer activation; returning failure"
+                    );
+                    return Err(e_fail());
+                }
+                tracing::warn!(?error, "preview render failed; returning placeholder");
+                // The resident scene may reference a retired device (the
+                // renderer discards itself on render errors). Drop it so the
+                // next paint reloads against a fresh renderer instead of
+                // replaying the same failure for the rest of this file view.
+                self.preview_scene.borrow_mut().take();
+                let preview_edge_px = width.min(height).clamp(1, MAX_OFFSCREEN_EDGE) as u16;
+                let spec = ThumbnailSpec {
+                    size_px: preview_edge_px,
+                    background: [0.0, 0.0, 0.0, 0.0],
+                };
+                let square = if let Some(byte_len) = self.oversize_stream_len.get() {
+                    placeholder_for_oversize_input(spec, byte_len)
+                } else {
+                    occluview_thumbnail::placeholder::placeholder_thumbnail(spec)
+                };
+                center_square_on_canvas(
+                    &square,
+                    preview_edge_px,
+                    width,
+                    height,
+                    theme.canvas_rgba(),
+                )
+            }
+        };
+        pixels_to_hbitmap(&pixels, width, height)
+    }
+
+    fn render_preview_pixels(
+        &self,
+        size_px: [u16; 2],
+        background_linear: [f64; 4],
+        canvas_rgba: [u8; 4],
+    ) -> Result<Vec<u8>, ShellError> {
+        if let Some(byte_len) = self.oversize_stream_len.get() {
+            let preview_edge_px = u32::from(size_px[0]).min(u32::from(size_px[1])) as u16;
+            let spec = ThumbnailSpec {
+                size_px: preview_edge_px.max(1),
+                background: [0.0, 0.0, 0.0, 0.0],
+            };
+            let square = placeholder_for_oversize_input(spec, byte_len);
+            return Ok(center_square_on_canvas(
+                &square,
+                spec.size_px,
+                u32::from(size_px[0]),
+                u32::from(size_px[1]),
+                canvas_rgba,
+            ));
+        }
+
+        #[cfg(feature = "diagnostic-logs")]
+        let (scene_was_loaded, started) = {
+            prepare_shell_diagnostics();
+            (self.preview_scene.borrow().is_some(), Instant::now())
+        };
+        let load_result = self.ensure_preview_scene_loaded();
+        #[cfg(feature = "diagnostic-logs")]
+        if !scene_was_loaded {
+            match &load_result {
+                Ok(()) => {
+                    if let Some(state) = self.preview_scene.borrow().as_ref() {
+                        let adapter = diagnostic_adapter(state.adapter_result());
+                        for stage in [
+                            ShellDiagnosticStage::SceneLoad,
+                            ShellDiagnosticStage::Adapter,
+                        ] {
+                            record_shell_event(
+                                ShellDiagnosticComponent::Preview,
+                                stage,
+                                ShellDiagnosticOutcome::Completed,
+                                adapter,
+                                elapsed_ms_since(started),
+                            );
+                        }
+                    }
+                }
+                Err(error) => record_shell_error(
+                    error,
+                    ShellDiagnosticComponent::Preview,
+                    ShellDiagnosticStage::SceneLoad,
+                    ShellDiagnosticAdapter::NotObserved,
+                    elapsed_ms_since(started),
+                ),
+            }
+        }
+        load_result?;
+        let preview = self.preview_scene.borrow();
+        let state = preview
+            .as_ref()
+            .ok_or_else(|| ShellError::Win32("preview scene unavailable".to_string()))?;
+        let rendered = state.render_rgba_with_background(size_px, background_linear);
+        #[cfg(feature = "diagnostic-logs")]
+        if let Err(error) = &rendered {
+            record_shell_error(
+                error,
+                ShellDiagnosticComponent::Preview,
+                ShellDiagnosticStage::Render,
+                diagnostic_adapter(state.adapter_result()),
+                elapsed_ms_since(started),
+            );
+        }
+        rendered
+    }
+
+    /// Loads preview input synchronously on the handler's COM apartment.
+    /// Stream-backed input uses `IStream` calls without an elapsed-time limit:
+    /// the calls stay synchronous and the stream is owned by the local scope,
+    /// not borrowed through the handler, while they run.
+    fn ensure_preview_scene_loaded(&self) -> Result<(), ShellError> {
+        if self.preview_scene.borrow().is_some() || self.oversize_stream_len.get().is_some() {
+            return Ok(());
+        }
+
+        let mut activation = self.source.borrow().token();
+        let source_path = self.source.borrow().path().map(PathBuf::from);
+        // Short take: the RefCell borrow ends at this statement. Everything
+        // below operates on owned state so a custom `IStream` can reenter
+        // Initialize/Unload without a borrow panic.
+        let pending = self.source.borrow_mut().take_pending_stream();
+        let mut scene_state = None;
+        let mut oversize = None;
+
+        if let Some(path) = source_path {
+            let state_result = PreviewSceneState::from_file(&path);
+            if !self.source.borrow().is_current(activation) {
+                return Err(source_changed_error());
+            }
+            scene_state = Some(state_result?);
+        } else if let Some((stream, extension, taken_activation)) = pending {
+            activation = taken_activation;
+            let read_result = read_preview_stream(&stream);
+            if !self.source.borrow().is_current(activation) {
+                return Err(source_changed_error());
+            }
+            match read_result? {
+                StreamRead::Complete(bytes) => {
+                    let state_result = PreviewSceneState::from_bytes(extension.as_deref(), &bytes);
+                    if !self.source.borrow().is_current(activation) {
+                        return Err(source_changed_error());
+                    }
+                    scene_state = Some(state_result?);
+                }
+                StreamRead::OverCap { byte_len } => {
+                    oversize = Some(byte_len);
+                }
+                StreamRead::ReadFailed | StreamRead::TimedOut => {
+                    return Err(ShellError::Win32(
+                        "reading preview stream failed".to_string(),
+                    ));
+                }
+            }
+        } else {
+            return Err(ShellError::Win32(
+                "preview handler has no file or stream source".to_string(),
+            ));
+        }
+
+        // The owned stream (and its final COM Release) has left scope above.
+        // Fence again before installing either a late parse result or oversize
+        // state; a custom Release can reenter Initialize/Unload.
+        if !self.source.borrow().is_current(activation) {
+            return Err(source_changed_error());
+        }
+        if let Some(byte_len) = oversize {
+            self.oversize_stream_len.set(Some(byte_len));
+            return Ok(());
+        }
+        let Some(state) = scene_state else {
+            return Err(ShellError::Win32(
+                "preview handler has no loaded source".to_string(),
+            ));
+        };
+        *self.preview_scene.borrow_mut() = Some(state);
+        Ok(())
+    }
+
+    fn render_preview_now(&self) -> windows::core::Result<()> {
+        let hwnd = self.preview_hwnd.get();
+        if hwnd.0.is_null() {
+            return Err(e_fail());
+        }
+        let (width, height) = self.preview_size();
+        let hbmp = self.preview_render_to_hbitmap(width, height)?;
+        self.replace_preview_bitmap(hbmp);
+        // SAFETY: `hwnd` is our live preview child window.
+        if unsafe { RedrawWindow(Some(hwnd), None, None, RDW_INVALIDATE | RDW_UPDATENOW) }.0 == 0 {
+            return Err(e_fail());
+        }
+        Ok(())
+    }
+
+    fn replace_preview_bitmap(&self, hbmp: HBITMAP) {
+        if let Some(previous) = self.preview_bitmap.borrow_mut().replace(hbmp) {
+            // SAFETY: the previous bitmap was allocated by this module.
+            let _ = unsafe { DeleteObject(HGDIOBJ(previous.0)) };
+        }
+    }
+
+    fn ensure_preview_window(&self) -> windows::core::Result<HWND> {
+        let hwnd = self.preview_hwnd.get();
+        if !hwnd.0.is_null() {
+            return Ok(hwnd);
+        }
+        let parent = self.parent_hwnd.get();
+        if parent.0.is_null() {
+            return Err(e_fail());
+        }
+        ensure_preview_window_class()?;
+        let rect = *self.rect.borrow();
+        let (width, height) = self.preview_size();
+        let style = WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS;
+        let create_param = std::ptr::from_ref::<Self>(self) as *const std::ffi::c_void;
+        // The child window must carry the DLL's module identity, matching the
+        // class registration (see `own_pinned_dll_module`).
+        let module = own_pinned_dll_module().map_err(|_| e_fail())?;
+        // SAFETY: Explorer supplied `parent` via IPreviewHandler::SetWindow.
+        let hwnd = unsafe {
+            CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                PREVIEW_WINDOW_CLASS_NAME,
+                w!(""),
+                style,
+                rect.left,
+                rect.top,
+                width as i32,
+                height as i32,
+                Some(parent),
+                None,
+                Some(HINSTANCE(module.0)),
+                Some(create_param),
+            )
+        }?;
+        self.preview_hwnd.set(hwnd);
+        Ok(hwnd)
+    }
+
+    fn resize_preview_window(&self) -> windows::core::Result<()> {
+        let hwnd = self.preview_hwnd.get();
+        if hwnd.0.is_null() {
+            return Ok(());
+        }
+        let rect = *self.rect.borrow();
+        let (width, height) = self.preview_size();
+        // SAFETY: `hwnd` is a child window created by this object.
+        unsafe { MoveWindow(hwnd, rect.left, rect.top, width as i32, height as i32, true) }?;
+        Ok(())
+    }
+
+    fn destroy_preview_window(&self) {
+        let hwnd = self.preview_hwnd.replace(HWND::default());
+        if !hwnd.0.is_null() {
+            // Cut the window's link to this object before destroying it, and do
+            // it unconditionally. The window holds a raw `&PreviewHandler` in
+            // GWLP_USERDATA, and `DestroyWindow` only works from the thread
+            // that created the window -- so when it does not, the window
+            // survives with a pointer to memory that is about to be freed.
+            // Clearing the slot is legal cross-thread and turns that window
+            // into a plain `DefWindowProcW` shell instead of a use-after-free.
+            //
+            // SAFETY: `hwnd` is a child window created by this object.
+            unsafe {
+                windows::Win32::UI::WindowsAndMessaging::SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0)
+            };
+            // SAFETY: `hwnd` is a child window created by this object.
+            let _ = unsafe { DestroyWindow(hwnd) };
+        }
+        if let Some(previous) = self.preview_bitmap.borrow_mut().take() {
+            // SAFETY: the bitmap was allocated by this module.
+            let _ = unsafe { DeleteObject(HGDIOBJ(previous.0)) };
+        }
+    }
+
+    fn clear_loaded_content(&self) {
+        let retired = self.source.borrow_mut().clear_all();
+        self.oversize_stream_len.set(None);
+        self.preview_scene.borrow_mut().take();
+        self.drag_mode.set(PreviewDragMode::None);
+        self.drag_moved.set(false);
+        // Drop the retired COM reference only after all handler state is
+        // cleared and the source borrow is gone; its Release can reenter.
+        drop(retired);
+    }
+
+    fn begin_drag(&self, mode: PreviewDragMode, pointer: POINT) {
+        self.drag_mode.set(mode);
+        self.last_pointer.set(pointer);
+        self.drag_moved.set(false);
+    }
+
+    fn update_drag(&self, pointer: POINT) -> windows::core::Result<()> {
+        let previous = self.last_pointer.replace(pointer);
+        let delta = Vec2::new(
+            (pointer.x - previous.x) as f32,
+            (pointer.y - previous.y) as f32,
+        );
+        if delta.length_squared() <= f32::EPSILON {
+            return Ok(());
+        }
+        self.drag_moved.set(true);
+        self.ensure_preview_scene_loaded()
+            .map_err(shell_error_to_hresult)?;
+        let size_px = self.preview_size_u16();
+        let changed = {
+            let mut preview = self.preview_scene.borrow_mut();
+            let Some(state) = preview.as_mut() else {
+                return Ok(());
+            };
+            match self.drag_mode.get() {
+                PreviewDragMode::Orbit => {
+                    // Raw pointer motion goes into the shared camera mapping
+                    // unchanged; the vertical orientation is corrected when the
+                    // rendered buffer is presented. Reversing it here makes the
+                    // preview pane orbit opposite to the app viewport.
+                    state.orbit_drag_delta(delta, size_px)
+                }
+                PreviewDragMode::Pan => state.pan_drag(delta, size_px),
+                PreviewDragMode::None => false,
+            }
+        };
+        if changed {
+            self.render_preview_now()?;
+        }
+        Ok(())
+    }
+
+    fn end_drag(&self) {
+        self.drag_mode.set(PreviewDragMode::None);
+    }
+
+    fn zoom_preview(&self, scroll_y: f32) -> windows::core::Result<()> {
+        self.ensure_preview_scene_loaded()
+            .map_err(shell_error_to_hresult)?;
+        let changed = {
+            let mut preview = self.preview_scene.borrow_mut();
+            preview
+                .as_mut()
+                .is_some_and(|state| state.zoom_scroll(scroll_y))
+        };
+        if changed {
+            self.render_preview_now()?;
+        }
+        Ok(())
+    }
+
+    fn focus_preview_point(&self, pointer: POINT) -> windows::core::Result<()> {
+        self.ensure_preview_scene_loaded()
+            .map_err(shell_error_to_hresult)?;
+        let changed = {
+            let mut preview = self.preview_scene.borrow_mut();
+            preview.as_mut().is_some_and(|state| {
+                state.focus_pointer(
+                    Vec2::new(pointer.x as f32, pointer.y as f32),
+                    self.preview_size_u16(),
+                )
+            })
+        };
+        if changed {
+            self.render_preview_now()?;
+        }
+        Ok(())
+    }
+
+    fn paint_preview(&self, hwnd: HWND) {
+        let mut paint = PAINTSTRUCT::default();
+        // SAFETY: `hwnd` is our preview child window and `paint` is valid.
+        let hdc = unsafe { BeginPaint(hwnd, &mut paint) };
+        if let Some(bitmap) = *self.preview_bitmap.borrow() {
+            // SAFETY: `hdc` is valid for the active paint cycle.
+            let memory_dc = unsafe { CreateCompatibleDC(Some(hdc)) };
+            if !memory_dc.0.is_null() {
+                // SAFETY: the bitmap handle is owned by this module.
+                let previous = unsafe { SelectObject(memory_dc, HGDIOBJ(bitmap.0)) };
+                // The DIB was rendered at the pane size clamped to
+                // MAX_OFFSCREEN_EDGE; blitting the raw pane size on a >2048 px
+                // pane would read past the bitmap and leave garbage rows. Blit
+                // exactly the bitmap extent — the window class background
+                // covers any remainder on those extreme panes.
+                let (width, height) = self.preview_size();
+                let blit_width = width.min(MAX_OFFSCREEN_EDGE);
+                let blit_height = height.min(MAX_OFFSCREEN_EDGE);
+                // SAFETY: both DCs are valid for this paint cycle.
+                let _ = unsafe {
+                    BitBlt(
+                        hdc,
+                        0,
+                        0,
+                        blit_width as i32,
+                        blit_height as i32,
+                        Some(memory_dc),
+                        0,
+                        0,
+                        SRCCOPY,
+                    )
+                };
+                // SAFETY: restore the previous selected object before deleting the DC.
+                let _ = unsafe { SelectObject(memory_dc, previous) };
+                // SAFETY: the temporary memory DC was created above.
+                let _ = unsafe { DeleteDC(memory_dc) };
+            }
+        }
+        // SAFETY: completes the paint cycle begun with BeginPaint above.
+        let _ = unsafe { EndPaint(hwnd, &paint) };
+    }
+}
+
+impl Default for PreviewHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for PreviewHandler {
+    fn drop(&mut self) {
+        // `Unload` is host etiquette, not a COM requirement, and the two paths
+        // that skip it are ordinary: a host that releases after `DoPreview`
+        // returned an error, and re-entrancy with no misbehaving host at all --
+        // `show_context_menu` runs `TrackPopupMenuEx`, a modal loop that pumps
+        // the STA, so a click on another file in Explorer can deliver Unload
+        // and Release while that call is still on the stack.
+        //
+        // Whatever the route, this object must not be freed while a live window
+        // still points at it, and the last rendered bitmap -- up to 2048x2048x4
+        // of GDI memory -- must not be left behind.
+        self.destroy_preview_window();
+        ACTIVE_COM_OBJECTS.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+impl IPreviewHandler_Impl for PreviewHandler_Impl {
+    fn SetWindow(&self, hwnd: HWND, prc: *const RECT) -> windows::core::Result<()> {
+        com_entry(
+            "IPreviewHandler::SetWindow",
+            || Err(e_fail()),
+            || {
+                if prc.is_null() {
+                    return Err(e_pointer());
+                }
+                if hwnd.0.is_null() {
+                    return Err(e_fail());
+                }
+                let previous_parent = self.this.parent_hwnd.replace(hwnd);
+                let preview = self.this.preview_hwnd.get();
+                if !preview.0.is_null() && previous_parent != hwnd {
+                    // SAFETY: `preview` is our live child preview window.
+                    let _ = unsafe { SetParent(preview, Some(hwnd))? };
+                }
+                // SAFETY: `prc` is a caller-owned RECT pointer valid for this call.
+                *self.this.rect.borrow_mut() = unsafe { *prc };
+                // One render per resize: `MoveWindow` synchronously delivers
+                // `WM_SIZE` when the size actually changed, and that handler
+                // re-renders. Adding a second explicit render here made every host
+                // resize pay two full GPU renders + readbacks back to back.
+                self.this.resize_preview_window()?;
+                Ok(())
+            },
+        )
+    }
+
+    fn SetRect(&self, prc: *const RECT) -> windows::core::Result<()> {
+        com_entry(
+            "IPreviewHandler::SetRect",
+            || Err(e_fail()),
+            || {
+                if prc.is_null() {
+                    return Err(e_pointer());
+                }
+                // SAFETY: `prc` is a caller-owned RECT pointer valid for this call.
+                *self.this.rect.borrow_mut() = unsafe { *prc };
+                // See SetWindow: the WM_SIZE handler owns the re-render, so a
+                // resize renders once, and a pure move (same size, no WM_SIZE)
+                // keeps the already-correct bitmap without any render at all.
+                self.this.resize_preview_window()?;
+                Ok(())
+            },
+        )
+    }
+
+    fn DoPreview(&self) -> windows::core::Result<()> {
+        com_entry(
+            "IPreviewHandler::DoPreview",
+            || Err(e_fail()),
+            || {
+                let owner = self.to_interface::<IPreviewHandler>();
+                *self.this.owner.borrow_mut() = owner.downgrade()?;
+                let _ = self.this.ensure_preview_window()?;
+                self.this.render_preview_now()
+            },
+        )
+    }
+
+    fn Unload(&self) -> windows::core::Result<()> {
+        com_entry(
+            "IPreviewHandler::Unload",
+            || Err(e_fail()),
+            || {
+                self.this.destroy_preview_window();
+                self.this.clear_loaded_content();
+                Ok(())
+            },
+        )
+    }
+
+    fn SetFocus(&self) -> windows::core::Result<()> {
+        let target = {
+            let preview = self.this.preview_hwnd.get();
+            if preview.0.is_null() {
+                self.this.parent_hwnd.get()
+            } else {
+                preview
+            }
+        };
+        if target.0.is_null() {
+            return Err(e_fail());
+        }
+        // SAFETY: `target` is either our preview child or the host parent.
+        let _ = unsafe { SetKeyboardFocus(Some(target)) };
+        Ok(())
+    }
+
+    fn QueryFocus(&self) -> windows::core::Result<HWND> {
+        // SAFETY: Win32 returns the HWND with focus for the current thread.
+        Ok(unsafe { GetKeyboardFocus() })
+    }
+
+    fn TranslateAccelerator(&self, _pmsg: *const MSG) -> windows::core::Result<()> {
+        Err(s_false())
+    }
+}
+
+impl IOleWindow_Impl for PreviewHandler_Impl {
+    fn GetWindow(&self) -> windows::core::Result<HWND> {
+        let preview = self.this.preview_hwnd.get();
+        if preview.0.is_null() {
+            Err(e_fail())
+        } else {
+            Ok(preview)
+        }
+    }
+
+    fn ContextSensitiveHelp(&self, _fentermode: BOOL) -> windows::core::Result<()> {
+        Err(e_notimpl())
+    }
+}
+
+impl IObjectWithSite_Impl for PreviewHandler_Impl {
+    fn SetSite(&self, punksite: Ref<'_, IUnknown>) -> windows::core::Result<()> {
+        com_entry(
+            "IObjectWithSite::SetSite",
+            || Err(e_fail()),
+            || {
+                // Take the incoming COM reference before the RefCell
+                // replacement. Null clears the site.
+                let generation = self.this.site_generation.get().wrapping_add(1);
+                self.this.site_generation.set(generation);
+                let site = punksite.as_ref().cloned().map(Rc::new);
+                // AddRef may have installed a newer site through SetSite.
+                if self.this.site_generation.get() != generation {
+                    return Err(e_fail());
+                }
+                let retired = self.this.site.replace(site);
+                // RefCell::replace released its internal borrow before
+                // returning; drop the retired Rc outside the borrow because
+                // its final Release can reenter GetSite/SetSite.
+                drop(retired);
+                Ok(())
+            },
+        )
+    }
+
+    fn GetSite(
+        &self,
+        riid: *const GUID,
+        ppvsite: *mut *mut std::ffi::c_void,
+    ) -> windows::core::Result<()> {
+        com_entry(
+            "IObjectWithSite::GetSite",
+            || Err(e_fail()),
+            || {
+                if riid.is_null() || ppvsite.is_null() {
+                    return Err(e_pointer());
+                }
+                // Snapshot the Rc and end the RefCell borrow before calling
+                // the external site. The held Rc keeps the COM reference alive
+                // if the custom QueryInterface reenters SetSite.
+                let site = self.this.site.borrow().as_ref().map(Rc::clone);
+                let Some(site) = site else {
+                    return Err(e_fail());
+                };
+                // SAFETY: COM supplied `riid`/`ppvsite`.
+                let hr = unsafe { site.query(riid, ppvsite) };
+                if hr.is_ok() {
+                    Ok(())
+                } else {
+                    Err(windows::core::Error::from_hresult(hr))
+                }
+            },
+        )
+    }
+}
+
+impl IInitializeWithStream_Impl for PreviewHandler_Impl {
+    fn Initialize(&self, pstream: Ref<'_, IStream>, _grfmode: u32) -> windows::core::Result<()> {
+        com_entry(
+            "preview IInitializeWithStream",
+            || Err(e_fail()),
+            || {
+                // Acquire our owned reference before evaluating the
+                // `borrow_mut()` receiver below. `Ref::ok` returns `&IStream`;
+                // AddRef must not run while the handler RefCell is borrowed.
+                let activation = self.this.source.borrow().token();
+                let stream = pstream.ok()?.clone();
+                let still_current = self.this.source.borrow().is_current(activation);
+                if !still_current {
+                    return Err(e_fail());
+                }
+                let retired = self
+                    .this
+                    .source
+                    .borrow_mut()
+                    .initialize_stream(stream);
+                self.this.preview_scene.borrow_mut().take();
+                self.this.oversize_stream_len.set(None);
+                // Drop the retired COM reference only after the source borrow
+                // is gone; its Release can reenter Initialize/Unload.
+                drop(retired);
+                Ok(())
+            },
+        )
+    }
+}
+
+impl IInitializeWithFile_Impl for PreviewHandler_Impl {
+    fn Initialize(&self, pszfilepath: &PCWSTR, _grfmode: u32) -> windows::core::Result<()> {
+        com_entry(
+            "preview IInitializeWithFile",
+            || Err(e_fail()),
+            || {
+                // SAFETY: `to_string()` on a path with an unpaired surrogate
+                // returns E_FAIL, so a file Explorer can see and hand over would
+                // get no preview and no thumbnail. `initialize_path` takes a
+                // `PathBuf`, so the wide string converts straight into an OS
+                // string with no lossy step to fail on.
+                let path = std::ffi::OsString::from_wide(unsafe { pszfilepath.as_wide() });
+                self.this.initialize_path(PathBuf::from(path));
+                Ok(())
+            },
+        )
+    }
+}
+
+impl IInitializeWithItem_Impl for PreviewHandler_Impl {
+    fn Initialize(&self, psi: Ref<'_, IShellItem>, _grfmode: u32) -> windows::core::Result<()> {
+        com_entry(
+            "preview IInitializeWithItem",
+            || Err(e_fail()),
+            || {
+                let activation = self.this.source.borrow().token();
+                let item = psi.ok()?;
+                // SAFETY: `GetDisplayName(SIGDN_FILESYSPATH)` returns a CoTaskMem
+                // path.
+                let path_ptr = unsafe { item.GetDisplayName(SIGDN_FILESYSPATH)? };
+                // SAFETY: GetDisplayName returned a live NUL-terminated path.
+                // Preserve every filename code unit before freeing its COM allocation.
+                let path = std::ffi::OsString::from_wide(unsafe { path_ptr.as_wide() });
+                // SAFETY: freeing the COM-owned pointer returned by GetDisplayName.
+                unsafe { CoTaskMemFree(Some(path_ptr.as_ptr().cast())) };
+                let still_current = self.this.source.borrow().is_current(activation);
+                if !still_current {
+                    return Err(e_fail());
+                }
+                self.this.initialize_path(PathBuf::from(path));
+                Ok(())
+            },
+        )
+    }
+}
+
+fn shell_error_to_hresult(error: ShellError) -> windows::core::Error {
+    windows::core::Error::new(HRESULT(0x8000_4005_u32 as i32), format!("{error}"))
+}
+
+#[cfg(test)]
+mod item_tests {
+    use super::*;
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::{ComObject, PWSTR};
+    use windows::Win32::System::Com::{
+        CoInitializeEx, CoTaskMemAlloc, CoUninitialize, IBindCtx, COINIT_APARTMENTTHREADED,
+    };
+    use windows::Win32::System::SystemServices::SFGAO_FLAGS;
+    use windows::Win32::UI::Shell::{IShellItem_Impl, SHCreateItemFromParsingName, SIGDN};
+
+    #[implement(IShellItem, Agile = false)]
+    struct ReentrantItem {
+        initialize_new_source: Rc<dyn Fn()>,
+    }
+
+    impl IShellItem_Impl for ReentrantItem_Impl {
+        fn BindToHandler(
+            &self,
+            _pbc: Ref<'_, IBindCtx>,
+            _bhid: *const GUID,
+            _riid: *const GUID,
+            _ppv: *mut *mut std::ffi::c_void,
+        ) -> windows::core::Result<()> {
+            Err(e_notimpl())
+        }
+
+        fn GetParent(&self) -> windows::core::Result<IShellItem> {
+            Err(e_notimpl())
+        }
+
+        fn GetDisplayName(&self, _name: SIGDN) -> windows::core::Result<PWSTR> {
+            (self.this.initialize_new_source)();
+            let path = [111_u16, 108, 100, 46, 111, 98, 106, 0];
+            // SAFETY: COM allocation holds all UTF-16 units, including NUL.
+            let allocation = unsafe { CoTaskMemAlloc(std::mem::size_of_val(&path)) }.cast::<u16>();
+            if allocation.is_null() {
+                return Err(e_fail());
+            }
+            // SAFETY: the allocation is writable and disjoint from the stack path.
+            unsafe { std::ptr::copy_nonoverlapping(path.as_ptr(), allocation, path.len()) };
+            Ok(PWSTR(allocation))
+        }
+
+        fn GetAttributes(&self, _mask: SFGAO_FLAGS) -> windows::core::Result<SFGAO_FLAGS> {
+            Err(e_notimpl())
+        }
+
+        fn Compare(&self, _item: Ref<'_, IShellItem>, _hint: u32) -> windows::core::Result<i32> {
+            Err(e_notimpl())
+        }
+    }
+
+    #[test]
+    fn reentrant_item_initialization_preserves_the_newer_source() {
+        let handler = ComObject::new(PreviewHandler::new());
+        let file: IInitializeWithFile = handler.to_interface();
+        let item: IShellItem = ReentrantItem {
+            initialize_new_source: Rc::new(move || {
+                // SAFETY: the interface and NUL-terminated literal remain live.
+                unsafe { file.Initialize(w!("new.obj"), 0) }.expect("nested initialization");
+            }),
+        }
+        .into();
+        let initialize: IInitializeWithItem = handler.to_interface();
+        // SAFETY: both interfaces stay live during the synchronous callback.
+        assert!(unsafe { initialize.Initialize(&item, 0) }.is_err());
+        assert_eq!(
+            handler.source.borrow().path(),
+            Some(std::path::Path::new("new.obj"))
+        );
+    }
+
+    struct Apartment;
+    impl Drop for Apartment {
+        fn drop(&mut self) {
+            // SAFETY: the guard is created only after successful COM initialization.
+            unsafe { CoUninitialize() };
+        }
+    }
+
+    #[test]
+    fn item_initialization_preserves_unpaired_filename_code_units() {
+        // SAFETY: this test initializes and balances COM on its own thread.
+        unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }
+            .ok()
+            .expect("COM apartment");
+        let _apartment = Apartment;
+        let directory =
+            std::env::temp_dir().join(format!("occluview-shell-item-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("directory");
+        let name = std::ffi::OsString::from_wide(&[0xd800, 0x2e, 0x6f, 0x62, 0x6a]);
+        let path = directory.join(name);
+        std::fs::write(&path, b"v 0 0 0\n").expect("filename with an unpaired surrogate");
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        // SAFETY: the path is NUL-terminated and valid for this call.
+        let item: IShellItem = unsafe { SHCreateItemFromParsingName(PCWSTR(wide.as_ptr()), None) }
+            .expect("shell item");
+        let preview: IInitializeWithItem = PreviewHandler::new().into();
+        let thumbnail: IInitializeWithItem = ThumbnailProvider::new().into();
+        // SAFETY: both interfaces and the item remain live through initialization.
+        unsafe { preview.Initialize(&item, 0) }.expect("preview accepts OS filename");
+        // SAFETY: both interfaces and the item remain live through initialization.
+        unsafe { thumbnail.Initialize(&item, 0) }.expect("thumbnail accepts OS filename");
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_dir(directory);
+    }
+}

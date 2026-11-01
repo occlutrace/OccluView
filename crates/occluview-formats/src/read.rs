@@ -1,0 +1,522 @@
+//! File input, memory admission, and scene assembly for format readers.
+
+use crate::dispatch::{
+    LoadedMesh, dispatch_by_extension, dispatch_by_kind_loaded_admitted, probe_kind,
+};
+use crate::error::FormatError;
+use crate::memory::{
+    SCENE_IMPORT_MEMORY_BUDGET_BYTES, check_scene_estimate, estimate_file_peak_bytes,
+};
+use crate::probe::FormatKind;
+use occluview_core::{Mesh, Scene, SceneMesh};
+use rayon::prelude::*;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+
+/// Largest single file the viewer will read into memory.
+///
+/// The number comes from the corpus, not from a round figure: the largest real
+/// scan in the test corpus is a 41 MB intraoral OBJ, and dental
+/// packages with embedded textures reach a few hundred MB. A gigabyte is
+/// therefore ~25x the largest known scan — far enough that no real scan is
+/// refused, close enough that a mistaken pick (a video, a disk image, a
+/// multi-gigabyte CBCT export) fails in the reader instead of in the
+/// allocator. It is also above the shell thumbnail's own 512 MiB file cap, so
+/// the viewer never refuses a file the Explorer preview is willing to render.
+pub const MAX_IMPORT_BYTES: u64 = 1 << 30;
+
+/// Bytes of file data that may be in flight while a multi-file import parses.
+///
+/// `MAX_IMPORT_BYTES` bounds one file; a folder of them is the other half of
+/// the same problem. Two arch scans of 250 MB each parse together; a single
+/// gigabyte file parses alone, because a batch always accepts its first file.
+pub const IMPORT_BATCH_BUDGET_BYTES: u64 = 512 << 20;
+
+/// Files parsed at once during a multi-file import.
+///
+/// The cores are shared with the renderer and with whatever else the operator
+/// is doing, and parsing is memory-hungry rather than CPU-hungry, so two is the
+/// point where a second file is worth it and more are not.
+pub const IMPORT_PARALLELISM: usize = 2;
+
+type PathResult<T> = Result<T, (PathBuf, FormatError)>;
+
+struct AdmittedInput {
+    path: PathBuf,
+    bytes: FileBytes,
+    kind: FormatKind,
+}
+
+/// Owned file bytes. Parsing must not depend on a file that another process
+/// may replace or truncate while the import is in progress.
+pub struct FileBytes {
+    extension: String,
+    bytes: Vec<u8>,
+}
+
+/// Owned primary bytes together with the handle they were read from.
+///
+/// Thumbnail callers keep this value through hashing so they can verify the
+/// opened source again, then dispatch the exact same byte buffer. Companion
+/// files remain path based and are resolved by the canonical dispatcher.
+pub struct OpenedFileBytes {
+    file: std::fs::File,
+    initial_metadata: std::fs::Metadata,
+    bytes: FileBytes,
+}
+
+impl OpenedFileBytes {
+    /// Borrow the owned bytes read from the opened file.
+    #[must_use]
+    pub fn file_bytes(&self) -> &FileBytes {
+        &self.bytes
+    }
+
+    /// Metadata observed on the same handle before its bounded read.
+    #[must_use]
+    pub fn initial_metadata(&self) -> &std::fs::Metadata {
+        &self.initial_metadata
+    }
+
+    /// Query the same opened file handle again.
+    ///
+    /// # Errors
+    /// Returns [`FormatError::Io`] if the handle can no longer be queried.
+    pub fn current_metadata(&self) -> Result<std::fs::Metadata, FormatError> {
+        self.file.metadata().map_err(FormatError::Io)
+    }
+}
+
+impl FileBytes {
+    /// Return the normalized lowercase extension used for dispatch.
+    #[must_use]
+    pub fn extension(&self) -> &str {
+        &self.extension
+    }
+
+    /// Borrow the file contents as a byte slice.
+    #[must_use]
+    pub fn as_slice(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Dispatch the loaded bytes through the canonical format readers.
+    ///
+    /// # Errors
+    /// See [`dispatch_by_extension`].
+    pub fn dispatch(&self) -> Result<Mesh, FormatError> {
+        dispatch_by_extension(self.extension(), self.as_slice())
+    }
+}
+
+fn normalized_extension(path: &Path) -> Result<String, FormatError> {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .ok_or(FormatError::Unsupported {
+            extension: String::new(),
+        })
+}
+
+/// Read a file into owned bytes, refusing anything above [`MAX_IMPORT_BYTES`].
+///
+/// A concurrent short read reports `UnexpectedEof`; a later truncation cannot
+/// invalidate this buffer.
+///
+/// # Errors
+/// - [`FormatError::Io`] if the file cannot be opened or read.
+/// - [`FormatError::TooLarge`] if the file exceeds the limit.
+/// - [`FormatError::Unsupported`] when the file has no UTF-8 extension.
+pub fn read_file_bytes(path: &Path) -> Result<FileBytes, FormatError> {
+    read_file_bytes_with_limit(path, MAX_IMPORT_BYTES)
+}
+
+/// As [`read_file_bytes`], with a caller-chosen limit.
+///
+/// The thumbnail host passes its own, smaller budget: it runs inside Explorer,
+/// where an over-large read costs more than a missing preview.
+///
+/// The opened length and the bytes actually read are both checked against the
+/// limit; the owned byte count must also match the opened length.
+///
+/// # Errors
+/// See [`read_file_bytes`].
+pub fn read_file_bytes_with_limit(path: &Path, limit: u64) -> Result<FileBytes, FormatError> {
+    read_opened_file_bytes_with_limit(path, limit).map(|opened| opened.bytes)
+}
+
+/// Open a file once and read its primary bytes into an owned, bounded buffer.
+///
+/// The returned handle supports a later metadata check after content hashing.
+/// The byte count must exactly match the length observed on that handle before
+/// the read; short reads report `UnexpectedEof`, and growth or metadata changes
+/// report an I/O interruption. Reads are capped at `limit + 1` bytes.
+///
+/// # Errors
+/// - [`FormatError::Io`] if opening, reading, or metadata access fails.
+/// - [`FormatError::TooLarge`] if the opened file or bytes read exceed `limit`.
+/// - [`FormatError::Unsupported`] when the file has no UTF-8 extension.
+pub fn read_opened_file_bytes_with_limit(
+    path: &Path,
+    limit: u64,
+) -> Result<OpenedFileBytes, FormatError> {
+    let extension = normalized_extension(path)?;
+    let mut file = std::fs::File::open(path).map_err(FormatError::Io)?;
+    let metadata = file.metadata().map_err(FormatError::Io)?;
+    if metadata.len() > limit {
+        return Err(FormatError::TooLarge {
+            bytes: metadata.len(),
+            limit,
+        });
+    }
+    let bytes = read_bounded_file_bytes(&mut file, metadata.len(), limit)?;
+    let after_read = file.metadata().map_err(FormatError::Io)?;
+    if !file_metadata_unchanged(&metadata, &after_read) {
+        return Err(FormatError::Io(std::io::Error::new(
+            std::io::ErrorKind::Interrupted,
+            "file changed during bounded read",
+        )));
+    }
+    Ok(OpenedFileBytes {
+        file,
+        initial_metadata: metadata,
+        bytes: FileBytes { extension, bytes },
+    })
+}
+
+fn read_bounded_file_bytes(
+    reader: &mut impl Read,
+    expected_length: u64,
+    limit: u64,
+) -> Result<Vec<u8>, FormatError> {
+    if expected_length > limit {
+        return Err(FormatError::TooLarge {
+            bytes: expected_length,
+            limit,
+        });
+    }
+    let capacity = usize::try_from(expected_length).unwrap_or(0);
+    let mut bytes = Vec::with_capacity(capacity);
+    reader
+        .take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(FormatError::Io)?;
+    let actual_length = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+    if actual_length > limit {
+        return Err(FormatError::TooLarge {
+            bytes: actual_length,
+            limit,
+        });
+    }
+    if actual_length < expected_length {
+        return Err(FormatError::Io(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "file ended before its opened length was read",
+        )));
+    }
+    if actual_length > expected_length {
+        return Err(FormatError::Io(std::io::Error::new(
+            std::io::ErrorKind::Interrupted,
+            "file grew during bounded read",
+        )));
+    }
+    Ok(bytes)
+}
+
+fn file_metadata_unchanged(before: &std::fs::Metadata, after: &std::fs::Metadata) -> bool {
+    before.len() == after.len() && before.modified().ok() == after.modified().ok()
+}
+
+#[cfg(test)]
+mod bounded_file_read_tests {
+    use super::{FormatError, read_bounded_file_bytes};
+    use std::io::{Cursor, ErrorKind};
+
+    #[test]
+    fn a_short_read_is_an_unexpected_eof() {
+        let mut reader = Cursor::new(b"ab".to_vec());
+        let error = read_bounded_file_bytes(&mut reader, 3, 8).expect_err("short source");
+        assert!(
+            matches!(error, FormatError::Io(error) if error.kind() == ErrorKind::UnexpectedEof)
+        );
+    }
+
+    #[test]
+    fn reading_past_the_cap_returns_too_large_at_the_extra_byte() {
+        let mut reader = Cursor::new(b"123456".to_vec());
+        let error = read_bounded_file_bytes(&mut reader, 5, 5).expect_err("over-cap source");
+        assert!(matches!(
+            error,
+            FormatError::TooLarge { bytes: 6, limit: 5 }
+        ));
+    }
+}
+
+/// Group files into the batches a multi-file import parses together.
+///
+/// A batch takes files while it has room for their bytes and has not reached
+/// the concurrency limit. The first file always joins, so a file larger than
+/// the budget is parsed on its own rather than refused: the per-file limit is
+/// what decides whether it may be read at all.
+pub(crate) fn import_batches(
+    sizes: &[u64],
+    budget: u64,
+    parallelism: usize,
+) -> Vec<std::ops::Range<usize>> {
+    let parallelism = parallelism.max(1);
+    let mut batches = Vec::new();
+    let mut start = 0;
+    let mut bytes = 0_u64;
+    for (index, size) in sizes.iter().enumerate() {
+        let is_first = index == start;
+        let full = index - start >= parallelism;
+        let over_budget = !is_first && bytes.saturating_add(*size) > budget;
+        if full || over_budget {
+            batches.push(start..index);
+            start = index;
+            bytes = 0;
+        }
+        bytes = bytes.saturating_add(*size);
+    }
+    if start < sizes.len() {
+        batches.push(start..sizes.len());
+    }
+    batches
+}
+
+/// Read a file through the canonical format readers.
+///
+/// # Errors
+/// See [`read_file`].
+pub fn read_file(path: &Path) -> Result<Mesh, FormatError> {
+    read_file_loaded(path).map(|loaded| loaded.mesh)
+}
+
+/// As [`read_file`], additionally reporting the probed
+/// kind and its import-unit interpretation.
+///
+/// # Errors
+/// See [`read_file`].
+pub fn read_file_loaded(path: &Path) -> Result<LoadedMesh, FormatError> {
+    read_file_loaded_shaded(path, crate::MeshShading::Reconstructed)
+}
+
+/// As [`read_file`], choosing how vertex normals are
+/// produced.
+///
+/// # Errors
+/// See [`FormatError`].
+pub fn read_file_shaded(path: &Path, shading: crate::MeshShading) -> Result<Mesh, FormatError> {
+    read_file_loaded_shaded(path, shading).map(|loaded| loaded.mesh)
+}
+
+/// Read a file with the requested shading, retaining its detected kind and units.
+///
+/// # Errors
+/// See [`read_file_shaded`].
+pub fn read_file_loaded_shaded(
+    path: &Path,
+    shading: crate::MeshShading,
+) -> Result<LoadedMesh, FormatError> {
+    read_file_loaded_shaded_with_limit(path, shading, MAX_IMPORT_BYTES)
+}
+
+/// Read shaded geometry and companion textures, bounding the primary file read.
+///
+/// The limit applies to the opened file and the bytes actually read, including
+/// growth after a caller's preflight. Companion textures retain their separate
+/// decoding and memory-admission limits.
+///
+/// # Errors
+/// See [`read_file_bytes_with_limit`] and [`read_file_shaded`].
+pub fn read_file_loaded_shaded_with_limit(
+    path: &Path,
+    shading: crate::MeshShading,
+    limit: u64,
+) -> Result<LoadedMesh, FormatError> {
+    let bytes = read_file_bytes_with_limit(path, limit)?;
+    crate::dispatch::dispatch_file_bytes_loaded_shaded_with_companions(path, &bytes, shading)
+}
+
+/// Read multiple files into a [`Scene`].
+///
+/// # Errors
+/// See [`read_files`].
+pub fn read_files(paths: &[PathBuf]) -> Result<Scene, (PathBuf, FormatError)> {
+    read_files_with_memory_budget(paths, 0)
+}
+
+/// Read files into a scene while reserving memory for layers already retained
+/// by the caller.
+///
+/// Each parse batch is admitted from per-format peak estimates before readers
+/// allocate geometry. The caller supplies the current scene estimate so Add
+/// and Open account for the layers kept alive during decoding.
+///
+/// # Errors
+/// The `Err` variant carries the path that failed and its [`FormatError`].
+pub fn read_files_with_memory_budget(
+    paths: &[PathBuf],
+    retained_scene_bytes: u64,
+) -> Result<Scene, (PathBuf, FormatError)> {
+    let mut scene = Scene::new();
+    let Some(first_path) = paths.first() else {
+        return Ok(scene);
+    };
+    check_scene_estimate(retained_scene_bytes).map_err(|error| (first_path.clone(), error))?;
+
+    let batches = import_batches(
+        &file_sizes(paths),
+        IMPORT_BATCH_BUDGET_BYTES,
+        IMPORT_PARALLELISM,
+    );
+    for batch in batches {
+        let current_scene_bytes =
+            retained_scene_bytes.saturating_add(scene.estimated_memory_bytes());
+        if current_scene_bytes > SCENE_IMPORT_MEMORY_BUDGET_BYTES {
+            return Err((
+                paths[batch.start].clone(),
+                FormatError::MemoryBudgetExceeded {
+                    estimated_bytes: current_scene_bytes,
+                    limit: SCENE_IMPORT_MEMORY_BUDGET_BYTES,
+                },
+            ));
+        }
+        let batch_paths = &paths[batch.clone()];
+        let inputs = read_batch_inputs(batch_paths, current_scene_bytes)?;
+        let admitted = admit_batch(inputs, current_scene_bytes, &batch_paths[0])?;
+        let meshes = parse_batch(admitted);
+        for result in meshes {
+            let loaded = result?;
+            scene.add(SceneMesh::new(loaded.mesh).with_import_units(loaded.units));
+        }
+    }
+    let final_estimate = retained_scene_bytes.saturating_add(scene.estimated_memory_bytes());
+    check_scene_estimate(final_estimate).map_err(|error| (first_path.clone(), error))?;
+    Ok(scene)
+}
+
+fn file_sizes(paths: &[PathBuf]) -> Vec<u64> {
+    paths
+        .iter()
+        .map(|path| {
+            std::fs::metadata(path)
+                .map_or(0, |metadata| metadata.len())
+                .min(MAX_IMPORT_BYTES)
+        })
+        .collect()
+}
+
+fn read_batch_inputs(
+    paths: &[PathBuf],
+    current_scene_bytes: u64,
+) -> PathResult<Vec<(PathBuf, FileBytes)>> {
+    let mut inputs = Vec::with_capacity(paths.len());
+    let mut raw_bytes = 0_u64;
+    for path in paths {
+        let file_size = std::fs::metadata(path)
+            .map_err(FormatError::Io)
+            .map(|metadata| metadata.len())
+            .map_err(|error| (path.clone(), error))?;
+        if file_size > MAX_IMPORT_BYTES {
+            return Err((
+                path.clone(),
+                FormatError::TooLarge {
+                    bytes: file_size,
+                    limit: MAX_IMPORT_BYTES,
+                },
+            ));
+        }
+        let raw_limit = SCENE_IMPORT_MEMORY_BUDGET_BYTES
+            .saturating_sub(current_scene_bytes)
+            .saturating_sub(raw_bytes)
+            .min(MAX_IMPORT_BYTES);
+        if file_size > raw_limit {
+            return Err((
+                path.clone(),
+                memory_budget_error(
+                    current_scene_bytes
+                        .saturating_add(raw_bytes)
+                        .saturating_add(file_size),
+                ),
+            ));
+        }
+        let file_bytes = read_file_bytes_with_limit(path, raw_limit).map_err(|error| {
+            if matches!(error, FormatError::TooLarge { limit, .. } if limit < MAX_IMPORT_BYTES) {
+                let estimated_bytes = current_scene_bytes
+                    .saturating_add(raw_bytes)
+                    .saturating_add(raw_limit.saturating_add(1));
+                (path.clone(), memory_budget_error(estimated_bytes))
+            } else {
+                (path.clone(), error)
+            }
+        })?;
+        raw_bytes = raw_bytes
+            .saturating_add(u64::try_from(file_bytes.as_slice().len()).unwrap_or(u64::MAX));
+        inputs.push((path.clone(), file_bytes));
+    }
+    Ok(inputs)
+}
+
+fn admit_batch(
+    inputs: Vec<(PathBuf, FileBytes)>,
+    current_scene_bytes: u64,
+    fallback_path: &Path,
+) -> PathResult<Vec<AdmittedInput>> {
+    let raw_batch_bytes = inputs.iter().fold(0_u64, |total, (_, bytes)| {
+        total.saturating_add(u64::try_from(bytes.as_slice().len()).unwrap_or(u64::MAX))
+    });
+    let first_path = inputs
+        .first()
+        .map_or_else(|| fallback_path.to_path_buf(), |(path, _)| path.clone());
+    let mut admitted = Vec::with_capacity(inputs.len());
+    let mut estimated_batch_bytes = 0_u64;
+    for (path, bytes) in inputs {
+        let kind = probe_kind(bytes.extension(), bytes.as_slice())
+            .map_err(|error| (path.clone(), error))?;
+        let input_bytes = u64::try_from(bytes.as_slice().len()).unwrap_or(u64::MAX);
+        let reserved_bytes =
+            current_scene_bytes.saturating_add(raw_batch_bytes.saturating_sub(input_bytes));
+        let estimate = estimate_file_peak_bytes(kind, bytes.as_slice(), reserved_bytes)
+            .map_err(|error| (path.clone(), error))?
+            .saturating_add(crate::memory::estimate_companion_peak_bytes(
+                kind,
+                bytes.as_slice(),
+            ));
+        estimated_batch_bytes = estimated_batch_bytes.saturating_add(estimate);
+        admitted.push(AdmittedInput { path, bytes, kind });
+    }
+    let total_estimate = current_scene_bytes.saturating_add(estimated_batch_bytes);
+    check_scene_estimate(total_estimate).map_err(|error| (first_path, error))?;
+    Ok(admitted)
+}
+
+fn parse_batch(admitted: Vec<AdmittedInput>) -> Vec<PathResult<LoadedMesh>> {
+    admitted
+        .into_par_iter()
+        .map(|input| {
+            let atlas = crate::companions::find(
+                &input.path,
+                crate::companions::LocateKind::for_kind(input.kind),
+                input.bytes.as_slice(),
+            )
+            .map_err(|error| (input.path.clone(), error))?;
+            let mut loaded = dispatch_by_kind_loaded_admitted(
+                input.kind,
+                input.bytes.as_slice(),
+                crate::MeshShading::Reconstructed,
+                atlas.is_some(),
+            )
+            .map_err(|error| (input.path.clone(), error))?;
+            crate::companions::attach(&mut loaded.mesh, atlas);
+            Ok(loaded)
+        })
+        .collect()
+}
+
+fn memory_budget_error(estimated_bytes: u64) -> FormatError {
+    FormatError::MemoryBudgetExceeded {
+        estimated_bytes,
+        limit: SCENE_IMPORT_MEMORY_BUDGET_BYTES,
+    }
+}

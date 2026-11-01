@@ -1,0 +1,300 @@
+//! Thumbnail-specific format inference.
+
+use occluview_formats::{FormatError, FormatKind, probe};
+
+/// Infer the format a thumbnail render should use.
+///
+/// Explorer commonly initializes thumbnail providers through
+/// `IInitializeWithStream`, which carries bytes but not a file path. The shared
+/// formats probe handles magic-byte formats, while this shell layer adds the
+/// conservative text probes and v1 thumbnail policy that are specific to shell
+/// rendering.
+///
+/// # Errors
+/// Returns [`FormatError::Unsupported`] for unknown or deferred thumbnail
+/// formats, and propagates probe errors from `occluview-formats`.
+pub fn infer_thumbnail_format(
+    extension: Option<&str>,
+    bytes: &[u8],
+) -> Result<FormatKind, FormatError> {
+    let extension = extension
+        .map(normalize_extension)
+        .filter(|ext| !ext.is_empty());
+    if bytes.starts_with(b"glTF") {
+        return Ok(FormatKind::Gltf);
+    }
+    if is_zip_magic(bytes) {
+        return deferred("3mf");
+    }
+    if matches!(extension.as_deref(), Some("3mf")) {
+        return deferred("3mf");
+    }
+    if matches!(extension.as_deref(), Some("gltf")) {
+        return deferred("gltf");
+    }
+    match probe(extension.as_deref(), bytes) {
+        Ok(FormatKind::Threemf) => deferred("3mf"),
+        Ok(FormatKind::Gltf) if !bytes.starts_with(b"glTF") => deferred("gltf"),
+        Ok(kind) => Ok(kind),
+        // The shared probe knows every format that declares itself and every
+        // extension the viewer opens. Only when it knows neither does the text
+        // probe below get a say -- which is the case it exists for: a stream
+        // carries bytes and no name, and OBJ has no magic of its own.
+        //
+        // The shared probe goes first because a binary STL's 80-byte header is
+        // free-form text: a header such as "g 1 arch upper" must not make the
+        // thumbnail read the scan as an OBJ, fail, and cache a corrupt-file
+        // badge for a file the viewer opens.
+        Err(error) => {
+            if looks_like_obj_text(bytes) {
+                return Ok(FormatKind::Obj);
+            }
+            Err(error)
+        }
+    }
+}
+
+fn normalize_extension(extension: &str) -> String {
+    extension.trim_start_matches('.').to_ascii_lowercase()
+}
+
+fn deferred(extension: &str) -> Result<FormatKind, FormatError> {
+    Err(FormatError::Unsupported {
+        extension: extension.to_string(),
+    })
+}
+
+fn is_zip_magic(bytes: &[u8]) -> bool {
+    bytes.len() >= 4 && bytes[..4] == [0x50, 0x4B, 0x03, 0x04]
+}
+
+/// Whether the first meaningful line reads as an OBJ record.
+///
+/// Only the lines it has to look at are decoded. Decoding the whole input
+/// first cost 796 ms and about 165 MB of transient allocation on a 94 MB STL,
+/// which is most of that file's thumbnail: this runs on Explorer's own thread,
+/// before a render lane is taken, and outside the six-second deadline. It
+/// fires for every STL over 40 MiB, every PLY over 4 MiB -- which is nearly
+/// every real dental PLY -- and on every stream request.
+fn looks_like_obj_text(bytes: &[u8]) -> bool {
+    // A record line in a real OBJ is short; anything longer is not one.
+    const MAX_RECORD_BYTES: usize = 4096;
+    // And the whole probe reads at most this much. Splitting on newlines over
+    // the full input is still linear when the input has none -- which is what
+    // a binary STL of a flat surface looks like -- so the window is what makes
+    // the cost independent of file size. A text OBJ's first record is in the
+    // first few hundred bytes; a file whose first 64 KiB hold no line at all
+    // is not one.
+    const PROBE_WINDOW_BYTES: usize = 64 * 1024;
+
+    let window = &bytes[..bytes.len().min(PROBE_WINDOW_BYTES)];
+    for line in window.split(|byte| *byte == b'\n') {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        let line = &line[..line.len().min(MAX_RECORD_BYTES)];
+        let text = String::from_utf8_lossy(line);
+        let text = text.trim_start().trim_start_matches('\u{feff}');
+        if text.is_empty() || text.starts_with('#') {
+            continue;
+        }
+        return is_obj_record(text);
+    }
+    false
+}
+
+fn is_obj_record(line: &str) -> bool {
+    matches!(
+        line.split_ascii_whitespace().next(),
+        Some(
+            "v" | "vn"
+                | "vt"
+                | "f"
+                | "o"
+                | "g"
+                | "s"
+                | "usemtl"
+                | "mtllib"
+                | "newmtl"
+                | "vp"
+                | "bevel"
+                | "cstype"
+                | "deg"
+                | "curv"
+                | "curv2"
+                | "surf"
+                | "parm"
+                | "trim"
+                | "hole"
+                | "scrv"
+                | "sp"
+                | "end"
+                | "con"
+                | "bmat"
+                | "step"
+        )
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    /// The OBJ probe must look at the first line, not at the file.
+    ///
+    /// Decoding the whole input costs 660 ms on a 100 MB binary STL, against
+    /// 12 us for the line-wise form. This runs on Explorer's thread before a
+    /// render lane is taken.
+    #[test]
+    fn the_obj_probe_does_not_read_the_whole_file() {
+        // 32 MB of binary STL: decoding all of it takes about 210 ms.
+        let mut bytes = vec![0u8; 80];
+        bytes.extend_from_slice(&600_000_u32.to_le_bytes());
+        bytes.resize(32 * 1024 * 1024, 0x7f);
+
+        let started = std::time::Instant::now();
+        let answer = looks_like_obj_text(&bytes);
+        let elapsed = started.elapsed();
+
+        assert!(!answer, "binary STL is not an OBJ");
+        assert!(
+            elapsed < std::time::Duration::from_millis(40),
+            "the probe took {elapsed:?} on 32 MB; it is reading past the first \
+             line again"
+        );
+    }
+
+    /// And it still answers correctly for the format it exists to spot.
+    #[test]
+    fn a_text_obj_is_still_recognised_after_comments_and_a_bom() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice("\u{feff}".as_bytes());
+        bytes.extend_from_slice(b"# exported by a scanner\r\n\r\n");
+        bytes.extend_from_slice(b"v 1.0 2.0 3.0\n");
+        assert!(looks_like_obj_text(&bytes));
+
+        assert!(!looks_like_obj_text(
+            b"ply\nformat binary_little_endian 1.0\n"
+        ));
+        assert!(!looks_like_obj_text(b""));
+        assert!(!looks_like_obj_text(b"# only a comment\n"));
+    }
+
+    use super::*;
+
+    #[test]
+    fn glb_magic_wins_without_extension() {
+        assert!(matches!(
+            infer_thumbnail_format(None, b"glTF\x02\x00\x00\x00"),
+            Ok(FormatKind::Gltf)
+        ));
+    }
+
+    #[test]
+    fn binary_stl_magic_wins_over_wrong_extension() {
+        assert!(matches!(
+            infer_thumbnail_format(
+                Some("obj"),
+                &occluview_core::test_support::binary_stl(&[[0.0; 12]]),
+            ),
+            Ok(FormatKind::Stl)
+        ));
+    }
+
+    #[test]
+    fn obj_text_is_detected_without_extension() {
+        let obj = b"# scan export\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n";
+        assert!(matches!(
+            infer_thumbnail_format(None, obj),
+            Ok(FormatKind::Obj)
+        ));
+    }
+
+    #[test]
+    fn obj_text_with_bom_and_non_utf8_metadata_is_detected_without_extension() {
+        let obj = b"\xef\xbb\xbf# scanner metadata \xFF\xFE\nmtllib scan.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n";
+
+        assert!(matches!(
+            infer_thumbnail_format(None, obj),
+            Ok(FormatKind::Obj)
+        ));
+    }
+
+    #[test]
+    fn obj_text_with_material_prologue_is_detected_without_extension() {
+        let obj = b"# scanner export\nnewmtl\tenamel\nvp 0 0 1\ncurv 0 1 1 2\nv\t0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n";
+
+        assert!(matches!(
+            infer_thumbnail_format(None, obj),
+            Ok(FormatKind::Obj)
+        ));
+    }
+
+    #[test]
+    fn extension_selects_obj_when_magic_is_silent() {
+        assert!(matches!(
+            infer_thumbnail_format(Some(".OBJ"), b"not enough obj syntax"),
+            Ok(FormatKind::Obj)
+        ));
+    }
+
+    #[test]
+    fn gltf_json_is_deferred_for_thumbnails() {
+        assert!(matches!(
+            infer_thumbnail_format(Some("gltf"), br#"{"asset":{"version":"2.0"}}"#),
+            Err(FormatError::Unsupported { extension }) if extension == "gltf"
+        ));
+    }
+
+    #[test]
+    fn threemf_is_deferred_for_thumbnails() {
+        assert!(matches!(
+            infer_thumbnail_format(Some("3mf"), &[0x50, 0x4B, 0x03, 0x04]),
+            Err(FormatError::Unsupported { extension }) if extension == "3mf"
+        ));
+    }
+
+    #[test]
+    fn unknown_input_is_rejected() {
+        assert!(matches!(
+            infer_thumbnail_format(None, b"not a mesh"),
+            Err(FormatError::Unsupported { .. })
+        ));
+    }
+}
+
+#[cfg(test)]
+mod agreement_tests {
+    use super::infer_thumbnail_format;
+    use occluview_formats::{FormatKind, probe};
+
+    /// A binary STL's 80-byte header is free-form text, and exporters put
+    /// words in it. Words that read like an OBJ record must not make the
+    /// thumbnail inference disagree with the viewer, which asks the shared
+    /// probe; a misread would cache a corrupt-file badge against the file's
+    /// timestamp on a scan that opens.
+    #[test]
+    fn a_binary_stl_whose_header_reads_like_obj_is_still_an_stl() {
+        let mut bytes = b"g 1 arch upper".to_vec();
+        bytes.resize(80, 0);
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        let triangle = [
+            0.0f32, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0,
+        ];
+        occluview_core::test_support::append_binary_stl_triangle(&mut bytes, &triangle);
+
+        assert!(matches!(probe(Some("stl"), &bytes), Ok(FormatKind::Stl)));
+        let inferred = infer_thumbnail_format(Some("stl"), &bytes);
+        assert!(
+            matches!(inferred, Ok(FormatKind::Stl)),
+            "the picture and the viewer must read the same file the same way: {inferred:?}"
+        );
+    }
+
+    /// The text probe still earns its place: a stream carries bytes and no
+    /// name, and OBJ has no magic of its own.
+    #[test]
+    fn an_unnamed_stream_of_obj_text_is_still_recognised() {
+        let obj = b"# exported\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n";
+        assert!(matches!(
+            infer_thumbnail_format(None, obj),
+            Ok(FormatKind::Obj)
+        ));
+    }
+}

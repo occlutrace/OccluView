@@ -1,0 +1,301 @@
+use windows::core::{HSTRING, PCWSTR};
+use windows::Win32::System::Registry::{
+    RegCloseKey, RegCreateKeyW, RegDeleteTreeW, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW,
+    RegSetValueExW, HKEY, HKEY_CLASSES_ROOT, KEY_QUERY_VALUE, KEY_SET_VALUE, REG_DWORD, REG_SZ,
+    REG_VALUE_TYPE,
+};
+
+/// An owned registry handle, closed on every exit path.
+pub(super) struct RegistryKey(HKEY);
+
+impl RegistryKey {
+    pub(super) const fn raw(&self) -> HKEY {
+        self.0
+    }
+}
+
+impl Drop for RegistryKey {
+    fn drop(&mut self) {
+        // SAFETY: this guard owns the handle returned by a successful open/create.
+        let _ = unsafe { RegCloseKey(self.0) };
+    }
+}
+
+/// `ERROR_SUCCESS`.
+pub(super) const ERROR_SUCCESS: u32 = 0;
+/// `ERROR_FILE_NOT_FOUND` — already-deleted key, treat as success on unregister.
+pub(super) const ERROR_FILE_NOT_FOUND: u32 = 2;
+/// `ERROR_PATH_NOT_FOUND` — parent path already deleted, also success.
+pub(super) const ERROR_PATH_NOT_FOUND: u32 = 3;
+
+/// Create or open a registry key under HKCR, returning the handle. Errors
+/// propagate as `windows::core::Error`.
+pub(super) fn create_key(subkey: &HSTRING) -> windows::core::Result<RegistryKey> {
+    create_key_at(HKEY_CLASSES_ROOT, subkey)
+}
+
+pub(super) fn create_key_at(root: HKEY, subkey: &HSTRING) -> windows::core::Result<RegistryKey> {
+    let mut hkey = HKEY::default();
+    // SAFETY: `hkey` is a stack out-param; `subkey` is a valid PCWSTR.
+    let r = unsafe { RegCreateKeyW(root, PCWSTR(subkey.as_ptr()), &mut hkey) };
+    if r.0 == ERROR_SUCCESS {
+        Ok(RegistryKey(hkey))
+    } else {
+        Err(r.into())
+    }
+}
+
+/// Open an existing registry key for value query/delete. Missing keys are a
+/// successful no-op for unregister paths.
+pub(super) fn open_key_for_value_update(
+    subkey: &HSTRING,
+) -> windows::core::Result<Option<RegistryKey>> {
+    open_key_for_value_update_at(HKEY_CLASSES_ROOT, subkey)
+}
+
+pub(super) fn open_key_for_value_update_at(
+    root: HKEY,
+    subkey: &HSTRING,
+) -> windows::core::Result<Option<RegistryKey>> {
+    let mut hkey = HKEY::default();
+    // SAFETY: `hkey` is a valid out-param; `subkey` is a valid PCWSTR.
+    let r = unsafe {
+        RegOpenKeyExW(
+            root,
+            PCWSTR(subkey.as_ptr()),
+            None,
+            KEY_QUERY_VALUE | KEY_SET_VALUE,
+            &mut hkey,
+        )
+    };
+    if r.0 == ERROR_SUCCESS {
+        Ok(Some(RegistryKey(hkey)))
+    } else if r.0 == ERROR_FILE_NOT_FOUND || r.0 == ERROR_PATH_NOT_FOUND {
+        Ok(None)
+    } else {
+        Err(r.into())
+    }
+}
+
+/// Set a `REG_SZ` value. `name=None` sets the key's default value.
+pub(super) fn set_string(
+    hkey: HKEY,
+    name: Option<&HSTRING>,
+    value: &HSTRING,
+) -> windows::core::Result<()> {
+    let name_pcwstr = match name {
+        Some(n) => PCWSTR(n.as_ptr()),
+        None => PCWSTR::null(),
+    };
+    // Include the trailing NUL wide char in the byte length.
+    let units: &[u16] = value;
+    let byte_len = (units.len() + 1) * 2;
+    // SAFETY: `value`'s wide buffer is valid for byte_len bytes; the trailing
+    // NUL is implicit in HSTRING's allocation.
+    let r = unsafe {
+        RegSetValueExW(
+            hkey,
+            name_pcwstr,
+            None,
+            REG_SZ,
+            Some(std::slice::from_raw_parts(
+                units.as_ptr().cast::<u8>(),
+                byte_len,
+            )),
+        )
+    };
+    if r.0 == ERROR_SUCCESS {
+        Ok(())
+    } else {
+        Err(r.into())
+    }
+}
+
+pub(super) fn set_dword(hkey: HKEY, name: &HSTRING, value: u32) -> windows::core::Result<()> {
+    let bytes = value.to_le_bytes();
+    // SAFETY: `bytes` is exactly four bytes, as required for REG_DWORD.
+    let r = unsafe { RegSetValueExW(hkey, PCWSTR(name.as_ptr()), None, REG_DWORD, Some(&bytes)) };
+    if r.0 == ERROR_SUCCESS {
+        Ok(())
+    } else {
+        Err(r.into())
+    }
+}
+
+/// Delete a single registry value under `subkey`. `name=None` deletes the
+/// default value; missing keys/values are successful no-ops.
+pub(super) fn delete_value(subkey: &HSTRING, name: Option<&HSTRING>) -> windows::core::Result<()> {
+    delete_value_at(HKEY_CLASSES_ROOT, subkey, name)
+}
+
+pub(super) fn delete_value_at(
+    root: HKEY,
+    subkey: &HSTRING,
+    name: Option<&HSTRING>,
+) -> windows::core::Result<()> {
+    let Some(hkey) = open_key_for_value_update_at(root, subkey)? else {
+        return Ok(());
+    };
+    let name_pcwstr = value_name_pcwstr(name);
+    // SAFETY: `hkey` is open and `name_pcwstr` is either null for the default
+    // value or points at a live HSTRING.
+    let r = unsafe { RegDeleteValueW(hkey.raw(), name_pcwstr) };
+    if r.0 == ERROR_SUCCESS || r.0 == ERROR_FILE_NOT_FOUND {
+        Ok(())
+    } else {
+        Err(r.into())
+    }
+}
+
+/// Delete a single registry value only if its current value exactly matches
+/// `expected`. This prevents self-unregistration from clearing a handler that
+/// another app has claimed after OccluView was registered.
+pub(super) fn delete_value_if_matches(
+    subkey: &HSTRING,
+    name: Option<&HSTRING>,
+    expected: &HSTRING,
+) -> windows::core::Result<()> {
+    let Some(hkey) = open_key_for_value_update(subkey)? else {
+        return Ok(());
+    };
+    let current = query_string_value(hkey.raw(), name)?;
+    if current.as_ref().is_some_and(|value| value == expected) {
+        let name_pcwstr = value_name_pcwstr(name);
+        // SAFETY: `hkey` is open and `name_pcwstr` is either null or a live
+        // HSTRING pointer.
+        let r = unsafe { RegDeleteValueW(hkey.raw(), name_pcwstr) };
+        if r.0 == ERROR_SUCCESS || r.0 == ERROR_FILE_NOT_FOUND {
+            Ok(())
+        } else {
+            Err(r.into())
+        }
+    } else {
+        Ok(())
+    }
+}
+
+pub(super) fn key_default_matches(
+    subkey: &HSTRING,
+    expected: &HSTRING,
+) -> windows::core::Result<bool> {
+    let Some(hkey) = open_key_for_value_update(subkey)? else {
+        return Ok(false);
+    };
+    let current = query_string_value(hkey.raw(), None)?;
+    Ok(current.as_ref().is_some_and(|value| value == expected))
+}
+
+pub(super) fn query_string_value(
+    hkey: HKEY,
+    name: Option<&HSTRING>,
+) -> windows::core::Result<Option<HSTRING>> {
+    let name_pcwstr = value_name_pcwstr(name);
+    let mut value_type = REG_VALUE_TYPE::default();
+    let mut byte_len = 0u32;
+    // SAFETY: first query asks Windows for required buffer length.
+    let r = unsafe {
+        RegQueryValueExW(
+            hkey,
+            name_pcwstr,
+            None,
+            Some(&mut value_type),
+            None,
+            Some(&mut byte_len),
+        )
+    };
+    if r.0 == ERROR_FILE_NOT_FOUND {
+        return Ok(None);
+    }
+    if r.0 != ERROR_SUCCESS {
+        return Err(r.into());
+    }
+    if value_type != REG_SZ || byte_len == 0 {
+        return Ok(None);
+    }
+
+    let mut bytes = vec![0u8; byte_len as usize];
+    // SAFETY: `bytes` is allocated to the byte length Windows just reported.
+    let r = unsafe {
+        RegQueryValueExW(
+            hkey,
+            name_pcwstr,
+            None,
+            Some(&mut value_type),
+            Some(bytes.as_mut_ptr()),
+            Some(&mut byte_len),
+        )
+    };
+    if r.0 != ERROR_SUCCESS {
+        return Err(r.into());
+    }
+    let (wide_bytes, _) = bytes.as_chunks::<2>();
+    let mut wide = wide_bytes
+        .iter()
+        .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+        .collect::<Vec<_>>();
+    while wide.last().copied() == Some(0) {
+        let _ = wide.pop();
+    }
+    Ok(Some(HSTRING::from_wide(&wide)))
+}
+
+fn value_name_pcwstr(name: Option<&HSTRING>) -> PCWSTR {
+    match name {
+        Some(value) => PCWSTR(value.as_ptr()),
+        None => PCWSTR::null(),
+    }
+}
+
+/// Recursively delete a key. `ERROR_FILE_NOT_FOUND` is treated as success.
+pub(super) fn delete_tree(subkey: &HSTRING) -> windows::core::Result<()> {
+    delete_tree_at(HKEY_CLASSES_ROOT, subkey)
+}
+
+/// Recursively delete a key under `root`. Missing keys are successful no-ops.
+pub(super) fn delete_tree_at(root: HKEY, subkey: &HSTRING) -> windows::core::Result<()> {
+    // SAFETY: `subkey` is a valid PCWSTR; RegDeleteTreeW recursively removes
+    // the key and all subkeys.
+    let r = unsafe { RegDeleteTreeW(root, PCWSTR(subkey.as_ptr())) };
+    if r.0 == ERROR_SUCCESS || r.0 == ERROR_FILE_NOT_FOUND {
+        Ok(())
+    } else {
+        Err(r.into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows::Win32::Foundation::{SetLastError, ERROR_ACCESS_DENIED, ERROR_INVALID_HANDLE};
+    use windows::Win32::System::Registry::HKEY_CURRENT_USER;
+
+    #[test]
+    fn registry_errors_use_the_returned_win32_code() {
+        // SAFETY: this only sets this test thread's last-error value.
+        unsafe { SetLastError(ERROR_ACCESS_DENIED) };
+        let error = set_string(HKEY::default(), None, &HSTRING::from("value"))
+            .expect_err("invalid registry handle");
+        assert_eq!(
+            error.code(),
+            windows::core::HRESULT::from_win32(ERROR_INVALID_HANDLE.0)
+        );
+    }
+
+    #[test]
+    fn owned_registry_keys_close_after_scope() {
+        let name = HSTRING::from(format!(
+            "Software\\OccluViewHandleTest-{}",
+            std::process::id()
+        ));
+        let key = create_key_at(HKEY_CURRENT_USER, &name).expect("test key");
+        let raw = key.raw();
+        set_string(raw, None, &HSTRING::from("value")).expect("write");
+        drop(key);
+        let error = query_string_value(raw, None).expect_err("closed handle");
+        assert_eq!(
+            error.code(),
+            windows::core::HRESULT::from_win32(ERROR_INVALID_HANDLE.0)
+        );
+        delete_tree_at(HKEY_CURRENT_USER, &name).expect("remove test key");
+    }
+}

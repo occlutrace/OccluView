@@ -1,0 +1,36 @@
+//! Live preview-pane scene controller.
+//!
+//! The COM layer owns Win32 windowing. This subtree owns mesh loading, camera
+//! interaction, and pixel rendering for Explorer Preview Pane.
+
+#![cfg_attr(not(windows), allow(dead_code))]
+#![cfg_attr(test, allow(clippy::cast_possible_truncation, clippy::expect_used))]
+
+mod interaction;
+mod load;
+mod render;
+
+#[cfg(test)]
+mod test_support;
+
+use occluview_core::{Camera, Scene};
+use occluview_render::{Offscreen, PreparedScene};
+use std::sync::Arc;
+
+pub(crate) struct PreviewSceneState {
+    pub(super) scene: Scene,
+    pub(super) camera: Camera,
+    /// The process-shared renderer (see `offscreen_factory`): scene state
+    /// borrows the device but does not own its lifetime, so successive file
+    /// clicks reuse one device instead of re-creating wgpu per preview.
+    pub(super) offscreen: Arc<Offscreen>,
+    pub(super) prepared_scene: PreparedScene,
+}
+
+impl PreviewSceneState {
+    /// Class of the verified offscreen adapter retained for this scene.
+    #[cfg(feature = "diagnostic-logs")]
+    pub(crate) fn adapter_result(&self) -> occluview_render::AdapterResult {
+        self.offscreen.adapter_result()
+    }
+}

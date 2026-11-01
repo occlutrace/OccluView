@@ -1,0 +1,278 @@
+use super::{
+    FileThumbnailPreflightError, MAX_THUMBNAIL_FILE_BYTES, MAX_THUMBNAIL_INPUT_BYTES, Path,
+    StreamThumbnailPreflightError, ThumbnailError, cache, oversize_input_error,
+};
+use crate::fast_thumb::try_read_fast_thumbnail_mesh_for_kind;
+use crate::fidelity::THUMBNAIL_FULL_FIDELITY_FILE_BYTES;
+use crate::thumbnail_format::infer_thumbnail_format;
+use glam::Vec3;
+use occluview_core::Mesh;
+use occluview_formats::dispatch::{
+    FileBytes, LoadedMesh, OpenedFileBytes, dispatch_by_kind_loaded,
+    dispatch_file_bytes_loaded_shaded_with_companions, read_opened_file_bytes_with_limit,
+};
+use occluview_formats::{FormatError, FormatKind};
+
+/// A thumbnail keeps the normals the file wrote.
+///
+/// Welding vertices by position and averaging normals across each run is what
+/// makes a faceted scan shade smoothly in the viewport, and it is most of the
+/// cost of reading one: 135 ms of a 172 ms read for a 326 000 triangle arch.
+/// At 256 pixels that arch puts a tenth of a pixel under each triangle, so the
+/// reconstruction cannot be seen -- the two renders differ by a quarter of one
+/// step out of 255. The app still reconstructs; only the picture skips it.
+const THUMBNAIL_SHADING: occluview_formats::MeshShading = occluview_formats::MeshShading::AsWritten;
+
+// Thumbnail fidelity cutoffs: files at or below the format's cutoff are
+// parsed with the canonical `occluview-formats` reader (full triangle/point
+// data); larger files go through the `fast_thumb` decimated reader instead.
+//
+// The cutoffs bound memory, not time. Because the thumbnail does not
+// reconstruct normals, the canonical readers are the faster ones at every
+// size measured: the decimating reader welds onto a grid, and that weld costs
+// more than the parse it replaces:
+//
+//     20.5 MB STL   full  42 ms   fast 113 ms
+//     46.7 MB STL   full 115 ms   fast 289 ms
+//    186.7 MB STL   full 415 ms   fast 938 ms
+//     31.7 MB OBJ   full 218 ms   fast 345 ms
+//
+// What the decimating reader buys is memory. A full read of that 186 MB scan
+// is 3.9 million triangles, about 420 MB of vertices resident, and the shell
+// hosts several of these at once in a process it does not own. The cutoffs
+// is sized to hold that resident cost inside a surrogate, and it is one number
+// for every format: `crate::fidelity` owns the table and records why STL alone
+// differs between this surface and the preview.
+
+fn reject_oversize_input(bytes: &[u8]) -> Result<(), ThumbnailError> {
+    if bytes.len() > MAX_THUMBNAIL_INPUT_BYTES {
+        return Err(oversize_input_error(bytes.len()));
+    }
+    Ok(())
+}
+
+pub(super) fn load_thumbnail_mesh_from_bytes(
+    extension: Option<&str>,
+    bytes: &[u8],
+) -> Result<Mesh, ThumbnailError> {
+    reject_oversize_input(bytes)?;
+    let kind = infer_thumbnail_format(extension, bytes)?;
+    load_thumbnail_mesh_from_bytes_kind(kind, bytes)
+}
+
+pub(super) fn load_thumbnail_mesh_from_bytes_kind(
+    kind: FormatKind,
+    bytes: &[u8],
+) -> Result<Mesh, ThumbnailError> {
+    select_thumbnail_mesh(
+        bytes.len() as u64 <= THUMBNAIL_FULL_FIDELITY_FILE_BYTES,
+        || dispatch_by_kind_loaded(kind, bytes, THUMBNAIL_SHADING),
+        || try_read_fast_thumbnail_mesh_for_kind(kind, bytes),
+    )
+}
+
+pub(super) fn load_thumbnail_mesh_from_file(
+    path: &Path,
+    metadata: cache::ThumbnailFileMetadata,
+) -> Result<Mesh, ThumbnailError> {
+    if metadata.byte_len > MAX_THUMBNAIL_FILE_BYTES as u64 {
+        return Err(cache::oversize_file_error(
+            usize::try_from(metadata.byte_len).unwrap_or(usize::MAX),
+        ));
+    }
+    let source = read_opened_file_bytes_with_limit(path, MAX_THUMBNAIL_FILE_BYTES as u64)?;
+    let file_bytes = source.file_bytes();
+    let kind = infer_thumbnail_format(Some(file_bytes.extension()), file_bytes.as_slice())?;
+    load_thumbnail_mesh_from_opened_file(path, &source, kind)
+}
+
+pub(super) fn load_thumbnail_mesh_from_opened_file(
+    path: &Path,
+    source: &OpenedFileBytes,
+    kind: FormatKind,
+) -> Result<Mesh, ThumbnailError> {
+    let file_bytes = source.file_bytes();
+    let bytes = file_bytes.as_slice();
+    if bytes.len() > MAX_THUMBNAIL_FILE_BYTES {
+        return Err(cache::oversize_file_error(bytes.len()));
+    }
+    select_thumbnail_mesh(
+        bytes.len() as u64 <= THUMBNAIL_FULL_FIDELITY_FILE_BYTES,
+        || dispatch_file_bytes_loaded_shaded_with_companions(path, file_bytes, THUMBNAIL_SHADING),
+        || try_read_fast_thumbnail_mesh_for_kind(kind, bytes),
+    )
+}
+
+pub(super) fn thumbnail_format_kind_from_file_bytes(
+    file_bytes: &FileBytes,
+) -> Result<FormatKind, ThumbnailError> {
+    infer_thumbnail_format(Some(file_bytes.extension()), file_bytes.as_slice()).map_err(Into::into)
+}
+
+/// Pick the mesh a thumbnail should render, preferring whichever source is
+/// appropriate for the file size but always returning renderable geometry.
+///
+/// The fast surrogate can decline (returns `None`) or emit geometry that would
+/// render as a fully transparent tile (an all-degenerate / non-finite file
+/// clusters to zero triangles); the full reader can likewise return a mesh with
+/// no renderable area. This routes around a blank result from either source,
+/// and only when *both* fail does it surface a corrupt-file error so the COM
+/// layer paints a placeholder — the public entry point never returns a
+/// fully-transparent bitmap.
+fn select_thumbnail_mesh(
+    prefer_full: bool,
+    full: impl FnOnce() -> Result<LoadedMesh, FormatError>,
+    fast: impl FnOnce() -> Option<Mesh>,
+) -> Result<Mesh, ThumbnailError> {
+    if prefer_full {
+        // Inside the fidelity budget: trust the canonical reader, but fall back
+        // to the fast surrogate if it fails or returns nothing renderable.
+        match full() {
+            Ok(loaded) if thumbnail_mesh_is_renderable(&loaded.mesh) => return Ok(loaded.mesh),
+            full_result => {
+                if let Some(mesh) = fast() {
+                    if thumbnail_mesh_is_renderable(&mesh) {
+                        return Ok(mesh);
+                    }
+                }
+                return match full_result {
+                    Err(error) => Err(error.into()),
+                    Ok(loaded) => Err(non_renderable_thumbnail_error(loaded.kind).into()),
+                };
+            }
+        }
+    }
+
+    // Above the fidelity budget: try the fast surrogate first, then the full
+    // reader, keeping the first source that yields renderable geometry.
+    if let Some(mesh) = fast() {
+        if thumbnail_mesh_is_renderable(&mesh) {
+            return Ok(mesh);
+        }
+    }
+    let loaded = full()?;
+    if thumbnail_mesh_is_renderable(&loaded.mesh) {
+        Ok(loaded.mesh)
+    } else {
+        Err(non_renderable_thumbnail_error(loaded.kind).into())
+    }
+}
+
+/// True if `mesh` will project to visible pixels in the thumbnail.
+///
+/// Guards against the two ways a loaded mesh renders to a fully transparent
+/// tile: no vertices / a non-finite (NaN or Inf) bounding box (dead camera
+/// framing), and a triangle mesh with no drawable area (every triangle
+/// degenerate — a point or a line — so nothing rasterizes). A point cloud only
+/// needs some spatial extent; the renderer splats its vertices.
+fn thumbnail_mesh_is_renderable(mesh: &Mesh) -> bool {
+    if mesh.vertices().is_empty() {
+        return false;
+    }
+    let bbox = mesh.bbox_cached();
+    let extent = bbox.size();
+    if bbox.is_empty() || !extent.is_finite() {
+        return false;
+    }
+    if mesh.is_point_cloud() {
+        return extent.max_element() > 0.0;
+    }
+    // A triangle mesh needs at least one triangle with real (finite, non-zero)
+    // area. A 2D-spanning bbox is not enough: an all-zero-area soup (every
+    // triangle a coincident point, scattered across a plane) has a 2D box yet
+    // rasterizes to nothing. Scan for the first drawable triangle — O(1) for a
+    // healthy surface, worst case O(triangles) for a wholly degenerate file.
+    mesh_has_drawable_triangle(mesh)
+}
+
+fn mesh_has_drawable_triangle(mesh: &Mesh) -> bool {
+    let vertices = mesh.vertices();
+    for triangle in mesh.indices().as_chunks::<3>().0 {
+        let a = Vec3::from_array(vertices[triangle[0] as usize].position).as_dvec3();
+        let b = Vec3::from_array(vertices[triangle[1] as usize].position).as_dvec3();
+        let c = Vec3::from_array(vertices[triangle[2] as usize].position).as_dvec3();
+        if a.is_finite()
+            && b.is_finite()
+            && c.is_finite()
+            && (b - a).cross(c - a).length_squared() > 0.0
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// A corrupt-file error for a recognized format that produced no renderable
+/// geometry. Maps to the corrupt-badge placeholder (see
+/// `render_thumb::placeholder_kind_for_error`): the format name is real (never
+/// the `"thumbnail …"` sentinel that marks a quiet policy decision).
+fn non_renderable_thumbnail_error(kind: FormatKind) -> FormatError {
+    // Every kind the table can return gets its own name here; "mesh" remains
+    // only for a kind with no extension behind it.
+    let format = match kind {
+        FormatKind::Stl => "STL",
+        FormatKind::Obj => "OBJ",
+        FormatKind::Ply => "PLY",
+        FormatKind::Gltf => "glTF",
+        FormatKind::Threemf => "3MF",
+        FormatKind::Off => "OFF",
+    };
+    FormatError::Malformed {
+        format,
+        offset: 0,
+        reason: "no renderable geometry (all triangles degenerate or non-finite)".to_string(),
+    }
+}
+
+fn path_has_supported_thumbnail_extension(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.trim_start_matches('.').to_ascii_lowercase())
+        .is_some_and(|extension| {
+            crate::SUPPORTED_EXTENSIONS
+                .iter()
+                .any(|supported| extension == *supported)
+        })
+}
+
+pub(super) fn prepare_file_thumbnail_render(
+    path: &Path,
+) -> Result<cache::FileThumbnailRenderPlan, FileThumbnailPreflightError> {
+    if !path_has_supported_thumbnail_extension(path) {
+        return Err(FileThumbnailPreflightError::UnsupportedExtension);
+    }
+
+    let (metadata, is_regular_file) = cache::thumbnail_file_metadata_checked(path)
+        .map_err(FileThumbnailPreflightError::Metadata)?;
+    if !is_regular_file {
+        return Err(FileThumbnailPreflightError::NotAFile);
+    }
+    if metadata.byte_len > MAX_THUMBNAIL_FILE_BYTES as u64 {
+        return Err(FileThumbnailPreflightError::Oversize {
+            byte_len: usize::try_from(metadata.byte_len).unwrap_or(usize::MAX),
+        });
+    }
+
+    Ok(cache::FileThumbnailRenderPlan {
+        metadata,
+        cache_key: cache::ThumbnailFileCacheKey::new(path, &metadata),
+    })
+}
+
+pub(super) fn prepare_stream_thumbnail_render(
+    extension: Option<&str>,
+    bytes: &[u8],
+) -> Result<cache::StreamThumbnailRenderPlan, StreamThumbnailPreflightError> {
+    if bytes.len() > MAX_THUMBNAIL_INPUT_BYTES {
+        return Err(StreamThumbnailPreflightError::Oversize {
+            byte_len: bytes.len(),
+        });
+    }
+    let kind =
+        infer_thumbnail_format(extension, bytes).map_err(StreamThumbnailPreflightError::Format)?;
+
+    Ok(cache::StreamThumbnailRenderPlan {
+        kind,
+        cache_key: cache::ThumbnailStreamCacheKey::new(kind, bytes),
+    })
+}

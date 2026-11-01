@@ -1,0 +1,30 @@
+# Normalize text line endings to LF in the repository and on checkout.
+* text=auto eol=lf
+
+# Binary file types — never merge / diff as text.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.dll binary
+*.exe binary
+*.pdb binary
+*.lib binary
+*.3mf binary
+*.glb binary
+*.webm binary
+*.mp4 binary
+
+# Markdown / source — force LF (these are edited on Windows too).
+*.md   text eol=lf
+*.rs   text eol=lf
+*.toml text eol=lf
+*.wgsl text eol=lf
+
+# No linguist overrides. WGSL was relabelled as Rust here to make the language
+# bar on the repository page read the way we wanted, which is exactly the kind
+# of dressing this project avoids everywhere else. The shaders are WGSL.

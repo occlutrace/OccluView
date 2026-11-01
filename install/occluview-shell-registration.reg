@@ -1,0 +1,354 @@
+Windows Registry Editor Version 5.00
+
+; OccluView shell extension — manual registration script.
+;
+; Prefer `regsvr32 occluview_shell.dll` (runs DllRegisterServer, which fills in
+; the absolute DLL path). This .reg file is a fallback for environments where
+; regsvr32 is blocked by policy; replace <DLL_PATH> with the absolute path to
+; occluview_shell.dll before importing.
+;
+; Layout:
+;   HKCR\CLSID\{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}\InprocServer32
+;       (default) = <DLL_PATH>
+;       ThreadingModel = Apartment
+;   HKCR\CLSID\{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}\InprocServer32
+;       (default) = <DLL_PATH>
+;       ThreadingModel = Apartment
+;   HKLM\Software\Microsoft\Windows\CurrentVersion\Shell Extensions\Approved
+;       {9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045} = "OccluView Thumbnail Provider"
+;       {9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046} = "OccluView Preview Handler"
+;   HKLM\Software\Microsoft\Windows\CurrentVersion\PreviewHandlers
+;       {9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046} = "OccluView Preview Handler"
+;   preview CLSID AppID = {6D2B5079-2F0B-48DD-AB7F-97CEC514D30B}
+;       (Windows' standard low-integrity Prevhost registration; this file
+;       intentionally does not create or delete the Windows-owned AppID key.)
+;   HKCR\<ext>\ShellEx\{E357FCCD-A995-4576-B01F-234630154E96}
+;       (default) = {9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}
+;   HKCR\<ext>\ShellEx\{8895B1C6-B41F-4C1C-A562-0D564250836F}
+;       (default) = {9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}
+;   HKCR\SystemFileAssociations\<ext>\ShellEx\{E357FCCD-A995-4576-B01F-234630154E96}
+;       (default) = {9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}
+;   HKCR\SystemFileAssociations\<ext>\ShellEx\{8895B1C6-B41F-4C1C-A562-0D564250836F}
+;       (default) = {9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}
+;
+;   HKCR\MeshFile.<EXT>                (per-format ProgID)
+;       (default) = "<EXT> File"
+;       DefaultIcon = "<APP_DIR>\occluview-3d.ico"
+;       shell\open\command = "<APP_EXE_PATH>" "%1"
+;       ThumbnailCutoff = 1 (allow thumbnails down to 16px)
+;       TypeOverlay = "" (no app-brand overlay on the rendered thumbnail)
+;   HKCR\Applications\occluview.exe          (Open With / Default Apps discovery)
+;       shell\open\command = "<APP_EXE_PATH>" "%1"
+;       SupportedTypes = .stl/.ply/.obj/.glb/.off
+;   HKCR\<ext>
+;       (default) = MeshFile.<EXT> (fallback only; user defaults can override)
+;       ThumbnailCutoff = 1
+;       TypeOverlay = ""
+;       DefaultIcon = "<APP_DIR>\occluview-3d.ico"
+;   HKCR\<ext>\OpenWithProgids
+;       MeshFile.<EXT> = ""
+;   HKCR\<ext>\OpenWithList\occluview.exe
+;
+;
+; Replace <DLL_PATH> with the absolute path to occluview_shell.dll and
+; <APP_EXE_PATH> with the absolute path to occluview.exe before importing.
+; Replace <APP_DIR> with the directory containing occluview.exe and the
+; occluview-*.ico format icons.
+;
+; The {E357FCCD-...} CLSID is the shell's well-known IThumbnailProvider
+; category; {8895B1C6-...} is the shell's preview-handler category.
+
+[HKEY_CLASSES_ROOT\CLSID\{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}]
+@="OccluView Thumbnail Provider"
+
+[HKEY_CLASSES_ROOT\CLSID\{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}\InprocServer32]
+@="<DLL_PATH>"
+"ThreadingModel"="Apartment"
+
+[HKEY_CLASSES_ROOT\CLSID\{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}]
+@="OccluView Preview Handler"
+"AppID"="{6D2B5079-2F0B-48DD-AB7F-97CEC514D30B}"
+
+[HKEY_CLASSES_ROOT\CLSID\{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}\InprocServer32]
+@="<DLL_PATH>"
+"ThreadingModel"="Apartment"
+
+[HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Shell Extensions\Approved]
+"{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}"="OccluView Thumbnail Provider"
+"{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}"="OccluView Preview Handler"
+
+[HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\PreviewHandlers]
+"{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}"="OccluView Preview Handler"
+
+[HKEY_CLASSES_ROOT\.stl]
+@="MeshFile.STL"
+"ThumbnailCutoff"=dword:00000001
+"TypeOverlay"=""
+
+[HKEY_CLASSES_ROOT\.stl\DefaultIcon]
+@="<APP_DIR>\\occluview-3d.ico"
+
+[HKEY_CLASSES_ROOT\.stl\ShellEx\{E357FCCD-A995-4576-B01F-234630154E96}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}"
+
+[HKEY_CLASSES_ROOT\.stl\ShellEx\{8895B1C6-B41F-4C1C-A562-0D564250836F}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}"
+
+[HKEY_CLASSES_ROOT\SystemFileAssociations\.stl\ShellEx\{E357FCCD-A995-4576-B01F-234630154E96}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}"
+
+[HKEY_CLASSES_ROOT\SystemFileAssociations\.stl\ShellEx\{8895B1C6-B41F-4C1C-A562-0D564250836F}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}"
+
+[HKEY_CLASSES_ROOT\.ply]
+@="MeshFile.PLY"
+"ThumbnailCutoff"=dword:00000001
+"TypeOverlay"=""
+
+[HKEY_CLASSES_ROOT\.ply\DefaultIcon]
+@="<APP_DIR>\\occluview-3d.ico"
+
+[HKEY_CLASSES_ROOT\.ply\ShellEx\{E357FCCD-A995-4576-B01F-234630154E96}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}"
+
+[HKEY_CLASSES_ROOT\.ply\ShellEx\{8895B1C6-B41F-4C1C-A562-0D564250836F}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}"
+
+[HKEY_CLASSES_ROOT\SystemFileAssociations\.ply\ShellEx\{E357FCCD-A995-4576-B01F-234630154E96}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}"
+
+[HKEY_CLASSES_ROOT\SystemFileAssociations\.ply\ShellEx\{8895B1C6-B41F-4C1C-A562-0D564250836F}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}"
+
+[HKEY_CLASSES_ROOT\.obj]
+@="MeshFile.OBJ"
+"ThumbnailCutoff"=dword:00000001
+"TypeOverlay"=""
+
+[HKEY_CLASSES_ROOT\.obj\DefaultIcon]
+@="<APP_DIR>\\occluview-3d.ico"
+
+[HKEY_CLASSES_ROOT\.obj\ShellEx\{E357FCCD-A995-4576-B01F-234630154E96}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}"
+
+[HKEY_CLASSES_ROOT\.obj\ShellEx\{8895B1C6-B41F-4C1C-A562-0D564250836F}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}"
+
+[HKEY_CLASSES_ROOT\SystemFileAssociations\.obj\ShellEx\{E357FCCD-A995-4576-B01F-234630154E96}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}"
+
+[HKEY_CLASSES_ROOT\SystemFileAssociations\.obj\ShellEx\{8895B1C6-B41F-4C1C-A562-0D564250836F}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}"
+
+[HKEY_CLASSES_ROOT\.off]
+@="MeshFile.OFF"
+"ThumbnailCutoff"=dword:00000001
+"TypeOverlay"=""
+
+[HKEY_CLASSES_ROOT\.off\DefaultIcon]
+@="<APP_DIR>\\occluview-3d.ico"
+
+[HKEY_CLASSES_ROOT\.off\ShellEx\{E357FCCD-A995-4576-B01F-234630154E96}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}"
+
+[HKEY_CLASSES_ROOT\.off\ShellEx\{8895B1C6-B41F-4C1C-A562-0D564250836F}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}"
+
+[HKEY_CLASSES_ROOT\SystemFileAssociations\.off\ShellEx\{E357FCCD-A995-4576-B01F-234630154E96}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}"
+
+[HKEY_CLASSES_ROOT\SystemFileAssociations\.off\ShellEx\{8895B1C6-B41F-4C1C-A562-0D564250836F}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}"
+
+[HKEY_CLASSES_ROOT\.glb]
+@="MeshFile.GLB"
+"ThumbnailCutoff"=dword:00000001
+"TypeOverlay"=""
+
+[HKEY_CLASSES_ROOT\.glb\DefaultIcon]
+@="<APP_DIR>\\occluview-3d.ico"
+
+[HKEY_CLASSES_ROOT\.glb\ShellEx\{E357FCCD-A995-4576-B01F-234630154E96}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}"
+
+[HKEY_CLASSES_ROOT\.glb\ShellEx\{8895B1C6-B41F-4C1C-A562-0D564250836F}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}"
+
+[HKEY_CLASSES_ROOT\SystemFileAssociations\.glb\ShellEx\{E357FCCD-A995-4576-B01F-234630154E96}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}"
+
+[HKEY_CLASSES_ROOT\SystemFileAssociations\.glb\ShellEx\{8895B1C6-B41F-4C1C-A562-0D564250836F}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}"
+
+[HKEY_CLASSES_ROOT\MeshFile.STL]
+@="STL File"
+"FriendlyTypeName"="STL File"
+"ThumbnailCutoff"=dword:00000001
+"TypeOverlay"=""
+
+[HKEY_CLASSES_ROOT\MeshFile.STL\ShellEx\{E357FCCD-A995-4576-B01F-234630154E96}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}"
+
+[HKEY_CLASSES_ROOT\MeshFile.STL\ShellEx\{8895B1C6-B41F-4C1C-A562-0D564250836F}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}"
+
+[HKEY_CLASSES_ROOT\MeshFile.STL\DefaultIcon]
+@="<APP_DIR>\\occluview-3d.ico"
+
+[HKEY_CLASSES_ROOT\MeshFile.STL\shell]
+
+[HKEY_CLASSES_ROOT\MeshFile.STL\shell\open]
+
+[HKEY_CLASSES_ROOT\MeshFile.STL\shell\open\command]
+@="\"<APP_EXE_PATH>\" \"%1\""
+
+[HKEY_CLASSES_ROOT\MeshFile.PLY]
+@="PLY File"
+"FriendlyTypeName"="PLY File"
+"ThumbnailCutoff"=dword:00000001
+"TypeOverlay"=""
+
+[HKEY_CLASSES_ROOT\MeshFile.PLY\ShellEx\{E357FCCD-A995-4576-B01F-234630154E96}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}"
+
+[HKEY_CLASSES_ROOT\MeshFile.PLY\ShellEx\{8895B1C6-B41F-4C1C-A562-0D564250836F}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}"
+
+[HKEY_CLASSES_ROOT\MeshFile.PLY\DefaultIcon]
+@="<APP_DIR>\\occluview-3d.ico"
+
+[HKEY_CLASSES_ROOT\MeshFile.PLY\shell]
+
+[HKEY_CLASSES_ROOT\MeshFile.PLY\shell\open]
+
+[HKEY_CLASSES_ROOT\MeshFile.PLY\shell\open\command]
+@="\"<APP_EXE_PATH>\" \"%1\""
+
+[HKEY_CLASSES_ROOT\MeshFile.OBJ]
+@="OBJ File"
+"FriendlyTypeName"="OBJ File"
+"ThumbnailCutoff"=dword:00000001
+"TypeOverlay"=""
+
+[HKEY_CLASSES_ROOT\MeshFile.OBJ\ShellEx\{E357FCCD-A995-4576-B01F-234630154E96}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}"
+
+[HKEY_CLASSES_ROOT\MeshFile.OBJ\ShellEx\{8895B1C6-B41F-4C1C-A562-0D564250836F}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}"
+
+[HKEY_CLASSES_ROOT\MeshFile.OBJ\DefaultIcon]
+@="<APP_DIR>\\occluview-3d.ico"
+
+[HKEY_CLASSES_ROOT\MeshFile.OBJ\shell]
+
+[HKEY_CLASSES_ROOT\MeshFile.OBJ\shell\open]
+
+[HKEY_CLASSES_ROOT\MeshFile.OBJ\shell\open\command]
+@="\"<APP_EXE_PATH>\" \"%1\""
+
+[HKEY_CLASSES_ROOT\MeshFile.OFF]
+@="OFF File"
+"FriendlyTypeName"="OFF File"
+"ThumbnailCutoff"=dword:00000001
+"TypeOverlay"=""
+
+[HKEY_CLASSES_ROOT\MeshFile.OFF\ShellEx\{E357FCCD-A995-4576-B01F-234630154E96}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}"
+
+[HKEY_CLASSES_ROOT\MeshFile.OFF\ShellEx\{8895B1C6-B41F-4C1C-A562-0D564250836F}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}"
+
+[HKEY_CLASSES_ROOT\MeshFile.OFF\DefaultIcon]
+@="<APP_DIR>\\occluview-3d.ico"
+
+[HKEY_CLASSES_ROOT\MeshFile.OFF\shell]
+
+[HKEY_CLASSES_ROOT\MeshFile.OFF\shell\open]
+
+[HKEY_CLASSES_ROOT\MeshFile.OFF\shell\open\command]
+@="\"<APP_EXE_PATH>\" \"%1\""
+
+[HKEY_CLASSES_ROOT\MeshFile.GLB]
+@="GLB File"
+"FriendlyTypeName"="GLB File"
+"ThumbnailCutoff"=dword:00000001
+"TypeOverlay"=""
+
+[HKEY_CLASSES_ROOT\MeshFile.GLB\ShellEx\{E357FCCD-A995-4576-B01F-234630154E96}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3045}"
+
+[HKEY_CLASSES_ROOT\MeshFile.GLB\ShellEx\{8895B1C6-B41F-4C1C-A562-0D564250836F}]
+@="{9F3A1B2C-4D5E-4F60-8A7B-9C0D1E2F3046}"
+
+[HKEY_CLASSES_ROOT\MeshFile.GLB\DefaultIcon]
+@="<APP_DIR>\\occluview-3d.ico"
+
+[HKEY_CLASSES_ROOT\MeshFile.GLB\shell]
+
+[HKEY_CLASSES_ROOT\MeshFile.GLB\shell\open]
+
+[HKEY_CLASSES_ROOT\MeshFile.GLB\shell\open\command]
+@="\"<APP_EXE_PATH>\" \"%1\""
+
+[HKEY_CLASSES_ROOT\Applications\occluview.exe]
+@="OccluView 3D Viewer"
+"FriendlyAppName"="OccluView 3D Viewer"
+
+[HKEY_CLASSES_ROOT\Applications\occluview.exe\shell]
+
+[HKEY_CLASSES_ROOT\Applications\occluview.exe\shell\open]
+
+[HKEY_CLASSES_ROOT\Applications\occluview.exe\shell\open\command]
+@="\"<APP_EXE_PATH>\" \"%1\""
+
+[HKEY_CLASSES_ROOT\Applications\occluview.exe\SupportedTypes]
+".stl"=""
+".ply"=""
+".obj"=""
+".glb"=""
+".off"=""
+
+[HKEY_CLASSES_ROOT\.stl\OpenWithProgids]
+"MeshFile.STL"=""
+
+[HKEY_CLASSES_ROOT\.ply\OpenWithProgids]
+"MeshFile.PLY"=""
+
+[HKEY_CLASSES_ROOT\.obj\OpenWithProgids]
+"MeshFile.OBJ"=""
+
+[HKEY_CLASSES_ROOT\.glb\OpenWithProgids]
+"MeshFile.GLB"=""
+
+[HKEY_CLASSES_ROOT\.off\OpenWithProgids]
+"MeshFile.OFF"=""
+
+[HKEY_CLASSES_ROOT\.stl\OpenWithList\occluview.exe]
+@=""
+
+[HKEY_CLASSES_ROOT\.ply\OpenWithList\occluview.exe]
+@=""
+
+[HKEY_CLASSES_ROOT\.obj\OpenWithList\occluview.exe]
+@=""
+
+[HKEY_CLASSES_ROOT\.glb\OpenWithList\occluview.exe]
+@=""
+
+[HKEY_CLASSES_ROOT\.off\OpenWithList\occluview.exe]
+@=""
+
+[HKEY_LOCAL_MACHINE\Software\RegisteredApplications]
+"OccluView"="Software\\OccluTrace\\OccluView\\Capabilities"
+
+[HKEY_LOCAL_MACHINE\Software\OccluTrace\OccluView\Capabilities]
+"ApplicationName"="OccluView 3D Viewer"
+"ApplicationDescription"="Advanced Mesh Repair and Mesh Editing for dental CAD scans."
+"ApplicationIcon"="<APP_EXE_PATH>,0"
+
+[HKEY_LOCAL_MACHINE\Software\OccluTrace\OccluView\Capabilities\FileAssociations]
+".stl"="MeshFile.STL"
+".ply"="MeshFile.PLY"
+".obj"="MeshFile.OBJ"
+".glb"="MeshFile.GLB"
+".off"="MeshFile.OFF"

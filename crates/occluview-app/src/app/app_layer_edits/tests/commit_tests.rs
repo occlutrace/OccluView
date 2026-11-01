@@ -1,0 +1,238 @@
+//! Orchestration-boundary tests for [`super::super::commit_layer_edit`]: the
+//! document/undo/notification effects every token-based layer executor must
+//! otherwise remember.
+#![allow(clippy::expect_used, clippy::panic)]
+
+use super::super::{
+    commit_layer_edit, refuse_busy_layer_edit, LayerContextAction, LayerContextApply,
+    LayerContextRequest, LayerEditResolution,
+};
+use crate::app::state_document::DocumentState;
+use crate::app::state_ui::{AppErrorDialog, SceneUiState};
+use crate::edit_mode::EditModeCommand;
+use occluview_core::{CoreError, Mesh, Scene, SceneMesh};
+
+fn vertex(x: f32, y: f32, z: f32) -> occluview_core::Vertex {
+    occluview_core::Vertex::at(glam::Vec3::new(x, y, z))
+}
+
+fn commit_scene() -> Option<Scene> {
+    let mesh = Mesh::new(
+        Some("commit".into()),
+        vec![
+            vertex(0.0, 0.0, 0.0),
+            vertex(1.0, 0.0, 0.0),
+            vertex(0.0, 1.0, 0.0),
+            vertex(1.0, 1.0, 0.0),
+        ],
+        vec![0, 1, 2, 1, 3, 2],
+    )
+    .ok()?;
+    let mut scene = Scene::new();
+    scene.add(SceneMesh::new(mesh));
+    Some(scene)
+}
+
+fn owners() -> (
+    DocumentState,
+    SceneUiState,
+    crate::i18n::LocaleManager,
+    Option<AppErrorDialog>,
+) {
+    (
+        DocumentState::new(),
+        SceneUiState::default(),
+        crate::i18n::LocaleManager::for_tests(),
+        None,
+    )
+}
+
+#[test]
+fn commit_applied_change_marks_unsaved_stores_undo_and_notes_status() {
+    let Some(scene) = commit_scene() else {
+        panic!("commit fixture builds");
+    };
+    let (mut document, mut scene_ui, locale, mut app_error) = owners();
+    let entry = scene.meshes()[0].clone();
+    let layer_id = entry.id();
+    let Some(token) = document
+        .edit_mode
+        .begin_layer_edit(&entry, EditModeCommand::CloseHoles)
+    else {
+        panic!("a fresh layer edit should begin");
+    };
+
+    commit_layer_edit(
+        &mut document,
+        &mut scene_ui,
+        &locale,
+        &mut app_error,
+        token,
+        layer_id,
+        LayerEditResolution::Applied {
+            changed: true,
+            status: "Closed holes".to_string(),
+        },
+    );
+
+    assert!(document.has_unsaved_mesh_edits());
+    assert_eq!(document.edit_mode.undo_len(), 1);
+    // Small mesh: the pre-op snapshot is kept, so no suffix is appended.
+    assert_eq!(scene_ui.status_message.as_deref(), Some("Closed holes"));
+    assert!(app_error.is_none());
+}
+
+#[test]
+fn commit_noop_discards_snapshot_without_unsaved_or_dialog() {
+    let Some(scene) = commit_scene() else {
+        panic!("commit fixture builds");
+    };
+    let (mut document, mut scene_ui, locale, mut app_error) = owners();
+    let entry = scene.meshes()[0].clone();
+    let layer_id = entry.id();
+    let Some(token) = document
+        .edit_mode
+        .begin_layer_edit(&entry, EditModeCommand::CloseHoles)
+    else {
+        panic!("a fresh layer edit should begin");
+    };
+
+    commit_layer_edit(
+        &mut document,
+        &mut scene_ui,
+        &locale,
+        &mut app_error,
+        token,
+        layer_id,
+        LayerEditResolution::Applied {
+            changed: false,
+            status: "Nothing to repair — mesh is clean".to_string(),
+        },
+    );
+
+    assert!(!document.has_unsaved_mesh_edits());
+    assert_eq!(
+        scene_ui.status_message.as_deref(),
+        Some("Nothing to repair — mesh is clean")
+    );
+    assert!(app_error.is_none());
+}
+
+#[test]
+fn commit_failure_finishes_error_and_opens_the_copyable_dialog() {
+    let Some(scene) = commit_scene() else {
+        panic!("commit fixture builds");
+    };
+    let (mut document, mut scene_ui, locale, mut app_error) = owners();
+    let entry = scene.meshes()[0].clone();
+    let layer_id = entry.id();
+    let Some(token) = document
+        .edit_mode
+        .begin_layer_edit(&entry, EditModeCommand::CloseHoles)
+    else {
+        panic!("a fresh layer edit should begin");
+    };
+
+    commit_layer_edit(
+        &mut document,
+        &mut scene_ui,
+        &locale,
+        &mut app_error,
+        token,
+        layer_id,
+        LayerEditResolution::Failed {
+            error: CoreError::Geometry("boom".to_string()),
+            layer_label: "scan".to_string(),
+        },
+    );
+
+    assert!(!document.has_unsaved_mesh_edits());
+    let status = scene_ui
+        .status_message
+        .as_deref()
+        .expect("failure must notify");
+    assert!(status.contains("Could not edit layer"));
+    let dialog = app_error.as_ref().expect("failure must open the dialog");
+    assert_eq!(dialog.title, "Could not edit layer");
+    assert!(dialog.summary.contains("Could not edit layer"));
+    assert!(dialog.details.contains("scan"));
+    assert!(dialog.details.contains("boom"));
+}
+
+#[test]
+fn busy_refusal_notifies_without_consuming_a_session() {
+    let (_, mut scene_ui, locale, app_error) = owners();
+
+    let apply: LayerContextApply = refuse_busy_layer_edit(&mut scene_ui, &locale);
+
+    assert!(!apply.scene_changed);
+    assert_eq!(
+        scene_ui.status_message.as_deref(),
+        Some("Layer edit already in progress")
+    );
+    assert!(app_error.is_none());
+}
+
+#[test]
+fn repair_stale_index_resolves_without_touching_undo() {
+    use super::super::repair::{apply_layer_repair_action, LayerRepairOutcome};
+
+    let Some(scene) = commit_scene() else {
+        panic!("commit fixture builds");
+    };
+    let (document, _, _, _) = owners();
+    // Index past the end: entry lookup misses, so the outcome is stale and
+    // no edit session may open.
+    let mut scene = scene;
+    let stale_request = LayerContextRequest {
+        index: 7,
+        layer_id: scene.meshes()[0].id(),
+        action: LayerContextAction::RepairMesh,
+    };
+    let outcome = apply_layer_repair_action(&mut scene, stale_request);
+    assert!(
+        matches!(outcome, Ok(LayerRepairOutcome::Stale)),
+        "a missing entry must resolve stale, never as an edit"
+    );
+    assert_eq!(document.edit_mode.undo_len(), 0);
+    assert!(!document.has_unsaved_mesh_edits());
+}
+
+#[test]
+fn layer_context_mesh_edit_waits_for_pending_sculpt() {
+    use super::super::apply_layer_context_action_with_status;
+    use crate::app::OccluViewApp;
+    use std::sync::Arc;
+
+    let mut scene = commit_scene().expect("valid scene");
+    let before = scene.meshes()[0].mesh.clone();
+    let request = LayerContextRequest {
+        index: 0,
+        layer_id: scene.meshes()[0].id(),
+        action: LayerContextAction::InvertNormals,
+    };
+    let mut app = OccluViewApp::new_for_tests(egui::Context::default());
+    let mut context = app.active_context().expect("active scene");
+    context.document.scene = Some(Arc::new(scene.clone()));
+    let _ = context
+        .tools
+        .sculpt
+        .queue_preparation(Arc::new(scene.clone()), 0);
+    assert!(context
+        .tools
+        .sculpt
+        .pending_matches(request.layer_id, before.topology_id()));
+    assert!(context.tools.sculpt.is_busy());
+    assert!(!context.document.edit_mode.is_busy());
+
+    let apply = apply_layer_context_action_with_status(&mut context, &mut scene, &[], request);
+
+    assert!(
+        !apply.scene_changed,
+        "mesh edits must wait for Sculpt to settle"
+    );
+    assert!(Arc::ptr_eq(&before, &scene.meshes()[0].mesh));
+    assert_eq!(context.document.edit_mode.undo_len(), 0);
+    assert!(!context.document.has_unsaved_mesh_edits());
+    assert!(context.scene_ui.status_message.is_some());
+}

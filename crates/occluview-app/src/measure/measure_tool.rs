@@ -1,0 +1,1007 @@
+//! Viewport measurement tools: the ruler and the wall-thickness probe.
+//!
+//! State machine + geometry only, pure and unit-tested. Painting lives in
+//! [`crate::measure::measure_overlay`], the input adapter in `app::app_viewport`, the
+//! toolbar toggles in `app::app_dialogs`. Anchors are world-space points on the
+//! mesh surface: they re-project through the live camera every frame, so the
+//! drawn segment orbits/zooms/pans with the model (matching the dental CAD
+//! ruler behaviour). A ruler either joins two picked points or ends on an
+//! earlier ruler's line, at a place along it or at the foot of the
+//! perpendicular; the ruler geometry lives in [`crate::measure::measure_ruler`].
+//!
+//! The thickness probe measures the wall directly: from the picked surface
+//! point it casts a ray inward (opposite the barycentric-interpolated surface
+//! normal at the hit) against the same layer's triangles; the nearest exit
+//! intersection is the local wall thickness (the normal chord). No exit means
+//! an open scan, and the reading says so instead of inventing a number.
+
+use glam::{Vec3, Vec3A};
+use occluview_core::SceneMesh;
+
+use crate::i18n::catalog::NumberFormat;
+use crate::measure::measure_ruler::{
+    self, LinePlacement, RulerEnd, RulerMeasurement, RulerSegment,
+};
+
+/// Ignore intersections closer than this to the probe origin (mm), so the probe
+/// never reports the entry triangle's edge-neighbors as an "exit".
+const SELF_HIT_EPS_MM: f32 = 1.0e-3;
+
+/// Which measurement tool is armed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MeasureMode {
+    /// Two clicks on the surface; distance in millimeters between them. A
+    /// second click on a drawn ruler line ends the ruler on that line.
+    Ruler,
+    /// One click on a shell; local wall thickness along the inward normal.
+    Thickness,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RulerEndpoint {
+    A,
+    B,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RulerAnchorRef {
+    pub(crate) ruler_index: usize,
+    pub(crate) endpoint: RulerEndpoint,
+}
+
+/// The outcome of one thickness probe.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum ThicknessReading {
+    /// The inward ray crossed the opposite wall: the normal chord.
+    Wall { exit: Vec3, thickness_mm: f32 },
+    /// No opposite wall along the inward normal (open scan).
+    Open,
+}
+
+/// A placed thickness probe: the clicked entry point plus its reading.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ThicknessProbe {
+    pub(crate) entry: Vec3,
+    pub(crate) reading: ThicknessReading,
+}
+
+/// The measurement tool state: at most one armed mode, completed rulers, an
+/// optional pending first anchor, and the latest thickness probe (a new click
+/// re-probes, replacing the marker).
+#[derive(Default)]
+pub(crate) struct MeasureTool {
+    mode: Option<MeasureMode>,
+    pending: Option<Vec3>,
+    rulers: Vec<RulerMeasurement>,
+    probe: Option<ThicknessProbe>,
+    dragged_anchor: Option<RulerAnchorRef>,
+    drag_start_measurement: Option<(usize, RulerMeasurement)>,
+    /// The dragged anchor's pointer has left its press point (latched).
+    drag_moved: bool,
+}
+
+impl MeasureTool {
+    pub(crate) fn is_active(&self) -> bool {
+        self.mode.is_some()
+    }
+
+    pub(crate) fn mode(&self) -> Option<MeasureMode> {
+        self.mode
+    }
+
+    /// Arm `mode`. Switching tools keeps completed overlays (RMB clears them)
+    /// but drops a half-made ruler pair: a pending anchor must not bridge a
+    /// tool switch.
+    pub(crate) fn arm(&mut self, mode: MeasureMode) {
+        self.mode = Some(mode);
+        self.pending = None;
+        self.dragged_anchor = None;
+        self.drag_start_measurement = None;
+    }
+
+    /// Exit the tool. The overlays go with it: once the tool is gone there is
+    /// no owner left to clear stale labels over a changing scene.
+    pub(crate) fn disarm(&mut self) {
+        self.mode = None;
+        self.pending = None;
+        self.rulers.clear();
+        self.probe = None;
+        self.dragged_anchor = None;
+        self.drag_start_measurement = None;
+    }
+
+    /// Place a ruler anchor at a picked surface `point`. The first click of a
+    /// pair returns `None`; the second completes a measurement and returns its
+    /// distance in millimeters. Non-finite points are refused.
+    pub(crate) fn place_ruler_point(&mut self, point: Vec3) -> Option<f64> {
+        if !point.is_finite() {
+            return None;
+        }
+        match self.pending.take() {
+            None => {
+                self.pending = Some(point);
+                None
+            }
+            Some(first) => {
+                self.rulers.push(RulerMeasurement {
+                    a: first,
+                    end: RulerEnd::Point(point),
+                });
+                self.ruler_distance_mm(self.rulers.len() - 1)
+            }
+        }
+    }
+
+    /// Complete the pending pair on the line of ruler `base`, as `placement`
+    /// says, returning its length in millimeters. Refused (the anchor stays
+    /// pending) when nothing is pending, `base` does not exist, or the place
+    /// along the line is not finite.
+    pub(crate) fn place_on_line(&mut self, base: usize, placement: LinePlacement) -> Option<f64> {
+        if base >= self.rulers.len() || self.pending.is_none() {
+            return None;
+        }
+        let end = line_end(base, placement)?;
+        let from = self.pending.take()?;
+        self.rulers.push(RulerMeasurement { a: from, end });
+        self.ruler_distance_mm(self.rulers.len() - 1)
+    }
+
+    /// What a click on ruler `base` would place right now: the ruler from the
+    /// pending anchor to its line, as `placement` says.
+    pub(crate) fn line_preview(
+        &self,
+        base: usize,
+        placement: LinePlacement,
+    ) -> Option<RulerSegment> {
+        let from = self.pending?;
+        line_end(base, placement)?;
+        let segments = self.ruler_segments();
+        let base_segment = segments.get(base)?;
+        Some(measure_ruler::onto_line(
+            from,
+            base_segment,
+            base,
+            placement,
+        ))
+    }
+
+    /// Every completed ruler resolved to world-space endpoints, index-aligned
+    /// with the stored rulers.
+    pub(crate) fn ruler_segments(&self) -> Vec<RulerSegment> {
+        measure_ruler::resolve(&self.rulers)
+    }
+
+    /// How many rulers are completed.
+    pub(crate) fn ruler_count(&self) -> usize {
+        self.rulers.len()
+    }
+
+    /// One completed ruler resolved to world-space endpoints.
+    pub(crate) fn ruler_segment(&self, ruler_index: usize) -> Option<RulerSegment> {
+        self.ruler_segments().get(ruler_index).copied()
+    }
+
+    fn ruler_distance_mm(&self, ruler_index: usize) -> Option<f64> {
+        self.ruler_segments()
+            .get(ruler_index)
+            .map(RulerSegment::distance_mm)
+    }
+
+    /// Replace the thickness probe (a repeated click re-probes).
+    pub(crate) fn set_probe(&mut self, probe: ThicknessProbe) {
+        self.probe = Some(probe);
+    }
+
+    pub(crate) fn clear_probe(&mut self) {
+        self.probe = None;
+    }
+
+    /// Start dragging a ruler end. An end on another ruler's line slides
+    /// along that line (see [`Self::update_line_end_drag`]).
+    pub(crate) fn begin_ruler_drag(&mut self, anchor: RulerAnchorRef) -> bool {
+        let Some(start) = self.rulers.get(anchor.ruler_index).copied() else {
+            return false;
+        };
+        self.dragged_anchor = Some(anchor);
+        self.drag_start_measurement = Some((anchor.ruler_index, start));
+        self.drag_moved = false;
+        true
+    }
+
+    /// Whether the dragged anchor may follow the pointer yet. Latched: it
+    /// turns on once the pointer moves past the click tolerance and stays on,
+    /// even back over the press point. Until then the anchor stays put, so a
+    /// press on an anchor drawn over nearer surface (the overlay has no depth
+    /// test) does not re-pick it onto that surface.
+    pub(crate) fn ruler_drag_follows(&mut self, moved_past_click: bool) -> bool {
+        self.drag_moved |= moved_past_click;
+        self.drag_moved
+    }
+
+    pub(crate) fn dragged_ruler_anchor(&self) -> Option<RulerAnchorRef> {
+        self.dragged_anchor
+    }
+
+    /// The base ruler of the dragged end, when that end lies on another
+    /// ruler's line: the pointer then moves it along the line, not onto the
+    /// surface.
+    pub(crate) fn dragged_line_end_base(&self) -> Option<usize> {
+        let anchor = self.dragged_anchor?;
+        if anchor.endpoint != RulerEndpoint::B {
+            return None;
+        }
+        match self.rulers.get(anchor.ruler_index)?.end {
+            RulerEnd::OnLine { base, .. } | RulerEnd::FootOn(base) => Some(base),
+            RulerEnd::Point(_) => None,
+        }
+    }
+
+    /// Move the dragged end to the picked surface `point`. Refused for an end
+    /// on another ruler's line, which only moves along that line.
+    pub(crate) fn update_ruler_drag(&mut self, point: Vec3) -> Option<f64> {
+        if !point.is_finite() {
+            return None;
+        }
+        let anchor = self.dragged_anchor?;
+        let ruler = self.rulers.get_mut(anchor.ruler_index)?;
+        match (anchor.endpoint, &mut ruler.end) {
+            (RulerEndpoint::A, _) => ruler.a = point,
+            (RulerEndpoint::B, RulerEnd::Point(b)) => *b = point,
+            (RulerEndpoint::B, RulerEnd::OnLine { .. } | RulerEnd::FootOn(_)) => return None,
+        }
+        self.ruler_distance_mm(anchor.ruler_index)
+    }
+
+    /// Move the dragged end that lies on another ruler's line to `placement`
+    /// on that same line.
+    pub(crate) fn update_line_end_drag(&mut self, placement: LinePlacement) -> Option<f64> {
+        let base = self.dragged_line_end_base()?;
+        let anchor = self.dragged_anchor?;
+        let end = line_end(base, placement)?;
+        self.rulers.get_mut(anchor.ruler_index)?.end = end;
+        self.ruler_distance_mm(anchor.ruler_index)
+    }
+
+    pub(crate) fn end_ruler_drag(&mut self) {
+        self.dragged_anchor = None;
+        self.drag_start_measurement = None;
+        self.drag_moved = false;
+    }
+
+    /// Cancel only the live endpoint drag, restoring its original ruler while
+    /// keeping completed annotations, a pending first anchor, and the armed
+    /// measurement mode intact.
+    pub(crate) fn cancel_ruler_drag(&mut self) -> bool {
+        self.dragged_anchor = None;
+        self.drag_moved = false;
+        let Some((index, start)) = self.drag_start_measurement.take() else {
+            return false;
+        };
+        self.rulers.get_mut(index).is_some_and(|ruler| {
+            let changed = *ruler != start;
+            *ruler = start;
+            changed
+        })
+    }
+
+    /// Drop every measurement overlay, keeping the tool armed (the RMB
+    /// gesture). Returns whether anything was actually cleared.
+    pub(crate) fn clear_measurements(&mut self) -> bool {
+        let had = self.pending.is_some() || !self.rulers.is_empty() || self.probe.is_some();
+        self.pending = None;
+        self.rulers.clear();
+        self.probe = None;
+        self.dragged_anchor = None;
+        self.drag_start_measurement = None;
+        self.drag_moved = false;
+        had
+    }
+
+    pub(crate) fn pending_anchor(&self) -> Option<Vec3> {
+        self.pending
+    }
+
+    pub(crate) fn probe(&self) -> Option<&ThicknessProbe> {
+        self.probe.as_ref()
+    }
+}
+
+/// The stored end for `placement` on the line of ruler `base`, or `None` for a
+/// place along the line that is not finite.
+fn line_end(base: usize, placement: LinePlacement) -> Option<RulerEnd> {
+    match placement {
+        LinePlacement::At(t) => t.is_finite().then_some(RulerEnd::OnLine { base, t }),
+        LinePlacement::Perpendicular => Some(RulerEnd::FootOn(base)),
+    }
+}
+
+/// `73.4°`: the angle between two rulers, one decimal. Non-finite input reads
+/// as `n/a`.
+pub(crate) fn format_angle(degrees: f64, number_format: NumberFormat) -> String {
+    if degrees.is_finite() {
+        format!("{}°", number_format.decimal(degrees, 1))
+    } else {
+        "n/a".to_string()
+    }
+}
+
+/// Outcome of clicking a Measure toolbar entry: the next armed mode (clicking
+/// the active one toggles it off) and whether the cut tool must be disabled
+/// first — the viewport-owning tools are mutually exclusive.
+pub(crate) fn apply_menu_toggle(
+    current: Option<MeasureMode>,
+    cut_active: bool,
+    clicked: MeasureMode,
+) -> (Option<MeasureMode>, bool) {
+    let next = if current == Some(clicked) {
+        None
+    } else {
+        Some(clicked)
+    };
+    (next, next.is_some() && cut_active)
+}
+
+/// Whether the Measure toolbar entries are clickable: a pickable (visible,
+/// triangle) layer must exist and no edit session may own the pointer.
+pub(crate) fn measure_menu_enabled(has_pickable_layer: bool, edit_session_active: bool) -> bool {
+    has_pickable_layer && !edit_session_active
+}
+
+/// `12.34 mm` labels (two decimals). Non-finite input (poisoned geometry)
+/// reads as `n/a` — never a `NaN mm` label.
+pub(crate) fn format_mm(mm: f64, number_format: NumberFormat) -> String {
+    if mm.is_finite() {
+        format!("{} mm", number_format.decimal(mm, 2))
+    } else {
+        "n/a".to_string()
+    }
+}
+
+/// A measurement readout in the operator's chosen unit. Non-finite input keeps
+/// the mm path's `n/a` label in both units.
+pub(crate) fn format_length(
+    mm: f64,
+    unit: crate::app_settings::UnitDisplay,
+    number_format: NumberFormat,
+) -> String {
+    match unit {
+        crate::app_settings::UnitDisplay::Millimeters => format_mm(mm, number_format),
+        crate::app_settings::UnitDisplay::Inches => {
+            if mm.is_finite() {
+                format!("{} in", number_format.decimal(mm / 25.4, 3))
+            } else {
+                "n/a".to_string()
+            }
+        }
+    }
+}
+
+/// Local wall thickness at a picked surface point of `entry`.
+///
+/// Casts a ray from `point` opposite the interpolated surface normal of
+/// triangle `triangle_index` (into the solid) against the same layer's
+/// triangles; the nearest exit intersection past the self-hit epsilon is the
+/// wall. Returns `None` when the surface normal is undeterminable
+/// (degenerate geometry) — the probe refuses instead of guessing.
+pub(crate) fn probe_wall_thickness(
+    entry: &SceneMesh,
+    triangle_index: usize,
+    point: Vec3,
+) -> Option<ThicknessProbe> {
+    if !point.is_finite() {
+        return None;
+    }
+    let base = triangle_index.checked_mul(3)?;
+    let end = base.checked_add(3)?;
+    let tri = entry.mesh.indices().get(base..end)?;
+    let world = world_triangle(entry, tri)?;
+    let inward = -surface_normal_at(entry, tri, &world, point)?;
+    let reading = match nearest_exit(entry, triangle_index, point, inward) {
+        Some((thickness_mm, exit)) => ThicknessReading::Wall { exit, thickness_mm },
+        None => ThicknessReading::Open,
+    };
+    Some(ThicknessProbe {
+        entry: point,
+        reading,
+    })
+}
+
+/// The three world-space corners of an index triple, or `None` on a broken
+/// index (defensive; scene meshes validate indices on construction).
+fn world_triangle(entry: &SceneMesh, tri: &[u32]) -> Option<[Vec3; 3]> {
+    let vertices = entry.mesh.vertices();
+    let mut out = [Vec3::ZERO; 3];
+    for (corner, &raw) in out.iter_mut().zip(tri) {
+        let vertex = vertices.get(raw as usize)?;
+        *corner = entry
+            .transform
+            .transform_point3(Vec3::from_array(vertex.position));
+    }
+    Some(out)
+}
+
+/// Interpolated world-space surface normal at `point` on the triangle, with a
+/// fallback ladder: barycentric vertex normals, then the geometric face
+/// normal, then `None` (degenerate — refuse rather than guess a direction).
+fn surface_normal_at(
+    entry: &SceneMesh,
+    tri: &[u32],
+    world: &[Vec3; 3],
+    point: Vec3,
+) -> Option<Vec3> {
+    let vertices = entry.mesh.vertices();
+    let weights = barycentric_weights(point, world[0], world[1], world[2]);
+    let mut local = Vec3::ZERO;
+    for (&raw, &weight) in tri.iter().zip(&weights) {
+        local += Vec3::from_array(vertices.get(raw as usize)?.normal) * weight;
+    }
+    let normal_matrix = entry.transform.matrix3.inverse().transpose();
+    let interpolated = Vec3::from(normal_matrix * Vec3A::from(local)).normalize_or_zero();
+    if interpolated.is_finite() && interpolated.length_squared() > 0.5 {
+        return Some(interpolated);
+    }
+    let face = (world[1] - world[0])
+        .cross(world[2] - world[0])
+        .normalize_or_zero();
+    (face.is_finite() && face.length_squared() > 0.5).then_some(face)
+}
+
+/// Barycentric weights of `point` in a triangle, clamped to the triangle and
+/// renormalized. A degenerate triangle yields equal thirds (the caller's
+/// face-normal fallback then decides whether the probe is possible at all).
+fn barycentric_weights(point: Vec3, corner_a: Vec3, corner_b: Vec3, corner_c: Vec3) -> [f32; 3] {
+    let edge0 = corner_b - corner_a;
+    let edge1 = corner_c - corner_a;
+    let to_point = point - corner_a;
+    let d00 = edge0.dot(edge0);
+    let d01 = edge0.dot(edge1);
+    let d11 = edge1.dot(edge1);
+    let d20 = to_point.dot(edge0);
+    let d21 = to_point.dot(edge1);
+    let denom = d00 * d11 - d01 * d01;
+    if !denom.is_finite() || denom.abs() <= f32::EPSILON {
+        return [1.0 / 3.0; 3];
+    }
+    let weight_b = ((d11 * d20 - d01 * d21) / denom).clamp(0.0, 1.0);
+    let weight_c = ((d00 * d21 - d01 * d20) / denom).clamp(0.0, 1.0);
+    let weight_a = (1.0 - weight_b - weight_c).clamp(0.0, 1.0);
+    let sum = weight_a + weight_b + weight_c;
+    if !sum.is_finite() || sum <= f32::EPSILON {
+        return [1.0 / 3.0; 3];
+    }
+    [weight_a / sum, weight_b / sum, weight_c / sum]
+}
+
+/// Nearest intersection along `direction` over the layer's own triangles,
+/// skipping the origin triangle and near-zero self-hits. Returns the ray
+/// distance (= thickness, `direction` is unit) and the exit point.
+///
+/// The search starts just past the entry wall and goes through the mesh's own
+/// cached BVH, the same structure that picked the entry point. A linear walk
+/// over every triangle (three affine transforms each, before the ray test)
+/// takes about a tenth of a second per click on a full arch.
+fn nearest_exit(
+    entry: &SceneMesh,
+    origin_triangle: usize,
+    origin: Vec3,
+    direction: Vec3,
+) -> Option<(f32, Vec3)> {
+    // Recover the known entry plane before stepping in the BVH's local frame.
+    // A small world-space step can disappear at a large scene translation, and
+    // inverse-transform rounding can otherwise put the ray behind its entry wall.
+    let inverse = entry.transform.inverse();
+    let local_direction = inverse.transform_vector3(direction);
+    if !local_direction.is_finite() || local_direction.length_squared() <= f32::EPSILON {
+        return None;
+    }
+    let base = origin_triangle.checked_mul(3)?;
+    let tri = entry.mesh.indices().get(base..base.checked_add(3)?)?;
+    let vertices = entry.mesh.vertices();
+    let corner = |index: u32| {
+        vertices
+            .get(index as usize)
+            .map(|vertex| Vec3::from_array(vertex.position).as_dvec3())
+    };
+    let a = corner(tri[0])?;
+    let normal = (corner(tri[1])? - a)
+        .cross(corner(tri[2])? - a)
+        .normalize_or_zero();
+    if !normal.is_finite() || normal.length_squared() <= f64::EPSILON {
+        return None;
+    }
+    let local_hit = inverse.transform_point3(origin).as_dvec3();
+    let on_plane = local_hit - normal * (local_hit - a).dot(normal);
+    let local_origin =
+        (on_plane + local_direction.as_dvec3() * f64::from(SELF_HIT_EPS_MM)).as_vec3();
+    let (triangle, local_point) =
+        entry
+            .mesh
+            .pick_ray_local(local_origin, local_direction, |_| true)?;
+    if triangle == origin_triangle {
+        return None;
+    }
+    let exit = entry.transform.transform_point3(local_point);
+    let distance = (exit - origin).dot(direction);
+    (distance > SELF_HIT_EPS_MM).then_some((distance, exit))
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::panic,
+        clippy::float_cmp
+    )]
+    use super::*;
+    use occluview_core::{Mesh, Scene, Vertex};
+
+    #[test]
+    fn ruler_pairs_complete_and_accumulate() {
+        let mut tool = MeasureTool::default();
+        tool.arm(MeasureMode::Ruler);
+        assert!(tool.is_active());
+        assert!(tool.place_ruler_point(Vec3::ZERO).is_none());
+        assert_eq!(tool.pending_anchor(), Some(Vec3::ZERO));
+        let first = tool.place_ruler_point(Vec3::new(3.0, 4.0, 0.0));
+        assert_eq!(first, Some(5.0));
+        assert!(tool.pending_anchor().is_none());
+        // A second pair stacks on screen alongside the first.
+        assert!(tool.place_ruler_point(Vec3::new(1.0, 0.0, 0.0)).is_none());
+        assert!(tool.place_ruler_point(Vec3::new(1.0, 0.0, 2.0)).is_some());
+        assert_eq!(tool.ruler_segments().len(), 2);
+    }
+
+    #[test]
+    fn clicking_the_same_point_twice_reads_zero_not_nan() {
+        let mut tool = MeasureTool::default();
+        tool.arm(MeasureMode::Ruler);
+        let p = Vec3::new(7.5, -2.0, 1.0);
+        tool.place_ruler_point(p);
+        let distance = tool.place_ruler_point(p).expect("completed pair");
+        assert_eq!(format_mm(distance, NumberFormat::for_tag("en")), "0.00 mm");
+    }
+
+    #[test]
+    fn non_finite_clicks_are_refused() {
+        let mut tool = MeasureTool::default();
+        tool.arm(MeasureMode::Ruler);
+        assert!(tool.place_ruler_point(Vec3::NAN).is_none());
+        assert!(tool.pending_anchor().is_none());
+    }
+
+    #[test]
+    fn rmb_clear_keeps_the_tool_armed_and_esc_disarm_drops_overlays() {
+        let mut tool = MeasureTool::default();
+        tool.arm(MeasureMode::Ruler);
+        tool.place_ruler_point(Vec3::ZERO);
+        tool.place_ruler_point(Vec3::X);
+        assert!(tool.clear_measurements(), "there was something to clear");
+        assert!(tool.is_active(), "RMB clear keeps the tool armed");
+        assert!(!tool.clear_measurements(), "second clear is a no-op");
+        tool.place_ruler_point(Vec3::ZERO);
+        tool.disarm();
+        assert!(!tool.is_active());
+        assert!(tool.ruler_segments().is_empty() && tool.pending_anchor().is_none());
+    }
+
+    #[test]
+    fn menu_toggle_arms_disarms_and_kills_the_cut_tool() {
+        // Arming from idle with the cut tool active must disable the cut.
+        assert_eq!(
+            apply_menu_toggle(None, true, MeasureMode::Ruler),
+            (Some(MeasureMode::Ruler), true)
+        );
+        // Clicking the armed entry toggles it off; nothing to disable.
+        assert_eq!(
+            apply_menu_toggle(Some(MeasureMode::Ruler), false, MeasureMode::Ruler),
+            (None, false)
+        );
+        // Switching tools re-arms; a dormant cut stays untouched.
+        assert_eq!(
+            apply_menu_toggle(Some(MeasureMode::Ruler), false, MeasureMode::Thickness),
+            (Some(MeasureMode::Thickness), false)
+        );
+    }
+
+    #[test]
+    fn completed_ruler_endpoints_can_be_dragged_without_rebuilding_the_pair() {
+        let mut tool = MeasureTool::default();
+        tool.arm(MeasureMode::Ruler);
+        tool.place_ruler_point(Vec3::ZERO);
+        tool.place_ruler_point(Vec3::X * 2.0);
+        let anchor = RulerAnchorRef {
+            ruler_index: 0,
+            endpoint: RulerEndpoint::B,
+        };
+        assert!(tool.begin_ruler_drag(anchor));
+        assert_eq!(tool.update_ruler_drag(Vec3::Y * 3.0), Some(3.0));
+        assert_eq!(tool.ruler_segments()[0].a, Vec3::ZERO);
+        assert_eq!(tool.ruler_segments()[0].b, Vec3::Y * 3.0);
+        tool.end_ruler_drag();
+        assert!(tool.dragged_ruler_anchor().is_none());
+    }
+
+    #[test]
+    fn cancel_live_ruler_drag_restores_pose_but_keeps_annotations_and_tool() {
+        let mut tool = MeasureTool::default();
+        tool.arm(MeasureMode::Ruler);
+        tool.place_ruler_point(Vec3::ZERO);
+        tool.place_ruler_point(Vec3::X * 2.0);
+        let before = tool.ruler_segment(0).expect("completed ruler");
+        let anchor = RulerAnchorRef {
+            ruler_index: 0,
+            endpoint: RulerEndpoint::B,
+        };
+
+        assert!(tool.begin_ruler_drag(anchor));
+        assert_eq!(tool.update_ruler_drag(Vec3::Y * 3.0), Some(3.0));
+        assert!(tool.cancel_ruler_drag());
+
+        assert_eq!(tool.ruler_segment(0), Some(before));
+        assert_eq!(tool.ruler_count(), 1);
+        assert!(tool.dragged_ruler_anchor().is_none());
+        assert_eq!(tool.mode(), Some(MeasureMode::Ruler));
+        assert!(!tool.cancel_ruler_drag());
+    }
+
+    #[test]
+    fn a_drag_follows_the_pointer_only_after_it_moves_and_then_stays_live() {
+        let mut tool = MeasureTool::default();
+        tool.arm(MeasureMode::Ruler);
+        tool.place_ruler_point(Vec3::ZERO);
+        tool.place_ruler_point(Vec3::X);
+        let anchor = RulerAnchorRef {
+            ruler_index: 0,
+            endpoint: RulerEndpoint::A,
+        };
+        assert!(tool.begin_ruler_drag(anchor));
+        assert!(
+            !tool.ruler_drag_follows(false),
+            "a press alone moves nothing"
+        );
+        assert!(tool.ruler_drag_follows(true));
+        assert!(
+            tool.ruler_drag_follows(false),
+            "back over the press point the drag stays live"
+        );
+        tool.end_ruler_drag();
+        assert!(tool.begin_ruler_drag(anchor));
+        assert!(!tool.ruler_drag_follows(false), "each drag starts still");
+    }
+
+    /// The pending anchor becomes the start of the ruler; its end is on the
+    /// base line, not on anything under the cursor, and the click places
+    /// exactly what was previewed.
+    #[test]
+    fn a_pending_anchor_ends_on_a_ruler_line_where_the_preview_showed() {
+        for (placement, end, length) in [
+            (LinePlacement::Perpendicular, Vec3::new(1.0, 0.0, 0.0), 25.0),
+            (
+                LinePlacement::At(0.75),
+                Vec3::new(8.0, 0.0, 0.0),
+                (49.0_f64 + 576.0 + 49.0).sqrt(),
+            ),
+        ] {
+            let mut tool = MeasureTool::default();
+            tool.arm(MeasureMode::Ruler);
+            tool.place_ruler_point(Vec3::new(-16.0, 0.0, 0.0));
+            tool.place_ruler_point(Vec3::new(16.0, 0.0, 0.0));
+            assert!(
+                tool.place_on_line(0, placement).is_none(),
+                "no pending anchor: nothing to start from"
+            );
+            tool.place_ruler_point(Vec3::new(1.0, 24.0, 7.0));
+            let preview = tool
+                .line_preview(0, placement)
+                .expect("preview while pending");
+            let placed_length = tool.place_on_line(0, placement).expect("placed");
+            assert!((placed_length - length).abs() < 1.0e-5);
+            assert!(tool.pending_anchor().is_none());
+            let placed = tool.ruler_segment(1).expect("second ruler");
+            assert_eq!(
+                placed, preview,
+                "the click places exactly what was previewed"
+            );
+            assert_eq!(placed.b, end);
+            assert_eq!(
+                placed.foot.map(|foot| foot.perpendicular),
+                Some(placement == LinePlacement::Perpendicular)
+            );
+        }
+    }
+
+    #[test]
+    fn ending_on_a_missing_ruler_or_nowhere_keeps_the_anchor_pending() {
+        let mut tool = MeasureTool::default();
+        tool.arm(MeasureMode::Ruler);
+        tool.place_ruler_point(Vec3::ZERO);
+        assert!(tool
+            .place_on_line(0, LinePlacement::Perpendicular)
+            .is_none());
+        assert_eq!(tool.pending_anchor(), Some(Vec3::ZERO));
+        assert!(tool.line_preview(0, LinePlacement::At(0.5)).is_none());
+        tool.place_ruler_point(Vec3::X * 4.0);
+        tool.place_ruler_point(Vec3::Y);
+        assert!(tool.place_on_line(0, LinePlacement::At(f32::NAN)).is_none());
+        assert_eq!(tool.pending_anchor(), Some(Vec3::Y));
+    }
+
+    /// The end on a line is a handle: it slides along the line, may become the
+    /// perpendicular and back, and never jumps onto the surface.
+    #[test]
+    fn an_end_on_a_line_slides_along_it_and_never_onto_the_surface() {
+        let mut tool = MeasureTool::default();
+        tool.arm(MeasureMode::Ruler);
+        tool.place_ruler_point(Vec3::ZERO);
+        tool.place_ruler_point(Vec3::X * 10.0);
+        tool.place_ruler_point(Vec3::new(3.0, 4.0, 0.0));
+        tool.place_on_line(0, LinePlacement::Perpendicular);
+        let end = RulerAnchorRef {
+            ruler_index: 1,
+            endpoint: RulerEndpoint::B,
+        };
+        assert!(tool.begin_ruler_drag(end));
+        assert_eq!(tool.dragged_line_end_base(), Some(0));
+        assert_eq!(
+            tool.update_ruler_drag(Vec3::new(5.0, 5.0, 5.0)),
+            None,
+            "a surface point is not a place on the line"
+        );
+        assert_eq!(tool.update_line_end_drag(LinePlacement::At(0.6)), Some(5.0));
+        let slid = tool.ruler_segment(1).expect("second ruler");
+        assert_eq!(slid.b, Vec3::new(6.0, 0.0, 0.0));
+        let foot = slid.foot.expect("still on the line");
+        assert!(!foot.perpendicular);
+        let angle = foot.angle_deg.expect("an angle");
+        assert!((angle - 53.130_102).abs() < 1.0e-4, "angle {angle}");
+        assert_eq!(
+            tool.update_line_end_drag(LinePlacement::Perpendicular),
+            Some(4.0)
+        );
+        tool.end_ruler_drag();
+        assert_eq!(tool.dragged_line_end_base(), None);
+    }
+
+    #[test]
+    fn dragging_the_start_keeps_a_perpendicular_square_and_a_place_where_it_is() {
+        let mut tool = MeasureTool::default();
+        tool.arm(MeasureMode::Ruler);
+        tool.place_ruler_point(Vec3::ZERO);
+        tool.place_ruler_point(Vec3::X * 10.0);
+        tool.place_ruler_point(Vec3::new(3.0, 4.0, 0.0));
+        tool.place_on_line(0, LinePlacement::Perpendicular);
+        tool.place_ruler_point(Vec3::new(3.0, 4.0, 0.0));
+        tool.place_on_line(0, LinePlacement::At(0.3));
+        for ruler_index in [1, 2] {
+            assert!(tool.begin_ruler_drag(RulerAnchorRef {
+                ruler_index,
+                endpoint: RulerEndpoint::A,
+            }));
+            assert_eq!(tool.dragged_line_end_base(), None);
+            tool.update_ruler_drag(Vec3::new(7.0, 6.0, 0.0));
+            tool.end_ruler_drag();
+        }
+        let segments = tool.ruler_segments();
+        assert_eq!(segments[1].b, Vec3::new(7.0, 0.0, 0.0));
+        assert_eq!(segments[2].b, Vec3::new(3.0, 0.0, 0.0));
+        // Dragging an end of the base carries both along with the line.
+        assert!(tool.begin_ruler_drag(RulerAnchorRef {
+            ruler_index: 0,
+            endpoint: RulerEndpoint::B,
+        }));
+        tool.update_ruler_drag(Vec3::new(10.0, 10.0, 0.0));
+        let moved = tool.ruler_segments();
+        assert!(
+            (moved[1].a - moved[1].b)
+                .dot(Vec3::new(10.0, 10.0, 0.0))
+                .abs()
+                < 1.0e-4
+        );
+        assert!(moved[2].b.distance(Vec3::new(3.0, 3.0, 0.0)) < 1.0e-5);
+    }
+
+    #[test]
+    fn format_angle_is_one_decimal_and_never_nan() {
+        let english = NumberFormat::for_tag("en");
+        assert_eq!(format_angle(73.44, english), "73.4°");
+        assert_eq!(format_angle(90.0, english), "90.0°");
+        assert_eq!(format_angle(f64::NAN, english), "n/a");
+    }
+
+    #[test]
+    fn menu_entries_are_greyed_during_an_edit_session_or_empty_scene() {
+        assert!(measure_menu_enabled(true, false));
+        assert!(!measure_menu_enabled(true, true));
+        assert!(!measure_menu_enabled(false, false));
+    }
+
+    #[test]
+    fn format_mm_is_two_decimals_and_never_nan() {
+        let english = NumberFormat::for_tag("en");
+        assert_eq!(format_mm(12.344, english), "12.34 mm");
+        assert_eq!(format_mm(0.0, english), "0.00 mm");
+        assert!(!format_mm(f64::NAN, english).contains("NaN"));
+        assert!(!format_mm(f64::INFINITY, english).contains("inf"));
+    }
+
+    #[test]
+    fn a_reading_uses_the_catalog_decimal_separator() {
+        assert_eq!(format_mm(0.05, NumberFormat::for_tag("de")), "0,05 mm");
+        assert_eq!(format_mm(0.05, NumberFormat::for_tag("ru")), "0,05 mm");
+    }
+
+    /// Cube corners + outward-wound faces spanning `[min, max]^3`, with smooth
+    /// outward corner normals (so the interpolated normal at a face center is
+    /// exactly the face axis).
+    fn cube_parts(min: f32, max: f32, offset: u32) -> (Vec<Vertex>, Vec<u32>) {
+        let corner = |x: f32, y: f32, z: f32| {
+            Vertex::at(Vec3::new(x, y, z)).with_normal(Vec3::new(x, y, z).normalize())
+        };
+        let vertices = vec![
+            corner(min, min, min),
+            corner(max, min, min),
+            corner(max, max, min),
+            corner(min, max, min),
+            corner(min, min, max),
+            corner(max, min, max),
+            corner(max, max, max),
+            corner(min, max, max),
+        ];
+        let indices = [
+            1, 2, 6, 1, 6, 5, // +X
+            0, 4, 7, 0, 7, 3, // -X
+            2, 3, 7, 2, 7, 6, // +Y
+            0, 1, 5, 0, 5, 4, // -Y
+            4, 5, 6, 4, 6, 7, // +Z
+            0, 3, 2, 0, 2, 1, // -Z
+        ]
+        .iter()
+        .map(|&i| i + offset)
+        .collect();
+        (vertices, indices)
+    }
+
+    /// A closed thick-walled shell: outer cube 10 mm, cavity 6 mm (2 mm wall).
+    fn shell_scene() -> Scene {
+        let (mut vertices, mut indices) = cube_parts(-5.0, 5.0, 0);
+        let (inner_v, inner_i) = cube_parts(-3.0, 3.0, 8);
+        vertices.extend(inner_v);
+        indices.extend(inner_i);
+        let mesh = Mesh::new(Some("shell".into()), vertices, indices).expect("shell mesh");
+        let mut scene = Scene::new();
+        scene.add(SceneMesh::new(mesh));
+        scene
+    }
+
+    #[test]
+    fn thickness_probe_reads_the_known_shell_wall() {
+        let scene = shell_scene();
+        // Pick the outer +X face dead center: the interpolated corner normals
+        // cancel to a pure +X there, so the chord is the exact 2 mm wall.
+        let hit = scene
+            .pick_ray_hit(Vec3::new(20.0, 0.0, 0.0), -Vec3::X)
+            .expect("outer face hit");
+        assert!((hit.point.x - 5.0).abs() < 1.0e-4);
+        let entry = &scene.meshes()[hit.layer_index];
+        let probe = probe_wall_thickness(entry, hit.triangle_index, hit.point).expect("probe");
+        match probe.reading {
+            ThicknessReading::Wall { exit, thickness_mm } => {
+                assert!(
+                    (thickness_mm - 2.0).abs() < 1.0e-3,
+                    "thickness {thickness_mm}"
+                );
+                assert!((exit.x - 3.0).abs() < 1.0e-3, "exit {exit}");
+            }
+            ThicknessReading::Open => panic!("closed shell must report a wall"),
+        }
+    }
+
+    /// One open sheet in the x = 0 plane facing +X, spanning y,z in [-1, 1].
+    fn sheet_mesh() -> Mesh {
+        Mesh::new(
+            Some("sheet".into()),
+            vec![
+                Vertex::at(Vec3::new(0.0, -1.0, -1.0)),
+                Vertex::at(Vec3::new(0.0, 1.0, -1.0)),
+                Vertex::at(Vec3::new(0.0, 1.0, 1.0)),
+                Vertex::at(Vec3::new(0.0, -1.0, 1.0)),
+            ],
+            vec![0, 1, 2, 0, 2, 3],
+        )
+        .expect("sheet mesh")
+    }
+
+    #[test]
+    fn transformed_two_wall_probe_does_not_stop_at_its_entry_triangle() {
+        let front = sheet_mesh();
+        let mut vertices = front.vertices().to_vec();
+        vertices.extend(
+            front
+                .vertices()
+                .iter()
+                .map(|v| Vertex::at(Vec3::from_array(v.position) - Vec3::X * 2.0)),
+        );
+        let mut indices = front.indices().to_vec();
+        indices.extend(front.indices().iter().map(|index| index + 4));
+        let mesh = Mesh::new(Some("two walls".into()), vertices, indices).expect("walls");
+        for shift in [0.0, 1_000.0, 10_000.0, 100_000.0] {
+            for angle in [0.1, 0.33, 0.7, 1.3] {
+                let mut entry = SceneMesh::new(mesh.clone());
+                entry.transform = glam::Affine3A::from_rotation_translation(
+                    glam::Quat::from_rotation_z(angle),
+                    Vec3::splat(shift),
+                );
+                let origin = entry.transform.transform_point3(Vec3::new(0.0, 0.2, 0.1));
+                let direction = entry.transform.transform_vector3(-Vec3::X).normalize();
+                let (distance, _) =
+                    nearest_exit(&entry, 0, origin, direction).unwrap_or_else(|| {
+                        panic!("lost the farther wall at shift {shift}, angle {angle}")
+                    });
+                assert!(
+                    (distance - 2.0).abs() < 0.05,
+                    "shift {shift}, angle {angle}, distance {distance}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn open_surface_reports_open_not_a_fake_number() {
+        let entry = SceneMesh::new(sheet_mesh());
+        let probe = probe_wall_thickness(&entry, 0, Vec3::new(0.0, 0.2, 0.1)).expect("probe");
+        assert_eq!(probe.reading, ThicknessReading::Open);
+    }
+
+    #[test]
+    fn degenerate_triangle_refuses_to_probe() {
+        // A zero-area triangle next to a real one: normal repair leaves its
+        // vertex normals unusable and the face normal is zero, so the probe
+        // must refuse (None), not guess a direction.
+        let p = Vec3::new(4.0, 4.0, 4.0);
+        let mesh = Mesh::new(
+            Some("degenerate".into()),
+            vec![
+                Vertex::at(Vec3::new(0.0, -1.0, -1.0)).with_normal(Vec3::X),
+                Vertex::at(Vec3::new(0.0, 1.0, -1.0)).with_normal(Vec3::X),
+                Vertex::at(Vec3::new(0.0, 1.0, 1.0)).with_normal(Vec3::X),
+                Vertex::at(p),
+                Vertex::at(p),
+                Vertex::at(p),
+            ],
+            vec![0, 1, 2, 3, 4, 5],
+        )
+        .expect("mesh");
+        let entry = SceneMesh::new(mesh);
+        assert!(probe_wall_thickness(&entry, 1, p).is_none());
+    }
+
+    #[test]
+    fn nan_poisoned_exit_geometry_cannot_panic_or_poison_the_reading() {
+        // Entry sheet is sane; a NaN triangle floats where the exit would be.
+        let mut vertices = sheet_mesh().vertices().to_vec();
+        let mut indices = sheet_mesh().indices().to_vec();
+        let base = u32::try_from(vertices.len()).expect("small mesh");
+        vertices.push(Vertex::at(Vec3::NAN));
+        vertices.push(Vertex::at(Vec3::new(-2.0, 1.0, f32::NAN)));
+        vertices.push(Vertex::at(Vec3::new(-2.0, f32::INFINITY, 1.0)));
+        indices.extend([base, base + 1, base + 2]);
+        let mesh = Mesh::new(Some("poisoned".into()), vertices, indices).expect("mesh");
+        let entry = SceneMesh::new(mesh);
+        let probe = probe_wall_thickness(&entry, 0, Vec3::new(0.0, 0.2, 0.1)).expect("probe");
+        match probe.reading {
+            ThicknessReading::Open => {}
+            ThicknessReading::Wall { thickness_mm, .. } => {
+                assert!(thickness_mm.is_finite(), "reading must never be NaN");
+            }
+        }
+    }
+
+    #[test]
+    fn probe_out_of_range_triangle_is_refused() {
+        let entry = SceneMesh::new(sheet_mesh());
+        assert!(probe_wall_thickness(&entry, 99, Vec3::ZERO).is_none());
+        assert!(probe_wall_thickness(&entry, usize::MAX / 3, Vec3::ZERO).is_none());
+        assert!(probe_wall_thickness(&entry, usize::MAX, Vec3::ZERO).is_none());
+    }
+}

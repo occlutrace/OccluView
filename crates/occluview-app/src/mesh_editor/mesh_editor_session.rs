@@ -1,0 +1,122 @@
+//! Mesh editor status line and session commit bar.
+//!
+//! Presentation only — actions flow back as [`MeshEditorAction`].
+
+use eframe::egui;
+
+use super::{MeshEditorAction, MeshEditorPanelState};
+use crate::ui::icons::AppIcon;
+use crate::ui::ui_theme;
+
+use super::groups::{icon, tall_text_button};
+
+/// One dim line of operator context: the pending-edits marker (only when it has
+/// something to say) and the interaction hint for the active selection mode. The
+/// raw selected-face count is not shown; the line carries only context the
+/// operator acts on.
+pub(super) fn status(
+    ui: &mut egui::Ui,
+    state: &MeshEditorPanelState,
+    locale: &crate::i18n::LocaleManager,
+) {
+    ui.add_space(3.0);
+    if state.busy || state.sculpt_pending {
+        ui.spinner();
+    } else if state.dirty {
+        ui.horizontal(|ui| {
+            let (icon_rect, _) =
+                ui.allocate_exact_size(egui::vec2(13.0, 13.0), egui::Sense::hover());
+            crate::ui::icons::paint(ui.painter(), icon_rect, AppIcon::Warn, ui_theme::ThemeTokens::from_ui(ui).warning());
+            ui.label(
+                egui::RichText::new(locale.tr(crate::i18n::message_id!("meshedit-status-unsaved")))
+                    .color(ui_theme::ThemeTokens::from_ui(ui).warning())
+                    .size(11.0),
+            );
+        })
+        .response
+        .on_hover_text(locale.tr(crate::i18n::message_id!("meshedit-status-unsaved-hint")));
+    }
+    let hint = if state.sculpt_armed.is_some() {
+        locale.tr(crate::i18n::message_id!("meshedit-status-hint-sculpt"))
+    } else if state.object_mode {
+        locale.tr(crate::i18n::message_id!("meshedit-status-hint-object"))
+    } else if state.lasso_armed {
+        locale.tr(crate::i18n::message_id!("meshedit-status-hint-lasso"))
+    } else {
+        locale.tr(crate::i18n::message_id!("meshedit-status-hint-default"))
+    };
+    ui.label(egui::RichText::new(hint).weak().size(10.0));
+}
+
+/// History and session boundary, laid out as an OK/Cancel bar matching the
+/// dental CAD convention: Undo/Redo as light history cells on the left, then
+/// `Cancel` and the accented `Done` pinned bottom-right. Done confirms and
+/// dismisses; Cancel reverts to baseline.
+pub(super) fn session(
+    ui: &mut egui::Ui,
+    state: &MeshEditorPanelState,
+    enabled: bool,
+    locale: &crate::i18n::LocaleManager,
+) -> Option<MeshEditorAction> {
+    let mut action = None;
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        let spacing = ui.spacing().item_spacing.x;
+        // History cluster (left).
+        let history_w = 42.0;
+        if icon(
+            ui,
+            history_w,
+            AppIcon::Undo,
+            &locale.tr(crate::i18n::message_id!("meshedit-session-undo")),
+            &locale.tr(crate::i18n::message_id!("meshedit-session-undo-hint")),
+            state.can_undo && enabled && !state.sculpt_pending,
+            false,
+        )
+        .clicked()
+        {
+            action = Some(MeshEditorAction::Undo);
+        }
+        if icon(
+            ui,
+            history_w,
+            AppIcon::Redo,
+            &locale.tr(crate::i18n::message_id!("meshedit-session-redo")),
+            &locale.tr(crate::i18n::message_id!("meshedit-session-redo-hint")),
+            state.can_redo && enabled && !state.sculpt_pending,
+            false,
+        )
+        .clicked()
+        {
+            action = Some(MeshEditorAction::Redo);
+        }
+        // Commit cluster (right): Cancel + Done fill the remaining width, so
+        // Done lands flush against the right edge as the primary action.
+        let commit_w = ((ui.available_width() - spacing) / 2.0).max(48.0);
+        if tall_text_button(
+            ui,
+            commit_w,
+            &locale.tr(crate::i18n::message_id!("meshedit-session-cancel")),
+            enabled,
+            false,
+        )
+        .on_hover_text(locale.tr(crate::i18n::message_id!("meshedit-session-cancel-hint")))
+        .clicked()
+        {
+            action = Some(MeshEditorAction::Cancel);
+        }
+        if tall_text_button(
+            ui,
+            commit_w,
+            &locale.tr(crate::i18n::message_id!("meshedit-session-done")),
+            enabled,
+            true,
+        )
+        .on_hover_text(locale.tr(crate::i18n::message_id!("meshedit-session-done-hint")))
+        .clicked()
+        {
+            action = Some(MeshEditorAction::Done);
+        }
+    });
+    action
+}

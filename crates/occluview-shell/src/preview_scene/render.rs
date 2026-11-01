@@ -1,0 +1,286 @@
+use super::PreviewSceneState;
+use crate::ShellError;
+use glam::{Mat4, Vec3};
+use occluview_core::{Camera, Scene, SceneMesh};
+use occluview_render::{GpuCamera, GpuMeshUniform, PreparedSceneSource, ViewportSpec};
+
+#[cfg(test)]
+const PREVIEW_DARK_BACKGROUND_LINEAR: [f64; 4] = [0.0, 0.0, 0.0, 1.0];
+
+impl PreviewSceneState {
+    #[cfg(test)]
+    pub(crate) fn render_rgba(&self, size_px: [u16; 2]) -> Result<Vec<u8>, ShellError> {
+        self.render_rgba_with_background(size_px, PREVIEW_DARK_BACKGROUND_LINEAR)
+    }
+
+    /// Toggle the technical wireframe overlay on every mesh in the preview and
+    /// re-upload the prepared scene so the next render reflects it. Returns
+    /// whether any mesh actually changed.
+    pub(crate) fn set_wireframe(&mut self, enabled: bool) -> bool {
+        let mut changed = false;
+        for entry in self.scene.meshes_mut() {
+            if entry.wireframe != enabled {
+                entry.wireframe = enabled;
+                changed = true;
+            }
+        }
+        if changed {
+            self.prepared_scene = self
+                .offscreen
+                .prepare_scene(&prepared_scene_sources(&self.scene));
+        }
+        changed
+    }
+
+    /// Whether the preview is currently drawing the wireframe overlay.
+    pub(crate) fn is_wireframe(&self) -> bool {
+        self.scene
+            .meshes()
+            .first()
+            .is_some_and(|entry| entry.wireframe)
+    }
+
+    pub(crate) fn render_rgba_with_background(
+        &self,
+        size_px: [u16; 2],
+        background: [f64; 4],
+    ) -> Result<Vec<u8>, ShellError> {
+        #[cfg(test)]
+        let _guard = occluview_core::test_support::acquire_render_test_guard("shell");
+
+        let width = size_px[0].max(1);
+        let height = size_px[1].max(1);
+        let aspect = f32::from(width) / f32::from(height.max(1));
+        let mut camera = self.camera;
+        camera.fit_clip_planes_to_bbox(self.scene.bbox());
+        let gpu_camera = GpuCamera::new(
+            build_view_matrix(&camera),
+            build_proj_matrix(&camera, aspect),
+            camera_studio_light_dir(&camera),
+            camera.eye(),
+        );
+        let rgba = pollster::block_on(self.offscreen.render_prepared_viewport(
+            &self.prepared_scene,
+            &gpu_camera,
+            ViewportSpec {
+                size_px: [width, height],
+                background,
+            },
+        ))
+        .inspect_err(|_| {
+            // A failed render means the shared device may be lost (driver
+            // reset, TDR). Retire it so the next preview load creates a fresh
+            // renderer instead of failing on the same dead device forever.
+            crate::offscreen_factory::discard_shared_shell_offscreen(&self.offscreen);
+        })?;
+        // `render_rgba` already hands back app-convention (top-down) rows.
+        Ok(rgba)
+    }
+}
+
+fn scene_mesh_uniform(entry: &SceneMesh) -> GpuMeshUniform {
+    GpuMeshUniform {
+        model: Mat4::from(entry.transform).to_cols_array(),
+        tint: entry.tint,
+        opacity: entry.opacity,
+        has_texture: u32::from(entry.mesh.texture().is_some()),
+        show_orientation: 0,
+        show_vertex_colors: u32::from(entry.show_vertex_colors),
+        show_texture: u32::from(entry.show_texture),
+        measured_map: 0,
+        ..GpuMeshUniform::identity()
+    }
+}
+
+pub(super) fn prepared_scene_sources(scene: &Scene) -> Vec<PreparedSceneSource<'_>> {
+    scene
+        .meshes()
+        .iter()
+        .map(|entry| PreparedSceneSource {
+            mesh: &entry.mesh,
+            uniform: scene_mesh_uniform(entry),
+            visible: entry.visible,
+            wireframe: entry.wireframe,
+            // The Explorer preview shows a scan, never a measurement.
+            contact: None,
+        })
+        .collect()
+}
+
+fn build_view_matrix(camera: &Camera) -> Mat4 {
+    occluview_render::camera_view_matrix(camera)
+}
+
+fn build_proj_matrix(camera: &Camera, aspect: f32) -> Mat4 {
+    occluview_render::camera_ortho_proj_matrix(camera, aspect)
+}
+
+fn camera_studio_light_dir(camera: &Camera) -> Vec3 {
+    let forward = camera.view_direction();
+    let up = camera.view_up();
+    let right = forward.cross(up).normalize_or_zero();
+    (-forward + up * 0.32 + right * 0.22).normalize_or_zero()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::preview_scene::test_support::{
+        binary_stl_marker_above_blob, binary_stl_preview_smoke_mesh, binary_stl_triangle,
+        lit_centroid_row_in_half,
+    };
+    use glam::Vec2;
+
+    const PARITY_SIZE: [u16; 2] = [64, 64];
+
+    /// The presented preview buffer uses the same top-down convention as the app.
+    #[test]
+    fn preview_presented_buffer_is_app_convention_right_side_up() {
+        let state = PreviewSceneState::from_bytes(Some("stl"), &binary_stl_marker_above_blob())
+            .expect("preview state should load the marker-above-blob fixture");
+
+        let w = usize::from(PARITY_SIZE[0]);
+        let h = usize::from(PARITY_SIZE[1]);
+        let frame = state
+            .render_rgba(PARITY_SIZE)
+            .expect("preview render should succeed");
+
+        let marker_top = lit_centroid_row_in_half(&frame, w, h, true);
+        let blob_bottom = lit_centroid_row_in_half(&frame, w, h, false);
+        assert!(
+            marker_top.is_some(),
+            "the small +Y marker must light the top half in app convention; \
+             a vertical mirror would push it into the bottom half"
+        );
+        assert!(
+            blob_bottom.is_some(),
+            "the big low blob must light the bottom half in app convention"
+        );
+
+        // The marker is small, the blob is large: this asymmetry is what makes the
+        // parity observable. Lock the direction, not just presence.
+        let (Some(marker_row), Some(blob_row)) = (marker_top, blob_bottom) else {
+            panic!("required test setup or expected result was missing");
+        };
+        assert!(
+            marker_row < blob_row,
+            "world +Y (marker, row {marker_row}) must sit above world -Y (blob, row {blob_row})"
+        );
+    }
+
+    /// A downward Win32 drag moves the top marker down through the presented
+    /// preview path, matching the main viewport's camera convention.
+    #[test]
+    fn preview_downward_drag_moves_top_feature_down_on_screen() {
+        let mut state = PreviewSceneState::from_bytes(Some("stl"), &binary_stl_marker_above_blob())
+            .expect("preview state should load the marker-above-blob fixture");
+
+        let w = usize::from(PARITY_SIZE[0]);
+        let h = usize::from(PARITY_SIZE[1]);
+
+        let before_frame = state.render_rgba(PARITY_SIZE).expect("frame before drag");
+        let before = lit_centroid_row_in_half(&before_frame, w, h, true)
+            .expect("marker visible in top half before the drag");
+
+        // Downward drag: Win32 client Y is down, so a downward gesture is +dy.
+        assert!(
+            state.orbit_drag_delta(Vec2::new(0.0, 18.0), PARITY_SIZE),
+            "downward drag should orbit the preview camera"
+        );
+
+        let after_frame = state.render_rgba(PARITY_SIZE).expect("frame after drag");
+        // Track the marker where it now lives (may have crossed the midline).
+        let after = lit_centroid_row_in_half(&after_frame, w, h, true)
+            .or_else(|| lit_centroid_row_in_half(&after_frame, w, h, false))
+            .expect("marker still on screen after the drag");
+
+        assert!(
+            after > before + 1.0,
+            "dragging down must move the top marker down the screen \
+             (row {before} -> {after}); an inverted preview moves it up"
+        );
+    }
+
+    #[test]
+    fn preview_scene_renders_rectangular_pixels() {
+        let state = PreviewSceneState::from_bytes(Some("stl"), &binary_stl_triangle());
+        assert!(state.is_ok(), "preview state should load a simple STL");
+        let Ok(state) = state else {
+            panic!("required test setup or expected result was missing");
+        };
+
+        let pixels = state.render_rgba([320, 180]);
+        assert!(pixels.is_ok(), "preview render should succeed");
+        let Ok(pixels) = pixels else {
+            panic!("required test setup or expected result was missing");
+        };
+        assert_eq!(pixels.len(), 320 * 180 * 4);
+    }
+
+    #[test]
+    fn preview_scene_uses_black_background() {
+        let state = PreviewSceneState::from_bytes(Some("stl"), &binary_stl_preview_smoke_mesh());
+        assert!(state.is_ok(), "preview state should load an asymmetric STL");
+        let Ok(state) = state else {
+            panic!("required test setup or expected result was missing");
+        };
+
+        let pixels = state
+            .render_rgba([320, 180])
+            .expect("preview render should succeed");
+        let top_left = &pixels[..4];
+
+        assert!(top_left[0] <= 4, "red={}", top_left[0]);
+        assert!(top_left[1] <= 4, "green={}", top_left[1]);
+        assert!(top_left[2] <= 4, "blue={}", top_left[2]);
+        assert_eq!(top_left[3], 255, "alpha={}", top_left[3]);
+    }
+
+    #[test]
+    fn wireframe_toggle_reports_change_and_alters_pixels() {
+        let mut state =
+            PreviewSceneState::from_bytes(Some("stl"), &binary_stl_preview_smoke_mesh())
+                .expect("preview state should load an asymmetric STL");
+
+        assert!(!state.is_wireframe(), "preview should start shaded");
+        let shaded = state.render_rgba([320, 180]).expect("shaded frame");
+
+        assert!(
+            state.set_wireframe(true),
+            "enabling wireframe should change state"
+        );
+        assert!(state.is_wireframe(), "wireframe flag should now be set");
+        assert!(
+            !state.set_wireframe(true),
+            "re-enabling wireframe should be a no-op"
+        );
+
+        let wire = state.render_rgba([320, 180]).expect("wireframe frame");
+        assert_ne!(shaded, wire, "wireframe overlay should change pixels");
+
+        assert!(
+            state.set_wireframe(false),
+            "disabling wireframe should change state"
+        );
+        assert!(!state.is_wireframe(), "wireframe flag should clear");
+    }
+
+    #[test]
+    fn preview_scene_accepts_light_theme_background() {
+        let state = PreviewSceneState::from_bytes(Some("stl"), &binary_stl_preview_smoke_mesh());
+        assert!(state.is_ok(), "preview state should load an asymmetric STL");
+        let Ok(state) = state else {
+            panic!("required test setup or expected result was missing");
+        };
+
+        let pixels = state
+            .render_rgba_with_background([320, 180], [0.80, 0.82, 0.84, 1.0])
+            .expect("preview render should succeed");
+        let top_left = &pixels[..4];
+
+        assert!(top_left[0] >= 198, "red={}", top_left[0]);
+        assert!(top_left[1] >= 203, "green={}", top_left[1]);
+        assert!(top_left[2] >= 208, "blue={}", top_left[2]);
+        assert_eq!(top_left[3], 255, "alpha={}", top_left[3]);
+    }
+}

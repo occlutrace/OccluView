@@ -1,0 +1,435 @@
+#![allow(clippy::expect_used, clippy::panic)]
+
+use super::workspace::commands::SplitSide;
+use super::workspace::layout::WorkspaceLayout;
+use super::{egui, OccluViewApp};
+use std::path::PathBuf;
+
+fn key(key: egui::Key) -> egui::Event {
+    egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    }
+}
+
+// AccessKit reports f64 bounds for a UI that egui positions in f32 coordinates.
+#[allow(clippy::cast_possible_truncation)]
+fn accessible_center(bounds: egui::accesskit::Rect) -> egui::Pos2 {
+    egui::pos2(
+        bounds.x0.midpoint(bounds.x1) as f32,
+        bounds.y0.midpoint(bounds.y1) as f32,
+    )
+}
+
+fn frame(
+    app: &mut OccluViewApp,
+    ctx: &egui::Context,
+    events: Vec<egui::Event>,
+) -> egui::FullOutput {
+    app.ui.popup_open_at_frame_start = egui::Popup::is_any_open(ctx);
+    let mut output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1000.0, 800.0),
+            )),
+            events,
+            focused: true,
+            ..Default::default()
+        },
+        |ui| {
+            app.show_workspace(ui);
+            if let Some(mut scene) = app.active_context() {
+                scene.show_viewport_context_menu(ctx);
+            }
+            app.apply_workspace_commands(ctx);
+        },
+    );
+    output.textures_delta.clear();
+    output
+}
+
+fn app_with_viewport(ctx: &egui::Context) -> OccluViewApp {
+    let mut app = OccluViewApp::new_for_tests(ctx.clone());
+    let model = super::app_test_support::named_scene("surface", 0.0);
+    let scene = &mut app.workspace.scenes[0];
+    scene.render.camera = Some(super::home_camera_for_scene(&model));
+    scene.document.scene = Some(std::sync::Arc::new(model));
+    scene.render.rendered = Some(super::RenderedFrame {
+        texture: ctx.load_texture(
+            "viewport",
+            egui::ColorImage::filled([1, 1], egui::Color32::GRAY),
+            egui::TextureOptions::LINEAR,
+        ),
+        pixels: vec![128, 128, 128, 255],
+        size_px: [1, 1],
+    });
+    app
+}
+
+fn pointer_button(point: egui::Pos2, button: egui::PointerButton, pressed: bool) -> egui::Event {
+    egui::Event::PointerButton {
+        pos: point,
+        button,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    }
+}
+
+#[test]
+fn viewport_right_click_menu_remains_visible_on_following_frames() {
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    let mut app = app_with_viewport(&ctx);
+    let point = egui::pos2(500.0, 400.0);
+    frame(&mut app, &ctx, vec![]);
+    frame(&mut app, &ctx, vec![egui::Event::PointerMoved(point)]);
+    frame(
+        &mut app,
+        &ctx,
+        vec![pointer_button(point, egui::PointerButton::Secondary, true)],
+    );
+    frame(
+        &mut app,
+        &ctx,
+        vec![pointer_button(point, egui::PointerButton::Secondary, false)],
+    );
+    assert!(egui::Popup::is_any_open(&ctx), "RMB must open its menu");
+    let output = frame(&mut app, &ctx, vec![]);
+    let update = output
+        .platform_output
+        .accesskit_update
+        .expect("menu output");
+    assert!(
+        update.nodes.iter().any(|(_, node)| {
+            matches!(
+                node.role(),
+                egui::accesskit::Role::Button | egui::accesskit::Role::MenuItem
+            ) && node.label().is_some_and(|label| label.contains("Save"))
+        }),
+        "the open viewport menu must still draw its actions on the next frame"
+    );
+}
+
+#[test]
+fn viewport_right_drag_orbits_and_does_not_open_a_menu() {
+    let ctx = egui::Context::default();
+    let mut app = app_with_viewport(&ctx);
+    let start = egui::pos2(500.0, 400.0);
+    let end = egui::pos2(560.0, 430.0);
+    frame(&mut app, &ctx, vec![]);
+    frame(&mut app, &ctx, vec![egui::Event::PointerMoved(start)]);
+    let before = app.workspace.scenes[0].render.camera.expect("camera");
+    frame(
+        &mut app,
+        &ctx,
+        vec![pointer_button(start, egui::PointerButton::Secondary, true)],
+    );
+    frame(&mut app, &ctx, vec![egui::Event::PointerMoved(end)]);
+    let after = app.workspace.scenes[0].render.camera.expect("camera");
+    assert!(
+        (after.yaw - before.yaw).abs() > f32::EPSILON,
+        "RMB motion must reach the camera"
+    );
+    frame(
+        &mut app,
+        &ctx,
+        vec![pointer_button(end, egui::PointerButton::Secondary, false)],
+    );
+    assert!(
+        !egui::Popup::is_any_open(&ctx),
+        "orbit must not open a menu"
+    );
+    assert!(!app.ui.viewport_orbit_cursor_grabbed);
+}
+
+#[test]
+fn viewport_right_click_layer_menu_toggles_the_picked_layer_wireframe() {
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    let mut app = app_with_viewport(&ctx);
+    let camera = app.workspace.scenes[0].render.camera.expect("camera");
+    let canvas = egui::Rect::from_min_max(egui::pos2(0.0, 30.0), egui::pos2(1000.0, 800.0));
+    let (point, _) =
+        crate::viewer::project_world_to_viewport(&camera, canvas, glam::vec3(0.25, 0.25, 0.0))
+            .expect("surface projects");
+    frame(&mut app, &ctx, vec![]);
+    frame(&mut app, &ctx, vec![egui::Event::PointerMoved(point)]);
+    for pressed in [true, false] {
+        frame(
+            &mut app,
+            &ctx,
+            vec![pointer_button(
+                point,
+                egui::PointerButton::Secondary,
+                pressed,
+            )],
+        );
+    }
+    let output = frame(&mut app, &ctx, vec![]);
+    let update = output
+        .platform_output
+        .accesskit_update
+        .expect("menu output");
+    let toggle = update
+        .nodes
+        .iter()
+        .find_map(|(_, node)| {
+            (node.label() == Some("Wireframe overlay"))
+                .then(|| node.bounds())
+                .flatten()
+        })
+        .expect("picked layer offers a wireframe toggle");
+    let toggle = accessible_center(toggle);
+    for pressed in [true, false] {
+        frame(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(toggle),
+                pointer_button(toggle, egui::PointerButton::Primary, pressed),
+            ],
+        );
+    }
+    assert!(
+        app.workspace.scenes[0]
+            .document
+            .scene
+            .as_ref()
+            .expect("scene")
+            .meshes()[0]
+            .wireframe
+    );
+    assert!(!egui::Popup::is_any_open(&ctx));
+}
+
+#[test]
+fn viewport_middle_drag_and_wheel_change_only_the_target_scene() {
+    let ctx = egui::Context::default();
+    let mut app = app_with_viewport(&ctx);
+    app.active_context()
+        .expect("scene")
+        .queue_new_scene(SplitSide::Right);
+    app.apply_workspace_commands(&ctx);
+    let camera = app.workspace.scenes[0].render.camera;
+    let texture = app.workspace.scenes[0]
+        .render
+        .rendered
+        .as_ref()
+        .expect("texture")
+        .texture
+        .clone();
+    let model = super::app_test_support::named_scene("peer", 5.0);
+    app.workspace.scenes[1].render.camera = camera;
+    app.workspace.scenes[1].document.scene = Some(std::sync::Arc::new(model));
+    app.workspace.scenes[1].render.rendered = Some(super::RenderedFrame {
+        texture,
+        pixels: vec![128, 128, 128, 255],
+        size_px: [1, 1],
+    });
+    frame(&mut app, &ctx, vec![]);
+    let before_left = app.workspace.scenes[0].render.camera.expect("left");
+    let before_right = app.workspace.scenes[1].render.camera.expect("right");
+    let start = egui::pos2(850.0, 400.0);
+    frame(&mut app, &ctx, vec![egui::Event::PointerMoved(start)]);
+    frame(
+        &mut app,
+        &ctx,
+        vec![pointer_button(start, egui::PointerButton::Middle, true)],
+    );
+    let end = egui::pos2(900.0, 440.0);
+    frame(&mut app, &ctx, vec![egui::Event::PointerMoved(end)]);
+    frame(
+        &mut app,
+        &ctx,
+        vec![pointer_button(end, egui::PointerButton::Middle, false)],
+    );
+    assert_eq!(
+        app.workspace.scenes[0].render.camera.expect("left").target,
+        before_left.target
+    );
+    assert_ne!(
+        app.workspace.scenes[1].render.camera.expect("right").target,
+        before_right.target
+    );
+    frame(
+        &mut app,
+        &ctx,
+        vec![egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: egui::vec2(0.0, 1.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        }],
+    );
+    assert_eq!(
+        app.workspace.scenes[0]
+            .render
+            .camera
+            .expect("left")
+            .orthographic_height
+            .to_bits(),
+        before_left.orthographic_height.to_bits()
+    );
+    assert!(
+        app.workspace.scenes[1]
+            .render
+            .camera
+            .expect("right")
+            .orthographic_height
+            < before_right.orthographic_height
+    );
+}
+
+#[test]
+fn scene_controls_follow_split_order_even_when_one_view_is_hidden() {
+    let ctx = egui::Context::default();
+    let mut app = OccluViewApp::new_for_tests(ctx.clone());
+    let original = app.workspace.scenes[0].key;
+    app.active_context()
+        .expect("active scene")
+        .queue_new_scene(SplitSide::Left);
+    app.apply_workspace_commands(&ctx);
+    let other = app
+        .workspace
+        .scenes
+        .iter()
+        .find(|scene| scene.key != original)
+        .expect("new scene");
+    let other_key = other.key;
+    let other_pane = other.pane;
+    assert_eq!(
+        app.workspace
+            .summaries()
+            .iter()
+            .map(|scene| scene.key)
+            .collect::<Vec<_>>(),
+        vec![other_key, original]
+    );
+    app.workspace.saved_split = Some(app.workspace.layout);
+    app.workspace.layout = WorkspaceLayout::single(other_pane);
+    assert_eq!(
+        app.workspace
+            .summaries()
+            .iter()
+            .map(|scene| scene.key)
+            .collect::<Vec<_>>(),
+        vec![other_key, original]
+    );
+}
+
+#[test]
+fn drop_prompt_keeps_long_names_in_bounds_and_queues_only_the_chosen_scene() {
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    let mut app = OccluViewApp::new_for_tests(ctx.clone());
+    app.active_context()
+        .expect("active scene")
+        .queue_new_scene(SplitSide::Left);
+    app.apply_workspace_commands(&ctx);
+    let chosen = app.workspace.scenes[0].key;
+    let long_name = "Upper arch ".repeat(12);
+    app.workspace.scenes[0].name.clone_from(&long_name);
+    app.workspace.pending_drop = Some(vec![PathBuf::from("queued.stl")]);
+    frame(&mut app, &ctx, vec![]);
+    let output = frame(&mut app, &ctx, vec![]);
+    let area = ctx
+        .memory(|memory| memory.area_rect(egui::Id::new("workspace-drop-target-dialog")))
+        .expect("drop dialog");
+    assert!(
+        ctx.content_rect().contains_rect(area),
+        "dialog escaped screen: {area:?}"
+    );
+    let update = output
+        .platform_output
+        .accesskit_update
+        .expect("accessible drop choices");
+    let bounds = update
+        .nodes
+        .iter()
+        .find_map(|(_, node)| {
+            (node.role() == egui::accesskit::Role::Button
+                && node.label() == Some(long_name.as_str()))
+            .then(|| node.bounds())
+            .flatten()
+            .filter(|bounds| area.contains(accessible_center(*bounds)))
+        })
+        .expect("named scene choice");
+    let point = accessible_center(bounds);
+    for pressed in [true, false] {
+        frame(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(point),
+                egui::Event::PointerButton {
+                    pos: point,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+    }
+    assert!(
+        app.workspace.pending_drop.is_none(),
+        "choice point {point:?}, dialog {area:?}, layer {:?}",
+        ctx.layer_id_at(point)
+    );
+    assert_eq!(app.loader.queued_for_test().len(), 1);
+    assert_eq!(app.loader.queued_for_test()[0].scene_key, chosen);
+}
+
+#[test]
+fn focused_divider_cancels_with_escape_and_defers_f6_until_release() {
+    let ctx = egui::Context::default();
+    let mut app = OccluViewApp::new_for_tests(ctx.clone());
+    app.active_context()
+        .expect("active scene")
+        .queue_new_scene(SplitSide::Right);
+    app.apply_workspace_commands(&ctx);
+    frame(&mut app, &ctx, vec![]);
+    frame(&mut app, &ctx, vec![]);
+    let original_layout = app.workspace.layout;
+    let original_active = app.workspace.active_id();
+    let start = egui::pos2(500.0, 400.0);
+    let end = egui::pos2(650.0, 400.0);
+    frame(
+        &mut app,
+        &ctx,
+        vec![
+            egui::Event::PointerMoved(start),
+            egui::Event::PointerButton {
+                pos: start,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    );
+    ctx.memory_mut(|memory| memory.request_focus(egui::Id::new("workspace-scene-divider")));
+    frame(
+        &mut app,
+        &ctx,
+        vec![egui::Event::PointerMoved(end), key(egui::Key::F6)],
+    );
+    assert_ne!(app.workspace.layout, original_layout);
+    assert_eq!(app.workspace.active_id(), original_active);
+    frame(&mut app, &ctx, vec![key(egui::Key::Escape)]);
+    assert_eq!(app.workspace.layout, original_layout);
+    assert_eq!(app.workspace.active_id(), original_active);
+    frame(
+        &mut app,
+        &ctx,
+        vec![egui::Event::PointerButton {
+            pos: end,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        }],
+    );
+    assert_ne!(app.workspace.active_id(), original_active);
+}

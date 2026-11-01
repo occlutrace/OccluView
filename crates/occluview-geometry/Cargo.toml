@@ -1,0 +1,22 @@
+# occluview-geometry — product-neutral shared geometry constants and math.
+#
+# Bottom layer of the workspace: it imports no other workspace crate, only glam.
+# `occluview-mesh-edit`, `occluview-core` and `occluview-formats` share from it the
+# tolerances that decide which vertices weld and which facets shade, so the
+# three cannot disagree about them.
+[package]
+name = "occluview-geometry"
+description = "Shared geometry constants, pure math, and triangle-surface queries for OccluView kernels."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+glam = { workspace = true }

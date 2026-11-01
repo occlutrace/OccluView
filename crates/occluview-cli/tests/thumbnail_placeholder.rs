@@ -1,0 +1,213 @@
+//! Integration contract for placeholder output from `occluview-cli thumbnail`.
+
+#![allow(clippy::expect_used)]
+
+use std::path::PathBuf;
+use std::process::Command;
+
+fn unique_tmp(name: &str) -> PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    std::env::temp_dir().join(format!("occluview-cli-thumb-{nanos}-{name}"))
+}
+
+/// One triangle per entry, as a binary STL: face normal, then the three corners.
+///
+/// The corners of a fixture must be distinct. Coincident corners make the
+/// decoder refuse the file and the CLI writes the picture of that failure
+/// instead, so a test would pass without exercising the render path.
+fn binary_stl(triangles: &[[[f32; 3]; 3]]) -> Vec<u8> {
+    let mut bytes = vec![0u8; 80];
+    let count = u32::try_from(triangles.len()).expect("fixture triangle count");
+    bytes.extend_from_slice(&count.to_le_bytes());
+    for corners in triangles {
+        occluview_core::test_support::append_binary_stl_facet(
+            &mut bytes,
+            [0.0, 0.0, 1.0],
+            corners[0],
+            corners[1],
+            corners[2],
+        );
+    }
+    bytes
+}
+
+/// A truncated binary STL fixture.
+fn corrupt_stl_bytes() -> Vec<u8> {
+    let mut bytes = vec![0u8; 84];
+    bytes[..7].copy_from_slice(b"corrupt");
+    bytes[80..84].copy_from_slice(&5_000_000u32.to_le_bytes());
+    bytes.extend_from_slice(b"not-a-triangle-soup");
+    bytes
+}
+
+#[test]
+fn thumbnail_of_corrupt_file_exits_zero_and_writes_placeholder_png() {
+    let input = unique_tmp("garbage.stl");
+    let output = unique_tmp("garbage.png");
+    std::fs::write(&input, corrupt_stl_bytes()).expect("write corrupt STL fixture");
+
+    let status = Command::new(env!("CARGO_BIN_EXE_occluview-cli"))
+        .args(["thumbnail"])
+        .arg(&input)
+        .arg("-o")
+        .arg(&output)
+        .args(["--size", "128"])
+        .status()
+        .expect("run occluview-cli thumbnail");
+
+    assert!(
+        status.success(),
+        "thumbnailing a corrupt file must exit 0 so the file manager shows the \
+         placeholder instead of a broken-image glyph (got {status:?})"
+    );
+
+    let bytes = std::fs::read(&output).expect("placeholder PNG must be written");
+    let image = image::load_from_memory(&bytes)
+        .expect("output must be a valid PNG")
+        .to_rgba8();
+    assert_eq!(image.width(), 128);
+    assert_eq!(image.height(), 128);
+    // The placeholder cube has an opaque body over a transparent background.
+    let any_opaque = image.pixels().any(|px| px.0[3] == 255);
+    let any_transparent = image.pixels().any(|px| px.0[3] == 0);
+    assert!(any_opaque, "placeholder should have an opaque cube body");
+    assert!(
+        any_transparent,
+        "placeholder should keep a transparent background"
+    );
+
+    let _ = std::fs::remove_file(input);
+    let _ = std::fs::remove_file(output);
+}
+
+/// A file the thumbnailer cannot open is a failure, and the exit code says so.
+///
+/// The two cases differ. A corrupt container is a verdict about content: the
+/// badge is written and the command succeeds, which is what the test above
+/// pins. A missing, unreadable or non-file path is the command failing to do
+/// its job, and a script running
+/// `occluview-cli thumbnail "$f" -o "$o" && use "$o"` must be able to tell the
+/// difference.
+#[test]
+fn an_unopenable_input_exits_non_zero_and_still_writes_a_png() {
+    let directory = std::env::temp_dir().join(format!(
+        "occluview-cli-thumb-missing-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos())
+    ));
+    std::fs::create_dir_all(&directory).expect("scratch directory");
+    let missing = directory.join("does-not-exist.stl");
+    let output_path = directory.join("out.png");
+
+    let status = Command::new(env!("CARGO_BIN_EXE_occluview-cli"))
+        .args(["thumbnail"])
+        .arg(&missing)
+        .arg("-o")
+        .arg(&output_path)
+        .args(["--size", "128"])
+        .status()
+        .expect("run occluview-cli thumbnail");
+
+    assert!(
+        !status.success(),
+        "thumbnailing a file that does not exist must not report success: {status:?}"
+    );
+    // The thumbnailer contract still requires a PNG, so the failure is a
+    // picture of the failure rather than no output at all.
+    let bytes = std::fs::read(&output_path).expect("a placeholder PNG is still written");
+    assert!(bytes.starts_with(b"\x89PNG"), "the output must be a PNG");
+
+    std::fs::remove_dir_all(&directory).ok();
+}
+
+/// A real mesh on disk renders a real thumbnail, which is only possible if the
+/// CLI goes through the file-backed path.
+///
+/// The bytes path cannot read metadata, work out the extension, or cache by
+/// file identity, so if the CLI used the in-memory stream entry point, a file
+/// on disk would come back as a plain placeholder. This asserts that the
+/// picture of a real scan is not the placeholder, which is what an operator
+/// sees in the file manager.
+#[test]
+fn a_real_mesh_on_disk_renders_a_real_thumbnail() {
+    let directory = std::env::temp_dir().join(format!(
+        "occluview-cli-thumb-real-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos())
+    ));
+    std::fs::create_dir_all(&directory).expect("scratch directory");
+
+    let bytes = binary_stl(&[[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]]);
+    let mesh_path = directory.join("triangle.stl");
+    std::fs::write(&mesh_path, &bytes).expect("write fixture");
+
+    let output_path = directory.join("out.png");
+    let status = Command::new(env!("CARGO_BIN_EXE_occluview-cli"))
+        .args(["thumbnail"])
+        .arg(&mesh_path)
+        .arg("-o")
+        .arg(&output_path)
+        .args(["--size", "128"])
+        .status()
+        .expect("run occluview-cli thumbnail");
+    assert!(
+        status.success(),
+        "a readable mesh must thumbnail: {status:?}"
+    );
+
+    let written = std::fs::read(&output_path).expect("a PNG is written");
+    assert!(written.starts_with(b"\x89PNG"));
+    // The placeholder is a flat single-colour tile. A rendered mesh is not: it
+    // has shading across it, so more than one distinct colour appears.
+    let image = image::load_from_memory(&written)
+        .expect("output parses as an image")
+        .to_rgba8();
+    let mut colours = std::collections::BTreeSet::new();
+    for pixel in image.pixels() {
+        colours.insert((pixel[0], pixel[1], pixel[2], pixel[3]));
+        if colours.len() > 8 {
+            break;
+        }
+    }
+    assert!(
+        colours.len() > 1,
+        "a real scan must render shaded geometry, not a flat placeholder tile \
+         (the bytes path cannot produce this)"
+    );
+
+    // The same CLI, given a file it cannot read as geometry, writes the picture
+    // of that failure. The two must not be the same picture: a placeholder is
+    // what the file manager shows when nothing was rendered, so accepting it as
+    // success would hide the CLI abandoning the render path entirely.
+    let refused_path = directory.join("coincident.stl");
+    std::fs::write(
+        &refused_path,
+        binary_stl(&[[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]]),
+    )
+    .expect("write the unreadable fixture");
+    let refused_output = directory.join("refused.png");
+    let status = Command::new(env!("CARGO_BIN_EXE_occluview-cli"))
+        .args(["thumbnail"])
+        .arg(&refused_path)
+        .arg("-o")
+        .arg(&refused_output)
+        .args(["--size", "128"])
+        .status()
+        .expect("run occluview-cli thumbnail");
+    assert!(status.success(), "the failure picture still exits 0");
+    let refused =
+        image::load_from_memory(&std::fs::read(&refused_output).expect("a PNG is written"))
+            .expect("output parses as an image")
+            .to_rgba8();
+    assert_ne!(
+        image.as_raw(),
+        refused.as_raw(),
+        "a real scan must not come back as the picture of a failure"
+    );
+
+    std::fs::remove_dir_all(&directory).ok();
+}

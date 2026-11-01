@@ -1,0 +1,30 @@
+# occluview-mesh-edit — mesh editing: the product-neutral geometry kernel, the
+# adapter that runs it on `occluview-core` meshes, and the optional native CSG
+# fallback.
+# Layering: depends on occluview-core (rank 1); the `robust` module owns the
+# native Manifold dependency directly behind the `robust-csg` feature.
+[package]
+name = "occluview-mesh-edit"
+description = "Mesh editing for OccluView: a product-neutral geometry kernel plus the adapter that runs it on core meshes."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+robust-csg = ["dep:manifold-csg"]
+
+[lints]
+workspace = true
+
+[dependencies]
+earcutr = { workspace = true }
+glam = { workspace = true }
+occluview-core = { workspace = true }
+occluview-geometry = { workspace = true }
+manifold-csg = { workspace = true, optional = true }
+thiserror = { workspace = true }

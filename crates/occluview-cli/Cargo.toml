@@ -1,0 +1,41 @@
+# occluview-cli — headless CLI: convert / render-to-png / thumbnail.
+# Depends on core + render + formats + thumbnail. It has no Windows shell
+# dependency so the Linux thumbnailer stays a platform-neutral binary.
+[package]
+name = "occluview-cli"
+description = "Headless OccluView CLI: render thumbnails, convert formats."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "occluview-cli"
+path = "src/main.rs"
+
+[dependencies]
+occluview-core    = { workspace = true }
+occluview-mesh-edit = { workspace = true }
+occluview-formats = { workspace = true }
+occluview-render  = { workspace = true }
+occluview-thumbnail = { workspace = true }
+anyhow            = { workspace = true }
+tracing-subscriber = { workspace = true }
+image             = { workspace = true }
+
+# Windows `rename` refuses an existing destination, so publishing a finished
+# thumbnail replaces it through `MoveFileExW` (Win32_Storage_FileSystem).
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.62.2"
+features = ["Win32_Storage_FileSystem"]
+
+[dev-dependencies]
+occluview-core      = { workspace = true, features = ["test-support"] }
+glam              = { workspace = true }
+tempfile = "3.27.0"

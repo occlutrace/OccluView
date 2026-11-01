@@ -1,0 +1,224 @@
+//! Single-window handoff for file-association launches.
+
+// This module tree is the per-platform handoff FFI boundary: named mutex and
+// pipe (Windows), Wayland activation (Linux), AppKit launch callbacks (macOS).
+// Each `unsafe` call carries its own SAFETY note; the rest of the crate stays
+// behind `#![deny(unsafe_code)]`.
+#![allow(unsafe_code)]
+
+use anyhow::{Context, Result};
+use eframe::egui;
+use std::path::PathBuf;
+use std::sync::mpsc::{self, Receiver};
+use std::time::Duration;
+
+#[cfg(windows)]
+use ::windows::Win32::Foundation::{CloseHandle, HANDLE};
+
+mod activation;
+mod fallback;
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "macos")]
+mod macos_open_files;
+mod protocol;
+#[cfg(all(not(windows), not(target_os = "macos")))]
+mod unix;
+#[cfg(windows)]
+mod windows;
+
+pub(crate) use activation::{capture_activation_token, complete_startup_notification, RaiseTarget};
+
+/// Add the Finder document handlers as the application finishes launching.
+/// Call before the event loop runs. Nothing to do off macOS.
+pub(crate) fn install_open_files_handler_at_launch() {
+    #[cfg(target_os = "macos")]
+    macos_open_files::install_when_launching();
+}
+
+/// Add the Finder document handlers now, if the launch observer has not.
+/// Nothing to do off macOS.
+pub(crate) fn install_open_files_handler() {
+    #[cfg(target_os = "macos")]
+    macos_open_files::install();
+}
+
+/// One file-open handoff from a second instance: the files to open plus, when
+/// available, the launcher's window-activation token (used to raise the running
+/// window past focus-stealing prevention). See `activation.rs`.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct OpenRequest {
+    pub(crate) paths: Vec<PathBuf>,
+    pub(crate) activation_token: Option<String>,
+}
+
+const REQUEST_DIR: &str = "open-requests";
+const FALLBACK_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const NATIVE_PATH_PEER_UNSUPPORTED: &str =
+    "The running OccluView copy cannot accept native file paths. Close it and reopen the updated copy.";
+const NATIVE_PATH_HANDOFF_UNCONFIRMED: &str =
+    "OccluView did not confirm the native file request. It may already be queued; check the running copy before closing it and reopening the updated copy.";
+#[cfg(not(windows))]
+const OPEN_REQUEST_WAKE_BURST_INTERVAL: Duration = Duration::from_millis(25);
+#[cfg(not(windows))]
+const OPEN_REQUEST_WAKE_BURST_STEPS: usize = 48;
+
+pub(crate) struct SingleInstance {
+    #[cfg(windows)]
+    handle: Option<HANDLE>,
+    #[cfg(not(windows))]
+    lock_file: Option<std::fs::File>,
+    secondary: bool,
+}
+
+impl SingleInstance {
+    pub(crate) fn acquire() -> Result<Self> {
+        #[cfg(windows)]
+        {
+            windows::acquire()
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            macos::acquire()
+        }
+
+        #[cfg(all(not(windows), not(target_os = "macos")))]
+        {
+            unix::acquire()
+        }
+    }
+
+    pub(crate) const fn is_secondary(&self) -> bool {
+        self.secondary
+    }
+}
+
+impl Drop for SingleInstance {
+    fn drop(&mut self) {
+        #[cfg(windows)]
+        if let Some(handle) = self.handle.take() {
+            // SAFETY: handle was returned by CreateMutexW and is owned here.
+            let _ = unsafe { CloseHandle(handle) };
+        }
+
+        // The descriptor owns the kernel lock. Leave the stable inode in
+        // place so a second process cannot race a pathname replacement.
+        #[cfg(not(windows))]
+        let _ = self.lock_file.take();
+    }
+}
+
+pub(crate) fn write_open_request(request: &OpenRequest) -> Result<()> {
+    if protocol::request_needs_native_encoding(request) {
+        return write_native_path_open_request(request);
+    }
+
+    #[cfg(windows)]
+    if windows::send_pipe_open_request(request).is_ok() {
+        return Ok(());
+    }
+
+    #[cfg(all(not(windows), not(target_os = "macos")))]
+    if unix::send_socket_open_request(request).is_ok() {
+        return Ok(());
+    }
+
+    fallback::write_disk_open_request(request)
+}
+
+fn write_native_path_open_request(request: &OpenRequest) -> Result<()> {
+    let payload = protocol::serialize_request(request)
+        .context("encoding native file paths for the single-instance handoff")?;
+
+    // The named-pipe protocol has no acceptance reply. Native paths use the
+    // acknowledged disk queue on Windows rather than reporting a successful
+    // write to a receiver that may not understand v3/v4.
+    #[cfg(all(not(windows), not(target_os = "macos")))]
+    match unix::send_native_socket_open_request(&payload) {
+        unix::NativeSocketOutcome::Accepted => return Ok(()),
+        unix::NativeSocketOutcome::Unconfirmed => {
+            anyhow::bail!("{NATIVE_PATH_HANDOFF_UNCONFIRMED}");
+        }
+        unix::NativeSocketOutcome::Unavailable => {}
+    }
+
+    match fallback::write_native_disk_open_request(&payload)? {
+        fallback::NativeDiskOutcome::Accepted => Ok(()),
+        fallback::NativeDiskOutcome::Unsupported => {
+            anyhow::bail!("{NATIVE_PATH_PEER_UNSUPPORTED}");
+        }
+        fallback::NativeDiskOutcome::Unconfirmed => {
+            anyhow::bail!("{NATIVE_PATH_HANDOFF_UNCONFIRMED}");
+        }
+    }
+}
+
+pub(crate) struct OpenRequestListener {
+    receiver: Receiver<OpenRequest>,
+    /// Liveness token for the disk fallback poller (`fallback.rs`). The
+    /// poller can only observe the receiver through a failed `send`, which
+    /// never happens while it is idle, so it watches this token instead to
+    /// stop its 20 Hz loop when the listener goes away.
+    _listener_alive: std::sync::Arc<()>,
+}
+
+impl OpenRequestListener {
+    #[cfg(test)]
+    pub(crate) fn for_tests() -> Self {
+        Self::for_tests_with_sender().0
+    }
+
+    /// The test listener together with the sender that feeds it, so a test can
+    /// hand it a request the way the socket thread does. Without the sender a
+    /// test can only observe an empty listener, which proves nothing about the
+    /// event-driven path.
+    #[cfg(test)]
+    pub(crate) fn for_tests_with_sender() -> (Self, mpsc::Sender<OpenRequest>) {
+        let (sender, receiver) = mpsc::channel();
+        (
+            Self {
+                receiver,
+                _listener_alive: std::sync::Arc::new(()),
+            },
+            sender,
+        )
+    }
+
+    pub(crate) fn spawn(repaint_ctx: egui::Context) -> Self {
+        let (sender, receiver) = mpsc::channel();
+        let listener_alive = std::sync::Arc::new(());
+        #[cfg(windows)]
+        windows::spawn_pipe_listener(sender.clone(), repaint_ctx.clone());
+        #[cfg(all(not(windows), not(target_os = "macos")))]
+        unix::spawn_socket_listener(sender.clone(), repaint_ctx.clone());
+        fallback::spawn_disk_fallback_listener(
+            sender,
+            repaint_ctx,
+            std::sync::Arc::downgrade(&listener_alive),
+        );
+        Self {
+            receiver,
+            _listener_alive: listener_alive,
+        }
+    }
+
+    pub(crate) fn take_requests(&self) -> Vec<OpenRequest> {
+        self.receiver.try_iter().collect()
+    }
+}
+
+fn request_open_handoff_repaint(repaint_ctx: &egui::Context) {
+    repaint_ctx.request_repaint();
+
+    #[cfg(not(windows))]
+    {
+        let repaint_ctx = repaint_ctx.clone();
+        std::thread::spawn(move || {
+            for _ in 0..OPEN_REQUEST_WAKE_BURST_STEPS {
+                std::thread::sleep(OPEN_REQUEST_WAKE_BURST_INTERVAL);
+                repaint_ctx.request_repaint();
+            }
+        });
+    }
+}

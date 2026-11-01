@@ -1,0 +1,496 @@
+use super::Vertex;
+use glam::Vec3;
+use occluview_geometry::{accumulate_smooth_normals, average_duplicate_normal_group};
+#[cfg(test)]
+use occluview_geometry::{DUPLICATE_NORMAL_DOT, MAX_PAIRWISE_DUPLICATE_GROUP};
+use rayon::prelude::*;
+
+/// The welding tolerance and its key function live in `occluview-geometry`,
+/// shared with `occluview-mesh-edit`. One number has to decide which vertices
+/// share a normal at load and after every edit, or a scan changes shading the
+/// first time it is touched.
+use occluview_geometry::coincident_position_key as position_key;
+
+fn normal_is_usable(normal: [f32; 3]) -> bool {
+    let n = Vec3::from_array(normal);
+    n.is_finite() && n.length_squared() > f32::EPSILON
+}
+
+/// Give normals to a mesh that arrived without any.
+///
+/// It returns as soon as one vertex already carries a usable normal, so a file
+/// that authored only part of its normals keeps the rest at zero; use
+/// [`repair_missing_normals`] for that case.
+///
+/// The accumulate-and-normalise pass alone: one add per triangle corner and
+/// one normalise per vertex, no welding sort and no comparison against what
+/// the file wrote. A mesh that arrived with normals keeps them exactly.
+/// [`Mesh::new_for_preview`](super::Mesh::new_for_preview) says why an image
+/// at that size does not need more.
+pub(super) fn fill_absent_normals(vertices: &mut [Vertex], indices: &[u32]) {
+    if vertices
+        .iter()
+        .any(|vertex| normal_is_usable(vertex.normal))
+    {
+        return;
+    }
+    compute_smooth_normals(vertices, indices);
+}
+
+pub(super) fn repair_missing_normals(vertices: &mut [Vertex], indices: &[u32]) {
+    if vertices
+        .iter()
+        .all(|vertex| !normal_is_usable(vertex.normal))
+    {
+        compute_smooth_normals(vertices, indices);
+        smooth_duplicate_position_normals(vertices);
+        return;
+    }
+
+    if vertices
+        .iter()
+        .all(|vertex| normal_is_usable(vertex.normal))
+    {
+        // STL and some exporters write per-facet normals (one flat normal per
+        // triangle). These are "usable" but produce a faceted/specular speckle
+        // that disappears under sculpt's full recompute. Only replace when the
+        // geometric variance is high (large mesh with many distinct positions);
+        // otherwise defer to duplicate-position averaging which preserves soft vs
+        // sharp edges on small fixtures.
+        if vertices.len() > 100 {
+            let smooth = smooth_normals(vertices, indices);
+            let mut disagree = 0usize;
+            let mut total = 0usize;
+            for (vertex, s) in vertices.iter().zip(&smooth) {
+                if s.length_squared() > f32::EPSILON {
+                    let a = Vec3::from_array(vertex.normal).normalize_or_zero();
+                    let b = s.normalize_or_zero();
+                    if a.length_squared() > f32::EPSILON && b.length_squared() > f32::EPSILON {
+                        total += 1;
+                        if a.dot(b) < 0.85 {
+                            disagree += 1;
+                        }
+                    }
+                }
+            }
+            if total > 0 && disagree * 4 > total {
+                for (vertex, s) in vertices.iter_mut().zip(smooth) {
+                    if s.length_squared() > f32::EPSILON {
+                        vertex.normal = s.normalize().to_array();
+                    }
+                }
+            }
+        }
+        smooth_duplicate_position_normals(vertices);
+        return;
+    }
+
+    let normals = smooth_normals(vertices, indices);
+    for (vertex, normal) in vertices.iter_mut().zip(normals) {
+        if !normal_is_usable(vertex.normal) && normal.length_squared() > f32::EPSILON {
+            vertex.normal = normal.normalize().to_array();
+        }
+    }
+    smooth_duplicate_position_normals(vertices);
+}
+
+fn compute_smooth_normals(vertices: &mut [Vertex], indices: &[u32]) {
+    let normals = smooth_normals(vertices, indices);
+    for (vertex, normal) in vertices.iter_mut().zip(normals) {
+        vertex.normal = if normal.length_squared() > f32::EPSILON {
+            normal.normalize().to_array()
+        } else {
+            Vec3::Z.to_array()
+        };
+    }
+}
+
+fn smooth_normals(vertices: &[Vertex], indices: &[u32]) -> Vec<Vec3> {
+    accumulate_smooth_normals(vertices.len(), indices, |index| {
+        vertices
+            .get(index)
+            .map(|vertex| Vec3::from_array(vertex.position))
+    })
+}
+
+fn smooth_duplicate_position_normals(vertices: &mut [Vertex]) {
+    if vertices.is_empty() {
+        return;
+    }
+
+    // Pair each vertex with its quantized position key, then sort by
+    // `(key, original_index)`. Equal keys land in a contiguous run, so one
+    // sort groups them without a hashmap entry and a `Vec` allocation per
+    // group. Sorting on the original index as a tiebreaker keeps each run in
+    // ascending vertex-index order, which fixes the floating point summation
+    // order below and keeps it bit-identical to the `HashMap` reference in the
+    // tests.
+    // The index is a `u32`, which makes the entry 16 bytes rather than 24. An
+    // STL soup duplicates nearly every vertex, so this is the largest
+    // temporary in the loader. Meshes larger than a `u32` can index cannot be
+    // constructed -- indices are `u32` -- so there is nothing to smooth there.
+    if u32::try_from(vertices.len()).is_err() {
+        return;
+    }
+    let mut keyed: Vec<([i32; 3], u32)> = vertices
+        .iter()
+        .enumerate()
+        .map(|(index, vertex)| {
+            // Exact: the length was just checked against `u32::MAX`.
+            #[allow(clippy::cast_possible_truncation)]
+            (position_key(vertex.position), index as u32)
+        })
+        .collect();
+    keyed.par_sort_unstable();
+
+    // One array, not two. It holds each vertex's own normalized normal, and
+    // the group results are written into it once every read of it is done --
+    // the parallel pass below reads it and writes only into `slots`, so no
+    // second copy is needed.
+    //
+    // Measured through the CLI on a 980k-triangle STL soup: 0.440 s and 294 MB
+    // peak with the `u32` key and the single array, against 0.538 s and 350 MB
+    // with a `usize` key and a cloned normal array; the converted output is
+    // byte-identical.
+    let mut source_normals: Vec<Vec3> = vertices
+        .iter()
+        .map(|vertex| {
+            let normal = Vec3::from_array(vertex.normal);
+            if normal.is_finite() && normal.length_squared() > f32::EPSILON {
+                normal.normalize()
+            } else {
+                Vec3::ZERO
+            }
+        })
+        .collect();
+
+    // Find contiguous equal-key runs (duplicate-position groups). This is a
+    // cheap linear scan next to the O(n log n) sort above. Single-member runs
+    // need no averaging: the array already holds their normalized normal.
+    let mut runs: Vec<(usize, usize)> = Vec::new();
+    let mut run_start = 0usize;
+    for i in 1..=keyed.len() {
+        if i == keyed.len() || keyed[i].0 != keyed[run_start].0 {
+            if i - run_start > 1 {
+                runs.push((run_start, i));
+            }
+            run_start = i;
+        }
+    }
+
+    // Each run touches a disjoint set of vertex indices, so runs can be
+    // averaged independently in parallel.
+    //
+    // One slot per keyed entry, not a collected `Vec<(usize, Vec3)>` of
+    // updates. That tuple vector would be the largest temporary in the loader:
+    // 24 bytes per duplicated vertex, an STL soup duplicates nearly all of
+    // them, and rayon's collect builds it per thread before concatenating, so
+    // the peak is a multiple again. Slots are sized by total run length, so a
+    // welded mesh allocates almost nothing and a soup pays 12 bytes per vertex
+    // once, with no unsafe and no concurrent write.
+    //
+    // `Vec3::ZERO` means "kept its own normal". Unambiguous, because every
+    // value written below is normalized.
+    let duplicated: usize = runs.iter().map(|&(start, end)| end - start).sum();
+    let mut slots: Vec<Vec3> = vec![Vec3::ZERO; duplicated];
+    let mut run_slices: Vec<(usize, &mut [Vec3])> = Vec::with_capacity(runs.len());
+    {
+        let mut rest: &mut [Vec3] = &mut slots;
+        for &(start, end) in &runs {
+            let (piece, tail) = rest.split_at_mut(end - start);
+            run_slices.push((start, piece));
+            rest = tail;
+        }
+    }
+
+    run_slices.into_par_iter().for_each(|(start, out)| {
+        let end = start + out.len();
+        average_duplicate_run(&keyed[start..end], &source_normals, out);
+    });
+
+    let mut written = 0usize;
+    for &(start, end) in &runs {
+        for (slot, &(_, index)) in slots[written..written + (end - start)]
+            .iter()
+            .zip(&keyed[start..end])
+        {
+            if slot.length_squared() > f32::EPSILON {
+                source_normals[index as usize] = *slot;
+            }
+        }
+        written += end - start;
+    }
+
+    for (vertex, normal) in vertices.iter_mut().zip(source_normals) {
+        if normal.length_squared() > f32::EPSILON {
+            vertex.normal = normal.to_array();
+        }
+    }
+}
+
+/// Average one run of coincident vertices into `out`, one slot per member.
+///
+/// `Vec3::ZERO` is left where a member keeps its own normal; every value
+/// written is normalized, so zero is unambiguous.
+fn average_duplicate_run(members: &[([i32; 3], u32)], source_normals: &[Vec3], out: &mut [Vec3]) {
+    average_duplicate_normal_group(
+        members.len(),
+        |slot| source_normals[members[slot].1 as usize],
+        out,
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn a_crease_survives_a_group_past_the_pairwise_threshold() {
+        // Two clusters ninety degrees apart at one position: a hard crease in
+        // a triangle soup, where K coincident vertices means K triangles
+        // meeting one point. Judging the whole group against its own mean would
+        // put that mean on the bisector, accept both clusters into it -- 0.707
+        // is above the 0.5 threshold -- and weld the crease flat, with 45
+        // degrees of error on every member.
+        let group = MAX_PAIRWISE_DUPLICATE_GROUP + 144;
+        let mut vertices = Vec::with_capacity(group);
+        for i in 0..group {
+            let mut vertex = Vertex::at(Vec3::ZERO);
+            vertex.normal = if i % 2 == 0 {
+                [0.0, 1.0, 0.0]
+            } else {
+                [1.0, 0.0, 0.0]
+            };
+            vertices.push(vertex);
+        }
+
+        smooth_duplicate_position_normals(&mut vertices);
+
+        for vertex in &vertices {
+            let normal = Vec3::from_array(vertex.normal);
+            assert!(
+                normal.dot(Vec3::Y) > 0.99 || normal.dot(Vec3::X) > 0.99,
+                "a member of the crease came out at {normal:?}: it should \
+                 still point the way its own cluster does, not along the \
+                 bisector"
+            );
+        }
+        assert!(
+            vertices
+                .iter()
+                .any(|vertex| Vec3::from_array(vertex.normal).dot(Vec3::Y) > 0.99),
+            "one side of the crease disappeared"
+        );
+        assert!(
+            vertices
+                .iter()
+                .any(|vertex| Vec3::from_array(vertex.normal).dot(Vec3::X) > 0.99),
+            "the other side of the crease disappeared"
+        );
+    }
+
+    #[test]
+    fn a_coherent_group_past_the_threshold_still_averages_to_one_normal() {
+        // The counterweight: clustering must not stop a genuinely coherent
+        // pile from being smoothed, which is what the bounded path is for.
+        let group = MAX_PAIRWISE_DUPLICATE_GROUP + 144;
+        let mut vertices = Vec::with_capacity(group);
+        for i in 0..group {
+            let angle = i as f32 * 0.0005;
+            let mut vertex = Vertex::at(Vec3::ZERO);
+            vertex.normal = [angle.sin(), angle.cos(), 0.0];
+            vertices.push(vertex);
+        }
+
+        smooth_duplicate_position_normals(&mut vertices);
+
+        let first = Vec3::from_array(vertices[0].normal);
+        for vertex in &vertices {
+            let normal = Vec3::from_array(vertex.normal);
+            assert!(
+                normal.dot(first) > 0.9999,
+                "a coherent group should come out as one normal, got \
+                 {normal:?} against {first:?}"
+            );
+        }
+    }
+
+    /// Deterministic LCG (not the `rand` crate) so parity tests are
+    /// reproducible without a dependency.
+    struct Lcg(u64);
+
+    impl Lcg {
+        fn next_u32(&mut self) -> u32 {
+            // Numerical Recipes constants.
+            self.0 = self
+                .0
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (self.0 >> 32) as u32
+        }
+
+        fn next_f32(&mut self, lo: f32, hi: f32) -> f32 {
+            let t = f32::from(u16::try_from(self.next_u32() >> 16).unwrap_or(u16::MAX))
+                / f32::from(u16::MAX);
+            lo + t * (hi - lo)
+        }
+    }
+
+    /// Independent brute-force reference: `HashMap`-based grouping and
+    /// averaging in vertex-index order, used to prove the sort-based
+    /// implementation is bit-identical.
+    fn brute_force_smooth_duplicate_position_normals(vertices: &mut [Vertex]) {
+        let mut groups: HashMap<[i32; 3], Vec<usize>> = HashMap::with_capacity(vertices.len());
+        for (index, vertex) in vertices.iter().enumerate() {
+            groups
+                .entry(position_key(vertex.position))
+                .or_default()
+                .push(index);
+        }
+
+        let source_normals: Vec<Vec3> = vertices
+            .iter()
+            .map(|vertex| {
+                let normal = Vec3::from_array(vertex.normal);
+                if normal.is_finite() && normal.length_squared() > f32::EPSILON {
+                    normal.normalize()
+                } else {
+                    Vec3::ZERO
+                }
+            })
+            .collect();
+        let mut smoothed = source_normals.clone();
+
+        for indices in groups.values().filter(|indices| indices.len() > 1) {
+            for &index in indices {
+                let current = source_normals[index];
+                if current.length_squared() <= f32::EPSILON {
+                    continue;
+                }
+
+                let mut normal = Vec3::ZERO;
+                for &neighbor in indices {
+                    let candidate = source_normals[neighbor];
+                    if candidate.length_squared() > f32::EPSILON
+                        && candidate.dot(current) >= DUPLICATE_NORMAL_DOT
+                    {
+                        normal += candidate;
+                    }
+                }
+
+                if normal.length_squared() > f32::EPSILON {
+                    smoothed[index] = normal.normalize();
+                }
+            }
+        }
+
+        for (vertex, normal) in vertices.iter_mut().zip(smoothed) {
+            if normal.length_squared() > f32::EPSILON {
+                vertex.normal = normal.to_array();
+            }
+        }
+    }
+
+    fn assert_bitwise_equal_normals(a: &[Vertex], b: &[Vertex]) {
+        assert_eq!(a.len(), b.len());
+        for (va, vb) in a.iter().zip(b) {
+            for i in 0..3 {
+                assert_eq!(
+                    va.normal[i].to_bits(),
+                    vb.normal[i].to_bits(),
+                    "normal component {i} differs: {:?} vs {:?}",
+                    va.normal,
+                    vb.normal
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn sort_based_matches_brute_force_on_randomized_soup() {
+        let mut rng = Lcg(0x1234_5678_9abc_def0);
+        // A small pool of quantized positions reused across many vertices
+        // guarantees plenty of duplicate-position groups of varying size.
+        let pool: Vec<[f32; 3]> = (0..12)
+            .map(|_| {
+                [
+                    rng.next_f32(-2.0, 2.0),
+                    rng.next_f32(-2.0, 2.0),
+                    rng.next_f32(-2.0, 2.0),
+                ]
+            })
+            .collect();
+
+        let mut vertices: Vec<Vertex> = Vec::new();
+        for _ in 0..500 {
+            let pos = pool[(rng.next_u32() as usize) % pool.len()];
+            let raw = Vec3::new(
+                rng.next_f32(-1.0, 1.0),
+                rng.next_f32(-1.0, 1.0),
+                rng.next_f32(-1.0, 1.0),
+            );
+            let normal = if raw.length_squared() > f32::EPSILON {
+                raw.normalize()
+            } else {
+                Vec3::Z
+            };
+            vertices.push(Vertex::at(Vec3::from_array(pos)).with_normal(normal));
+        }
+
+        let mut expected = vertices.clone();
+        brute_force_smooth_duplicate_position_normals(&mut expected);
+        let mut actual = vertices.clone();
+        smooth_duplicate_position_normals(&mut actual);
+
+        assert_bitwise_equal_normals(&expected, &actual);
+    }
+
+    #[test]
+    fn sort_based_matches_brute_force_with_disagreeing_normals_across_threshold() {
+        // Same quantized position, four vertices: two normals that agree
+        // with each other (dot above threshold), one that disagrees (dot
+        // near zero), and a near-duplicate position within the quantization
+        // epsilon — exercises both branches of the dot-threshold check plus
+        // the position-quantization tolerance.
+        let base = Vec3::new(0.1, -0.2, 0.3);
+        let agree_a = Vec3::new(0.0, 0.0, 1.0);
+        let agree_b = Vec3::new(0.05, 0.0, 0.999).normalize();
+        let disagree = Vec3::new(1.0, 0.0, 0.0);
+
+        let vertices = vec![
+            Vertex::at(base).with_normal(agree_a),
+            Vertex::at(base).with_normal(agree_b),
+            Vertex::at(base).with_normal(disagree),
+            Vertex::at(base + Vec3::new(0.0007, -0.0004, 0.0002)).with_normal(agree_a),
+        ];
+
+        let mut expected = vertices.clone();
+        brute_force_smooth_duplicate_position_normals(&mut expected);
+        let mut actual = vertices.clone();
+        smooth_duplicate_position_normals(&mut actual);
+
+        assert_bitwise_equal_normals(&expected, &actual);
+    }
+
+    #[test]
+    fn sort_based_matches_brute_force_on_empty_and_single_triangle() {
+        let mut empty: Vec<Vertex> = Vec::new();
+        let mut empty_expected: Vec<Vertex> = Vec::new();
+        smooth_duplicate_position_normals(&mut empty);
+        brute_force_smooth_duplicate_position_normals(&mut empty_expected);
+        assert_bitwise_equal_normals(&empty, &empty_expected);
+
+        let vertices = vec![
+            Vertex::at(Vec3::ZERO).with_normal(Vec3::Z),
+            Vertex::at(Vec3::X).with_normal(Vec3::Z),
+            Vertex::at(Vec3::Y).with_normal(Vec3::Z),
+        ];
+        let mut expected = vertices.clone();
+        brute_force_smooth_duplicate_position_normals(&mut expected);
+        let mut actual = vertices.clone();
+        smooth_duplicate_position_normals(&mut actual);
+
+        assert_bitwise_equal_normals(&expected, &actual);
+    }
+}
