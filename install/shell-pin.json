@@ -1,5 +1,5 @@
 {
-  "revision": "883d061db5fe89a02a2e0af5bd6f1d18cff19794",
+  "revision": "6c64acaa2df43e48bb7497a75a433d928ad0c5ca",
   "tag": "",
   "why": "Public release uses the current supported geometry readers. Explorer lifecycle validation is pending.",
   "shell_crates": [
