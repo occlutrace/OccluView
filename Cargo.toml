@@ -114,7 +114,7 @@ serde_json = "1.0"
 # Read-only validation for product-owned platform configuration in tests.
 roxmltree = "0.21.1"
 serde_yaml_ng = "0.10.0"
-naga = { version = "=30.0.1", features = ["wgsl-in"] }
+naga = { version = "=30.0.2", features = ["wgsl-in"] }
 
 # Async runtime for offscreen render in the GUI app.
 pollster   = "1.0.1"
@@ -133,7 +133,7 @@ tracing            = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # GPU / rendering.
-wgpu = "=30.0.1"             # pinned; bumps need tests
+wgpu = "=30.0.2"             # pinned; bumps need tests
 
 # Windowing / GUI.
 egui    = "=0.36.1"
